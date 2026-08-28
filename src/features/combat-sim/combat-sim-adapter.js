@@ -17,7 +17,7 @@ import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
-import { manualAchievementCombatBuffs } from '../../utils/achievement-combat-buffs.js';
+import { manualAchievementCombatBuffs, deriveAchievementCombatBuffs } from '../../utils/achievement-combat-buffs.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
@@ -609,7 +609,39 @@ export function parseShykaiImport(jsonString) {
  */
 function buildPartyMemberDTO(profile, clientData, battleData) {
     const itemDetailMap = clientData?.itemDetailMap || {};
-    const manualAchievementBuffs = manualAchievementCombatBuffs();
+
+    // A shared profile carries which achievements are completed
+    // (characterAchievements: achievementHrid + isCompleted) but not the
+    // resolved per-action-type combat buff a completed tier grants — that
+    // field is server-side only. It can still be derived: cross-referencing
+    // characterAchievements against the game's own achievementDetailMap (hrid
+    // → tierHrid) gives, per tier, whether every achievement in it is done —
+    // exactly the condition the game's Achievement Buffs popup highlights a
+    // buff on. When both pieces are available, pre-check the buffs that tier
+    // actually earned instead of leaving everything unchecked.
+    // achievementBuffsManual/achievementBuffsDerived flag the Configure
+    // section to render the matching caption; either way the checkboxes stay
+    // manually toggleable, since a derivation from a possibly-stale shared
+    // profile is a starting point, not a guarantee.
+    const characterAchievements = profile.profile?.characterAchievements;
+    const achievementDetailMap = clientData?.achievementDetailMap;
+    let achievementCombatBuffs;
+    let achievementBuffsOff;
+    let achievementBuffsManual = false;
+    let achievementBuffsDerived = false;
+
+    if (Array.isArray(characterAchievements) && achievementDetailMap && Object.keys(achievementDetailMap).length) {
+        const { buffs, activeTypeHrids } = deriveAchievementCombatBuffs(characterAchievements, achievementDetailMap);
+        const activeSet = new Set(activeTypeHrids);
+        achievementCombatBuffs = buffs;
+        achievementBuffsOff = buffs.filter((buff) => !activeSet.has(buff.typeHrid)).map((buff) => buff.typeHrid);
+        achievementBuffsDerived = true;
+    } else {
+        const manualAchievementBuffs = manualAchievementCombatBuffs();
+        achievementCombatBuffs = manualAchievementBuffs;
+        achievementBuffsOff = manualAchievementBuffs.map((buff) => buff.typeHrid);
+        achievementBuffsManual = true;
+    }
 
     const dto = {
         staminaLevel: 1,
@@ -628,17 +660,10 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         houseRooms: {},
         guildShrineLevels: {},
         guildCombatBuffs: [],
-        // A shared profile carries which achievements are completed
-        // (characterAchievements) but not the resolved per-action-type combat
-        // buff a completed tier grants — that mapping is server-side only and
-        // never sent to the client. Offer the fixed three achievement combat
-        // buffs as manual toggles, defaulted off, rather than silently sim-ing
-        // this player without buffs their real counterpart likely has.
-        // achievementBuffsManual flags the Configure section to render the
-        // "set manually" caption instead of the "from your achievements" one.
-        achievementCombatBuffs: manualAchievementBuffs,
-        achievementBuffsOff: manualAchievementBuffs.map((buff) => buff.typeHrid),
-        achievementBuffsManual: true,
+        achievementCombatBuffs,
+        achievementBuffsOff,
+        achievementBuffsManual,
+        achievementBuffsDerived,
     };
 
     // Extract skill levels

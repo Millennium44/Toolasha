@@ -253,6 +253,75 @@ describe('buildPlayerDTOFromProfile — a shared profile has no resolved achieve
     });
 });
 
+describe('buildPlayerDTOFromProfile — a shared profile with a completed achievement tier', () => {
+    const ACHIEVEMENT_DETAIL_MAP = {
+        '/achievements/novice_1': { tierHrid: '/achievement_tiers/novice' },
+        '/achievements/novice_2': { tierHrid: '/achievement_tiers/novice' },
+        '/achievements/veteran_1': { tierHrid: '/achievement_tiers/veteran' },
+        '/achievements/elite_1': { tierHrid: '/achievement_tiers/elite' },
+        '/achievements/elite_2': { tierHrid: '/achievement_tiers/elite' },
+    };
+
+    test('pre-checks the buffs earned by a fully completed tier, leaves the rest off', () => {
+        mocks.clientData.achievementDetailMap = ACHIEVEMENT_DETAIL_MAP;
+
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: {
+                characterSkills: [],
+                wearableItemMap: {},
+                characterAchievements: [
+                    { achievementHrid: '/achievements/novice_1', isCompleted: true },
+                    { achievementHrid: '/achievements/novice_2', isCompleted: true },
+                    { achievementHrid: '/achievements/veteran_1', isCompleted: false },
+                ],
+            },
+        });
+
+        expect(dto.achievementBuffsDerived).toBe(true);
+        expect(dto.achievementBuffsManual).toBe(false);
+        expect(dto.achievementCombatBuffs.map((b) => b.typeHrid)).toEqual([
+            '/buff_types/damage',
+            '/buff_types/wisdom',
+            '/buff_types/rare_find',
+        ]);
+        // Novice (wisdom) is complete and pre-checked; veteran (rare find) and
+        // elite (damage) are not, so they stay off.
+        expect(dto.achievementBuffsOff).toEqual(
+            expect.arrayContaining(['/buff_types/damage', '/buff_types/rare_find'])
+        );
+        expect(dto.achievementBuffsOff).not.toContain('/buff_types/wisdom');
+    });
+
+    test('a profile without characterAchievements falls back to the manual, unchecked catalog', () => {
+        mocks.clientData.achievementDetailMap = ACHIEVEMENT_DETAIL_MAP;
+
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: { characterSkills: [], wearableItemMap: {} },
+        });
+
+        expect(dto.achievementBuffsManual).toBe(true);
+        expect(dto.achievementBuffsDerived).toBe(false);
+        expect(dto.achievementBuffsOff).toHaveLength(3);
+    });
+
+    test('characterAchievements present but no achievementDetailMap loaded also falls back to manual', () => {
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: {
+                characterSkills: [],
+                wearableItemMap: {},
+                characterAchievements: [{ achievementHrid: '/achievements/novice_1', isCompleted: true }],
+            },
+        });
+
+        expect(dto.achievementBuffsManual).toBe(true);
+        expect(dto.achievementBuffsDerived).toBe(false);
+        expect(dto.achievementBuffsOff).toHaveLength(3);
+    });
+});
+
 /**
  * The player DTO's equipped kit.
  *
