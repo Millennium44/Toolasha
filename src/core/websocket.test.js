@@ -28,6 +28,11 @@ function msg(type, extra = {}) {
     return JSON.stringify({ type, ...extra });
 }
 
+/** A stand-in for one game connection — only its identity matters here. */
+function gameSocket(url = 'wss://api.milkywayidle.com/ws') {
+    return { url, send() {} };
+}
+
 beforeEach(() => {
     webSocketHook.messageHandlers.clear();
     webSocketHook.socketEventHandlers.clear();
@@ -73,7 +78,9 @@ describe('on / off handler registration', () => {
         const handler = vi.fn();
         webSocketHook.on('test_type', handler);
         webSocketHook.processMessage(msg('test_type', { foo: 'bar' }));
-        expect(handler).toHaveBeenCalledWith({ type: 'test_type', foo: 'bar' });
+        // Handlers are invoked with the owning socket alongside the payload; a
+        // message processed without one carries `socket: null`
+        expect(handler).toHaveBeenCalledWith({ type: 'test_type', foo: 'bar' }, { socket: null });
     });
 
     test('does not register the same handler function twice', () => {
@@ -96,7 +103,7 @@ describe('on / off handler registration', () => {
         const wildcard = vi.fn();
         webSocketHook.on('*', wildcard);
         webSocketHook.processMessage(msg('anything'));
-        expect(wildcard).toHaveBeenCalledWith({ type: 'anything' });
+        expect(wildcard).toHaveBeenCalledWith({ type: 'anything' }, { socket: null });
     });
 
     test('a handler that throws does not stop other handlers for the same type', () => {
@@ -282,6 +289,62 @@ describe('content-hash deduplication', () => {
         webSocketHook.processMessage(message);
 
         expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    test('the same payload from two different sockets is processed twice', () => {
+        // A character switch overlaps two connections: the old socket is still
+        // closing while the new one delivers the arriving character's opening
+        // state. Two characters' first message of a type agree for far more than
+        // a hundred characters, so a globally-keyed hash dropped the *new*
+        // character's message as a duplicate of the old character's
+        const handler = vi.fn();
+        webSocketHook.on('some_generic_type', handler);
+        const message = msg('some_generic_type', { value: 1 });
+
+        webSocketHook.processMessage(message, gameSocket());
+        webSocketHook.processMessage(message, gameSocket());
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    test('a repeat on the same socket is still dropped', () => {
+        // The scoping must not cost the dedup its actual job: one physical frame
+        // reaching two interception paths is still one message
+        const handler = vi.fn();
+        webSocketHook.on('some_generic_type', handler);
+        const socket = gameSocket();
+        const message = msg('some_generic_type', { value: 1 });
+
+        webSocketHook.processMessage(message, socket);
+        webSocketHook.processMessage(message, socket);
+
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    test('the TTL dedup is socket-scoped too, so a new socket loses no loot_opened', () => {
+        // `loot_opened` and `action_completed` skip the content hash and use the
+        // 50 ms TTL key instead — same cross-socket collision, same data loss,
+        // and for loot_opened the lost message is a chest that paid out
+        const handler = vi.fn();
+        webSocketHook.on('loot_opened', handler);
+        const message = msg('loot_opened', { chest: 'x' });
+
+        const oldSocket = gameSocket();
+        webSocketHook.processMessage(message, oldSocket);
+        webSocketHook.processMessage(message, oldSocket); // genuine duplicate: dropped
+        webSocketHook.processMessage(message, gameSocket()); // a different connection: kept
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    test('handlers are told which socket delivered the message', () => {
+        const handler = vi.fn();
+        const socket = gameSocket();
+        webSocketHook.on('some_generic_type', handler);
+
+        webSocketHook.processMessage(msg('some_generic_type', { value: 1 }), socket);
+
+        expect(handler).toHaveBeenCalledWith({ type: 'some_generic_type', value: 1 }, { socket });
     });
 
     test('cleanupProcessedMessages trims down to the newest 50 entries once the cap is crossed', () => {

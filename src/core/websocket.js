@@ -145,8 +145,15 @@ class WebSocketHook {
          * Track processed messages by content hash to prevent duplicate JSON.parse
          * Uses message content (first 100 chars) as key since same message can have different event objects
          */
-        this.processedMessages = new Map(); // message hash -> timestamp
-        this.recentActionCompleted = new Map(); // ttlDedupKey(message) -> timestamp (50ms TTL dedup)
+        this.processedMessages = new Map(); // socket-scoped message hash -> timestamp
+        this.recentActionCompleted = new Map(); // socket-scoped ttlDedupKey(message) -> timestamp (50ms TTL dedup)
+
+        /**
+         * Stable small integer per socket, for the dedup key prefixes above.
+         * A WeakMap so a closed socket's id goes away with the socket itself.
+         */
+        this.socketDedupIds = new WeakMap();
+        this.nextSocketDedupId = 1;
 
         /** Pristine MessageEvent.data getter, fetched lazily when a foreign hook breaks (null = unobtainable) */
         this.nativeDataGet = undefined;
@@ -212,7 +219,7 @@ class WebSocketHook {
             }
 
             hookInstance.markMessageEventProcessed(this);
-            hookInstance.processMessage(message);
+            hookInstance.processMessage(message, socket);
 
             return message;
         };
@@ -417,8 +424,30 @@ class WebSocketHook {
                 return;
             }
 
-            this.processMessage(data);
+            this.processMessage(data, socket);
         });
+    }
+
+    /**
+     * A stable identity for one socket, used to scope the dedup maps below.
+     *
+     * Weakly held, so nothing here keeps a closed socket alive. Messages that
+     * reach `processMessage` without a socket (tests, and any future caller
+     * that has only the payload) share one `no-socket` scope, which is exactly
+     * the pre-socket behaviour.
+     *
+     * @param {WebSocket|Object|null} socket - Originating socket when known
+     * @returns {string} Dedup scope key
+     */
+    getSocketDedupKey(socket) {
+        if (!socket || (typeof socket !== 'object' && typeof socket !== 'function')) return 'no-socket';
+
+        let id = this.socketDedupIds.get(socket);
+        if (!id) {
+            id = this.nextSocketDedupId++;
+            this.socketDedupIds.set(socket, id);
+        }
+        return `socket-${id}`;
     }
 
     isMessageEventProcessed(event) {
@@ -440,8 +469,9 @@ class WebSocketHook {
     /**
      * Process intercepted message
      * @param {string} message - JSON string from WebSocket
+     * @param {WebSocket|Object|null} socket - The socket that delivered it, when known
      */
-    processMessage(message) {
+    processMessage(message, socket = null) {
         // Parse message type first to determine deduplication strategy
         let messageType;
         try {
@@ -455,10 +485,20 @@ class WebSocketHook {
 
         const skipDedup = SKIP_DEDUP_TYPES.has(messageType);
 
+        // Both dedup maps below exist to collapse the *same physical frame* reaching
+        // more than one interception path. Two different sockets are never the same
+        // frame: during a character switch the old connection is still closing while
+        // the new one delivers its opening state, and the two characters' first
+        // messages of a type agree for far more than a hundred characters. Keyed
+        // globally, the new character's message was dropped as a duplicate of the old
+        // character's — real data loss, not a saved parse. The socket scope makes the
+        // key say which connection it came from.
+        const socketKey = this.getSocketDedupKey(socket);
+
         if (!skipDedup) {
             // Deduplicate by message content to prevent 4x JSON.parse on same message
             // Use first 100 chars as hash (contains type + timestamp, unique enough)
-            const messageHash = message.substring(0, 100);
+            const messageHash = `${socketKey}:${message.substring(0, 100)}`;
 
             if (this.processedMessages.has(messageHash)) {
                 return; // Already processed this message, skip
@@ -482,7 +522,7 @@ class WebSocketHook {
             // messages of either type are far enough apart that a repeat inside 50ms
             // is a duplicate rather than a second event.
             const now = Date.now();
-            const dedupKey = ttlDedupKey(message);
+            const dedupKey = `${socketKey}:${ttlDedupKey(message)}`;
             if (this.recentActionCompleted.has(dedupKey)) {
                 return; // Duplicate from second listener — skip
             }
@@ -512,6 +552,12 @@ class WebSocketHook {
                 this.saveCombatSimData(parsedMessageType, message);
             }
 
+            // Every handler is called as `handler(data, { socket })`. The second
+            // argument is what lets a stateful consumer tell the socket it is bound
+            // to from an old one that is still delivering after a character switch;
+            // handlers written as `(data) => …` simply ignore it.
+            const context = { socket };
+
             // Call registered handlers for this message type. Snapshot the array:
             // a handler that off()s itself mid-dispatch would otherwise shift the
             // list under the loop and skip the next handler.
@@ -519,7 +565,7 @@ class WebSocketHook {
 
             for (const handler of handlers) {
                 try {
-                    const result = handler(data);
+                    const result = handler(data, context);
                     if (result instanceof Promise) {
                         result.catch((error) => {
                             console.error(`[WebSocket] Async handler error for ${parsedMessageType}:`, error);
@@ -534,7 +580,7 @@ class WebSocketHook {
             const wildcardHandlers = [...(this.messageHandlers.get('*') || [])];
             for (const handler of wildcardHandlers) {
                 try {
-                    const result = handler(data);
+                    const result = handler(data, context);
                     if (result instanceof Promise) {
                         result.catch((error) => {
                             console.error('[WebSocket] Async wildcard handler error:', error);
