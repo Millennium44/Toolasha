@@ -44,14 +44,18 @@
  * bugs about where the game moved its tab bar.
  */
 
+import webSocketHook from '../core/websocket.js';
+import dataManager from '../core/data-manager.js';
 import {
     createMaterialTab,
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
     visibleTabsContainer,
+    updateTabBadge,
 } from './marketplace-tabs.js';
 import { createAutofillManager } from './marketplace-autofill.js';
+import { unclaimedBoughtCount } from './material-calculator.js';
 
 /**
  * How long to keep putting the tabs back.
@@ -70,6 +74,80 @@ let tabs = [];
 let cleanupObserver = null;
 let watchTimer = null;
 let heading = '';
+/** The open list, each with the holdings it opened against, so buys move the badges */
+let watchedItems = [];
+let inventoryHandler = null;
+
+/**
+ * What the character effectively holds of an item right now: the inventory,
+ * plus units a buy order has bought that are still sitting unclaimed on the
+ * listing. The second half is what makes a badge fall WHILE the order fills.
+ * @param {string} itemHrid - Item
+ * @returns {number} Units
+ */
+function ownedNow(itemHrid) {
+    const inventory = dataManager.getInventory?.() || [];
+    const held = inventory
+        .filter((i) => i.itemHrid === itemHrid && !i.enhancementLevel)
+        .reduce((sum, i) => sum + (i.count || 0), 0);
+    return held + unclaimedBoughtCount(itemHrid);
+}
+
+/**
+ * How many of one list line are still to buy: the original shortfall, less
+ * whatever has been acquired since the list opened. Against a baseline rather
+ * than recomputed from need, because the list's counts are the caller's bill
+ * (a shortfall already netted, an estimate, a plan) — this module only knows
+ * what changed since it was handed over.
+ * @param {Object} item - A watched line
+ * @returns {number} Remaining count
+ */
+function remainingFor(item) {
+    const gained = ownedNow(item.itemHrid) - item.baseline;
+    return Math.max(0, item.count - Math.max(0, gained));
+}
+
+/** Redraw every built tab's badge from what has been bought since the open */
+function refreshTabBadges() {
+    for (const tab of tabs) {
+        const itemHrid = tab.getAttribute?.('data-item-hrid');
+        if (!itemHrid) continue;
+        const item = watchedItems.find((entry) => entry.itemHrid === itemHrid);
+        if (!item) continue;
+        const remaining = remainingFor(item);
+        if (remaining === item.remaining) continue;
+        item.remaining = remaining;
+        updateTabBadge(tab, {
+            itemHrid,
+            itemName: item.name,
+            missing: remaining,
+            required: item.count,
+            isTradeable: true,
+        });
+    }
+}
+
+function startInventoryWatch() {
+    if (inventoryHandler) return;
+    inventoryHandler = (data) => {
+        if (
+            data?.type?.includes('item') ||
+            data?.type?.includes('inventory') ||
+            data?.type?.includes('market') ||
+            data?.endCharacterItems
+        ) {
+            refreshTabBadges();
+        }
+    };
+    webSocketHook.on('*', inventoryHandler);
+}
+
+function stopInventoryWatch() {
+    if (inventoryHandler) {
+        webSocketHook.off('*', inventoryHandler);
+        inventoryHandler = null;
+    }
+}
 
 /**
  * Put a shopping list on the marketplace and go there.
@@ -89,16 +167,24 @@ export function openShoppingList(items, { heading: headingText = '' } = {}) {
     autofill.initialize?.();
     heading = headingText;
 
+    // Each line remembers the holdings it opened against, so what is bought
+    // from here on moves its badge — and only what is bought from here on:
+    // the caller already netted (or chose not to net) what was held before
+    watchedItems = wanted.map((item) => ({ ...item, baseline: ownedNow(item.itemHrid), remaining: item.count }));
+    startInventoryWatch();
+
     // The first item opens the marketplace, and the tabs are put in behind it
     navigateToMarketplace(wanted[0].itemHrid, 0);
     autofill.setQuantity(wanted[0].count);
-    watchForTabBar(wanted);
+    watchForTabBar(watchedItems);
 }
 
 /** Take the tabs away, and stop watching for the marketplace to close */
 export function clearShoppingList() {
     clearInterval(watchTimer);
     watchTimer = null;
+    stopInventoryWatch();
+    watchedItems = [];
     removeMaterialTabs();
     tabs = [];
     cleanupObserver?.();
@@ -176,7 +262,7 @@ function addTabs(container, reference, items) {
                 {
                     itemHrid: item.itemHrid,
                     itemName: item.name,
-                    missing: item.count,
+                    missing: item.remaining ?? item.count,
                     required: item.count,
                     isTradeable: true,
                 },
@@ -208,7 +294,9 @@ function addTabs(container, reference, items) {
  */
 function handlerFor(item) {
     return () => {
-        autofill.setQuantity(item.count);
+        // What is STILL missing, not the original bill — half-filled lines
+        // arm the buy box with the half that is left
+        autofill.setQuantity(item.remaining ?? item.count);
         navigateToMarketplace(item.itemHrid, 0);
     };
 }

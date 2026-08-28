@@ -14,14 +14,29 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const tabsModule = vi.hoisted(() => ({ navigations: [], cleanupObservers: 0 }));
+const tabsModule = vi.hoisted(() => ({ navigations: [], cleanupObservers: 0, badgeUpdates: [] }));
+const game = vi.hoisted(() => ({ inventory: [], unclaimed: {}, wsHandlers: new Set(), quantities: [] }));
+
+vi.mock('../core/websocket.js', () => ({
+    default: {
+        on: (type, fn) => game.wsHandlers.add(fn),
+        off: (type, fn) => game.wsHandlers.delete(fn),
+    },
+}));
+vi.mock('../core/data-manager.js', () => ({
+    default: { getInventory: () => game.inventory },
+}));
+vi.mock('./material-calculator.js', () => ({
+    unclaimedBoughtCount: (itemHrid) => game.unclaimed[itemHrid] || 0,
+}));
 
 vi.mock('./marketplace-tabs.js', () => ({
-    createMaterialTab: (material) => {
+    createMaterialTab: (material, _reference, onClick) => {
         const tab = document.createElement('div');
         tab.setAttribute('data-item-hrid', material.itemHrid);
         tab.setAttribute('data-mwi-custom-tab', 'true');
         tab.textContent = `${material.itemName}: ${material.missing}`;
+        if (onClick) tab.addEventListener('click', onClick);
         return tab;
     },
     removeMaterialTabs: () => {
@@ -35,12 +50,16 @@ vi.mock('./marketplace-tabs.js', () => ({
     },
     navigateToMarketplace: (itemHrid) => tabsModule.navigations.push(itemHrid),
     visibleTabsContainer: () => document.querySelector('#tab-bar'),
+    updateTabBadge: (tab, material) => {
+        tab.textContent = `${material.itemName}: ${material.missing}`;
+        tabsModule.badgeUpdates.push({ itemHrid: material.itemHrid, missing: material.missing });
+    },
 }));
 
 vi.mock('./marketplace-autofill.js', () => ({
     createAutofillManager: () => ({
         initialize: () => {},
-        setQuantity: () => {},
+        setQuantity: (n) => game.quantities.push(n),
         clearQuantity: () => {},
     }),
 }));
@@ -69,6 +88,10 @@ beforeEach(() => {
     document.body.innerHTML = '';
     tabsModule.navigations = [];
     tabsModule.cleanupObservers = 0;
+    tabsModule.badgeUpdates = [];
+    game.inventory = [];
+    game.unclaimed = {};
+    game.quantities = [];
     vi.useFakeTimers();
 });
 
@@ -162,6 +185,60 @@ describe('opening a shopping list', () => {
         const tabs = document.querySelectorAll('[data-item-hrid]');
         expect(tabs).toHaveLength(1);
         expect(tabs[0].getAttribute('data-item-hrid')).toBe('/items/milk');
+    });
+});
+
+describe('purchases move the badges', () => {
+    const fireWs = (data) => {
+        for (const fn of game.wsHandlers) fn(data);
+    };
+    const openAndBuild = () => {
+        tabBar();
+        openShoppingList(items);
+        vi.advanceTimersByTime(200);
+    };
+
+    test('what is bought after the open comes off the missing count', () => {
+        openAndBuild();
+        expect(tabText()).toContain('Cheese: 40');
+
+        game.inventory = [{ itemHrid: '/items/cheese', count: 15, enhancementLevel: 0 }];
+        fireWs({ type: 'items_updated' });
+
+        expect(tabText()).toContain('Cheese: 25');
+        expect(tabText()).toContain('Log: 12');
+    });
+
+    test('units bought but unclaimed on a buy order count too, and never twice', () => {
+        openAndBuild();
+        game.unclaimed = { '/items/cheese': 40 };
+        fireWs({ type: 'market_listings_updated' });
+        expect(tabText()).toContain('Cheese: 0');
+
+        // The claim moves them to the inventory and off the listing at once
+        game.unclaimed = {};
+        game.inventory = [{ itemHrid: '/items/cheese', count: 40, enhancementLevel: 0 }];
+        fireWs({ type: 'items_updated' });
+        expect(tabText()).toContain('Cheese: 0');
+    });
+
+    test('what was already held before the open is the caller’s business, not a purchase', () => {
+        game.inventory = [{ itemHrid: '/items/cheese', count: 100, enhancementLevel: 0 }];
+        openAndBuild();
+        fireWs({ type: 'items_updated' });
+
+        // The 100 sat in the baseline; nothing was bought, nothing moves
+        expect(tabText()).toContain('Cheese: 40');
+    });
+
+    test('a half-filled line arms the buy box with the half that is left', () => {
+        openAndBuild();
+        game.inventory = [{ itemHrid: '/items/cheese', count: 15, enhancementLevel: 0 }];
+        fireWs({ type: 'items_updated' });
+        game.quantities = [];
+
+        document.querySelector('[data-item-hrid="/items/cheese"]').click();
+        expect(game.quantities).toEqual([25]);
     });
 });
 
