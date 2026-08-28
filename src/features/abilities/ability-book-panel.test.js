@@ -15,6 +15,9 @@ const game = vi.hoisted(() => ({ data: {}, prices: {}, character: null }));
 /** What the panel asked the game's buy dialog to be filled with, and for what */
 const market = vi.hoisted(() => ({ filled: [], opened: [], initialized: 0 }));
 
+/** The data manager's event bus, reduced to the one event this file cares about */
+const bus = vi.hoisted(() => ({ handlers: {} }));
+
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({
         initialize: () => market.initialized++,
@@ -29,6 +32,15 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => game.data,
         get characterData() {
             return game.character;
+        },
+        on: (event, handler) => {
+            (bus.handlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            bus.handlers[event] = (bus.handlers[event] || []).filter((h) => h !== handler);
+        },
+        emit: (event, payload) => {
+            for (const handler of bus.handlers[event] || []) handler(payload);
         },
     },
 }));
@@ -49,6 +61,7 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
 }));
 
 const { abilityBookPanel, abilityPlans, resetAbilityTargets } = await import('./ability-book-panel.js');
+const { default: dataManager } = await import('../../core/data-manager.js');
 
 /** Each level costs 1,000 more experience than the last */
 const table = [0, 0];
@@ -351,5 +364,55 @@ describe('the time column', () => {
         expect(abilityPlans().every((plan) => plan.experiencePerHour === null)).toBe(true);
         expect(text()).toContain('—/hr');
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('switching character', () => {
+    test('a target set for the departed character does not apply to the next one', () => {
+        // Main sets Poke to level 20. An ironcow — same abilityHrid, level 2 —
+        // switches in next: 20 is still ">  level" for it, so nothing would
+        // have caught the stale target were it not cleared on the switch.
+        abilityBookPanel.show();
+        targetInput('/abilities/poke').value = '20';
+        targetInput('/abilities/poke').dispatchEvent(new Event('change'));
+        expect(abilityPlans().find((plan) => plan.name === 'Poke').targetLevel).toBe(20);
+
+        game.character = {
+            combatUnit: { combatAbilities: [{ abilityHrid: '/abilities/poke', level: 2 }] },
+            characterAbilities: [{ abilityHrid: '/abilities/poke', level: 2, experience: 0 }],
+        };
+        dataManager.emit('character_switched', {});
+
+        expect(abilityPlans().find((plan) => plan.name === 'Poke').targetLevel).toBeNull();
+    });
+
+    test('the shared target does not survive a switch either', () => {
+        abilityBookPanel.show();
+        const shared = sharedInput();
+        shared.value = '5';
+        shared.dispatchEvent(new Event('change'));
+        expect(abilityPlans()[0].targetLevel).not.toBeNull();
+
+        dataManager.emit('character_switched', {});
+
+        expect(abilityPlans().every((plan) => plan.targetLevel === null)).toBe(true);
+    });
+
+    test('a switch while the panel is closed does not open it', () => {
+        expect(abilityBookPanel.panel).toBeNull();
+        dataManager.emit('character_switched', {});
+        expect(abilityBookPanel.panel).toBeNull();
+    });
+
+    test('an open panel redraws rather than being left showing stale rows', () => {
+        abilityBookPanel.show();
+        targetInput('/abilities/poke').value = '20';
+        targetInput('/abilities/poke').dispatchEvent(new Event('change'));
+
+        dataManager.emit('character_switched', {});
+
+        // The redrawn target input reflects the reset, not the value typed
+        // before the switch
+        expect(targetInput('/abilities/poke').value).toBe('3');
     });
 });

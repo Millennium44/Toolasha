@@ -753,3 +753,16 @@ class AbilityBookPanel {
 }
 
 export const abilityBookPanel = new AbilityBookPanel();
+
+// A target level is a question about one character's abilities — taking main's
+// Puncture from 41 to 100 is a different purchase from taking an ironcow's
+// Puncture (same abilityHrid, level 3) to 100. `abilityTargets` is keyed on the
+// hrid alone, so without this it survives a character switch and reapplies the
+// departed character's targets to whoever switched in — silently, since every
+// target here is still "valid" (target > new character's current level) until
+// it happens not to be. The Combat Level panel resets its own per-character
+// state the same way on the same event; this brings the ability panel in line.
+dataManager.on('character_switched', () => {
+    resetAbilityTargets();
+    if (abilityBookPanel.panel) abilityBookPanel._render();
+});
