@@ -573,6 +573,17 @@ export function buildPanelBody(attribution, { series = null, now = undefined } =
         'above rather than being one of them, so it is not added to anything.';
     body.appendChild(movement);
 
+    const unpricedAlchemy = attribution?.unpricedAlchemySessions || 0;
+    if (unpricedAlchemy > 0) {
+        const warning = document.createElement('div');
+        warning.className = 'mwi-gold-sources-unpriced-alchemy';
+        warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
+        warning.textContent =
+            `${unpricedAlchemy} alchemy session${unpricedAlchemy === 1 ? '' : 's'} could not be valued — the ` +
+            'input consumed has no market price — so they are in the residual rather than the alchemy row.';
+        body.appendChild(warning);
+    }
+
     const unpriced = attribution?.unpricedEnhancementSessions || 0;
     if (unpriced > 0) {
         const warning = document.createElement('div');

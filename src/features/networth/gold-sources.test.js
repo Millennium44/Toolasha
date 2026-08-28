@@ -152,6 +152,28 @@ describe('alchemySessionNet', () => {
         };
         expect(alchemySessionNet(session, price)).toBe(777 - 10);
     });
+
+    test('an unpriceable input is not a free one — the session is not valued at all', () => {
+        // `price()` has no entry for the input, so num(null) used to fall
+        // through to zero cost and the whole output read as pure profit
+        const session = {
+            startTime: D20,
+            inputItemHrid: '/items/unknown_input',
+            totalAttempts: 10,
+            results: { '/items/cheese': { count: 4 } },
+        };
+        expect(alchemySessionNet(session, price)).toBeNull();
+    });
+
+    test('no attempts means no input cost even when the input has no price', () => {
+        const session = {
+            startTime: D20,
+            inputItemHrid: '/items/unknown_input',
+            totalAttempts: 0,
+            totalCoinsEarned: 50,
+        };
+        expect(alchemySessionNet(session, price)).toBe(50);
+    });
 });
 
 describe('enhancementSessionNet', () => {
@@ -366,6 +388,32 @@ describe('attributeGoldSources', () => {
 
         expect(result.unpricedEnhancementSessions).toBe(1);
         expect(result.totals.sources.enhancement).toBe(9000 - 1000 - 1000);
+    });
+
+    test('unpriceable alchemy inputs are counted, not silently valued at zero', () => {
+        const result = attributeGoldSources({
+            ...base,
+            alchemySessions: [
+                // No price for the input: this run's gross output must not
+                // read as pure profit
+                {
+                    startTime: D20,
+                    inputItemHrid: '/items/unknown_input',
+                    totalAttempts: 10,
+                    results: { '/items/cheese': { count: 4 } },
+                },
+                {
+                    startTime: D20,
+                    inputItemHrid: '/items/milk',
+                    totalAttempts: 10,
+                    results: { '/items/cheese': { count: 4 } },
+                },
+            ],
+        });
+
+        expect(result.unpricedAlchemySessions).toBe(1);
+        // Only the priceable session (400 cheese out - 400 milk in = 0) counts
+        expect(result.totals.sources.alchemy).toBe(0);
     });
 
     test('coverage reports when each recording starts', () => {

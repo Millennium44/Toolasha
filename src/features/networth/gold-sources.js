@@ -376,9 +376,17 @@ export function combatSessionLootValue(session, price) {
  * whether or not it succeeded — which is exactly why alchemy can lose money and
  * why counting only the outputs would be a lie.
  *
+ * An input with no market price is not a free one: `price()` returning null
+ * for it used to fall through `num()` to zero cost, so a session run on an
+ * unpriceable material reported its whole gross output as profit — the exact
+ * overstatement the production recorder exists to avoid, here for the other
+ * ingredient. So a session that spent at least one unpriceable input is not
+ * valued at all, the same way an unpriceable enhancement run is not.
+ *
  * @param {Object} session - A stored alchemy session, tagged with `kind`
  * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
- * @returns {number} Coins, which may be negative
+ * @returns {number|null} Coins, which may be negative, or null when the input
+ *   consumed could not be priced
  */
 export function alchemySessionNet(session, price) {
     if (!session) return 0;
@@ -392,7 +400,9 @@ export function alchemySessionNet(session, price) {
     }
 
     const attempts = num(session.totalAttempts);
-    const inputs = attempts * num(price(session.inputItemHrid, num(session.enhancementLevel)));
+    const inputUnit = price(session.inputItemHrid, num(session.enhancementLevel));
+    if (attempts > 0 && !Number.isFinite(inputUnit)) return null;
+    const inputs = attempts * num(inputUnit);
 
     const catalysts =
         num(session.catalystOfCoinificationUsed) * num(price('/items/catalyst_of_coinification', 0)) +
@@ -834,6 +844,7 @@ function earlierOf(a, b) {
  *   totals: {sources: Object, explained: number, delta: number|null, residual: number|null, categories: Object|null},
  *   marketMovement: Object|null,
  *   coverage: Object<string, number|null>,
+ *   unpricedAlchemySessions: number,
  *   unpricedEnhancementSessions: number,
  *   unpricedProductionActions: number,
  *   combatBasis: {lootLogDays: number, sessionDays: number, uncoveredDays: number, sessions: number,
@@ -933,10 +944,16 @@ export function attributeGoldSources(input) {
         unpricedChests += day.unpricedChests;
     }
 
+    let unpricedAlchemySessions = 0;
     for (const session of alchemySessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
-        add(localDayId(t), 'alchemy', alchemySessionNet(session, price));
+        const net = alchemySessionNet(session, price);
+        if (net === null) {
+            if (inWindow.has(localDayId(t))) unpricedAlchemySessions += 1;
+            continue;
+        }
+        add(localDayId(t), 'alchemy', net);
     }
 
     let unpricedEnhancementSessions = 0;
@@ -1147,6 +1164,7 @@ export function attributeGoldSources(input) {
             marketTax: earliest(tradeFills, (fill) => num(fill?.t) || NaN),
             consumables: earliest(combatSessions, (session) => Date.parse(session?.combatStartTime)),
         },
+        unpricedAlchemySessions,
         unpricedEnhancementSessions,
         unpricedProductionActions,
         unpricedChestItems,
