@@ -1450,6 +1450,70 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.28.0](https://github.com/Millennium44/Toolasha/compare/v3.27.0...v3.28.0) (2026-08-28)
+
+
+### Features
+
+* caption imported players' achievement section as derived ([8518303](https://github.com/Millennium44/Toolasha/commit/8518303c3c74260d1dc9169e0a1886b48d6849ad))
+* combat sim shows manual achievement buff toggles for imported players ([d7266f8](https://github.com/Millennium44/Toolasha/commit/d7266f8926ae974a852add982cce4983d06ea0a8))
+* copy button on mention popup ([f5e9402](https://github.com/Millennium44/Toolasha/commit/f5e94025e2187ad87dac13c2185570340750f577))
+* derive achievement-tier combat buffs from a shared profile ([95499ab](https://github.com/Millennium44/Toolasha/commit/95499abd0dde0047b2019623c9e2b7bee3719a48))
+* pop-out chat shows a blocked-message count ([27a648f](https://github.com/Millennium44/Toolasha/commit/27a648fbde642e2b354aa449a0e7848be6d6908d))
+* pop-out chat window remembers its size and position ([ae19981](https://github.com/Millennium44/Toolasha/commit/ae19981ededfeee87fc233150b23961f906aa1c3))
+* pre-check imported players' achievement buffs from their achievements ([7300ce9](https://github.com/Millennium44/Toolasha/commit/7300ce9a46f805f0716dfc2f6631b6aa799c538a))
+* task claim toast — summarize a claim's rewards ([a1c3eda](https://github.com/Millennium44/Toolasha/commit/a1c3edaf49befde3ca5f954f92e9d6fe3ffdc4fa))
+* task reroll spend badge next to the slot count ([3a60d33](https://github.com/Millennium44/Toolasha/commit/3a60d336419ff690b44c725df21e7026e09d827a))
+* task statistics: Copy CSV export ([2166bf0](https://github.com/Millennium44/Toolasha/commit/2166bf0fe84fe2dffb0a4fb3a700a6a18de6b70d))
+
+
+### Bug Fixes
+
+* all-zones sim status stops freezing on "Simulating" past 100% ([d7eafd3](https://github.com/Millennium44/Toolasha/commit/d7eafd32fe4a7f156da38e81b721249c1a523879))
+* build score tile clears on character switch, not just on demand ([5b35e88](https://github.com/Millennium44/Toolasha/commit/5b35e8886e3319fd015a7f1e9baae485bcc4adc3))
+* combat level session/history clear at character_switching, not just switched ([23e1d41](https://github.com/Millennium44/Toolasha/commit/23e1d41a847e7254858a5d26db22d0477d4e900f))
+* combat-stats tiles clear their party-stats cache on a character switch ([56fb167](https://github.com/Millennium44/Toolasha/commit/56fb1676b2f959358aca6df5204f2e717d6a4af4))
+* drop-luck session-luck window can silently undersize for high-value sessions ([31740d9](https://github.com/Millennium44/Toolasha/commit/31740d9cbe32291c67ddcca45479b8deb014f8e1))
+* enhancement session records milestones a Blessed jump skips over ([f397c51](https://github.com/Millennium44/Toolasha/commit/f397c513f99a9e9935fb914d3a85e1d8cd26229e))
+* enhancement tracker clears pending-start flag on disable() ([7cf1ac3](https://github.com/Millennium44/Toolasha/commit/7cf1ac359e7e5709a31ea79a8c393d3a02599f40))
+* equipment level overlay goes stale on in-place item swaps ([a381e34](https://github.com/Millennium44/Toolasha/commit/a381e34eba069e5b7e95ee55c38a6f9d8d0654b5))
+* equipmentWatch tile clears synchronously on a character switch ([90b407a](https://github.com/Millennium44/Toolasha/commit/90b407a5c73a7bb8f3ac72e44ac094cf566c0aef))
+* inventory category totals go stale without Sort or Badge Prices on ([99c8899](https://github.com/Millennium44/Toolasha/commit/99c8899cc8f404c1ec10b6bad92adb448692ff39))
+* labyrinth ability level scaling floors below level 1 ([f873db9](https://github.com/Millennium44/Toolasha/commit/f873db968ef47be477bc13e5dd32148cc2495d2f))
+* loadout enhancement badge goes stale on inventory or character change ([d885d6d](https://github.com/Millennium44/Toolasha/commit/d885d6d3adf47a3c63eaddf71a1ca72fb54387ee))
+* marketplace item count badge goes stale on character switch ([574fb63](https://github.com/Millennium44/Toolasha/commit/574fb63d9f585979468ef0f01beef7113f91ccc9))
+* missing-mats buy dialog quantity survives clicking + New Buy Listing ([5507290](https://github.com/Millennium44/Toolasha/commit/5507290a25c11a3c017ef07f1943ed08b374a7dc))
+* notice log clears in-memory entries at character_switching ([b08cbda](https://github.com/Millennium44/Toolasha/commit/b08cbda11fcf7778fd6386aa5dc0362cf8edaef7))
+* risk-of-ruin reports 100% ruin but "no ruin occurred" for a busted start ([0ecad0b](https://github.com/Millennium44/Toolasha/commit/0ecad0b9e8e821fac40893d70988c3208bb3fc5d))
+* session briefing clears stale listing-fill count on character switch ([9167bb0](https://github.com/Millennium44/Toolasha/commit/9167bb07138e630c9035854fd9a2fffec2ebee4d))
+* task claim toast defaults to off ([57eef89](https://github.com/Millennium44/Toolasha/commit/57eef8975933055d269205808ea8c98a09b9dc6f))
+* tea optimizer gives no signal when its gold recommendation used unpriced items ([d3cf453](https://github.com/Millennium44/Toolasha/commit/d3cf4531459c125f34874f65505d4fd525c272c3))
+* time-to-level row clears its own skill history on a character switch ([dba1fea](https://github.com/Millennium44/Toolasha/commit/dba1fead70a3b8f1599c52fe367a4cab47380a61))
+* watchlist tile clears synchronously on a character switch ([07bd1b2](https://github.com/Millennium44/Toolasha/commit/07bd1b262f12e9eedc410755b9c118241dcd6c35))
+
+
+### Code Refactoring
+
+* unify ripple's cooldown reduction on the haste-scaled duration ([9ce7981](https://github.com/Millennium44/Toolasha/commit/9ce798193e45490ab4ddfe793fa33b8855469aaf))
+
+
+### Performance Improvements
+
+* add sub-marks inside the character:data -&gt; settings:character gap ([11415b2](https://github.com/Millennium44/Toolasha/commit/11415b23d877a15881a553d21b21146e5e5b7135))
+* drop the redundant IndexedDB read in settings loadSettings() ([54cc3c7](https://github.com/Millennium44/Toolasha/commit/54cc3c7a42f564522eb2ddf6de202e19042c030e))
+
+
+### Documentation
+
+* changelog for overlay sweep and reported fixes ([833314a](https://github.com/Millennium44/Toolasha/commit/833314a5ddf29873b1104c9f5f708280ad33dc36))
+* changelog for sixth audit round ([ce1aa16](https://github.com/Millennium44/Toolasha/commit/ce1aa16aa2fdaaa551dcdf4b32e0a7dbe5606905))
+* restore dropped sixth-round heading ([2db9924](https://github.com/Millennium44/Toolasha/commit/2db992431f31a3c503ae4475ff537fcc223666c4))
+
+
+### Tests
+
+* cap the worker pool at half the cores ([5ebd904](https://github.com/Millennium44/Toolasha/commit/5ebd904a5f949e0212e171a2f2a97da317bc2c05))
+
 ## [3.27.0](https://github.com/Millennium44/Toolasha/compare/v3.26.0...v3.27.0) (2026-08-28)
 
 ### Features
