@@ -75,6 +75,62 @@ const mergeChipStyle = `
 `;
 
 /**
+ * One session's headline figures as plain text, for the clipboard.
+ *
+ * Close enough to what the panel shows to tell the same story pasted into a
+ * guild chat or a bug report, but flattened — the per-level table and the
+ * predictions math underneath it don't survive a paste, and a wall of numbers
+ * nobody asked for is worse than the few that answer "how did the run go".
+ *
+ * @param {Object} session - From `enhancementTracker.getCurrentSession()`
+ * @param {Object} [options]
+ * @param {string} [options.itemName] - Falls back to the session's own name/hrid
+ * @param {Function} [options.formatNum] - Number formatter matching the panel
+ * @param {Function} [options.formatDuration] - Seconds → readable duration
+ * @returns {string}
+ */
+export function enhancementSessionText(
+    session,
+    { itemName, formatNum = (num) => String(Math.round(num)), formatDuration = (seconds) => `${seconds}s` } = {}
+) {
+    if (!session) return 'Enhancement Tracker\nNo session.';
+
+    const name = itemName || session.itemName || session.itemHrid;
+    const done = session.state === SessionState.COMPLETED;
+    const lines = [
+        'Enhancement Tracker',
+        `${name} +${session.startLevel} → +${session.targetLevel}${done ? ' (completed)' : ' (in progress)'}`,
+        `Duration: ${formatDuration(getSessionDuration(session))}`,
+        `Attempts: ${session.totalAttempts || 0} ` +
+            `(${session.totalSuccesses || 0} success, ${session.totalBlessed || 0} blessed, ` +
+            `${session.totalFailures || 0} fail)`,
+        `Protections used: ${session.protectionCount || 0}`,
+        `Total cost: ${formatNum(session.totalCost || 0)}`,
+    ];
+
+    const duration = getSessionDuration(session);
+    if (duration >= 5 && session.totalXP > 0) {
+        const xpPerHour = Math.floor((session.totalXP / duration) * 3600);
+        lines.push(`XP: ${formatNum(session.totalXP)} (${formatNum(xpPerHour)}/h)`);
+    }
+
+    // Cost against the prediction, at this run's own leg — the same comparison
+    // the panel draws underneath the per-level table, just in words.
+    if (session.predictions) {
+        const cost = costVsExpected(session, getCurrentLegCounters(session));
+        if (cost) {
+            const word = cost.diff >= 0 ? 'below' : 'above';
+            lines.push(
+                `Cost vs expected: ${formatNum(cost.expectedCost)} expected, ${cost.factor.toFixed(2)}x, ` +
+                    `${formatNum(Math.abs(cost.diff))} ${word}`
+            );
+        }
+    }
+
+    return lines.join('\n');
+}
+
+/**
  * Enhancement UI Manager
  */
 class EnhancementUI {
@@ -466,6 +522,9 @@ class EnhancementUI {
         // Merge button — combine several sessions into one summary
         const mergeButton = this.createMergeButton();
 
+        // Copy the session on view to the clipboard as text
+        const copyButton = this.createCopyButton();
+
         // Collapse button
         const collapseButton = this.createCollapseButton();
 
@@ -475,6 +534,7 @@ class EnhancementUI {
         navContainer.appendChild(prevButton);
         navContainer.appendChild(nextButton);
         navContainer.appendChild(mergeButton);
+        navContainer.appendChild(copyButton);
         navContainer.appendChild(collapseButton);
         navContainer.appendChild(clearButton);
 
@@ -510,6 +570,65 @@ class EnhancementUI {
             button.style.background = 'none';
         });
         button.addEventListener('click', onClick);
+
+        return button;
+    }
+
+    /**
+     * Create the copy-session-as-text button.
+     *
+     * Puts the session currently in view on the clipboard as plain text, for
+     * pasting into a guild chat or a bug report without a screenshot — the
+     * same move Combat Statistics offers for a fight. Silently does nothing
+     * without a session or a clipboard to write to, rather than a header
+     * button that pops an error over a panel that otherwise has nothing to
+     * say (no sessions yet is the panel's normal empty state, not a failure).
+     */
+    createCopyButton() {
+        const button = document.createElement('button');
+        button.innerHTML = '⧉';
+        button.title = 'Copy the session in view to the clipboard as text';
+        Object.assign(button.style, {
+            background: 'none',
+            border: 'none',
+            color: STYLE.colors.textPrimary,
+            cursor: 'pointer',
+            fontSize: '14px',
+            padding: '2px 8px',
+            borderRadius: '3px',
+            transition: STYLE.transitions.fast,
+        });
+
+        button.addEventListener('mouseover', () => {
+            button.style.color = STYLE.colors.accent;
+            button.style.background = 'rgba(255, 0, 212, 0.1)';
+        });
+        button.addEventListener('mouseout', () => {
+            button.style.color = STYLE.colors.textPrimary;
+            button.style.background = 'none';
+        });
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const session = this.getCurrentSession();
+            if (!session || !navigator.clipboard) return;
+
+            const gameData = dataManager.getInitClientData();
+            const itemName = gameData?.itemDetailMap?.[session.itemHrid]?.name;
+            const text = enhancementSessionText(session, {
+                itemName,
+                formatNum: (num) => this.formatNumber(num),
+                formatDuration: (seconds) => this.formatDuration(seconds),
+            });
+
+            navigator.clipboard
+                .writeText(text)
+                .then(() => {
+                    const original = button.innerHTML;
+                    button.innerHTML = '✓';
+                    setTimeout(() => (button.innerHTML = original), 1200);
+                })
+                .catch((error) => console.error('[EnhancementUI] Copy failed:', error));
+        });
 
         return button;
     }
