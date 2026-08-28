@@ -8,6 +8,9 @@ import { markAsProfileLink } from './chat-profile-link.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatDateTime } from '../../utils/formatters.js';
 
+/** The copy button at rest — what a flash restores it to */
+const COPY_BUTTON_GLYPH = '⧉';
+
 class MentionPopup {
     constructor() {
         this.container = null;
@@ -142,7 +145,7 @@ class MentionPopup {
         headerBtns.style.cssText = `display: flex; align-items: center; gap: 8px;`;
 
         const copyBtn = document.createElement('button');
-        copyBtn.textContent = '⧉';
+        copyBtn.textContent = COPY_BUTTON_GLYPH;
         copyBtn.title = 'Copy mentions to clipboard';
         copyBtn.style.cssText = `
             background: none;
@@ -282,23 +285,34 @@ class MentionPopup {
      * the button briefly to confirm it landed (or that it was refused).
      * @param {HTMLButtonElement} button
      */
-    _copyToClipboard(button) {
+    async _copyToClipboard(button) {
         const text = this.formatMentionsForCopy(this.currentMentions, this.currentDisplayName);
         const flash = (symbol) => {
-            const original = button.textContent;
             button.textContent = symbol;
-            setTimeout(() => {
-                if (button.isConnected) button.textContent = original;
+            // The resting glyph is a constant, not whatever the button happens
+            // to read now: a second click inside the 1200ms window would
+            // otherwise capture '✓' as the thing to restore, and the later
+            // timer would put the checkmark back after the earlier one had
+            // already cleared it — leaving the button stuck on '✓' until the
+            // popup is rebuilt. The pending timer is cleared for the same
+            // reason, so the last click is the one that decides.
+            clearTimeout(this._flashTimer);
+            this._flashTimer = setTimeout(() => {
+                this._flashTimer = null;
+                if (button.isConnected) button.textContent = COPY_BUTTON_GLYPH;
             }, 1200);
         };
         if (!navigator.clipboard) {
             flash('✗');
             return;
         }
-        navigator.clipboard
-            .writeText(text)
-            .then(() => flash('✓'))
-            .catch(() => flash('✗'));
+        try {
+            await navigator.clipboard.writeText(text);
+            flash('✓');
+        } catch (error) {
+            console.error('[MentionPopup] Copying the mentions failed:', error);
+            flash('✗');
+        }
     }
 
     /**
@@ -390,6 +404,10 @@ class MentionPopup {
         if (this.clickOutsideHandler) {
             document.removeEventListener('mousedown', this.clickOutsideHandler);
             this.clickOutsideHandler = null;
+        }
+        if (this._flashTimer) {
+            clearTimeout(this._flashTimer);
+            this._flashTimer = null;
         }
 
         if (this.container) {

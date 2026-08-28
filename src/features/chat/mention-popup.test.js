@@ -164,4 +164,36 @@ describe('mention popup copy button', () => {
 
         expect(writeText).toHaveBeenCalledWith('Mentions — General\n[12:00 PM] Someone: hi @Me');
     });
+
+    test('a second click inside the flash window still leaves the button at rest afterwards', async () => {
+        // The flash used to capture `button.textContent` as "the original" at
+        // call time. Click twice inside the 1200ms window and the second call
+        // captures '✓' — so the second timer restores the checkmark after the
+        // first has already cleared it, and the button reads '✓' for as long as
+        // the popup stays open.
+        vi.useFakeTimers();
+        try {
+            const writeText = vi.fn().mockResolvedValue();
+            Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+            mentionPopup.open(
+                '/chat_channel_types/general',
+                [{ sName: 'Someone', m: 'hi @Me', t: '2026-01-01T00:00:00.000Z' }],
+                'General',
+                () => {}
+            );
+            const copyBtn = document.querySelector(
+                '#mwi-mention-popup-header button[title="Copy mentions to clipboard"]'
+            );
+
+            copyBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            await vi.advanceTimersByTimeAsync(600);
+            copyBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            await vi.advanceTimersByTimeAsync(2000);
+
+            expect(copyBtn.textContent).toBe('⧉');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
