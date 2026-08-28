@@ -523,6 +523,43 @@ describe('applying a preset over a layout somebody had already made', () => {
         expect(drawn()).toEqual(SKILLING_AT_460);
     });
 
+    test('and the grid it produces is one the lines can settle', async () => {
+        // The other half of what was reported: the preset left 50-pixel voids
+        // under tiles that had nothing to say. `settleLines` was right to
+        // decline — the stray tiles below made the layout non-line-structured —
+        // so putting them away is what lets it close the gaps up.
+        registerRow({
+            key: 'totalProfit',
+            name: 'totalProfit',
+            defaultSize: { width: 240, height: 78 },
+            render: (el) => (el.textContent = 'profit'),
+        });
+        registerRow({
+            key: 'consumables',
+            name: 'consumables',
+            defaultSize: { width: 240, height: 76 },
+            // Nothing slotted on this character, so the tile stands down
+            render: (el) => el.replaceChildren(),
+        });
+        registerRow({
+            key: 'houses',
+            name: 'houses',
+            defaultSize: { width: 200, height: 50 },
+            render: (el) => (el.textContent = 'houses'),
+        });
+
+        await overlayPanel.applyNamedLayout('Skilling');
+        const placed = drawn();
+
+        // As designed, consumables is given 80 pixels at y=140 and houses sits
+        // at y=220 below it. Standing down to a strip, it takes 20 — and houses
+        // comes up to meet it instead of leaving a band of nothing.
+        expect(overlayPanel.settings.positions.consumables).toEqual({ x: 0, y: 140 });
+        expect(overlayPanel.settings.positions.houses).toEqual({ x: 0, y: 220 });
+        expect(placed.consumables.height).toBe(20);
+        expect(placed.houses.y).toBe(placed.consumables.y + placed.consumables.height);
+    });
+
     test('the layout it replaced can still be taken back', async () => {
         await overlayPanel.applyNamedLayout('Skilling');
         overlayPanel._undo();
