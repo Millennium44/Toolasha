@@ -119,6 +119,17 @@ describe('the queue time tile', () => {
         expect(queueTimeLeft().seconds).toBe(500);
     });
 
+    test('a remaining count that does not divide evenly still rounds up to a whole action', () => {
+        // 50% efficiency -> effectiveRate 1.5. 10 remaining / 1.5 = 6.667 actions,
+        // which is 7 whole actions at 10s — not 66.67s of a 7th action nobody can
+        // partially run. queue-snapshot.js (the other-character estimate) already
+        // rounds up for this reason; the live tile must agree with it.
+        game.stats = { actionTime: 10, totalEfficiency: 50 };
+        game.actions = [counted(10)];
+
+        expect(queueTimeLeft().seconds).toBe(70);
+    });
+
     test('finished actions are not queued work', () => {
         game.actions = [{ ...counted(100), isDone: true }, counted(10)];
 

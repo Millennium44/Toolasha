@@ -80,7 +80,13 @@ export function queueTimeLeft() {
         if (!stats) continue;
 
         const remaining = Math.max(0, (action.maxCount || 0) - (action.currentCount || 0));
-        seconds += (remaining / calculateEfficiencyMultiplier(stats.totalEfficiency)) * stats.actionTime;
+        // Whole actions only — a character cannot run 6.4 actions to finish the
+        // last few items, they run 7 and the queue takes the full 7th action's
+        // time. `queue-snapshot.js` rounds up for exactly this reason; skipping
+        // it here quietly undercounts every action whose efficiency does not
+        // divide the remaining count evenly.
+        const effectiveRate = calculateEfficiencyMultiplier(stats.totalEfficiency);
+        seconds += Math.ceil(remaining / effectiveRate) * stats.actionTime;
         finite += 1;
     }
 
