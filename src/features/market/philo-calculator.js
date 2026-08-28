@@ -22,6 +22,7 @@ import {
 } from '../../utils/profit-helpers.js';
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { settingsUI as sharedSettingsUI } from '../../utils/bundle-bridge.js';
+import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -1523,6 +1524,16 @@ class PhiloCalculator {
                 switch (col.key) {
                     case 'name':
                         td.textContent = value;
+                        // The rest of the modal is about this item; the name is
+                        // the way to it. Same pattern as the ledger's rows.
+                        td.style.cursor = 'pointer';
+                        td.title = 'Open this item in the marketplace.';
+                        td.addEventListener('mouseenter', () => (td.style.textDecoration = 'underline'));
+                        td.addEventListener('mouseleave', () => (td.style.textDecoration = ''));
+                        td.addEventListener('click', () => {
+                            navigateToMarketplace(row.itemHrid, 0);
+                            this.closeModal();
+                        });
                         break;
                     case 'cost':
                         this.renderCostCell(td, row);

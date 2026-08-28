@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Philosopher's Stone Calculator items click through to the marketplace
+
+Item names in the calculator's table now open that item's marketplace page, closing the modal — the same pattern the Trade Ledger and the trial tables use.
+
+
 ### The sidebar tea boost stays beside the level
 
 The game's level cell wraps "+9" onto its own line when font metrics leave it a pixel short (Firefox renders a few pixels wider than Chrome here). One nowrap rule keeps the boost on the level's line everywhere.
