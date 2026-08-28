@@ -96,6 +96,15 @@ class TaskRerollBadge {
             this._onHeaderAppeared(headerElement)
         );
         this.unregisterHandlers.push(unregister);
+
+        // The observer only reports elements that *appear*; it does not scan
+        // what is already on the page (dom-observer.js `_add`). Ticking the
+        // setting on with the Tasks panel open is therefore an initialize()
+        // that draws nothing, and the badge stays missing until the panel is
+        // navigated away from and back. Same immediate pass task-statistics.js
+        // makes for the same reason.
+        const header = document.querySelector(GAME.TASK_PANEL);
+        if (header) this._onHeaderAppeared(header);
     }
 
     _onHeaderAppeared(headerElement) {

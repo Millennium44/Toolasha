@@ -1,5 +1,7 @@
+/** @vitest-environment happy-dom */
 /**
- * The reroll spend badge's arithmetic.
+ * The reroll spend badge's arithmetic, and the one piece of wiring that is not
+ * arithmetic: whether the badge appears on a Tasks panel that is already open.
  *
  * The one thing worth getting wrong here is scope: the live map keeps a
  * just-retired task for a grace window (see `task-reroll-tracker.js`), and a
@@ -7,8 +9,33 @@
  * its own card before it left, and again in the badge after.
  */
 
-import { describe, test, expect } from 'vitest';
-import { sumBoardRerollSpend, formatRerollSpendBadge } from './task-reroll-badge.js';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) => key === 'taskRerollSpendBadge',
+        onSettingChange: () => {},
+        COLOR_LOSS: '#ef4444',
+    },
+}));
+// The observer reports elements that *appear*; a no-op here is exactly the
+// production behaviour for a panel that was already on the page.
+vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        get characterQuests() {
+            return board.quests;
+        },
+    },
+}));
+
+const board = { quests: [] };
+
+const {
+    default: taskRerollBadge,
+    sumBoardRerollSpend,
+    formatRerollSpendBadge,
+} = await import('./task-reroll-badge.js');
 
 describe('sumBoardRerollSpend', () => {
     test('sums gold and cowbells across the active tasks only', () => {
@@ -48,5 +75,28 @@ describe('formatRerollSpendBadge', () => {
 
     test('both currencies, cowbells first', () => {
         expect(formatRerollSpendBadge({ gold: 30000, cowbells: 3 })).toBe('Rerolls: 3\u{1f514} + 30.0K\u{1f4b0}');
+    });
+});
+
+describe('appearing on a panel that is already open', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        board.quests = [];
+        taskRerollBadge.disable();
+    });
+
+    test('initialize() draws onto a task slot count that is already on the page', () => {
+        // domObserver.onClass only fires for elements that appear after
+        // registration — it does not scan the existing DOM. Ticking the setting
+        // on while the Tasks panel is open is therefore an initialize() with
+        // nothing to react to, and without an immediate pass the badge stays
+        // missing until the panel is navigated away from and back.
+        const header = document.createElement('div');
+        header.className = 'TasksPanel_taskSlotCount__abc';
+        document.body.appendChild(header);
+
+        taskRerollBadge.initialize();
+
+        expect(header.querySelector('.toolasha-reroll-spend-badge')).not.toBeNull();
     });
 });
