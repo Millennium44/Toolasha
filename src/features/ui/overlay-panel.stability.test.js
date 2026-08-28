@@ -235,6 +235,90 @@ describe('tiles coming and going', () => {
     });
 });
 
+describe('lines settling to what they drew', () => {
+    /**
+     * Where each tile is actually drawn, as the panel styled it.
+     * @returns {Object} `{ [key]: {top, height} }`
+     */
+    function drawn() {
+        const out = {};
+        for (const [key, tile] of overlayPanel.tiles) {
+            out[key] = { top: Number.parseFloat(tile.style.top), height: Number.parseFloat(tile.style.height) };
+        }
+        return out;
+    }
+
+    /**
+     * Open on three lines of one tile each, the middle one able to go quiet.
+     * @returns {Object} The middle row, with a `quiet` flag on it
+     */
+    function threeLines() {
+        const middle = sometimes('middle', { width: 220, height: 80 });
+        registry.rows = [
+            speaking('top', { width: 220, height: 30 }),
+            middle,
+            speaking('bottom', { width: 220, height: 30 }),
+        ];
+        overlayPanel.settings.visible = { top: true, middle: true, bottom: true };
+        overlayPanel.settings.order = ['top', 'middle', 'bottom'];
+        overlayPanel.settings.positions = {
+            top: { x: 0, y: 0 },
+            middle: { x: 0, y: 30 },
+            bottom: { x: 0, y: 110 },
+        };
+        overlayPanel.settings.sizes = {
+            top: { width: 220, height: 30 },
+            middle: { width: 220, height: 80 },
+            bottom: { width: 220, height: 30 },
+        };
+        return middle;
+    }
+
+    test('a tile standing down pulls the line below it up', () => {
+        const middle = threeLines();
+        middle.quiet = false;
+        overlayPanel.show();
+        expect(drawn().bottom.top).toBe(110);
+
+        middle.quiet = true;
+        overlayPanel._renderBody();
+
+        // Eighty pixels of tile became a twenty-pixel strip, and the tile below
+        // came up to meet it rather than leaving a blank band
+        expect(drawn().middle.height).toBe(20);
+        expect(drawn().bottom.top).toBe(50);
+        // Sideways, nothing moved at all
+        expect(overlayPanel.tiles.get('bottom').style.left).toBe('0px');
+    });
+
+    test('and the arrangement comes straight back when it fills in again', () => {
+        const middle = threeLines();
+        overlayPanel.show();
+        expect(drawn().bottom.top).toBe(50);
+
+        middle.quiet = false;
+        overlayPanel._renderBody();
+
+        expect(drawn().bottom.top).toBe(110);
+        // Nothing of this was written down — the saved layout is still the one
+        // that was designed
+        expect(overlayPanel.settings.positions.bottom).toEqual({ x: 0, y: 110 });
+        expect(overlayPanel.settings.sizes.middle).toEqual({ width: 220, height: 80 });
+    });
+
+    test('nothing settles while the tiles are being arranged', () => {
+        // Unlocked, a drag writes back where a tile was dropped — so a settled
+        // position must never be the one under the pointer
+        const middle = threeLines();
+        middle.quiet = true;
+        overlayPanel.settings.locked = false;
+        overlayPanel.show();
+
+        expect(drawn().bottom.top).toBe(110);
+        expect(drawn().middle.height).toBe(80);
+    });
+});
+
 describe('Reset layout', () => {
     test('arranges rather than merely forgetting', () => {
         registry.rows = [

@@ -116,9 +116,11 @@ import {
     autoGrid,
     compactColumns,
     contentBounds,
+    settleLines,
     clampTile,
     clampZoom,
     snap,
+    snapUp,
     GRID,
     MIN_TILE,
     COMPACT_TILE,
@@ -178,6 +180,16 @@ const ONE_COLUMN_WIDTH = 500;
 const MIN_FLOW_COLUMN = 240;
 /** Between flowed tiles, so two readouts never touch */
 const FLOW_GAP = 4;
+
+/**
+ * A tile's own padding and border, which its content sits inside.
+ *
+ * One pixel of padding and one of border on each of the top and bottom edges —
+ * see `_tileFor`, which is where both are set. Named rather than inlined because
+ * a tile measured without it is a tile that clips the last pixel of its own last
+ * line every time it is fitted to its content.
+ */
+const TILE_CHROME = 4;
 
 /** Marks the container the docked panel was put into, so the sheet can find it */
 const DOCK_HOST_CLASS = 'toolasha-overlay-dock-host';
@@ -2579,8 +2591,10 @@ class OverlayPanel {
                         ? { width: size.width, height: Math.min(size.height, COMPACT_TILE.height) }
                         : size,
             });
-            for (const row of laid) this._styleTile(this.tiles.get(row.key), row);
         }
+        laid = this._settleToContent(laid, full, hidden);
+        for (const row of laid) this._styleTile(this.tiles.get(row.key), row);
+
         // Kept rather than destroyed: a hidden tile is one refresh away from
         // having something to say again, and rebuilding it every second would
         // churn the DOM and its listeners for a tile nobody can see
@@ -2596,6 +2610,91 @@ class OverlayPanel {
         const bounds = contentBounds(laid);
         this.canvasEl.style.width = `${bounds.width}px`;
         this.canvasEl.style.height = `${bounds.height}px`;
+    }
+
+    /**
+     * Shrink each tile to what it drew, and close the lines up behind it.
+     *
+     * The tiles are sized for what a row *can* show. Consumables is four lines
+     * tall because a party of five with a limiting item is four lines; on a
+     * character crafting alone it is one, and the other three lines are a blank
+     * band under a heading. Reported as the biggest remaining contributor to a
+     * panel that still felt gappy, and the reading was right: the columns were
+     * straight by then, and what was left was vertical air.
+     *
+     * Display-time only, and nothing here is written back — the saved layout
+     * stays the arrangement that was designed, and a tile that fills in tomorrow
+     * gets its full height back. And only while the layout is locked: unlocked,
+     * the point is to arrange the tiles, which means seeing them at the size
+     * they were given rather than at the size today's data happens to need.
+     * Dragging writes back where a tile was dropped, so a settled position must
+     * never be under the pointer.
+     *
+     * @param {Array<Object>} tiles - Laid-out rows, without the hidden ones
+     * @param {Array<Object>} full - Every visible row at its full size, which is
+     *   the only place a hidden row's own slot can still be read from
+     * @param {Set<string>} hidden - Rows that took themselves off screen
+     * @returns {Array<Object>} The same rows, fitted and closed up
+     */
+    _settleToContent(tiles, full, hidden) {
+        if (this.isEditable || this.flowing || !tiles.length) return tiles;
+
+        // What the layout allotted, which is what a line's spacing is measured
+        // against — read off the full-size pass rather than off these rows,
+        // whose heights have already been cut down for the tiles standing down.
+        // Taken from the shrunken height instead, a compact tile looks like a
+        // small tile with a lot of deliberate air under it, and nothing moves.
+        const allotted = new Map(full.map((row) => [row.key, row.height]));
+        const given = (row) => allotted.get(row.key) ?? row.height;
+
+        const fitted = tiles.map((row) => ({ ...row, given: given(row), height: this._drawnHeight(row) }));
+
+        // A hidden row is still a member of the line it was laid out on, at no
+        // height at all. Left out altogether, the space it vacated reads as
+        // spacing somebody left there and is kept; counted at zero, a line every
+        // one of whose tiles has gone takes no room.
+        const gone = full.filter((row) => hidden.has(row.key)).map((row) => ({ ...row, given: row.height, height: 0 }));
+
+        const settled = new Map(settleLines([...fitted, ...gone]).map((row) => [row.key, row]));
+        return tiles.map((row) => settled.get(row.key) || row);
+    }
+
+    /**
+     * How tall a tile has to be for what is currently in it.
+     *
+     * Measured from the content's own children rather than from the content box,
+     * which is the full height of the tile and would only ever measure itself.
+     * Rounded up to the grid so a pixel of font metrics cannot make a tile
+     * oscillate between two heights once a second, and never taller than the
+     * tile was given — growing is how a size somebody chose gets overruled.
+     *
+     * Cached per tile and recomputed only when the row actually redrew, because
+     * reading an offset forces the browser to lay the panel out and this runs
+     * for every tile on every tick. Most ticks redraw nothing.
+     *
+     * @param {Object} row - A laid-out row
+     * @returns {number} Pixels
+     */
+    _drawnHeight(row) {
+        const tile = this.tiles.get(row.key);
+        const content = tile?._content;
+        if (!content) return row.height;
+
+        if (tile._redrawn || !Number.isFinite(tile._contentHeight)) {
+            let extent = 0;
+            for (const child of content.children) extent = Math.max(extent, child.offsetTop + child.offsetHeight);
+            tile._contentHeight = extent;
+            tile._redrawn = false;
+        }
+
+        // No measurement to be had — a test DOM, or a tile not yet in the
+        // document. The tile keeps the height it was given, which is the honest
+        // answer to "how tall is this" when nothing can be measured.
+        if (!(tile._contentHeight > 0)) return row.height;
+
+        // The tile's own padding and border, which the content sits inside
+        const needed = snapUp(tile._contentHeight + TILE_CHROME, GRID);
+        return Math.max(MIN_TILE.height, Math.min(row.height, needed));
     }
 
     /**
@@ -2740,6 +2839,8 @@ class OverlayPanel {
             if (typeof row.version === 'function') {
                 version = row.version();
                 if (version !== undefined && tile._version === version && typeof tile._wasEmpty === 'boolean') {
+                    // Nothing was rebuilt, so whatever was measured of it stands
+                    tile._redrawn = false;
                     return tile._wasEmpty;
                 }
             }
@@ -2749,6 +2850,9 @@ class OverlayPanel {
             if (tile._content.style.color) tile._content.style.color = '';
             row.render(tile._content);
             tile._version = version;
+            // The content is new, so the height measured off the old content is
+            // no longer an answer about this tile — see `_drawnHeight`
+            tile._redrawn = true;
         } catch (error) {
             console.error(`[OverlayPanel] Row "${row.key}" failed to render:`, error);
             tile._content.textContent = `${row.name}: unavailable`;
@@ -2756,6 +2860,7 @@ class OverlayPanel {
             // Nothing about a failed render is worth reusing next tick
             tile._version = undefined;
             tile._wasEmpty = undefined;
+            tile._redrawn = true;
             // A row that fell over is not a row with nothing to report, and
             // hiding it would hide the failure with it
             return false;
@@ -2832,6 +2937,7 @@ class OverlayPanel {
             textOverflow: 'ellipsis',
         });
         tile._content.replaceChildren(note);
+        tile._redrawn = true;
     }
 
     /**
@@ -2876,6 +2982,7 @@ class OverlayPanel {
         lines.push(note);
 
         tile._content.replaceChildren(...lines);
+        tile._redrawn = true;
     }
 
     /**

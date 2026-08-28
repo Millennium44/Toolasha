@@ -9,6 +9,7 @@ import {
     autoGrid,
     snapUp,
     compactColumns,
+    settleLines,
     contentBounds,
     columnWidth,
     gridColumns,
@@ -441,6 +442,107 @@ describe('materializeGrid', () => {
     test('a row with no size of its own gets the standard tile', () => {
         const bare = { columns: 2, grid: [['a', 'b']] };
         expect(materializeGrid(bare, { width: 456 }).sizes.a.height).toBe(DEFAULT_TILE.height);
+    });
+});
+
+describe('settleLines', () => {
+    /**
+     * A line of two tiles, each given `given` pixels and drawing `height`.
+     * @param {string} name - Prefix for the keys
+     * @param {number} y - Where the line sits
+     * @param {number} given - What the layout allotted
+     * @param {number} height - What was drawn
+     * @returns {Array<Object>} Two tiles
+     */
+    const line = (name, y, given, height = given) => [
+        { key: `${name}L`, x: 0, y, width: 220, given, height },
+        { key: `${name}R`, x: 220, y, width: 220, given, height },
+    ];
+
+    test('a line that gave height back pulls the lines below it up', () => {
+        // Consumables is four lines tall because it can be; on a character with
+        // nothing slotted it is one, and the rest is a blank band
+        const settled = settleLines([...line('a', 0, 30), ...line('b', 30, 80, 30), ...line('c', 110, 30)]);
+        const at = Object.fromEntries(settled.map((tile) => [tile.key, tile.y]));
+
+        expect(at.aL).toBe(0);
+        expect(at.bL).toBe(30);
+        expect(at.cL).toBe(60);
+    });
+
+    test('a line is as tall as the tallest thing drawn in it, not the shortest', () => {
+        const settled = settleLines([
+            { key: 'short', x: 0, y: 0, width: 220, given: 80, height: 20 },
+            { key: 'tall', x: 220, y: 0, width: 220, given: 80, height: 50 },
+            ...line('next', 80, 30),
+        ]);
+
+        expect(settled.find((tile) => tile.key === 'nextL').y).toBe(50);
+    });
+
+    test('space nobody gave back stays where it was', () => {
+        // Ten pixels of air under a line is somebody's spacing, and closing it
+        // would be rewriting the arrangement rather than tidying it
+        const spaced = [...line('a', 0, 40), ...line('b', 50, 40)];
+        expect(settleLines(spaced)).toEqual(spaced);
+    });
+
+    test('and is kept even by a line that did give some back', () => {
+        const settled = settleLines([...line('a', 0, 40, 20), ...line('b', 50, 40)]);
+        // The line shrank by 20, so the one below moves up by 20 — the ten
+        // pixels of air between them survive
+        expect(settled.find((tile) => tile.key === 'bL').y).toBe(30);
+    });
+
+    test('a line with nothing left in it takes no room', () => {
+        // Every tile on it hid. The panel keeps them in the reckoning at no
+        // height rather than dropping them, because a line that is simply
+        // missing is indistinguishable from spacing somebody left
+        const settled = settleLines([...line('a', 0, 30), ...line('b', 30, 30, 0), ...line('c', 60, 30)]);
+        expect(settled.find((tile) => tile.key === 'cL').y).toBe(30);
+    });
+
+    test('a hand-arranged layout is handed straight back', () => {
+        // Two tiles five pixels apart are not two lines, and stacking them would
+        // be scrambling an arrangement rather than settling one
+        const freeform = [
+            { key: 'a', x: 0, y: 0, width: 200, given: 30, height: 30 },
+            { key: 'b', x: 210, y: 5, width: 200, given: 30, height: 20 },
+        ];
+        expect(settleLines(freeform)).toBe(freeform);
+    });
+
+    test('nor does a tall tile beside a column of short ones move', () => {
+        const straddling = [
+            { key: 'tall', x: 0, y: 0, width: 200, given: 100, height: 60 },
+            { key: 'topRight', x: 200, y: 0, width: 200, given: 50, height: 50 },
+            { key: 'lowRight', x: 200, y: 50, width: 200, given: 50, height: 50 },
+        ];
+        expect(settleLines(straddling)).toBe(straddling);
+    });
+
+    test('a layout that does not start at the top is left alone', () => {
+        const pushedDown = [...line('a', 40, 30), ...line('b', 70, 30)];
+        expect(settleLines(pushedDown)).toBe(pushedDown);
+    });
+
+    test('the tiles come back in the order they went in', () => {
+        const given = [...line('a', 0, 30), ...line('b', 30, 80, 30)];
+        expect(settleLines(given).map((tile) => tile.key)).toEqual(given.map((tile) => tile.key));
+    });
+
+    test('one tile, or none, is nothing to settle', () => {
+        const one = [{ key: 'a', x: 0, y: 20, width: 200, given: 30, height: 30 }];
+        expect(settleLines(one)).toBe(one);
+        expect(settleLines([])).toEqual([]);
+    });
+
+    test('a tile with no allotted height settles on what it drew', () => {
+        const settled = settleLines([
+            { key: 'a', x: 0, y: 0, width: 200, height: 30 },
+            { key: 'b', x: 0, y: 30, width: 200, height: 30 },
+        ]);
+        expect(settled.find((tile) => tile.key === 'b').y).toBe(30);
     });
 });
 

@@ -516,6 +516,102 @@ function toMaps(placed) {
 }
 
 /**
+ * Close the vertical gaps in a layout made of lines.
+ *
+ * A tile is given the height its line was designed for, and often draws less
+ * than that: a consumables tile is four lines tall because it *can* be, and on a
+ * character with nothing slotted it is one; a tile with nothing at all to say
+ * stands down to a twenty-pixel strip. The gap that leaves is the biggest part
+ * of what still read as a gappy panel after the columns were straightened out —
+ * a heading, then two centimetres of nothing, then the next heading.
+ *
+ * So each line is given the height of the tallest thing actually drawn in it,
+ * and the lines below move up to meet it. **Only vertically, and only by whole
+ * lines**: nothing changes column, nothing changes width, and nothing changes
+ * order, so a tile that fills in is a line growing rather than an arrangement
+ * rearranging. That is the distinction the whole complaint turns on.
+ *
+ * ## When it declines
+ *
+ * A hand-arranged layout is not made of lines, and settling one would be
+ * scrambling it — two tiles sitting five pixels apart are not two lines, and a
+ * tall tile beside a column of short ones does not belong to any single line. So
+ * this only acts on a layout that is demonstrably line-structured: it starts at
+ * the top, and no tile on a line reaches past where the next line begins.
+ * Anything else is handed back exactly as it came. Every layout the presets and
+ * the packer produce passes; a free-form one does not, and is left alone.
+ *
+ * ## What it does not reclaim
+ *
+ * Only the space a tile *gave back*. A line whose tiles are all drawing their
+ * full height does not move, even when the layout left ten pixels of air under
+ * it — that air is somebody's spacing, and closing it up would be this function
+ * rewriting an arrangement rather than tidying one. So each line keeps whatever
+ * slack it was laid out with, and loses only the difference between what its
+ * tiles were given and what they drew.
+ *
+ * @param {Array<Object>} tiles - Tiles with `key`, `y`, their **drawn** `height`,
+ *   and `given` — the height the layout allotted them, which defaults to the
+ *   drawn one, making a settle with nothing to reclaim a no-op
+ * @returns {Array<Object>} The same tiles in the same order, with `y` closed up,
+ *   or the very same array when the layout is not one this may touch
+ */
+export function settleLines(tiles) {
+    if (!Array.isArray(tiles) || tiles.length < 2) return tiles;
+
+    const lines = new Map();
+    for (const tile of tiles) {
+        if (!Number.isFinite(tile.y)) return tiles;
+        if (!lines.has(tile.y)) lines.set(tile.y, []);
+        lines.get(tile.y).push(tile);
+    }
+
+    const tops = [...lines.keys()].sort((a, b) => a - b);
+    // A layout that does not begin at the top is one somebody placed by hand,
+    // and the space above the first tile is space they left
+    if (tops[0] !== 0) return tiles;
+
+    /**
+     * @param {Object} tile - A tile
+     * @returns {number} The height the layout gave it
+     */
+    const given = (tile) => (Number.isFinite(tile.given) ? tile.given : tile.height || 0);
+    /**
+     * @param {Array<Object>} line - One line's tiles
+     * @param {Function} of - Which height to take
+     * @returns {number} The tallest
+     */
+    const extent = (line, of) => line.reduce((tallest, tile) => Math.max(tallest, of(tile)), 0);
+
+    // Judged on the layout as designed rather than as drawn: whether these tiles
+    // form lines is a fact about the arrangement, not about today's data
+    for (let index = 0; index + 1 < tops.length; index += 1) {
+        const next = tops[index + 1];
+        for (const tile of lines.get(tops[index])) {
+            // Reaches into the line below, so it is not a member of one line and
+            // cannot be settled as if it were
+            if (tops[index] + given(tile) > next) return tiles;
+        }
+    }
+
+    const moved = new Map();
+    let y = 0;
+    for (let index = 0; index < tops.length; index += 1) {
+        const line = lines.get(tops[index]);
+        for (const tile of line) moved.set(tile.key, y);
+
+        // Whatever room was left under this line stays left under it
+        const below = tops[index + 1];
+        const slack = below === undefined ? 0 : below - tops[index] - extent(line, given);
+        y += extent(line, (tile) => tile.height || 0) + slack;
+    }
+
+    // Handed back in the order they arrived: what changed is where they are
+    // drawn, and nothing downstream should have to notice a reordering
+    return tiles.map((tile) => (moved.get(tile.key) === tile.y ? tile : { ...tile, y: moved.get(tile.key) }));
+}
+
+/**
  * How much room the tiles actually need.
  *
  * The canvas is sized from this rather than from the panel, so dragging a tile
