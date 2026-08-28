@@ -187,6 +187,24 @@ describe('elite-achievement-reminder — icon injection', () => {
         expect(unregister).toHaveBeenCalledTimes(1);
     });
 
+    test('clears a stale icon when the next shared profile in the same modal is already complete', async () => {
+        buildProfileModal();
+        const incompleteProfile = buildProfileData([{ achievementHrid: '/achievements/elite_a', isCompleted: false }]);
+        await eliteAchievementReminder.handleProfileShared(incompleteProfile);
+        expect(document.querySelector('#mwi-elite-achievement-reminder-icon')).not.toBeNull();
+
+        // The game re-shares a different player's profile into the *same* modal
+        // (no removal in between, so the cleanup observer never fires).
+        const completeProfile = buildProfileData([
+            { achievementHrid: '/achievements/elite_a', isCompleted: true },
+            { achievementHrid: '/achievements/elite_b', isCompleted: true },
+        ]);
+        await eliteAchievementReminder.handleProfileShared(completeProfile);
+
+        expect(document.querySelector('#mwi-elite-achievement-reminder-icon')).toBeNull();
+        expect(eliteAchievementReminder.currentIcon).toBeNull();
+    });
+
     test('initialize -> disable -> initialize registers exactly one profile_shared listener', () => {
         eliteAchievementReminder.initialize();
         eliteAchievementReminder.disable();

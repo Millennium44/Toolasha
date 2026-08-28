@@ -87,6 +87,13 @@ class EliteAchievementReminder {
         try {
             if (!config.getSetting('eliteAchievementReminder')) return;
 
+            // A profile can be re-shared into the same open modal (switching between
+            // players without the modal closing in between). The cleanup observer only
+            // fires on full modal removal, so without this the previous player's icon
+            // — and its click handler bound to their name — would survive next to the
+            // new player's name whenever this handler returns early below.
+            this.clearIcon();
+
             const clientData = dataManager.getInitClientData();
             const characterAchievements = profileData?.profile?.characterAchievements;
             if (!isEliteTierIncomplete(characterAchievements, clientData?.achievementDetailMap)) return;
@@ -134,16 +141,23 @@ class EliteAchievementReminder {
     }
 
     /**
+     * Remove the currently-injected icon, if any (idempotent).
+     */
+    clearIcon() {
+        if (this.currentIcon) {
+            this.currentIcon.remove();
+            this.currentIcon = null;
+        }
+    }
+
+    /**
      * Inject the reminder icon next to the player's name
      * @param {Element} nameContainer - CharacterName_characterName element
      * @param {Element} modalContainer - Profile modal container element
      * @param {string} playerName - Name of the viewed player
      */
     showIcon(nameContainer, modalContainer, playerName) {
-        if (this.currentIcon) {
-            this.currentIcon.remove();
-            this.currentIcon = null;
-        }
+        this.clearIcon();
 
         const icon = document.createElement('span');
         icon.id = ICON_ID;
@@ -218,10 +232,7 @@ class EliteAchievementReminder {
             this.profileSharedHandler = null;
         }
 
-        if (this.currentIcon) {
-            this.currentIcon.remove();
-            this.currentIcon = null;
-        }
+        this.clearIcon();
 
         this.isActive = false;
         this.isInitialized = false;
