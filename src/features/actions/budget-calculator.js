@@ -258,7 +258,13 @@ class BudgetCalculator {
         this.unregisterHandlers = [];
         this.timerRegistry = createTimerRegistry();
         this.processedPanels = new WeakSet();
-        this.panelObservers = new WeakMap();
+        // A Set, not a WeakMap: an entry surviving GC was never the leak — a
+        // live MutationObserver is a strong reference the other direction
+        // (panel → observer, via the browser's internal observer registry),
+        // so nothing here was ever going to be collected while the panel
+        // stays open. disable() has to disconnect every observer itself,
+        // which means holding something it can actually iterate.
+        this.panelObservers = new Set();
     }
 
     initialize() {
@@ -329,7 +335,7 @@ class BudgetCalculator {
             if (relevant) position();
         });
         obs.observe(panel, { childList: true, subtree: false });
-        this.panelObservers.set(panel, obs);
+        this.panelObservers.add(obs);
     }
 
     /**
@@ -457,8 +463,13 @@ class BudgetCalculator {
             document.querySelectorAll(`#${UI_ID}`).forEach((el) => el.remove());
             document.getElementById('mwi-budget-modal-overlay')?.remove();
 
-            // Disconnect all panel observers
-            // (WeakMap entries are cleaned up automatically as panels are GC'd)
+            // Disconnect every panel observer. Left running, one keeps firing
+            // on an open panel's own DOM churn (e.g. missing-mats-button being
+            // recreated by another feature) and its position() callback closes
+            // over `ui` — the very element just removed above — so it would
+            // re-insert the disabled widget on the next relevant mutation.
+            this.panelObservers.forEach((obs) => obs.disconnect());
+            this.panelObservers.clear();
 
             this.processedPanels = new WeakSet();
             this.isInitialized = false;
