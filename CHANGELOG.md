@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Five combat-sim fixes from the audit's deepest pass
 
-The skilling upgrade advisor no longer drops a valid candidate when two loadouts wear the same accessory at different enhancement levels; the labyrinth Upgrade Analyze button gains the reentrancy guard the combat one always had, so a double-click can't race two runs against one Stop flag; the labyrinth clear-chance cache finally notices combat token upgrades (its key never included them, so a bought damage upgrade kept answering with the old number forever); the consumables auto-rate stops guessing "self" from party-slot order, which could file your food usage under a party member; and the sim comparison view stops fabricating zero baselines for players absent from the comparison run.
+The skilling upgrade advisor no longer drops a valid candidate when two loadouts wear the same accessory at different enhancement levels; the labyrinth Upgrade Analyze button gains the reentrancy guard the combat one always had, so a double-click can't race two runs against one Stop flag; the labyrinth clear-chance badges refresh after buying combat token upgrades (cached results didn't account for the new levels, so badges could show slightly outdated figures until something else refreshed them); the consumables auto-rate stops guessing "self" from party-slot order, which could file your food usage under a party member; and the sim comparison view stops fabricating zero baselines for players absent from the comparison run.
 
 
 ### Second audit round: four more fixes and six more conveniences
