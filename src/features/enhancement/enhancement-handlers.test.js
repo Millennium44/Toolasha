@@ -96,6 +96,17 @@ describe('a run already going when the script comes up', () => {
         await state.handlers.action_completed(attempt(6, 79));
         expect(state.calls.at(-1)).toEqual(['success', 5, 6, false]);
     });
+
+    test('below the protection threshold, the inferred start level is one below the result — matching the other two "first observed attempt" paths', async () => {
+        // Picked up mid-run at a low level: the result (1) is below the +2
+        // protection threshold, so it can only have come from a level-0 success.
+        // The other two paths that create a session from a bare result (a fresh
+        // rawCount === 1 attempt, and a pendingSessionStart) already make this
+        // inference; this is the third one, "mid-run pickup" via
+        // findExtendableSession returning null, doing the same thing.
+        await state.handlers.action_completed(attempt(1, 42));
+        expect(state.calls).toEqual([['start', '/items/enchanted_cloak_refined', 0, 15, 2]]);
+    });
 });
 
 describe('the run ending in the queue', () => {

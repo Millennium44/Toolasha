@@ -294,8 +294,19 @@ async function handleEnhancementResult(action, _data) {
                 // the first attempt has no baseline, so it is costed, not recorded
                 enhancementTracker.pendingSessionStart = false;
                 const protectFrom = action.enhancingProtectionMinLevel || 0;
+                // Same inference the other two "first observed attempt" branches
+                // above make: primaryItemHash carries the RESULT level, and below
+                // the protection threshold a non-zero result can only have come
+                // from one level down. Without this, a session picked up mid-run
+                // at a low level recorded a startLevel one higher than the item
+                // actually started at — wrong on the session tile and wrong in
+                // the predictions computed from it.
+                let startLevel = newLevel;
+                if (newLevel > 0 && newLevel < Math.max(2, protectFrom)) {
+                    startLevel = newLevel - 1;
+                }
                 const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
-                const sessionId = await enhancementTracker.startSession(itemHrid, newLevel, targetLevel, protectFrom);
+                const sessionId = await enhancementTracker.startSession(itemHrid, startLevel, targetLevel, protectFrom);
                 currentSession = enhancementTracker.getCurrentSession();
                 enhancementUI.switchToSession(sessionId);
                 enhancementUI.scheduleUpdate();
