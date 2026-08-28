@@ -5,6 +5,7 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
+import { COMBAT_SIM_TARGETS } from '../combat/combat-sim-targets.js';
 
 class ExternalLinks {
     constructor() {
@@ -59,10 +60,8 @@ class ExternalLinks {
      */
     addLinks(container) {
         const links = [
-            {
-                label: 'Combat Sim',
-                url: 'https://shykai.github.io/MWICombatSimulatorTest/dist/',
-            },
+            // Every simulator "Import from Toolasha" supports, so a new target shows up here too
+            ...COMBAT_SIM_TARGETS.map((target) => ({ label: target.label, url: target.url })),
             {
                 label: 'Enhancelator',
                 url: 'https://doh-nuts.github.io/Enhancelator/',

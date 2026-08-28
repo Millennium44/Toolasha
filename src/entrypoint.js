@@ -186,13 +186,21 @@ const { showToast } = Utils.toast;
 const { GAME } = Utils.selectors;
 
 /**
- * Detect if running on Combat Simulator page
- * @returns {boolean} True if on Combat Simulator
+ * Detect if running on a supported Combat Simulator page.
+ *
+ * Kept inline rather than imported: this bundle imports nothing from `src/` (it reads the
+ * @require'd libraries off `window.Toolasha`, which are not loaded on a simulator page).
+ * The canonical list lives in `src/features/combat/combat-sim-targets.js`, and
+ * `combat-sim-targets.test.js` asserts this copy stays in sync with it.
+ *
+ * @returns {boolean} True if on a Combat Simulator
  */
 function isCombatSimulatorPage() {
     const url = window.location.href;
-    // Only work on test Combat Simulator for now
-    return url.includes('shykai.github.io/MWICombatSimulatorTest/dist/');
+    return (
+        url.includes('shykai.github.io/MWICombatSimulatorTest/dist/') ||
+        url.includes('szerra.github.io/mwi-shrine-combat-simulator/')
+    );
 }
 
 /* ------------------------------------------------------------------------- *

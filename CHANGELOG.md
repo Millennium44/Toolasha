@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Import from Toolasha now works on the szerra combat simulator
+
+The szerra shrine combat simulator (a fork of the same lineage as Shykai's) is now a supported import target: it shares the export JSON format and the selectors the integration already drives, so recognising the domain was all it took. It also joins the sidebar's external tool links as "Combat Sim (Shrine)". The supported-simulator list is now one module, with a test that keeps the entrypoint's detection and both userscript `@match` headers in sync with it.
+
 ### Trial signups: right-click an unsigned name for their profile
 
 The unsigned-players list keeps left-click for drafting the whisper nudge; right-clicking a name now opens that player's profile instead.
