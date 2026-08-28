@@ -274,6 +274,45 @@ describe('a tile with nothing to show', () => {
         expect(text()).not.toContain('No net worth yet');
     });
 
+    test('the strip is confined to its own tile, whatever the row had drawn', async () => {
+        // A row styles the tile's content box to draw itself and `blank` clears
+        // the children without putting any of it back. So the strip used to be
+        // laid out by whatever shape the row had left behind — a grid set up for
+        // three columns of figures lays a strip out in one of those columns.
+        const netWorth = row('netWorth', { name: 'Net Worth', empty: 'No net worth yet' });
+        netWorth.render = (element) => {
+            Object.assign(element.style, { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto' });
+            element.textContent = '12.4M';
+        };
+        await open([netWorth]);
+        expect(tiles().get('netWorth')._content.style.display).toBe('grid');
+
+        netWorth.render = (element) => element.replaceChildren();
+        overlayPanel.refresh();
+
+        const content = tiles().get('netWorth')._content;
+        expect(content.textContent).toBe('Net Worth');
+        // The box is back to its own shape, and the label is held inside it
+        expect(content.style.gridTemplateColumns).toBe('');
+        expect(content.style.width).toBe('100%');
+        expect(content.style.overflow).toBe('hidden');
+
+        const label = content.children[0];
+        expect(label.style.textOverflow).toBe('ellipsis');
+        expect(label.style.maxWidth).toBe('100%');
+        expect(label.style.whiteSpace).toBe('nowrap');
+    });
+
+    test('and is centred in the tile rather than pinned to a fixed line height', async () => {
+        // Which is what lets it sit level with a taller neighbour on the same
+        // line instead of floating above its text
+        await open([row('netWorth', { name: 'Net Worth', empty: 'No net worth yet' })]);
+
+        const content = tiles().get('netWorth')._content;
+        expect(content.style.display).toBe('flex');
+        expect(content.style.alignItems).toBe('center');
+    });
+
     test('a watch tile offers the click that would fill it', async () => {
         await open([row('watchlist', { name: 'Watchlist', empty: 'Nothing watched', onOpen: () => {} })]);
 

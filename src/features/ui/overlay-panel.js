@@ -195,6 +195,18 @@ const SCROLLBAR_RESERVE = 16;
 const SCROLLER_PADDING = 12;
 
 /**
+ * A tile's content box, as it stands before any row has drawn into it.
+ *
+ * Named because it has to be *restored*, not merely set once. A row draws by
+ * styling this box — `row` makes it a column, `alignedRows` makes it a grid of
+ * however many columns that row has — and `blank` clears the children without
+ * touching any of it. So a tile that has drawn once and then gone quiet still
+ * carries the last shape it was given, and whatever the panel puts in it next
+ * is laid out by somebody else's rules.
+ */
+const CONTENT_STYLE = { width: '100%', height: '100%', overflow: 'hidden' };
+
+/**
  * A tile's own padding and border, which its content sits inside.
  *
  * One pixel of padding and one of border on each of the top and bottom edges —
@@ -2975,18 +2987,48 @@ class OverlayPanel {
     _drawCompact(tile, row) {
         if (!tile) return;
 
+        // From the box's own shape rather than from whatever the row left on it
+        // — see `_resetContent`. A strip laid out by the grid a row had set up
+        // for three columns of figures is a strip in one of those columns.
+        const content = this._resetContent(tile);
+        Object.assign(content.style, { display: 'flex', alignItems: 'center' });
+
         const note = document.createElement('div');
         note.textContent = compactLabel(row);
         Object.assign(note.style, {
             color: COLORS.textDim,
             fontSize: '85%',
-            lineHeight: `${COMPACT_TILE.height - 4}px`,
+            // Held to the tile it belongs to, and cut with an ellipsis rather
+            // than allowed to reach for the room a neighbour is using
+            minWidth: '0',
+            maxWidth: '100%',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
         });
-        tile._content.replaceChildren(note);
+        content.appendChild(note);
         tile._redrawn = true;
+    }
+
+    /**
+     * A tile's content box, back to the shape it was made with.
+     *
+     * Every row styles this box to draw itself and none of them puts it back —
+     * `blank` clears the children and leaves the styling, which is right for the
+     * row (it is about to draw again) and wrong for anyone else. The panel draws
+     * into the same box for a tile that has stood down, and inherited a column,
+     * or a grid of three, or a centred line, depending on what the row had been
+     * showing when it last had something to show.
+     *
+     * @param {HTMLElement} tile - The tile
+     * @returns {HTMLElement} Its content box, empty and plain
+     */
+    _resetContent(tile) {
+        const content = tile._content;
+        content.replaceChildren();
+        content.style.cssText = '';
+        Object.assign(content.style, CONTENT_STYLE);
+        return content;
     }
 
     /**
@@ -3008,7 +3050,10 @@ class OverlayPanel {
     _drawPlaceholder(tile, row) {
         if (!tile) return;
 
-        const shared = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' };
+        const content = this._resetContent(tile);
+        Object.assign(content.style, { display: 'flex', flexDirection: 'column', justifyContent: 'flex-start' });
+
+        const shared = { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: '0' };
         const lines = [];
 
         const acknowledging = this.justEnabled.has(row.key) && !this.isEditable;
@@ -3030,7 +3075,7 @@ class OverlayPanel {
         });
         lines.push(note);
 
-        tile._content.replaceChildren(...lines);
+        content.append(...lines);
         tile._redrawn = true;
     }
 
@@ -3060,7 +3105,7 @@ class OverlayPanel {
         });
 
         const content = document.createElement('div');
-        Object.assign(content.style, { width: '100%', height: '100%', overflow: 'hidden' });
+        Object.assign(content.style, CONTENT_STYLE);
         tile.appendChild(content);
         tile._content = content;
 
