@@ -424,6 +424,60 @@ describe('guild shrine levels', () => {
         expect(dataManager.getGuildBuildingLevel('/guild_shrines/force')).toBe(10);
         expect(dataManager.isGuildShrineHydrated()).toBe(false);
     });
+
+    test('a hydration read that lands after a later switch does not stamp one character/guild onto another', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+
+        // Character A's own persisted reading: no guild buffs personally bought
+        // (an ordinary case — most players never buy any), but the guild itself
+        // has built its shrine, which is what makes `guildBuildingLevelMap` carry
+        // no per-row owner to check.
+        storageMock.data.set('guildShrineLevels_char-A', {
+            characterGuildBuffMap: {},
+            guildBuildingLevelMap: { '/guild_shrines/force': 9 },
+            capturedAt: 1_700_000_000_000,
+        });
+
+        // Gate the read for A's key so it stays in flight until released below,
+        // simulating a slow IndexedDB read that overlaps a second switch.
+        let releaseA;
+        const gate = new Promise((resolve) => {
+            releaseA = resolve;
+        });
+        const realGetJSON = storageMock.getJSON;
+        storageMock.getJSON = vi.fn(async (key, storeName, fallback) => {
+            if (key === 'guildShrineLevels_char-A') {
+                await gate;
+            }
+            return realGetJSON(key, storeName, fallback);
+        });
+
+        // Character A logs in; its hydration read starts but is gated.
+        await webSocketHandlers.get('init_character_data')(initPayload({ character: { id: 'char-A', name: 'Alpha' } }));
+        const aHydration = dataManager.guildShrineHydration;
+
+        // Before A's read resolves, the user switches to a different character
+        // (in a different guild, or none) with no shrine reading of its own.
+        await webSocketHandlers.get('init_character_data')(initPayload({ character: { id: 'char-B', name: 'Beta' } }));
+
+        expect(dataManager.getCurrentCharacterId()).toBe('char-B');
+        expect(dataManager.getGuildBuildingLevel('/guild_shrines/force')).toBe(0);
+
+        // Now let A's stale read land.
+        releaseA();
+        await aHydration;
+
+        // A's guild's shrine levels must not have leaked onto B.
+        expect(dataManager.getCurrentCharacterId()).toBe('char-B');
+        expect(dataManager.getGuildBuildingLevel('/guild_shrines/force')).toBe(0);
+        expect(dataManager.isGuildShrineHydrated()).toBe(false);
+
+        // The singleton's clock otherwise carries into later tests (see the
+        // identical reset in 'overlapping character switches' below) and would
+        // make their own A→B switch look rapid too.
+        dataManager.lastCharacterSwitchTime = 0;
+    });
 });
 
 describe('event listener snapshots (upstream 03204a5)', () => {

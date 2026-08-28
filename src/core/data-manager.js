@@ -1033,8 +1033,27 @@ class DataManager {
                 return false;
             }
 
-            const record = await loadGuildShrineLevels(this.currentCharacterId);
+            // Fixed for a character-switch race: this call is deliberately not
+            // awaited by its caller (see the comment at the call site), so a
+            // second switch can complete — clearing and re-populating this same
+            // instance's maps for a different, possibly differently-guilded
+            // character — while this IndexedDB read is still in flight below.
+            const targetCharacterId = this.currentCharacterId;
+            const record = await loadGuildShrineLevels(targetCharacterId);
             if (!record) return false;
+
+            // The read landed after a newer switch moved on. `record` is the
+            // departed character's own reading, correctly keyed and internally
+            // consistent for *them* — applying it now would stamp it onto
+            // whoever is current now. `buffMapBelongsTo` below only catches this
+            // for `characterGuildBuffMap`, and only when its rows are non-empty
+            // and carry an explicit owner; `guildBuildingLevelMap` carries no
+            // per-row owner at all (it is the *guild's* levels, not the
+            // character's), so an empty buff map plus a populated building map —
+            // an ordinary reading for a player who has bought no guild buffs —
+            // would sail through unblocked and hand one guild's shrine levels to
+            // a character in a different guild entirely.
+            if (this.currentCharacterId !== targetCharacterId) return false;
 
             // A record contaminated before the capture was owner-checked —
             // another character's buff rows under this character's key — is
