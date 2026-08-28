@@ -642,6 +642,50 @@ function findProcessingConversion(itemHrid, gameData) {
 }
 
 /**
+ * Whether any material an action's gold/hour score depends on has no price data.
+ *
+ * calculateGatheringGoldPerHour / calculateProductionGoldPerHour treat an unpriced item as
+ * worth 0 (`getItemPrice(...) || 0`), deliberately matching the live action tile's own
+ * numeric convention. But the tile calculators (gathering-profit.js, profit-calculator.js)
+ * also track a `hasMissingPrices`/`missingPrice` flag alongside that 0, precisely so the UI
+ * can warn that the number rests on a guess rather than a quote — an unpriced input reading as
+ * "free" can make an action look like the best gold/hour option when its true cost is simply
+ * unknown. This mirrors that flag for the optimizer's own recommendations, which had no such
+ * signal at all.
+ *
+ * Checked independently of any specific tea combination (a combo-agnostic pass over the
+ * action's own item list), so it costs nothing extra inside the combination search loop that
+ * calls the gold functions once per combo.
+ *
+ * @param {Object} actionDetails - Action details from game data
+ * @param {boolean} isGathering - Whether this is a gathering-skill action (vs. production)
+ * @param {Object} gameData - Full game data (for resolving processing conversions)
+ * @returns {boolean}
+ */
+export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData) {
+    const isPriced = (itemHrid, side) =>
+        itemHrid === '/items/coin' || getItemPrice(itemHrid, { context: 'profit', side }) !== null;
+
+    if (isGathering) {
+        for (const drop of actionDetails.dropTable || []) {
+            if (!isPriced(drop.itemHrid, 'sell')) return true;
+            const processedData = findProcessingConversion(drop.itemHrid, gameData);
+            if (processedData && !isPriced(processedData.outputItemHrid, 'sell')) return true;
+        }
+        return false;
+    }
+
+    if (actionDetails.upgradeItemHrid && !isPriced(actionDetails.upgradeItemHrid, 'buy')) return true;
+    for (const input of actionDetails.inputItems || []) {
+        if (!isPriced(input.itemHrid, 'buy')) return true;
+    }
+    for (const output of actionDetails.outputItems || []) {
+        if (!isPriced(output.itemHrid, 'sell')) return true;
+    }
+    return false;
+}
+
+/**
  * Get all actions for a skill that the player can do
  * @param {string} skillName - Skill name
  * @param {number} playerLevel - Player's skill level
@@ -916,6 +960,14 @@ export function findOptimalTeas(
         itemDetailMap: gameData.itemDetailMap,
     };
 
+    // Whether each action's gold score depends on an unpriced item — combo-independent, so
+    // computed once rather than inside the combination loop below. Only meaningful for the
+    // gold goal; xp scoring never touches prices.
+    const unpricedByAction =
+        goal === 'gold' && !alchemyContext
+            ? new Map(actions.map((action) => [action.name, actionHasUnpricedMaterials(action, isGathering, gameData)]))
+            : null;
+
     for (const combo of combinations) {
         const buffs = parseTeaBuffs(combo, gameData.itemDetailMap, drinkConcentration);
 
@@ -924,6 +976,7 @@ export function findOptimalTeas(
 
         let totalScore = 0;
         let profitableCount = 0;
+        let hasMissingPrices = false;
         const actionScores = [];
 
         // Alchemy mode: score the specific item, not all actions
@@ -962,6 +1015,7 @@ export function findOptimalTeas(
                     if (score > 0) {
                         totalScore += score;
                         profitableCount++;
+                        if (unpricedByAction.get(action.name)) hasMissingPrices = true;
                     }
                 } else {
                     score = calculateProductionGoldPerHour(
@@ -978,10 +1032,15 @@ export function findOptimalTeas(
                     if (score > 0) {
                         totalScore += score;
                         profitableCount++;
+                        if (unpricedByAction.get(action.name)) hasMissingPrices = true;
                     }
                 }
 
-                actionScores.push({ action: action.name, score });
+                actionScores.push({
+                    action: action.name,
+                    score,
+                    ...(unpricedByAction ? { hasMissingPrices: unpricedByAction.get(action.name) } : {}),
+                });
             }
         }
 
@@ -996,6 +1055,7 @@ export function findOptimalTeas(
             buffs,
             teaCostPerHour,
             profitableCount, // Track how many actions are profitable
+            hasMissingPrices, // Whether any counted action's score relies on an unpriced item
         });
     }
 
@@ -1050,6 +1110,12 @@ export function findOptimalTeas(
             actionScores: topResult.actionScores,
             buffs: topResult.buffs, // Include for UI debugging
             profitableCount: topResult.profitableCount, // How many actions are profitable
+            // True when a counted action's gold score relies on at least one item with no
+            // price data (treated as free/worthless per calculateGatheringGoldPerHour /
+            // calculateProductionGoldPerHour's "match the tile calculation" convention) — a
+            // caller should present this recommendation's gold number as uncertain rather than
+            // definitive when true.
+            hasMissingPrices: topResult.hasMissingPrices || false,
         },
         isConsistent,
         skill: skillName,
@@ -1298,7 +1364,7 @@ export function calculateSkillPerformance(skillName, equipment, teaHrids, player
     const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
     const isProduction = PRODUCTION_SKILLS.includes(normalizedSkill);
 
-    const empty = { xpPerHour: 0, goldPerHour: 0, teaCostPerHour: 0 };
+    const empty = { xpPerHour: 0, goldPerHour: 0, teaCostPerHour: 0, hasMissingPrices: false };
     if (!isGathering && !isProduction) return empty;
     if (selectedActionHrids !== null && selectedActionHrids.size === 0) return empty;
 
@@ -1328,6 +1394,7 @@ export function calculateSkillPerformance(skillName, equipment, teaHrids, player
         xpCount = 0;
     let totalGold = 0,
         goldCount = 0;
+    let hasMissingPrices = false;
 
     for (const action of actions) {
         const xp = calculateXpPerHour(action, buffs, playerLevel, otherEfficiency, calcContext);
@@ -1344,6 +1411,7 @@ export function calculateSkillPerformance(skillName, equipment, teaHrids, player
         if (gold > 0) {
             totalGold += gold;
             goldCount++;
+            if (actionHasUnpricedMaterials(action, isGathering, gameData)) hasMissingPrices = true;
         }
     }
 
@@ -1351,6 +1419,9 @@ export function calculateSkillPerformance(skillName, equipment, teaHrids, player
         xpPerHour: xpCount > 0 ? totalXp / xpCount : 0,
         goldPerHour: goldCount > 0 ? totalGold / goldCount : 0,
         teaCostPerHour: teaCost.total,
+        // See actionHasUnpricedMaterials: true when goldPerHour counts an action whose score
+        // depends on an item with no price data, treated as free rather than excluded.
+        hasMissingPrices,
     };
 }
 

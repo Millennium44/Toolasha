@@ -10,6 +10,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const state = vi.hoisted(() => ({ gameData: null }));
+const prices = vi.hoisted(() => ({ byHrid: {} }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -17,7 +18,14 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 
-const { getRelevantTeas, getTeaBuffDescription } = await import('./tea-optimizer.js');
+// actionHasUnpricedMaterials only needs getItemPrice's null-vs-number distinction; the real
+// module reaches through config/marketAPI/custom-price-overrides, which this file otherwise
+// avoids wiring up (see file docblock).
+vi.mock('./market-data.js', () => ({
+    getItemPrice: (itemHrid) => (itemHrid in prices.byHrid ? prices.byHrid[itemHrid] : null),
+}));
+
+const { getRelevantTeas, getTeaBuffDescription, actionHasUnpricedMaterials } = await import('./tea-optimizer.js');
 
 const knownItems = [
     '/items/milking_tea',
@@ -34,6 +42,7 @@ const knownItems = [
 
 beforeEach(() => {
     state.gameData = { itemDetailMap: Object.fromEntries(knownItems.map((hrid) => [hrid, {}])) };
+    prices.byHrid = {};
 });
 
 describe('getRelevantTeas', () => {
@@ -146,5 +155,81 @@ describe('getTeaBuffDescription', () => {
         };
         const description = getTeaBuffDescription('/items/multi_tea', 0);
         expect(description).toBe('+10% eff, +12% XP');
+    });
+});
+
+describe('actionHasUnpricedMaterials', () => {
+    // calculateGatheringGoldPerHour / calculateProductionGoldPerHour treat a missing price as
+    // 0 (revenue for an unpriced output, cost for an unpriced input) — the same convention the
+    // live action tile uses. actionHasUnpricedMaterials is the parity piece the tile has that
+    // the optimizer didn't: a signal that a gold/hour number rests on treating something as
+    // free/worthless rather than on an actual quote.
+    const gameData = { actionDetailMap: {} };
+
+    test('a gathering action with every drop priced is not flagged', () => {
+        prices.byHrid = { '/items/log': 10, '/items/bark': 5 };
+        const action = {
+            dropTable: [{ itemHrid: '/items/log' }, { itemHrid: '/items/bark' }],
+        };
+        expect(actionHasUnpricedMaterials(action, true, gameData)).toBe(false);
+    });
+
+    test('a gathering action with one unpriced drop is flagged', () => {
+        prices.byHrid = { '/items/log': 10 }; // bark left unpriced -> getItemPrice returns null
+        const action = {
+            dropTable: [{ itemHrid: '/items/log' }, { itemHrid: '/items/bark' }],
+        };
+        expect(actionHasUnpricedMaterials(action, true, gameData)).toBe(true);
+    });
+
+    test('a production action with an unpriced input is flagged even though the output is priced', () => {
+        prices.byHrid = { '/items/cheese': 100 }; // milk left unpriced
+        const action = {
+            inputItems: [{ itemHrid: '/items/milk', count: 1 }],
+            outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+        };
+        expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(true);
+    });
+
+    test('a production action with an unpriced output is flagged even though inputs are priced', () => {
+        prices.byHrid = { '/items/milk': 2 }; // cheese left unpriced
+        const action = {
+            inputItems: [{ itemHrid: '/items/milk', count: 1 }],
+            outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+        };
+        expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(true);
+    });
+
+    test('coins never count as unpriced, on either side', () => {
+        prices.byHrid = { '/items/widget': 50 };
+        const action = {
+            inputItems: [{ itemHrid: '/items/coin', count: 10 }],
+            outputItems: [{ itemHrid: '/items/widget', count: 1 }],
+        };
+        expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(false);
+    });
+
+    test('an unpriced upgrade item is flagged', () => {
+        prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+        const action = {
+            upgradeItemHrid: '/items/rare_starter_culture', // unpriced
+            inputItems: [{ itemHrid: '/items/milk', count: 1 }],
+            outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+        };
+        expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(true);
+    });
+
+    test('a gathering drop that feeds an unpriced processing conversion is flagged', () => {
+        prices.byHrid = { '/items/raw_hide': 5 }; // tanned_leather (the conversion output) left unpriced
+        gameData.actionDetailMap = {
+            '/actions/tailoring/tan_hide': {
+                type: '/action_types/tailoring',
+                inputItems: [{ itemHrid: '/items/raw_hide', count: 1 }],
+                outputItems: [{ itemHrid: '/items/tanned_leather', count: 1 }],
+            },
+        };
+        const action = { dropTable: [{ itemHrid: '/items/raw_hide' }] };
+        expect(actionHasUnpricedMaterials(action, true, gameData)).toBe(true);
+        gameData.actionDetailMap = {};
     });
 });
