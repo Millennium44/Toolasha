@@ -1006,11 +1006,27 @@ export function attributeGoldSources(input) {
         const spanEnd = t + Math.max(0, num(session?.durationSeconds)) * 1000;
         const shares = daySharesOfSpan(t, spanEnd);
 
+        // `loot.value` is the WHOLE run's total, cumulative from its first
+        // action to its last. A share of it is only safe to hand to a day
+        // when no other day of the same run has already been paid from the
+        // loot log: the log's figure for that other day is real, drawn from
+        // the actual entries, and it is already counted. Spreading this
+        // run's total across its remaining days on top of that would count
+        // whatever the log saw a second time, folded into the fallback days'
+        // share — a multi-day AFK grind that toggles the loot panel off
+        // partway through is exactly this shape, and the two days would sum
+        // to more coin than the run actually dropped. So a run with even one
+        // logged day contributes no fallback value anywhere; its other days
+        // are left uncovered rather than guessed from a total that is no
+        // longer entirely theirs to spread.
+        const mixedCoverage = shares.some(({ day }) => combatLootDays.has(day));
+
         let touchedWindow = false;
         for (const { day, share } of shares) {
             add(day, 'consumables', -cost * share);
             if (!inWindow.has(day)) continue;
             touchedWindow = true;
+            if (mixedCoverage) continue;
             const held = combatSessionDays.get(day) || { value: 0, items: 0 };
             held.value += loot.value * share;
             held.items += loot.items;

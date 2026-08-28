@@ -356,6 +356,32 @@ describe('attributeGoldSources', () => {
         expect(perDay['2026-08-20']).toBeCloseTo(5000, 0);
     });
 
+    test('a session that straddles a logged day does not spread its total into the day the log missed', () => {
+        // One 24h run, noon D19 to noon D20, evenly split by time (50/50) —
+        // but the loot log only saw D19, and it saw MOST of the run's value
+        // there (90 of the 100 cheese), not the 50 a time-split would guess.
+        // If the run's whole total were still spread across D20 by time
+        // share, D20 would add another 5,000 (50 cheese × 100) on top of the
+        // 9,000 the log already recorded for D19 — 14,000 out of a run that
+        // only ever dropped 10,000.
+        const session = run(dayStart('2026-08-19') + 12 * 3600_000, { '/items/cheese': 100 });
+        session.durationSeconds = 24 * 3600;
+
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [combatEntry(dayStart('2026-08-19') + 18 * 3600_000, { '/items/cheese': 90 })],
+            combatSessions: [session],
+        });
+
+        const perDay = Object.fromEntries(result.days.map((row) => [row.day, row.sources.combat]));
+        expect(perDay['2026-08-19']).toBe(9000);
+        // D20 is left uncovered rather than credited a guessed slice of a
+        // total the log has already partly spoken for
+        expect(perDay['2026-08-20']).toBe(0);
+        expect(result.totals.sources.combat).toBe(9000);
+        expect(result.combatBasis.uncoveredDays).toBe(1);
+    });
+
     test('a long-running live session still pays into today even though it started before the window', () => {
         const session = run(D18, { '/items/cheese': 100 });
         session.durationSeconds = (D20 + 3600_000 - D18) / 1000;
