@@ -102,9 +102,20 @@ class ListingRefreshNavigator {
         // Resume where the previous session stopped, so a user who abandoned a cycle half-way
         // and came back picks up at the next listing rather than starting over.
         let startIndex = 0;
-        const lastListingId = this.session?.items[this.session.currentIndex]?.listingId;
-        if (lastListingId != null) {
-            const lastIdx = items.findIndex((item) => item.listingId === lastListingId);
+        const lastItem = this.session?.items[this.session.currentIndex];
+        if (lastItem) {
+            // Prefer listingId — it disambiguates a buy and a sell of the same item at the
+            // same level — but a row that listing-price-display couldn't match to a listing
+            // never gets one stamped, and every previous session then looked identical to a
+            // fresh one and restarted at index 0, re-visiting listings already refreshed. Item
+            // identity is always present, so it is the fallback rather than another dead end.
+            let lastIdx =
+                lastItem.listingId != null ? items.findIndex((item) => item.listingId === lastItem.listingId) : -1;
+            if (lastIdx === -1) {
+                lastIdx = items.findIndex(
+                    (item) => item.itemHrid === lastItem.itemHrid && item.enhancementLevel === lastItem.enhancementLevel
+                );
+            }
             if (lastIdx !== -1) startIndex = (lastIdx + 1) % items.length;
         }
 

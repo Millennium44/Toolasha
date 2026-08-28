@@ -22,7 +22,9 @@ const { default: refreshNavigator } = await import('./listing-refresh-navigator.
 refreshNavigator.initialize();
 
 /**
- * @param {Array<{hrid: string, level?: number, id: string}>} rows - Listing rows to draw
+ * @param {Array<{hrid: string, level?: number, id?: string}>} rows - Listing rows to draw. A
+ *   row with no `id` is left without a `listingId` dataset — an unmatched row, the way
+ *   listing-price-display leaves one it could not stamp.
  */
 function drawMyListings(rows) {
     document.body.innerHTML = `
@@ -36,7 +38,7 @@ function drawMyListings(rows) {
         const tr = document.createElement('tr');
         tr.dataset.itemHrid = row.hrid;
         tr.dataset.enhancementLevel = String(row.level ?? 0);
-        tr.dataset.listingId = row.id;
+        if (row.id != null) tr.dataset.listingId = row.id;
         tbody.appendChild(tr);
     }
     // The observer that normally re-injects the button after a redraw fires asynchronously.
@@ -102,6 +104,30 @@ describe('the Refresh button', () => {
         // Session left sitting on the second listing; restarting wraps back to the first.
         refreshButton().click();
         expect(refreshNavigator.getSessionProgress().index).toBe(0);
+    });
+
+    test('resumes by item identity when the current row never got a listingId', () => {
+        // listing-price-display leaves a row's dataset unstamped when it can't match the row
+        // to a listing (a race on load, an ambiguous quantity). Without a listingId to resume
+        // on, every restart used to fall back to index 0 and re-visit listings already done.
+        drawMyListings([
+            { hrid: '/items/plank', id: 'a' },
+            { hrid: '/items/sword', level: 5 }, // no id — unmatched row
+            { hrid: '/items/ore', id: 'c' },
+        ]);
+
+        refreshButton().click(); // stops on plank (index 0)
+        refreshNavigator.advanceSession(); // stops on the unmatched sword row (index 1)
+
+        drawMyListings([
+            { hrid: '/items/plank', id: 'a' },
+            { hrid: '/items/sword', level: 5 }, // still unmatched
+            { hrid: '/items/ore', id: 'c' },
+        ]);
+        refreshButton().click();
+
+        expect(refreshNavigator.getSessionProgress().index).toBe(2);
+        expect(refreshNavigator.getSessionProgress().current.itemHrid).toBe('/items/ore');
     });
 });
 
