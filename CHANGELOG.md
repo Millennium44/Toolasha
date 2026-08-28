@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pin items in the Enhance Item picker
+
+The alchemy picker's pin ability comes to Enhancing: hover a tile, pin it to the front of the grid. Pins persist per character and survive the panel remounting; the pin logic is now shared between both pickers. Toggleable.
+
+### Battle chips survive a queue change
+
+Queuing another action mid-combat makes the game rewrite its header in place, which wiped the "· Battle #N" and boss-countdown chips until the next battle arrived. Both chips now re-inject immediately from their cached state when the header is rewritten, and still clear properly when combat ends.
+
 ### Start-up catch-up scans no longer race the DOM observer
 
 The observer-readiness lifecycle the character-select display adopted last release is now rolled out across the codebase: all 52 features that scanned for already-rendered game UI at initialize — across actions, alchemy, chat, collection, combat, the simulators, the dictionary, inventory, market, tasks, and ui — now wait for the shared observer to actually attach before their catch-up scan, so UI that mounts during the readiness gap at page start can no longer be permanently missed.
