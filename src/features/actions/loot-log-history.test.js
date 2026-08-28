@@ -12,6 +12,8 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
+const character = vi.hoisted(() => ({ id: 'char-1' }));
+
 const storageMock = vi.hoisted(() => {
     const store = new Map();
     return {
@@ -40,7 +42,7 @@ const storageMock = vi.hoisted(() => {
 });
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'char-1' } }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => character.id } }));
 
 const { default: lootLogHistory } = await import('./loot-log-history.js');
 
@@ -56,6 +58,7 @@ const entry = (id, startTime) => ({ characterActionId: id, startTime, endTime: s
 const recordWrites = () => storageMock.set.mock.calls.filter(([key]) => String(key).startsWith('lootLogRec_'));
 
 beforeEach(() => {
+    character.id = 'char-1';
     storageMock.store.clear();
     for (const fn of Object.values(storageMock)) fn.mockClear?.();
     storageMock.isQuotaExceeded.mockImplementation(() => false);
@@ -295,5 +298,39 @@ describe('two loot messages in quick succession', () => {
         expect(errorSpy).toHaveBeenCalled();
         expect(storageMock.store.get('lootLogRec_char-1_2026-08-01T13')).toHaveLength(1);
         errorSpy.mockRestore();
+    });
+});
+
+describe('a character switch landing mid-merge', () => {
+    test('a merge started for the departing character never writes under the arriving one', async () => {
+        // _load is an IndexedDB round trip — flip the current character while
+        // it is "in flight", the way a real switch could land between the read
+        // and the save that follows it.
+        const originalLoad = lootLogHistory._load.bind(lootLogHistory);
+        vi.spyOn(lootLogHistory, '_load').mockImplementation(async (charId) => {
+            const result = await originalLoad(charId);
+            character.id = 'char-2';
+            return result;
+        });
+
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]);
+        lootLogHistory._load.mockRestore();
+
+        // Nothing landed under char-2's keys — the merge belonged to char-1
+        expect(storageMock.set).not.toHaveBeenCalledWith(
+            expect.stringContaining('lootLogRec_char-2_'),
+            expect.anything(),
+            expect.anything(),
+            expect.anything()
+        );
+        // And char-1, who the merge was actually for, does not have it either —
+        // the whole point is that the save is abandoned, not silently redirected
+        expect(storageMock.store.has('lootLogRec_char-1_2026-08-01T13')).toBe(false);
+    });
+
+    test('a merge that completes without a switch is unaffected', async () => {
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]);
+
+        expect(storageMock.store.get('lootLogRec_char-1_2026-08-01T13')).toHaveLength(1);
     });
 });

@@ -80,10 +80,13 @@ class LootLogHistory {
     }
 
     /**
+     * @param {string} [charId] - Whose history — defaults to whoever is current now.
+     *   A caller spanning an await (like `_merge`) should capture one up front and
+     *   pass it through, rather than let `_load` and a later `_save` each read the
+     *   current character independently and risk disagreeing after a switch.
      * @returns {Promise<Array>} Every stored entry, newest first
      */
-    async _load() {
-        const charId = this._charId();
+    async _load(charId = this._charId()) {
         if (!charId) return [];
         return this._store.load(charId);
     }
@@ -98,9 +101,10 @@ class LootLogHistory {
      * @param {Array} entries - The history as it now stands, newest first
      * @param {Set<string>} [changedChunks] - Chunks whose entries moved, so the rest
      *   are carried over from the last snapshot instead of being re-serialised
+     * @param {string} [charId] - Whose history — see `_load`'s note on why a caller
+     *   spanning an await should pass this explicitly rather than rely on the default
      */
-    _save(entries, changedChunks) {
-        const charId = this._charId();
+    _save(entries, changedChunks, charId = this._charId()) {
         if (!charId) return;
         this._store.save(charId, entries, { changedChunks });
     }
@@ -146,7 +150,22 @@ class LootLogHistory {
         // merge over 500 entries per loot message
         if (storage.isQuotaExceeded()) return;
 
-        const existing = await this._load();
+        // Captured once and threaded through the load and the save below,
+        // rather than each independently reading "the current character" —
+        // `_load` is an IndexedDB round trip, and a character switch landing
+        // inside that window must not have the save that follows write this
+        // merge under the *new* character's keys. See trade-ledger-store.js
+        // for the same pattern.
+        const charId = this._charId();
+        if (!charId) return;
+
+        const existing = await this._load(charId);
+        // A newer switch happened while the read was in flight: this merge
+        // belongs to a character that is no longer current, and saving it
+        // now would write stale data under the character that switched away —
+        // `character_switching` already dropped this instance's cache for it.
+        if (this._charId() !== charId) return;
+
         const byId = new Map(existing.map((e) => [e.characterActionId, e]));
 
         // A loot message is a handful of actions against a 500-entry window spread
@@ -171,7 +190,7 @@ class LootLogHistory {
 
         // Entries past the cap fall out of the array here; the chunks they were
         // the last of are deleted by the save that notices they have gone
-        this._save(merged.slice(0, MAX_ENTRIES), touchedChunks);
+        this._save(merged.slice(0, MAX_ENTRIES), touchedChunks, charId);
     }
 
     /**
