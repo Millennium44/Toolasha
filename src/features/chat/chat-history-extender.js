@@ -26,14 +26,38 @@ const CSS = `
 `;
 
 /**
- * Read React props off a DOM node via the __reactProps$ key.
- * @param {Element} domNode
- * @returns {object|null}
+ * Read React props for a batch of DOM nodes via the fiber tree.
+ *
+ * The `__reactProps$…`/`__reactFiber$…` expando keys these nodes used to carry
+ * were removed in the February 2026 update; `_reactRootContainer` on `#root`
+ * was not, so props have to be read by walking down from there instead (same
+ * pattern as `src/utils/react-click.js` and `src/features/tasks/task-card-quest.js`).
+ * One tree walk serves every node in `domNodes` rather than one walk per node.
+ * @param {Iterable<Element>} domNodes
+ * @returns {Map<Element, object>} Only nodes whose fiber was found and had props
  */
-function getReactProps(domNode) {
-    if (!domNode) return null;
-    const key = Object.keys(domNode).find((k) => k.startsWith('__reactProps'));
-    return key ? domNode[key] : null;
+function getReactPropsForNodes(domNodes) {
+    const result = new Map();
+    if (typeof document === 'undefined') return result;
+
+    const rootEl = document.getElementById('root');
+    const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+    if (!rootFiber) return result;
+
+    const targets = new Set(domNodes);
+    const stack = [rootFiber];
+    let guard = 0;
+    while (stack.length && targets.size && guard++ < 500000) {
+        const fiber = stack.pop();
+        if (!fiber) continue;
+        if (targets.has(fiber.stateNode)) {
+            if (fiber.memoizedProps) result.set(fiber.stateNode, fiber.memoizedProps);
+            targets.delete(fiber.stateNode);
+        }
+        if (fiber.child) stack.push(fiber.child);
+        if (fiber.sibling) stack.push(fiber.sibling);
+    }
+    return result;
 }
 
 /**
@@ -80,8 +104,11 @@ class ChatTabHandler {
             'onMouseUp',
         ];
 
-        [messageNode, ...messageNode.querySelectorAll('*')].forEach((el) => {
-            const props = getReactProps(el);
+        const elements = [messageNode, ...messageNode.querySelectorAll('*')];
+        const propsByNode = getReactPropsForNodes(elements);
+
+        elements.forEach((el) => {
+            const props = propsByNode.get(el);
             if (!props) return;
 
             const handlers = {};
