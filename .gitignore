@@ -12,6 +12,8 @@ docs/*
 !docs/THIRD-PARTY-LICENSES.md
 # Exception: the GreasyFork listing body carries that attribution to the listing
 !docs/GREASYFORK.md
+# Exception: a design the maintainer approves section by section belongs in review, not in a scratch file
+!docs/overlay-rework-design.md
 
 # Agent worktrees and session files
 .claude/
