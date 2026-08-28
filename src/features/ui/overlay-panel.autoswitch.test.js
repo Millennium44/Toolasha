@@ -438,3 +438,96 @@ describe('following what you are doing', () => {
         expect(shown()).toEqual(['dps']);
     });
 });
+
+describe('applying a preset over a layout somebody had already made', () => {
+    /**
+     * Every tile actually on screen, as the panel drew it.
+     *
+     * Read off the DOM rather than off `settings.visible`, which is the blind
+     * spot this whole describe exists for: the settings said the right thing and
+     * the panel drew something else, because a row the settings say *nothing*
+     * about falls back to its own `defaultVisible`.
+     *
+     * @returns {Object} `{ [key]: {x, y, width, height} }`
+     */
+    function drawn() {
+        const out = {};
+        for (const tile of overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')) {
+            if (tile.style.display === 'none') continue;
+            out[tile.dataset.overlayRow] = {
+                x: Number.parseFloat(tile.style.left),
+                y: Number.parseFloat(tile.style.top),
+                width: Number.parseFloat(tile.style.width),
+                height: Number.parseFloat(tile.style.height),
+            };
+        }
+        return out;
+    }
+
+    /**
+     * The Skilling grid as designed, on a 460-pixel canvas with every row at the
+     * standard tile height. Worked out by hand from `PRESET_LAYOUTS.Skilling`
+     * rather than from the code that builds it: two columns of 230, one line per
+     * grid line, spans across both.
+     */
+    const SKILLING_AT_460 = {
+        experiencePerHour: { x: 0, y: 0, width: 230, height: 30 },
+        timeToLevel: { x: 230, y: 0, width: 230, height: 30 },
+        queueTimeLeft: { x: 0, y: 30, width: 230, height: 30 },
+        coins: { x: 230, y: 30, width: 230, height: 30 },
+        totalProfit: { x: 0, y: 60, width: 460, height: 30 },
+        consumables: { x: 0, y: 90, width: 460, height: 30 },
+        houses: { x: 0, y: 120, width: 460, height: 30 },
+    };
+
+    beforeEach(() => {
+        // A character who arranged their overlay before the curated set existed:
+        // no `curatedDefaults` flag, so every registered row falls back to its
+        // own default, which is on. Positions are the mess they arrived in.
+        overlayPanel.settings.curatedDefaults = false;
+        overlayPanel.settings.visible = { dps: true, luck: true };
+        overlayPanel.settings.order = ['dps', 'luck'];
+        overlayPanel.settings.positions = { dps: { x: 17, y: 3 }, luck: { x: 240, y: 41 } };
+        overlayPanel.settings.sizes = { dps: { width: 240, height: 40 } };
+
+        Object.defineProperty(overlayPanel.scrollEl, 'clientWidth', { value: 472, configurable: true });
+        overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
+        overlayPanel._renderBody();
+    });
+
+    test('leaves exactly the tiles the preset names on screen, and nothing else', async () => {
+        // Reported live: the Skilling preset put its own seven tiles exactly
+        // where they were designed to go, and left eight tiles from the old
+        // layout switched on underneath them
+        expect(Object.keys(drawn()).length).toBeGreaterThan(PRESET_LAYOUTS.Skilling.rows.length);
+
+        await overlayPanel.applyNamedLayout('Skilling');
+
+        expect(Object.keys(drawn()).sort()).toEqual([...PRESET_LAYOUTS.Skilling.rows].sort());
+    });
+
+    test('at exactly the coordinates the grid was designed as', async () => {
+        await overlayPanel.applyNamedLayout('Skilling');
+
+        expect(drawn()).toEqual(SKILLING_AT_460);
+    });
+
+    test('and does not write the old layout back underneath it', async () => {
+        // A row left visible has no saved position, so it is placed and then
+        // written down — which is how the old tiles came back below the preset
+        await overlayPanel.applyNamedLayout('Skilling');
+        overlayPanel._renderBody();
+        overlayPanel._renderBody();
+
+        expect(Object.keys(overlayPanel.settings.positions).sort()).toEqual([...PRESET_LAYOUTS.Skilling.rows].sort());
+        expect(drawn()).toEqual(SKILLING_AT_460);
+    });
+
+    test('the layout it replaced can still be taken back', async () => {
+        await overlayPanel.applyNamedLayout('Skilling');
+        overlayPanel._undo();
+
+        expect(overlayPanel.settings.positions.dps).toEqual({ x: 17, y: 3 });
+        expect(overlayPanel.settings.visible.dps).toBe(true);
+    });
+});

@@ -447,6 +447,23 @@ function registrySizes(rows) {
  * that only added tiles would leave whatever was up before sitting among them,
  * which is not a layout — it is the union of two.
  *
+ * That has to be said **out loud, row by row**, and for a long time it was not.
+ * The map carried a `true` for each of the preset's own rows and nothing at all
+ * for the rest, on the assumption that an unmentioned row reads as off. It does
+ * not: `resolveRows` falls back to the row's own `defaultVisible`, which is
+ * `true` for nearly every row in the script. So on a character who had arranged
+ * their overlay before the curated set existed — where there is no
+ * `curatedDefaults` flag to catch it — applying the Skilling preset brought up
+ * the seven tiles it names *and left eight others on*, unplaced, to be dropped
+ * in below it. The preset's own tiles were exactly where they were designed to
+ * be; the layout was still a mess, because it was the union of two after all.
+ *
+ * So every registered row the preset does not name is written `false`. The one
+ * gap left is a row whose feature registers *after* the preset is applied: it
+ * cannot be named by a map built before it existed, and comes up on its own
+ * default. That is the same row a fresh update would add to any saved layout,
+ * and it is one tick of the row picker to put away.
+ *
  * @param {string} name - Preset name
  * @param {Object} [options] - The canvas to build against
  * @param {number} [options.width] - Canvas width; the default panel's when unsaid
@@ -466,9 +483,16 @@ export function presetFile(name, { width = PRESET_CANVAS_WIDTH, rows = null, sna
         step: snapToGrid ? GRID : 1,
     });
 
+    // Off first, then the preset's own back on. Written this way round so that
+    // adding a row to a preset cannot leave it switched off, and adding a row to
+    // the script cannot leave it switched on.
+    const visible = {};
+    for (const key of available || []) visible[key] = false;
+    for (const key of preset.rows) visible[key] = true;
+
     return toOPanelConfig({
         order: [...preset.rows],
-        visible: Object.fromEntries(preset.rows.map((key) => [key, true])),
+        visible,
         positions: placed.positions,
         sizes: placed.sizes,
         zoom: {},
