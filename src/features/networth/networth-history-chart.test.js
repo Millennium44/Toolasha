@@ -38,7 +38,7 @@ vi.mock('./networth-history.js', () => ({
     GAP_THRESHOLD_MS: 2 * 60 * 60 * 1000,
 }));
 
-const { default: networthHistoryChart } = await import('./networth-history-chart.js');
+const { default: networthHistoryChart, computeAllTimeExtremes } = await import('./networth-history-chart.js');
 
 /** A captured Chart.js construction, so tests can inspect what would be drawn. */
 class FakeChart {
@@ -207,5 +207,62 @@ describe('Guild Shrines tooltip breakdown', () => {
             expect(tooltipEl.innerHTML).toContain('Guild Shrines');
             expect(tooltipEl.innerHTML).toContain('100');
         });
+    });
+});
+
+describe('computeAllTimeExtremes', () => {
+    test('finds the highest and lowest total in the history, ignoring point order', () => {
+        const history = [
+            { t: 1, total: 500 },
+            { t: 2, total: 900 },
+            { t: 3, total: 100 },
+            { t: 4, total: 700 },
+        ];
+        const { high, low } = computeAllTimeExtremes(history);
+        expect(high).toEqual({ t: 2, total: 900 });
+        expect(low).toEqual({ t: 3, total: 100 });
+    });
+
+    test('skips points with no finite total rather than treating them as zero', () => {
+        const history = [
+            { t: 1, total: 500 },
+            { t: 2, total: NaN },
+            { t: 3, total: undefined },
+        ];
+        const { high, low } = computeAllTimeExtremes(history);
+        expect(high).toEqual({ t: 1, total: 500 });
+        expect(low).toEqual({ t: 1, total: 500 });
+    });
+
+    test('returns nulls for an empty or missing history', () => {
+        expect(computeAllTimeExtremes([])).toEqual({ high: null, low: null });
+        expect(computeAllTimeExtremes(null)).toEqual({ high: null, low: null });
+    });
+});
+
+describe('All-Time High stat', () => {
+    test('shows the highest total ever recorded, not just the plotted range', async () => {
+        getHistory.mockReturnValue([
+            { t: OLD_T, total: 5_000_000, nonExcluded: 5_000_000 },
+            { t: OLD_T + 3_600_000, total: 9_000_000, nonExcluded: 9_000_000 },
+            { t: NEW_T, total: 6_000_000, nonExcluded: 6_000_000 },
+        ]);
+
+        await networthHistoryChart.openModal();
+        const statsRow = document.getElementById('mwi-nw-chart-stats');
+        expect(statsRow.textContent).toContain('All-Time High');
+        expect(statsRow.textContent).toContain('9.00M');
+    });
+
+    test('reads "(now)" when the current total is the all-time high', async () => {
+        getHistory.mockReturnValue([
+            { t: OLD_T, total: 5_000_000, nonExcluded: 5_000_000 },
+            { t: NEW_T, total: 9_000_000, nonExcluded: 9_000_000 },
+        ]);
+
+        await networthHistoryChart.openModal();
+        const statsRow = document.getElementById('mwi-nw-chart-stats');
+        expect(statsRow.textContent).toContain('All-Time High');
+        expect(statsRow.innerHTML).toContain('(now)');
     });
 });

@@ -28,6 +28,28 @@ const CATEGORIES = [
     { key: 'guildShrines', label: 'Guild Shrines', color: '#ec4899' },
 ];
 
+/**
+ * The best and worst total the account has ever recorded.
+ *
+ * Deliberately computed from the whole history, never the range currently
+ * plotted — switching from 7D to 24H answers a different question about the
+ * recent trend, and an all-time figure that quietly changed along with it
+ * would not be an all-time figure at all.
+ *
+ * @param {Array<Object>} history - Snapshots `{t, total}`, any order
+ * @returns {{high: Object|null, low: Object|null}} The extreme points, or null when there is no history
+ */
+export function computeAllTimeExtremes(history) {
+    let high = null;
+    let low = null;
+    for (const point of Array.isArray(history) ? history : []) {
+        if (!point || !Number.isFinite(point.total)) continue;
+        if (!high || point.total > high.total) high = point;
+        if (!low || point.total < low.total) low = point;
+    }
+    return { high, low };
+}
+
 /** The chart modal's element id, and the control that opens and closes it */
 export const MODAL_ID = 'mwi-nw-chart-modal';
 export const CHART_BUTTON_ID = 'mwi-networth-chart-btn';
@@ -988,6 +1010,18 @@ class NetworthHistoryChart {
                 const sign = ratePerHour >= 0 ? '+' : '';
                 parts.push(
                     `<span>Rate: <strong style="color: ${color};">${sign}${networthFormatter(Math.round(ratePerHour))}/hr</strong></span>`
+                );
+            }
+
+            // All-time high, off the whole recorded history rather than the
+            // range currently plotted — see computeAllTimeExtremes
+            const { high } = computeAllTimeExtremes(networthHistory.getHistory());
+            if (high) {
+                const atHigh = currentTotal >= high.total;
+                const dateLabel = formatDateTime(new Date(high.t), { includeTime: false });
+                parts.push(
+                    `<span>All-Time High: <strong style="color: ${config.COLOR_ACCENT};">${networthFormatter(Math.round(high.total))}</strong> ` +
+                        `<span style="font-size: 11px; color: #aaa;">${atHigh ? '(now)' : `(${dateLabel})`}</span></span>`
                 );
             }
         }
