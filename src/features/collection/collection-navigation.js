@@ -41,6 +41,7 @@ class CollectionNavigation {
         this.itemNameToHridCache = null;
         this.itemNameToHridCacheSource = null;
         this.panelObserver = null;
+        this.observedPanel = null;
     }
 
     initialize() {
@@ -104,18 +105,29 @@ class CollectionNavigation {
             this.panelObserver();
             this.panelObserver = null;
         }
+        this.observedPanel = null;
         this.isInitialized = false;
     }
 
     /**
      * Attach a MutationObserver to the collection panel to catch filter toggles
      * that show/hide existing tiles without re-adding them to the DOM.
+     *
+     * `domObserver.onClass` fires again every time the game remounts the panel
+     * (leaving the Collections screen and returning is enough), handing this a
+     * new node each time. A guard keyed on "an observer already exists" rather
+     * than "on this node" left the observer watching the old, detached node
+     * forever after the first remount — tiles that loaded in after that point
+     * never got their click handler attached until the whole feature cycled on
+     * a character switch.
      * @param {Element} panel
      */
     attachPanelObserver(panel) {
         if (this.panelObserver) {
-            return; // Already attached
+            if (this.observedPanel === panel) return; // Already attached to this node
+            this.panelObserver();
         }
+        this.observedPanel = panel;
         this.panelObserver = createMutationWatcher(
             panel,
             () => {
