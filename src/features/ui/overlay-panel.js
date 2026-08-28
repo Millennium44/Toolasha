@@ -2831,15 +2831,19 @@ class OverlayPanel {
      * new tile among placed ones gets the corner search, which puts it at the
      * first free corner of the arrangement it is joining.
      *
-     * Never while the tiles are flowed: those positions are what the width
-     * allowed, not what anyone chose, and writing them back would overwrite a
-     * desktop arrangement with a phone's column.
+     * The flow does not stop any of this, and used to. Flowing is a way of
+     * *drawing* a layout that does not fit, not a reason to stop deciding where
+     * the layout puts things — and while it did stop them, a row that arrived
+     * on a narrow panel was placed afresh on every draw against whatever was on
+     * screen that tick, which is precisely the wandering this exists to end.
+     * What is written is `flow: false` geometry throughout, so a phone's column
+     * is never what gets saved. The one thing still held back is building a
+     * whole arrangement from nothing, which would be measuring a phone and
+     * calling the result this character's layout.
      *
      * @returns {boolean} Whether anything was written
      */
     _adoptPlacements() {
-        if (this.flowing) return false;
-
         const visible = resolveRows(registeredRows(), this.settings).filter((row) => row.visible);
         if (!visible.length) return false;
 
@@ -2847,8 +2851,14 @@ class OverlayPanel {
         const placed = (row) => Number.isFinite(positions[row.key]?.x) && Number.isFinite(positions[row.key]?.y);
         if (visible.every(placed)) return false;
 
-        if (!visible.some(placed)) this._packVisible();
-        else {
+        if (!visible.some(placed)) {
+            // Nothing has ever been arranged, and the panel is currently too
+            // narrow for the arrangement it would build. Packing now would
+            // measure a phone and write the result down as this character's
+            // layout, which is a decision a phone does not get to make.
+            if (this.flowing) return false;
+            this._packVisible();
+        } else {
             const next = { ...positions };
             for (const tile of this._layout({ flow: false })) {
                 if (!Number.isFinite(next[tile.key]?.x)) next[tile.key] = { x: tile.x, y: tile.y };

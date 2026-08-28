@@ -339,6 +339,108 @@ describe('a preset with rows switched on that it does not name', () => {
     });
 });
 
+describe('a tile the saved layout has never heard of', () => {
+    /**
+     * A new row, with no saved position, beside an arrangement that has one —
+     * which is what a row added by an update looks like on every existing
+     * character.
+     * @returns {Object} The new row, with a `quiet` flag on it
+     */
+    function newcomerBeside(placedWidth) {
+        const newcomer = sometimes('skillLevel', { width: 220, height: 30 });
+        registry.rows = [newcomer, speaking('timeToLevel', { width: placedWidth, height: 30 })];
+        overlayPanel.settings.visible = { skillLevel: true, timeToLevel: true };
+        overlayPanel.settings.order = ['skillLevel', 'timeToLevel'];
+        overlayPanel.settings.positions = { timeToLevel: { x: 0, y: 0 } };
+        overlayPanel.settings.sizes = { timeToLevel: { width: placedWidth, height: 30 } };
+        return newcomer;
+    }
+
+    /** @returns {Object} The new tile's drawn geometry */
+    function newcomerBox() {
+        const tile = overlayPanel.tiles.get('skillLevel');
+        return {
+            x: tile.style.left,
+            y: tile.style.top,
+            width: tile.style.width,
+        };
+    }
+
+    test('holds its width while it fills in and empties, tick after tick', () => {
+        // Reported live: the new skill-level tile flickered between its own
+        // cell and the full width of the panel, over and over
+        const newcomer = newcomerBeside(220);
+        overlayPanel.show();
+
+        const seen = new Set();
+        for (let tick = 0; tick < 8; tick += 1) {
+            newcomer.quiet = tick % 2 === 0;
+            overlayPanel._renderBody();
+            seen.add(newcomerBox().width);
+        }
+        expect([...seen]).toEqual(['220px']);
+    });
+
+    test('and holds it through the layout being unlocked and locked again', () => {
+        const newcomer = newcomerBeside(220);
+        overlayPanel.show();
+
+        const seen = new Set();
+        for (let tick = 0; tick < 8; tick += 1) {
+            newcomer.quiet = tick % 2 === 0;
+            overlayPanel.settings.locked = tick % 3 !== 0;
+            overlayPanel._renderBody();
+            seen.add(newcomerBox().width);
+        }
+        expect([...seen]).toEqual(['220px']);
+    });
+
+    test('is written down even while the panel is too narrow for its layout', () => {
+        // Flowed, nothing was adopted — so a row arriving while the panel was
+        // too narrow was placed afresh on every draw, against whatever happened
+        // to be on screen that tick, and never settled anywhere. The flow is a
+        // way of *drawing* a layout; it is not a reason to stop deciding where
+        // the layout puts things.
+        registry.rows = [speaking('timeToLevel', { width: 900, height: 30 })];
+        overlayPanel.settings.visible = { timeToLevel: true };
+        overlayPanel.settings.order = ['timeToLevel'];
+        overlayPanel.settings.positions = { timeToLevel: { x: 0, y: 0 } };
+        overlayPanel.settings.sizes = { timeToLevel: { width: 900, height: 30 } };
+        overlayPanel.show();
+        expect(overlayPanel.flowing).toBe(true);
+
+        // Only now does the new row register, with the panel already flowed
+        registry.rows = [...registry.rows, speaking('skillLevel', { width: 220, height: 30 })];
+        overlayPanel.settings.visible.skillLevel = true;
+        overlayPanel._renderBody();
+
+        expect(overlayPanel.settings.positions.skillLevel).toBeTruthy();
+        // And what was written is the arrangement's own geometry, not the
+        // single column the panel happens to be drawing
+        expect(overlayPanel.settings.positions.skillLevel.y).toBeGreaterThanOrEqual(30);
+        expect(overlayPanel.settings.positions.skillLevel.x).toBe(0);
+    });
+
+    test('but a layout nobody has arranged is not invented while flowed', () => {
+        // Packing the whole set against a phone's width would freeze a phone's
+        // arrangement as the one this character has
+        registry.rows = [speaking('a', { width: 900, height: 30 })];
+        overlayPanel.settings.visible = { a: true };
+        overlayPanel.settings.order = ['a'];
+        overlayPanel.settings.positions = { a: { x: 0, y: 0 } };
+        overlayPanel.settings.sizes = { a: { width: 900, height: 30 } };
+        overlayPanel.show();
+        expect(overlayPanel.flowing).toBe(true);
+
+        // The arrangement is forgotten while the panel is in that state
+        overlayPanel.settings.positions = {};
+        overlayPanel.settings.sizes = {};
+        overlayPanel._renderBody();
+
+        expect(overlayPanel.settings.positions).toEqual({});
+    });
+});
+
 describe('lines settling to what they drew', () => {
     /**
      * Where each tile is actually drawn, as the panel styled it.
