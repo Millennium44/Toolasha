@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Three fixes from the audit fleet: races and free alchemy
+
+The consumable target could survive an overlapping character switch with the departed character's value — the load now carries a generation guard like the persisted records do. An alchemy session consuming an unpriceable input was valued as if the input were free, overstating the alchemy row; it now reports as unpriceable and is disclosed like the enhancement equivalent. And a combat run that ended while the tab was closed was silently dropped instead of archived — the restored snapshot now remembers its own session key, so the first new fight after a reload archives it properly and its loot reaches the gold attribution.
+
+
 ### Six small conveniences across the panels
 
 From this round's feature agents: the Consumables panel closes on Escape; external tool links tooltip the site they actually open; the Party Loot panel gains a Copy button for the run on screen (the CSV export only covered the archive); expired character-select activity blocks say how long ago they were last seen; loot-log sessions get a copy-summary button; and the action ETA marks with an ⓘ exactly how much in-progress time it subtracted.
