@@ -21,22 +21,44 @@ const STORAGE_KEY_PREFIX = 'networth_exclusions';
 /** @type {Array<{type: string, value: string}>|null} In-memory cache */
 let cache = null;
 
+/** Which character `cache` belongs to — a mismatch means it must be reloaded */
+let cacheCharId = null;
+
+/**
+ * The current character id, `'default'` before login.
+ * @returns {string}
+ */
+function currentCharId() {
+    return dataManager.getCurrentCharacterId() || 'default';
+}
+
 /**
  * Get the character-scoped storage key.
  * @returns {string}
  */
 function getStorageKey() {
-    const charId = dataManager.getCurrentCharacterId() || 'default';
-    return `${STORAGE_KEY_PREFIX}_${charId}`;
+    return `${STORAGE_KEY_PREFIX}_${currentCharId()}`;
 }
 
 /**
  * Load exclusions from storage into memory.
+ *
+ * Reloaded whenever the character has changed since the cache was filled, not
+ * only when it is empty: the feature is torn down and reinitialized on every
+ * character switch (`character_switching` / `character_switched`), but this
+ * module has no listener of its own, so `cache !== null` alone kept serving
+ * the departed character's list to whoever logged in next — reading it, and
+ * writing it back merged with anything the new character excluded, silently
+ * carried one character's exclusions onto another's (a real risk with several
+ * ironclad/ironcow characters open in the same browser).
+ *
  * @returns {Promise<Array<{type: string, value: string}>>}
  */
 async function loadExclusions() {
-    if (cache === null) {
+    const charId = currentCharId();
+    if (cache === null || cacheCharId !== charId) {
         cache = (await storage.getJSON(getStorageKey(), 'settings', [])) || [];
+        cacheCharId = charId;
     }
     return cache;
 }
@@ -107,5 +129,6 @@ export async function removeExclusion(type, value) {
  */
 export async function clearExclusions() {
     cache = [];
+    cacheCharId = currentCharId();
     storage.setJSON(getStorageKey(), [], 'settings');
 }
