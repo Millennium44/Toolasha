@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The credit exchange gets a Max button and a held count per row
+
+The exchange dialog's "You give" box gains a Max button that fills in everything held, floored to whole exchanges so the game accepts it as-is. The gold-per-credit table also shows how many of each item you hold beside its name, so the cheapest route and the routes you can actually feed read off one screen.
+
+
 ### Shrine buff levels stop leaking between characters
 
 The shrine planner could show another character's buff levels — "lvl 1" while the game said 3/3. The capture listens on the raw socket with no character scoping, so during a switch a late message from the departing character's stream was persisted under the arriving character's key. Every buff row names its owner, so a capture whose rows belong to someone else is now refused outright, and a persisted record contaminated before this fix is ignored on load and overwritten by the next clean capture.

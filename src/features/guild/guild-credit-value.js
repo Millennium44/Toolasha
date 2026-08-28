@@ -11,7 +11,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
 import webSocketHook from '../../core/websocket.js';
@@ -27,6 +27,7 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { openShoppingList } from '../../utils/shopping-list.js';
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { heldInInventory } from '../../utils/dungeon-key-forecast.js';
+import { setReactInputValue } from '../../utils/react-input.js';
 import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
 import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
 import { describeGuildTokenGold, explainGuildTokenValue } from './guild-token-value.js';
@@ -1102,6 +1103,11 @@ class GuildCreditValue {
 
         let sortKey = 'ask';
 
+        // What is on hand, once per build rather than once per row — the held
+        // figure beside each name is what turns "cheapest per credit" into
+        // "cheapest per credit that I can actually feed"
+        const inventoryForCounts = dataManager.getInventory?.() || [];
+
         const buildTbody = () => {
             const sorted = [...rows].sort((a, b) => {
                 const aVal = sortKey === 'bid' ? a.buyGPC : a.sellGPC;
@@ -1117,8 +1123,11 @@ class GuildCreditValue {
                 const tr = document.createElement('tr');
                 tr.style.cssText = `border-bottom:1px solid rgba(255,255,255,0.05); color:${isTop ? '#4ade80' : '#e0e0e0'};`;
                 const rate = row.creditCount === 1 ? `${row.itemCount} → 1` : `${row.itemCount} → ${row.creditCount}`;
+                const held = heldInInventory(inventoryForCounts, row.hrid);
+                const heldNote =
+                    held > 0 ? ` <span style="color:#6b7280; font-size:10px;">${formatKMB(held)}</span>` : '';
                 tr.innerHTML = `
-                    <td style="padding:4px 6px; text-align:left;">${row.name}</td>
+                    <td style="padding:4px 6px; text-align:left;">${row.name}${heldNote}</td>
                     <td style="padding:4px 6px; text-align:center; color:#9ca3af;">${rate}</td>
                     <td style="padding:4px 6px; text-align:right; color:#9ca3af;">${row.sellPrice ? formatKMB(row.sellPrice) : '–'}</td>
                     <td style="padding:4px 6px; text-align:right; color:#9ca3af;">${row.buyPrice ? formatKMB(row.buyPrice) : '–'}</td>
@@ -2126,6 +2135,50 @@ class GuildCreditValue {
         insertAfter?.insertAdjacentElement('afterend', wrapper);
     }
 
+    /**
+     * A Max button beside the exchange's "You give" input.
+     *
+     * The game caps the give amount at what is held, but typing the figure in
+     * means reading it off the label and getting the multiple right. The button
+     * fills in the largest amount the held stock covers, floored to a whole
+     * number of exchanges so the game accepts it as-is.
+     *
+     * @param {Element} modalEl - The exchange modal
+     * @param {Element|null} giveInput - The "You give" input
+     * @param {Array<Object>} rows - Conversion rows from the table render
+     * @param {{selectedItemHrid: string|null, selectedItemName: string|null}} selected - The chosen item
+     * @private
+     */
+    _injectExchangeMaxButton(modalEl, giveInput, rows, { selectedItemHrid, selectedItemName }) {
+        modalEl.querySelectorAll('.mwi-exchange-max').forEach((el) => el.remove());
+        if (!giveInput) return;
+
+        const row = selectedItemHrid
+            ? rows.find((r) => r.hrid === selectedItemHrid)
+            : rows.find((r) => r.name === selectedItemName);
+        if (!row?.hrid) return;
+
+        const held = heldInInventory(dataManager.getInventory?.() || [], row.hrid);
+        const per = Math.max(1, row.itemCount || 1);
+        const max = Math.floor(held / per) * per;
+        if (max <= 0) return;
+
+        const button = document.createElement('button');
+        button.className = 'mwi-exchange-max';
+        button.textContent = 'Max';
+        button.title = `Give ${formatWithSeparator(max)} — everything held, in whole exchanges of ${per}.`;
+        button.style.cssText =
+            'margin-left:6px; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer; ' +
+            'background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#e8ecf5; ' +
+            'vertical-align:middle;';
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setReactInputValue(giveInput, String(max));
+        });
+        giveInput.insertAdjacentElement('afterend', button);
+    }
+
     _renderExchangeAdvisor(modalEl, creditHrid, rows) {
         modalEl.querySelectorAll('.mwi-exchange-advisor').forEach((el) => el.remove());
 
@@ -2137,9 +2190,12 @@ class GuildCreditValue {
         const itemSvg = selectorContainer?.querySelector('svg[aria-label]');
         const selectedItemName = itemSvg?.getAttribute('aria-label') || null;
 
-        // Read batch quantity
-        const quantityInput = modalEl.querySelector('input[type="number"]');
+        // Read batch quantity. Both input types: the marketplace's inputs moved
+        // to type="text" in a game update, and this dialog may follow.
+        const quantityInput = modalEl.querySelector('input[type="number"], input[type="text"]');
         const batches = Math.max(1, parseInt(quantityInput?.value || '1', 10) || 1);
+
+        this._injectExchangeMaxButton(modalEl, quantityInput, rows, { selectedItemHrid, selectedItemName });
 
         // Find best and selected rows (rows are pre-built from _render)
         const validRows = rows.filter((r) => r.sellGPC !== null || r.buyGPC !== null);

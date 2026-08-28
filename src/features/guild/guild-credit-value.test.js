@@ -210,6 +210,22 @@ describe('guild credit value — exchange ranking table', () => {
         expect(texts[2]).toContain('Iron Bar');
     });
 
+    test('each row names how many of the item are held, and holds its tongue at zero', () => {
+        game.inventory = [
+            { itemHrid: '/items/bronze_bar', count: 170000, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        const modal = buildExchangeModal('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const texts = rowTexts(modal);
+        expect(texts.find((t) => t.includes('Bronze Bar'))).toContain('170.0K');
+        // An unheld item's name cell is just the name — no zero, no note
+        const ironNameCell = [...modal.querySelectorAll('.mwi-guild-credit-value tbody td:first-child')].find((td) =>
+            td.textContent.includes('Iron Bar')
+        );
+        expect(ironNameCell.querySelector('span')).toBeNull();
+    });
+
     test('the cheapest row is the only one highlighted', () => {
         const modal = buildExchangeModal('Trade Credit');
         game.observers['GuildPanel_exchangeModalContent'](modal);
