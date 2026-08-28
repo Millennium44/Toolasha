@@ -471,8 +471,8 @@ class EnhancementUI {
         header.id = 'enhancementPanelHeader';
         Object.assign(header.style, {
             display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
+            flexDirection: 'column',
+            gap: '2px',
             cursor: 'move',
             padding: '10px 15px',
             background: STYLE.colors.headerBg,
@@ -481,27 +481,27 @@ class EnhancementUI {
             flexShrink: '0',
         });
 
-        // Title with session counter
-        const titleContainer = document.createElement('div');
-        titleContainer.style.display = 'flex';
-        titleContainer.style.alignItems = 'center';
-        titleContainer.style.gap = '10px';
-        titleContainer.style.overflow = 'hidden';
-        titleContainer.style.minWidth = '0';
-        titleContainer.style.textOverflow = 'ellipsis';
+        // Top row: title and controls. The session counter used to live here
+        // too, squeezed between the title and six control buttons — narrow
+        // enough that "(2/5)" clipped to "(2". It gets its own row below
+        // instead, where it always has the panel's full width to say its piece.
+        const topRow = document.createElement('div');
+        Object.assign(topRow.style, {
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '10px',
+        });
 
         const title = document.createElement('span');
         title.textContent = 'Enhancement Tracker';
-        title.style.fontWeight = 'bold';
-
-        const sessionCounter = document.createElement('span');
-        sessionCounter.id = 'enhancementSessionCounter';
-        sessionCounter.style.fontSize = '12px';
-        sessionCounter.style.opacity = '0.7';
-        sessionCounter.style.marginLeft = '5px';
-
-        titleContainer.appendChild(title);
-        titleContainer.appendChild(sessionCounter);
+        Object.assign(title.style, {
+            fontWeight: 'bold',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            minWidth: '0',
+        });
 
         // Navigation container
         const navContainer = document.createElement('div');
@@ -509,7 +509,6 @@ class EnhancementUI {
             display: 'flex',
             gap: '5px',
             alignItems: 'center',
-            marginLeft: 'auto',
             flexShrink: '0',
         });
 
@@ -538,8 +537,24 @@ class EnhancementUI {
         navContainer.appendChild(collapseButton);
         navContainer.appendChild(clearButton);
 
-        header.appendChild(titleContainer);
-        header.appendChild(navContainer);
+        topRow.appendChild(title);
+        topRow.appendChild(navContainer);
+
+        // Session counter, on its own row so it is never fighting the buttons
+        // for space. Hidden (not just empty) when there is nothing to say, so
+        // it doesn't leave a blank sliver under the title before any session
+        // exists.
+        const sessionCounter = document.createElement('span');
+        sessionCounter.id = 'enhancementSessionCounter';
+        Object.assign(sessionCounter.style, {
+            fontSize: '12px',
+            opacity: '0.7',
+            whiteSpace: 'nowrap',
+            display: 'none',
+        });
+
+        header.appendChild(topRow);
+        header.appendChild(sessionCounter);
 
         return header;
     }
@@ -1044,10 +1059,13 @@ class EnhancementUI {
         const sessions = Object.values(enhancementTracker.getAllSessions());
         if (sessions.length === 0) {
             counter.textContent = '';
+            counter.style.display = 'none';
         } else if (this.mergeMode) {
             counter.textContent = `(merge ${this.mergeSelected.size}/${sessions.length})`;
+            counter.style.display = '';
         } else {
             counter.textContent = `(${this.currentViewingIndex + 1}/${sessions.length})`;
+            counter.style.display = '';
         }
     }
 
