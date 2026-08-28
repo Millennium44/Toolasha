@@ -33,7 +33,7 @@
 
 import config from '../../core/config.js';
 import { networthFormatter } from '../../utils/formatters.js';
-import { attributeGoldSources, SOURCE_KEYS, SOURCE_META, dayStart } from './gold-sources.js';
+import { attributeGoldSources, SOURCE_KEYS, SOURCE_META, dayStart, localDayId } from './gold-sources.js';
 import { collectGoldSourceInputs } from './gold-sources-collect.js';
 import { buildNetworthCalendar, CALENDAR_WEEKS } from './networth-calendar.js';
 
@@ -84,7 +84,7 @@ function shortDay(dayId) {
  */
 export function coverageText(since) {
     if (!Number.isFinite(since)) return 'Nothing has been recorded for this source yet.';
-    return `Covers activity since ${new Date(since).toISOString().slice(0, 10)}, when recording began.`;
+    return `Covers activity since ${localDayId(since)}, when recording began.`;
 }
 
 /** `n thing` / `n things` */
@@ -127,7 +127,7 @@ export function combatCoverageText(basis) {
 
     parts.push(
         Number.isFinite(basis.lastLootLog)
-            ? `The loot log last recorded combat on ${new Date(basis.lastLootLog).toISOString().slice(0, 10)}.`
+            ? `The loot log last recorded combat on ${localDayId(basis.lastLootLog)}.`
             : 'The loot log has never recorded combat — the game only sends it while its own panel is open.'
     );
 
@@ -728,7 +728,10 @@ class GoldSourcesPanel {
     async buildAttribution() {
         const days = WINDOWS.find((entry) => entry.key === this.activeWindow)?.days || 7;
         const to = Date.now();
-        const from = dayStart(new Date(to - (days - 1) * DAY_MS).toISOString().slice(0, 10));
+        // localDayId, not toISOString(): the ISO slice is the UTC date, and
+        // feeding a UTC id to a LOCAL dayStart put the window's start in the
+        // future for any evening west of Greenwich — an empty Day view
+        const from = dayStart(localDayId(to - (days - 1) * DAY_MS));
         const inputs = await collectGoldSourceInputs();
         return {
             attribution: attributeGoldSources({ ...inputs, from, to }),
