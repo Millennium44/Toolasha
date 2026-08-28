@@ -461,6 +461,19 @@ class LoadoutSnapshot {
 
             this.updateListeners = [];
             this.isInitialized = false;
+
+            // initialize()'s "only load if empty" guard exists so a
+            // `loadouts_updated` message that arrived before this ran is not
+            // clobbered by the storage read racing behind it — it assumes an
+            // empty cache means nothing has loaded yet. Left un-cleared here,
+            // that assumption breaks on a character switch: the next
+            // initialize() sees the *previous* character's snapshots still
+            // sitting in the cache, treats it as "already loaded", and skips
+            // reading the new character's storage key entirely — profit
+            // calculators keep applying the old character's gear until
+            // `loadouts_updated` happens to fire again for this character.
+            this.snapshots = {};
+            this.snapshotsReady = false;
         } catch (error) {
             console.error('[Loadout Snapshots] Disable failed part-way:', error);
         } finally {

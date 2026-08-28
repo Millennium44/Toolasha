@@ -203,3 +203,51 @@ describe('whether the store has actually loaded', () => {
         }
     });
 });
+
+/**
+ * disable() is the teardown half of a character switch — feature-registry
+ * calls it before the next character's initialize() runs. initialize()'s
+ * "only load if empty" guard (so a `loadouts_updated` message that arrived
+ * first is not clobbered by a slower storage read) assumes an empty cache
+ * means "nothing has loaded yet". Left un-cleared across a switch, that
+ * assumption is false: the next character's initialize() sees the previous
+ * character's snapshots still sitting there, treats the store as already
+ * loaded, and never reads the new character's storage key at all.
+ */
+describe('switching characters', () => {
+    test('disable clears the cached snapshots, not just the listeners', () => {
+        const store = new loadoutSnapshot.constructor();
+        store._onLoadoutsUpdated({ characterLoadoutMap: { 1: { name: 'Fighting' } } });
+        expect(store.snapshots).not.toEqual({});
+
+        store.disable();
+
+        expect(store.snapshots).toEqual({});
+    });
+
+    test('disable resets the ready flag, so the next character waits for its own load', () => {
+        const store = new loadoutSnapshot.constructor();
+        store._onLoadoutsUpdated({ characterLoadoutMap: { 1: { name: 'Fighting' } } });
+        expect(store.snapshotsReady).toBe(true);
+
+        store.disable();
+
+        expect(store.snapshotsReady).toBe(false);
+    });
+
+    test('initialize after disable loads again instead of keeping the old character’s cache', async () => {
+        const store = new loadoutSnapshot.constructor();
+        await store.initialize();
+        store._onLoadoutsUpdated({ characterLoadoutMap: { 1: { name: 'Fighting' } } });
+        expect(store.getAllSnapshots()).toHaveLength(1);
+
+        store.disable();
+        await store.initialize();
+
+        // Storage is mocked empty for every character in this file, so a
+        // genuine reload lands back at nothing — the old bug instead left
+        // the previous character's one snapshot in place because the
+        // "already loaded" guard skipped the read entirely.
+        expect(store.getAllSnapshots()).toHaveLength(0);
+    });
+});
