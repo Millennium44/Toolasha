@@ -3,7 +3,20 @@ import {
     achievementBuffLabel,
     manualAchievementCombatBuffs,
     MANUAL_ACHIEVEMENT_COMBAT_BUFFS,
+    achievementTierCounts,
+    deriveAchievementCombatBuffs,
 } from './achievement-combat-buffs.js';
+
+const NOVICE_ACH_1 = { hrid: '/achievements/novice_1', tierHrid: '/achievement_tiers/novice' };
+const NOVICE_ACH_2 = { hrid: '/achievements/novice_2', tierHrid: '/achievement_tiers/novice' };
+const VETERAN_ACH_1 = { hrid: '/achievements/veteran_1', tierHrid: '/achievement_tiers/veteran' };
+const ELITE_ACH_1 = { hrid: '/achievements/elite_1', tierHrid: '/achievement_tiers/elite' };
+const ELITE_ACH_2 = { hrid: '/achievements/elite_2', tierHrid: '/achievement_tiers/elite' };
+const BEGINNER_ACH_1 = { hrid: '/achievements/beginner_1', tierHrid: '/achievement_tiers/beginner' };
+
+const DETAIL_MAP = Object.fromEntries(
+    [NOVICE_ACH_1, NOVICE_ACH_2, VETERAN_ACH_1, ELITE_ACH_1, ELITE_ACH_2, BEGINNER_ACH_1].map((a) => [a.hrid, a])
+);
 
 describe('achievementBuffLabel', () => {
     test('a ratio-boost buff reads as a percentage', () => {
@@ -78,5 +91,103 @@ describe('manualAchievementCombatBuffs', () => {
             const buff = { typeHrid: def.typeHrid, [def.valueKey]: def.value };
             expect(achievementBuffLabel(buff)).toBe(def.label);
         }
+    });
+});
+
+describe('achievementTierCounts', () => {
+    test('counts completed vs. total per tier from a shared profile', () => {
+        const characterAchievements = [
+            { achievementHrid: NOVICE_ACH_1.hrid, isCompleted: true },
+            { achievementHrid: NOVICE_ACH_2.hrid, isCompleted: false },
+            { achievementHrid: VETERAN_ACH_1.hrid, isCompleted: true },
+        ];
+
+        const counts = achievementTierCounts(characterAchievements, DETAIL_MAP);
+
+        expect(counts['/achievement_tiers/novice']).toEqual({ completedCount: 1, totalCount: 2 });
+        expect(counts['/achievement_tiers/veteran']).toEqual({ completedCount: 1, totalCount: 1 });
+        // Elite has two achievements in the catalog but none listed as completed
+        expect(counts['/achievement_tiers/elite']).toEqual({ completedCount: 0, totalCount: 2 });
+    });
+
+    test('an achievement not marked completed is not counted', () => {
+        const counts = achievementTierCounts([{ achievementHrid: NOVICE_ACH_1.hrid, isCompleted: false }], DETAIL_MAP);
+        expect(counts['/achievement_tiers/novice'].completedCount).toBe(0);
+    });
+
+    test('missing or empty inputs are safe and empty, not a throw', () => {
+        expect(achievementTierCounts(null, null)).toEqual({});
+        expect(achievementTierCounts(undefined, undefined)).toEqual({});
+        expect(achievementTierCounts([], {})).toEqual({});
+        expect(achievementTierCounts(null, DETAIL_MAP)).toMatchObject({
+            '/achievement_tiers/novice': { completedCount: 0, totalCount: 2 },
+        });
+        // A detail map is required to know each tier's total — without it,
+        // nothing can be said about completion.
+        expect(achievementTierCounts([{ achievementHrid: NOVICE_ACH_1.hrid, isCompleted: true }], null)).toEqual({});
+    });
+});
+
+describe('deriveAchievementCombatBuffs', () => {
+    test('a fully completed tier is active', () => {
+        const characterAchievements = [
+            { achievementHrid: NOVICE_ACH_1.hrid, isCompleted: true },
+            { achievementHrid: NOVICE_ACH_2.hrid, isCompleted: true },
+        ];
+
+        const { buffs, activeTypeHrids } = deriveAchievementCombatBuffs(characterAchievements, DETAIL_MAP);
+
+        expect(buffs.map((b) => b.typeHrid)).toEqual([
+            '/buff_types/damage',
+            '/buff_types/wisdom',
+            '/buff_types/rare_find',
+        ]);
+        expect(activeTypeHrids).toEqual(['/buff_types/wisdom']);
+    });
+
+    test('a tier one achievement short of complete is inactive', () => {
+        const characterAchievements = [
+            { achievementHrid: NOVICE_ACH_1.hrid, isCompleted: true },
+            { achievementHrid: NOVICE_ACH_2.hrid, isCompleted: false },
+        ];
+
+        const { activeTypeHrids } = deriveAchievementCombatBuffs(characterAchievements, DETAIL_MAP);
+
+        expect(activeTypeHrids).not.toContain('/buff_types/wisdom');
+    });
+
+    test('all three combat tiers complete activates all three buffs', () => {
+        const characterAchievements = [
+            { achievementHrid: NOVICE_ACH_1.hrid, isCompleted: true },
+            { achievementHrid: NOVICE_ACH_2.hrid, isCompleted: true },
+            { achievementHrid: VETERAN_ACH_1.hrid, isCompleted: true },
+            { achievementHrid: ELITE_ACH_1.hrid, isCompleted: true },
+            { achievementHrid: ELITE_ACH_2.hrid, isCompleted: true },
+        ];
+
+        const { activeTypeHrids } = deriveAchievementCombatBuffs(characterAchievements, DETAIL_MAP);
+
+        expect(new Set(activeTypeHrids)).toEqual(
+            new Set(['/buff_types/damage', '/buff_types/wisdom', '/buff_types/rare_find'])
+        );
+    });
+
+    test('non-combat tiers (e.g. Beginner) never appear in the combat buff list, complete or not', () => {
+        const characterAchievements = [{ achievementHrid: BEGINNER_ACH_1.hrid, isCompleted: true }];
+        const { buffs, activeTypeHrids } = deriveAchievementCombatBuffs(characterAchievements, DETAIL_MAP);
+
+        expect(buffs.map((b) => b.typeHrid)).not.toContain('/buff_types/gathering');
+        expect(activeTypeHrids).not.toContain('/buff_types/gathering');
+        expect(activeTypeHrids).toEqual([]);
+    });
+
+    test('empty or missing inputs return all three buffs with none active', () => {
+        const { buffs, activeTypeHrids } = deriveAchievementCombatBuffs(null, null);
+        expect(buffs).toHaveLength(3);
+        expect(activeTypeHrids).toEqual([]);
+
+        const empty = deriveAchievementCombatBuffs([], {});
+        expect(empty.buffs).toHaveLength(3);
+        expect(empty.activeTypeHrids).toEqual([]);
     });
 });
