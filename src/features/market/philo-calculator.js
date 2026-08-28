@@ -12,6 +12,7 @@ import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import {
@@ -452,27 +453,57 @@ class PhiloCalculator {
         const action = this._refineActionByOutput.get(itemHrid);
         if (!action) return null;
 
+        // Artisan tea reduces the materials a craft consumes; the game's own
+        // requirement line shows the reduced figure (88.9 shards, not 100),
+        // and a craft estimate priced at the raw recipe overstated the cost
+        // by the whole bonus. Coins are not materials and are not reduced.
+        const artisanBonus = calculateArtisanBonus(action);
+        const lines = [];
         let cost = 0;
         for (const input of action.inputItems || []) {
             const count = input.count || 0;
             if (input.itemHrid === '/items/coin') {
                 cost += count;
+                if (count > 0) lines.push(`${formatLargeNumber(count)} coins`);
                 continue;
             }
             const priceData = marketAPI.getPrice(input.itemHrid, 0);
             const price = priceData?.ask > 0 ? priceData.ask : priceData?.bid > 0 ? priceData.bid : null;
             if (price === null) return null;
-            cost += price * count;
+            const effective = count * (1 - artisanBonus);
+            cost += price * effective;
+            const countText = artisanBonus > 0 ? `${effective.toFixed(1)} (${count} less artisan)` : `${count}`;
+            lines.push(
+                `${countText} × ${this.getItemName(input.itemHrid)} @ ${formatLargeNumber(price)} = ` +
+                    formatLargeNumber(Math.round(price * effective))
+            );
         }
 
+        let baseNote = null;
         if (action.upgradeItemHrid) {
-            const base = resolveItemPrice(action.upgradeItemHrid, { side: 'buy', mode: 'ask', context: 'profit' });
-            if (!base.missing && base.price > 0) {
-                cost += base.price;
+            const baseDetails = dataManager.getInitClientData()?.itemDetailMap?.[action.upgradeItemHrid];
+            if (baseDetails?.isTradable !== true) {
+                // The capes' bases are vendor items you bring yourself — no
+                // market cost is the honest figure, and worth saying
+                baseNote = 'untradable';
+            } else {
+                const base = resolveItemPrice(action.upgradeItemHrid, { side: 'buy', mode: 'ask', context: 'profit' });
+                if (!base.missing && base.price > 0) {
+                    cost += base.price;
+                } else {
+                    // A tradable base with no listing would silently understate
+                    // the craft cost; disclose rather than pretend
+                    baseNote = 'unpriced';
+                }
             }
         }
 
-        return cost > 0 ? cost : null;
+        if (cost <= 0) return null;
+        this._craftBaseNotes = this._craftBaseNotes || {};
+        this._craftBaseNotes[itemHrid] = baseNote;
+        this._craftBreakdowns = this._craftBreakdowns || {};
+        this._craftBreakdowns[itemHrid] = lines;
+        return cost;
     }
 
     /**
@@ -1326,7 +1357,20 @@ class PhiloCalculator {
         const markers = {
             craft: {
                 glyph: ' ⚒',
-                title: 'Cost is the refinement craft estimate (base item + materials), not a listing.',
+                title: (r) => {
+                    const parts = ['Refinement craft estimate, not a listing:'];
+                    for (const line of philoCalculator._craftBreakdowns?.[r.itemHrid] || []) parts.push(line);
+                    const note = philoCalculator._craftBaseNotes?.[r.itemHrid];
+                    if (note === 'untradable') {
+                        parts.push('Base item: untradable — you bring your own, no market cost.');
+                    } else if (note === 'unpriced') {
+                        parts.push('Base item: tradable but unlisted — the real cost is HIGHER than shown.');
+                    } else {
+                        parts.push('Base item priced at ask, included above.');
+                    }
+                    parts.push('Click to override this cost basis.');
+                    return parts.join('\n');
+                },
             },
             enhanced: {
                 glyph: ` ⚠+${row.costFallbackLevel}`,
@@ -1340,7 +1384,8 @@ class PhiloCalculator {
 
         const marker = markers[row.costSource];
         td.textContent = formatLargeNumber(Math.round(row.cost)) + (marker?.glyph || '');
-        td.title = marker?.title || 'Click to override this item’s cost basis.';
+        const markerTitle = typeof marker?.title === 'function' ? marker.title(row) : marker?.title;
+        td.title = markerTitle || 'Click to override this item’s cost basis.';
         td.style.cursor = 'pointer';
         if (row.costSource === 'enhanced') {
             td.style.color = config.COLOR_WARNING;

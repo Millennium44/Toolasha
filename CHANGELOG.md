@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The philo calculator's craft costs account for Artisan tea, and show their arithmetic
+
+The refinement craft estimate priced the raw recipe — 100 shards when the game's own requirement line says 88.9 with Artisan tea active — overstating cape costs by the whole tea bonus. The estimate now applies the artisan reduction, and hovering the ⚒ cost shows the full accounting: each material's effective count, unit price and subtotal, plus what happened to the base item (untradable bases add no market cost; a tradable-but-unlisted base is disclosed as understating rather than silently omitted).
+
+
 ### Philosopher's Stone Calculator items click through to the marketplace
 
 Item names in the calculator's table now open that item's marketplace page, closing the modal — the same pattern the Trade Ledger and the trial tables use.
