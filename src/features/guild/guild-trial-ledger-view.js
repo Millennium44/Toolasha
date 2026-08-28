@@ -75,6 +75,8 @@ const state = {
     window: '4',
     sortKey: 'damageShare',
     sortDirection: 'desc',
+    /** Substring the member column is filtered to, as typed into the search box */
+    filterText: '',
     /** The roster box's contents, as typed */
     rosterText: '',
     /** Whether the box has ever been filled from the last cycle */
@@ -103,6 +105,7 @@ export function resetLedgerView() {
     state.window = '4';
     state.sortKey = 'damageShare';
     state.sortDirection = 'desc';
+    state.filterText = '';
     state.rosterText = '';
     state.rosterSeeded = false;
     state.tier = '';
@@ -165,7 +168,32 @@ export async function refreshLedgerView() {
 }
 
 /**
- * The table as it currently stands: folded, sorted, and with its coverage.
+ * Only the rows whose member name contains the typed text.
+ *
+ * A member search, not a data filter: `trialsRun` and the coverage sentence
+ * stay computed from the whole window regardless, because a search narrowing
+ * the table to one name must not make the ledger claim fewer trials happened.
+ * Blank or whitespace-only text is "not searching" rather than "match
+ * nothing", so an empty box shows the whole table.
+ *
+ * @param {Array<Object>} rows - From {@link foldLedgerCycles}
+ * @param {string} query - As typed into the search box
+ * @returns {Array<Object>} The rows whose name matches
+ */
+export function filterLedgerRows(rows, query) {
+    const wanted = String(query || '')
+        .trim()
+        .toLowerCase();
+    if (!wanted) return rows || [];
+    return (rows || []).filter((row) =>
+        String(row?.name || '')
+            .toLowerCase()
+            .includes(wanted)
+    );
+}
+
+/**
+ * The table as it currently stands: folded, filtered, sorted, and with its coverage.
  *
  * Exported because it is the whole of the table's logic and the drawing below is
  * not worth a test — a caller hands it cycles and a roster and gets back exactly
@@ -176,6 +204,7 @@ export async function refreshLedgerView() {
  * @param {Array<string>} [options.roster] - Guild members, for no-show rows
  * @param {string} [options.sortKey] - A {@link LEDGER_COLUMNS} key
  * @param {'asc'|'desc'} [options.sortDirection] - Which way
+ * @param {string} [options.filterText] - Member-name search, from {@link filterLedgerRows}
  * @returns {{rows: Array<Object>, trialsRun: number, coverage: Object, cycles: number}} The table
  */
 export function buildLedgerTable({
@@ -183,10 +212,11 @@ export function buildLedgerTable({
     roster = null,
     sortKey = state.sortKey,
     sortDirection = state.sortDirection,
+    filterText = state.filterText,
 } = {}) {
     const folded = foldLedgerCycles(cycles, { rosterNames: roster ?? rosterNames() });
     return {
-        rows: sortLedgerRows(folded.rows, sortKey, sortDirection),
+        rows: sortLedgerRows(filterLedgerRows(folded.rows, filterText), sortKey, sortDirection),
         trialsRun: folded.trialsRun,
         cycles: folded.cycles,
         coverage: observedCoverage(cycles),
@@ -325,6 +355,32 @@ function drawControls(card, table) {
     });
 
     bar.appendChild(select);
+
+    const search = document.createElement('input');
+    search.type = 'text';
+    search.id = 'mwi-ledger-filter-input';
+    search.placeholder = 'Filter by name…';
+    search.value = state.filterText;
+    search.title = 'Narrows the table to members whose name contains this. Trials run and coverage stay unaffected.';
+    search.style.cssText =
+        'flex: 1 1 100px; min-width: 80px; background: rgba(255,255,255,0.08); ' +
+        'border: 1px solid rgba(255,255,255,0.18); color: #e8ecf5; border-radius: 5px; padding: 3px 6px; ' +
+        'font-size: 12px;';
+    search.addEventListener('input', () => {
+        state.filterText = search.value;
+        const cursor = search.selectionStart;
+        guildTrialLedgerPanel.render();
+        // A full redraw rebuilds this very box; find the new one and put the
+        // caret back where it was, or the second keystroke would type into a
+        // box that just lost focus under the user's hands
+        const revived = document.getElementById('mwi-ledger-filter-input');
+        if (revived) {
+            revived.focus();
+            revived.setSelectionRange(cursor, cursor);
+        }
+    });
+    bar.appendChild(search);
+
     bar.appendChild(
         controlButton('Export CSV', 'The table as it stands, with raw numbers a spreadsheet can sort.', () => {
             const csv = toCsv(ledgerCsvRows(table.rows, table.trialsRun), LEDGER_CSV_COLUMNS);

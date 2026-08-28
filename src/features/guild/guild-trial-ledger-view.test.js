@@ -63,6 +63,7 @@ vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
 const {
     buildLedgerTable,
     coverageLine,
+    filterLedgerRows,
     guildTrialLedgerPanel,
     lastAttendedText,
     lastCycleParticipants,
@@ -175,6 +176,34 @@ describe('buildLedgerTable', () => {
 
         const table = buildLedgerTable();
         expect(table.rows.find((row) => row.name === 'Alice').damage).toBe(222);
+    });
+});
+
+describe('filterLedgerRows', () => {
+    const rows = [{ name: 'Alice' }, { name: 'Bob' }, { name: 'AliceInTraining' }];
+
+    test('blank text is not searching — everything shows', () => {
+        expect(filterLedgerRows(rows, '')).toBe(rows);
+        expect(filterLedgerRows(rows, '   ')).toEqual(rows);
+    });
+
+    test('matches a case-insensitive substring anywhere in the name', () => {
+        expect(filterLedgerRows(rows, 'ali').map((row) => row.name)).toEqual(['Alice', 'AliceInTraining']);
+        expect(filterLedgerRows(rows, 'BOB').map((row) => row.name)).toEqual(['Bob']);
+    });
+
+    test('no match is an empty table, not the whole one', () => {
+        expect(filterLedgerRows(rows, 'zzz')).toEqual([]);
+    });
+});
+
+describe('buildLedgerTable filtering', () => {
+    test('a name filter narrows the rows without changing trials run', async () => {
+        await refreshLedgerView();
+        const table = buildLedgerTable({ filterText: 'alice' });
+
+        expect(table.rows.map((row) => row.name)).toEqual(['Alice']);
+        expect(table.trialsRun).toBe(2);
     });
 });
 
