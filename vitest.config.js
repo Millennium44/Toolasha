@@ -26,6 +26,10 @@ export default defineConfig({
         // Agent worktrees live under .claude/worktrees and carry a full copy of src/, so
         // without this the suite runs every test twice and the mathjs-heavy ones time out.
         exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
+        // Half the cores, not all of them: the suite is often run while the
+        // game (and sometimes several concurrent agent suites) share the same
+        // machine, and a full-width worker pool starves the foreground tab.
+        maxWorkers: '50%',
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],

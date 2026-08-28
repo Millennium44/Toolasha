@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The test suite leaves half the machine alone
+
+The vitest worker pool is capped at half the cores so a full run no longer starves the game tab (or anything else) while it goes. Dev-only; nothing in the shipped script changes.
+
 ### Fifth audit round: fourteen fixes across combat, abilities, activity, and the market client
 
 Combat: the Combat Level panel's session and rate history reset on character switch instead of booking the whole gap between two characters' totals as one impossible session; the Party Loot "Combined" view sums experience again instead of always reading 0; a reconnect resend of a dungeon's first wave no longer wipes a run already in progress; the Sim Accuracy checker starts a fresh watch per character instead of comparing the new character against the old one's observations; loadout snapshots reload per character instead of serving the previous character's gear to the profit calculators; and a reconnect that skips a wave's opening message no longer blends the finished fight's damage into the new one or permanently disables monster-name recovery. Abilities: book targets reset on character switch instead of aiming an alt at the main's target level, and a maxed ability says it's at the cap instead of "0 books needed" with a broken input. Character select: the activity icon follows the queue like the text always did instead of staying pinned to the first action. Market client: simultaneous forced refreshes can no longer burst parallel requests past the dedup. Combat sim tools: exp rates with thousand separators parse instead of reading as untrained, and the level calculator starts sim-imported skills from their real level instead of level 1.
