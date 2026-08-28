@@ -241,6 +241,20 @@ function capitalize(str) {
 }
 
 /**
+ * Parse an exp/hour figure out of the sim results panel.
+ *
+ * The panel formats these with thousand separators once the number gets
+ * large enough (`12,345`), same as the rest of the game's DOM — `Number()`
+ * on that text is NaN, which `expRates[skillName] || 0` then silently turns
+ * into "not trained in simulation" for a skill that is actually gaining exp.
+ * @param {string} text - Cell text from the results row
+ * @returns {number} The value, or NaN when it is not one
+ */
+function parseExpValue(text) {
+    return Number(String(text).replace(/,/g, ''));
+}
+
+/**
  * Extract exp/hour rates from combat sim DOM
  * @returns {Object|null} Exp rates object or null if not found
  */
@@ -257,7 +271,7 @@ export function extractExpRates() {
         if (row.children.length >= 2) {
             const skillText = row.children[0]?.textContent?.toLowerCase() || '';
             const expText = row.children[1]?.textContent || '';
-            const expValue = Number(expText);
+            const expValue = parseExpValue(expText);
 
             // Match skill names
             if (skillText.includes('stamina')) {
