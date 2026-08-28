@@ -315,6 +315,16 @@ async function disableAllFeatures() {
  * fires) before and after every await, so a reinit a newer switch has
  * superseded aborts instead of clobbering the newer character's state — the
  * "latest character wins" invariant. Ported from upstream Celasha/Toolasha#622.
+ *
+ * A burst of switches — four characters in one browser, clicked through faster
+ * than a second apart — is coalesced here rather than upstream. Every switch
+ * still emits both events (they are what reloads per-character settings and
+ * lets each feature persist and clear the departing character's state), but the
+ * *expensive* half runs once per burst: the first switch tears the feature
+ * layer down, the rest find it already down and skip, and only the switch that
+ * is still current when the burst settles re-initialises. Data-manager used to
+ * do this by dropping the events outright, which meant the second character ran
+ * on the first character's settings until some later, slower switch fixed it.
  */
 function setupCharacterSwitchHandler() {
     // One chain that every switch step is appended to, so no two ever overlap.
@@ -326,6 +336,12 @@ function setupCharacterSwitchHandler() {
         return lifecycleChain;
     };
 
+    // Whether this chain has torn the feature layer down and not yet brought it
+    // back up. Starts false: at boot the layer is up (entrypoint initialises it
+    // before this handler can ever fire), so the first switch of the session
+    // does a real teardown.
+    let tornDown = false;
+
     // Cleanup phase
     dataManager.on('character_switching', () => {
         // Clear the config cache synchronously, before the chain awaits anything,
@@ -333,7 +349,15 @@ function setupCharacterSwitchHandler() {
         if (config && typeof config.clearSettingsCache === 'function') {
             config.clearSettingsCache();
         }
-        enqueue(() => disableAllFeatures());
+        enqueue(async () => {
+            // Mid-burst the layer is already down and every feature's disable()
+            // is a no-op — a hundred of them per switch is the storm the old
+            // rapid-switch guard was defending against. Skip, and let the
+            // settling switch bring the layer back up for whoever is current.
+            if (tornDown) return;
+            tornDown = true;
+            await disableAllFeatures();
+        });
     });
 
     // Re-initialization phase
@@ -357,6 +381,9 @@ function setupCharacterSwitchHandler() {
             if (isStale()) return;
 
             await initializeFeatures();
+            // The layer is up again for the character that is current now, so
+            // the next switch owes a real teardown.
+            tornDown = false;
         });
     });
 }

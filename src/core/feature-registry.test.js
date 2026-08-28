@@ -453,4 +453,49 @@ describe('setupCharacterSwitchHandler — serialized lifecycle', () => {
         expect(initialize).toHaveBeenCalledTimes(2);
         vi.useRealTimers();
     });
+
+    test('a rapid burst tears the layer down once and re-initializes once, for the settling character', async () => {
+        // A→B→C clicked through faster than the reinit for B can run. Every
+        // switch still emits both events — data-manager no longer drops them —
+        // so the coalescing has to happen here: one teardown, and one reinit
+        // for C, the character still current when the burst settles.
+        vi.useFakeTimers();
+        state.currentCharacterId = 'C';
+        const { initialize, disable } = oneFeature();
+
+        featureRegistry.setupCharacterSwitchHandler();
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'C' });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(disable).toHaveBeenCalledTimes(1);
+        expect(initialize).toHaveBeenCalledTimes(1);
+        // Settings were reloaded once, for C, before C's features came up
+        expect(state.calls).toEqual(['clearCache', 'clearCache', 'disable:x', 'loadSettings', 'applyColors', 'init:x']);
+        vi.useRealTimers();
+    });
+
+    test('the switch after a burst gets a real teardown again', async () => {
+        vi.useFakeTimers();
+        state.currentCharacterId = 'C';
+        const { disable } = oneFeature();
+
+        featureRegistry.setupCharacterSwitchHandler();
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'C' });
+        await vi.advanceTimersByTimeAsync(200);
+
+        // Burst over, layer back up for C — a later switch must tear it down
+        state.currentCharacterId = 'D';
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'D' });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(disable).toHaveBeenCalledTimes(2);
+        vi.useRealTimers();
+    });
 });
