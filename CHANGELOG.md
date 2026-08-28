@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sixth audit round: eleven fixes reaching into the engines
+
+Simulation engines: a labyrinth room at very low level could scale a monster's ability below level 1, computing a negative level bonus — now floored at the level-1 baseline; the drop-luck FFT window now sizes itself to the session's own payouts, so one huge rare drop can't alias the "how lucky was that" math into silent nonsense; a zero-balance risk-of-ruin run no longer prints "no ruin occurred" beside "ruin probability: 100%"; and the tea optimizer now flags recommendations that lean on an unpriced material instead of silently treating it as free. Enhancement: a Blessed Tea jump that passes over a milestone records it, and a stale pending-start flag no longer fragments the next character's session. Displays: inventory category totals update again when Sort and Badge Prices are both off; the equipment level overlay follows in-place item swaps (an attribute-only change the shared observer never saw); loadout enhancement badges refresh on inventory changes and character switches; marketplace owned-count badges reset when the character does; and the briefing overlay tile clears the previous character's market-fill count the moment a switch starts instead of showing it under the new character's name. Startup: a redundant settings read is gone and the startup trace gains sub-marks inside the settings window, so a future slow trace says exactly where the time went.
+
+### Sixth audit round: six conveniences
+
+Task statistics export as CSV; claiming a task shows a toast naming what it paid; a badge by the task header totals reroll spend on the current board; the mention popup gains a Copy button; pop-out chat remembers its size and position (clamped to the current screen) and shows a running blocked-message count.
+
 ### The test suite leaves half the machine alone
 
 The vitest worker pool is capped at half the cores so a full run no longer starves the game tab (or anything else) while it goes. Dev-only; nothing in the shipped script changes.
