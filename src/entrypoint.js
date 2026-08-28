@@ -1987,6 +1987,15 @@ if (isCombatSimulatorPage()) {
                 // Ensure storage/config are initialized before loading character settings
                 // On Steam, character data can arrive before IndexedDB is open
                 await storageReady;
+                // Sub-mark inside the character:data → settings:character gap: this
+                // one says whether storageReady was still pending (should not be —
+                // storage:open/config:loaded land within the first ~100ms) or whether
+                // the setTimeout below it had to wait for a busy main thread before
+                // this line even ran. A trace where this sits right after
+                // character:data means the delay was all in config.loadSettings();
+                // one where it doesn't means the machine was contended before this
+                // code got a turn at all.
+                performanceMonitor.mark('settings:storageReady');
 
                 // Start the one startup market load now, not awaited: the
                 // first market feature used to force a fresh fetch inside its
@@ -2001,6 +2010,10 @@ if (isCombatSimulatorPage()) {
 
                 // Reload config settings with character-specific data
                 await config.loadSettings();
+                // Isolates config.loadSettings() itself — the IndexedDB reads for
+                // the character's settings key and the one-time-rewrite flag — from
+                // applyColorSettings() and everything after settings:character.
+                performanceMonitor.mark('settings:loaded');
                 config.applyColorSettings();
                 performanceMonitor.mark('settings:character');
 
