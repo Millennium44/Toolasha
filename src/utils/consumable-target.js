@@ -33,6 +33,17 @@ const DEFAULT_INDEX = 1;
 let index = DEFAULT_INDEX;
 
 /**
+ * Bumped on every `loadTarget()` call. A read that resolves after a newer one
+ * has already started belongs to a character this module has since left —
+ * two switches close enough together interleave their `readScoped` awaits,
+ * and storage does not promise to resolve them in call order. Without this,
+ * the older read's answer can land last and overwrite `index` with the
+ * departed character's target, which the very next `cycleTarget()` then
+ * writes down permanently under the *current* character's key.
+ */
+let generation = 0;
+
+/**
  * @returns {{label: string, seconds: number}} The duration everything is
  *   measured against
  */
@@ -65,17 +76,20 @@ export function cycleTarget() {
  * @returns {Promise<void>}
  */
 export async function loadTarget(onLoaded) {
+    const started = (generation += 1);
     try {
         // Waits for the database: it is opened after the libraries are
         // evaluated, so a read at module scope always returns the default
         await storage.ready;
         const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        if (started !== generation) return; // A newer switch already started its own read
         const found = TARGETS.findIndex((target) => target.seconds === saved?.targetSeconds);
         // A value stored by an older list must not win over the code's
         index = found >= 0 ? found : DEFAULT_INDEX;
     } catch (error) {
         console.error('[ConsumableTarget] Reading the target failed:', error);
     }
+    if (started !== generation) return; // Superseded — the newer call owns the next redraw
     onLoaded?.(currentTarget());
 }
 

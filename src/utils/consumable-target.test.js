@@ -160,4 +160,48 @@ describe('one answer per character', () => {
         expect(store.data['consumablesSettings_iron456']).toEqual({ targetSeconds: 3 * 86400 });
         expect(store.data.consumablesSettings_market123).toEqual({ targetSeconds: 7 * 86400 });
     });
+
+    test('a read started before a switch does not land on top of the switch', async () => {
+        // The `character_switched` handler fires a fresh loadTarget() with no
+        // way to cancel whichever read is already in flight. If that read's
+        // own storage.get began before the switch — capturing the departing
+        // character's key — but resolves after the new character's own load,
+        // it must not overwrite what the new character already loaded.
+        store.data = {
+            consumablesSettings_market123: { targetSeconds: 7 * 86400 }, // 1 week
+            consumablesSettings_iron456: { targetSeconds: 8 * 3600 }, // 8 hours
+        };
+
+        const { default: mockedStorage } = await import('../core/storage.js');
+        const realGet = mockedStorage.get;
+        let releaseDeparting;
+        const gate = new Promise((resolve) => {
+            releaseDeparting = resolve;
+        });
+        mockedStorage.get = async (key, name, fallback) => {
+            if (key === 'consumablesSettings_market123') await gate;
+            return realGet(key, name, fallback);
+        };
+
+        character.id = 'market123';
+        character.mode = 'standard';
+        const departingLoad = loadTarget();
+
+        // Let the departing character's read reach (and block on) its own
+        // storage.get before switching characters out from under it.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        character.id = 'iron456';
+        character.mode = 'ironcow';
+        await loadTarget();
+        expect(currentTarget().label).toBe('8 hours');
+
+        releaseDeparting();
+        await departingLoad;
+
+        // The stale, since-superseded read must not have won.
+        expect(currentTarget().label).toBe('8 hours');
+
+        mockedStorage.get = realGet;
+    });
 });
