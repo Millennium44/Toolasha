@@ -83,3 +83,46 @@ describe('mention popup sender names', () => {
         expect(document.querySelectorAll('.mwi-chat-profile-name')).toHaveLength(1);
     });
 });
+
+describe('mention popup click-outside', () => {
+    test('mousedown on an unrelated element outside the popup closes it', () => {
+        const onClose = vi.fn();
+        mentionPopup.open(
+            '/chat_channel_types/general',
+            [{ sName: 'Someone', m: 'hi @Me', t: '2026-01-01T00:00:00.000Z' }],
+            'General',
+            onClose
+        );
+
+        const outside = document.createElement('div');
+        document.body.appendChild(outside);
+        outside.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(document.getElementById('mwi-mention-popup')).toBeNull();
+    });
+
+    test('mousedown on the mention badge that opened this popup does not close it', () => {
+        // The badge that opens the popup lives on the chat tab, outside the popup
+        // container, so it is "outside" by DOM containment. Its own click handler
+        // (mention-tracker.js) re-opens/refreshes the popup on 'click', which fires
+        // after this 'mousedown' — closing here first would call onClose
+        // (clearMentions) and let the badge be removed from the DOM before the
+        // reopen ever runs, silently discarding the unread mentions.
+        const onClose = vi.fn();
+        mentionPopup.open(
+            '/chat_channel_types/general',
+            [{ sName: 'Someone', m: 'hi @Me', t: '2026-01-01T00:00:00.000Z' }],
+            'General',
+            onClose
+        );
+
+        const badge = document.createElement('span');
+        badge.className = 'mwi-mention-badge';
+        document.body.appendChild(badge);
+        badge.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+
+        expect(onClose).not.toHaveBeenCalled();
+        expect(document.getElementById('mwi-mention-popup')).not.toBeNull();
+    });
+});

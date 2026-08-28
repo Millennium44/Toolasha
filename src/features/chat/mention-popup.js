@@ -233,9 +233,15 @@ class MentionPopup {
      */
     _setupClickOutside() {
         this.clickOutsideHandler = (e) => {
-            if (this.container && !this.container.contains(e.target)) {
-                this.close();
-            }
+            if (!this.container || this.container.contains(e.target)) return;
+            // The mention badge that opened this popup lives outside `this.container`.
+            // Its own 'click' handler re-opens/refreshes the popup for its channel, but
+            // that handler runs on 'click', after this 'mousedown' listener. Closing here
+            // first would call onCloseFn (clearMentions) and, on count 0, remove the badge
+            // from the DOM before its paired click ever runs — wiping the unread mentions
+            // a re-click on the same badge was meant to bring back into view.
+            if (e.target.closest?.('.mwi-mention-badge')) return;
+            this.close();
         };
         // Use mousedown so it fires before any other click handlers
         document.addEventListener('mousedown', this.clickOutsideHandler);
