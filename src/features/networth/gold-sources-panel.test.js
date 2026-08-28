@@ -31,6 +31,7 @@ const {
     calendarCellKind,
     categoryLineText,
     marketMovementText,
+    formatAttributionAsText,
     MODAL_ID,
 } = await import('./gold-sources-panel.js');
 
@@ -628,5 +629,33 @@ describe('calendarCellKind', () => {
         expect(calendarCellKind({ delta: 0 })).toBe('flat');
         expect(calendarCellKind({ delta: null })).toBe('nodata');
         expect(calendarCellKind(null)).toBe('nodata');
+    });
+});
+
+describe('formatAttributionAsText', () => {
+    test('mirrors what the panel draws — day rows, sources, residual, and the measured total', () => {
+        const text = formatAttributionAsText(attribution());
+
+        expect(text).toContain('Where the gold came from — 2026-08-19 to 2026-08-20');
+        expect(text).toContain('2026-08-19: +7.00M');
+        expect(text).toContain('2026-08-20: no data');
+        expect(text).toContain('Combat drops: +5.00M');
+        expect(text).toContain('Consumables: -300.00K');
+        expect(text).toContain('Unexplained residual: +13.62M');
+        expect(text).toContain('Measured net worth change: +20.00M');
+    });
+
+    test('a window with no measured change says so rather than printing a fabricated number', () => {
+        const text = formatAttributionAsText(
+            attribution({ totals: { sources: {}, explained: 0, delta: null, residual: null } })
+        );
+
+        expect(text).toContain('Unexplained residual: —');
+        expect(text).toContain('Measured net worth change: not measured');
+    });
+
+    test('handles a missing attribution without throwing', () => {
+        expect(() => formatAttributionAsText(null)).not.toThrow();
+        expect(formatAttributionAsText(null)).toContain('Where the gold came from');
     });
 });

@@ -173,6 +173,65 @@ export function marketMovementText(movement) {
 }
 
 /**
+ * The whole attribution as plain text, for pasting into a chat or a note.
+ *
+ * Mirrors what the bars and table already draw — the same day rows, the same
+ * source order, the same residual — so what a user copies out says exactly
+ * what the panel on screen said, not a re-derived summary that could drift
+ * from it.
+ *
+ * @param {Object} attribution - From `attributeGoldSources`
+ * @returns {string} Plain text block
+ */
+export function formatAttributionAsText(attribution) {
+    const lines = [];
+    const from = attribution?.from;
+    const to = attribution?.to;
+    lines.push(
+        Number.isFinite(from) && Number.isFinite(to)
+            ? `Where the gold came from — ${localDayId(from)} to ${localDayId(to)}`
+            : 'Where the gold came from'
+    );
+    lines.push('');
+
+    const rows = attribution?.days || [];
+    if (rows.length > 0) {
+        lines.push('By day:');
+        for (const row of rows) {
+            const value = Number.isFinite(row.delta)
+                ? `${row.delta > 0 ? '+' : ''}${networthFormatter(Math.round(row.delta))}`
+                : 'no data';
+            lines.push(`  ${row.day}: ${value}`);
+        }
+        lines.push('');
+    }
+
+    lines.push('By source:');
+    const totals = attribution?.totals?.sources || {};
+    for (const key of SOURCE_KEYS) {
+        const meta = SOURCE_META[key];
+        const value = totals[key] || 0;
+        lines.push(`  ${meta.label}: ${value > 0 ? '+' : ''}${networthFormatter(Math.round(value))}`);
+    }
+    const residual = attribution?.totals?.residual;
+    lines.push(
+        `  Unexplained residual: ${
+            Number.isFinite(residual) ? (residual > 0 ? '+' : '') + networthFormatter(Math.round(residual)) : '—'
+        }`
+    );
+    lines.push('');
+
+    const delta = attribution?.totals?.delta;
+    lines.push(
+        `Measured net worth change: ${
+            Number.isFinite(delta) ? (delta > 0 ? '+' : '') + networthFormatter(Math.round(delta)) : 'not measured'
+        }`
+    );
+
+    return lines.join('\n');
+}
+
+/**
  * A day id as `MM-DD`, which is what a per-day axis needs.
  * @param {string} dayId - `YYYY-MM-DD`
  * @returns {string} Short label
@@ -888,6 +947,9 @@ class GoldSourcesPanel {
         // active window is read relative to the day chosen rather than to now.
         // Null means "now", which is what every window button resets it to.
         this.anchorTo = null;
+        // The attribution behind the panel currently on screen, so the copy
+        // button can format exactly what is drawn without rebuilding it.
+        this._lastAttribution = null;
     }
 
     /**
@@ -964,6 +1026,29 @@ class GoldSourcesPanel {
             header.appendChild(today);
         }
 
+        const copyBtn = document.createElement('button');
+        copyBtn.id = 'mwi-gold-sources-copy';
+        copyBtn.textContent = 'Copy';
+        copyBtn.title = 'Copy this breakdown as text';
+        copyBtn.style.cssText =
+            'background: none; border: 1px solid rgba(255,255,255,0.16); color: #9ca3af; ' +
+            'border-radius: 3px; padding: 3px 8px; cursor: pointer; font-size: 11px;';
+        copyBtn.addEventListener('click', async () => {
+            const text = formatAttributionAsText(this._lastAttribution);
+            const original = copyBtn.textContent;
+            try {
+                await navigator.clipboard.writeText(text);
+                copyBtn.textContent = 'Copied!';
+            } catch (error) {
+                console.error('[GoldSources] Copy to clipboard failed:', error);
+                copyBtn.textContent = 'Copy failed';
+            }
+            setTimeout(() => {
+                copyBtn.textContent = original;
+            }, 1500);
+        });
+        header.appendChild(copyBtn);
+
         const close = document.createElement('button');
         close.textContent = '✕';
         close.style.cssText = 'background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 14px;';
@@ -1005,6 +1090,7 @@ class GoldSourcesPanel {
         try {
             const { attribution, series } = await this.buildAttribution();
             if (!this.modal) return;
+            this._lastAttribution = attribution;
             bodyHolder.textContent = '';
             const onSelectDay = async (dayId) => {
                 this.activeWindow = 'day';
@@ -1025,6 +1111,7 @@ class GoldSourcesPanel {
     closeModal() {
         this.modal?.remove();
         this.modal = null;
+        this._lastAttribution = null;
     }
 }
 
