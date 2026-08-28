@@ -23,6 +23,21 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 /** How many weekly summary lines the modal shows. */
 const WEEKS_SHOWN = 8;
 
+/**
+ * Item rows whose display name contains the query, or all of them when the
+ * query is blank. Pure, so the filter box's logic is testable without a modal.
+ *
+ * @param {Array<Object>} items - Aggregated item rows, each carrying itemHrid
+ * @param {string} query - What the user typed into the filter box
+ * @param {Function} getName - `(itemHrid) => string`
+ * @returns {Array<Object>}
+ */
+export function filterItemsByName(items, query, getName) {
+    const needle = (query || '').trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((item) => getName(item.itemHrid).toLowerCase().includes(needle));
+}
+
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'tradeLedgerModal';
 
@@ -39,6 +54,8 @@ class TradeLedgerView {
         this.tabCleanupObserver = null;
         this.aggregates = null;
         this.itemNameCache = new Map();
+        /** What the filter box currently reads; reset each time the modal is opened fresh. */
+        this.filterText = '';
     }
 
     /**
@@ -195,6 +212,12 @@ class TradeLedgerView {
             this.createModal();
         }
 
+        // A fresh open shows everything; a filter left over from last time would
+        // read as items having silently vanished from the ledger.
+        this.filterText = '';
+        const filterInput = this.modal.querySelector('.mwi-trade-ledger-filter');
+        if (filterInput) filterInput.value = '';
+
         this.modal.style.display = 'flex';
         this.renderContent();
     }
@@ -307,11 +330,35 @@ class TradeLedgerView {
             line-height: 1.6;
         `;
 
+        const filterRow = document.createElement('div');
+        filterRow.style.cssText = 'margin-bottom: 10px;';
+
+        const filterInput = document.createElement('input');
+        filterInput.type = 'text';
+        filterInput.placeholder = 'Filter by item name…';
+        filterInput.className = 'mwi-trade-ledger-filter';
+        filterInput.style.cssText = `
+            width: 100%;
+            box-sizing: border-box;
+            padding: 6px 10px;
+            background: #1a1a1a;
+            border: 1px solid #4a4a4a;
+            border-radius: 4px;
+            color: #e8ecf5;
+            font-size: 13px;
+        `;
+        filterInput.addEventListener('input', () => {
+            this.filterText = filterInput.value;
+            this.renderItemTable();
+        });
+        filterRow.appendChild(filterInput);
+
         const tableContainer = document.createElement('div');
         tableContainer.className = 'mwi-trade-ledger-table-container';
 
         content.appendChild(header);
         content.appendChild(weeksContainer);
+        content.appendChild(filterRow);
         content.appendChild(tableContainer);
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
@@ -319,7 +366,7 @@ class TradeLedgerView {
         this.minimizeCtl = attachMinimize({
             panel: content,
             header,
-            body: [weeksContainer, tableContainer],
+            body: [weeksContainer, filterRow, tableContainer],
             panelKey: PANEL_KEY,
             beforeEl: closeBtn,
             accent: '#e8ecf5',
@@ -398,13 +445,16 @@ class TradeLedgerView {
             tableContainer.removeChild(tableContainer.firstChild);
         }
 
-        const items = this.aggregates.items;
+        const allItems = this.aggregates.items;
+        const items = filterItemsByName(allItems, this.filterText, (itemHrid) => this.getItemName(itemHrid));
 
         if (items.length === 0) {
             const empty = document.createElement('div');
             empty.textContent =
-                'No fills recorded yet. The ledger records fills on your own listings as they happen — ' +
-                'place or watch some orders and come back.';
+                allItems.length === 0
+                    ? 'No fills recorded yet. The ledger records fills on your own listings as they happen — ' +
+                      'place or watch some orders and come back.'
+                    : `No item names match "${this.filterText.trim()}".`;
             empty.style.cssText = `
                 padding: 20px;
                 text-align: center;
@@ -519,7 +569,9 @@ class TradeLedgerView {
     }
 
     /**
-     * Export the per-item aggregates as CSV (raw numbers, not display strings)
+     * Export the per-item aggregates as CSV (raw numbers, not display strings).
+     * Honors the item-name filter box, so the export always matches the table
+     * on screen rather than silently exporting more than was visible.
      */
     exportCSV() {
         const columns = [
@@ -536,7 +588,10 @@ class TradeLedgerView {
             { key: 'unmatchedRevenue', label: 'Revenue With Unknown Cost' },
             { key: 'lastActivity', label: 'Last Activity' },
         ];
-        const rows = this.aggregates.items.map((item) => ({
+        const filtered = filterItemsByName(this.aggregates.items, this.filterText, (itemHrid) =>
+            this.getItemName(itemHrid)
+        );
+        const rows = filtered.map((item) => ({
             ...item,
             item: this.getItemName(item.itemHrid),
             lastActivity: new Date(item.lastActivity).toISOString(),
