@@ -19,11 +19,9 @@ Four additions to "Where the gold came from", all aimed at the grey residual row
 
 A hundred unsigned names twice over is most of the trials tab. The block now has a heading — "Trial signups — Skilling N · Combat M unsigned" — that folds and unfolds the lists on click, remembered across reloads.
 
-
 ### The price-panel pin stops floating in the corner on listing tabs
 
 On My Listings and History the game keeps the last item's node in the DOM but hidden, and the price panel's 📌 anchored to its 0×0 rectangle — parking the pin in the page's top-left corner. A hidden anchor now hides the pin instead.
-
 
 ### Labyrinth restock: pick your per-run basis, and the measured figure stops lying
 
@@ -1346,25 +1344,22 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.25.0](https://github.com/Millennium44/Toolasha/compare/v3.24.0...v3.25.0) (2026-08-28)
 
-
 ### Features
 
-* gold panel residual says what it was made of ([9c769f6](https://github.com/Millennium44/Toolasha/commit/9c769f6766473c948bd87fb6169a378b69894f3b))
-* labyrinth per-run basis pill, and the measured spend only trusts runs seen from the door ([8a15360](https://github.com/Millennium44/Toolasha/commit/8a1536030e9b457d82e2d7b86ec48d28ac5c6539))
-* Max button on the credit exchange, and held counts in the ranking table ([5ddfded](https://github.com/Millennium44/Toolasha/commit/5ddfdedc2a1717fbf8eed81c7a688c8243f3d85b))
-* the trial signups block folds from its heading, remembered across reloads ([c7e58d1](https://github.com/Millennium44/Toolasha/commit/c7e58d1226768ed14bc17d7cfba68a9f4c8caad6))
-
+- gold panel residual says what it was made of ([9c769f6](https://github.com/Millennium44/Toolasha/commit/9c769f6766473c948bd87fb6169a378b69894f3b))
+- labyrinth per-run basis pill, and the measured spend only trusts runs seen from the door ([8a15360](https://github.com/Millennium44/Toolasha/commit/8a1536030e9b457d82e2d7b86ec48d28ac5c6539))
+- Max button on the credit exchange, and held counts in the ranking table ([5ddfded](https://github.com/Millennium44/Toolasha/commit/5ddfdedc2a1717fbf8eed81c7a688c8243f3d85b))
+- the trial signups block folds from its heading, remembered across reloads ([c7e58d1](https://github.com/Millennium44/Toolasha/commit/c7e58d1226768ed14bc17d7cfba68a9f4c8caad6))
 
 ### Bug Fixes
 
-* hide the price-panel pin when the marketplace shows no item ([b01163b](https://github.com/Millennium44/Toolasha/commit/b01163b2e4df6e282a8dc831290fea8d30f93015))
-* Missing badges count items a buy order bought but the player has not claimed ([31dfbf1](https://github.com/Millennium44/Toolasha/commit/31dfbf1f3999cc1050c6fee99d0204d3b5042800))
-* shrine buff levels refuse captures and records owned by another character ([51efba9](https://github.com/Millennium44/Toolasha/commit/51efba974997d9849c78604403d21ddf7a1f71d2))
-
+- hide the price-panel pin when the marketplace shows no item ([b01163b](https://github.com/Millennium44/Toolasha/commit/b01163b2e4df6e282a8dc831290fea8d30f93015))
+- Missing badges count items a buy order bought but the player has not claimed ([31dfbf1](https://github.com/Millennium44/Toolasha/commit/31dfbf1f3999cc1050c6fee99d0204d3b5042800))
+- shrine buff levels refuse captures and records owned by another character ([51efba9](https://github.com/Millennium44/Toolasha/commit/51efba974997d9849c78604403d21ddf7a1f71d2))
 
 ### Tests
 
-* cross-tab lock test brings its own Web Locks — CI's Node 20 has no navigator ([8aee09c](https://github.com/Millennium44/Toolasha/commit/8aee09cff50240d646663de6ac3eb80f46ab4180))
+- cross-tab lock test brings its own Web Locks — CI's Node 20 has no navigator ([8aee09c](https://github.com/Millennium44/Toolasha/commit/8aee09cff50240d646663de6ac3eb80f46ab4180))
 
 ## [3.24.0](https://github.com/Millennium44/Toolasha/compare/v3.23.0...v3.24.0) (2026-08-28)
 
