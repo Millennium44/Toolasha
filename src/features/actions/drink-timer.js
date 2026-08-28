@@ -92,6 +92,23 @@ class DrinkTimer {
             this.updateDebounceTimer = null;
         });
 
+        // A low-supply alert already fired for an action type disarms it (see
+        // thresholdCrossing) so the same dip is not announced twice. That bit is
+        // keyed only by actionTypeHrid, not by character — switching to a different
+        // character (1 main + 3 ironcow in one browser share this tab) carries the
+        // previous character's disarmed types over, so an alt whose milking tea is
+        // already critically low on its very first observation gets no warning at
+        // all, because "milking" was disarmed by the main character earlier in the
+        // session. Re-arming on every real switch makes the alt's first reading
+        // count as news again, same as a fresh page load would.
+        const onCharacterSwitch = (data) => {
+            if (data?._isCharacterSwitch) this.drinkAlertArmed.clear();
+        };
+        dataManager.on('character_initialized', onCharacterSwitch);
+        this.observers.push(() => {
+            dataManager.off('character_initialized', onCharacterSwitch);
+        });
+
         // Containers already on screen were inserted before the observer was
         // listening, so they are picked up once here; everything after arrives
         // through the observer

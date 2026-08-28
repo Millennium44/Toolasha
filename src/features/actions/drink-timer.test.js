@@ -25,9 +25,17 @@ const calc = vi.hoisted(() => ({
     drinks: [{ itemHrid: '/items/wisdom_tea', name: 'Wisdom Tea', totalSeconds: 10 * 3600 }],
 }));
 
+const config = vi.hoisted(() => ({
+    getSetting: () => false,
+}));
+
+const notify = vi.hoisted(() => ({
+    calls: 0,
+}));
+
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => false,
+        getSetting: (key) => config.getSetting(key),
         getSettingValue: (key, fallback) => fallback,
     },
 }));
@@ -51,7 +59,11 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 
 vi.mock('../notifications/notification-service.js', () => ({
-    default: { notify: () => {} },
+    default: {
+        notify: () => {
+            notify.calls++;
+        },
+    },
 }));
 
 vi.mock('../../utils/drink-calculator.js', () => ({
@@ -93,6 +105,9 @@ beforeEach(() => {
     game.actions = {};
     observer.handlers.clear();
     calc.calls = 0;
+    calc.drinks = [{ itemHrid: '/items/wisdom_tea', name: 'Wisdom Tea', totalSeconds: 10 * 3600 }];
+    config.getSetting = () => false;
+    notify.calls = 0;
 });
 
 afterEach(() => {
@@ -157,6 +172,35 @@ describe('drink timer updates', () => {
         game.listeners.get('items_updated')();
         vi.advanceTimersByTime(300);
         expect(calc.calls).toBe(2);
+    });
+
+    test('a character switch re-arms the low-supply alert for the new character', () => {
+        // notifications_consumableLow needs to read true for this scenario, unlike
+        // every other test in this file
+        config.getSetting = (key) => key === 'notifications_consumableLow';
+
+        drinkTimer.initialize();
+        const container = mountContainer();
+        observer.handlers.get('GatheringProductionSkillPanel_consumablesContainer')(container);
+
+        // Main character's woodcutting tea is critically low — fires once and disarms
+        calc.drinks = [{ itemHrid: '/items/wisdom_tea', name: 'Wisdom Tea', totalSeconds: 60 }];
+        game.listeners.get('items_updated')();
+        vi.advanceTimersByTime(300);
+        expect(notify.calls).toBe(1);
+
+        // Same reading again (still low) — already disarmed, no repeat
+        game.listeners.get('items_updated')();
+        vi.advanceTimersByTime(300);
+        expect(notify.calls).toBe(1);
+
+        // Switch to an ironcow whose woodcutting tea is *also* already critically
+        // low on its very first reading. Without a re-arm this stays silent because
+        // "woodcutting" was disarmed by the previous character.
+        game.listeners.get('character_initialized')({ _isCharacterSwitch: true });
+        game.listeners.get('items_updated')();
+        vi.advanceTimersByTime(300);
+        expect(notify.calls).toBe(2);
     });
 
     test('cleanup cancels a pending redraw and removes the rows', () => {
