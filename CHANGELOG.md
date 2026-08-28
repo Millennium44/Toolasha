@@ -6,10 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Third audit round: fourteen fixes across planner, alchemy, house, chat, and profiles
+
+Planner: craft-arbitrage input quantities now carry the same Artisan tea discount as their cost, the Queue Time Left tile rounds up to whole actions like the other-character estimate always did, and the goal planner fully resets on a character switch instead of showing the previous character's plans and repricing against their skills. Alchemy: decompose history counts batched successes from item deltas (efficiency procs were scored as one success), coinify logs when a sell price is missing instead of silently degrading, and the gold-protection action cap stops counting a partial stack's remainder as one more action. House: the panel's bid price was always identical to the ask; it now quotes real bids. Collections: click-to-navigate survives the panel remounting. Chat and profiles: interactive elements in extended chat history work again after the February fiber change, the mention badge toggles its popup instead of close-then-reopen fighting itself, pop-out chat relays are tagged per tab so a second logged-in character can't answer the wrong pop-out, the Elite-achievement whisper icon clears when the profile modal swaps to another player, enhancement calibration forgets its cache on character switch, and the ironcow panel stops showing the previous character's costing when the new one has none.
+
+### Third audit round: six conveniences
+
+The treasure tracker remembers which chests you had expanded; the Enhancement Tracker session summary gains a ⧉ Copy button; custom-tab headers explain their item count and value on hover; the combat/lab sim's remembered-results banner gains a one-click Clear; the upgrade tables remember your sort choice; and the Δ columns show the exact baseline → upgraded arithmetic on hover.
+
 ### Chest rooms stop wearing combat badges on the labyrinth map
 
 A treasure room carrying a stray monster field in the game's data was classified as a fight and given a clear-chance badge. Room classification now trusts the room's own type — the convention every other classifier in the codebase already followed — on both the calculation and cache-restore paths.
-
 
 ### The philo calculator's craft costs account for Artisan tea, and show their arithmetic
 
