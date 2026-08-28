@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
     drinks: [],
     enhancingParams: { enhancingLevel: 1, houseLevel: 0, toolBonus: 0, speedBonus: 0, teas: {}, guzzlingBonus: 1 },
     enhancementResult: { attempts: 1, protectionCount: 0 },
+    marketListings: [],
 }));
 
 vi.mock('../core/config.js', () => ({
@@ -27,6 +28,7 @@ vi.mock('../core/data-manager.js', () => ({
         getCurrentActions: () => state.currentActions,
         getActionDetails: (hrid) => state.gameData?.actionDetailMap?.[hrid] || null,
         getActionDrinkSlots: () => state.drinks,
+        getMarketListings: () => state.marketListings,
     },
 }));
 
@@ -74,6 +76,7 @@ beforeEach(() => {
     state.currentActions = [];
     state.equipment = new Map();
     state.drinks = [];
+    state.marketListings = [];
 });
 
 describe('calculateMaterialRequirements', () => {
@@ -149,6 +152,18 @@ describe('calculateMaterialRequirements', () => {
         const upgrade = result.find((m) => m.isUpgradeItem);
         expect(upgrade.itemHrid).toBe('/items/table');
         expect(upgrade.required).toBe(5);
+    });
+
+    test('counts unclaimed buy-order fills toward the upgrade item, same as a regular input', () => {
+        // Regular inputs already count unclaimedBoughtCount(); the upgrade item
+        // used to skip it, leaving "Missing" stuck high even after a buy order
+        // for the upgrade item partially filled.
+        state.gameData.actionDetailMap['/actions/crafting/table'].upgradeItemHrid = '/items/table';
+        state.marketListings = [{ itemHrid: '/items/table', isSell: false, unclaimedItemCount: 3 }];
+        const result = calculateMaterialRequirements('/actions/crafting/table', 5);
+        const upgrade = result.find((m) => m.isUpgradeItem);
+        expect(upgrade.have).toBe(3);
+        expect(upgrade.missing).toBe(2);
     });
 });
 
@@ -251,5 +266,15 @@ describe('calculateEnhancementMaterialRequirements', () => {
         state.enhancementResult = { attempts: 10, protectionCount: 3 };
         const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/philosophers_mirror', 2);
         expect(result.find((m) => m.itemHrid === '/items/philosophers_mirror')).toBeUndefined();
+    });
+
+    test('counts unclaimed buy-order fills toward the protection item, same as a regular enhancement cost', () => {
+        state.enhancementResult = { attempts: 10, protectionCount: 2.5 };
+        state.gameData.itemDetailMap['/items/protection_scroll'] = { name: 'Protection Scroll', isTradable: true };
+        state.marketListings = [{ itemHrid: '/items/protection_scroll', isSell: false, unclaimedItemCount: 1 }];
+        const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, '/items/protection_scroll', 2);
+        const protection = result.find((m) => m.itemHrid === '/items/protection_scroll');
+        expect(protection.have).toBe(1);
+        expect(protection.missing).toBe(2); // ceil(2.5) - 1
     });
 });

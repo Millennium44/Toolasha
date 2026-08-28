@@ -215,9 +215,11 @@ export function calculateMaterialRequirements(actionHrid, numActions, accountFor
         // Upgrade items always need exactly 1 per action, no artisan reduction
         const totalRequired = numActions;
 
-        const have = inventory
-            .filter((i) => i.itemHrid === actionDetails.upgradeItemHrid && !i.enhancementLevel)
-            .reduce((sum, i) => sum + (i.count || 0), 0);
+        const have =
+            unclaimedBoughtCount(actionDetails.upgradeItemHrid) +
+            inventory
+                .filter((i) => i.itemHrid === actionDetails.upgradeItemHrid && !i.enhancementLevel)
+                .reduce((sum, i) => sum + (i.count || 0), 0);
 
         // Calculate queued and available amounts
         const queued = queuedMaterialsMap.get(actionDetails.upgradeItemHrid) || 0;
@@ -394,9 +396,11 @@ export function calculateEnhancementMaterialRequirements(
         const protDetails = gameData.itemDetailMap[protectionItemHrid];
 
         if (protDetails) {
-            const have = inventory
-                .filter((i) => i.itemHrid === protectionItemHrid && !i.enhancementLevel)
-                .reduce((sum, i) => sum + (i.count || 0), 0);
+            const have =
+                unclaimedBoughtCount(protectionItemHrid) +
+                inventory
+                    .filter((i) => i.itemHrid === protectionItemHrid && !i.enhancementLevel)
+                    .reduce((sum, i) => sum + (i.count || 0), 0);
             const missing = Math.max(0, totalProtection - have);
 
             materials.push({
