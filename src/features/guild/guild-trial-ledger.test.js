@@ -453,6 +453,31 @@ describe('the ledger on disk', () => {
         ).resolves.toBeNull();
     });
 
+    test('two different trials finishing close together do not clobber each other', async () => {
+        // `_accrue` in the recorder is fire-and-forget, so two calls for the
+        // same cycle — a manual stop racing the idle watcher, or one trial
+        // ending just as another one closes out — can genuinely overlap: both
+        // read the cycle before either has written it back. Different
+        // `startedAt` (the trialId) mimics two distinct trials in one week.
+        const first = recordFinishedTrial({
+            session: session([[player('Alice', { damage: 900 })]], { startedAt: WEEK + 1000 }),
+            guildName: 'g',
+        });
+        const second = recordFinishedTrial({
+            session: session([[player('Bob', { damage: 400 })]], { startedAt: WEEK + 2000 }),
+            guildName: 'g',
+        });
+
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        expect(firstResult).not.toBeNull();
+        expect(secondResult).not.toBeNull();
+
+        const [cycle] = await loadLedgerCycles('g');
+        expect(cycle.trials).toHaveLength(2);
+        expect(cycle.members.alice.damage).toBe(900);
+        expect(cycle.members.bob.damage).toBe(400);
+    });
+
     test('clearing takes one guild and leaves the other', async () => {
         await recordFinishedTrial({ session: session([[player('Alice')]]), guildName: 'First' });
         await recordFinishedTrial({ session: session([[player('Bob')]]), guildName: 'Second' });

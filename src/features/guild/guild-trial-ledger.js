@@ -629,6 +629,29 @@ async function pruneLedger(scope, stamps) {
 }
 
 /**
+ * One write at a time per ledger cycle key.
+ *
+ * `recordFinishedTrial` is a read-accrue-write, and `_accrue` in
+ * `guild-trial-recorder.js` calls it without awaiting it — deliberately, so a
+ * slow ledger write cannot delay the recorder closing a session. Two of these
+ * for the *same* cycle can therefore genuinely overlap in one tab: the idle
+ * watcher and a manual stop racing each other, or a session ending just as
+ * another one (a different trial, or a different character's own recorder in
+ * the same tab session) starts and finishes its own. Without serializing,
+ * the second call's read lands before the first call's write, both compute a
+ * `next` that only carries their own contribution, and the second `set`
+ * silently erases the first trial's attendance row.
+ *
+ * `accrueTrial`'s own trialId dedup is what makes serializing the whole read
+ * step (rather than only the write) safe: replaying a fold that already
+ * landed is a no-op, so a queued call that reads a cycle another call just
+ * wrote to still gets the right, combined answer.
+ *
+ * @type {Map<string, Promise<*>>}
+ */
+const ledgerWriteChains = new Map();
+
+/**
  * Fold a finished trial into the ledger and write the one record it touched.
  *
  * Called by the recorder as a session closes. Deliberately tolerant: a ledger
@@ -660,23 +683,30 @@ export async function recordFinishedTrial({
     const scope = ledgerScope(guildName, characterId);
     const key = ledgerCycleKey(scope, contribution.weekStart);
 
-    try {
-        const stored = await storage.get(key, LEDGER_STORE, null);
-        const cycle = stored && typeof stored === 'object' ? stored : emptyLedgerCycle(contribution.weekStart, scope);
-        const next = accrueTrial(cycle, contribution);
-        // Unchanged means this trial was already folded — an idempotent stop,
-        // which is the normal case when a manual stop races the watcher
-        if (next === cycle) return null;
+    const run = async () => {
+        try {
+            const stored = await storage.get(key, LEDGER_STORE, null);
+            const cycle =
+                stored && typeof stored === 'object' ? stored : emptyLedgerCycle(contribution.weekStart, scope);
+            const next = accrueTrial(cycle, contribution);
+            // Unchanged means this trial was already folded — an idempotent stop,
+            // which is the normal case when a manual stop races the watcher
+            if (next === cycle) return null;
 
-        await storage.set(key, next, LEDGER_STORE, true);
+            await storage.set(key, next, LEDGER_STORE, true);
 
-        const keys = await storage.getAllKeys(LEDGER_STORE);
-        await pruneLedger(scope, ledgerCyclesInKeys(keys, scope));
-        return contribution;
-    } catch (error) {
-        console.error('[GuildTrialLedger] Recording the finished trial failed:', error);
-        return null;
-    }
+            const keys = await storage.getAllKeys(LEDGER_STORE);
+            await pruneLedger(scope, ledgerCyclesInKeys(keys, scope));
+            return contribution;
+        } catch (error) {
+            console.error('[GuildTrialLedger] Recording the finished trial failed:', error);
+            return null;
+        }
+    };
+
+    const chain = (ledgerWriteChains.get(key) || Promise.resolve()).then(run, run);
+    ledgerWriteChains.set(key, chain);
+    return chain;
 }
 
 /**
