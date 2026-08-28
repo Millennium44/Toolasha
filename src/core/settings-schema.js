@@ -2690,7 +2690,7 @@ export const settingsGroups = {
                 id: 'taskClaimToast',
                 label: 'Show a toast summary when a task is claimed',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help: 'Pops a brief toast naming the coins, tokens, and items a claimed task paid out — the reward the claimed card no longer shows once it is gone.',
             },
             taskRerollSpendBadge: {
