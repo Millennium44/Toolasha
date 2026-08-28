@@ -3480,9 +3480,16 @@ export default {
     name: 'Equipment Savings',
     initialize: () => {
         applyMenuButtonSetting();
+        // Registered fresh on every initialize() — and initialize() runs again
+        // on every character switch, right after cleanup() — so this must be
+        // unregistered there. `config.onSettingChange` has no dedupe of its
+        // own: left unpaired, a session with N character switches ends up with
+        // N copies of this callback firing on every future toggle of the
+        // setting, each doing the same (harmless but wasteful) work, forever.
         config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
     },
     cleanup: () => {
+        config.offSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
         detachMenuObserver?.();
         detachMenuObserver = null;
         document.querySelectorAll(`.${MENU_BUTTON_CLASS}`).forEach((button) => button.remove());

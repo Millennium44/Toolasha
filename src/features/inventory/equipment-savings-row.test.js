@@ -67,11 +67,21 @@ vi.mock('../../core/data-manager.js', () => ({
         off: () => {},
     },
 }));
+// A real registry, not a stub, so a test can prove cleanup() actually
+// unregisters what initialize() registered rather than only that neither call
+// throws
+const settingChangeCallbacks = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 1100,
         getSetting: () => false,
-        onSettingChange: () => {},
+        onSettingChange: (key, callback) => {
+            (settingChangeCallbacks[key] ||= []).push(callback);
+        },
+        offSettingChange: (key, callback) => {
+            if (!settingChangeCallbacks[key]) return;
+            settingChangeCallbacks[key] = settingChangeCallbacks[key].filter((cb) => cb !== callback);
+        },
         getSettingValue: () => 'full',
     },
 }));
@@ -305,6 +315,27 @@ describe('cleanup on a character switch', () => {
         expect(plan.targets).toEqual([]);
         expect(plan.abilities).toEqual([]);
         expect(plan.houses).toEqual([]);
+    });
+
+    test('does not re-register the menu button setting listener on every switch', () => {
+        // initialize()/cleanup() run in a pair on every character switch (see
+        // core/feature-registry.js). `config.onSettingChange` has no dedupe of
+        // its own, so a cleanup() that forgot to unregister what initialize()
+        // just added would leave one more copy of the same callback in the
+        // registry after every switch — each one firing (and re-running
+        // applyMenuButtonSetting's DOM work) on every future toggle of the
+        // setting, forever.
+        const key = 'equipmentSavings_menuButton';
+        const before = (settingChangeCallbacks[key] || []).length;
+
+        equipmentSavings.initialize();
+        equipmentSavings.cleanup();
+        equipmentSavings.initialize();
+        equipmentSavings.cleanup();
+        equipmentSavings.initialize();
+        equipmentSavings.cleanup();
+
+        expect((settingChangeCallbacks[key] || []).length).toBe(before);
     });
 });
 
