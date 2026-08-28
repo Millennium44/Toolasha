@@ -1694,9 +1694,13 @@ export class SimEditor {
 
     /**
      * The combat buffs the player's completed achievements grant (e.g. Damage
-     * +2%). These are auto-detected off the player's own data and applied by
-     * default; the section lets you untick one to sim without it. A player with
-     * no combat achievement buffs, or the skilling tab, shows nothing.
+     * +2%). For your own character these are auto-detected off your own data and
+     * applied by default; the section lets you untick one to sim without it. A
+     * shared profile carries no equivalent field, so an imported/party-member DTO
+     * (`achievementBuffsManual`) instead offers the same three buffs as manual
+     * toggles, defaulted off — the caption below says which situation applies.
+     * A player with no achievement combat buffs at all, or the skilling tab,
+     * shows nothing.
      * @private
      */
     _renderAchievementsSection(dto) {
@@ -1722,7 +1726,10 @@ export class SimEditor {
             html += `<span style="color:#888;">${achievementBuffLabel(buff)}</span>`;
             html += '</label>';
         }
-        html += `<div style="color:#666; font-size:10px; margin-top:4px;">From your completed achievements. Untick to sim without one.</div>`;
+        const caption = dto.achievementBuffsManual
+            ? 'Not in shared profiles — set manually.'
+            : 'From your completed achievements. Untick to sim without one.';
+        html += `<div style="color:#666; font-size:10px; margin-top:4px;">${caption}</div>`;
 
         html += '</div></div>';
         return html;

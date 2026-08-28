@@ -17,6 +17,7 @@ import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
+import { manualAchievementCombatBuffs } from '../../utils/achievement-combat-buffs.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
@@ -608,6 +609,7 @@ export function parseShykaiImport(jsonString) {
  */
 function buildPartyMemberDTO(profile, clientData, battleData) {
     const itemDetailMap = clientData?.itemDetailMap || {};
+    const manualAchievementBuffs = manualAchievementCombatBuffs();
 
     const dto = {
         staminaLevel: 1,
@@ -626,6 +628,17 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         houseRooms: {},
         guildShrineLevels: {},
         guildCombatBuffs: [],
+        // A shared profile carries which achievements are completed
+        // (characterAchievements) but not the resolved per-action-type combat
+        // buff a completed tier grants — that mapping is server-side only and
+        // never sent to the client. Offer the fixed three achievement combat
+        // buffs as manual toggles, defaulted off, rather than silently sim-ing
+        // this player without buffs their real counterpart likely has.
+        // achievementBuffsManual flags the Configure section to render the
+        // "set manually" caption instead of the "from your achievements" one.
+        achievementCombatBuffs: manualAchievementBuffs,
+        achievementBuffsOff: manualAchievementBuffs.map((buff) => buff.typeHrid),
+        achievementBuffsManual: true,
     };
 
     // Extract skill levels

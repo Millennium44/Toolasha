@@ -61,6 +61,7 @@ const {
     readGuildShrineSnapshot,
     buildGuildBuffsFromLevels,
     buildPlayerDTO,
+    buildPlayerDTOFromProfile,
     taxedDropValue,
 } = await import('./combat-sim-adapter.js');
 const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
@@ -219,6 +220,36 @@ describe('guild shrine buff synthesis', () => {
         expect(snapshot.levels).toEqual(readGuildShrineLevels());
         expect(snapshot.capturedAt).toBe(1_700_000_000_000);
         expect(snapshot.hydrated).toBe(true);
+    });
+});
+
+describe('buildPlayerDTOFromProfile — a shared profile has no resolved achievement buffs', () => {
+    test('offers the manual achievement buff catalog, defaulted off', () => {
+        const dto = buildPlayerDTOFromProfile({
+            characterID: 'char1',
+            profile: { characterSkills: [], wearableItemMap: {} },
+        });
+
+        expect(dto.achievementBuffsManual).toBe(true);
+        expect(dto.achievementCombatBuffs.map((b) => b.typeHrid)).toEqual([
+            '/buff_types/damage',
+            '/buff_types/wisdom',
+            '/buff_types/rare_find',
+        ]);
+        // All three start excluded — a shared profile does not say which the
+        // subject actually has, so nothing is silently applied.
+        expect(dto.achievementBuffsOff).toEqual(
+            expect.arrayContaining(['/buff_types/damage', '/buff_types/wisdom', '/buff_types/rare_find'])
+        );
+        expect(dto.achievementBuffsOff).toHaveLength(3);
+    });
+
+    test('missing profile data or client data yields null, not a throw', () => {
+        expect(buildPlayerDTOFromProfile(null)).toBeNull();
+        expect(buildPlayerDTOFromProfile({})).toBeNull();
+
+        mocks.clientData = null;
+        expect(buildPlayerDTOFromProfile({ profile: {} })).toBeNull();
     });
 });
 
