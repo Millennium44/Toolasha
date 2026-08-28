@@ -164,6 +164,7 @@ class PinnedActionsPage {
         this.isActive = false;
         this.navigationObserver = null;
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.timerRegistry = createTimerRegistry();
         this.navInjected = false;
         this.hiddenElements = [];
@@ -210,10 +211,15 @@ class PinnedActionsPage {
             }
         });
 
-        const existingNav = document.querySelector('[class*="NavigationBar_nav"]');
-        if (existingNav && !this.navInjected) {
-            this.injectNavButton();
-        }
+        // @run-at document-start: a nav bar rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('PinnedActionsPageCatchUp', () => {
+            const existingNav = document.querySelector('[class*="NavigationBar_nav"]');
+            if (existingNav && !this.navInjected) {
+                this.injectNavButton();
+            }
+        });
     }
 
     /**
@@ -1256,6 +1262,11 @@ class PinnedActionsPage {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             if (this.navigationObserver) {
