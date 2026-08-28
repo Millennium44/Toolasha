@@ -59,6 +59,81 @@ const GLOBAL_PRICING_MODE = 'global';
 const SETTINGS_KEY = 'philoCalculatorSettings';
 
 /**
+ * The result table's columns, in display order. Shared between the drawn
+ * table and the Copy-as-text button so what gets copied always matches what
+ * is on screen.
+ */
+const TABLE_COLUMNS = [
+    { key: 'name', label: 'Item', align: 'left' },
+    { key: 'cost', label: 'Cost' },
+    { key: 'philoChance', label: 'Philo %' },
+    { key: 'returnChance', label: 'Return %' },
+    { key: 'transmuteChance', label: 'Base Xmute %' },
+    { key: 'effectiveTransmuteChance', label: 'Eff. Xmute %' },
+    { key: 'transmuteCost', label: 'Xmute Cost' },
+    { key: 'ev', label: 'EV' },
+    { key: 'itemsPerAction', label: 'Items/Act' },
+    { key: 'actionsPerPhilo', label: 'Acts/Philo' },
+    { key: 'itemsPerPhilo', label: 'Items/Philo' },
+    {
+        key: 'profitPerPhiloInstant',
+        label: 'Profit/Philo (instant | patient)',
+        title: 'Left: stones sold into standing bids. Right: stones listed and waited out at ask. Sorts on instant.',
+    },
+    { key: 'profitMargin', label: 'Margin' },
+    { key: 'timePerPhiloSeconds', label: 'Time/Philo' },
+    { key: 'profitPerHour', label: 'Profit/Hr' },
+    { key: 'revenuePerHour', label: 'Revenue/Hr' },
+    { key: 'costPerHour', label: 'Cost/Hr' },
+];
+
+/**
+ * Plain-text value for one column of a row, formatted the same way the table
+ * cell itself is (minus color/click behaviour, which text can't carry).
+ * @param {string} key - Column key
+ * @param {Object} row - Row data, as produced by calculateRow
+ * @returns {string} The cell's text
+ */
+export function formatRowValue(key, row) {
+    const value = row[key];
+    switch (key) {
+        case 'name':
+            return value;
+        case 'profitPerPhiloInstant':
+            return (
+                `${formatLargeNumber(Math.round(row.profitPerPhiloInstant))} | ` +
+                `${formatLargeNumber(Math.round(row.profitPerPhiloPatient))}`
+            );
+        case 'philoChance':
+        case 'returnChance':
+        case 'transmuteChance':
+        case 'effectiveTransmuteChance':
+            return formatPercentage(value, 2);
+        case 'profitMargin':
+            return formatPercentage(value, 1);
+        case 'timePerPhiloSeconds':
+            return timeReadable(value);
+        case 'itemsPerAction':
+            return value.toFixed(2);
+        default:
+            return formatLargeNumber(Math.round(value));
+    }
+}
+
+/**
+ * The table, as tab-separated text: a header row of column labels, then one
+ * row per item. Pastes cleanly into chat or a spreadsheet either way.
+ * @param {Array<{key: string, label: string}>} columns - Columns, in order
+ * @param {Array<Object>} rows - Row data, in display order
+ * @returns {string} Tab-separated text, one line per row plus the header
+ */
+export function rowsToTsv(columns, rows) {
+    const header = columns.map((col) => col.label).join('\t');
+    const lines = rows.map((row) => columns.map((col) => formatRowValue(col.key, row)).join('\t'));
+    return [header, ...lines].join('\n');
+}
+
+/**
  * Fold stored settings under the ones in memory — only consulted before this
  * character's settings have been read back (see `createCuratedRecord`): the
  * toggles key by key with memory winning, and the per-item cost overrides
@@ -1271,6 +1346,35 @@ class PhiloCalculator {
         });
         container.appendChild(refreshBtn);
 
+        // Copy-as-text button
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = 'Copy Table';
+        copyBtn.title = 'Copy the visible rows as tab-separated text.';
+        copyBtn.style.cssText = `
+            padding: 4px 12px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        `;
+        copyBtn.addEventListener('mouseenter', () => {
+            copyBtn.style.background = '#357abd';
+        });
+        copyBtn.addEventListener('mouseleave', () => {
+            copyBtn.style.background = '#4a90e2';
+        });
+        copyBtn.addEventListener('click', async () => {
+            const original = copyBtn.textContent;
+            await this.copyTableAsText();
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => {
+                copyBtn.textContent = original;
+            }, 1200);
+        });
+        container.appendChild(copyBtn);
+
         return container;
     }
 
@@ -1466,35 +1570,42 @@ class PhiloCalculator {
     }
 
     /**
+     * The rows currently on screen — name filter and hide-negative-profit
+     * both applied, in the current sort order. Shared by the table draw and
+     * the Copy-as-text button, so a copy always matches what is visible.
+     * @returns {Array<Object>} Row data
+     */
+    getVisibleRows() {
+        const filterLower = this.filterText.toLowerCase();
+        let rows = filterLower ? this.rows.filter((row) => row.name.toLowerCase().includes(filterLower)) : this.rows;
+
+        if (this.hideNegativeProfitItems) {
+            rows = rows.filter((row) => row.profitPerPhilo >= 0);
+        }
+
+        return rows;
+    }
+
+    /**
+     * Copy the visible table to the clipboard as tab-separated text.
+     */
+    async copyTableAsText() {
+        const text = rowsToTsv(TABLE_COLUMNS, this.getVisibleRows());
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch (error) {
+            console.error('[PhiloCalculator] Failed to copy table to clipboard:', error);
+        }
+    }
+
+    /**
      * Render the results table
      */
     renderTable() {
         const container = this.modal?.querySelector('.philo-calc-table-container');
         if (!container) return;
 
-        const columns = [
-            { key: 'name', label: 'Item', align: 'left' },
-            { key: 'cost', label: 'Cost' },
-            { key: 'philoChance', label: 'Philo %' },
-            { key: 'returnChance', label: 'Return %' },
-            { key: 'transmuteChance', label: 'Base Xmute %' },
-            { key: 'effectiveTransmuteChance', label: 'Eff. Xmute %' },
-            { key: 'transmuteCost', label: 'Xmute Cost' },
-            { key: 'ev', label: 'EV' },
-            { key: 'itemsPerAction', label: 'Items/Act' },
-            { key: 'actionsPerPhilo', label: 'Acts/Philo' },
-            { key: 'itemsPerPhilo', label: 'Items/Philo' },
-            {
-                key: 'profitPerPhiloInstant',
-                label: 'Profit/Philo (instant | patient)',
-                title: 'Left: stones sold into standing bids. Right: stones listed and waited out at ask. Sorts on instant.',
-            },
-            { key: 'profitMargin', label: 'Margin' },
-            { key: 'timePerPhiloSeconds', label: 'Time/Philo' },
-            { key: 'profitPerHour', label: 'Profit/Hr' },
-            { key: 'revenuePerHour', label: 'Revenue/Hr' },
-            { key: 'costPerHour', label: 'Cost/Hr' },
-        ];
+        const columns = TABLE_COLUMNS;
 
         const table = document.createElement('table');
         table.style.cssText = `
@@ -1539,15 +1650,7 @@ class PhiloCalculator {
         const tbody = document.createElement('tbody');
 
         // Apply item name filter
-        const filterLower = this.filterText.toLowerCase();
-        let filteredRows = filterLower
-            ? this.rows.filter((row) => row.name.toLowerCase().includes(filterLower))
-            : this.rows;
-
-        // Apply negative profit filter
-        if (this.hideNegativeProfitItems) {
-            filteredRows = filteredRows.filter((row) => row.profitPerPhilo >= 0);
-        }
+        const filteredRows = this.getVisibleRows();
 
         for (let i = 0; i < filteredRows.length; i++) {
             const row = filteredRows[i];

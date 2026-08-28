@@ -110,7 +110,7 @@ vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: () => mocks.actionStats,
 }));
 
-const { PhiloCalculator } = await import('./philo-calculator.js');
+const { PhiloCalculator, formatRowValue, rowsToTsv } = await import('./philo-calculator.js');
 
 /**
  * A transmutable item: half its attempts succeed, 1% of those pay a stone,
@@ -451,5 +451,48 @@ describe('the stored settings', () => {
             [OTHER_HRID]: 50,
         });
         expect(stored().itemCostOverrides).toEqual({ [WIDGET_HRID]: 900 });
+    });
+});
+
+describe('copy table as text', () => {
+    const columns = [
+        { key: 'name', label: 'Item' },
+        { key: 'philoChance', label: 'Philo %' },
+        { key: 'profitPerPhiloInstant', label: 'Profit/Philo (instant | patient)' },
+        { key: 'itemsPerAction', label: 'Items/Act' },
+    ];
+    const row = {
+        name: 'Test Widget',
+        philoChance: 0.012345,
+        profitPerPhiloInstant: 1234.6,
+        profitPerPhiloPatient: 2345.4,
+        itemsPerAction: 1.5,
+    };
+
+    test('name passes through untouched', () => {
+        expect(formatRowValue('name', row)).toBe('Test Widget');
+    });
+
+    test('a percentage column reads as a percentage', () => {
+        expect(formatRowValue('philoChance', row)).toBe('1.23%');
+    });
+
+    test('the paired instant/patient profit column keeps both halves', () => {
+        expect(formatRowValue('profitPerPhiloInstant', row)).toBe('1.24K | 2.35K');
+    });
+
+    test('a plain numeric column falls back to the shared large-number format', () => {
+        expect(formatRowValue('itemsPerAction', row)).toBe('1.50');
+    });
+
+    test('rowsToTsv builds one header line and one line per row, tab-separated', () => {
+        const text = rowsToTsv(columns, [row]);
+        const lines = text.split('\n');
+        expect(lines[0]).toBe('Item\tPhilo %\tProfit/Philo (instant | patient)\tItems/Act');
+        expect(lines[1]).toBe('Test Widget\t1.23%\t1.24K | 2.35K\t1.50');
+    });
+
+    test('an empty row set is just the header', () => {
+        expect(rowsToTsv(columns, [])).toBe('Item\tPhilo %\tProfit/Philo (instant | patient)\tItems/Act');
     });
 });
