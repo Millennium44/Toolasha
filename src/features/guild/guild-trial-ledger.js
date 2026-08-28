@@ -420,6 +420,54 @@ export function foldLedgerCycles(cycles, { rosterNames = [] } = {}) {
     return { rows, trialsRun, cycles: list.length, totals };
 }
 
+/**
+ * One synthetic row summing every member row, for a totals line under the table.
+ *
+ * Shares are recomputed from the summed figures rather than averaged from the
+ * per-row shares, for the reason {@link foldLedgerCycles} recomputes them in
+ * the first place: a share only means something against the total it was a
+ * fraction of. Summed over every row that total is the whole of it, so damage
+ * share, healing share and tank share are always 100% here — the row exists to
+ * carry the raw sums a reader would otherwise have to add up by hand, not to
+ * say anything the per-member shares did not already say.
+ *
+ * Attendance stays a dash: "trials attended" summed across members is a count
+ * of seats filled, not a fraction of anything a single number could represent
+ * as a percentage.
+ *
+ * @param {Array<Object>} rows - From {@link foldLedgerCycles}
+ * @param {number} [trialsRun] - Trials in the window, for the caption
+ * @returns {Object|null} A row shaped like the others, or null with nothing to sum
+ */
+export function ledgerTotalsRow(rows, trialsRun = 0) {
+    const list = (rows || []).filter(Boolean);
+    if (!list.length) return null;
+
+    const sum = (field) => list.reduce((total, row) => total + (Number(row[field]) || 0), 0);
+    const damage = sum('damage');
+    const healing = sum('healing');
+    const damageTaken = sum('damageTaken');
+
+    return {
+        name: 'Total',
+        trials: sum('trials'),
+        attendance: null,
+        damage,
+        damageShare: damage > 0 ? 1 : null,
+        healing,
+        healingShare: healing > 0 ? 1 : null,
+        damageTaken,
+        tankShare: damageTaken > 0 ? 1 : null,
+        deaths: sum('deaths'),
+        manaSpent: sum('manaSpent'),
+        starvedMs: sum('starvedMs'),
+        lowManaMs: sum('lowManaMs'),
+        noShow: false,
+        isTotal: true,
+        trialsRun,
+    };
+}
+
 /** The sortable columns the table offers, and how each row's value is read */
 export const LEDGER_COLUMNS = [
     { key: 'name', label: 'Member', numeric: false, value: (row) => row.name },

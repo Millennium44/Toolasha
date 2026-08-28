@@ -47,6 +47,7 @@ const {
     ledgerCycleKey,
     ledgerCyclesInKeys,
     ledgerScope,
+    ledgerTotalsRow,
     loadLedgerCycles,
     observedCoverage,
     recordFinishedTrial,
@@ -253,6 +254,42 @@ describe('foldLedgerCycles', () => {
     test('a member measured by nothing gets a null share rather than a zero', () => {
         const folded = foldLedgerCycles([cycleOf(WEEK, [[player('Alice', { damage: 0 })]])]);
         expect(folded.rows[0].damageShare).toBeNull();
+    });
+});
+
+describe('ledgerTotalsRow', () => {
+    test('sums the raw figures and reads every share as 100%', () => {
+        const rows = [
+            { name: 'Alice', trials: 2, damage: 300, healing: 0, damageTaken: 50, deaths: 1 },
+            { name: 'Bob', trials: 1, damage: 700, healing: 200, damageTaken: 150, deaths: 0 },
+        ];
+
+        const totals = ledgerTotalsRow(rows, 3);
+        expect(totals).toMatchObject({
+            name: 'Total',
+            trials: 3,
+            damage: 1000,
+            damageShare: 1,
+            healing: 200,
+            healingShare: 1,
+            damageTaken: 200,
+            tankShare: 1,
+            deaths: 1,
+            attendance: null,
+            isTotal: true,
+        });
+    });
+
+    test('a figure nothing measured stays a null share rather than a fake 100%', () => {
+        const totals = ledgerTotalsRow([{ name: 'Alice', trials: 1, damage: 0, healing: 0, damageTaken: 0 }], 1);
+        expect(totals.damageShare).toBeNull();
+        expect(totals.healingShare).toBeNull();
+        expect(totals.tankShare).toBeNull();
+    });
+
+    test('nothing to sum is nothing to show', () => {
+        expect(ledgerTotalsRow([], 0)).toBeNull();
+        expect(ledgerTotalsRow(null, 0)).toBeNull();
     });
 });
 

@@ -35,6 +35,7 @@ import {
     LEDGER_WINDOWS,
     foldLedgerCycles,
     ledgerCsvRows,
+    ledgerTotalsRow,
     loadLedgerCycles,
     observedCoverage,
     sortLedgerRows,
@@ -396,6 +397,29 @@ function drawTable(card, table) {
             `${formatKMB(entry.damage)} damage · ${formatKMB(entry.healing)} healing · ` +
             `${formatKMB(entry.damageTaken)} taken · ${entry.deaths} death${entry.deaths === 1 ? '' : 's'}.\n` +
             'Shares are of what was actually measured over the selected window.';
+        element.appendChild(line);
+    }
+
+    const totals = ledgerTotalsRow(table.rows, table.trialsRun);
+    if (totals) {
+        const line = document.createElement('tr');
+        for (const column of LEDGER_COLUMNS) {
+            const cell = document.createElement('td');
+            cell.textContent = ledgerCellText(totals, column.key);
+            Object.assign(cell.style, {
+                textAlign: column.numeric ? 'right' : 'left',
+                padding: '3px 5px',
+                whiteSpace: 'nowrap',
+                color: ACCENT,
+                borderTop: '1px solid rgba(255,255,255,0.18)',
+                fontWeight: '600',
+            });
+            line.appendChild(cell);
+        }
+        line.title =
+            `Sum of every row shown, over the same window.\n` +
+            `${formatKMB(totals.damage)} damage · ${formatKMB(totals.healing)} healing · ` +
+            `${formatKMB(totals.damageTaken)} taken · ${totals.deaths} death${totals.deaths === 1 ? '' : 's'}.`;
         element.appendChild(line);
     }
 
