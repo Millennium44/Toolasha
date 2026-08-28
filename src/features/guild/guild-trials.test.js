@@ -1849,10 +1849,14 @@ describe('the panel, end to end', () => {
         expect(keys).toEqual(['tile:skilling::milking']);
     });
 
-    test('one fight’s per-player rows dress only the encounter they measured', () => {
-        // Reported: Trial Hedgehog's panel — "0 pts, not started" — showed
-        // "Per player · 2 fights · watched" with the Chameleon fight's exact
-        // rows. One measurement, two combat cards, and it landed on both.
+    test('neither boss card wears the other fight’s per-player rows — because neither wears any', () => {
+        // Originally reported as: Trial Hedgehog's panel — "0 pts, not
+        // started" — showed "Per player · 2 fights · watched" with the
+        // Chameleon fight's exact rows. One measurement, two combat cards,
+        // and it landed on both. The boss-side block no longer renders the
+        // per-player split at all (it moved to the dedicated Per-player
+        // popup), so this now simply asserts neither card shows it — the
+        // scoping itself is `breakdownFor`'s own test, below.
         game.breakdown = {
             measured: true,
             source: 'spectated',
@@ -1896,12 +1900,10 @@ describe('the panel, end to end', () => {
         const chameleon = blocks.find((block) => block.dataset.mwiBlock.includes('chameleon'));
         const hedgehog = blocks.find((block) => block.dataset.mwiBlock.includes('hedgehog'));
 
-        expect(chameleon.textContent).toContain('NPD');
-        expect(chameleon.textContent).toContain('2 fights');
+        expect(chameleon.textContent).not.toContain('NPD');
+        expect(chameleon.textContent).not.toContain('2 fights');
         expect(hedgehog.textContent).not.toContain('NPD');
         expect(hedgehog.textContent).not.toContain('2 fights');
-        // The empty state says whose fight is actually on the stream
-        expect(hedgehog.innerHTML).toContain('no fights watched for this encounter');
     });
 
     test('breakdownFor scopes the measurement, and keeps an unidentified one whole', () => {
@@ -4941,9 +4943,13 @@ describe('renderTrialPlayers', () => {
         expect(renderTrialBlock(running, 3, { measured: false, reason: 'none' })).not.toContain('· finished');
     });
 
-    test('a combat block carries the split and a skilling one does not', () => {
+    test('neither a combat block nor a skilling one carries the per-player split', () => {
+        // The boss-side block is a summary — Party DPS / Kill in / On pace /
+        // Banked — and stays that way even with a measured breakdown in hand;
+        // the per-player detail lives only in the dedicated Per-player popup
+        // (`guild-trial-scoreboard.js`), reached through its own button.
         const combat = analyseTrial(record({ samples: [{ t: now, readings: [{ current: 1, max: 2 }] }] }), {});
-        expect(renderTrialBlock(combat, 0, breakdown)).toContain('Per player');
+        expect(renderTrialBlock(combat, 0, breakdown)).not.toContain('Per player');
 
         const skilling = analyseTrial(
             record({ kind: 'skilling', samples: [{ t: now, readings: [{ current: 1, max: 2 }] }] }),

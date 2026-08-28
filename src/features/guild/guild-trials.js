@@ -1406,8 +1406,6 @@ export function renderTrialBlock(
 
     rows.push(bankedRow(analysis));
 
-    if (analysis.kind === 'combat') rows.push(...renderTrialPlayers(breakdown));
-
     return rows.join('');
 }
 
@@ -1457,11 +1455,20 @@ export function breakdownFor(name, breakdown = guildTrialDamage.breakdown()) {
 /**
  * Who in the party is producing the DPS the card is already showing.
  *
- * Drawn only under a combat card, and fed by the spectator stream: opening the
- * In Progress fight view subscribes this client to the trial's own battle ticks
- * (`guild-trial-damage.js`). So the empty state is an instruction rather than an
- * apology — "open the fight view", not "no trial fight seen here", which reads as
- * a fight that could have been seen and was not and was twice reported as a bug.
+ * No longer drawn under the boss card itself — `renderTrialBlock` used to
+ * append these rows under Party DPS / Kill in / On pace / Banked, but a
+ * forty-eight-player trial turned that column into a scrolling player list
+ * where the block was supposed to be a compact summary, and the per-player
+ * detail already has a home of its own: the "Per-player" button opens
+ * `guild-trial-scoreboard.js`'s dedicated view. Kept here, tested and
+ * exported, as the narrow-column row format for wherever this compact form
+ * is wanted again.
+ *
+ * Fed by the spectator stream: opening the In Progress fight view subscribes
+ * this client to the trial's own battle ticks (`guild-trial-damage.js`). So
+ * the empty state is an instruction rather than an apology — "open the fight
+ * view", not "no trial fight seen here", which reads as a fight that could
+ * have been seen and was not and was twice reported as a bug.
  *
  * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
  * @returns {string[]} Rows of HTML, empty when there is nothing worth a row
