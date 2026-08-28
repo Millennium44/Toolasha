@@ -44,6 +44,7 @@ class OfflineProgressEconomics {
         this.currentOfflineData = null;
         this.currentBlock = null;
         this.pricingModeChangeHandler = null;
+        this.modalCleanupUnwatch = null;
     }
 
     /**
@@ -175,17 +176,32 @@ class OfflineProgressEconomics {
 
     /**
      * Tear the injected block down once the native modal closes.
+     *
+     * Only one of these watches every runs at a time. A second modal — a
+     * different character's, after a switch that left the first modal's
+     * element lingering in the DOM rather than removing it synchronously —
+     * used to start a second `MutationObserver` on `document.body` without
+     * disconnecting the first. Both then kept running: when the *stale*
+     * modal was eventually removed, its own watcher fired and called
+     * `teardownBlock()` unconditionally, deleting the current character's
+     * block and unsubscribing its pricing-mode listener even though that
+     * character's own modal was still open. Superseding the old watch here
+     * before installing the new one keeps exactly one modal's lifetime tied
+     * to `currentBlock` at any moment.
      * @param {Element} modal - OfflineProgressModal_modalContent element
      */
     setupCleanupObserver(modal) {
         if (!document.body) return;
 
-        const cleanupObserver = createMutationWatcher(
+        if (this.modalCleanupUnwatch) {
+            this.modalCleanupUnwatch();
+        }
+
+        this.modalCleanupUnwatch = createMutationWatcher(
             document.body,
             () => {
                 if (!document.body.contains(modal)) {
                     this.teardownBlock();
-                    cleanupObserver();
                 }
             },
             { childList: true, subtree: true }
@@ -193,9 +209,14 @@ class OfflineProgressEconomics {
     }
 
     /**
-     * Remove the injected block and unsubscribe its pricing-mode listener.
+     * Remove the injected block, unsubscribe its pricing-mode listener, and stop
+     * watching for the modal that owned it to close.
      */
     teardownBlock() {
+        if (this.modalCleanupUnwatch) {
+            this.modalCleanupUnwatch();
+            this.modalCleanupUnwatch = null;
+        }
         if (this.pricingModeChangeHandler) {
             config.offSettingChange('profitCalc_pricingMode', this.pricingModeChangeHandler);
             this.pricingModeChangeHandler = null;

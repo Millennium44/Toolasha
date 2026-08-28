@@ -61,11 +61,18 @@ vi.mock('../../utils/offline-economics-calculator.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({ formatPrice: vi.fn((n) => String(Math.round(n))) }));
 
+// One entry per `createMutationWatcher` call, oldest first, so a test can tell
+// a still-live watch (from the modal currently open) apart from a superseded
+// one (a previous modal's watch that a correct implementation must have
+// disconnected already).
+let capturedWatches = [];
 let capturedCleanupCallback = null;
 vi.mock('../../utils/dom-observer-helpers.js', () => ({
     createMutationWatcher: vi.fn((_el, callback) => {
         capturedCleanupCallback = callback;
-        return vi.fn();
+        const unwatch = vi.fn();
+        capturedWatches.push({ callback, unwatch });
+        return unwatch;
     }),
 }));
 
@@ -118,6 +125,7 @@ describe('offline-progress-economics', () => {
         mockOnClass.mockClear();
         fakeDataManager.characterData = null;
         capturedCleanupCallback = null;
+        capturedWatches = [];
     });
 
     afterEach(() => {
@@ -242,6 +250,31 @@ describe('offline-progress-economics', () => {
         expect(mockCalculateOfflineEconomics).toHaveBeenCalledTimes(2);
         expect(document.querySelectorAll('#mwi-offline-economics')).toHaveLength(1);
         expect(document.querySelector('#mwi-offline-economics').textContent).toContain('999');
+    });
+
+    test('a stale watch from a leftover previous modal cannot tear down the current character’s block', () => {
+        // Character A's modal appears and gets a block.
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalA = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalA);
+        expect(capturedWatches).toHaveLength(1);
+
+        // The player switches to character B while modal A's element is still
+        // attached to the DOM (the game has not removed it yet) - the real
+        // scenario a 1-main-plus-3-ironcow session hits routinely.
+        fakeDataManager.emit('character_switching', {});
+        triggerCharacterInitialized();
+        const modalB = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalB);
+        expect(document.querySelector('#mwi-offline-economics')).not.toBeNull();
+
+        // Watch A must have been disconnected once watch B took over - a real
+        // MutationObserver never calls back again after `disconnect()`, so this
+        // is what actually keeps watch A from later reaching into character B's
+        // `currentBlock` when modal A eventually leaves the DOM for real.
+        expect(capturedWatches).toHaveLength(2);
+        expect(capturedWatches[0].unwatch).toHaveBeenCalled();
     });
 
     test('the pricing mode listener is unsubscribed once the modal closes (no leaked recompute)', () => {
