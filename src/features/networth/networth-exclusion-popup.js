@@ -322,6 +322,18 @@ class NetworthExclusionPopup {
         currentSection.appendChild(currentLabel);
 
         if (exclusions.length > 0) {
+            // What all of the above adds up to omitting from the net worth
+            // figure — visible here, while configuring, rather than only in
+            // the collapsed "Excluded" row back on the panel itself
+            const totalExcluded = this.networthData?.excluded?.total ?? 0;
+            if (totalExcluded > 0) {
+                const totalLine = document.createElement('div');
+                totalLine.id = 'mwi-nex-total';
+                totalLine.style.cssText = `font-size: 0.72rem; color: rgba(255,255,255,0.45); margin-bottom: 6px;`;
+                totalLine.textContent = `Currently omitting ${networthFormatter(Math.round(totalExcluded))} from net worth`;
+                currentSection.appendChild(totalLine);
+            }
+
             const chips = document.createElement('div');
             chips.style.cssText = `display: flex; flex-wrap: wrap; gap: 6px;`;
             for (const exc of exclusions) {
