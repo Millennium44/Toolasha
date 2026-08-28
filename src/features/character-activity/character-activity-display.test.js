@@ -249,6 +249,25 @@ describe('the two lines a slot shows', () => {
 
         expect(state.firstLineText).toBe('Cow +2 queued');
     });
+
+    test('the reported action type is whichever segment is actually running, not the first queued', () => {
+        const segments = [
+            { actionName: 'Cow', actionTypeHrid: '/action_types/milking', startAt: NOW, endAt: NOW + HOUR },
+            { actionName: 'Cheese', actionTypeHrid: '/action_types/cheesesmithing', endAt: NOW + 3 * HOUR },
+        ];
+
+        const stillOnFirst = computeSlotDisplayState(record({ endsInMs: 3 * HOUR, segments }), { id: '1' }, PREFS, NOW);
+        expect(stillOnFirst.actionTypeHrid).toBe('/action_types/milking');
+
+        const movedToSecond = computeSlotDisplayState(
+            record({ endsInMs: 3 * HOUR, segments }),
+            { id: '1' },
+            PREFS,
+            NOW + 2 * HOUR
+        );
+        expect(movedToSecond.firstLineText).toBe('Cheese');
+        expect(movedToSecond.actionTypeHrid).toBe('/action_types/cheesesmithing');
+    });
 });
 
 describe('segment helpers', () => {

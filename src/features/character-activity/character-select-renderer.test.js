@@ -265,6 +265,80 @@ describe('slots that arrive after the root', () => {
     });
 });
 
+describe('the icon tracks the currently-active segment', () => {
+    /**
+     * A stored record with two queued segments: milking, then cheesesmithing.
+     * @param {string} id
+     * @returns {Object}
+     */
+    function twoSegmentRecord(id) {
+        return {
+            version: 1,
+            characterId: id,
+            characterName: `Char ${id}`,
+            observedAt: NOW,
+            offline: { hourCap: null, mooPassExpireTime: null },
+            projection: {
+                segments: [
+                    {
+                        actionHrid: '/actions/milking/cow',
+                        actionName: 'Cow',
+                        actionTypeHrid: '/action_types/milking',
+                        startAt: NOW,
+                        endAt: NOW + HOUR,
+                        queuedIndex: 0,
+                        certainty: 'trustworthy',
+                        stopCause: 'count',
+                    },
+                    {
+                        actionHrid: '/actions/cheesesmithing/cheese',
+                        actionName: 'Cheese',
+                        actionTypeHrid: '/action_types/cheesesmithing',
+                        startAt: NOW + HOUR,
+                        endAt: NOW + 3 * HOUR,
+                        queuedIndex: 1,
+                        certainty: 'trustworthy',
+                        stopCause: 'count',
+                    },
+                ],
+                terminalCause: 'queue',
+                terminalAt: NOW + 3 * HOUR,
+                certainty: 'trustworthy',
+            },
+        };
+    }
+
+    /** @returns {string|null} The `use` href of the injected icon, or null if there is none */
+    function iconHref() {
+        return blocks()[0]?.querySelector('use')?.getAttribute('href') ?? null;
+    }
+
+    test('the icon matches the first queued action while it is still running', async () => {
+        store.records['1234'] = twoSegmentRecord('1234');
+        const root = mountCharacterSelect(['1234']);
+
+        await renderer.onCharacterSelectMounted(root);
+
+        expect(iconHref()).toContain('#milking');
+    });
+
+    test('once the first segment ends, the icon follows the text onto the next one', async () => {
+        store.records['1234'] = twoSegmentRecord('1234');
+        const root = mountCharacterSelect(['1234']);
+        await renderer.onCharacterSelectMounted(root);
+        expect(iconHref()).toContain('#milking');
+
+        // The character has moved on to segment two, but the stored record — read from the
+        // same snapshot taken while it was still on segment one — never changes.
+        vi.setSystemTime(NOW + 2 * HOUR);
+        await renderer.renderAllTrackedSlots();
+
+        expect(blocks()[0].textContent).toContain('Cheese');
+        expect(iconHref()).toContain('#cheesesmithing');
+        expect(iconHref()).not.toContain('#milking');
+    });
+});
+
 describe('teardown', () => {
     test('stopWatching removes the blocks and the observer registration', async () => {
         store.records['1234'] = storedRecord('1234', 4 * HOUR);

@@ -113,7 +113,7 @@ class CharacterSelectRenderer {
             if (!slotElement.isConnected) continue;
             const record = await loadCharacterActivity(character.id);
             const state = computeSlotDisplayState(record, character, prefs);
-            this.renderSlotBlock(slotElement, state, record, spriteUrl);
+            this.renderSlotBlock(slotElement, state, spriteUrl);
         }
     }
 
@@ -121,11 +121,10 @@ class CharacterSelectRenderer {
      * Build or update one slot's block. Text goes in through `textContent`, never markup —
      * action names come from game data and the block sits inside the game's own DOM.
      * @param {Element} slotElement
-     * @param {{firstLineText: string, limiterColor: string, limiterText: string}} state
-     * @param {Object|null} record
+     * @param {{firstLineText: string, limiterColor: string, limiterText: string, actionTypeHrid: string|null}} state
      * @param {string|null} spriteUrl
      */
-    renderSlotBlock(slotElement, state, record, spriteUrl) {
+    renderSlotBlock(slotElement, state, spriteUrl) {
         let block = slotElement.querySelector(`.${BLOCK_CLASS}`);
         if (!block) {
             block = document.createElement('div');
@@ -138,7 +137,12 @@ class CharacterSelectRenderer {
         const activityRow = document.createElement('div');
         activityRow.style.cssText = 'display:flex;align-items:center;overflow:hidden;';
 
-        const iconSlug = skillSlugFromRecord(record);
+        // Taken from the display state's currently-active segment, not the record's first queued
+        // segment — a record persisted with several segments queued moves on to segment 2, 3, …
+        // as time passes (that is what `firstLineText` already shows), and an icon pinned to
+        // segment 0 would show the wrong skill for as long as the block is redrawn from the same
+        // stored record.
+        const iconSlug = skillSlugFromActionTypeHrid(state.actionTypeHrid);
         if (spriteUrl && iconSlug) {
             const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             svg.setAttribute('width', '16');
@@ -227,17 +231,16 @@ class CharacterSelectRenderer {
 }
 
 /**
- * The sprite symbol id for a record's leading action type, or null.
- * @param {Object|null} record
+ * The sprite symbol id for an action type hrid, or null.
+ * @param {string|null} actionTypeHrid
  * @returns {string|null}
  */
-function skillSlugFromRecord(record) {
-    const hrid = record?.projection?.segments?.[0]?.actionTypeHrid;
-    if (typeof hrid !== 'string' || !hrid.startsWith('/action_types/')) return null;
-    return hrid.replace('/action_types/', '') || null;
+function skillSlugFromActionTypeHrid(actionTypeHrid) {
+    if (typeof actionTypeHrid !== 'string' || !actionTypeHrid.startsWith('/action_types/')) return null;
+    return actionTypeHrid.replace('/action_types/', '') || null;
 }
 
 const characterSelectRenderer = new CharacterSelectRenderer();
 
 export default characterSelectRenderer;
-export { BLOCK_CLASS, skillSlugFromRecord };
+export { BLOCK_CLASS, skillSlugFromActionTypeHrid };

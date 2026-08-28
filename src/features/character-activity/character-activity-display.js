@@ -159,7 +159,7 @@ export function formatStaleness(observedAt, now) {
  * @param {Object} character - What is known about the slot: `{id, name, lastOfflineTime}`
  * @param {Object} prefs - Account-level date/time preferences
  * @param {number} [now]
- * @returns {{firstLineText: string, limiterColor: string, limiterText: string}}
+ * @returns {{firstLineText: string, limiterColor: string, limiterText: string, actionTypeHrid: string|null}}
  */
 export function computeSlotDisplayState(record, character, prefs, now = Date.now()) {
     if (!record) {
@@ -167,6 +167,7 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
             firstLineText: 'No activity data yet',
             limiterColor: 'neutral',
             limiterText: 'Open character once to enable status',
+            actionTypeHrid: null,
         };
     }
 
@@ -175,6 +176,7 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
             firstLineText: 'Activity status expired',
             limiterColor: 'neutral',
             limiterText: `Open character to refresh · last seen ${formatStaleness(record.observedAt, now)} ago`,
+            actionTypeHrid: null,
         };
     }
 
@@ -184,13 +186,19 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
             firstLineText: 'Activity status outdated',
             limiterColor: 'neutral',
             limiterText: `Open character to refresh · last seen ${formatStaleness(record.observedAt, now)} ago`,
+            actionTypeHrid: null,
         };
     }
 
     const { segments, terminalCause, terminalAt } = resolveDisplayProjection(record, lastOfflineTime);
 
     if (terminalCause === 'idle') {
-        return { firstLineText: 'No active action', limiterColor: 'red', limiterText: 'Character is idle' };
+        return {
+            firstLineText: 'No active action',
+            limiterColor: 'red',
+            limiterText: 'Character is idle',
+            actionTypeHrid: null,
+        };
     }
 
     if (terminalCause === 'unknown' || segments.length === 0) {
@@ -199,6 +207,7 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
             firstLineText: last ? formatActivityLine(last, false, 0) : 'No active action expected',
             limiterColor: 'neutral',
             limiterText: 'End time unavailable',
+            actionTypeHrid: last?.actionTypeHrid ?? null,
         };
     }
 
@@ -216,12 +225,14 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
                 firstLineText: formatActivityLine(found.segment, true, queuedCount),
                 limiterColor: 'red',
                 limiterText: `${PAST_LABELS.offline} · ${time}`,
+                actionTypeHrid: found.segment?.actionTypeHrid ?? null,
             };
         }
         return {
             firstLineText: 'No active action expected',
             limiterColor: 'red',
             limiterText: `${PAST_LABELS[terminalCause]} · ${time}`,
+            actionTypeHrid: null,
         };
     }
 
@@ -233,5 +244,6 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
         firstLineText: found ? formatActivityLine(found.segment, false, queuedCount) : 'No active action expected',
         limiterColor: color,
         limiterText: `${FUTURE_LABELS[terminalCause]} · ${time}`,
+        actionTypeHrid: found?.segment?.actionTypeHrid ?? null,
     };
 }
