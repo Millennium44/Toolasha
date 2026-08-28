@@ -284,17 +284,31 @@ class DataManager {
         if (this.currentCharacterId && this.currentCharacterId !== newCharacterId) {
             isCharacterSwitch = true;
 
-            // Rapid-switch guard (loop protection).
+            // Rapid-switch detection.
             //
-            // This used to `return`, which threw away the whole message:
-            // the new character's data was never stored, so every reader
-            // went on serving the previous character's skills, items and
-            // actions until another init arrived. What is expensive about a
-            // switch is the teardown — cleaning up and re-initialising a
-            // hundred features — not recording the data. So the data update
-            // and the lifecycle events below always happen; only the
-            // teardown is skipped when switches arrive faster than a second
-            // apart, which is exactly what the guard was defending.
+            // The guard this replaces has been wrong twice. First it
+            // `return`ed, throwing away the whole message: the new
+            // character's data was never stored, so every reader went on
+            // serving the previous character's skills, items and actions
+            // until another init arrived. Then it kept the data update but
+            // skipped `character_switching`/`character_switched` when two
+            // switches landed under a second apart — and those events are
+            // not incidental to a switch, they *are* the switch. They are
+            // what reloads the per-character settings and what gives every
+            // feature its one chance to persist and clear the departing
+            // character's state, and skipping them left the second character
+            // running on the first character's settings until some later,
+            // slower switch happened to fix it. Four characters in one
+            // browser is exactly the case that never gets that slow switch.
+            //
+            // Both halves of the lifecycle now always fire, in the same order
+            // and at the same points as a slow switch. The expensive part —
+            // tearing down and re-initialising a hundred features — is
+            // coalesced in feature-registry instead, which is the module that
+            // owns the feature layer and already serializes the whole
+            // lifecycle: a burst tears down once and re-initialises once, for
+            // whichever character is still current when it settles. See
+            // setupCharacterSwitchHandler().
             const now = arrivedAt;
             const isRapidSwitch = Boolean(
                 this.lastCharacterSwitchTime && now - this.lastCharacterSwitchTime < RAPID_SWITCH_WINDOW_MS
@@ -308,7 +322,7 @@ class DataManager {
 
             if (isRapidSwitch) {
                 console.warn(
-                    '[Toolasha] Rapid character switch (<1s since last); updating data but skipping feature teardown'
+                    '[Toolasha] Rapid character switch (<1s since last); feature teardown will be coalesced with the rest of the burst'
                 );
             }
             this.lastCharacterSwitchTime = now;
@@ -320,28 +334,35 @@ class DataManager {
             // draining belong to the *old* character, and a feature that
             // rewrote its state during cleanup could land on top of them.
             // Awaiting it costs one macrotask and makes the ordering real.
-            if (!isRapidSwitch) {
-                try {
-                    if (storage && typeof storage.flushAll === 'function') {
-                        await storage.flushAll();
-                    }
-                } catch (error) {
-                    console.error('[Toolasha] Failed to flush storage before character switch:', error);
+            //
+            // Run for a rapid switch too. The writes being drained belong to
+            // the character that is departing *this* switch, and a burst
+            // departs a different character each time; skipping the flush
+            // mid-burst leaves those writes to be picked up after
+            // currentCharacterId has moved on.
+            try {
+                if (storage && typeof storage.flushAll === 'function') {
+                    await storage.flushAll();
                 }
+            } catch (error) {
+                console.error('[Toolasha] Failed to flush storage before character switch:', error);
             }
 
-            // Emit character_switching event (cleanup phase)
-            if (!isRapidSwitch) {
-                // Awaited: a listener that persists the departing
-                // character's state must land before the teardown below
-                // starts clearing that state out from under it.
-                await this.emit('character_switching', {
-                    oldId: this.currentCharacterId,
-                    newId: newCharacterId,
-                    oldName: this.currentCharacterName,
-                    newName: newCharacterName,
-                });
-            }
+            // Emit character_switching event (cleanup phase).
+            //
+            // Before currentCharacterId moves, always: a listener that reads
+            // "the current character" here is persisting the departing one's
+            // state, and this is its only chance to.
+            //
+            // Awaited: a listener that persists the departing character's
+            // state must land before the teardown below starts clearing that
+            // state out from under it.
+            await this.emit('character_switching', {
+                oldId: this.currentCharacterId,
+                newId: newCharacterId,
+                oldName: this.currentCharacterName,
+                newName: newCharacterName,
+            });
 
             // Update character tracking
             this.currentCharacterId = newCharacterId;
@@ -373,14 +394,13 @@ class DataManager {
             this.isCharacterSwitching = false;
 
             // Emit character_switched event (ready for re-init).
-            // Paired with character_switching: a rapid switch skips both, so
-            // feature-registry never sees a re-init without a teardown.
-            if (!isRapidSwitch) {
-                this.emit('character_switched', {
-                    newId: newCharacterId,
-                    newName: newCharacterName,
-                });
-            }
+            // Paired with character_switching — one of each, per switch,
+            // always, so feature-registry never sees a re-init without a
+            // teardown or a teardown without a re-init to answer it.
+            this.emit('character_switched', {
+                newId: newCharacterId,
+                newName: newCharacterName,
+            });
         } else if (!this.currentCharacterId) {
             // First load - set character tracking
             this.currentCharacterId = newCharacterId;

@@ -899,3 +899,102 @@ describe('overlapping character switches', () => {
         }
     });
 });
+
+describe('rapid character switches', () => {
+    /**
+     * Record the switch lifecycle a run produces, and put it back afterwards.
+     * @param {Object} dataManager - The singleton
+     * @param {Function} run - The switches to perform
+     * @returns {Promise<{switching: string[], switched: string[]}>} What was emitted
+     */
+    async function recordLifecycle(dataManager, run) {
+        const switching = [];
+        const switched = [];
+        const onSwitching = (event) => switching.push(`${event.oldId}->${event.newId}`);
+        const onSwitched = (event) => switched.push(event.newId);
+        dataManager.on('character_switching', onSwitching);
+        dataManager.on('character_switched', onSwitched);
+        try {
+            await run();
+            // character_switched is deferred through a setTimeout
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        } finally {
+            dataManager.off('character_switching', onSwitching);
+            dataManager.off('character_switched', onSwitched);
+        }
+        return { switching, switched };
+    }
+
+    test('a rapid switch still runs the whole lifecycle, so the new character gets its own settings', async () => {
+        // The guard used to skip both events under a 1s window, which meant
+        // config never reloaded and char-2 ran on char-1's per-character
+        // settings until some later, slower switch happened along.
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        const init = webSocketHandlers.get('init_character_data');
+
+        const { switching, switched } = await recordLifecycle(dataManager, async () => {
+            await init(initPayload());
+            // Make the next switch land inside the rapid window for certain
+            dataManager.lastCharacterSwitchTime = Date.now();
+            await init(initPayload({ character: { id: 'char-2', name: 'Two' } }));
+        });
+
+        expect(switching).toEqual(['char-1->char-2']);
+        expect(switched).toEqual(['char-2']);
+        expect(dataManager.getCurrentCharacterId()).toBe('char-2');
+        // The departing character's pending writes were drained, not left for
+        // after currentCharacterId moved on
+        expect(storageMock.flushAll).toHaveBeenCalled();
+    });
+
+    test('a rapid A→B→A bounce ends pointing at A, with a lifecycle for each leg', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        const init = webSocketHandlers.get('init_character_data');
+
+        const { switching, switched } = await recordLifecycle(dataManager, async () => {
+            await init(initPayload());
+            dataManager.lastCharacterSwitchTime = Date.now();
+            await init(initPayload({ character: { id: 'char-2', name: 'Two' } }));
+            await init(initPayload());
+        });
+
+        // Each leg reports the character it actually departed, so a listener
+        // persisting "the current character" on switching never misfiles B's
+        // state under A or the other way round
+        expect(switching).toEqual(['char-1->char-2', 'char-2->char-1']);
+        expect(switched).toEqual(['char-2', 'char-1']);
+        expect(dataManager.getCurrentCharacterId()).toBe('char-1');
+        expect(dataManager.getCurrentCharacterName()).toBe('Tester');
+    });
+
+    test('the slow-switch path is unchanged: flush, then switching, then the data update', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const { default: dataManager } = await import('./data-manager.js');
+        const order = [];
+        const onSwitching = () => order.push('switching');
+        const init = webSocketHandlers.get('init_character_data');
+
+        try {
+            vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+            await init(initPayload());
+            dataManager.lastCharacterSwitchTime = 0; // the singleton carries earlier tests' clock
+
+            storageMock.flushAll = vi.fn(async () => {
+                order.push('flush');
+            });
+            dataManager.on('character_switching', onSwitching);
+
+            vi.setSystemTime(new Date('2026-01-01T00:00:10Z'));
+            await init(initPayload({ character: { id: 'char-2', name: 'Two' } }));
+
+            expect(order).toEqual(['flush', 'switching']);
+            expect(dataManager.getCurrentCharacterId()).toBe('char-2');
+            expect(dataManager.getIsCharacterSwitching()).toBe(false);
+        } finally {
+            dataManager.off('character_switching', onSwitching);
+            vi.useRealTimers();
+        }
+    });
+});
