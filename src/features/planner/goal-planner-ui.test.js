@@ -254,6 +254,45 @@ describe('drawing a plan', () => {
     });
 });
 
+describe('the character-switch boundary', () => {
+    test('disable clears the priced context and plans, so the next character does not inherit them', async () => {
+        // Build up everything a priced session accumulates
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(goalPlannerPanel.context).not.toBeNull();
+        expect(goalPlannerPanel.plans.length).toBeGreaterThan(0);
+        expect(goalPlannerPanel.pricedAt).not.toBeNull();
+
+        // feature-registry calls this on every character_switching event
+        goalPlannerPanel.disable();
+
+        // A context still in hand would let the next replan() (add/remove a
+        // goal without a Refresh) quote a new goal against this character's
+        // ranked income and cached prices instead of the next one's
+        expect(goalPlannerPanel.context).toBeNull();
+        expect(goalPlannerPanel.plans).toEqual([]);
+        expect(goalPlannerPanel.rateNotes).toEqual([]);
+        expect(goalPlannerPanel.combatStatus).toBeNull();
+        expect(goalPlannerPanel.pricedAt).toBeNull();
+    });
+
+    test('a replan after disable prices a fresh context rather than reusing the old one', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        expect(plannerContext.builds).toBe(1);
+
+        goalPlannerPanel.disable();
+        goalPlannerPanel.goals = [];
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 1 });
+
+        // Without a context in hand, replan() has to reprice rather than reuse
+        expect(plannerContext.builds).toBe(2);
+    });
+});
+
 describe('a step that says buy can go and buy', () => {
     /**
      * Click a button by its label, on the step whose text contains `within`.

@@ -369,9 +369,27 @@ class GoalPlannerPanel {
         reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
     }
 
-    /** Feature-registry teardown */
+    /**
+     * Feature-registry teardown — also the character-switch boundary.
+     *
+     * `this.context` carries the ranked activities, the acquisition and XP-rate
+     * caches, and `this.plans` the last drawn steps — all of them read live
+     * game state exactly once, at whichever character built them. `load()`
+     * replaces `this.plans` only when the next character has a saved snapshot,
+     * so without this reset a character who has never opened the planner would
+     * inherit the previous one's plans outright, and `replan()` without a
+     * refresh would quote a new goal against the previous character's ranked
+     * income and cached prices — a different person's crafting skill, gear and
+     * coins, presented as this one's.
+     */
     disable() {
         this._remove();
+        this.context = null;
+        this.plans = [];
+        this.rateNotes = [];
+        this.combatStatus = null;
+        this.pricedAt = null;
+        this.notice = null;
     }
 
     /**
