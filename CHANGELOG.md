@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Six small conveniences across the panels
+
+From this round's feature agents: the Consumables panel closes on Escape; external tool links tooltip the site they actually open; the Party Loot panel gains a Copy button for the run on screen (the CSV export only covered the archive); expired character-select activity blocks say how long ago they were last seen; loot-log sessions get a copy-summary button; and the action ETA marks with an ⓘ exactly how much in-progress time it subtracted.
+
+
 ### Startup stops waiting nine seconds for write timers
 
 A performance trace showed three startup paths awaiting the storage module's three-second write debounce — the character-activity collector twice in a row (six seconds), the session briefing's listing baseline (three), and the what's-new state stamp (three, before features even began). None of them needed the write landed to continue; the first two now fire and forget, the third writes immediately. Roughly nine of the ten blocking startup seconds gone.
