@@ -96,6 +96,7 @@ tracker.openedUnits = [];
 const rosterModule = await import('./guild-roster-view.js');
 const {
     filterSeenToRoster,
+    filterRosterRows,
     drawProfileCycler,
     drawSeenLoadouts,
     seriesDelta,
@@ -107,6 +108,7 @@ const {
     memberLabel,
     guildRosterPanel,
     registerGuildRosterRow,
+    resetRosterFilter,
     rosterCsvRows,
     ROSTER_CSV_COLUMNS,
     WINDOW_7D,
@@ -348,6 +350,24 @@ describe('isGoneQuiet', () => {
     });
 });
 
+describe('filterRosterRows', () => {
+    const members = [{ name: 'Alice' }, { name: 'Bob' }, { name: 'AliceInTraining' }];
+
+    test('blank text is not searching — everyone shows', () => {
+        expect(filterRosterRows(members, '')).toBe(members);
+        expect(filterRosterRows(members, '   ')).toEqual(members);
+    });
+
+    test('matches a case-insensitive substring anywhere in the name', () => {
+        expect(filterRosterRows(members, 'ali').map((member) => member.name)).toEqual(['Alice', 'AliceInTraining']);
+        expect(filterRosterRows(members, 'BOB').map((member) => member.name)).toEqual(['Bob']);
+    });
+
+    test('no match is an empty list, not the whole roster', () => {
+        expect(filterRosterRows(members, 'zzz')).toEqual([]);
+    });
+});
+
 describe('contributionShares', () => {
     test('shares are of the total actually earned', () => {
         expect(contributionShares([{ delta: 300 }, { delta: 100 }])).toEqual([75, 25]);
@@ -519,6 +539,7 @@ describe('the panel and tile', () => {
     afterEach(() => {
         guildRosterPanel.hide({ remember: false });
         vi.useRealTimers();
+        resetRosterFilter();
     });
 
     test('draws every section', () => {

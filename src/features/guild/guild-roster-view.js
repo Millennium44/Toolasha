@@ -59,6 +59,19 @@ export const QUIET_MIN_WEEK_RATE = 1;
 const ACCENT = '#c0b0ff';
 
 /**
+ * The contribution card's search box, as typed. Lives outside the panel's own
+ * state because the panel has none — every other section is recomputed fresh
+ * from the tracker on each draw, and a search term is the one thing among them
+ * a redraw must not throw away.
+ */
+let rosterFilterText = '';
+
+/** Reset the remembered search text. Exported for tests, which must not inherit a run. */
+export function resetRosterFilter() {
+    rosterFilterText = '';
+}
+
+/**
  * XP gained inside a window, and how much of the window the samples cover.
  *
  * Both matter: a delta over twenty minutes and a delta over six days are not
@@ -539,6 +552,30 @@ export function drawSeenLoadouts(
 }
 
 /**
+ * Only the members whose name contains the typed text.
+ *
+ * A search of who is already on the list, not a fresh query: it never touches
+ * who is "contributing" (two samples in the window and a positive delta), only
+ * which of those rows are shown. Blank or whitespace-only text is "not
+ * searching", so an empty box shows everyone.
+ *
+ * @param {Array<Object>} members - From {@link buildRoster}
+ * @param {string} query - As typed into the search box
+ * @returns {Array<Object>} The members whose name matches
+ */
+export function filterRosterRows(members, query) {
+    const wanted = String(query || '')
+        .trim()
+        .toLowerCase();
+    if (!wanted) return members || [];
+    return (members || []).filter((member) =>
+        String(member?.name || '')
+            .toLowerCase()
+            .includes(wanted)
+    );
+}
+
+/**
  * The "Export CSV" button for the contribution card.
  *
  * The card's own numbers, raw: a guild leader comparing this week against last
@@ -622,13 +659,39 @@ export const guildRosterPanel = createPanel({
         drawSeenLoadouts(body);
 
         const contributing = rows.filter((member) => Number.isFinite(member.delta7d) && member.delta7d > 0);
+        const shown = filterRosterRows(contributing, rosterFilterText);
         const card = panelCard(body, `Contribution (${contributing.length} of ${rows.length} measured)`, ACCENT);
         if (!contributing.length) {
             card.appendChild(panelNote('No member has two samples in the last week yet.'));
         } else {
-            card.appendChild(exportRosterCsvButton(contributing));
+            const search = document.createElement('input');
+            search.type = 'text';
+            search.id = 'mwi-roster-filter-input';
+            search.placeholder = 'Filter by name…';
+            search.value = rosterFilterText;
+            search.title = 'Narrows this list to members whose name contains this.';
+            search.style.cssText =
+                'width: 100%; box-sizing: border-box; margin: 0 0 4px; background: rgba(255,255,255,0.08); ' +
+                'border: 1px solid rgba(255,255,255,0.18); color: #e8ecf5; border-radius: 5px; padding: 3px 6px; ' +
+                'font-size: 12px;';
+            search.addEventListener('input', () => {
+                rosterFilterText = search.value;
+                const cursor = search.selectionStart;
+                guildRosterPanel.render();
+                // A redraw rebuilds this very box; put the caret back where it
+                // was, or the next keystroke lands on a box that just lost focus
+                const revived = document.getElementById('mwi-roster-filter-input');
+                if (revived) {
+                    revived.focus();
+                    revived.setSelectionRange(cursor, cursor);
+                }
+            });
+            card.appendChild(search);
+
+            card.appendChild(exportRosterCsvButton(shown));
+            if (!shown.length) card.appendChild(panelNote(`No match for "${rosterFilterText}".`));
         }
-        for (const member of contributing) {
+        for (const member of shown) {
             const line = panelLine(
                 `${memberLabel(member)}${member.quiet ? ' ·' : ''}`,
                 `${percent(member.share7d)} 7d · ${percent(member.share30d)} 30d · ${xp(member.delta7d)} XP`,
@@ -694,5 +757,6 @@ export default {
         offCaptured?.();
         offCaptured = null;
         guildRosterPanel.hide({ remember: false });
+        resetRosterFilter();
     },
 };
