@@ -310,6 +310,37 @@ describe('attributeGoldSources', () => {
         expect(result.totals.sources.marketTax).toBe(-25);
     });
 
+    test('a multi-day session spreads its loot across the days it ran, by time', () => {
+        // A run starting LOCAL noon of D19 and lasting 48h: a quarter of it
+        // on D19, half on D20, a quarter on D21 — only D19+D20 are in the window
+        const session = run(dayStart('2026-08-19') + 12 * 3600_000, { '/items/cheese': 100 });
+        session.durationSeconds = 48 * 3600;
+
+        const result = attributeGoldSources({
+            ...base,
+            to: D20 + 12 * 3600_000,
+            combatSessions: [session],
+        });
+
+        // cheese prices at 100 in the base pricer: 100 × 100 = 10,000 total,
+        // 25% on D19 and 50% on D20 land in the window
+        const perDay = Object.fromEntries(result.days.map((row) => [row.day, row.sources.combat]));
+        expect(perDay['2026-08-19']).toBeCloseTo(2500, 0);
+        expect(perDay['2026-08-20']).toBeCloseTo(5000, 0);
+    });
+
+    test('a long-running live session still pays into today even though it started before the window', () => {
+        const session = run(D18, { '/items/cheese': 100 });
+        session.durationSeconds = (D20 + 3600_000 - D18) / 1000;
+
+        const result = attributeGoldSources({
+            ...base,
+            combatSessions: [session],
+        });
+
+        expect(result.totals.sources.combat).toBeGreaterThan(0);
+    });
+
     test('offline income is its own row', () => {
         const result = attributeGoldSources({
             ...base,

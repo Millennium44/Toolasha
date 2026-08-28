@@ -176,6 +176,32 @@ export function dayStart(dayId) {
 }
 
 /**
+ * How much of a time span falls in each local day it touches.
+ *
+ * A zero-length span (a session with no recorded duration) is its start day,
+ * whole. Days step by calendar date, so DST days weigh their real length.
+ *
+ * @param {number} from - Span start, epoch ms
+ * @param {number} to - Span end, epoch ms
+ * @returns {Array<{day: string, share: number}>} Shares summing to 1
+ */
+export function daySharesOfSpan(from, to) {
+    if (!Number.isFinite(from)) return [];
+    if (!Number.isFinite(to) || to <= from) return [{ day: localDayId(from), share: 1 }];
+
+    const total = to - from;
+    const shares = [];
+    const cursor = new Date(dayStart(localDayId(from)));
+    while (cursor.getTime() < to) {
+        const start = cursor.getTime();
+        cursor.setDate(cursor.getDate() + 1);
+        const overlap = Math.min(to, cursor.getTime()) - Math.max(from, start);
+        if (overlap > 0) shares.push({ day: localDayId(start), share: overlap / total });
+    }
+    return shares;
+}
+
+/**
  * The day ids a window covers, oldest first.
  * @param {number} from - Window start
  * @param {number} to - Window end
@@ -609,8 +635,16 @@ export function attributeGoldSources(input) {
         add(day, 'marketTax', -figures.tax);
     }
 
-    // The archived runs, which pay for two rows: the consumables burned in them,
-    // and — where the loot log was closed and so recorded nothing — the drops
+    // The combat runs, which pay for two rows: the consumables burned in them,
+    // and — where the loot log was closed and so recorded nothing — the drops.
+    //
+    // A session's totals are SPREAD across the days it actually ran, by time.
+    // Booking everything to the start day put a twelve-day AFK grind — the
+    // normal way this game is played — entirely on a day outside every window,
+    // and the combat row read 0 while the loot was accruing right now. Which
+    // day each drop really fell on is unknowable from a session total, so the
+    // uniform-by-time share is the honest estimate, and it is exact for the
+    // common one-day session.
     const combatSessionDays = new Map();
     let sessionsInWindow = 0;
     let emptyLootSessions = 0;
@@ -628,19 +662,26 @@ export function attributeGoldSources(input) {
             if (consumed <= 0) continue;
             cost += consumed * num(price(consumable.itemHrid, 0));
         }
-        const day = localDayId(t);
-        add(day, 'consumables', -cost);
-
-        if (!inWindow.has(day)) continue;
-        sessionsInWindow += 1;
-        if (cost > 0) consumablesAttributed = true;
 
         const loot = combatSessionLootValue(session, price);
+        const spanEnd = t + Math.max(0, num(session?.durationSeconds)) * 1000;
+        const shares = daySharesOfSpan(t, spanEnd);
+
+        let touchedWindow = false;
+        for (const { day, share } of shares) {
+            add(day, 'consumables', -cost * share);
+            if (!inWindow.has(day)) continue;
+            touchedWindow = true;
+            const held = combatSessionDays.get(day) || { value: 0, items: 0 };
+            held.value += loot.value * share;
+            held.items += loot.items;
+            combatSessionDays.set(day, held);
+        }
+
+        if (!touchedWindow) continue;
+        sessionsInWindow += 1;
+        if (cost > 0) consumablesAttributed = true;
         if (loot.items === 0) emptyLootSessions += 1;
-        const held = combatSessionDays.get(day) || { value: 0, items: 0 };
-        held.value += loot.value;
-        held.items += loot.items;
-        combatSessionDays.set(day, held);
     }
 
     // The precedence rule, one day at a time: the loot log where it spoke, the
