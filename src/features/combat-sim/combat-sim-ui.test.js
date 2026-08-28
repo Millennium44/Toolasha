@@ -41,6 +41,8 @@ const mocks = vi.hoisted(() => ({
     guildBuffDetailMap: {},
     /** The params the last all-zones run was started with */
     allZonesArgs: null,
+    /** What `runAllZonesSimulation` resolves with — one entry per selected zone/tier */
+    allZonesResult: [],
     /** itemHrid → unit price, what `resolveItemPrice` answers with */
     itemPrices: {},
     /** The Bestiary as `getCharacterMonsters` hands it back; null until the tab has loaded it */
@@ -250,7 +252,8 @@ vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: () => ({})
 vi.mock('./all-zones-runner.js', () => ({
     runAllZonesSimulation: async (params) => {
         mocks.allZonesArgs = params;
-        return [];
+        if (params.onProgress) params.onProgress(100);
+        return mocks.allZonesResult;
     },
     cancelAllZonesSimulation: () => {},
 }));
@@ -1437,6 +1440,48 @@ describe('the all-zones table', () => {
             mocks.playerDTOs = [{ hrid: 'player1', equipment: {} }];
             mocks.itemPrices = {};
             mocks.zones = [];
+            mocks.allZonesResult = [];
+        });
+
+        test('the status moves off "Simulating" the moment the sweep resolves, before results finish rendering', async () => {
+            // The worker pool is done and the progress bar is at 100 as soon as
+            // runAllZonesSimulation resolves, but revenue/liquidity capping and
+            // the table render still run inside _onSimulateAllZones afterwards.
+            // A frozen "Simulating…" status through that stretch reads as a hang
+            // even though the sim itself finished promptly.
+            mocks.allZonesResult = [
+                {
+                    simulatedTime: 3600 * 1e9,
+                    encounters: 10,
+                    deaths: { player1: 0 },
+                    experienceGained: { player1: { defense: 100 } },
+                },
+            ];
+
+            const statuses = [];
+            const originalSetStatus = ui._setStatus.bind(ui);
+            const spy = vi.spyOn(ui, '_setStatus').mockImplementation((text) => {
+                statuses.push(text);
+                originalSetStatus(text);
+            });
+
+            await ui._onSimulateAllZones();
+            spy.mockRestore();
+
+            const simulatingIdx = statuses.findLastIndex((t) => t.startsWith('Simulating'));
+            const finalizingIdx = statuses.findIndex((t) => t.startsWith('Finalizing'));
+            const completeIdx = statuses.findIndex((t) => t.startsWith('All zones complete'));
+
+            // A "Finalizing" status is posted right after the sim resolves —
+            // between the last "Simulating" tick and the terminal "complete"
+            // message — so the panel never sits on stale "Simulating" text
+            // while it is actually done simulating and just finishing up.
+            expect(finalizingIdx).toBeGreaterThan(-1);
+            expect(completeIdx).toBeGreaterThan(finalizingIdx);
+            if (simulatingIdx > -1) expect(finalizingIdx).toBeGreaterThan(simulatingIdx);
+            // The very last status the user sees is the completion message,
+            // not a status frozen mid-finalization
+            expect(statuses[statuses.length - 1]).toBe(statuses[completeIdx]);
         });
 
         test('with the option off, the run gets the food the character carries', async () => {

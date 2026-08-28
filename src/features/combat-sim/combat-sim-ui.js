@@ -4230,6 +4230,14 @@ class CombatSimUI {
             clearInterval(elapsedTimer);
             const totalElapsed = formatElapsed((Date.now() - simStartTime) / 1000);
 
+            // The worker pool is done, but the results are not: revenue and
+            // liquidity capping run per zone (with real market-history fetches
+            // on a cache miss) and the table itself still has to render before
+            // anything can be saved. Left showing the frozen "Simulating…"
+            // text through all of that, the panel looks hung at 100% — say
+            // what is actually happening instead of freezing on stale words.
+            this._setStatus(`Finalizing ${zoneCount} zones' results...`);
+
             // Build zone results with revenue calculations
             const playerHrid = this._activePlayerTab || 'player1';
             const zoneResults = simResults
