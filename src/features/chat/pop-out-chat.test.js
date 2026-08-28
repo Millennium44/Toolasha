@@ -144,12 +144,15 @@ describe('pop-out chat window: remembered size and position', () => {
         expect(features).toBe('width=700,height=500,resizable=yes,left=200,top=100');
     });
 
-    test('clamps a saved size larger than the current screen', () => {
+    test('still caps a saved size that is absurdly larger than the current screen', () => {
+        // Size is the only thing still bounded (to a generous multiple of the primary
+        // screen), since a corrupted saved value could otherwise produce an unusable window.
         const features = buildPopoutWindowFeatures(
-            { width: 3000, height: 2000, left: 0, top: 0 },
+            { width: 30000, height: 20000, left: 0, top: 0 },
             { availWidth: 1280, availHeight: 800 }
         );
-        expect(features).toBe('width=1280,height=800,resizable=yes,left=0,top=0');
+        // 1280*2=2560, 800*2=1600
+        expect(features).toBe('width=2560,height=1600,resizable=yes,left=0,top=0');
     });
 
     test('never shrinks below a sane minimum even if a bad value was saved', () => {
@@ -160,13 +163,24 @@ describe('pop-out chat window: remembered size and position', () => {
         expect(features).toBe('width=320,height=240,resizable=yes,left=0,top=0');
     });
 
-    test('clamps a saved position that would open the window off-screen', () => {
+    test('passes a saved position through verbatim, even far beyond the primary screen', () => {
+        // This is what a pop-out placed on a second monitor to the right of/below the
+        // primary looks like: coordinates well past the primary screen's availWidth/Height.
+        // Firefox has no Window Management API to tell a real second monitor apart from a
+        // bogus position, so position is no longer clamped to the primary screen at all.
         const features = buildPopoutWindowFeatures(
             { width: 700, height: 500, left: 5000, top: 5000 },
             { availWidth: 1920, availHeight: 1080 }
         );
-        // left/top clamped so the window stays fully within the available screen area
-        expect(features).toBe('width=700,height=500,resizable=yes,left=1220,top=580');
+        expect(features).toBe('width=700,height=500,resizable=yes,left=5000,top=5000');
+    });
+
+    test('passes a negative saved position through verbatim (a monitor above/left of primary)', () => {
+        const features = buildPopoutWindowFeatures(
+            { width: 700, height: 500, left: -1200, top: -300 },
+            { availWidth: 1920, availHeight: 1080 }
+        );
+        expect(features).toBe('width=700,height=500,resizable=yes,left=-1200,top=-300');
     });
 
     test('ignores a malformed geometry object and falls back to defaults', () => {

@@ -25,6 +25,10 @@ const DEFAULT_POPOUT_WIDTH = 960;
 const DEFAULT_POPOUT_HEIGHT = 720;
 const MIN_POPOUT_WIDTH = 320;
 const MIN_POPOUT_HEIGHT = 240;
+// Size (not position) is still bounded to a multiple of the primary screen's available area.
+// We can't know a second monitor's actual size from Firefox (no Window Management API), so
+// this is a generous sanity cap against corrupted/absurd saved values, not a real screen fit.
+const MAX_SIZE_SCREEN_MULTIPLIER = 2;
 
 const CHANNELS = [
     { hrid: '/chat_channel_types/general', name: 'General' },
@@ -178,8 +182,17 @@ function resolveMessage(message) {
 
 /**
  * Build the `window.open` features string for the pop-out window, restoring a previously
- * saved size/position when one is available, clamped to fit the current screen so a
- * geometry saved on a bigger or differently-arranged monitor can never open off-screen.
+ * saved size/position when one is available.
+ *
+ * Position is trusted verbatim, including negative values or values beyond the primary
+ * screen's availWidth/availHeight — that's exactly what a window parked on a second monitor
+ * looks like from the primary screen's coordinate origin. Firefox has no Window Management
+ * API to enumerate monitors, so there is no way to tell a legitimate second-monitor position
+ * apart from a bogus one; clamping to the primary screen (the old behavior) meant a pop-out
+ * placed on a second monitor always reopened on the primary one instead.
+ *
+ * Size is still bounded (to a generous multiple of the primary screen, since we can't know a
+ * second monitor's real size either) so a corrupted saved value can't produce an absurd window.
  * @param {{width:number, height:number, left:number, top:number}|null|undefined} geometry
  * @param {{availWidth:number, availHeight:number}|null|undefined} screenBounds
  * @returns {string}
@@ -194,15 +207,13 @@ function buildPopoutWindowFeatures(geometry, screenBounds) {
         width = geometry.width;
         height = geometry.height;
     }
-    width = Math.min(Math.max(width, MIN_POPOUT_WIDTH), availWidth);
-    height = Math.min(Math.max(height, MIN_POPOUT_HEIGHT), availHeight);
+    width = Math.min(Math.max(width, MIN_POPOUT_WIDTH), availWidth * MAX_SIZE_SCREEN_MULTIPLIER);
+    height = Math.min(Math.max(height, MIN_POPOUT_HEIGHT), availHeight * MAX_SIZE_SCREEN_MULTIPLIER);
 
     const parts = [`width=${Math.round(width)}`, `height=${Math.round(height)}`, 'resizable=yes'];
 
     if (Number.isFinite(geometry?.left) && Number.isFinite(geometry?.top)) {
-        const left = Math.min(Math.max(geometry.left, 0), Math.max(availWidth - width, 0));
-        const top = Math.min(Math.max(geometry.top, 0), Math.max(availHeight - height, 0));
-        parts.push(`left=${Math.round(left)}`, `top=${Math.round(top)}`);
+        parts.push(`left=${Math.round(geometry.left)}`, `top=${Math.round(geometry.top)}`);
     }
 
     return parts.join(',');
