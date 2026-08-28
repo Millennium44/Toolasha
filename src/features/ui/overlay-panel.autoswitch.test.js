@@ -49,7 +49,10 @@ vi.mock('../../core/storage.js', () => ({
             store.data.set(key, JSON.parse(JSON.stringify(value)));
             return true;
         },
-        get: async () => null,
+        // `readScoped` reads through this one, so it has to answer from the
+        // same store the writes go to — returning null unconditionally made a
+        // reload untestable, since the panel always started from defaults
+        get: async (key) => (store.data.has(key) ? JSON.parse(JSON.stringify(store.data.get(key))) : null),
     },
 }));
 vi.mock('../../utils/timer-registry.js', () => ({
@@ -102,13 +105,19 @@ function at(ms) {
  * @param {string|null} kind - `combat`, `skilling`, `labyrinth`, or null for idle
  */
 function doing(kind) {
-    game.labyrinth = kind === 'labyrinth' ? { roomData: [{ id: 1 }] } : null;
+    // The room data is left behind by a run rather than made by one, so a
+    // character who has ever been in the labyrinth carries it while doing
+    // anything else. Set for every kind here, deliberately: what the character
+    // is doing has to be read off the queue in spite of it.
+    game.labyrinth = { roomData: [{ id: 1 }] };
     game.actions =
         kind === 'combat'
             ? [{ actionHrid: '/actions/combat/fly', isDone: false }]
-            : kind === 'skilling' || kind === 'labyrinth'
-              ? [{ actionHrid: '/actions/milking/cow', isDone: false }]
-              : [];
+            : kind === 'labyrinth'
+              ? [{ actionHrid: '/actions/labyrinth/dark_forest', isDone: false }]
+              : kind === 'skilling'
+                ? [{ actionHrid: '/actions/milking/cow', isDone: false }]
+                : [];
 }
 
 /** The rows currently switched on, in order. @returns {string[]} */
@@ -352,6 +361,21 @@ describe('following what you are doing', () => {
         expect(shown()).toEqual(PRESET_LAYOUTS.Labyrinth.rows);
     });
 
+    test('a labyrinth finished days ago is not a labyrinth run now', async () => {
+        // Reported live: a character quietly tailoring came back from a reload
+        // wearing the Labyrinth layout. The room data a run leaves behind was
+        // being read as a run in progress, and since that data never goes away
+        // the character read as being in the labyrinth for good.
+        game.labyrinth = { roomData: [{ id: 1 }], pathData: 'a-long-path-string' };
+        game.actions = [{ actionHrid: '/actions/tailoring/cotton_shirt', isDone: false }];
+
+        await overlayPanel._followActivity();
+        at(SWITCH_STABILITY_MS);
+        await overlayPanel._followActivity();
+
+        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.rows);
+    });
+
     test('the marketplace being open wins over whatever is being ground', async () => {
         doing('combat');
         const market = document.createElement('div');
@@ -436,6 +460,57 @@ describe('following what you are doing', () => {
         await overlayPanel._followActivity();
 
         expect(shown()).toEqual(['dps']);
+    });
+});
+
+describe('reloading the page', () => {
+    test('brings back the same tiles at the same coordinates', async () => {
+        // A preset is applied, the page is reloaded, and the panel reads its
+        // settings back from storage. Nothing in that round trip may change
+        // which tiles are up or where they sit.
+        Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', { value: 488, configurable: true });
+        overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
+
+        await overlayPanel.applyNamedLayout('Skilling');
+        const before = {
+            shown: shown(),
+            positions: { ...overlayPanel.settings.positions },
+            sizes: { ...overlayPanel.settings.sizes },
+        };
+        expect(before.shown).toEqual(PRESET_LAYOUTS.Skilling.rows);
+
+        // The reload: everything in memory goes, and the panel starts again
+        // from what was written. Settings are saved without being waited on, so
+        // the write has to be let land before anything reads it back.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        overlayPanel.hide();
+        overlayPanel.isInitialized = false;
+        overlayPanel.settings = { visible: {}, order: [], positions: {}, sizes: {}, zoom: {} };
+        overlayPanel.switchState = { seen: null, seenSince: 0, applied: null, paused: false, pausedAt: null };
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        // The order grows to name every registered row — opening the picker
+        // needs a full one to reorder against — but which of them are *on*, and
+        // where they sit, is the layout, and none of that may move
+        expect(shown()).toEqual(before.shown);
+        expect(overlayPanel.settings.positions).toEqual(before.positions);
+        expect(overlayPanel.settings.sizes).toEqual(before.sizes);
+    });
+
+    test('and does not switch layout on its own with auto-switching off', async () => {
+        // Even for a character whose save carries a finished labyrinth run
+        game.labyrinth = { roomData: [{ id: 1 }] };
+        game.actions = [{ actionHrid: '/actions/tailoring/cotton_shirt', isDone: false }];
+        overlayPanel.settings.autoSwitchLayout = false;
+
+        await overlayPanel.applyNamedLayout('Skilling');
+
+        at(SWITCH_STABILITY_MS * 3);
+        await overlayPanel._followActivity();
+        await overlayPanel._followActivity();
+
+        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.rows);
     });
 });
 

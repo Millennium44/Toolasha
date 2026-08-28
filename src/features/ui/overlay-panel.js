@@ -177,6 +177,9 @@ const MIN_HEADER_HEIGHT = 28;
  * above it the columns are as many as {@link MIN_FLOW_COLUMN} allows.
  */
 const ONE_COLUMN_WIDTH = 500;
+
+/** What the game calls a labyrinth action, for telling one run of combat from another */
+const LABYRINTH_ACTION_TYPE = '/action_types/labyrinth';
 /** The narrowest a flowed column may be and still hold a readout */
 const MIN_FLOW_COLUMN = 240;
 /** Between flowed tiles, so two readouts never touch */
@@ -366,19 +369,28 @@ function currentActivity() {
             return ACTIVITY.MARKET;
         }
 
-        // The same test the labyrinth features use: a run is the thing that has
-        // a floor and a path, and only a run has them. Written out here rather
-        // than imported, because those modules live in the combat bundle and an
-        // import would put a copy of them in this one.
-        const labyrinth = dataManager.characterData?.characterLabyrinth;
-        const laid = (value) =>
-            (Array.isArray(value) && value.length > 0) || (typeof value === 'string' && value.length > 2);
-        if (laid(labyrinth?.roomData) || laid(labyrinth?.pathData)) return ACTIVITY.LABYRINTH;
-
+        // Everything below is read off the action queue, which is the only thing
+        // that answers "what is this character doing" in the present tense.
+        //
+        // The labyrinth used to be read from `characterLabyrinth.roomData`
+        // instead, on the reasoning that a run is the thing with a floor and a
+        // path and only a run has them. Only a run *makes* them; the character
+        // keeps them afterwards. So a character who cleared a labyrinth on
+        // Tuesday still read as being in one on Thursday while quietly
+        // tailoring — and with auto-switching on, got the Labyrinth layout for
+        // it, permanently, since the reading never changed back.
         const running = (dataManager.getCurrentActions?.() || []).find((action) => action && !action.isDone);
         if (!running?.actionHrid) return null;
 
-        return String(running.actionHrid).startsWith('/actions/combat/') ? ACTIVITY.COMBAT : ACTIVITY.SKILLING;
+        const hrid = String(running.actionHrid);
+        // The same test the labyrinth features use, by action type where the
+        // game offers one and by the hrid where it does not. Written out here
+        // rather than imported, because those modules live in the combat bundle
+        // and an import would put a copy of them in this one.
+        const type = dataManager.getActionDetails?.(hrid)?.type;
+        if (type === LABYRINTH_ACTION_TYPE || (!type && hrid.includes('/labyrinth'))) return ACTIVITY.LABYRINTH;
+
+        return hrid.startsWith('/actions/combat/') ? ACTIVITY.COMBAT : ACTIVITY.SKILLING;
     } catch (error) {
         console.error('[OverlayPanel] Reading the current activity failed:', error);
         return null;
