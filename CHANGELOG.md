@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial signups block folds away
+
+A hundred unsigned names twice over is most of the trials tab. The block now has a heading — "Trial signups — Skilling N · Combat M unsigned" — that folds and unfolds the lists on click, remembered across reloads.
+
+
 ### The price-panel pin stops floating in the corner on listing tabs
 
 On My Listings and History the game keeps the last item's node in the DOM but hidden, and the price panel's 📌 anchored to its 0×0 rectangle — parking the pin in the page's top-left corner. A hidden anchor now hides the pin instead.

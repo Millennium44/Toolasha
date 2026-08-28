@@ -14,8 +14,23 @@ import { findTrialsRoot, isTrialsSetupTab } from './guild-trials-scrape.js';
 import { BUILDING_PATTERNS, readBuildingBonus } from './guild-trials-store.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { openPlayerProfile } from '../../utils/profile-command.js';
+import storage from '../../core/storage.js';
+
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
+
+/** Whether the trial-signups block is folded; hydrated from storage, survives redraws */
+let trialSignupsCollapsed = false;
+let trialSignupsCollapsedLoaded = false;
+async function hydrateTrialSignupsCollapsed() {
+    if (trialSignupsCollapsedLoaded) return;
+    trialSignupsCollapsedLoaded = true;
+    try {
+        trialSignupsCollapsed = (await storage.get('guildTrialSignupsCollapsed', 'settings', false)) === true;
+    } catch {
+        /* an unreadable preference is just the default */
+    }
+}
 
 const CSS_PREFIX = 'mwi-guild-xp';
 
@@ -914,7 +929,31 @@ class GuildXPDisplay {
             return `<div><span style="color:#9ca3af;">${label} (${names.length} unsigned):</span> <span style="color:${color};">${nameStr}</span></div>`;
         };
 
-        wrapper.innerHTML = makeList('Skilling', unsignedSkilling) + makeList('Combat', unsignedCombat);
+        // A hundred-name list twice over is most of the tab; it folds from
+        // its heading, and the fold is remembered
+        hydrateTrialSignupsCollapsed();
+        const header = document.createElement('div');
+        header.style.cssText = 'cursor:pointer; color:#9ca3af; user-select:none;';
+        const drawHeader = () => {
+            header.textContent =
+                `${trialSignupsCollapsed ? '▸' : '▾'} Trial signups — ` +
+                `Skilling ${unsignedSkilling.length} · Combat ${unsignedCombat.length} unsigned`;
+        };
+        drawHeader();
+        header.title = 'Click to fold or unfold the unsigned lists. Remembered across reloads.';
+
+        const body = document.createElement('div');
+        body.innerHTML = makeList('Skilling', unsignedSkilling) + makeList('Combat', unsignedCombat);
+        body.style.display = trialSignupsCollapsed ? 'none' : '';
+
+        header.addEventListener('click', () => {
+            trialSignupsCollapsed = !trialSignupsCollapsed;
+            body.style.display = trialSignupsCollapsed ? 'none' : '';
+            drawHeader();
+            storage.set('guildTrialSignupsCollapsed', trialSignupsCollapsed, 'settings');
+        });
+
+        wrapper.append(header, body);
 
         // The status row is a place to put this, not a condition for having it.
         // Requiring it meant an unverified class name could withhold the whole
