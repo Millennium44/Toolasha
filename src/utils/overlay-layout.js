@@ -550,11 +550,24 @@ function toMaps(placed) {
  * slack it was laid out with, and loses only the difference between what its
  * tiles were given and what they drew.
  *
+ * ## One height to a line
+ *
+ * Tiles on a line come out the same height, the line's. They arrive at their
+ * own: a tile standing down to a strip is twenty pixels beside a neighbour
+ * drawing thirty, and left at twenty it is a short box at the top of a taller
+ * line with its label floating above the neighbour's text. Since the line is
+ * thirty tall either way, the strip may as well be — and then the two labels are
+ * level, and the rule drawn under each tile is one rule across the line.
+ *
+ * A tile drawn at no height at all is left there, because that is a tile that
+ * has taken itself off screen rather than one that is merely short.
+ *
  * @param {Array<Object>} tiles - Tiles with `key`, `y`, their **drawn** `height`,
  *   and `given` — the height the layout allotted them, which defaults to the
  *   drawn one, making a settle with nothing to reclaim a no-op
- * @returns {Array<Object>} The same tiles in the same order, with `y` closed up,
- *   or the very same array when the layout is not one this may touch
+ * @returns {Array<Object>} The same tiles in the same order, closed up and each
+ *   as tall as its line, or the very same array when the layout is not one this
+ *   may touch
  */
 export function settleLines(tiles) {
     if (!Array.isArray(tiles) || tiles.length < 2) return tiles;
@@ -598,17 +611,25 @@ export function settleLines(tiles) {
     let y = 0;
     for (let index = 0; index < tops.length; index += 1) {
         const line = lines.get(tops[index]);
-        for (const tile of line) moved.set(tile.key, y);
+        const height = extent(line, (tile) => tile.height || 0);
+        for (const tile of line) moved.set(tile.key, { y, height });
 
         // Whatever room was left under this line stays left under it
         const below = tops[index + 1];
         const slack = below === undefined ? 0 : below - tops[index] - extent(line, given);
-        y += extent(line, (tile) => tile.height || 0) + slack;
+        y += height + slack;
     }
 
     // Handed back in the order they arrived: what changed is where they are
     // drawn, and nothing downstream should have to notice a reordering
-    return tiles.map((tile) => (moved.get(tile.key) === tile.y ? tile : { ...tile, y: moved.get(tile.key) }));
+    return tiles.map((tile) => {
+        const settled = moved.get(tile.key);
+        // A tile drawn at nothing has taken itself off screen; the line's height
+        // is not an offer it should take up
+        const height = tile.height > 0 ? settled.height : tile.height;
+        if (settled.y === tile.y && height === tile.height) return tile;
+        return { ...tile, y: settled.y, height };
+    });
 }
 
 /**

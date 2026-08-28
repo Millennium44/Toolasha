@@ -246,14 +246,17 @@ describe('a tile with nothing to show', () => {
 
         expect(shown()).toEqual(['coins', 'dps']);
         expect(tiles().get('dps')._content.textContent).toBe('DPS');
-        expect(tiles().get('dps').style.height).toBe('20px');
+        // Level with the tile it shares a line with, rather than a short box at
+        // the top of a taller line — the line is that tall either way
+        expect(tiles().get('dps').style.height).toBe(tiles().get('coins').style.height);
+        expect(tiles().get('dps').style.top).toBe(tiles().get('coins').style.top);
         expect(text()).not.toContain('No damage tracked yet');
     });
 
     test('and comes back to full size the moment it has something to say', async () => {
         const dps = row('dps', { name: 'DPS', empty: 'No damage tracked yet' });
         await open([dps, row('coins', { text: '1,024' })]);
-        expect(tiles().get('dps').style.height).toBe('20px');
+        expect(tiles().get('dps')._content.textContent).toBe('DPS');
 
         // The fight starts
         dps.render = (el) => (el.textContent = '412 dps');

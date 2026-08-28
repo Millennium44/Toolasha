@@ -502,6 +502,43 @@ describe('settleLines', () => {
         expect(settled.find((tile) => tile.key === 'cL').y).toBe(30);
     });
 
+    test('tiles on a line all come out as tall as the line', () => {
+        // A strip beside a taller tile, left at its own height, is a short box
+        // at the top of a taller line with its label floating above the
+        // neighbour's text. The line is that tall either way.
+        const settled = settleLines([
+            { key: 'strip', x: 0, y: 0, width: 220, given: 30, height: 20 },
+            { key: 'drawn', x: 220, y: 0, width: 220, given: 30, height: 30 },
+            ...line('next', 30, 30),
+        ]);
+        const at = Object.fromEntries(settled.map((tile) => [tile.key, tile]));
+
+        expect(at.strip.height).toBe(30);
+        expect(at.drawn.height).toBe(30);
+        expect(at.strip.y).toBe(at.drawn.y);
+        // And the line below still sits directly under it
+        expect(at.nextL.y).toBe(30);
+    });
+
+    test('a line every tile of which stood down is short, not padded back out', () => {
+        const settled = settleLines([...line('a', 0, 30, 20), ...line('b', 30, 30)]);
+        const at = Object.fromEntries(settled.map((tile) => [tile.key, tile]));
+
+        expect(at.aL.height).toBe(20);
+        expect(at.bL.y).toBe(20);
+    });
+
+    test('a tile drawn at no height is left at none', () => {
+        // It has taken itself off screen rather than being merely short, so the
+        // line's height is not an offer it should take up
+        const settled = settleLines([
+            { key: 'gone', x: 0, y: 0, width: 220, given: 30, height: 0 },
+            { key: 'here', x: 220, y: 0, width: 220, given: 30, height: 30 },
+        ]);
+
+        expect(settled.find((tile) => tile.key === 'gone').height).toBe(0);
+    });
+
     test('a hand-arranged layout is handed straight back', () => {
         // Two tiles five pixels apart are not two lines, and stacking them would
         // be scrambling an arrangement rather than settling one

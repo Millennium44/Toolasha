@@ -306,6 +306,39 @@ describe('lines settling to what they drew', () => {
         expect(overlayPanel.settings.sizes.middle).toEqual({ width: 220, height: 80 });
     });
 
+    test('a tile flickering between drawn and empty never moves its neighbour', () => {
+        // What a player watched happen: the experience-per-hour tile filling in
+        // and emptying as the tracker ticked. Its own height may change — that
+        // is the line reporting honestly — but the tile beside it shares the
+        // line, so nothing on that line may move sideways or up and down.
+        const flicker = sometimes('flicker', { width: 220, height: 30 });
+        registry.rows = [flicker, speaking('steady', { width: 220, height: 30 })];
+        overlayPanel.settings.visible = { flicker: true, steady: true };
+        overlayPanel.settings.order = ['flicker', 'steady'];
+        overlayPanel.settings.positions = { flicker: { x: 0, y: 0 }, steady: { x: 220, y: 0 } };
+        overlayPanel.settings.sizes = {
+            flicker: { width: 220, height: 30 },
+            steady: { width: 220, height: 30 },
+        };
+        overlayPanel.show();
+
+        const seen = new Set();
+        for (let tick = 0; tick < 6; tick += 1) {
+            flicker.quiet = tick % 2 === 0;
+            overlayPanel._renderBody();
+
+            const steady = overlayPanel.tiles.get('steady');
+            seen.add([steady.style.left, steady.style.top, steady.style.width, steady.style.height].join(','));
+
+            // And the two are level with each other on every one of them
+            const strip = overlayPanel.tiles.get('flicker');
+            expect(strip.style.top).toBe(steady.style.top);
+            expect(strip.style.height).toBe(steady.style.height);
+        }
+
+        expect(seen.size).toBe(1);
+    });
+
     test('nothing settles while the tiles are being arranged', () => {
         // Unlocked, a drag writes back where a tile was dropped — so a settled
         // position must never be the one under the pointer
