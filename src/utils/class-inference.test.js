@@ -122,14 +122,51 @@ describe('the cast log', () => {
 });
 
 describe('inferring a class', () => {
-    test('threat on the captured sheet is a tank, whatever they cast', () => {
+    test('a real damaging ability outranks a bare threat number, whatever the sheet says', () => {
+        // atlan: threat 208 on the sheet, but a mage kit — the sheet number
+        // alone must not override what they are actually observed casting
         const verdict = inferClass(
             { casts: cast('/abilities/cleave'), stats: { threat: 3.2, combatStyleHrids: ['/combat_styles/slash'] } },
             ABILITIES
         );
 
+        expect(verdict.key).toBe('melee');
+        expect(verdict.basis).toContain('styles cast');
+    });
+
+    test('threat on the captured sheet is a tank only once nothing else has answered', () => {
+        // No damaging ability anywhere in the evidence — the sheet's threat
+        // number is all there is, so it still gets to speak
+        const verdict = inferClass({ stats: { threat: 3.2 } }, ABILITIES);
+
         expect(verdict).toMatchObject({ key: 'tank', short: CLASS_BUCKETS.tank.short });
         expect(verdict.basis).toContain('threat');
+    });
+
+    test('threat merely at the party baseline is not a tank; threat well above it is', () => {
+        // Mirrors the reported bug: a mage with Threat 208 sitting near the
+        // rest of the party's baseline, versus a real tank materially above it
+        const mage = inferClass({ stats: { threat: 208 }, partyThreat: 200 }, ABILITIES);
+        expect(mage).toBeNull();
+
+        const tank = inferClass({ stats: { threat: 900 }, partyThreat: 200 }, ABILITIES);
+        expect(tank.key).toBe('tank');
+        expect(tank.basis).toContain('above the rest of the party');
+    });
+
+    test('a mage kit beats a merely-baseline threat number even with a party baseline supplied', () => {
+        // The exact reported scenario: captured kit has Fireball, sheet threat
+        // is unremarkable next to the rest of the party
+        const verdict = inferClass(
+            {
+                kit: [{ hrid: '/abilities/fireball' }],
+                stats: { threat: 208 },
+                partyThreat: 190,
+            },
+            ABILITIES
+        );
+
+        expect(verdict.key).toBe('fireMage');
     });
 
     test('a thorns or taunt ability is a tank, cast or merely carried', () => {

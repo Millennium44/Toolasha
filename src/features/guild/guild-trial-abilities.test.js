@@ -716,7 +716,9 @@ describe('class tags from the ability stream', () => {
         expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('healer');
     });
 
-    test('threat on a captured sheet outranks the stream', () => {
+    test('a real cast beats a bare threat number — the misclassification this guards against', () => {
+        // Every sheet carries a nonzero threat reading; a captured mage with
+        // an observed fireball must not be reclassified tank off that alone
         const s = session(['Alice']);
         s.noteTrialStart(NOW);
         s.noteAbilityCast('Alice', '/abilities/fireball');
@@ -724,7 +726,62 @@ describe('class tags from the ability stream', () => {
             at: NOW,
         });
 
+        expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('fireMage');
+    });
+
+    test('threat on a captured sheet still tags a tank once nothing else is known', () => {
+        const s = session(['Alice']);
+        s.noteTrialStart(NOW);
+        s.recordCapture(snap('Alice', 1, [], { stats: { threat: 4, combatStyleHrids: ['/combat_styles/smash'] } }), {
+            at: NOW,
+        });
+
         expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('tank');
+    });
+
+    test('a mage with an ordinary threat reading is not tank next to a party whose baseline sits near it', () => {
+        // The reported scenario: atlan and bilibili both carried a moderate
+        // Threat number and a mage kit — "guessed Fire Mage/Water Mage, Battle
+        // Info says Tank" was the bug. A roster of several similar mages
+        // establishes the baseline every one of them sits near, and the one
+        // real tank sits well clear of it.
+        const s = session(['Atlan', 'Bilibili', 'Cleric', 'Rogue', 'Tanky']);
+        s.noteTrialStart(NOW);
+        s.recordCapture(snap('Atlan', 1, [{ hrid: '/abilities/fireball' }], { stats: { threat: 208 } }), { at: NOW });
+        s.recordCapture(snap('Bilibili', 2, [{ hrid: '/abilities/fireball' }], { stats: { threat: 195 } }), {
+            at: NOW,
+        });
+        s.recordCapture(snap('Cleric', 3, [{ hrid: '/abilities/fireball' }], { stats: { threat: 220 } }), { at: NOW });
+        s.recordCapture(snap('Rogue', 4, [{ hrid: '/abilities/fireball' }], { stats: { threat: 180 } }), { at: NOW });
+        // The real tank: threat far above what everyone else's sheet shows,
+        // and no damaging ability of their own to say otherwise
+        s.recordCapture(snap('Tanky', 5, [], { stats: { threat: 1400 } }), { at: NOW });
+
+        const state = s.state(STREAM_GAME);
+        const byName = (name) => state.participants.find((row) => row.name === name).classTag.key;
+
+        expect(byName('Atlan')).toBe('fireMage');
+        expect(byName('Bilibili')).toBe('fireMage');
+        expect(byName('Tanky')).toBe('tank');
+    });
+
+    test('a party threat baseline is what tells apart a blank-kit member near it from one well above it', () => {
+        // No captured abilities for either — this exercises the baseline
+        // arithmetic in guild-trial-abilities.js itself (rule 3 never fires
+        // for either row), not the reordering covered above
+        const s = session(['A', 'B', 'C', 'D', 'Tanky']);
+        s.noteTrialStart(NOW);
+        s.recordCapture(snap('A', 1, [], { stats: { threat: 200 } }), { at: NOW });
+        s.recordCapture(snap('B', 2, [], { stats: { threat: 190 } }), { at: NOW });
+        s.recordCapture(snap('C', 3, [], { stats: { threat: 210 } }), { at: NOW });
+        s.recordCapture(snap('D', 4, [], { stats: { threat: 205 } }), { at: NOW });
+        s.recordCapture(snap('Tanky', 5, [], { stats: { threat: 1400 } }), { at: NOW });
+
+        const state = s.state(STREAM_GAME);
+        const byName = (name) => state.participants.find((row) => row.name === name).classTag;
+
+        expect(byName('A')).toBeNull();
+        expect(byName('Tanky').key).toBe('tank');
     });
 
     test('the sheet’s own style tags a captured member whose casts were never streamed', () => {

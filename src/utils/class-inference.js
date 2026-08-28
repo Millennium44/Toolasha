@@ -19,27 +19,38 @@
  *
  * Strongest evidence first, and the first rule that fires wins:
  *
- * 1. **Threat on the sheet is a tank.** `combatStats.threat` is a stat nobody
- *    carries by accident — it exists to pull aggro — so a captured loadout with
- *    a nonzero one settles the question outright. Only a capture can say this;
- *    the stream carries no stats. **A taunt, thorns or retaliation ability**
- *    cast or carried says the same thing from the kit side: a buff of type
- *    threat, physical/elemental thorns or retaliation exists to be hit and
- *    nobody else runs one.
+ * 1. **A taunt, thorns or retaliation ability is a tank.** Cast or merely
+ *    carried in a captured kit: a buff of type threat, physical/elemental
+ *    thorns or retaliation exists to be hit and nobody else runs one. This is
+ *    the kit declaring itself, which beats a number on a stat sheet.
  * 2. **An ally heal is a healer.** An `/ability_effect_types/heal` effect
  *    pointed at an ally. Self-heals do not count: every build life-steals.
- * 3. **The modal damage style of what they actually cast.** Magic splits again
- *    by the modal `damageType` of those casts, because in this game "mage"
+ * 3. **The modal damage style of what they actually cast or carry.** Magic
+ *    splits again by the modal `damageType`, because in this game "mage"
  *    without an element says nothing about what the party is weak to — and the
  *    elements are not three peers. Fire and water are the damage elements and
  *    get a bucket each; **nature is the healing element**, so nature casts land
  *    in Healer rather than in a third mage bucket. That agrees with rule 2 by
  *    construction: a nature caster and an ally-healer are the same player, and
  *    the two rules must not be able to disagree about them. Ranged and the
- *    three melee styles collapse to Ranged and Melee.
- * 4. **The sheet's own style**, when no damaging cast has been seen but a
+ *    three melee styles collapse to Ranged and Melee. A real ability someone is
+ *    actually casting says more about their role than a raw threat number does,
+ *    so this now outranks rule 4 — a mage stacking Threat from gear or levels
+ *    is still a mage, evidenced by the fireballs they are throwing.
+ * 4. **Threat on the sheet is a tank**, when nothing above already answered.
+ *    `combatStats.threat` is not a flag — every unit carries a baseline value
+ *    the moment they enter combat (the game adds a flat 100 before any
+ *    tank-specific multiplier), so a merely nonzero reading proves nothing on
+ *    its own; it is what a Fire Mage with 208 Threat on their sheet looks like.
+ *    What is diagnostic is a reading well above what the rest of the party is
+ *    showing, which is why the caller may pass `partyThreat` — a representative
+ *    baseline threat for the current roster. With one, this rule requires
+ *    `stats.threat` to clear `partyThreat * TANK_THREAT_RATIO`. Without one
+ *    (an isolated call, or a test), it falls back to "nonzero" — weaker, but
+ *    only reached once rules 1–3 have already had first refusal.
+ * 5. **The sheet's own style**, when no damaging cast has been seen but a
  *    capture exists: `combatStats.combatStyleHrids[0]` and `combatStats.damageType`.
- * 5. **Nothing.** Null, and the caller draws no tag. Never a guess from party
+ * 6. **Nothing.** Null, and the caller draws no tag. Never a guess from party
  *    position or from a name.
  *
  * ## It says where it came from
@@ -77,6 +88,14 @@ const TANK_BUFFS = new Set([
 
 /** How many distinct ability hrids a verdict keeps as its evidence */
 export const MAX_EVIDENCE = 6;
+
+/**
+ * How far above the party's baseline threat a sheet reading must sit before
+ * it is trusted as a tank signal, rather than the ordinary scaling everybody's
+ * Threat stat shows. Picked well clear of noise: a real tank's threat comes
+ * from a taunt-type buff's ratio boost, which multiplies rather than nudges.
+ */
+export const TANK_THREAT_RATIO = 1.5;
 
 /**
  * The buckets, and how each is drawn.
@@ -259,6 +278,9 @@ export function bucketForStyle(style, element) {
  * @param {Object} [input.stats] - `combatDetails.combatStats` from a captured loadout
  * @param {string} [input.weaponHrid] - The weapon actually wielded, when known (own character,
  *   a captured loadout) — carried on the verdict so the drawing can be the real weapon's kind
+ * @param {number|null} [input.partyThreat] - A representative baseline threat for the rest of the
+ *   party (e.g. the median of everyone else captured), used to tell a tank's threat apart from the
+ *   baseline everybody's sheet shows. Omit when there is nothing to compare against yet.
  * @param {Object} [abilityDetailMap] - Game data
  * @returns {{key: string, label: string, short: string, basis: string, evidence: string[],
  *   style: string, curse: boolean, weaponHrid: string|null}|null}
@@ -267,7 +289,10 @@ export function bucketForStyle(style, element) {
  *   curse was ever seen in the evidence — the Cursed Bow's on-hit, which is what tells it
  *   from the crossbow inside the ranged bucket.
  */
-export function inferClass({ casts = null, kit = null, stats = null, weaponHrid = null } = {}, abilityDetailMap = {}) {
+export function inferClass(
+    { casts = null, kit = null, stats = null, weaponHrid = null, partyThreat = null } = {},
+    abilityDetailMap = {}
+) {
     // The hrids the verdict may cite: what was watched first, and the captured
     // kit behind it. Deduplicated, because a captured ability that was also
     // cast is one piece of evidence rather than two
@@ -285,17 +310,14 @@ export function inferClass({ casts = null, kit = null, stats = null, weaponHrid 
     const verdict = (bucket, basis, style = '') =>
         bucket ? { ...bucket, basis, evidence, style: style || sheetStyleTail || '', curse, weaponHrid } : null;
 
-    // 1. Threat is a stat carried on purpose, and only a tank carries it
-    if (Number(stats?.threat) > 0) return verdict(CLASS_BUCKETS.tank, 'threat on the captured sheet');
-
     const profiles = [];
     for (const hrid of [...observed, ...kitHrids]) {
         const profile = abilityProfile(hrid, abilityDetailMap);
         if (profile) profiles.push(profile);
     }
 
-    //    …and a taunt, thorns or retaliation ability is the kit-side statement
-    //    of the same thing
+    // 1. A taunt, thorns or retaliation ability is the kit's own statement of
+    //    tanking — cast or merely carried
     if (profiles.some((profile) => profile.tanks)) {
         return verdict(CLASS_BUCKETS.tank, 'a taunt, thorns or retaliation ability in the kit');
     }
@@ -308,7 +330,10 @@ export function inferClass({ casts = null, kit = null, stats = null, weaponHrid 
 
     // 3. The modal style of the damaging casts, weighted by how often each
     //    ability was actually seen — a rotation's opener should not outvote
-    //    the spell it is cast ten times between
+    //    the spell it is cast ten times between. A real offensive ability
+    //    outranks a raw threat number: everyone's Threat stat scales with
+    //    level and gear, so it is not evidence against what someone is
+    //    actually observed casting
     const styleCounts = {};
     const elementCounts = {};
     for (const profile of profiles) {
@@ -326,12 +351,30 @@ export function inferClass({ casts = null, kit = null, stats = null, weaponHrid 
         if (bucket) return verdict(bucket, 'the styles cast in this trial', style);
     }
 
-    // 4. The sheet, when nothing damaging has been watched. A capture states
+    // 4. Threat on the sheet, once nothing above has already answered. Not a
+    //    flag — every unit's sheet carries a baseline value — so with a party
+    //    baseline to compare against, only a reading well clear of it counts;
+    //    without one, this falls back to "nonzero", the weakest reading of it
+    const threat = Number(stats?.threat);
+    const baseline = Number(partyThreat);
+    const hasBaseline = Number.isFinite(baseline) && baseline > 0;
+    const threatIsElevated =
+        Number.isFinite(threat) && (hasBaseline ? threat > baseline * TANK_THREAT_RATIO : threat > 0);
+    if (threatIsElevated) {
+        return verdict(
+            CLASS_BUCKETS.tank,
+            hasBaseline
+                ? 'threat well above the rest of the party, on the captured sheet'
+                : 'threat on the captured sheet'
+        );
+    }
+
+    // 5. The sheet, when nothing damaging has been watched. A capture states
     //    the weapon's own style and element outright
     const sheetStyle = stats?.combatStyleHrid || stats?.combatStyleHrids?.[0];
     const sheetBucket = bucketForStyle(sheetStyle, stats?.damageType);
     if (sheetBucket) return verdict(sheetBucket, 'the weapon style on the captured sheet', tail(sheetStyle));
 
-    // 5. Nothing. A column of blanks is honest; a column of guesses is not
+    // 6. Nothing. A column of blanks is honest; a column of guesses is not
     return null;
 }

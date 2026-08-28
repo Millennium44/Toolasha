@@ -665,9 +665,12 @@ class GuildTrialAbilities {
      *
      * @param {{name?: string, capture?: Object|null}} row - A `participants()` row
      * @param {Object} abilityDetailMap - Game data
+     * @param {number|null} [partyThreat] - Baseline threat for the rest of the party, from
+     *   {@link partyThreatBaseline}. Recomputed from the current roster when omitted — pass it in
+     *   when classifying many rows in a loop so it is only ever computed once.
      * @returns {Object|null} The verdict, from `inferClass`
      */
-    classOf(row, abilityDetailMap = this._abilityMap()) {
+    classOf(row, abilityDetailMap = this._abilityMap(), partyThreat = this._partyThreatBaseline()) {
         const name = String(row?.name || row?.capture?.name || '')
             .trim()
             .toLowerCase();
@@ -679,9 +682,32 @@ class GuildTrialAbilities {
                 casts: name ? this.casts[name] || null : null,
                 kit: row?.capture?.abilities || null,
                 stats: row?.capture?.classStats || null,
+                partyThreat,
             },
             abilityDetailMap
         );
+    }
+
+    /**
+     * A representative "everyone has this" threat reading for the current roster.
+     *
+     * The median of every captured player's sheet threat — the middle of the pack rather than
+     * the mean, so one true tank pulling the average up cannot raise the bar against themselves,
+     * and a couple of stray zero readings cannot pull it down to nothing. Null under two captured
+     * readings: a baseline of one player is not a baseline, and `inferClass` falls back to its own
+     * "nonzero" reading in that case.
+     *
+     * @returns {number|null}
+     */
+    _partyThreatBaseline() {
+        const players = this.session?.players || {};
+        const threats = Object.values(players)
+            .map((entry) => Number(entry?.classStats?.threat))
+            .filter((value) => Number.isFinite(value) && value > 0)
+            .sort((a, b) => a - b);
+        if (threats.length < 2) return null;
+        const mid = Math.floor(threats.length / 2);
+        return threats.length % 2 === 0 ? (threats[mid - 1] + threats[mid]) / 2 : threats[mid];
     }
 
     /**
@@ -698,12 +724,13 @@ class GuildTrialAbilities {
      */
     classes(abilityDetailMap = this._abilityMap()) {
         const map = {};
+        const partyThreat = this._partyThreatBaseline();
         for (const row of this.participants()) {
             const name = String(row.name || '')
                 .trim()
                 .toLowerCase();
             if (!name) continue;
-            const verdict = this.classOf(row, abilityDetailMap);
+            const verdict = this.classOf(row, abilityDetailMap, partyThreat);
             if (verdict) map[name] = verdict;
         }
         return map;
@@ -735,18 +762,20 @@ class GuildTrialAbilities {
      *
      * @param {{name?: string, captured?: boolean, capture?: Object|null}} row - A `participants()` row
      * @param {Object} [abilityDetailMap] - Game data
+     * @param {number|null} [partyThreat] - Baseline threat for the rest of the party, from
+     *   {@link partyThreatBaseline}. Recomputed from the current roster when omitted.
      * @returns {{guess: Object|null, actual: Object|null, agree: boolean|null}|null}
      *   Null when the player is not captured
      */
-    classCheck(row, abilityDetailMap = this._abilityMap()) {
+    classCheck(row, abilityDetailMap = this._abilityMap(), partyThreat = this._partyThreatBaseline()) {
         if (!row?.captured || !row.capture) return null;
         const name = String(row.name || row.capture?.name || '')
             .trim()
             .toLowerCase();
         const casts = name ? this.casts[name] || null : null;
-        const guess = casts ? inferClass({ casts }, abilityDetailMap) : null;
+        const guess = casts ? inferClass({ casts, partyThreat }, abilityDetailMap) : null;
         const actual = inferClass(
-            { kit: row.capture.abilities || null, stats: row.capture.classStats || null },
+            { kit: row.capture.abilities || null, stats: row.capture.classStats || null, partyThreat },
             abilityDetailMap
         );
         const agree = guess && actual ? guess.key === actual.key : null;
@@ -764,13 +793,14 @@ class GuildTrialAbilities {
      */
     state(abilityDetailMap = this._abilityMap()) {
         const session = this.session;
+        const partyThreat = this._partyThreatBaseline();
         // Each row carries its inferred role. Computed here rather than in
         // `participants()` because that runs on every capture and every roster
         // feed to re-check completion, and a class tag is display state
         const rows = this.participants().map((row) => ({
             ...row,
-            classTag: this.classOf(row, abilityDetailMap),
-            classCheck: this.classCheck(row, abilityDetailMap),
+            classTag: this.classOf(row, abilityDetailMap, partyThreat),
+            classCheck: this.classCheck(row, abilityDetailMap, partyThreat),
         }));
         // The detector's scorecard: every captured player whose casts gave a
         // guess is a test of it against their Battle Info
