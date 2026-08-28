@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The sidebar tea boost stays beside the level
+
+The game's level cell wraps "+9" onto its own line when font metrics leave it a pixel short (Firefox renders a few pixels wider than Chrome here). One nowrap rule keeps the boost on the level's line everywhere.
+
+
 ### Five combat-sim fixes from the audit's deepest pass
 
 The skilling upgrade advisor no longer drops a valid candidate when two loadouts wear the same accessory at different enhancement levels; the labyrinth Upgrade Analyze button gains the reentrancy guard the combat one always had, so a double-click can't race two runs against one Stop flag; the labyrinth clear-chance badges refresh after buying combat token upgrades (cached results didn't account for the new levels, so badges could show slightly outdated figures until something else refreshed them); the consumables auto-rate stops guessing "self" from party-slot order, which could file your food usage under a party member; and the sim comparison view stops fabricating zero baselines for players absent from the comparison run.

@@ -242,6 +242,19 @@ class XPTracker {
         if (this.initialized) return;
         if (!config.getSetting('xpTracker', true) && !config.getSetting('xpTracker_timeTillLevel', true)) return;
 
+        // The game's sidebar level cell is display:block with normal
+        // white-space, and "150 +9" fits it with only a few pixels to spare —
+        // font metrics (Firefox vs Chrome) or a small game tweak wrap the tea
+        // boost onto its own line. Nothing of ours causes it, but one nowrap
+        // keeps the boost beside the level everywhere. Injected here because
+        // this feature already owns the sidebar rows it decorates.
+        if (!document.getElementById('mwi-nav-level-nowrap')) {
+            const style = document.createElement('style');
+            style.id = 'mwi-nav-level-nowrap';
+            style.textContent = '[class*="NavigationBar_level"] { white-space: nowrap; }';
+            document.head.appendChild(style);
+        }
+
         const characterInitHandler = async (data) => {
             await this._onCharacterInit(data);
         };
