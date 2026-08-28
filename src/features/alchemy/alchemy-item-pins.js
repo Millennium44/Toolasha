@@ -22,6 +22,12 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { findAlchemizeMenu, activeAlchemyAction, menuTiles, tileItemHrid } from './alchemy-item-selector.js';
 import { createCuratedRecord } from '../../utils/persisted-record.js';
+import { togglePin, orderTiles, sameOrder, mergePins } from '../../utils/item-picker-pins.js';
+
+// Re-exported so existing imports of the pure ordering/merge logic from this
+// module (and its tests) keep working now that the logic lives in
+// utils/item-picker-pins.js, shared with enhancement-item-pins.js.
+export { togglePin, orderTiles, sameOrder, mergePins };
 
 const STORAGE_KEY = 'alchemyItemPins';
 const STYLE_ID = 'mwi-alchemy-pins-style';
@@ -29,96 +35,6 @@ const PIN_CLASS = 'mwi-alchemy-pin';
 const PINNED_CLASS = 'mwi-alchemy-pinned';
 /** Marks the element the pin is mounted on, which is not always the tile */
 const TILE_CLASS = 'mwi-alchemy-tile';
-
-/**
- * Add or remove an item from one action's pins.
- *
- * Newly pinned items go to the end rather than the front: the order is the one
- * you built, and having each new pin displace the one you use most would make
- * the list rearrange itself every time you added to it.
- *
- * @param {Object} pins - { [action]: itemHrid[] }
- * @param {string} action - Alchemy action
- * @param {string} itemHrid - Item
- * @returns {Object} New pins
- */
-export function togglePin(pins, action, itemHrid) {
-    if (!action || !itemHrid) return pins || {};
-
-    const current = (pins || {})[action] || [];
-    const next = current.includes(itemHrid) ? current.filter((hrid) => hrid !== itemHrid) : [...current, itemHrid];
-
-    return { ...pins, [action]: next };
-}
-
-/**
- * The order tiles should appear in: pinned first, in pin order, then everything
- * else exactly as it was.
- *
- * Tiles the filter has hidden are ordered along with the rest rather than
- * skipped. A hidden tile takes up no room, so putting it at the front changes
- * nothing about what you see — and checking each tile's computed style to find
- * out would cost a layout pass on every keystroke to achieve the same result.
- *
- * @param {HTMLElement[]} tiles - Tiles in their current order
- * @param {string[]} pinned - Pinned item hrids, in pin order
- * @param {Function} hridOf - Reads a tile's item hrid
- * @returns {HTMLElement[]} The tiles, reordered
- */
-export function orderTiles(tiles, pinned, hridOf) {
-    const list = tiles || [];
-    const rank = new Map((pinned || []).map((hrid, index) => [hrid, index]));
-
-    // The "Remove" cell shares the grid and stands for no item. It keeps the
-    // first slot rather than being swept along with the unpinned items, so
-    // pinning something does not push the way to clear the selection down
-    // behind it.
-    const fixed = [];
-    const front = [];
-    const rest = [];
-    for (const tile of list) {
-        const hrid = hridOf(tile);
-        if (!hrid) fixed.push(tile);
-        else if (rank.has(hrid)) front.push(tile);
-        else rest.push(tile);
-    }
-    front.sort((a, b) => rank.get(hridOf(a)) - rank.get(hridOf(b)));
-
-    return [...fixed, ...front, ...rest];
-}
-
-/**
- * Whether two tile orders are the same, so an unchanged menu can be left alone.
- * Reordering the DOM is itself a mutation, and a watcher that reacted to its own
- * writes would never stop.
- * @param {HTMLElement[]} a - One order
- * @param {HTMLElement[]} b - Another
- * @returns {boolean}
- */
-export function sameOrder(a, b) {
-    return a.length === b.length && a.every((tile, index) => tile === b[index]);
-}
-
-/**
- * Fold stored pins under the ones in memory — only consulted before this
- * character's pins have been read back (see `createCuratedRecord`): per
- * action, the stored order with anything pinned since appended, so a pin made
- * before the read landed is kept and nothing stored is dropped.
- * @param {Object} stored - `{ [action]: itemHrid[] }` as read back
- * @param {Object} memory - `{ [action]: itemHrid[] }` as held
- * @returns {Object} The merged pins
- */
-export function mergePins(stored, memory) {
-    const theirs = stored && typeof stored === 'object' ? stored : {};
-    const ours = memory && typeof memory === 'object' ? memory : {};
-    const out = {};
-    for (const action of new Set([...Object.keys(theirs), ...Object.keys(ours)])) {
-        const base = Array.isArray(theirs[action]) ? theirs[action] : [];
-        const extra = (Array.isArray(ours[action]) ? ours[action] : []).filter((hrid) => !base.includes(hrid));
-        out[action] = [...base, ...extra];
-    }
-    return out;
-}
 
 /**
  * The pins as stored, per character. A curated record: a read that cannot be

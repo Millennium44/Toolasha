@@ -104,6 +104,22 @@ const ALLOWLIST = new Map([
         // and the trial stream is in combat, so both reach it.
         'constants and pure functions; the accumulated state lives on the caller, not here',
     ],
+    [
+        'src/utils/item-picker-pins.js',
+        // togglePin/orderTiles/sameOrder/mergePins each take their bucket map
+        // or tile list as an argument and return a new value; nothing is kept
+        // between calls. Used by alchemy item pins (actions bundle) and
+        // enhancement item pins (ui bundle).
+        'pure functions operating only on their arguments; no module state',
+    ],
+    [
+        'src/utils/item-selector-dom.js',
+        // tileItemHrid/menuTiles read the DOM node handed to them and nothing
+        // else; MENU_SELECTOR/TILE_SELECTOR are constants. Used by the
+        // alchemy and enhancement item selector finders (actions and ui
+        // bundles respectively).
+        'pure functions and constants; no module state',
+    ],
 ]);
 
 /** Import suffixes handled by custom rollup plugins; their targets are not part of the shared JS graph */
