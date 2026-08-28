@@ -252,6 +252,13 @@ class CoinifyHistoryTracker {
         if (!itemDetails?.alchemyDetail?.bulkMultiplier) {
             console.error(`[CoinifyHistoryTracker] Item has no alchemyDetail.bulkMultiplier: ${inputItemHrid}`);
         }
+        if (!itemDetails?.sellPrice) {
+            // With no sellPrice, coinsPerSuccess comes out 0 and the coin-delta
+            // path below can no longer tell successes from failures, silently
+            // degrading to counting the coin row itself — which is 0 or 1
+            // regardless of how many attempts a batched message covers.
+            console.error(`[CoinifyHistoryTracker] Item has no sellPrice: ${inputItemHrid}`);
+        }
         const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
         const coinsPerSuccess = (itemDetails?.sellPrice || 0) * 5 * bulkMultiplier;
 

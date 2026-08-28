@@ -204,6 +204,17 @@ describe('coinify: successes come from the coins gained', () => {
 
         expect(coinifyHistoryTracker.activeSession.totalSuccesses).toBe(1);
     });
+
+    test('a missing sellPrice is logged rather than silently costed as free', async () => {
+        game.items['/items/unpriced'] = { itemLevel: 10, sellPrice: 0, alchemyDetail: { bulkMultiplier: 1 } };
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await coinifyHistoryTracker.startSession('/items/unpriced', 0, 1000);
+
+        expect(coinifyHistoryTracker.activeSession.coinsPerSuccess).toBe(0);
+        expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('no sellPrice'));
+        errorSpy.mockRestore();
+    });
 });
 
 describe('transmute: successes come from the output counts', () => {
