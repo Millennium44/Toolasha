@@ -19,8 +19,14 @@ vi.mock('./storage.js', () => ({
     },
 }));
 
-const { guildShrineStorageKey, extractGuildShrineData, loadGuildShrineLevels, saveGuildShrineLevels, buffMapBelongsTo, mapSize } =
-    await import('./guild-shrine-store.js');
+const {
+    guildShrineStorageKey,
+    extractGuildShrineData,
+    loadGuildShrineLevels,
+    saveGuildShrineLevels,
+    buffMapBelongsTo,
+    mapSize,
+} = await import('./guild-shrine-store.js');
 
 beforeEach(() => {
     store.data = new Map();

@@ -1040,9 +1040,7 @@ class DataManager {
             // another character's buff rows under this character's key — is
             // ignored, and the next clean capture overwrites it
             if (!buffMapBelongsTo(record.characterGuildBuffMap, this.currentCharacterId)) {
-                console.warn(
-                    '[DataManager] Persisted shrine levels belong to another character; ignoring the record'
-                );
+                console.warn('[DataManager] Persisted shrine levels belong to another character; ignoring the record');
                 return false;
             }
 
