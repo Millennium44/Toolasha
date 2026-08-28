@@ -220,6 +220,9 @@ class PopOutChat {
         this.popoutInstanceId = null;
         this.messageBuffer = new Map(); // hrid → Array<resolved message>
         this.discoveredChannels = new Map(); // hrid → {hrid, name} for channels seen via messages but not in DOM
+        // Count of live messages dropped by chatBlockList since this tab's game session
+        // started, shown in the pop-out topbar so a block is visibly doing something.
+        this.blockedCount = 0;
         this.wsHandler = null;
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
@@ -316,6 +319,8 @@ class PopOutChat {
 
         // Drop messages from blocked players
         if (!resolved.isSystem && chatBlockList.isBlocked(resolved.sName)) {
+            this.blockedCount++;
+            this._relayPost({ type: 'blocked_count', count: this.blockedCount });
             return;
         }
 
@@ -429,6 +434,7 @@ class PopOutChat {
             channels: this._getLiveChannels(),
             characterName: dataManager.getCurrentCharacterName() || '',
             messageBuffer: bufferSnapshot,
+            blockedCount: this.blockedCount,
         });
     }
 
@@ -564,6 +570,12 @@ class PopOutChat {
   }
   #topbar-title { font-weight: 700; color: var(--accent); font-size: 13px; }
   #topbar-name { color: var(--muted); font-size: 11px; }
+  #blocked-count {
+    color: var(--muted); font-size: 11px;
+    padding: 2px 7px; border-radius: 5px;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+  }
+  #blocked-count.has-blocked { color: #ff9999; border-color: rgba(220,50,50,0.3); }
   #add-pane-btn {
     margin-left: 4px; padding: 4px 10px; font-size: 11px;
     background: rgba(215,183,255,0.1); color: var(--accent);
@@ -694,6 +706,7 @@ class PopOutChat {
 <div id="topbar">
   <span id="topbar-title">MWI Chat</span>
   <span id="topbar-name"></span>
+  <span id="blocked-count" title="Messages hidden by your block list this session">0 blocked</span>
   <button id="add-pane-btn">+ Pane</button>
   <label id="vertical-label"><input type="checkbox" id="vertical-toggle"> Vertical</label>
   <div id="disconnect-banner">⚠ Disconnected from game tab</div>
@@ -767,6 +780,13 @@ class PopOutChat {
   const verticalToggle = document.getElementById('vertical-toggle');
   const nameEl         = document.getElementById('topbar-name');
   const disconnectEl   = document.getElementById('disconnect-banner');
+  const blockedEl      = document.getElementById('blocked-count');
+
+  function setBlockedCount(count) {
+    const n = count || 0;
+    blockedEl.textContent = n + ' blocked';
+    blockedEl.classList.toggle('has-blocked', n > 0);
+  }
 
   // ── Ping watchdog ─────────────────────────────────────────────
   function resetPingWatchdog() {
@@ -788,6 +808,7 @@ class PopOutChat {
       characterName = data.characterName || '';
       messageBuffer = data.messageBuffer || {};
       nameEl.textContent = characterName ? '— ' + characterName : '';
+      setBlockedCount(data.blockedCount);
       panes.forEach(p => refreshPaneSelect(p));
       resetPingWatchdog();
       return;
@@ -795,6 +816,10 @@ class PopOutChat {
     if (data.type === 'channels_updated') {
       channels = data.channels || [];
       panes.forEach(p => refreshPaneSelect(p));
+      return;
+    }
+    if (data.type === 'blocked_count') {
+      setBlockedCount(data.count);
       return;
     }
     if (data.type === 'chat_message') {
@@ -1305,6 +1330,7 @@ class PopOutChat {
         this.popoutBtn = null;
 
         this.messageBuffer.clear();
+        this.blockedCount = 0;
         this.initialized = false;
     }
 }

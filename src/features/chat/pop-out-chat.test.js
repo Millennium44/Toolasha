@@ -16,7 +16,10 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterName: () => 'Tester' } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
-vi.mock('./chat-block-list.js', () => ({ chatBlockList: { isBlocked: () => false } }));
+const blockState = vi.hoisted(() => ({ blockedNames: new Set() }));
+vi.mock('./chat-block-list.js', () => ({
+    chatBlockList: { isBlocked: (name) => blockState.blockedNames.has(name) },
+}));
 
 const { PopOutChat, buildPopoutWindowFeatures, POPOUT_GEOMETRY_KEY } = await import('./pop-out-chat.js');
 const { ANNOUNCE_RE, VALID_NAME_RE } = await import('./chat-profile-link.js');
@@ -203,5 +206,82 @@ describe('pop-out chat window: _readSavedGeometry', () => {
         localStorage.setItem(POPOUT_GEOMETRY_KEY, '{not json');
         const chat = new PopOutChat();
         expect(chat._readSavedGeometry()).toBeNull();
+    });
+});
+
+describe('pop-out chat window: blocked-message count', () => {
+    afterEach(() => {
+        blockState.blockedNames.clear();
+    });
+
+    test('a blocked sender is dropped and bumps the count instead of buffering the message', () => {
+        blockState.blockedNames.add('Griefer');
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+
+        chat._onChatMessage({
+            message: { chan: '/chat_channel_types/general', sName: 'Griefer', m: 'spam', isSystemMessage: false },
+        });
+
+        expect(chat.blockedCount).toBe(1);
+        expect(chat.messageBuffer.has('/chat_channel_types/general')).toBe(false);
+    });
+
+    test('relays the running count to the pop-out each time a message is dropped', () => {
+        blockState.blockedNames.add('Griefer');
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+
+        chat._onChatMessage({
+            message: { chan: '/chat_channel_types/general', sName: 'Griefer', m: 'spam', isSystemMessage: false },
+        });
+        chat._onChatMessage({
+            message: { chan: '/chat_channel_types/general', sName: 'Griefer', m: 'more spam', isSystemMessage: false },
+        });
+
+        const calls = chat.relayChannel.postMessage.mock.calls.map((c) => c[0]);
+        expect(calls).toContainEqual(expect.objectContaining({ type: 'blocked_count', count: 1 }));
+        expect(calls).toContainEqual(expect.objectContaining({ type: 'blocked_count', count: 2 }));
+    });
+
+    test('a system message from a blocked name is never dropped (isSystem bypasses the block check)', () => {
+        blockState.blockedNames.add('Griefer');
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+
+        chat._onChatMessage({
+            message: { chan: '/chat_channel_types/general', sName: 'Griefer', m: 'sys', isSystemMessage: true },
+        });
+
+        expect(chat.blockedCount).toBe(0);
+        expect(chat.messageBuffer.has('/chat_channel_types/general')).toBe(true);
+    });
+
+    test('_sendInit includes the running blocked count', () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+        chat.blockedCount = 5;
+
+        chat._sendInit();
+
+        expect(chat.relayChannel.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'init', blockedCount: 5 })
+        );
+    });
+
+    test('disable() resets the count for the next session', () => {
+        const chat = new PopOutChat();
+        chat.blockedCount = 7;
+        chat.disable();
+        expect(chat.blockedCount).toBe(0);
+    });
+
+    test('the generated pop-out script wires up the blocked-count display', () => {
+        const chat = new PopOutChat();
+        const html = chat._buildPopoutHTML();
+
+        expect(html).toContain('id="blocked-count"');
+        expect(html).toContain("data.type === 'blocked_count'");
+        expect(html).toContain('function setBlockedCount(count)');
     });
 });
