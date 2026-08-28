@@ -1632,11 +1632,15 @@ class LootLogStats {
      * @param {number} characterActionId
      */
     async deleteHistoricalEntry(characterActionId) {
-        const key = lootLogHistory._getKey();
-        if (!key) return;
-        const entries = await lootLogHistory._load();
+        // `_getKey` never existed on LootLogHistory — it exposes `_charId`,
+        // `_load` and `_save`. Clicking a historical entry's delete button hit
+        // this and threw before removing anything, from either storage or the
+        // panel it was clicked in.
+        const charId = lootLogHistory._charId();
+        if (!charId) return;
+        const entries = await lootLogHistory._load(charId);
         const filtered = entries.filter((e) => e.characterActionId !== characterActionId);
-        await lootLogHistory._save(filtered);
+        await lootLogHistory._save(filtered, undefined, charId);
     }
 
     /**

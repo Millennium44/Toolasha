@@ -4,6 +4,7 @@ import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { LootLogStats, buildLootLogRows, buildLootLogSummaryText, LOOT_LOG_CSV_COLUMNS } from './loot-log-stats.js';
+import lootLogHistory from './loot-log-history.js';
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -41,7 +42,13 @@ vi.mock('../market/expected-value-calculator.js', () => ({
 }));
 
 vi.mock('./loot-log-history.js', () => ({
-    default: { mergeAndSave: vi.fn(), getHistoricalEntries: vi.fn() },
+    default: {
+        mergeAndSave: vi.fn(),
+        getHistoricalEntries: vi.fn(),
+        _charId: vi.fn(() => 'char-1'),
+        _load: vi.fn(async () => []),
+        _save: vi.fn(),
+    },
 }));
 // The enhancing summary only needs two pricing functions from here; mock them so
 // the test does not pull the whole enhancement bundle's transitive imports.
@@ -377,5 +384,42 @@ describe('LootLogStats daily extrapolation', () => {
     test('a missing duration is not a rate either', () => {
         expect(stats.isDailyRateMeaningful(undefined)).toBe(false);
         expect(stats.isDailyRateMeaningful(null)).toBe(false);
+    });
+});
+
+describe('LootLogStats.deleteHistoricalEntry', () => {
+    let stats;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        lootLogHistory._charId.mockReturnValue('char-1');
+        stats = new LootLogStats();
+    });
+
+    test('deletes a historical entry by characterActionId', async () => {
+        lootLogHistory._load.mockResolvedValue([
+            { characterActionId: 1, startTime: '2026-08-01T00:00:00Z' },
+            { characterActionId: 2, startTime: '2026-08-02T00:00:00Z' },
+        ]);
+
+        // This used to call the nonexistent lootLogHistory._getKey() and throw,
+        // leaving the entry in storage and on screen
+        await expect(stats.deleteHistoricalEntry(2)).resolves.toBeUndefined();
+
+        expect(lootLogHistory._load).toHaveBeenCalledWith('char-1');
+        expect(lootLogHistory._save).toHaveBeenCalledWith(
+            [{ characterActionId: 1, startTime: '2026-08-01T00:00:00Z' }],
+            undefined,
+            'char-1'
+        );
+    });
+
+    test('does nothing before a character is known', async () => {
+        lootLogHistory._charId.mockReturnValue(null);
+
+        await stats.deleteHistoricalEntry(1);
+
+        expect(lootLogHistory._load).not.toHaveBeenCalled();
+        expect(lootLogHistory._save).not.toHaveBeenCalled();
     });
 });
