@@ -10,31 +10,25 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The Philosopher's Stone Calculator's own refinement craft estimate priced the raw recipe — 100 shards when the game's requirement line says 88.9 with Artisan tea active — overstating cape costs there by the whole tea bonus. This was specific to that calculator: every other craft-cost surface (equipment savings, the crafting plan, missing-mats, the profit displays) already applied the artisan reduction. The calculator now does too, and hovering its ⚒ cost shows the full accounting: each material's effective count, unit price and subtotal, plus what happened to the base item (untradable bases add no market cost; a tradable-but-unlisted base is disclosed as understating rather than silently omitted).
 
-
 ### Philosopher's Stone Calculator items click through to the marketplace
 
 Item names in the calculator's table now open that item's marketplace page, closing the modal — the same pattern the Trade Ledger and the trial tables use.
-
 
 ### The sidebar tea boost stays beside the level
 
 The game's level cell wraps "+9" onto its own line when font metrics leave it a pixel short (Firefox renders a few pixels wider than Chrome here). One nowrap rule keeps the boost on the level's line everywhere.
 
-
 ### Five combat-sim fixes from the audit's deepest pass
 
 The skilling upgrade advisor no longer drops a valid candidate when two loadouts wear the same accessory at different enhancement levels; the labyrinth Upgrade Analyze button gains the reentrancy guard the combat one always had, so a double-click can't race two runs against one Stop flag; the labyrinth clear-chance badges refresh after buying combat token upgrades (cached results didn't account for the new levels, so badges could show slightly outdated figures until something else refreshed them); the consumables auto-rate stops guessing "self" from party-slot order, which could file your food usage under a party member; and the sim comparison view stops fabricating zero baselines for players absent from the comparison run.
-
 
 ### Second audit round: four more fixes and six more conveniences
 
 Fixes: the damage-taken table no longer keeps departed party members (or hands their totals to whoever inherits the slot); the inventory badge cooldown stops being consumed by renders that bailed; a mid-run enhancement pickup infers the correct start level near the protection threshold; and an undercut alert can no longer be swallowed by its own predecessor's cooldown after you reprice — a reprice mints a fresh notification key. Features: mooket watchlist chips say how fresh their price reading is; the Trade Ledger gets an item filter (the CSV export follows it); the Combat Statistics popup copies as text; the attendance ledger tooltips each member's last-attended date; the gold-sources calendar clicks through to that day's breakdown; and the guild roster's contribution table exports to CSV.
 
-
 ### Seven guild fixes from the audit fleet
 
 Trial state stops leaking across boundaries: a new trial no longer inherits the previous trial's game-reported totals and boss sheets; the personally-fought path resets its per-slot HP/MP baselines at wave boundaries like the spectated path always did, ending phantom revives and bogus healing swings when slots re-deal; and a character or guild switch mid-trial now closes the recording out properly — accruing it to the attendance ledger instead of leaving a forever-open session that never counted. The attendance ledger itself serialises its writes so two trials finishing close together can't clobber each other's rows, the ledger view guards against out-of-order redraws, the XP tracker stamps its guild id before awaiting the read so overlapping guild switches can't mismatch histories, and the skilling stats keep a stated zero consistently.
-
 
 ### Pinned market tabs stop reading the next character's bags
 
@@ -1399,6 +1393,66 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
+
+## [3.26.0](https://github.com/Millennium44/Toolasha/compare/v3.25.1...v3.26.0) (2026-08-28)
+
+### Features
+
+- action ETA names the partial-progress boundary it subtracts ([e4bfd24](https://github.com/Millennium44/Toolasha/commit/e4bfd241f788c2fa0614ca5aae7b7c26a41b372e))
+- attendance ledger names a member's last-attended date in its tooltip ([c485fd8](https://github.com/Millennium44/Toolasha/commit/c485fd89c46dabf7ff858a95611612a6f76ef4ad))
+- character-select shows how long an expired activity record has been stale ([aaf8aa9](https://github.com/Millennium44/Toolasha/commit/aaf8aa9d945f0dbc439eb43d3f6589f4b5d66b7f))
+- Consumables panel closes on Escape ([52f7f4d](https://github.com/Millennium44/Toolasha/commit/52f7f4d02124a90ee11963c393f49e82649c85d9))
+- copy a Combat Statistics session as text ([cb2b065](https://github.com/Millennium44/Toolasha/commit/cb2b065444914b67220452af24d7c794130081b8))
+- every floating panel closes on Escape ([bbe7764](https://github.com/Millennium44/Toolasha/commit/bbe77643dae5be41159df115b6db002284c39de3))
+- external tool links disclose where they actually go ([ff0f29f](https://github.com/Millennium44/Toolasha/commit/ff0f29f5417d79b27d91a695919cfa0e1f0bef19))
+- filter the Trade Ledger's item table by name ([7c6ab8d](https://github.com/Millennium44/Toolasha/commit/7c6ab8d498932c0499331b6f4ce5623447d8d3b4))
+- gold-sources calendar clicks through to that day's breakdown ([f52dab1](https://github.com/Millennium44/Toolasha/commit/f52dab1fc307e35e8ca6afd627a14506031b4c40))
+- guild roster's contribution table can export as CSV ([d804593](https://github.com/Millennium44/Toolasha/commit/d8045931734b95bb7150a12280ba9aa1af719710))
+- loot log entries get a copy affordance ([4e8a417](https://github.com/Millennium44/Toolasha/commit/4e8a417970b2582ee6fcf60601b898c8d572407c))
+- mooket watchlist chips tooltip their last price update age ([6cca7b4](https://github.com/Millennium44/Toolasha/commit/6cca7b410a33bb38a8b4b44b23a27650b2c67854))
+- Party Loot panel gets a Copy button for the on-screen view ([b8dc70a](https://github.com/Millennium44/Toolasha/commit/b8dc70abf08464f496c05f36b96894d58f617ddd))
+- Philosopher's Stone Calculator items open the marketplace on click ([09b687e](https://github.com/Millennium44/Toolasha/commit/09b687e7eea0648116b4e8c5c36d4b0b4a115d3b))
+
+### Bug Fixes
+
+- a combat run that finished while the tab was closed is archived, not dropped ([c970a1c](https://github.com/Millennium44/Toolasha/commit/c970a1c6aa4161bfd091dd74ae4270c9000f5a91))
+- a quick window-selector change could redraw the ledger under the older selection ([d3f241f](https://github.com/Millennium44/Toolasha/commit/d3f241fd92a1e11dba3eca53bb40ae3aba356565))
+- a stated zero work power or work time was dropped as if never reported ([387b72d](https://github.com/Millennium44/Toolasha/commit/387b72d35d2b5157e50d3fb16f9f1b3e1364dea0))
+- a trial cut short by a character or guild switch never reached the attendance ledger ([53260d8](https://github.com/Millennium44/Toolasha/commit/53260d8d3f7b1c6f3274b6c56c84bf30797af873))
+- acquisition-watched market tabs read the next character's inventory after a switch ([1b1a8a9](https://github.com/Millennium44/Toolasha/commit/1b1a8a9cb4cd3e1001732d2ad1bcc6b20e626b59))
+- alchemy sessions with an unpriceable input are not valued at zero cost ([c185367](https://github.com/Millennium44/Toolasha/commit/c185367c0375f3f1a29ba704fcc91b0bb22076d0))
+- comparison deltas no longer fabricate a zero baseline for a missing player ([d661185](https://github.com/Millennium44/Toolasha/commit/d661185ae64b0400c00a5833479c98e34854c5ef))
+- consumable target survives an overlapping character switch ([0bf47de](https://github.com/Millennium44/Toolasha/commit/0bf47deae1ebf7fc4887a580c7783fd2be11d8e6))
+- damage taken tracker drops stale party members instead of haunting the table ([ad3b199](https://github.com/Millennium44/Toolasha/commit/ad3b199d1fb59231925e6e88072f2288a26a338d))
+- disabling market ledger/history around a character switch leaks the old character's data ([447c1bf](https://github.com/Millennium44/Toolasha/commit/447c1bfed74421819c59a4a0909bdc6c1449d390))
+- enhancement mid-run pickup infers the wrong start level below the protection threshold ([8c694df](https://github.com/Millennium44/Toolasha/commit/8c694df4673aa3c0e8b1ecd43b7a01e082de6e9d))
+- guard the Labyrinth Upgrade Analyze button against a concurrent run ([fcb1b16](https://github.com/Millennium44/Toolasha/commit/fcb1b161ff4903f0536fdeecb72a0b740ea4f087))
+- guild trial damage carries a previous trial's reported stats and boss sheets into the next ([b23565a](https://github.com/Millennium44/Toolasha/commit/b23565adb21c17c844963bb6d4549376f986f757))
+- guild XP tracker resolves a racing double guild-switch to the wrong guild ([5b0bfe4](https://github.com/Millennium44/Toolasha/commit/5b0bfe4f6c931a2624295a7a84250c1d3cd31bde))
+- inventory badges no longer starve the render cooldown during a long calc ([ebcf04f](https://github.com/Millennium44/Toolasha/commit/ebcf04fe37a4833d1781bace6d0a94c883479911))
+- keep the sidebar tea boost on the level's own line ([7c6beb2](https://github.com/Millennium44/Toolasha/commit/7c6beb2bb255f2d755dcd6842fc968139c66802e))
+- labyrinth combat cache key ignores token upgrade levels ([a9b4be0](https://github.com/Millennium44/Toolasha/commit/a9b4be016c3cdaf26166ad7c638127484a4671d4))
+- market undercut alert cooldown can eat a reprice's own notification ([2389312](https://github.com/Millennium44/Toolasha/commit/238931254012f16fb56ad0b15d07efce26b2988d))
+- marketplace shortcut buttons truncate comma-formatted quantities and prices ([6bae951](https://github.com/Millennium44/Toolasha/commit/6bae951bfe22eaed103758c8e81cf04ae2d6d0b2))
+- mooket chart stays blank after a character switch or re-enable ([92b1217](https://github.com/Millennium44/Toolasha/commit/92b12179f48104a64660f57a50d3861575841436))
+- persisted consumable rate no longer guesses self from key order ([28b1ade](https://github.com/Millennium44/Toolasha/commit/28b1adee05e319383d12254edab3d3ba3fae87d5))
+- personally-fought trial tiers carried a dead player's HP/MP baseline onto whoever re-dealt their slot ([bccd020](https://github.com/Millennium44/Toolasha/commit/bccd0206d73fdb1e4a3ad033bb07c1c6255f1063))
+- refinement craft cost applies Artisan tea, and the cost tooltip shows its arithmetic ([2ab647d](https://github.com/Millennium44/Toolasha/commit/2ab647d8c559d7e08390da4cbc686831b62eb7b7))
+- shopping list ignores unclaimed buy-order fills for upgrade and protection items ([c64b623](https://github.com/Millennium44/Toolasha/commit/c64b6234920003c3efd79c6fa1d48974720932c6))
+- skilling upgrade advisor dedups philo-accessory candidates by enhancement level ([63d8249](https://github.com/Millennium44/Toolasha/commit/63d824933dc883b0a38754f1cea452fa1176a12d))
+- trade history never shows last price for non-equipment items ([428dbcc](https://github.com/Millennium44/Toolasha/commit/428dbcc2aec655ea04e812accfbeeff8b8cc2fd8))
+- two trials finishing close together could clobber each other in the attendance ledger ([7e500c5](https://github.com/Millennium44/Toolasha/commit/7e500c5e227452ea22dd9cb0a271822912c79573))
+
+### Documentation
+
+- changelog for the consumable-target race, free-alchemy-input, and lost-run-archive fixes ([805631f](https://github.com/Millennium44/Toolasha/commit/805631fd02b4762ec32b95ee6021cda23d9eca0c))
+- changelog for the five combat-sim audit fixes ([03c6cd8](https://github.com/Millennium44/Toolasha/commit/03c6cd8f753f52d95b7a4d2599d8e1ae956fd47e))
+- changelog for the five market audit fixes ([b65289a](https://github.com/Millennium44/Toolasha/commit/b65289af6e0113a5be208789b59a311446855c07))
+- changelog for the second audit round's fixes and conveniences ([d971821](https://github.com/Millennium44/Toolasha/commit/d971821a43bc722ef1870cee606e4610eb6cb12b))
+- changelog for the seven guild audit fixes ([824f273](https://github.com/Millennium44/Toolasha/commit/824f27323ea2da11d5a8850b220476779a667e8b))
+- changelog for the six panel conveniences ([4ecec00](https://github.com/Millennium44/Toolasha/commit/4ecec00c00cd81c396d1e8acfdbbb820492d1d6f))
+- clarify the artisan craft-cost fix was specific to the philo calculator ([999b481](https://github.com/Millennium44/Toolasha/commit/999b481479d393e37da49f5452830812ba4a135d))
+- soften the token-upgrade cache entry's wording ([8441f9a](https://github.com/Millennium44/Toolasha/commit/8441f9afd0b66896b7bbc0edd6bc6424f781b9e0))
 
 ## [3.25.1](https://github.com/Millennium44/Toolasha/compare/v3.25.0...v3.25.1) (2026-08-28)
 
