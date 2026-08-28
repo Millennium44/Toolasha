@@ -633,6 +633,60 @@ export function settleLines(tiles) {
 }
 
 /**
+ * How much too wide a layout may be before it is dealt into columns instead.
+ *
+ * A fifth of the narrowest column anybody would want, so squeezing can never be
+ * the reason a tile became unreadable — and comfortably more than the handful of
+ * pixels a panel loses when the room kept for a scrollbar changes, which is what
+ * this exists to absorb.
+ */
+export const SQUEEZE_LIMIT = 48;
+
+/**
+ * Draw an arrangement that is a little too wide at a little under its own size.
+ *
+ * The alternative was dealing it into columns, and for a layout that misses by a
+ * few pixels that is a wildly disproportionate answer: a two-column grid becomes
+ * one full-width column, every tile changes size, and the arrangement somebody
+ * made is not on screen any more. It happened for real. Widening the room kept
+ * for a scrollbar took sixteen pixels off the canvas, every layout already saved
+ * was suddenly that much too wide for it, and panels that had been two columns
+ * came back as one.
+ *
+ * A layout missing by less than {@link SQUEEZE_LIMIT} is therefore scaled to fit
+ * rather than rearranged. Columns stay columns and every tile keeps its place in
+ * the grid; they are all a few pixels narrower, which is what the panel is.
+ * Missing by more than that is a layout built for a different screen, and
+ * squeezing *that* would give a phone a desktop's arrangement in miniature —
+ * which is what the flow is for, so it is left to it.
+ *
+ * Tiles are scaled by their edges rather than by position-and-width separately,
+ * so two tiles that were flush stay flush: the right edge of one and the left
+ * edge of the next are the same number scaled the same way. Rounding cannot open
+ * a gap or an overlap between them.
+ *
+ * @param {Array<Object>} tiles - Tiles with `x` and `width`
+ * @param {number} width - Canvas width
+ * @param {number} [limit] - How much overflow may be absorbed
+ * @returns {Array<Object>} The scaled tiles, or the very same array when this is
+ *   not a layout to squeeze — which is how the caller knows to flow it instead
+ */
+export function squeezeToWidth(tiles, width, limit = SQUEEZE_LIMIT) {
+    if (!Array.isArray(tiles) || !tiles.length || !(width > 0)) return tiles;
+
+    const extent = tiles.reduce((widest, tile) => Math.max(widest, tile.x + tile.width), 0);
+    if (extent <= width) return tiles;
+    if (extent - width > limit) return tiles;
+
+    const scale = width / extent;
+    return tiles.map((tile) => {
+        const left = Math.round(tile.x * scale);
+        const right = Math.round((tile.x + tile.width) * scale);
+        return { ...tile, x: left, width: Math.max(MIN_TILE.width, right - left) };
+    });
+}
+
+/**
  * How much room the tiles actually need.
  *
  * The canvas is sized from this rather than from the panel, so dragging a tile

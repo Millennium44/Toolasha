@@ -10,6 +10,7 @@ import {
     snapUp,
     compactColumns,
     settleLines,
+    squeezeToWidth,
     contentBounds,
     columnWidth,
     gridColumns,
@@ -580,6 +581,71 @@ describe('settleLines', () => {
             { key: 'b', x: 0, y: 30, width: 200, height: 30 },
         ]);
         expect(settled.find((tile) => tile.key === 'b').y).toBe(30);
+    });
+});
+
+describe('squeezeToWidth', () => {
+    /**
+     * A two-column grid, as the packer builds them.
+     * @param {number} column - Column width
+     * @returns {Array<Object>} Four tiles
+     */
+    const grid = (column) => [
+        { key: 'a', x: 0, y: 0, width: column, height: 30 },
+        { key: 'b', x: column, y: 0, width: column, height: 30 },
+        { key: 'c', x: 0, y: 30, width: column, height: 30 },
+        { key: 'd', x: column, y: 30, width: column, height: 30 },
+    ];
+
+    test('a layout that already fits is handed straight back', () => {
+        const fits = grid(220);
+        expect(squeezeToWidth(fits, 460)).toBe(fits);
+    });
+
+    test('one that misses by a little is scaled to fit, keeping its columns', () => {
+        // The live case: a layout saved when the canvas was 480 across, drawn
+        // after the room kept for a scrollbar grew and left 473
+        const squeezed = squeezeToWidth(grid(240), 473);
+        const at = Object.fromEntries(squeezed.map((tile) => [tile.key, tile]));
+
+        expect(at.a.x).toBe(0);
+        expect(at.a.x + at.a.width).toBe(at.b.x);
+        expect(at.b.x + at.b.width).toBe(473);
+        // Still a grid: the two columns line up down the panel
+        expect(at.c.x).toBe(at.a.x);
+        expect(at.d.x).toBe(at.b.x);
+        expect(at.c.width).toBe(at.a.width);
+    });
+
+    test('flush tiles stay flush, whatever the rounding does', () => {
+        for (const width of [473, 461, 455, 442, 437]) {
+            const at = Object.fromEntries(squeezeToWidth(grid(240), width).map((tile) => [tile.key, tile]));
+            expect(at.a.x + at.a.width).toBe(at.b.x);
+            expect(at.b.x + at.b.width).toBe(width);
+        }
+    });
+
+    test('heights and positions down the page are left alone', () => {
+        const squeezed = squeezeToWidth(grid(240), 473);
+        for (const tile of squeezed) expect(tile.height).toBe(30);
+        expect(squeezed.map((tile) => tile.y)).toEqual([0, 0, 30, 30]);
+    });
+
+    test('one built for a different screen is declined, so it can be flowed', () => {
+        // A desktop arrangement on a phone is not a few pixels out, and shrinking
+        // it would give the phone the desktop's layout in miniature
+        const desktop = grid(240);
+        expect(squeezeToWidth(desktop, 360)).toBe(desktop);
+    });
+
+    test('nothing is ever squeezed below what can be grabbed', () => {
+        const tiny = [{ key: 'a', x: 0, y: 0, width: 45, height: 30 }];
+        expect(squeezeToWidth(tiny, 20)[0].width).toBeGreaterThanOrEqual(MIN_TILE.width);
+    });
+
+    test('nothing at all is nothing to squeeze', () => {
+        expect(squeezeToWidth([], 400)).toEqual([]);
+        expect(squeezeToWidth(grid(220), 0)).toEqual(grid(220));
     });
 });
 

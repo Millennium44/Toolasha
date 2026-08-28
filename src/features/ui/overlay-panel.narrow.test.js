@@ -441,6 +441,79 @@ describe('the panel inside the window', () => {
     });
 });
 
+describe('a layout saved when the panel measured itself differently', () => {
+    beforeEach(() => overlayPanel.show());
+
+    test('is squeezed to fit rather than dealt into one column', () => {
+        // Live regression. Widening the room kept for a scrollbar took sixteen
+        // pixels off the canvas, so every layout already saved was suddenly that
+        // much too wide — and a two-column grid came back as one full-width
+        // column, because a canvas under ONE_COLUMN_WIDTH flows to a single one.
+        widthIs(501);
+        expect(overlayPanel._canvasWidth()).toBe(473);
+
+        // Two columns of 240, as the packer built them when the canvas read 489
+        Object.assign(overlayPanel.settings, {
+            visible: { dps: true, luck: true, worth: true, loot: true },
+            order: ['dps', 'luck', 'worth', 'loot'],
+            positions: {
+                dps: { x: 0, y: 0 },
+                luck: { x: 240, y: 0 },
+                worth: { x: 0, y: 30 },
+                loot: { x: 240, y: 30 },
+            },
+            sizes: {
+                dps: { width: 240, height: 30 },
+                luck: { width: 240, height: 30 },
+                worth: { width: 240, height: 30 },
+                loot: { width: 240, height: 30 },
+            },
+        });
+        overlayPanel._renderBody();
+
+        expect(overlayPanel.flowing).toBe(false);
+        const at = Object.fromEntries(boxes().map((tile) => [tile.key, tile]));
+
+        // Still two columns, still lined up, still inside the canvas
+        expect(new Set(Object.values(at).map((tile) => tile.x)).size).toBe(2);
+        expect(at.worth.x).toBe(at.dps.x);
+        expect(at.loot.x).toBe(at.luck.x);
+        expect(at.luck.x + at.luck.width).toBe(473);
+        expect(collisions()).toEqual([]);
+    });
+
+    test('and nothing about the squeeze is written back', () => {
+        // The arrangement is still the one that was made; it is only drawn
+        // smaller, so widening the panel again restores it at full size
+        widthIs(501);
+        Object.assign(overlayPanel.settings, {
+            visible: { dps: true, luck: true },
+            order: ['dps', 'luck'],
+            positions: { dps: { x: 0, y: 0 }, luck: { x: 240, y: 0 } },
+            sizes: { dps: { width: 240, height: 30 }, luck: { width: 240, height: 30 } },
+        });
+        overlayPanel._renderBody();
+        expect(overlayPanel.settings.positions.luck).toEqual({ x: 240, y: 0 });
+        expect(overlayPanel.settings.sizes.luck).toEqual({ width: 240, height: 30 });
+
+        widthIs(600);
+        const at = Object.fromEntries(boxes().map((tile) => [tile.key, tile]));
+        expect(at.luck.x).toBe(240);
+        expect(at.luck.width).toBe(240);
+    });
+
+    test('a layout built for a wider screen is still flowed', () => {
+        // The squeeze is for a few pixels, not for a desktop arrangement on a
+        // phone — that one still gets whole tiles in however many columns fit
+        widthIs(380);
+        Object.assign(overlayPanel.settings, twoColumnDesktop());
+        overlayPanel._renderBody();
+
+        expect(overlayPanel.flowing).toBe(true);
+        expect(new Set(boxes().map((tile) => tile.x))).toEqual(new Set([0]));
+    });
+});
+
 describe('a scrollbar appearing', () => {
     beforeEach(() => overlayPanel.show());
 

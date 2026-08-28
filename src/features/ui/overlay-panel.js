@@ -117,6 +117,7 @@ import {
     compactColumns,
     contentBounds,
     settleLines,
+    squeezeToWidth,
     clampTile,
     clampZoom,
     snap,
@@ -2448,9 +2449,44 @@ class OverlayPanel {
         const tiles = resolveLayout(visible, this.settings, width, sizeFor);
         if (!flow) return tiles;
 
-        const narrow = tiles.length > 0 && this._needsFlow(tiles, width);
-        this.flowing = narrow;
-        return narrow ? this._flowTiles(tiles, width) : tiles;
+        if (!tiles.length || !this._needsFlow(tiles, width)) {
+            this.flowing = false;
+            return tiles;
+        }
+
+        // Too wide, but perhaps only just. Laid out again against its own extent
+        // so nothing is clamped — `resolveLayout` would otherwise have dragged
+        // the right-hand column left on top of the left-hand one, and there is
+        // no recovering the arrangement from that — and then scaled down to the
+        // width there actually is.
+        const extent = this._savedExtent(tiles);
+        const roomy = resolveLayout(visible, this.settings, extent, sizeFor);
+        const squeezed = squeezeToWidth(roomy, width);
+        if (squeezed !== roomy) {
+            this.flowing = false;
+            return squeezed;
+        }
+
+        this.flowing = true;
+        return this._flowTiles(tiles, width);
+    }
+
+    /**
+     * How wide the arrangement is, as it was saved rather than as it was drawn.
+     *
+     * Taken from the saved positions because the drawn ones have already been
+     * held inside the canvas, and a tile pulled back from past the right edge no
+     * longer says how far past it the layout goes.
+     *
+     * @param {Array<Object>} tiles - Laid-out rows
+     * @returns {number} Pixels
+     */
+    _savedExtent(tiles) {
+        const saved = this.settings.positions || {};
+        return tiles.reduce((widest, tile) => {
+            const x = Number.isFinite(saved[tile.key]?.x) ? saved[tile.key].x : tile.x;
+            return Math.max(widest, x + tile.width);
+        }, 0);
     }
 
     /**
