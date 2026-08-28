@@ -222,6 +222,7 @@ class MarketHistoryPanel {
         try {
             this.chart?.destroy();
             this.chart = null;
+            this.shown = null;
             this.minimizeCtl?.destroy();
             this.minimizeCtl = null;
             this.panel?.remove();

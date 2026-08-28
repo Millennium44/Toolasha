@@ -301,4 +301,22 @@ describe('disable() always leaves the feature re-initialisable', () => {
         panel.prefs.open = true;
         expect(() => panel.applyOpenState()).not.toThrow();
     });
+
+    test('disable clears `shown` so a re-initialize is not blocked by the stale-key guard', async () => {
+        panel.chart = { destroy() {} };
+        panel.shown = '/items/cheese:0:7';
+        panel.panel = { remove() {}, style: {} };
+        panel.title = { textContent: '' };
+
+        panel.disable();
+
+        expect(panel.chart).toBeNull();
+        expect(panel.shown).toBeNull();
+
+        // Without the fix this would short-circuit at `this.shown === key` and
+        // leave the newly re-created chart blank until the item or day range changed.
+        panel.prefs.open = true;
+        await panel.showItem('/items/cheese', 0);
+        expect(panel.shown).toBe('/items/cheese:0:7');
+    });
 });
