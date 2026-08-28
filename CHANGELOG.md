@@ -6,9 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skill Level joins the overlay
+
+A skilling counterpart to the Combat Level tile: the skill your current action trains, its level, and progress to next (exact remaining XP on hover). It sits beside Time to Level in the Skilling preset and stands down outside skilling.
+
 ### The overlay stops jumbling
 
-The overlay's layout system was reworked end to end. Each built-in preset now materializes a designed two-column grid against the panel's real width — aligned rows, logical grouping, no truncated names — and switching to a preset now deterministically installs exactly its tiles and coordinates, including switching OFF tiles the preset doesn't name (previously a legacy layout's extras stayed on and got corner-packed underneath). New tiles flow to a corner of the existing arrangement instead of the first 10px sliver that fits; placements persist instead of reshuffling as tiles come and go; Autogrid packs real columns sized to the median tile; empty tiles compact to a thin named strip instead of leaving a hole or a tall blank band, and lines close up to what their tiles actually drew (hand-arranged layouts are left alone). Paired tiles align exactly, and a clipped character name says itself in full on hover. Verified live: preset switch, reset, and autogrid each produce a clean grid.
+The overlay's layout system was reworked end to end. Each built-in preset now materializes a designed two-column grid against the panel's real width — aligned rows, logical grouping, no truncated names — and switching to a preset now deterministically installs exactly its tiles and coordinates, including switching OFF tiles the preset doesn't name (previously a legacy layout's extras stayed on and got corner-packed underneath). New tiles flow to a corner of the existing arrangement instead of the first 10px sliver that fits; placements persist instead of reshuffling as tiles come and go; Autogrid packs real columns sized to the median tile; empty tiles compact to a thin named strip instead of leaving a hole or a tall blank band, and lines close up to what their tiles actually drew (hand-arranged layouts are left alone). Paired tiles align exactly, and a clipped character name says itself in full on hover. A panel scrollbar can no longer flip the arrangement into a single column (width is measured so tile height can't change tile width, and a near-miss squeezes columns a few pixels instead of reflowing); empty-tile strips stay inside their own cell at the line's height; and activity auto-switching reads the action queue alone — a labyrinth finished days ago no longer counts as a labyrinth run now, which could pin auto-switchers to the Labyrinth layout forever. Verified live: preset switch, reset, autogrid, and reloads each produce a stable, clean grid.
 
 ### Dropdowns are readable when open
 
