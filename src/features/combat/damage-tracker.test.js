@@ -192,6 +192,26 @@ describe('the fight on screen', () => {
         expect(battleBreakdown().enemies['0'].hp).toBeNull();
     });
 
+    test('a battleId change clears "this fight" too, not just its counters', () => {
+        // Same reconnect trigger as the seed test above: the id changes without
+        // a `new_battle` announcing the new fight. This-fight totals are reset
+        // in every other per-battle counter in that branch (state.dmgCounter,
+        // battleHP, ...) but `battle` itself — the players/enemies tally behind
+        // battleBreakdown(), the portrait "cur" DPS line, and wave-clear/TTK —
+        // was not, so the finished fight's numbers used to blend into the new
+        // one's.
+        announce();
+        tick({ battleId: 7, atk: 1, monsterHP: 1000, dmg: 0 });
+        tick({ battleId: 7, atk: 2, monsterHP: 900, dmg: 1 });
+        expect(battleBreakdown().enemies['0'].damage).toBeGreaterThan(0);
+
+        // A second id change, nothing announced: a brand-new battle whose only
+        // tick this fight does no damage
+        tick({ battleId: 8, atk: 1, monsterHP: 1000, dmg: 0 });
+        expect(battleBreakdown().enemies['0'].damage).toBe(0);
+        expect(battleBreakdown().players['0']).toBeUndefined();
+    });
+
     test('each player’s mana readings accumulate for the runway', () => {
         announce();
         tick({ mana: 300 });

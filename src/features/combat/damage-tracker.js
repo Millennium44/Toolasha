@@ -589,6 +589,14 @@ export default {
                     state.dmgCounter = {};
                     state.critCounter = {};
 
+                    // This-fight-only totals belong to the battle that just ended,
+                    // same as every other per-battle counter reset in this branch —
+                    // otherwise a reconnect that skips this battle's `new_battle`
+                    // (see the `announced` reset below) keeps blending the previous
+                    // fight's players/enemies/seconds into what the portraits and
+                    // wave-clear estimates present as "this fight".
+                    battle = { players: {}, enemies: {}, seconds: 0 };
+
                     // The health map is per battle too, but `new_battle` has
                     // usually just rebuilt it for exactly this battle, and
                     // wiping that seed would blank every bar until its monster
@@ -596,6 +604,19 @@ export default {
                     // reload mid-run — starts from nothing.
                     if (!battleSeeded) battleHP = {};
                     battleSeeded = false;
+
+                    // `announced` says whether *this* battle got a `new_battle`,
+                    // not whether the session ever saw one. Left true across a
+                    // battleId change, a reconnect that skips this wave's
+                    // `new_battle` (server resumes with `battle_updated` only)
+                    // would never re-run the `mMap` name-recovery fallback below,
+                    // so `monsters` keeps the previous battle's names on every
+                    // slot they occupied — misattributing every hit on the new
+                    // battle's actual monsters. Resetting here is a no-op for a
+                    // normally-announced battle: `onNewBattle` already fills
+                    // `monsters` for every slot, so the fallback's `!monsters[index]`
+                    // guard has nothing left to fill.
+                    announced = false;
                 }
 
                 // A reload mid-fight never saw this battle's `new_battle`, so
