@@ -101,6 +101,19 @@ describe('parsing a plan', () => {
         expect(plan.unknownTokens).toEqual(['Flurry']);
     });
 
+    test('two players typoing the same unknown ability in different case count once, not twice', () => {
+        const plan = parse('Alice: Flurry\nBob: FLURRY\nCara: flurry');
+        // Each line still names its own typo verbatim...
+        expect(plan.lines.map((line) => line.unknown[0])).toEqual(['Flurry', 'FLURRY', 'flurry']);
+        // ...but the summary is one unrecognised ability, not three
+        expect(plan.unknownTokens).toEqual(['Flurry']);
+    });
+
+    test('two players naming the same ambiguous prefix in different case count once, not twice', () => {
+        const plan = parse('Alice: s\nBob: S');
+        expect(plan.ambiguousTokens).toEqual([{ token: 's', matches: ['Smack', 'Sweep'] }]);
+    });
+
     test('a trailing number, with or without @, is a minimum level', () => {
         const plan = parse('Alice: Fierce Aura 200, Vampirism@150, Sweep');
         expect(plan.lines[0].abilities).toEqual([

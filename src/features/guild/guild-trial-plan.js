@@ -148,14 +148,20 @@ export function parsePlan(text, abilityDetailMap = {}, parsedAt = Date.now()) {
             const resolved = resolveAbility(abilityText, index);
             if (resolved.error === 'ambiguous') {
                 line.ambiguous.push({ token, matches: resolved.matches });
-                if (!ambiguousTokens.some((entry) => entry.token === token)) {
+                // Deduped the same way the token was matched: two players who
+                // both wrote "s" and "S" named the same ambiguous prefix, and a
+                // status line counting it twice would overstate how much of the
+                // plan is broken
+                if (!ambiguousTokens.some((entry) => normalizeToken(entry.token) === normalizeToken(token))) {
                     ambiguousTokens.push({ token, matches: resolved.matches });
                 }
                 continue;
             }
             if (resolved.error) {
                 line.unknown.push(token);
-                if (!unknownTokens.includes(token)) unknownTokens.push(token);
+                if (!unknownTokens.some((seen) => normalizeToken(seen) === normalizeToken(token))) {
+                    unknownTokens.push(token);
+                }
                 continue;
             }
             line.abilities.push({ hrid: resolved.hrid, name: resolved.name, minLevel });
