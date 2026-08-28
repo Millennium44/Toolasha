@@ -178,6 +178,18 @@ setScoreSource(() => {
     return buildScore.score;
 });
 
+// This module lives outside the feature registry — it starts lazily from the
+// overlay row's render rather than from an initialize(), the same shape
+// combat-replay-check.js had — so nothing ever called disable() on a switch.
+// `ensureWatching()` early-returns once `watching` is true, so without this,
+// `this.score` stayed the departing character's indefinitely: house rooms and
+// equipment changes are what schedule a recompute, and a character who has not
+// touched their gear or house since arriving would never trigger one, leaving
+// the Build Score tile showing the previous character's score — main and
+// ironcow alike — under the arriving character's name for the rest of the
+// session, not just for the redraw gap the other tiles in this sweep have.
+dataManager.on?.('character_switching', () => buildScore.disable());
+
 registerRow({
     key: 'buildScore',
     empty: 'No build score yet',

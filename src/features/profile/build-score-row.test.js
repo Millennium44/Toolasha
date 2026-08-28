@@ -7,6 +7,7 @@ const game = vi.hoisted(() => ({
     equipment: [],
     guildBuffMap: {},
     wsHandlers: {},
+    dmHandlers: {},
     rows: {},
     scoreResult: { total: 42 },
     toggles: 0,
@@ -36,6 +37,12 @@ vi.mock('../../core/data-manager.js', () => ({
         },
         getCombinedData: () => game.combined,
         getEquipment: () => game.equipment,
+        on: (event, handler) => {
+            game.dmHandlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (game.dmHandlers[event] === handler) delete game.dmHandlers[event];
+        },
     },
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({
@@ -223,6 +230,24 @@ describe('BuildScore', () => {
         await buildScore.refresh();
 
         expect(buildScore.score).toBeNull();
+    });
+
+    test('character_switching clears the score, since this module lives outside the feature registry', async () => {
+        // build-score-row.js has no initialize()/cleanup() in feature-registry.js
+        // — it starts lazily from the overlay row's render — so nothing but a
+        // direct dataManager listener can catch a character switch. Without it,
+        // MIN_INTERVAL_MS and "ensureWatching is a no-op once watching" together
+        // meant the departing character's score kept showing under the arriving
+        // character's name until their own equipment or house changed, not just
+        // for a redraw or two.
+        buildScore.ensureWatching();
+        await vi.runAllTimersAsync();
+        expect(buildScore.score).toEqual({ total: 42 });
+
+        game.dmHandlers.character_switching();
+
+        expect(buildScore.score).toBeNull();
+        expect(buildScore.watching).toBe(false);
     });
 });
 
