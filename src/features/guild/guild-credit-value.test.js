@@ -11,6 +11,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { formatKMB } from '../../utils/formatters.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const game = vi.hoisted(() => ({
     settings: {},
@@ -281,6 +283,88 @@ describe('guild credit value — exchange ranking table', () => {
         game.observers['GuildPanel_exchangeModalContent'](modal);
 
         expect(modal.querySelectorAll('.mwi-guild-credit-value')).toHaveLength(1);
+    });
+});
+
+describe('guild credit value — exchange advisor sell/rebuy math', () => {
+    beforeEach(() => {
+        game.settings = { guildCreditValue: true, guildCreditExchangeAdvisor: true, guildShrineUpgradePlanner: false };
+        game.observers = {};
+        game.inventory = [];
+        game.prices = {
+            '/items/bronze_bar': { ask: 100, bid: 90 },
+            '/items/iron_bar': { ask: 300, bid: 280 },
+            '/items/steel_bar': { ask: 50, bid: 0 },
+        };
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_credit_1': { name: 'Trade Credit', guildCreditConversions: [] },
+                '/items/bronze_bar': {
+                    name: 'Bronze Bar',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+                '/items/iron_bar': {
+                    name: 'Iron Bar',
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 5, creditCount: 1 }],
+                },
+                '/items/steel_bar': {
+                    name: 'Steel Bar',
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 1, creditCount: 1 }],
+                },
+            },
+        };
+        guildCreditValue.cleanup();
+        guildCreditValue.initialize();
+    });
+
+    /**
+     * The exchange modal with an item selected on the give side and a typed
+     * quantity, the way the advisor reads them: an `ItemSelector_itemContainer`
+     * carrying the icon sprite, and a number input beside it.
+     */
+    function buildAdvisorModal(creditName, { spriteId, quantity }) {
+        const modal = buildExchangeModal(creditName);
+        const selector = document.createElement('div');
+        selector.className = 'ItemSelector_itemContainer_x';
+        selector.innerHTML = `<svg aria-label="ignored"><use href="#${spriteId}"></use></svg>`;
+        modal.appendChild(selector);
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.value = String(quantity);
+        modal.appendChild(input);
+        return modal;
+    }
+
+    // Steel Bar is the cheapest per credit (50 gold/credit) against Iron Bar's
+    // 1500, so selecting Iron Bar always triggers the sell-→-rebuy comparison
+    // rather than the "optimal choice" message.
+
+    test('the "You give" field is a raw item count, not a count of whole exchanges', () => {
+        // Iron Bar converts 5 → 1 credit. Typing 12 only fills two whole
+        // exchanges (10 of the 12), so the direct exchange nets 2 credits —
+        // not 12, which is what reading the raw field value as an exchange
+        // count would produce.
+        const modal = buildAdvisorModal('Trade Credit', { spriteId: 'iron_bar', quantity: 12 });
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const advisor = modal.querySelector('.mwi-exchange-advisor');
+        expect(advisor.textContent).toContain('2 credits');
+        expect(advisor.textContent).not.toContain('12 credits');
+    });
+
+    test('sell proceeds price what was actually typed, not that amount scaled by the conversion ratio again', () => {
+        // Selling all 12 Iron Bar at bid (280) prices 12 × 280 gold before tax —
+        // not 12 × 5 × 280, which is what multiplying by itemCount a second
+        // time (on top of it already being folded into the raw count) produced.
+        const modal = buildAdvisorModal('Trade Credit', { spriteId: 'iron_bar', quantity: 12 });
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const advisor = modal.querySelector('.mwi-exchange-advisor');
+        const gross = 12 * 280;
+        const net = gross - Math.floor(gross * MARKET_TAX);
+        expect(advisor.textContent).toContain(formatKMB(net));
     });
 });
 

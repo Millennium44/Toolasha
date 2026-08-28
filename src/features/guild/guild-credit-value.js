@@ -2190,10 +2190,13 @@ class GuildCreditValue {
         const itemSvg = selectorContainer?.querySelector('svg[aria-label]');
         const selectedItemName = itemSvg?.getAttribute('aria-label') || null;
 
-        // Read batch quantity. Both input types: the marketplace's inputs moved
-        // to type="text" in a game update, and this dialog may follow.
+        // The "You give" field holds a raw item count, not a count of whole
+        // exchanges — confirmed by the Max button, which fills it with
+        // `held` floored to a multiple of `itemCount` rather than with a
+        // batch number. Both input types: the marketplace's inputs moved to
+        // type="text" in a game update, and this dialog may follow.
         const quantityInput = modalEl.querySelector('input[type="number"], input[type="text"]');
-        const batches = Math.max(1, parseInt(quantityInput?.value || '1', 10) || 1);
+        const rawQuantity = Math.max(1, parseInt(quantityInput?.value || '1', 10) || 1);
 
         this._injectExchangeMaxButton(modalEl, quantityInput, rows, { selectedItemHrid, selectedItemName });
 
@@ -2242,7 +2245,11 @@ class GuildCreditValue {
         // Calculate sell → rebuy scenario
         const SELLER_TAX = MARKET_TAX;
         const sellPrice = selectedRow.buyPrice; // bid price = what market will buy at
-        const directCredits = batches * selectedRow.creditCount;
+        // The exchange only ever redeems whole conversions — a typed quantity
+        // that is not a multiple of `itemCount` still floors to the last one
+        // the game would actually honour.
+        const perExchange = Math.max(1, selectedRow.itemCount || 1);
+        const directCredits = Math.floor(rawQuantity / perExchange) * selectedRow.creditCount;
 
         if (!sellPrice || sellPrice <= 0 || !bestRow.sellPrice || bestRow.sellPrice <= 0) {
             advisor.innerHTML = `<div style="color:#6b7280; text-align:center;">Best: <b style="color:#e0e0e0;">${bestRow.name}</b> — no price data for comparison</div>`;
@@ -2250,7 +2257,9 @@ class GuildCreditValue {
             return;
         }
 
-        const gross = batches * selectedRow.itemCount * sellPrice;
+        // Selling everything typed, not that amount scaled by itemCount again —
+        // `rawQuantity` is already how many units of the item are on the table.
+        const gross = rawQuantity * sellPrice;
         const tax = Math.floor(gross * SELLER_TAX);
         const net = gross - tax;
 
