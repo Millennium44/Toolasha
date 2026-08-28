@@ -149,6 +149,26 @@ describe('whether the panel was open', () => {
         await expect(wasOpen('consumablesPanel')).resolves.toBe(false);
     });
 
+    test('Escape closes it', async () => {
+        consumablesPanel.show();
+        await settled();
+        expect(consumablesPanel.panel).not.toBeNull();
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+        expect(consumablesPanel.panel).toBeNull();
+    });
+
+    test('Escape after it is already closed does nothing surprising', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel.hide();
+
+        // The listener is torn down with the panel; a stray Escape afterwards
+        // must not throw for want of a panel to close
+        expect(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))).not.toThrow();
+    });
+
     test('going to the marketplace is not closing it', async () => {
         // The panel gets out of the way so the marketplace is not underneath it.
         // You went shopping; you did not put the panel away.
