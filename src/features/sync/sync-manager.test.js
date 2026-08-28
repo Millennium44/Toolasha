@@ -753,6 +753,61 @@ describe('the busy lock survives a takeover', () => {
     });
 });
 
+describe('a takeover discards the operation it replaced, not just its lock', () => {
+    test('a conflict dialog answered after a takeover neither applies nor overwrites the newer sync', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:what-we-pushed';
+        gist.read = {
+            manifest: {
+                exportedAt: '2026-02-01T00:00:00.000Z',
+                chunks: 1,
+                hash: 'h:{"remote":1}',
+                bytes: '{"remote":1}'.length,
+            },
+            payload: '{"remote":1}',
+        };
+
+        // Both sides moved, so the pull stops to ask — and the answer never
+        // comes: this is what an abandoned dialog looks like from inside
+        // `_doPull`, which is why a stuck one is called "wedged".
+        let resolveDialog;
+        dialog.answer = new Promise((resolve) => {
+            resolveDialog = resolve;
+        });
+
+        const stalePull = syncManager.pull();
+        await vi.waitFor(() => expect(dialog.calls).toBe(1));
+
+        // Five minutes pass with nobody at the keyboard. The next sync (an
+        // interval push, say) finds `busy` held past BUSY_STUCK_MS and takes
+        // it over — the pull above keeps running, it just no longer owns the
+        // lock.
+        syncManager.busySince = Date.now() - 6 * 60 * 1000;
+        const takeoverResult = await syncManager.push({ silent: true });
+        expect(takeoverResult).toMatchObject({ ok: true });
+        expect(gist.writes).toHaveLength(1);
+        const stampAfterTakeover = stored.map.toolasha_sync_lastSyncedAt;
+        const hashAfterTakeover = stored.map.toolasha_sync_lastHash;
+
+        // Only now does the player come back and click "Merge" on the dialog
+        // they left open. Its decision was made against a database and a
+        // gist that the takeover has since replaced.
+        resolveDialog('merge');
+        const staleResult = await stalePull;
+
+        expect(staleResult).toMatchObject({ ok: true, skipped: true, reason: 'superseded' });
+        // Nothing from the stale pull's plan reached storage or the gist:
+        // no remote payload applied, no merge pushed on top of the takeover.
+        expect(payload.applied).toBeUndefined();
+        expect(gist.writes).toHaveLength(1);
+        // And it did not stamp the takeover's fresh bookkeeping with its own
+        // stale exportedAt/hash, which would make a good sync look unsynced.
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe(stampAfterTakeover);
+        expect(stored.map.toolasha_sync_lastHash).toBe(hashAfterTakeover);
+    });
+});
+
 describe('the cross-tab lock', () => {
     // A hand-rolled Web Locks stand-in, stubbed over whatever the runtime has:
     // CI's Node 20 has no `navigator` global at all, and even where the real

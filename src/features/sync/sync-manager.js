@@ -183,7 +183,7 @@ class SyncManager {
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      */
     async push({ silent = false } = {}) {
-        return this._run('push', silent, () => this._doPush(silent));
+        return this._run('push', silent, (opToken) => this._doPush(silent, opToken));
     }
 
     /**
@@ -195,10 +195,13 @@ class SyncManager {
      * choice would silently do nothing.
      *
      * @param {boolean} silent - Skip an unchanged payload, and say nothing on success
+     * @param {number} [opToken] - This call's `busy` ownership token, from `_run`. Checked
+     *   before every write that follows a wait a takeover could have happened during (a
+     *   confirmation dialog left open, a hung request) — see `_stillOwns`.
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _doPush(silent) {
+    async _doPush(silent, opToken) {
         const token = this._token();
         const scope = config.getSetting('sync_scope', 'settings');
 
@@ -229,6 +232,13 @@ class SyncManager {
                 ],
             });
             if (answer !== 'push') return { ok: true, skipped: true, reason: 'cancelled' };
+            // The dialog just above can sit open for as long as the player
+            // ignores it — the paradigm case of "wedged" that lets a takeover
+            // happen at all (see `_run`). If one did, this push is racing an
+            // operation that has already run with a fresher view of both the
+            // database and the gist; writing now would stomp whatever it just
+            // wrote. Stand down instead of overwriting a newer sync.
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push');
         }
 
         // The hash above is always of the plaintext — compression and
@@ -277,7 +287,25 @@ class SyncManager {
             ...(encrypted ? { encrypted } : {}),
         };
 
+        // Last check before the write that actually reaches GitHub. Nothing
+        // between the top of this method and here normally takes long enough
+        // for a takeover to happen without the dialog above, but a `fetch`
+        // fallback (no GM manager) has no timeout of its own and can hang
+        // indefinitely — the same "wedged" shape, just without a dialog to
+        // point at.
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push');
+
         const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks);
+
+        // The upload already landed — that part cannot be undone or is not
+        // worth undoing, since the takeover's own more-recent write (if any)
+        // will win the next read anyway. What must not happen is THIS call's
+        // bookkeeping clobbering whatever the takeover has since recorded:
+        // this `exportedAt`/`hash` describe a snapshot from before the wait,
+        // and stamping them now would make a perfectly good later sync look
+        // unsynced again.
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push');
+
         await this._remember({ gistId: written.id, exportedAt, hash, chunkCount: chunks.length });
         await rememberLocal({ [KEY_LAST_PUSHED_AT]: exportedAt });
 
@@ -295,16 +323,17 @@ class SyncManager {
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      */
     async pull({ silent = false } = {}) {
-        return this._run('pull', silent, () => this._doPull(silent));
+        return this._run('pull', silent, (opToken) => this._doPull(silent, opToken));
     }
 
     /**
      * The download itself, with no guard around it.
      * @param {boolean} silent - Only act on a strictly newer remote, and stay quiet otherwise
+     * @param {number} [opToken] - This call's `busy` ownership token, from `_run`. See `_stillOwns`.
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
-    async _doPull(silent) {
+    async _doPull(silent, opToken) {
         const token = this._token();
         const gistId = await this._resolveGistId(token);
         if (!gistId) {
@@ -384,10 +413,24 @@ class SyncManager {
                     { value: null, label: 'Do nothing' },
                 ],
             });
-            if (answer === 'push') return this._doPush(false);
+            // The dialog above is the one this file's "wedged" comments are
+            // about — it can sit open for as long as the player ignores it.
+            // A takeover during that wait means an operation with a fresher
+            // view of both the database and the gist has already run; this
+            // pull's decision was made against a snapshot that no longer
+            // exists, and applying it now would silently undo whatever that
+            // operation just did.
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull');
+            if (answer === 'push') return this._doPush(false, opToken);
             if (answer !== 'pull' && answer !== 'merge') return { ok: true, skipped: true, reason: 'cancelled' };
             pushBack = answer === 'merge';
         }
+
+        // Last check before the write that actually lands in IndexedDB. On the
+        // no-dialog path this only catches a `fetch` fallback (no GM manager,
+        // no timeout of its own) hanging long enough for a takeover — the same
+        // "wedged" shape as the dialog above, just without a dialog to point at.
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull');
 
         const { merged, complete, failed, applied } = await applyPayload(payload);
 
@@ -438,7 +481,7 @@ class SyncManager {
         // the remote's stamp, so this push is no longer a "never synced" one
         // and will not stop to ask.
         if (pushBack) {
-            const pushed = await this._doPush(false);
+            const pushed = await this._doPush(false, opToken);
             return { ok: true, merged: merged?.length || 0, pushedBack: pushed?.ok === true };
         }
 
@@ -638,20 +681,21 @@ class SyncManager {
      * browser) runs unguarded, as before.
      *
      * @param {boolean} silent - Whether this is an interval sync nobody asked for
-     * @param {Function} operation - What to run
+     * @param {Function} operation - What to run, called with this call's `busy` token
+     * @param {number} opToken - This call's `busy` ownership token, forwarded to `operation`
      * @returns {Promise<*>} The operation's result, or a skipped outcome
      * @private
      */
-    async _withCrossTabLock(silent, operation) {
+    async _withCrossTabLock(silent, operation, opToken) {
         const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
-        if (typeof locks?.request !== 'function') return operation();
+        if (typeof locks?.request !== 'function') return operation(opToken);
 
         let ran = false;
         let outcome;
         await locks.request('toolasha-sync', { ifAvailable: true }, async (lock) => {
             if (!lock) return;
             ran = true;
-            outcome = await operation();
+            outcome = await operation(opToken);
         });
         if (ran) return outcome;
 
@@ -661,7 +705,46 @@ class SyncManager {
         // anyway: it must not silently do nothing, and the 409 retry absorbs
         // the race it might lose.
         if (silent) return { ok: true, skipped: true, reason: 'another-tab' };
-        return operation();
+        return operation(opToken);
+    }
+
+    /**
+     * Whether the `busy` lock this call took is still the one in effect.
+     *
+     * A takeover (see `_run`) does not stop the operation it replaces — it
+     * cannot; there is nothing to cancel a hung request or a dialog nobody has
+     * answered. It only stops *honouring* that operation's lock. The operation
+     * itself is still running, and when it finally gets an answer — a user
+     * clicking a conflict dialog they left open ten minutes ago, or a `fetch`
+     * fallback's request finally resolving — it is about to act on a
+     * database and a gist that have since moved on under a newer operation.
+     * Every write that follows such a wait checks this first, so a superseded
+     * operation stands down instead of overwriting what the takeover wrote.
+     *
+     * @param {number} opToken - The token this operation's `_run` call took
+     * @returns {boolean} True while this operation still owns `busy`
+     * @private
+     */
+    _stillOwns(opToken) {
+        return this.busy === opToken;
+    }
+
+    /**
+     * What a push or pull returns when it discovers, after a wait, that a
+     * takeover has already run in its place.
+     * @param {boolean} silent - Whether to say anything about it
+     * @param {string} label - 'push' or 'pull'
+     * @returns {{ok: boolean, skipped: boolean, reason: string}} Outcome
+     * @private
+     */
+    _supersededResult(silent, label) {
+        console.warn(`[Sync] A ${label} was superseded by a takeover while it was waiting; discarding its result.`);
+        if (!silent) {
+            showToast(
+                `Sync ${label} was overtaken by a newer sync while it waited. Nothing was lost — try again if needed.`
+            );
+        }
+        return { ok: true, skipped: true, reason: 'superseded' };
     }
 
     async _run(label, silent, operation) {
@@ -695,7 +778,7 @@ class SyncManager {
         try {
             // A takeover skips the cross-tab lock: the wedged operation it is
             // replacing is the very thing still holding it
-            return await (takingOver ? operation() : this._withCrossTabLock(silent, operation));
+            return await (takingOver ? operation(token) : this._withCrossTabLock(silent, operation, token));
         } catch (error) {
             // GistError messages are written to be shown; anything else is a bug
             // here and gets a generic message with the detail in the console.
