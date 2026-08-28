@@ -3,6 +3,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const registrations = vi.hoisted(() => []);
+const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
 
 vi.mock('../../core/config.js', () => ({
     default: { isFeatureEnabled: () => true, getSetting: () => true },
@@ -13,6 +14,16 @@ vi.mock('../../core/dom-observer.js', () => ({
         onClass: (name, classNames, callback) => {
             registrations.push({ name, classNames, callback });
             return () => {};
+        },
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            observerReady.handlers.push(handler);
+            if (observerReady.domReady) callback();
+            return () => {
+                observerReady.handlers = observerReady.handlers.filter((h) => h !== handler);
+            };
         },
     },
 }));
@@ -41,6 +52,8 @@ const { default: tooltipObserver } = await import('../../core/tooltip-observer.j
 describe('collection panel observer watches the class the game actually uses', () => {
     beforeEach(() => {
         registrations.length = 0;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
         watchers.length = 0;
         document.body.innerHTML = '';
     });
@@ -66,6 +79,19 @@ describe('collection panel observer watches the class the game actually uses', (
         shell.initialize();
 
         // attachPanelObserver stores an unregister function when it attached
+        expect(collectionNavigation.panelObserver).not.toBeNull();
+    });
+
+    test('a panel mounted before the shared observer is ready is attached to at readiness', () => {
+        observerReady.domReady = false;
+        const panel = document.createElement('div');
+        panel.className = 'Collection_collectionContainer__3ZlUO';
+        document.body.appendChild(panel);
+
+        shell.initialize();
+        expect(collectionNavigation.panelObserver).toBeNull();
+
+        observerReady.handlers.forEach((h) => h.callback());
         expect(collectionNavigation.panelObserver).not.toBeNull();
     });
 

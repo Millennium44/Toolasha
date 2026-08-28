@@ -75,13 +75,23 @@ class CollectionNavigation {
         );
         this.unregisterHandlers.push(unregisterPanel);
 
-        // Also attach to any panel already in the DOM
-        const existingPanel = document.querySelector(
-            '[class*="Collection_collectionContainer"], [class*="Collection_collections"]'
+        // @run-at document-start: a panel or tiles rendered before the shared observer attaches
+        // to document.body are invisible to the class watchers, so both catch-up scans wait for
+        // the observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('CollectionNavigationCatchUp', () => {
+                const existingPanel = document.querySelector(
+                    '[class*="Collection_collectionContainer"], [class*="Collection_collections"]'
+                );
+                if (existingPanel) {
+                    this.attachPanelObserver(existingPanel);
+                }
+
+                document.querySelectorAll('[class*="Collection_tierGray"]').forEach((tile) => {
+                    this.handleCollectionTile(tile);
+                });
+            })
         );
-        if (existingPanel) {
-            this.attachPanelObserver(existingPanel);
-        }
 
         // Watch for collected item popovers (MuiTooltip containing Collection_actionMenu),
         // through the shared tooltip observer rather than a class handler of our own
@@ -90,11 +100,6 @@ class CollectionNavigation {
             this.handleTooltip(tooltipEl);
         });
         this.unregisterHandlers.push(() => tooltipObserver.unsubscribe('CollectionNavigation'));
-
-        // Process any tiles already in the DOM
-        document.querySelectorAll('[class*="Collection_tierGray"]').forEach((tile) => {
-            this.handleCollectionTile(tile);
-        });
     }
 
     disable() {
