@@ -30,6 +30,11 @@ function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
 }
 
+// Shown next to a Gold/hr figure that counts an action whose score leans on an item with no
+// price data — mirrors actionHasUnpricedMaterials in tea-optimizer.js. The tea-recommendation
+// popup uses the same wording so a player sees one consistent warning across surfaces.
+const UNPRICED_WARNING_TITLE = 'Leans on an unpriced material — gold figures treat it as free';
+
 /**
  * Check whether any mutation added nodes that are, contain, or sit under a tablist.
  * Keeps the body-wide watcher from re-scanning every tablist on unrelated DOM churn.
@@ -1048,17 +1053,15 @@ class SkillingSimulatorUI {
         const stats = document.createElement('div');
         stats.style.cssText = 'display: flex; gap: 20px; margin-bottom: 8px;';
 
-        const makeStat = (label, value, color) => {
-            const el = document.createElement('div');
-            el.innerHTML = `
-                <div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${label}</div>
-                <div style="font-size:15px;font-weight:700;color:${color};">${value > 0 ? formatKMB(value) : '—'}</div>
-            `;
-            return el;
-        };
-
-        stats.appendChild(makeStat('XP / hr', result.xpPerHour, config.COLOR_INFO));
-        stats.appendChild(makeStat('Gold / hr', result.goldPerHour, config.COLOR_PROFIT));
+        stats.appendChild(this._makeStat('XP / hr', result.xpPerHour, config.COLOR_INFO));
+        stats.appendChild(
+            this._makeStat(
+                'Gold / hr',
+                result.goldPerHour,
+                config.COLOR_PROFIT,
+                result.hasMissingPrices ? UNPRICED_WARNING_TITLE : null
+            )
+        );
         section.appendChild(stats);
 
         if (result.teaCostPerHour > 0) {
@@ -1115,7 +1118,14 @@ class SkillingSimulatorUI {
             statsRow.style.cssText = 'display: flex; gap: 20px; margin-top: 16px; margin-bottom: 4px;';
             if (hasXp) statsRow.appendChild(this._makeStat('Avg XP/hr', xpResult.optimal.avgScore, config.COLOR_INFO));
             if (hasGold)
-                statsRow.appendChild(this._makeStat('Avg Gold/hr', goldResult.optimal.avgScore, config.COLOR_PROFIT));
+                statsRow.appendChild(
+                    this._makeStat(
+                        'Avg Gold/hr',
+                        goldResult.optimal.avgScore,
+                        config.COLOR_PROFIT,
+                        goldResult.optimal.hasMissingPrices ? UNPRICED_WARNING_TITLE : null
+                    )
+                );
             container.appendChild(statsRow);
         }
 
@@ -1336,11 +1346,12 @@ class SkillingSimulatorUI {
         return tiers;
     }
 
-    _makeStat(label, value, color) {
+    _makeStat(label, value, color, warningTitle = null) {
         const el = document.createElement('div');
+        const warningHtml = warningTitle ? ` <sup title="${warningTitle}" style="cursor: help;">⚠</sup>` : '';
         el.innerHTML = `
             <div style="font-size:10px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">${label}</div>
-            <div style="font-size:15px;font-weight:700;color:${color};">${value > 0 ? formatKMB(value) : '—'}</div>
+            <div style="font-size:15px;font-weight:700;color:${color};">${value > 0 ? formatKMB(value) : '—'}${value > 0 ? warningHtml : ''}</div>
         `;
         return el;
     }
