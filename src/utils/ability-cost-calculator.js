@@ -80,7 +80,13 @@ export function explainAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, 
     const targetXp = levelXpTable[targetLevel] || 0;
     const xpPerBook = isStarterAbility(abilityHrid) ? 50 : 500;
 
-    let books = (targetXp - currentXp) / xpPerBook;
+    // Books are bought whole — a leftover 480 XP out of 500 still costs a full
+    // book. Rounding down here (as a plain division does whenever `currentXp`
+    // is not an exact book boundary, which is the common case once XP has
+    // accumulated from real play) undercounts both the book total shown to the
+    // player and every `total` gold figure derived from it (networth, combat
+    // score, tooltip cost).
+    let books = Math.max(0, Math.ceil((targetXp - currentXp) / xpPerBook));
     // A book is spent learning the ability before any of them count as levels
     const learnBook = currentLevel === 0;
     if (learnBook) books += 1;

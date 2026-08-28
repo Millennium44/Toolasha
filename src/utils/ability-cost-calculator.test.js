@@ -55,6 +55,15 @@ describe('the book, and how many of it', () => {
         expect(explainAbilityLevelUpCost(SMOKE, 2, 500, 4)).toMatchObject({ xpPerBook: 500, books: 5 });
     });
 
+    test('a leftover XP balance that is not an exact book boundary still costs a whole book', () => {
+        // 3000 − 520 = 2480 XP needed, at 50 per book: 49.6 books on paper, but
+        // only whole books can be bought, so it must round up to 50 rather than
+        // undercount the last, partially-wasted book.
+        const detail = explainAbilityLevelUpCost(FIREBALL, 2, 520, 4);
+        expect(detail.books).toBe(50);
+        expect(detail.total).toBe(50_000);
+    });
+
     test('learning it from nothing costs one book more than the levels do', () => {
         const learn = explainAbilityLevelUpCost(FIREBALL, 0, 0, 2);
 
