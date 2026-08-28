@@ -859,7 +859,15 @@ class MarketHistoryPanel {
         // Every measurement first, then every write. Reading a rect after writing
         // a style forces the browser to lay the page out again mid-tick, once a
         // second, for a position that has almost never moved.
-        const iconRect = currentItem.querySelector('svg').getBoundingClientRect();
+        const iconRect = currentItem.querySelector('svg')?.getBoundingClientRect();
+        // A tab with no item open (My Listings, History) keeps the last
+        // currentItem node in the DOM but hidden — its rect is 0×0, and
+        // anchoring to it parked the pin in the page's top-left corner
+        if (!iconRect || !(iconRect.width > 0 && iconRect.height > 0)) {
+            this._setDisplay(this.panel, wantPanel);
+            this._setDisplay(this.pinButton, 'none');
+            return;
+        }
         const left = `${iconRect.right + window.scrollX + 6}px`;
         const top = `${iconRect.top + window.scrollY - 2}px`;
 

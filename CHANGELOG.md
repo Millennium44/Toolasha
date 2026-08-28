@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The price-panel pin stops floating in the corner on listing tabs
+
+On My Listings and History the game keeps the last item's node in the DOM but hidden, and the price panel's 📌 anchored to its 0×0 rectangle — parking the pin in the page's top-left corner. A hidden anchor now hides the pin instead.
+
+
 ### Labyrinth restock: pick your per-run basis, and the measured figure stops lying
 
 A "measured / full capacity" pill on the Labyrinth block chooses whether a run is planned at the average your recorded runs actually spent or at the whole capacity every run (also a setting). And the measured average was badly low — a run first seen mid-way (a reload, a tab opened late) recorded "spent" from wherever it was joined, dragging 350-torch runs down to ~100. Only runs watched from the door count now; older records that cannot say which they were are excluded, so the figure rebuilds honestly over your next few runs.
