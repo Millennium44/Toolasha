@@ -30,10 +30,17 @@ class LabSim {
         });
         this.unregisterHandlers.push(unregister);
 
-        const existingPanel = document.querySelector('[class*="LabyrinthPanel_tabsComponentContainer"]');
-        if (existingPanel) {
-            this._injectButton(existingPanel);
-        }
+        // @run-at document-start: a labyrinth panel rendered before the shared observer attaches
+        // to document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('LabSimButtonCatchUp', () => {
+                const existingPanel = document.querySelector('[class*="LabyrinthPanel_tabsComponentContainer"]');
+                if (existingPanel) {
+                    this._injectButton(existingPanel);
+                }
+            })
+        );
     }
 
     /**
