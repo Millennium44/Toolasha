@@ -151,9 +151,15 @@ export function recordSuccess(session, previousLevel, newLevel, wasBlessed = fal
         session.longestSuccessStreak = session.currentStreak.count;
     }
 
-    // Check for milestones
-    if ([5, 10, 15, 20].includes(newLevel) && !session.milestonesReached.includes(newLevel)) {
-        session.milestonesReached.push(newLevel);
+    // Check for milestones. A Blessed success can jump +2 or more levels in one
+    // attempt (e.g. +4 -> +6), passing straight over a milestone (+5) without
+    // ever landing on it — checking only newLevel missed those crossed-but-not-
+    // landed-on milestones entirely. Scan every level from previousLevel+1
+    // through newLevel so a skipped milestone still counts as reached.
+    for (let level = previousLevel + 1; level <= newLevel; level++) {
+        if ([5, 10, 15, 20].includes(level) && !session.milestonesReached.includes(level)) {
+            session.milestonesReached.push(level);
+        }
     }
 
     // Update timestamp

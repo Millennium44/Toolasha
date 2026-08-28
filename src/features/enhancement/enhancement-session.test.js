@@ -238,6 +238,35 @@ describe('recordSuccess - Blessed tea tracking', () => {
         );
         expect(totalBlessedAcrossLevels).toBe(session.totalBlessed);
     });
+
+    test('a Blessed success that jumps over a milestone still records it as reached', () => {
+        // Blessed Tea can jump +2 or more levels in one attempt. +4 -> +6 never
+        // lands on +5, so checking only the landing level silently dropped it.
+        const session = createSession('/items/sword', 'Sword', 4, 10, 0);
+
+        recordSuccess(session, 4, 6, true);
+
+        expect(session.milestonesReached).toEqual([5]);
+    });
+
+    test('a Blessed success that jumps over two milestones records both', () => {
+        const session = createSession('/items/sword', 'Sword', 9, 20, 0);
+
+        recordSuccess(session, 9, 11, true);
+
+        expect(session.milestonesReached).toEqual([10]);
+    });
+
+    test('landing exactly on a milestone still records it once, not twice on a later re-pass', () => {
+        const session = createSession('/items/sword', 'Sword', 0, 20, 0);
+
+        recordSuccess(session, 4, 5, false);
+        // A later Blessed success that starts at the milestone and jumps past it
+        // must not push a duplicate entry for the milestone already reached.
+        recordSuccess(session, 5, 7, true);
+
+        expect(session.milestonesReached).toEqual([5]);
+    });
 });
 
 describe('normalizeSession - backward compatibility', () => {
