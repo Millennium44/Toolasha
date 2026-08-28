@@ -17,7 +17,22 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getS
 vi.mock('../../core/storage.js', () => ({
     default: { getJSON: async () => null, setJSON: async () => {} },
 }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            observerReady.handlers.push(handler);
+            if (observerReady.domReady) callback();
+            return () => {
+                observerReady.handlers = observerReady.handlers.filter((h) => h !== handler);
+            };
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => 'character',
@@ -72,6 +87,8 @@ const allCatalystSlots = () => document.querySelectorAll('[class*="ItemSelector_
 beforeEach(() => {
     document.body.innerHTML = '';
     document.head.innerHTML = '';
+    observerReady.handlers = [];
+    observerReady.domReady = true;
 });
 
 afterEach(() => {
@@ -114,6 +131,17 @@ describe('the shield row beside the item selector', () => {
 
         expect(allCatalystSlots()).toHaveLength(1);
         expect(document.querySelectorAll('.mwi-alchemy-icon-row')).toHaveLength(1);
+    });
+
+    test('a panel mounted before the shared observer is ready gets its row at readiness', async () => {
+        observerReady.domReady = false;
+        mountAlchemyPanel();
+
+        await alchemyActionProtection.initialize();
+        expect(document.querySelector('.mwi-alchemy-icon-row')).toBeNull();
+
+        observerReady.handlers.forEach((h) => h.callback());
+        expect(document.querySelector('.mwi-alchemy-icon-row')).not.toBeNull();
     });
 });
 

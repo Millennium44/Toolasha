@@ -138,11 +138,17 @@ class AlchemyActionProtection {
         );
         this.unregisterHandlers.push(unregister);
 
-        // Check for already-existing element (alchemy panel may already be open)
-        const existing = document.querySelector('[class*="SkillActionDetail_primaryItemSelectorContainer"]');
-        if (existing) {
-            this._injectShieldButton(existing);
-        }
+        // @run-at document-start: an alchemy panel open before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('AlchemyActionProtection-ShieldCatchUp', () => {
+                const existing = document.querySelector('[class*="SkillActionDetail_primaryItemSelectorContainer"]');
+                if (existing) {
+                    this._injectShieldButton(existing);
+                }
+            })
+        );
     }
 
     _injectShieldButton(itemSelectorContainer) {

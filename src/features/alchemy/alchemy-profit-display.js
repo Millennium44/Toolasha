@@ -20,6 +20,7 @@ class AlchemyProfitDisplay {
     constructor() {
         this.isActive = false;
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.contentObserver = null;
         this.tabObserver = null;
         this.displayElement = null;
@@ -93,12 +94,16 @@ class AlchemyProfitDisplay {
             }
         );
 
-        // Initial check for existing panel
-        const existingComponent = document.querySelector('[class*="SkillActionDetail_alchemyComponent"]');
-        if (existingComponent) {
-            this.checkAndUpdateDisplay();
-            this.setupContentObserver(existingComponent);
-        }
+        // @run-at document-start: a panel rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('AlchemyProfitDisplayCatchUp', () => {
+            const existingComponent = document.querySelector('[class*="SkillActionDetail_alchemyComponent"]');
+            if (existingComponent) {
+                this.checkAndUpdateDisplay();
+                this.setupContentObserver(existingComponent);
+            }
+        });
     }
 
     /**
@@ -1471,6 +1476,11 @@ class AlchemyProfitDisplay {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             this.removeSpeedTimeInputListeners();
