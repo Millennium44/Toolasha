@@ -158,6 +158,31 @@ describe('foldSighting', () => {
         expect(observedUse([{ left: { torch: 10 } }], 'torch')).toEqual([]);
     });
 
+    test('a mid-run shop top-up does not net against earlier spending', () => {
+        // Start with 100, spend down to 40 by floor 3, buy back up to 150 with
+        // earned points, then spend down to 40 by the exit. start - left would
+        // read this as 100 - 40 = 60 spent; the true spend across both legs is
+        // 60 + 110 = 170.
+        let s = foldSighting(start, active({ currentFloor: 1, torchCount: 100 }), 1000).state;
+        s = foldSighting(s, active({ currentFloor: 3, torchCount: 40 }), 2000).state;
+        s = foldSighting(s, active({ currentFloor: 3, torchCount: 150 }), 3000).state;
+        s = foldSighting(s, active({ currentFloor: 6, torchCount: 40 }), 4000).state;
+        const { ended } = foldSighting(s, { isActive: false }, 5000);
+
+        expect(ended.spent.torch).toBe(170);
+        expect(observedUse([ended], 'torch')).toEqual([170]);
+        // A record with no start - left "net spend" of its own would
+        // undercount, or even go negative once the top-up outweighs the
+        // pre-top-up spend — spent never does either.
+        expect(ended.start.torch - ended.left.torch).toBe(60);
+    });
+
+    test('a record from before spend-accumulation existed falls back to start - left', () => {
+        expect(observedUse([{ startTrusted: true, start: { torch: 100 }, left: { torch: 40 } }], 'torch')).toEqual([
+            60,
+        ]);
+    });
+
     test('the ending records the run once, off the active→ended edge', () => {
         const s = foldSighting(start, active({ torchCount: 61 }), 1000).state;
         const { state, ended } = foldSighting(s, { isActive: false }, 2000);

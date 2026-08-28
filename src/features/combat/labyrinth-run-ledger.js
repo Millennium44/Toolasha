@@ -166,11 +166,22 @@ export function rushFloorTable(deepestFloor, torchCap, preserve = 0) {
 }
 
 /**
- * What recorded runs actually spent of one supply: start less what was left,
- * for every run that knows both. Newest first, as the ledger is.
+ * What recorded runs actually spent of one supply, for every run that knows
+ * it. Newest first, as the ledger is.
  *
  * This is the figure the grid math only estimates — it has the real rush
  * floor, the rooms actually entered, and the preserves actually rolled in it.
+ *
+ * Prefers the run's `spent` figure — the sum of sighting-to-sighting
+ * *decreases*, accumulated as the run was watched (see `foldSighting`) —
+ * over `start - left`. The labyrinth shop sells more of all three supplies
+ * for points earned mid-run, so `left` does not fall monotonically: a run
+ * that buys back up partway through has `start - left` net against the
+ * purchase, reading as spending less than it did, sometimes negative. `spent`
+ * only counts falls, so a mid-run top-up cannot erase the drops that came
+ * before it. Older records carry no `spent` field and fall back to
+ * `start - left`, which is exactly `spent` would have been for a run that
+ * never bought back in.
  *
  * @param {Array<Object>} runs - Ledger records
  * @param {string} kind - 'torch' | 'shroud' | 'beacon'
@@ -185,6 +196,11 @@ export function observedUse(runs, kind) {
         // Only runs watched from the door count. Records from before the flag
         // existed cannot say which they were, so they do not count either.
         if (run?.startTrusted !== true) continue;
+        const spent = Number(run?.spent?.[kind]);
+        if (Number.isFinite(spent)) {
+            out.push(Math.max(0, spent));
+            continue;
+        }
         const start = Number(run?.start?.[kind]);
         const left = Number(run?.left?.[kind]);
         if (!Number.isFinite(start) || !Number.isFinite(left)) continue;
@@ -234,6 +250,18 @@ export function foldSighting(state, labyrinth, nowMs) {
         // we came in"
         const firstFloor = Math.floor(Number(labyrinth?.currentFloor) || 0);
         const startTrusted = previous ? (previous.startTrusted ?? false) : firstFloor <= 1;
+        // True spend, accumulated sighting to sighting: a fall in `left` is a
+        // room entered and is added in, a rise is a mid-run shop purchase (the
+        // labyrinth shop sells more supplies for points earned in the run) and
+        // is left alone rather than netted against past spending. See
+        // observedUse for why this beats `start - left` once a run can buy
+        // back in.
+        const spent = {};
+        for (const kind of ['torch', 'shroud', 'beacon']) {
+            const prevLeft = previous?.left?.[kind];
+            const fall = Number.isFinite(prevLeft) && Number.isFinite(left[kind]) ? prevLeft - left[kind] : 0;
+            spent[kind] = (previous?.spent?.[kind] ?? 0) + Math.max(0, fall);
+        }
         return {
             state: {
                 phase: 'active',
@@ -243,6 +271,7 @@ export function foldSighting(state, labyrinth, nowMs) {
                     floor: Math.max(previous?.floor ?? 0, Math.floor(Number(labyrinth?.currentFloor) || 0)),
                     left,
                     start,
+                    spent,
                     itemHrids: {
                         torch: labyrinth?.torchItemHrid || previous?.itemHrids?.torch || null,
                         shroud: labyrinth?.shroudItemHrid || previous?.itemHrids?.shroud || null,
