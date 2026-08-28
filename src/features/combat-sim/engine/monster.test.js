@@ -305,6 +305,21 @@ describe('buff capture (blind-sim instrumentation)', () => {
     });
 });
 
+describe('labyrinth ability level scaling floors at level 1', () => {
+    test('a very low room level does not scale an ability to level 0', () => {
+        // baseLevel 10 at roomLevel 1: floor(10 * 1/100) = 0. Ability effects use
+        // (level - 1) as the level-bonus multiplier, so level 0 would compute a
+        // bonus of -1x instead of the level-1 floor of 0x.
+        seed();
+        const monster = new Monster(HRID, 0, 1, true);
+        const ability = monster.abilities.find((a) => a);
+        expect(ability.level).toBe(1);
+        // At level 1, (level - 1) = 0, so the effect sits at exactly its
+        // unscaled base values (baseDamageFlat/baseDamageRatio), not below them.
+        expect(ability.abilityEffects[0].damageRatio).toBe(ABILITY_DETAIL.abilityEffects[0].baseDamageRatio);
+    });
+});
+
 describe('resetCooldowns — labyrinth abilities open at deterministic half-cooldown', () => {
     test('a labyrinth monster (roomLevel > 0) opens each ability at exactly cd/2, no randomness', () => {
         seed();

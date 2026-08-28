@@ -39,7 +39,12 @@ class Monster extends CombatUnit {
                 continue;
             }
             const baseLevel = gameMonster.abilities[i].level;
-            const scaledLevel = this.roomLevel > 0 ? Math.floor(baseLevel * labyrinthScaleFactor) : baseLevel;
+            // Floor, not round: a very low room level can floor a scaled level to
+            // 0. Ability effects scale off (level - 1), so level 0 would compute a
+            // NEGATIVE level bonus — below the level-1 baseline instead of at it.
+            // Clamp to the level-1 floor, same as an unscaled ability's minimum.
+            const scaledLevel =
+                this.roomLevel > 0 ? Math.max(1, Math.floor(baseLevel * labyrinthScaleFactor)) : baseLevel;
             this.abilities[i] = new Ability(gameMonster.abilities[i].abilityHrid, scaledLevel);
         }
     }
