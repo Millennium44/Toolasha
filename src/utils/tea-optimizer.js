@@ -13,7 +13,7 @@ import {
     parseGatheringQuantityBonus,
 } from './equipment-parser.js';
 import { calculateActionsPerHour, calculateEffectiveActionsPerHour, calculateDrinksPerHour } from './profit-helpers.js';
-import { getItemPrice } from './market-data.js';
+import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { calculateBonusRevenue } from './bonus-revenue-calculator.js';
 import { MARKET_TAX } from './profit-constants.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
@@ -657,14 +657,26 @@ function findProcessingConversion(itemHrid, gameData) {
  * action's own item list), so it costs nothing extra inside the combination search loop that
  * calls the gold functions once per combo.
  *
+ * "No price data" has to mean `getItemPriceInfo(...).estimated`, not a null price. Since
+ * value-filling landed, an item with an empty order book is still priced — from the game's
+ * official value map — so a null price now means only "not an item anybody can price at all",
+ * and a check written against it fires essentially never. market-data.js says as much in
+ * `getItemPriceInfo`'s own comment: every older signal of this kind (`missing`,
+ * `hasMissingPrices`, `hasPriceData`) stopped firing that day, and `estimated` is how a caller
+ * gets it back. A flag meant to say "this number rests on a guess rather than a quote" is
+ * exactly that flag.
+ *
  * @param {Object} actionDetails - Action details from game data
  * @param {boolean} isGathering - Whether this is a gathering-skill action (vs. production)
  * @param {Object} gameData - Full game data (for resolving processing conversions)
  * @returns {boolean}
  */
 export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData) {
-    const isPriced = (itemHrid, side) =>
-        itemHrid === '/items/coin' || getItemPrice(itemHrid, { context: 'profit', side }) !== null;
+    const isPriced = (itemHrid, side) => {
+        if (itemHrid === '/items/coin') return true;
+        const info = getItemPriceInfo(itemHrid, { context: 'profit', side });
+        return info.price !== null && !info.estimated;
+    };
 
     if (isGathering) {
         for (const drop of actionDetails.dropTable || []) {
@@ -1015,7 +1027,7 @@ export function findOptimalTeas(
                     if (score > 0) {
                         totalScore += score;
                         profitableCount++;
-                        if (unpricedByAction.get(action.name)) hasMissingPrices = true;
+                        if (unpricedByAction?.get(action.name)) hasMissingPrices = true;
                     }
                 } else {
                     score = calculateProductionGoldPerHour(
@@ -1032,7 +1044,7 @@ export function findOptimalTeas(
                     if (score > 0) {
                         totalScore += score;
                         profitableCount++;
-                        if (unpricedByAction.get(action.name)) hasMissingPrices = true;
+                        if (unpricedByAction?.get(action.name)) hasMissingPrices = true;
                     }
                 }
 

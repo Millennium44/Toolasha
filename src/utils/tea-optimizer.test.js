@@ -10,7 +10,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const state = vi.hoisted(() => ({ gameData: null }));
-const prices = vi.hoisted(() => ({ byHrid: {} }));
+const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -18,11 +18,17 @@ vi.mock('../core/data-manager.js', () => ({
     },
 }));
 
-// actionHasUnpricedMaterials only needs getItemPrice's null-vs-number distinction; the real
-// module reaches through config/marketAPI/custom-price-overrides, which this file otherwise
-// avoids wiring up (see file docblock).
+// actionHasUnpricedMaterials needs the same distinction the real module draws: a price from a
+// live order book, a price filled in from the game's value map (`estimated`), or none at all.
+// The real module reaches through config/marketAPI/custom-price-overrides, which this file
+// otherwise avoids wiring up (see file docblock).
 vi.mock('./market-data.js', () => ({
     getItemPrice: (itemHrid) => (itemHrid in prices.byHrid ? prices.byHrid[itemHrid] : null),
+    getItemPriceInfo: (itemHrid) => {
+        if (!(itemHrid in prices.byHrid)) return { price: null, source: null, estimated: false };
+        const estimated = prices.estimated.has(itemHrid);
+        return { price: prices.byHrid[itemHrid], source: estimated ? 'value' : 'book', estimated };
+    },
 }));
 
 const { getRelevantTeas, getTeaBuffDescription, actionHasUnpricedMaterials } = await import('./tea-optimizer.js');
@@ -43,6 +49,7 @@ const knownItems = [
 beforeEach(() => {
     state.gameData = { itemDetailMap: Object.fromEntries(knownItems.map((hrid) => [hrid, {}])) };
     prices.byHrid = {};
+    prices.estimated = new Set();
 });
 
 describe('getRelevantTeas', () => {
@@ -231,5 +238,22 @@ describe('actionHasUnpricedMaterials', () => {
         const action = { dropTable: [{ itemHrid: '/items/raw_hide' }] };
         expect(actionHasUnpricedMaterials(action, true, gameData)).toBe(true);
         gameData.actionDetailMap = {};
+    });
+
+    test('an item priced only from the value map is flagged — the case a null-price check misses', () => {
+        // This is what "unpriced" means since value-filling landed. An item with
+        // an empty order book still comes back with a number, from the game's
+        // official value map, so `getItemPrice(...) !== null` is true for very
+        // nearly everything and a check built on it never fires. `estimated` is
+        // the signal market-data.js says replaced it, and it is the one that
+        // matches what this flag claims: the gold/hour number rests on a guess
+        // rather than on a quote somebody would actually trade at.
+        prices.byHrid = { '/items/milk': 2, '/items/cheese': 100 };
+        prices.estimated = new Set(['/items/cheese']);
+        const action = {
+            inputItems: [{ itemHrid: '/items/milk', count: 1 }],
+            outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
+        };
+        expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(true);
     });
 });
