@@ -116,7 +116,24 @@ function twoColumnDesktop() {
  * @param {number} width - The scroller's width, in pixels
  */
 function widthIs(width) {
-    Object.defineProperty(overlayPanel.scrollEl, 'clientWidth', { value: width, configurable: true });
+    // Both, because they are different questions: the border box is how wide the
+    // scroller is, and `clientWidth` is how much of that is left for content
+    // once a scrollbar has taken its share. With no scrollbar they agree.
+    for (const property of ['offsetWidth', 'clientWidth']) {
+        Object.defineProperty(overlayPanel.scrollEl, property, { value: width, configurable: true });
+    }
+    overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
+    overlayPanel._renderBody();
+}
+
+/**
+ * The tiles grew tall enough to scroll, so a scrollbar took its width out of
+ * the content box. The scroller itself is exactly as wide as it was.
+ * @param {number} [scrollbar] - How wide, in pixels
+ */
+function scrollbarAppears(scrollbar = 15) {
+    const outer = overlayPanel.scrollEl.offsetWidth;
+    Object.defineProperty(overlayPanel.scrollEl, 'clientWidth', { value: outer - scrollbar, configurable: true });
     overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
     overlayPanel._renderBody();
 }
@@ -214,7 +231,7 @@ describe('a desktop layout opened on a phone', () => {
     test('under 500px across it is a single column', () => {
         widthIs(380);
 
-        expect(overlayPanel._flowColumns(380 - 12)).toBe(1);
+        expect(overlayPanel._flowColumns(overlayPanel._canvasWidth())).toBe(1);
         expect(new Set(boxes().map((tile) => tile.x))).toEqual(new Set([0]));
     });
 
@@ -224,13 +241,14 @@ describe('a desktop layout opened on a phone', () => {
         // readout
         widthIs(380);
 
-        for (const tile of boxes()) expect(tile.width).toBe(368);
+        // The scroller's width less its padding and the room kept for a scrollbar
+        for (const tile of boxes()) expect(tile.width).toBe(352);
     });
 
     test('nothing is drawn past the right-hand edge', () => {
         widthIs(380);
 
-        for (const tile of boxes()) expect(tile.x + tile.width).toBeLessThanOrEqual(368);
+        for (const tile of boxes()) expect(tile.x + tile.width).toBeLessThanOrEqual(352);
     });
 
     test('the column runs in the order the eye ran across the desktop', () => {
@@ -395,7 +413,11 @@ describe('the panel inside the window', () => {
         widthIs(900);
         expect(boxes().find((tile) => tile.key === 'luck').x).toBe(250);
 
-        Object.defineProperty(overlayPanel.scrollEl, 'clientWidth', { value: 380, configurable: true });
+        // A resize makes the scroller itself narrower, which is the difference
+        // between this and a scrollbar merely appearing inside it
+        for (const property of ['offsetWidth', 'clientWidth']) {
+            Object.defineProperty(overlayPanel.scrollEl, property, { value: 380, configurable: true });
+        }
         window.dispatchEvent(new Event('resize'));
 
         expect(collisions()).toEqual([]);
@@ -416,5 +438,75 @@ describe('the panel inside the window', () => {
         overlayPanel._placePicker();
 
         expect(Number.parseFloat(overlayPanel.pickerEl.style.width)).toBeLessThanOrEqual(window.innerWidth);
+    });
+});
+
+describe('a scrollbar appearing', () => {
+    beforeEach(() => overlayPanel.show());
+
+    /**
+     * A two-column arrangement built to fit the canvas exactly, the way a preset
+     * materialised against this panel is.
+     * @param {number} column - How wide each column came out
+     * @returns {Object} Settings to apply
+     */
+    function twoColumnsFitting(column) {
+        return {
+            visible: { dps: true, luck: true, worth: true, loot: true },
+            order: ['dps', 'luck', 'worth', 'loot'],
+            positions: {
+                dps: { x: 0, y: 0 },
+                luck: { x: column, y: 0 },
+                worth: { x: 0, y: 30 },
+                loot: { x: column, y: 30 },
+            },
+            sizes: {
+                dps: { width: column, height: 30 },
+                luck: { width: column, height: 30 },
+                worth: { width: column, height: 30 },
+                loot: { width: column, height: 30 },
+            },
+        };
+    }
+
+    test('does not deal a two-column layout into one full-width column', () => {
+        // The whole of the shifting a player reported. Arranged against
+        // `clientWidth`, the canvas narrowed the moment the tiles grew tall
+        // enough to scroll — so a layout built to fit it exactly then
+        // overflowed, flowed into one column, became short enough that the
+        // scrollbar went, and came back. Once a second, for as long as a tile
+        // near the boundary kept filling in and emptying.
+        widthIs(500);
+        const column = Math.floor(Math.floor(overlayPanel._canvasWidth() / 2) / 10) * 10;
+        Object.assign(overlayPanel.settings, twoColumnsFitting(column));
+        overlayPanel._renderBody();
+
+        expect(overlayPanel.flowing).toBe(false);
+        const before = boxes();
+
+        scrollbarAppears();
+
+        expect(overlayPanel.flowing).toBe(false);
+        expect(boxes()).toEqual(before);
+    });
+
+    test('does not change the width the tiles are arranged against at all', () => {
+        widthIs(500);
+        const before = overlayPanel._canvasWidth();
+
+        scrollbarAppears();
+        expect(overlayPanel._canvasWidth()).toBe(before);
+
+        // Nor does a wider one, on a platform that draws them wider
+        scrollbarAppears(24);
+        expect(overlayPanel._canvasWidth()).toBe(before);
+    });
+
+    test('and a scrollbar always has room it does not have to take', () => {
+        // Which is what leaves the space for the two above to be true
+        for (const width of [380, 440, 476, 500, 900]) {
+            widthIs(width);
+            expect(overlayPanel._canvasWidth()).toBeLessThanOrEqual(width - 15);
+        }
     });
 });

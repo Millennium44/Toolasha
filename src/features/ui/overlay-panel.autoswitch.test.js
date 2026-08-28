@@ -490,7 +490,9 @@ describe('applying a preset over a layout somebody had already made', () => {
         overlayPanel.settings.positions = { dps: { x: 17, y: 3 }, luck: { x: 240, y: 41 } };
         overlayPanel.settings.sizes = { dps: { width: 240, height: 40 } };
 
-        Object.defineProperty(overlayPanel.scrollEl, 'clientWidth', { value: 472, configurable: true });
+        // 460 of usable canvas, once the scroller's padding and the room always
+        // kept for a scrollbar come off — what SKILLING_AT_460 is worked out for
+        Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', { value: 488, configurable: true });
         overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
         overlayPanel._renderBody();
     });

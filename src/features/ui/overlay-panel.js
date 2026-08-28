@@ -182,6 +182,19 @@ const MIN_FLOW_COLUMN = 240;
 const FLOW_GAP = 4;
 
 /**
+ * How much of the scroller's width is never laid out on.
+ *
+ * Wider than any ordinary scrollbar, and that is a requirement rather than a
+ * margin of taste — see {@link OverlayPanel#_canvasWidth}, where holding this
+ * back unconditionally is what keeps the width the tiles are arranged against
+ * from moving when a scrollbar arrives.
+ */
+const SCROLLBAR_RESERVE = 16;
+
+/** The scroller's own padding, which the canvas sits inside — `6px` on each side */
+const SCROLLER_PADDING = 12;
+
+/**
  * A tile's own padding and border, which its content sits inside.
  *
  * One pixel of padding and one of border on each of the top and bottom edges —
@@ -549,7 +562,17 @@ class OverlayPanel {
         // The scroll container, so the canvas below can be as large as the tiles
         // need without the panel growing to match
         this.scrollEl = document.createElement('div');
-        Object.assign(this.scrollEl.style, { flex: '1', overflow: 'auto', padding: '6px', minHeight: '0' });
+        Object.assign(this.scrollEl.style, {
+            flex: '1',
+            overflow: 'auto',
+            padding: '6px',
+            minHeight: '0',
+            // The gutter is held whether or not a scrollbar is in it, so the
+            // width the tiles were laid out against does not change under them
+            // the moment they grow tall enough to scroll. Ignored by browsers
+            // that have not got it, which is what `SCROLLBAR_RESERVE` is for.
+            scrollbarGutter: 'stable',
+        });
 
         this.canvasEl = document.createElement('div');
         Object.assign(this.canvasEl.style, { position: 'relative', minHeight: '100%' });
@@ -2361,9 +2384,35 @@ class OverlayPanel {
         this._placePicker();
     }
 
-    /** Usable width inside the scroller, less the scrollbar */
+    /**
+     * The width a layout is arranged against.
+     *
+     * Measured from the scroller's **border box**, not from `clientWidth`, and
+     * that is the whole of a bug a player reported as tiles shifting back and
+     * forth once a second.
+     *
+     * `clientWidth` has the scrollbar taken out of it. The border box does not
+     * move when a scrollbar appears inside it. Arranging against `clientWidth`
+     * therefore means the width the tiles were laid out for *changes by fifteen
+     * pixels the moment the tiles grow tall enough to scroll* — and a two-column
+     * arrangement built to fit the canvas exactly then overflows, `_needsFlow`
+     * fires, and every tile is dealt into one full-width column. Which is
+     * shorter, so the scrollbar goes, so the canvas widens, so it goes back to
+     * two columns. Round and round, for as long as a tile near the boundary kept
+     * filling in and emptying.
+     *
+     * So the scrollbar's room is held back **unconditionally** rather than
+     * discovered from whether one is currently there. The figure is the same
+     * either way, which is the property that matters: nothing about how tall the
+     * tiles happen to be can change how wide they are arranged.
+     *
+     * @returns {number} Pixels
+     */
     _canvasWidth() {
-        return Math.max(120, (this.scrollEl?.clientWidth || DEFAULT_PANEL.width) - 12);
+        // `offsetWidth` is zero in a DOM that measures nothing, where the
+        // panel's own design width is a better answer than a hundred and twenty
+        const outer = this.scrollEl?.offsetWidth || this.scrollEl?.clientWidth || DEFAULT_PANEL.width;
+        return Math.max(120, outer - SCROLLER_PADDING - SCROLLBAR_RESERVE);
     }
 
     /**
