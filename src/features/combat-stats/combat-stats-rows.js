@@ -51,6 +51,20 @@ const CACHE_MS = 4000;
 let cached = null;
 let cachedAt = 0;
 
+// This cache sits in front of `combatStatsDataCollector`, which clears its own
+// `latestCombatData` synchronously on `character_switching` — but that does
+// nothing for the copy already sitting here. Left alone, `partyStats()` kept
+// answering with the outgoing character's figures for up to CACHE_MS after a
+// switch (longer if a redraw landed just before the switch), which the
+// overlay panel's 1s redraw made visible under the arriving character's name:
+// Combat Revenue, Experience/hr, Deaths/hr and Total Profit are all fed by
+// this cache. Dropped here so the next read goes straight to the collector,
+// which is already reporting nothing for the new character at that point.
+dataManager.on('character_switching', () => {
+    cached = null;
+    cachedAt = 0;
+});
+
 /**
  * Everybody's stats, recomputed at most every few seconds.
  *
@@ -64,7 +78,7 @@ let cachedAt = 0;
  * @returns {Array<Object>} From `calculatePlayerStats`, yours first, empty until
  *   a run has produced data
  */
-function partyStats() {
+export function partyStats() {
     const now = Date.now();
     if (cached && now - cachedAt < CACHE_MS) return cached;
 
