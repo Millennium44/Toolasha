@@ -64,6 +64,7 @@ const {
     buildLedgerTable,
     coverageLine,
     guildTrialLedgerPanel,
+    lastAttendedText,
     lastCycleParticipants,
     ledgerCellText,
     refreshLedgerView,
@@ -217,6 +218,18 @@ describe('ledgerCellText', () => {
     });
 });
 
+describe('lastAttendedText', () => {
+    test('a row with a lastSeen timestamp names the local day', () => {
+        const t = new Date(2026, 7, 14, 18, 30).getTime();
+        expect(lastAttendedText({ lastSeen: t })).toBe('last attended 2026-08-14');
+    });
+
+    test('a row with no lastSeen has never attended in the window, not a blank date', () => {
+        expect(lastAttendedText({ lastSeen: null })).toBe('never attended in this window');
+        expect(lastAttendedText({})).toBe('never attended in this window');
+    });
+});
+
 describe('lastCycleParticipants', () => {
     test('names whoever joined something in the newest cycle, sorted', () => {
         expect(lastCycleParticipants(world.cycles)).toEqual(['Alice', 'Bob']);
@@ -264,6 +277,16 @@ describe('the panel', () => {
         const first = guildTrialLedgerPanel.panel.querySelectorAll('td')[0];
         expect(first.textContent).toBe('Alice');
         expect(buildLedgerTable().rows[0].name).toBe('Alice');
+    });
+
+    test('a row names its member’s last-attended date in its tooltip', async () => {
+        await refreshLedgerView();
+        guildTrialLedgerPanel.show({ remember: false });
+
+        const rows = [...guildTrialLedgerPanel.panel.querySelectorAll('tbody tr, tr')].filter((row) =>
+            row.textContent.startsWith('Alice')
+        );
+        expect(rows[0].title).toContain(`last attended ${lastAttendedText({ lastSeen: WEEK }).slice(-10)}`);
     });
 
     test('an empty ledger says so instead of drawing a headed table with no rows', async () => {

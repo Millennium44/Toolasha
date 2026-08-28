@@ -224,6 +224,38 @@ function minutes(ms) {
 }
 
 /**
+ * A timestamp as the local calendar day it fell on, `YYYY-MM-DD`.
+ *
+ * The reader's own day, not Greenwich's: an evening trial folded through
+ * `toISOString` would print tomorrow's date for anyone west of Greenwich.
+ *
+ * @param {number} timestamp - Epoch ms
+ * @returns {string} `YYYY-MM-DD`
+ */
+function localDay(timestamp) {
+    const date = new Date(timestamp);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * "Last attended" as a sentence fragment, from a row's `lastSeen` timestamp.
+ *
+ * `lastSeen` is folded from whichever cycles are in the current window, so a
+ * member outside the window entirely has never had a chance to set it — that
+ * is a different claim from "watched and never showed", which is what
+ * {@link ledgerCellText}'s no-show label already says.
+ *
+ * @param {Object} row - A folded ledger row
+ * @returns {string} e.g. `last attended 2026-08-14` or `never attended in this window`
+ */
+export function lastAttendedText(row) {
+    if (!Number.isFinite(row?.lastSeen)) return 'never attended in this window';
+    return `last attended ${localDay(row.lastSeen)}`;
+}
+
+/**
  * The cell text for one column of one row.
  * @param {Object} row - A folded row
  * @param {string} key - A {@link LEDGER_COLUMNS} key
@@ -360,7 +392,7 @@ function drawTable(card, table) {
             line.appendChild(cell);
         }
         line.title =
-            `${entry.name} joined ${entry.trials} of ${table.trialsRun} recorded trials.\n` +
+            `${entry.name} joined ${entry.trials} of ${table.trialsRun} recorded trials, ${lastAttendedText(entry)}.\n` +
             `${formatKMB(entry.damage)} damage · ${formatKMB(entry.healing)} healing · ` +
             `${formatKMB(entry.damageTaken)} taken · ${entry.deaths} death${entry.deaths === 1 ? '' : 's'}.\n` +
             'Shares are of what was actually measured over the selected window.';
