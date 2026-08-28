@@ -1398,10 +1398,25 @@ class SkillingSimulatorUI {
         this.contentParent = null;
         this.isActive = false;
         this.isInitialized = false;
+
+        // A character switch runs cleanup() then initialize() again for the
+        // new character. lastOptimizerResult was computed against the
+        // departing character's level and item availability — left standing,
+        // reopening the Optimizer tab (with no click on "Optimize") renders
+        // it immediately, mislabelled as the new character's numbers.
+        // optimizerLoadout is a direct reference into the departing
+        // character's loadout snapshots; getLoadoutSnapshot() already
+        // reloads a fresh, character-scoped list on switch, but nothing here
+        // re-pointed this field at it, so a same-named loadout on the new
+        // character would silently diff against the old character's gear.
+        this.lastOptimizerResult = null;
+        this.optimizerLoadout = null;
     }
 }
 
 const skillingSimulatorUI = new SkillingSimulatorUI();
+
+export { skillingSimulatorUI };
 
 export default {
     name: 'Skilling Simulator',
