@@ -14,7 +14,7 @@ import { GAME } from './selectors.js';
  * value is the unsubscribe function returned by `webSocketHook.on('*', …)`.
  * A tab in here is a tab `watchTabForAcquisition` is still tracking; removing it
  * from the map is how every retirement path — auto, manual dismiss, "× All",
- * marketplace close — agrees the watch is over.
+ * marketplace close, character switch — agrees the watch is over.
  */
 const acquisitionWatchers = new Map();
 
@@ -28,6 +28,42 @@ const pendingRetireTimeouts = new Map();
 
 /** How long the ✓ badge stays up before the tab is actually removed. */
 const ACQUIRED_BADGE_DELAY_MS = 900;
+
+/** Whether the character-switch teardown below has been hooked up yet. */
+let characterSwitchHookRegistered = false;
+
+/**
+ * Drop every acquisition watch — and its tab — when the character switches.
+ *
+ * A watcher's `check()` reads whatever `dataManager.getInventory()` currently
+ * holds, which after a switch is the *new* character's inventory. Left alive, a
+ * tab pinned for character A retires as "✓ Acquired" the moment character B's
+ * init data arrives, if B happens to own the item. `character_switching` is
+ * emitted (and awaited) before data-manager swaps `characterItems`, so tearing
+ * down synchronously here means no watcher can ever see the wrong character's
+ * inventory. Registered lazily by `watchTabForAcquisition` rather than at
+ * import time, and only when the real dataManager (not a test stub) exposes
+ * `on`.
+ *
+ * Pending ✓-window removals are cancelled too rather than left to fire into
+ * the new character's session; the tabs are removed immediately without their
+ * `onRetire`/`onDismiss` callbacks — callers' bookkeeping is reconciled by
+ * their own cleanup observers, the same as on marketplace close.
+ */
+function retireAllWatchesForCharacterSwitch() {
+    const tabs = new Set([...acquisitionWatchers.keys(), ...pendingRetireTimeouts.keys()]);
+    for (const tab of tabs) {
+        unwatchTabAcquisition(tab);
+        tab.remove();
+    }
+}
+
+function ensureCharacterSwitchHook() {
+    if (characterSwitchHookRegistered) return;
+    if (typeof dataManager.on !== 'function') return;
+    characterSwitchHookRegistered = true;
+    dataManager.on('character_switching', retireAllWatchesForCharacterSwitch);
+}
 
 /** How often the cleanup watchdog checks that its tabs are still on screen */
 const POLL_MS = 3000;
@@ -534,6 +570,9 @@ export function watchTabForAcquisition(tab, options) {
     if (!tab || !options?.itemHrid) return noop;
 
     const { itemHrid, enhancementLevel = 0, requiredCount = 1, onRetire } = options;
+
+    // A watch must not outlive its character — see retireAllWatchesForCharacterSwitch.
+    ensureCharacterSwitchHook();
 
     // Re-registering (e.g. the same tab watched twice) replaces the old watch
     // rather than stacking a second subscription on top of it.

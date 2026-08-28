@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pinned market tabs stop reading the next character's bags
+
+A lab-sim shopping-plan tab left pinned across a character switch kept its acquisition watcher alive, so the new character's inventory could retire it as "✓ Acquired" for items the planning character never bought. The watchers now tear down synchronously during the switch, before the new inventory is visible.
+
 ### Escape closes the floating panel in front
 
 Every floating panel now closes on Escape — most recently opened or raised first, one panel per keypress — via one shared document-level handler instead of the Consumables panel's one-off listener. The keypress is left alone while you are typing in an input, while a game modal or popover is up, and while the overlay's gear popover is open (dismissing it is the whole keypress).

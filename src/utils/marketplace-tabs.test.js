@@ -5,14 +5,20 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const inventory = vi.hoisted(() => ({ items: [] }));
+const dataManagerListeners = vi.hoisted(() => new Map());
 
 // watchTabForAcquisition reads inventory through dataManager, same as
 // missing-materials-button.js does — mocked here so tests control exactly
-// what's "owned" without a real character session.
+// what's "owned" without a real character session. `on` is captured so tests
+// can replay dataManager lifecycle events (character_switching) by hand.
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getInventory: () => inventory.items,
         getItemDetails: (itemHrid) => ({ name: itemHrid.split('/').pop() }),
+        on: (event, listener) => {
+            if (!dataManagerListeners.has(event)) dataManagerListeners.set(event, []);
+            dataManagerListeners.get(event).push(listener);
+        },
     },
 }));
 
@@ -33,6 +39,14 @@ import {
  * mechanism missing-materials-button.js's setupInventoryListener triggers off. */
 function sendInventoryUpdate() {
     webSocketHook.processMessage(JSON.stringify({ type: 'items_updated' }));
+}
+
+/** Replay data-manager's character_switching emit — the synchronous teardown
+ * window before the new character's inventory becomes visible. */
+function emitCharacterSwitching() {
+    for (const listener of dataManagerListeners.get('character_switching') || []) {
+        listener({ oldId: 'char-a', newId: 'char-b' });
+    }
 }
 
 function buildReferenceTab() {
@@ -557,5 +571,50 @@ describe('watchTabForAcquisition', () => {
 
         expect(document.body.contains(tab)).toBe(false);
         expect(onRetire).toHaveBeenCalledWith(tab);
+    });
+
+    test("a character switch retires the watch before the new character's inventory can be read", () => {
+        // Character A pins a tab for an item A does not have…
+        inventory.items = [];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, { itemHrid: '/items/plank', requiredCount: 3, itemName: 'plank', onRetire });
+        expect(document.body.contains(tab)).toBe(true);
+
+        // …then switches character. character_switching fires before dataManager
+        // exposes the new inventory, and must tear the watch (and its tab) down.
+        emitCharacterSwitching();
+        expect(document.body.contains(tab)).toBe(false);
+
+        // Character B's inventory arrives — B already holds enough of the item.
+        // Without the switch teardown, the stale watcher would read B's stock and
+        // fire "Acquired" for A's tab.
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 5 }];
+        sendInventoryUpdate();
+        vi.runAllTimers();
+
+        expect(onRetire).not.toHaveBeenCalled();
+    });
+
+    test('a character switch during the ✓ window cancels the pending removal without firing onRetire', () => {
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
+        const tab = buildTab();
+        const onRetire = vi.fn();
+
+        watchTabForAcquisition(tab, { itemHrid: '/items/plank', requiredCount: 1, itemName: 'plank', onRetire });
+
+        // Acquisition detected — tab shows ✓ and its removal is pending
+        inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
+        sendInventoryUpdate();
+        expect(document.body.contains(tab)).toBe(true);
+
+        // The switch lands inside the ✓ window: the tab goes now, and the pending
+        // onRetire must not fire into the new character's session
+        emitCharacterSwitching();
+        expect(document.body.contains(tab)).toBe(false);
+
+        vi.runAllTimers();
+        expect(onRetire).not.toHaveBeenCalled();
     });
 });
