@@ -139,6 +139,17 @@ describe('saves are gathered rather than made per fill', () => {
         await tradeHistory.flushSave();
         expect(stored()).toEqual({});
     });
+
+    test('a fill with no enhancementLevel on the wire is keyed the same as a lookup for level 0', async () => {
+        // Most non-equipment orders come back with enhancementLevel omitted rather
+        // than explicitly 0; the write key must normalize like every reader does.
+        tradeHistory.handleMarketUpdate({
+            endMarketListings: [{ itemHrid: '/items/a', isSell: true, price: 5, filledQuantity: 1 }],
+        });
+
+        expect(tradeHistory.getHistory('/items/a', 0)).toEqual({ sell: 5 });
+        expect(tradeHistory.getHistory('/items/a')).toEqual({ sell: 5 });
+    });
 });
 
 describe('the history cannot be wiped by a failed read or a stale copy', () => {

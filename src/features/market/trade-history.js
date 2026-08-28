@@ -254,7 +254,7 @@ class TradeHistory {
             // Only track orders that actually filled
             if (order.filledQuantity === 0) return;
 
-            const key = `${order.itemHrid}:${order.enhancementLevel}`;
+            const key = `${order.itemHrid}:${order.enhancementLevel || 0}`;
 
             // Get existing history for this item or create new
             const itemHistory = this.history[key] || {};
