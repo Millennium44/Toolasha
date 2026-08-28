@@ -20,7 +20,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const store = vi.hoisted(() => ({ records: {}, prefs: { enabled: true, dateFormat: 'MM-DD', timeFormat: '24hour' } }));
 
 /** The class handlers the renderer registers on the shared observer */
-const observer = vi.hoisted(() => ({ handlers: [] }));
+const observer = vi.hoisted(() => ({ handlers: [], readyHandlers: [], domReady: true }));
 
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -29,6 +29,18 @@ vi.mock('../../core/dom-observer.js', () => ({
             observer.handlers.push(handler);
             return () => {
                 observer.handlers = observer.handlers.filter((h) => h !== handler);
+            };
+        },
+        // Mirrors the real DOMObserver.onReady: fires immediately when the observer is already
+        // attached (the default here, matching the observer's steady-state in production), or
+        // defers until `observer.domReady` is flipped on and the handler is invoked by hand —
+        // the TLA-025 readiness-gap case below.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            observer.readyHandlers.push(handler);
+            if (observer.domReady) callback();
+            return () => {
+                observer.readyHandlers = observer.readyHandlers.filter((h) => h !== handler);
             };
         },
     },
@@ -153,6 +165,8 @@ beforeEach(() => {
     store.records = {};
     store.prefs = { enabled: true, dateFormat: 'MM-DD', timeFormat: '24hour' };
     observer.handlers = [];
+    observer.readyHandlers = [];
+    observer.domReady = true;
     document.body.innerHTML = '';
 });
 
@@ -250,6 +264,34 @@ describe('slots that arrive after the root', () => {
         renderer.startWatching();
         await flush();
 
+        expect(blocks()).toHaveLength(1);
+    });
+
+    // TLA-025 REOPEN: at @run-at document-start the shared observer may not be attached yet
+    // because document.body does not exist. Character Select can fully mount during that gap,
+    // producing no observable mutation after the observer finally attaches. Readiness must
+    // trigger a bounded catch-up at the moment observing actually becomes active.
+    test('catches up when Character Select fully mounts before the shared observer becomes ready', async () => {
+        observer.domReady = false;
+        store.records['1234'] = storedRecord('1234', 4 * HOUR);
+
+        renderer.startWatching();
+        expect(observer.readyHandlers).toHaveLength(1);
+
+        // Native UI fully mounts while the central observer is still waiting for body/readiness.
+        mountCharacterSelect(['1234']);
+        expect(blocks()).toHaveLength(0);
+
+        // The real DOMObserver emits readiness only after it actually attaches to document.body.
+        observer.domReady = true;
+        await observer.readyHandlers[0].callback();
+        await flush();
+
+        expect(blocks()).toHaveLength(1);
+
+        // Re-notification/remount catch-up remains idempotent.
+        await observer.readyHandlers[0].callback();
+        await flush();
         expect(blocks()).toHaveLength(1);
     });
 
@@ -352,5 +394,6 @@ describe('teardown', () => {
 
         expect(blocks()).toHaveLength(0);
         expect(observer.handlers).toHaveLength(0);
+        expect(observer.readyHandlers).toHaveLength(0);
     });
 });

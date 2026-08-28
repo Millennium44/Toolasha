@@ -406,3 +406,49 @@ describe('per-className handler cache', () => {
         expect(order).toEqual(['outer', 'inner']);
     });
 });
+
+describe('DOMObserver readiness lifecycle (TLA-025)', () => {
+    afterEach(() => {
+        domObserver.stop();
+        domObserver.readyHandlers = [];
+    });
+
+    test('onReady registered before start is notified once observing actually starts', () => {
+        const callback = vi.fn();
+        const unregister = domObserver.onReady('late-body-catch-up', callback);
+
+        // Do not depend on mutation delivery: readiness is a distinct lifecycle signal.
+        domObserver.start();
+
+        expect(domObserver.isObserving).toBe(true);
+        expect(callback).toHaveBeenCalledTimes(1);
+        unregister();
+    });
+
+    test('onReady registered after observer is active catches up immediately and unregisters cleanly', () => {
+        domObserver.start();
+        const callback = vi.fn();
+        const unregister = domObserver.onReady('already-ready', callback);
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(domObserver.getStats().readyHandlerCount).toBe(1);
+
+        unregister();
+        expect(domObserver.getStats().readyHandlerCount).toBe(0);
+    });
+
+    test('an onReady handler that throws does not stop other handlers from firing', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        domObserver.onReady('throwing', () => {
+            throw new Error('boom');
+        });
+        const second = vi.fn();
+        domObserver.onReady('second', second);
+
+        domObserver.start();
+
+        expect(second).toHaveBeenCalledTimes(1);
+        expect(spy).toHaveBeenCalled();
+        spy.mockRestore();
+    });
+});

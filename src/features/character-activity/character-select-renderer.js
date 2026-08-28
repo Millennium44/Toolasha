@@ -33,6 +33,7 @@ class CharacterSelectRenderer {
     constructor() {
         this.isWatching = false;
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.refreshTimer = null;
         this.trackedSlots = new Map(); // characterId -> {slotElement, character}
     }
@@ -51,10 +52,22 @@ class CharacterSelectRenderer {
             (node) => this.onCharacterSelectDomReady(node)
         );
 
-        // Runs exactly once, guarded by the isWatching check above — not a poll. Later async
-        // slot arrival is still handled by the observer.
+        // @run-at document-start means domObserver.start() can return before document.body exists.
+        // If native Character Select fully mounts during that readiness gap, neither its root nor
+        // slots insertion can be observed. Subscribe to the centralized observer's actual-ready
+        // lifecycle and perform the bounded catch-up only after it is attached to the current body.
+        // If it is already observing, onReady() invokes this immediately.
+        this.unregisterReady = domObserver.onReady('characterActivityStatusCatchUp', () => this.catchUpExistingRoot());
+    }
+
+    /**
+     * Bounded catch-up after the shared DOM observer is actually ready.
+     * @returns {Promise<void>|undefined}
+     */
+    catchUpExistingRoot() {
+        if (!this.isWatching) return;
         const existingRoot = document.querySelector(`[class*="${CHARACTER_SELECT_ROOT_CLASS}"]`);
-        if (existingRoot) this.onCharacterSelectMounted(existingRoot);
+        if (existingRoot) return this.onCharacterSelectMounted(existingRoot);
     }
 
     /**
@@ -222,6 +235,10 @@ class CharacterSelectRenderer {
         if (this.unregisterObserver) {
             this.unregisterObserver();
             this.unregisterObserver = null;
+        }
+        if (this.unregisterReady) {
+            this.unregisterReady();
+            this.unregisterReady = null;
         }
         this.stopRefreshTimer();
         this.clearAllInjectedBlocks();
