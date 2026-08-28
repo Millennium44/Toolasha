@@ -1465,8 +1465,24 @@ describe('the all-zones table', () => {
                 originalSetStatus(text);
             });
 
+            // What the status says at the moment the finalization work actually
+            // runs. Ordering assertions alone cannot tell this fix from a
+            // `_setStatus('Finalizing …')` moved to just above the completion
+            // line — which restores the exact freeze, since the revenue pass,
+            // the table render and the snapshot save would all still happen
+            // under stale "Simulating" text.
+            let statusDuringRender = null;
+            const originalDisplay = ui._displayAllZonesResults.bind(ui);
+            const displaySpy = vi.spyOn(ui, '_displayAllZonesResults').mockImplementation(async (...args) => {
+                statusDuringRender = statuses[statuses.length - 1] ?? null;
+                return originalDisplay(...args);
+            });
+
             await ui._onSimulateAllZones();
             spy.mockRestore();
+            displaySpy.mockRestore();
+
+            expect(statusDuringRender).toMatch(/^Finalizing/);
 
             const simulatingIdx = statuses.findLastIndex((t) => t.startsWith('Simulating'));
             const finalizingIdx = statuses.findIndex((t) => t.startsWith('Finalizing'));
