@@ -1671,7 +1671,17 @@ class OverlayPanel {
         try {
             const map = await loadLayouts();
             const key = normalizeName(name);
-            const saved = map[key]?.file || presetFile(key);
+            // A preset is built against the canvas it is about to land on: its
+            // arrangement is a grid of columns rather than a set of coordinates,
+            // and the columns are only the right width once somebody has said
+            // how wide the panel is
+            const saved =
+                map[key]?.file ||
+                presetFile(key, {
+                    width: this._canvasWidth(),
+                    rows: registeredRows(),
+                    snapToGrid: this.settings.snapToGrid !== false,
+                });
             if (!saved) return false;
 
             const read = fromOPanelConfig(saved);
@@ -2012,22 +2022,43 @@ class OverlayPanel {
         this._placePicker();
     }
 
-    /** Repack every visible tile against the top left */
+    /** Repack every visible tile into columns, against the top left */
     _autoGrid() {
         this._snapshot('Autogrid');
-        // The layout as saved, not as flowed: this one writes what it is handed
-        // back to storage, and a phone's single column is not an arrangement
-        // anyone asked to keep
-        const laid = this._layout({ flow: false });
-        const positions = { ...this.settings.positions };
-        for (const { key, x, y } of autoGrid(laid, this._canvasWidth(), this.settings.snapToGrid ? GRID : 1)) {
-            positions[key] = { x, y };
-        }
-        this.settings.positions = positions;
+        this._packVisible();
         this._save();
         this._renderBody();
         this._renderPicker();
         this._placePicker();
+    }
+
+    /**
+     * Lay every visible tile out as a column grid, and write it down.
+     *
+     * Sizes as well as positions, which is the part that makes it a grid rather
+     * than a shelf: column edges can only agree if the tiles in a column are the
+     * same width, so the packer widens each one to a whole number of columns and
+     * this writes that back. Nothing is ever narrowed below what it asked for —
+     * see `autoGrid`.
+     *
+     * @returns {number} How many tiles were placed
+     */
+    _packVisible() {
+        // The layout as saved, not as flowed: this writes what it is handed back
+        // to storage, and a phone's single column is not an arrangement anyone
+        // asked to keep
+        const laid = this._layout({ flow: false });
+        const positions = { ...this.settings.positions };
+        const sizes = { ...this.settings.sizes };
+
+        const packed = autoGrid(laid, this._canvasWidth(), this.settings.snapToGrid ? GRID : 1);
+        for (const tile of packed) {
+            positions[tile.key] = { x: tile.x, y: tile.y };
+            sizes[tile.key] = { width: tile.width, height: tile.height };
+        }
+        this.settings.positions = positions;
+        this.settings.sizes = sizes;
+        return packed.length;
     }
 
     /**
@@ -2056,20 +2087,31 @@ class OverlayPanel {
         this._placePicker();
     }
 
-    /** Forget every position, size and zoom, and the panel's own geometry with them */
+    /**
+     * Put the layout back to a designed arrangement, and the panel with it.
+     *
+     * It used to only forget — positions, sizes, zooms — and leave the tiles to
+     * be placed one at a time by the free-spot search, which on a set of tiles
+     * of a dozen different widths is what produced the patchwork this button was
+     * pressed to escape. So it forgets and then *arranges*: the same column pack
+     * Autogrid uses, which is a grid rather than a pile.
+     */
     _resetLayout() {
         this._snapshot('Reset');
         this.settings.positions = {};
         this.settings.sizes = {};
         this.settings.zoom = {};
         this.settings.textScale = 100;
-        this._save();
         clearGeometry(GEOMETRY_KEY);
         this.panel.style.width = `${DEFAULT_PANEL.width}px`;
         this.panel.style.height = `${DEFAULT_PANEL.height}px`;
         this.panel.style.fontSize = `${this._baseFontPx()}px`;
         // The design size is a desktop's; on a phone it is wider than the screen
         this._clampToViewport();
+        // After the frame is back to its own size, so the columns are measured
+        // against the canvas the tiles will actually be drawn on
+        this._packVisible();
+        this._save();
         this._renderBody();
         this._renderPicker();
         this._placePicker();
@@ -2475,6 +2517,8 @@ class OverlayPanel {
         // anyway.
         if (this.interacting) return;
 
+        this._adoptPlacements();
+
         const full = this._layout();
         if (!full.length) {
             this.tiles.clear();
@@ -2551,6 +2595,60 @@ class OverlayPanel {
         const bounds = contentBounds(laid);
         this.canvasEl.style.width = `${bounds.width}px`;
         this.canvasEl.style.height = `${bounds.height}px`;
+    }
+
+    /**
+     * Write down where a tile that had no saved position ended up.
+     *
+     * This is the other half of the jumble, and it is the half that made it look
+     * like the overlay was rearranging itself. A tile with no saved position is
+     * placed by `resolveLayout` **against the tiles that happen to be on screen
+     * at that moment**, and the result was never written down — so it was
+     * recomputed on the next draw, against a different set. Every measurement
+     * tile that starts or stops reporting, every activity change, every second
+     * pass of `_drawBody` (which lays out again without the tiles that stood
+     * down) moved every unplaced tile somewhere else. Worse, a tile placed in
+     * the gap left by one that had gone quiet was sitting on top of it the
+     * moment it had something to say again.
+     *
+     * So a placement is a decision, and decisions are saved. Once a tile has a
+     * position it keeps it: neighbours can appear and vanish around it and it
+     * stays where it was put, which is what a layout is.
+     *
+     * Two placements, for two situations. Nothing placed at all is a fresh
+     * character or a layout just reset, and gets the whole set packed as a grid —
+     * the same one Autogrid produces, because "what does the overlay look like
+     * before you arrange it" and "tidy this up" have the same right answer. One
+     * new tile among placed ones gets the corner search, which puts it at the
+     * first free corner of the arrangement it is joining.
+     *
+     * Never while the tiles are flowed: those positions are what the width
+     * allowed, not what anyone chose, and writing them back would overwrite a
+     * desktop arrangement with a phone's column.
+     *
+     * @returns {boolean} Whether anything was written
+     */
+    _adoptPlacements() {
+        if (this.flowing) return false;
+
+        const visible = resolveRows(registeredRows(), this.settings).filter((row) => row.visible);
+        if (!visible.length) return false;
+
+        const positions = this.settings.positions || {};
+        const placed = (row) => Number.isFinite(positions[row.key]?.x) && Number.isFinite(positions[row.key]?.y);
+        if (visible.every(placed)) return false;
+
+        if (!visible.some(placed)) this._packVisible();
+        else {
+            const next = { ...positions };
+            for (const tile of this._layout({ flow: false })) {
+                if (!Number.isFinite(next[tile.key]?.x)) next[tile.key] = { x: tile.x, y: tile.y };
+            }
+            this.settings.positions = next;
+        }
+
+        this._save();
+        return true;
     }
 
     /**

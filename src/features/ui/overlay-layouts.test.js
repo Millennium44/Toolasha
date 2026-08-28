@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { gridOrder } from '../../utils/overlay-layout.js';
 
 const store = vi.hoisted(() => ({ data: new Map(), fail: false, unavailable: false }));
 
@@ -236,12 +237,56 @@ describe('the round trip', () => {
 });
 
 describe('presets', () => {
-    test('all four ship, each with rows and an activity', () => {
-        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market']);
+    test('all five ship, each with rows and an activity', () => {
+        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Default']);
 
         for (const name of presetNames()) {
             expect(PRESET_LAYOUTS[name].rows.length).toBeGreaterThan(0);
             expect(Object.values(ACTIVITY)).toContain(PRESET_LAYOUTS[name].activity);
+        }
+    });
+
+    test('a preset names each of its rows once, in the order its grid reads', () => {
+        for (const name of presetNames()) {
+            const { rows, grid } = PRESET_LAYOUTS[name];
+            expect(new Set(rows).size).toBe(rows.length);
+            expect(rows).toEqual(gridOrder(grid));
+        }
+    });
+
+    test('every line of every preset is full, so no line leaves a sliver', () => {
+        // The complaint, as a rule: a line with one tile in a two-column grid is
+        // the orphan half-row the screenshot was full of
+        for (const name of presetNames()) {
+            const { columns, grid } = PRESET_LAYOUTS[name];
+            for (const line of grid) {
+                const cells = Array.isArray(line) ? line : line.cells;
+                expect(cells).toHaveLength(columns);
+                expect(cells.every((cell) => typeof cell === 'string')).toBe(true);
+            }
+        }
+    });
+
+    test('a preset arrives placed, aligned and inside the canvas', () => {
+        const rows = PRESET_LAYOUTS.Combat.rows.map((key) => ({ key, defaultSize: { width: 200, height: 30 } }));
+        const { positions, sizes } = presetFile('Combat', { width: 456, rows }).toolasha.settings;
+
+        const tiles = PRESET_LAYOUTS.Combat.rows.map((key) => ({ key, ...positions[key], ...sizes[key] }));
+        for (const tile of tiles) {
+            expect(Number.isFinite(tile.x)).toBe(true);
+            expect(tile.x % 10).toBe(0);
+            expect(tile.x + tile.width).toBeLessThanOrEqual(456);
+        }
+        // Two columns, and every tile starts at one of them
+        expect(new Set(tiles.map((tile) => tile.x)).size).toBe(2);
+
+        for (let i = 0; i < tiles.length; i += 1) {
+            for (let j = i + 1; j < tiles.length; j += 1) {
+                const [a, b] = [tiles[i], tiles[j]];
+                const apart =
+                    a.x >= b.x + b.width || b.x >= a.x + a.width || a.y >= b.y + b.height || b.y >= a.y + a.height;
+                expect(apart).toBe(true);
+            }
         }
     });
 
@@ -254,10 +299,9 @@ describe('presets', () => {
         const built = presetFile('Combat');
 
         expect(built.toolasha.settings.order).toEqual(PRESET_LAYOUTS.Combat.rows);
-        // Nothing placed and nothing sized: a preset carrying coordinates would
-        // be a preset measured against one panel width
-        expect(built.toolasha.settings.positions).toEqual({});
-        expect(built.toolasha.settings.sizes).toEqual({});
+        // Placed, but placed *here* rather than shipped as coordinates — see the
+        // canvas-width tests below
+        expect(Object.keys(built.toolasha.settings.positions).length).toBeGreaterThan(0);
         expect(built.toolasha.settings.locked).toBe(true);
     });
 
@@ -266,6 +310,29 @@ describe('presets', () => {
 
         for (const key of PRESET_LAYOUTS.Market.rows) expect(visible[key]).toBe(true);
         expect(visible.dps).toBeUndefined();
+    });
+
+    test('the arrangement follows the canvas it is built against', () => {
+        const rows = PRESET_LAYOUTS.Market.rows.map((key) => ({ key, defaultSize: { width: 180, height: 30 } }));
+        const wide = presetFile('Market', { width: 456, rows }).toolasha.settings;
+        const narrow = presetFile('Market', { width: 300, rows }).toolasha.settings;
+
+        // Wide enough for the design, so the two columns it was designed as
+        expect(new Set(Object.values(wide.positions).map((spot) => spot.x)).size).toBe(2);
+        // Too narrow to squeeze it into two, so one column of whole tiles rather
+        // than two columns of ellipsis
+        expect(new Set(Object.values(narrow.positions).map((spot) => spot.x))).toEqual(new Set([0]));
+        for (const size of Object.values(narrow.sizes)) expect(size.width).toBeLessThanOrEqual(300);
+    });
+
+    test('a row no feature has registered is left out rather than left as a hole', () => {
+        const rows = [{ key: 'netWorth', defaultSize: { width: 180, height: 30 } }];
+        const built = presetFile('Market', { width: 456, rows }).toolasha.settings;
+
+        // Still switched on, so it appears if its feature comes back
+        expect(built.visible.watchlist).toBe(true);
+        expect(built.positions.watchlist).toBeUndefined();
+        expect(built.positions.netWorth).toEqual({ x: 0, y: 0 });
     });
 
     test('names are recognised, and anything else is not', () => {

@@ -10,11 +10,30 @@ import {
     snapUp,
     compactColumns,
     contentBounds,
+    columnWidth,
+    gridColumns,
+    gridOrder,
+    materializeGrid,
     GRID,
     DEFAULT_TILE,
     DEFAULT_ZOOM,
     COMPACT_TILE,
+    MIN_TILE,
 } from './overlay-layout.js';
+
+/**
+ * Every pair of tiles, for the assertions that are about the set rather than a
+ * member of it.
+ * @param {Array<Object>} tiles - Placed tiles
+ * @returns {Array<Array<Object>>} Pairs
+ */
+function pairs(tiles) {
+    const out = [];
+    for (let i = 0; i < tiles.length; i += 1) {
+        for (let j = i + 1; j < tiles.length; j += 1) out.push([tiles[i], tiles[j]]);
+    }
+    return out;
+}
 
 describe('snap', () => {
     test('rounds to the nearest step', () => {
@@ -174,6 +193,32 @@ describe('resolveLayout', () => {
     });
 });
 
+describe('gridColumns', () => {
+    test('sizes the columns to the ordinary tile rather than to the widest', () => {
+        // One three-line block among a dozen one-liners must not turn a 460
+        // canvas into a single column of half-empty tiles
+        const tiles = [
+            { width: 180, height: 30 },
+            { width: 180, height: 30 },
+            { width: 200, height: 30 },
+            { width: 280, height: 90 },
+        ];
+        expect(gridColumns(tiles, 460)).toBe(2);
+    });
+
+    test('never fewer than one, whatever it is handed', () => {
+        expect(gridColumns([], 460)).toBe(1);
+        expect(gridColumns([{ width: 900, height: 30 }], 200)).toBe(1);
+    });
+});
+
+describe('columnWidth', () => {
+    test('snaps down, so the last column still ends inside the canvas', () => {
+        expect(columnWidth(456, 2)).toBe(220);
+        expect(columnWidth(456, 2) * 2).toBeLessThanOrEqual(456);
+    });
+});
+
 describe('autoGrid', () => {
     const tiles = [
         { key: 'a', width: 160, height: 30 },
@@ -181,28 +226,87 @@ describe('autoGrid', () => {
         { key: 'c', width: 160, height: 30 },
     ];
 
-    test('lays tiles left to right and wraps at the edge', () => {
-        expect(autoGrid(tiles, 340)).toEqual([
-            { key: 'a', x: 0, y: 0 },
-            { key: 'b', x: 160, y: 0 },
-            { key: 'c', x: 0, y: 30 },
-        ]);
+    test('lays tiles left to right in columns of one width, and wraps', () => {
+        const [a, b, c] = autoGrid(tiles, 340);
+
+        expect(a.x).toBe(0);
+        expect(b.x).toBe(a.width);
+        expect(a.width).toBe(b.width);
+        expect(c).toMatchObject({ key: 'c', x: 0 });
+        expect(c.y).toBeGreaterThanOrEqual(a.height);
     });
 
-    test('a wrapped line clears the tallest tile above it', () => {
+    test('every column edge is the same on every line', () => {
+        // The whole of the complaint: a shelf packer advances by each tile's own
+        // width, so the second column starts somewhere different on every line
+        const mixed = [
+            { key: 'a', width: 180, height: 30 },
+            { key: 'b', width: 130, height: 30 },
+            { key: 'c', width: 200, height: 46 },
+            { key: 'd', width: 160, height: 30 },
+            { key: 'e', width: 220, height: 40 },
+            { key: 'f', width: 180, height: 30 },
+        ];
+        const packed = autoGrid(mixed, 456);
+        const lefts = new Set(packed.map((tile) => tile.x));
+
+        expect(lefts.size).toBe(2);
+        expect([...lefts].sort((first, second) => first - second)).toEqual([0, packed[0].width]);
+    });
+
+    test('tiles on a line are the same height, so none of them leaves a sliver', () => {
         const mixed = [
             { key: 'tall', width: 160, height: 100 },
             { key: 'short', width: 160, height: 30 },
             { key: 'next', width: 160, height: 30 },
         ];
-        // Using the last tile's height would interleave the second line with the
-        // tall tile still occupying the first
-        expect(autoGrid(mixed, 340)[2]).toEqual({ key: 'next', x: 0, y: 100 });
+        const [tall, short, next] = autoGrid(mixed, 340);
+
+        expect(short.height).toBe(tall.height);
+        expect(short.y).toBe(tall.y);
+        // And the line below clears the tallest rather than the last
+        expect(next.y).toBeGreaterThanOrEqual(100);
+    });
+
+    test('a wide tile does not leave a half-empty line above itself', () => {
+        // Reading order with one concession: the tile that fits the gap is taken
+        // ahead of the one that cannot, rather than closing the line early
+        const mixed = [
+            { key: 'narrow', width: 180, height: 30 },
+            { key: 'wide', width: 440, height: 40 },
+            { key: 'after', width: 180, height: 30 },
+        ];
+        const placed = Object.fromEntries(autoGrid(mixed, 456).map((tile) => [tile.key, tile]));
+
+        expect(placed.after.y).toBe(placed.narrow.y);
+        expect(placed.wide.y).toBeGreaterThan(placed.narrow.y);
+    });
+
+    test('a tile is widened to whole columns, never narrowed below what it asked for', () => {
+        const mixed = [
+            { key: 'ordinary', width: 180, height: 30 },
+            { key: 'wide', width: 280, height: 90 },
+        ];
+        for (const tile of autoGrid(mixed, 456)) {
+            const wanted = mixed.find((entry) => entry.key === tile.key).width;
+            expect(tile.width).toBeGreaterThanOrEqual(wanted);
+        }
+    });
+
+    test('nothing packed ever overlaps anything else', () => {
+        const many = Array.from({ length: 13 }, (_, index) => ({
+            key: `t${index}`,
+            width: [130, 160, 180, 200, 220, 240, 280][index % 7],
+            height: [30, 40, 46, 76, 90][index % 5],
+        }));
+        for (const [first, second] of pairs(autoGrid(many, 456))) {
+            expect(overlaps(first, second)).toBe(false);
+        }
     });
 
     test('a tile wider than the canvas does not wrap onto an empty line', () => {
         const oversized = [{ key: 'huge', width: 900, height: 30 }];
-        expect(autoGrid(oversized, 400)[0]).toEqual({ key: 'huge', x: 0, y: 0 });
+        expect(autoGrid(oversized, 400)[0]).toMatchObject({ key: 'huge', x: 0, y: 0 });
     });
 
     test('positions land on the grid', () => {
@@ -235,6 +339,108 @@ describe('autoGrid', () => {
         const [, b] = autoGrid(odd, 200);
         expect(b.y).toBeGreaterThanOrEqual(25);
         expect(b.y % GRID).toBe(0);
+    });
+});
+
+describe('gridOrder', () => {
+    test('reads a grid left to right and top to bottom, naming each tile once', () => {
+        expect(gridOrder([['a', 'b'], ['c', 'c'], { cells: ['d', null], height: 70 }])).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    test('nothing at all is no order rather than a throw', () => {
+        expect(gridOrder(null)).toEqual([]);
+    });
+});
+
+describe('materializeGrid', () => {
+    const spec = {
+        columns: 2,
+        grid: [
+            ['a', 'b'],
+            ['wide', 'wide'],
+            ['c', 'd'],
+        ],
+    };
+    const sizes = {
+        a: { width: 180, height: 30 },
+        b: { width: 130, height: 30 },
+        wide: { width: 280, height: 40 },
+        c: { width: 200, height: 46 },
+        d: { width: 160, height: 30 },
+    };
+
+    test('two columns of one width, on the grid, inside the canvas', () => {
+        const { positions, sizes: placed } = materializeGrid(spec, { width: 456, sizes });
+
+        expect(positions.a).toEqual({ x: 0, y: 0 });
+        expect(positions.b).toEqual({ x: 220, y: 0 });
+        expect(placed.a).toEqual(placed.b);
+        for (const key of Object.keys(placed)) {
+            expect(positions[key].x % GRID).toBe(0);
+            expect(positions[key].y % GRID).toBe(0);
+            expect(positions[key].x + placed[key].width).toBeLessThanOrEqual(456);
+        }
+    });
+
+    test('a key repeated across a line is one tile spanning it', () => {
+        const { positions, sizes: placed } = materializeGrid(spec, { width: 456, sizes });
+
+        expect(positions.wide).toEqual({ x: 0, y: 30 });
+        expect(placed.wide.width).toBe(440);
+    });
+
+    test('a line is as tall as the tallest thing in it, and its tiles agree', () => {
+        const { positions, sizes: placed } = materializeGrid(spec, { width: 456, sizes });
+
+        expect(placed.c.height).toBe(50);
+        expect(placed.d.height).toBe(placed.c.height);
+        expect(positions.d.y).toBe(positions.c.y);
+    });
+
+    test('a line can ask for more room than its contents need', () => {
+        const roomy = { columns: 2, grid: [{ cells: ['a', 'a'], height: 70 }] };
+        expect(materializeGrid(roomy, { width: 456, sizes }).sizes.a.height).toBe(70);
+    });
+
+    test('a row that is not registered costs no hole, and empties its line', () => {
+        const { positions } = materializeGrid(spec, {
+            width: 456,
+            sizes,
+            available: new Set(['a', 'b', 'c', 'd']),
+        });
+
+        expect(positions.wide).toBeUndefined();
+        // The line the missing tile had to itself is gone, rather than left as a
+        // gap between the two that remain
+        expect(positions.c.y).toBe(30);
+    });
+
+    test('nothing placed ever overlaps anything else', () => {
+        const { positions, sizes: placed } = materializeGrid(spec, { width: 456, sizes });
+        const tiles = Object.keys(placed).map((key) => ({ ...positions[key], ...placed[key] }));
+
+        for (const [first, second] of pairs(tiles)) expect(overlaps(first, second)).toBe(false);
+    });
+
+    test('every tile stays large enough to be grabbed', () => {
+        const { sizes: placed } = materializeGrid(spec, { width: 456, sizes });
+        for (const size of Object.values(placed)) {
+            expect(size.width).toBeGreaterThanOrEqual(MIN_TILE.width);
+            expect(size.height).toBeGreaterThanOrEqual(MIN_TILE.height);
+        }
+    });
+
+    test('too narrow for the design, it is packed rather than squeezed', () => {
+        // Two columns of 150 is two columns of label and ellipsis
+        const { positions, sizes: placed } = materializeGrid(spec, { width: 300, sizes });
+
+        expect(new Set(Object.values(positions).map((spot) => spot.x))).toEqual(new Set([0]));
+        for (const size of Object.values(placed)) expect(size.width).toBeLessThanOrEqual(300);
+    });
+
+    test('a row with no size of its own gets the standard tile', () => {
+        const bare = { columns: 2, grid: [['a', 'b']] };
+        expect(materializeGrid(bare, { width: 456 }).sizes.a.height).toBe(DEFAULT_TILE.height);
     });
 });
 

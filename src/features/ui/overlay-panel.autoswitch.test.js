@@ -170,12 +170,30 @@ describe('applying a preset', () => {
         expect(overlayPanel.settings.visible.dps).toBeFalsy();
     });
 
-    test('a preset places its tiles rather than stacking them at the origin', async () => {
+    test('a preset arrives as a grid rather than as a pile', async () => {
         await overlayPanel.applyNamedLayout('Combat');
 
-        // Nothing is saved as a position — the packer puts them where the panel
-        // has room, which is what makes a preset fit a panel it has never seen
-        expect(overlayPanel.settings.positions).toEqual({});
+        // Placed against the canvas it landed on, rather than shipped as
+        // coordinates or left for the packer to guess at one tile at a time
+        const placed = PRESET_LAYOUTS.Combat.rows.map((key) => ({
+            key,
+            ...overlayPanel.settings.positions[key],
+            ...overlayPanel.settings.sizes[key],
+        }));
+
+        expect(placed.every((tile) => Number.isFinite(tile.x) && Number.isFinite(tile.y))).toBe(true);
+        // Two columns, and every tile starts at one of them — the jumble was
+        // tiles starting wherever the last one happened to end
+        expect(new Set(placed.map((tile) => tile.x)).size).toBe(2);
+
+        for (let i = 0; i < placed.length; i += 1) {
+            for (let j = i + 1; j < placed.length; j += 1) {
+                const [a, b] = [placed[i], placed[j]];
+                expect(
+                    a.x >= b.x + b.width || b.x >= a.x + a.width || a.y >= b.y + b.height || b.y >= a.y + a.height
+                ).toBe(true);
+            }
+        }
         expect(overlayPanel.canvasEl.children.length).toBeGreaterThan(1);
     });
 
