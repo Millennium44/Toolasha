@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The overlay becomes a real grid
+
+The overlay's layout engine was replaced outright: tiles now live in a browser-native grid in reading order, with a column span and a natural height, instead of hand-placed pixel rectangles reconciled by five correction passes. Arranging is drag-to-reorder plus a right-edge width handle; overlaps, off-panel drops, and layout oscillation are structurally impossible now, and one saved arrangement is correct at every panel width (two columns by default, three when wide, one when narrow). Existing layouts migrate automatically — order and relative widths survive; the old data is kept untouched under its original key, so rolling back is just installing the previous version. Reset layout now asks first and restores the shipped Default; the gear popover says which layout is showing; Snap and Autogrid are gone because the grid does their jobs. Net: about 1,700 lines of layout machinery deleted. Freeform pixel placement is retired — that's the one deliberate loss.
+
 ### Skill Level joins the overlay
 
 A skilling counterpart to the Combat Level tile: the skill your current action trains, its level, and progress to next (exact remaining XP on hover). It sits beside Time to Level in the Skilling preset and stands down outside skilling.
