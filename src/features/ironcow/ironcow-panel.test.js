@@ -352,4 +352,23 @@ describe('lifecycle', () => {
         expect(ironCowFarmPanel.busy).toBe(false);
         vi.restoreAllMocks();
     });
+
+    test("a character switch to one with no snapshot of their own does not inherit the last character's costed loop", async () => {
+        // Character A costs the loop; the store now holds A's snapshot.
+        await ironCowFarmPanel.load();
+        await ironCowFarmPanel.refresh();
+        expect(ironCowFarmPanel.loop).not.toBeNull();
+        expect(ironCowFarmPanel.pricedAt).not.toBeNull();
+
+        // feature-registry tears the panel down on character_switching...
+        ironCowFarmPanel.disable();
+        // ...and character B, who has never pressed Refresh, has no snapshot.
+        store.snapshot = null;
+
+        // load() is feature-registry's re-initialize entry point on character_switched.
+        await ironCowFarmPanel.load();
+
+        expect(ironCowFarmPanel.loop).toBeNull();
+        expect(ironCowFarmPanel.pricedAt).toBeNull();
+    });
 });

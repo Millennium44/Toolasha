@@ -250,11 +250,16 @@ class IronCowFarmPanel {
      */
     async load() {
         this.overrides = await loadOverrides();
+        // Unconditional: disable()/_remove() only tears down the DOM, not
+        // this.loop/this.pricedAt, so on a character switch a character with
+        // no snapshot of their own must still overwrite whatever the previous
+        // character's numbers were — otherwise this character's panel (and
+        // the overlay tile, which reads ironCowRuntime.loop) would keep
+        // showing the departing character's costed gold/hour, bells/week,
+        // and "costed <time>" as if they were this character's.
         const snapshot = await loadSnapshot();
-        if (snapshot) {
-            this.loop = snapshot;
-            this.pricedAt = snapshot.computedAt || null;
-        }
+        this.loop = snapshot;
+        this.pricedAt = snapshot?.computedAt || null;
         this._render();
     }
 
@@ -264,6 +269,11 @@ class IronCowFarmPanel {
      */
     async refresh() {
         if (this.busy) return;
+        // _create() fires load() without awaiting it (a floating panel opens
+        // instantly, then fills in). Wait for that read to land first so it
+        // can never resolve after this and clobber the freshly-costed loop
+        // back to whatever (or nothing) was last on disk.
+        if (this.loaded) await this.loaded;
         this.busy = true;
         this._status('Costing…');
         try {
