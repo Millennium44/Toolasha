@@ -82,6 +82,31 @@ function createFakeDb(storeNames, initialData = {}) {
     return { db, dataByStore };
 }
 
+describe('Storage.parseJSON', () => {
+    // getJSON() = get() + parseJSON(). parseJSON is split out so a caller
+    // that already has the raw value in hand (e.g. from tryGet(), which
+    // reads it anyway to distinguish "absent" from "could not be read") can
+    // parse it without paying for a second IndexedDB round trip on the same
+    // key — see settings-storage.js's loadSettings().
+    test('returns the default for null', () => {
+        expect(storage.parseJSON(null, 'k', 'fallback')).toBe('fallback');
+    });
+
+    test('returns an object value as-is (IndexedDB stores objects directly)', () => {
+        const value = { a: 1 };
+        expect(storage.parseJSON(value, 'k')).toBe(value);
+    });
+
+    test('parses a JSON string', () => {
+        expect(storage.parseJSON('{"a":1}', 'k')).toEqual({ a: 1 });
+    });
+
+    test('falls back on unparsable input without throwing', () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        expect(storage.parseJSON('not json', 'k', 'fallback')).toBe('fallback');
+    });
+});
+
 describe('Storage.listStores', () => {
     beforeEach(() => {
         storage.db = null;

@@ -129,13 +129,20 @@ class SettingsStorage {
         // Probe first: "absent" and "could not be read" must not look alike
         // here, because the migration below treats absent as "first run for
         // this character" and writes, and the caller treats the result as
-        // the settings to save back
+        // the settings to save back.
+        //
+        // The probe already read the raw value off the same key — a second
+        // `getJSON` round trip just to JSON-parse it would be a redundant
+        // IndexedDB transaction on every settings load, doubling this key's
+        // exposure to slow transactions when the main thread or the
+        // browser's IDB task queue is under load. Parse what the probe
+        // already has instead.
         const probed = await storage.tryGet(characterKey, this.storageArea);
         this.lastLoadReadable = probed !== null;
         let saved = null;
 
         if (probed !== null) {
-            saved = await storage.getJSON(characterKey, this.storageArea, null);
+            saved = probed.found ? storage.parseJSON(probed.value, characterKey, null) : null;
 
             // Migration: If this is a character-specific key and it doesn't exist
             // Copy from global template (old 'script_settingsMap' key)

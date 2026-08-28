@@ -13,6 +13,7 @@ vi.mock('./storage.js', () => ({
         getJSON: vi.fn((key, _area, defaultValue) =>
             Promise.resolve(outage.on ? defaultValue : (stored.get(`json:${key}`) ?? defaultValue))
         ),
+        parseJSON: vi.fn((raw, _key, defaultValue) => (raw == null ? defaultValue : raw)),
         setJSON: vi.fn((key, value) => {
             if (outage.on) return Promise.resolve(false);
             stored.set(`json:${key}`, value);
@@ -36,6 +37,7 @@ vi.mock('./storage.js', () => ({
 }));
 
 const { default: settingsStorage } = await import('./settings-storage.js');
+const { default: storage } = await import('./storage.js');
 
 describe('SettingsStorage.importSettings known-character matching', () => {
     beforeEach(() => {
@@ -233,6 +235,23 @@ describe('a settings store that cannot be read', () => {
         expect(settingsStorage.lastLoadReadable).toBe(true);
         expect(map.whatsNew_showPopup.isTrue).toBe(false);
         expect(map.ironCow_enabled.isTrue).toBe(true);
+    });
+
+    test('reads the character key once, not once for the probe and again to parse it', async () => {
+        // loadSettings() used to follow tryGet() (a probe, to tell "absent"
+        // from "could not be read") with a second getJSON() of the exact same
+        // key just to get it parsed — a redundant IndexedDB round trip on
+        // every settings load, on the hot startup path. It now parses the
+        // value the probe already read.
+        stored.set(`json:${KEY}`, saved());
+        storage.getJSON.mockClear();
+        storage.tryGet.mockClear();
+
+        const map = await settingsStorage.loadSettings();
+
+        expect(map.ironCow_enabled.isTrue).toBe(true);
+        expect(storage.tryGet).toHaveBeenCalledTimes(1);
+        expect(storage.getJSON).not.toHaveBeenCalledWith(KEY, expect.anything(), expect.anything());
     });
 
     test('a load that cannot be made says so, answers defaults, and runs no migration', async () => {

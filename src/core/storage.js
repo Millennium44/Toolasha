@@ -803,7 +803,23 @@ class Storage {
      */
     async getJSON(key, storeName = 'settings', defaultValue = null) {
         const raw = await this.get(key, storeName, null);
+        return this.parseJSON(raw, key, defaultValue);
+    }
 
+    /**
+     * Parse a raw value already in hand — no storage round trip — the way
+     * `getJSON` parses one it just read.
+     *
+     * Split out so a caller that already has the raw value (e.g. from
+     * `tryGet`, which reads it anyway to tell "absent" from "could not be
+     * read") does not have to pay a second IndexedDB transaction for the
+     * same key just to get it JSON-parsed.
+     * @param {*} raw - The value as read from a store (or `null`)
+     * @param {string} key - Storage key, for error logging only
+     * @param {*} defaultValue - Default value if `raw` is `null`
+     * @returns {*} The parsed object or default
+     */
+    parseJSON(raw, key, defaultValue = null) {
         if (raw === null) {
             return defaultValue;
         }
