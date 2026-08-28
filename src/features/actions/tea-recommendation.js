@@ -146,13 +146,19 @@ class TeaRecommendation {
         this.unregisterHandlers.push(unregisterLabelObserver);
         this.unregisterHandlers.push(unregisterAlchemyLabelObserver);
 
-        // Check if consumables label already exists (both skill panel and alchemy panel variants)
-        const existingLabels = document.querySelectorAll(
-            '[class*="GatheringProductionSkillPanel_label"], [class*="AlchemyPanel_label"]'
+        // @run-at document-start: labels rendered before the shared observer attaches to
+        // document.body are invisible to the class watchers, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('TeaRecommendationCatchUp', () => {
+                const existingLabels = document.querySelectorAll(
+                    '[class*="GatheringProductionSkillPanel_label"], [class*="AlchemyPanel_label"]'
+                );
+                existingLabels.forEach((label) => {
+                    this.checkAndInjectButtons(label);
+                });
+            })
         );
-        existingLabels.forEach((label) => {
-            this.checkAndInjectButtons(label);
-        });
     }
 
     /**

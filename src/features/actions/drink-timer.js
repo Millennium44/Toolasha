@@ -111,10 +111,16 @@ class DrinkTimer {
 
         // Containers already on screen were inserted before the observer was
         // listening, so they are picked up once here; everything after arrives
-        // through the observer
-        for (const el of document.querySelectorAll(CONTAINER_SELECTOR)) {
-            this._trackPanel(el);
-        }
+        // through the observer. @run-at document-start: the scan waits for the
+        // shared observer's actual-ready signal (immediate if it is already
+        // attached), so a container rendered during the readiness gap is not missed.
+        this.observers.push(
+            domObserver.onReady('DrinkTimerCatchUp', () => {
+                for (const el of document.querySelectorAll(CONTAINER_SELECTOR)) {
+                    this._trackPanel(el);
+                }
+            })
+        );
         this.initialized = true;
     }
 

@@ -18,6 +18,8 @@ const game = vi.hoisted(() => ({
 const observer = vi.hoisted(() => ({
     /** class substring → callback, as registered by initialize() */
     handlers: new Map(),
+    readyHandlers: [],
+    domReady: true,
 }));
 
 const calc = vi.hoisted(() => ({
@@ -54,6 +56,16 @@ vi.mock('../../core/dom-observer.js', () => ({
         onClass: (name, className, callback) => {
             observer.handlers.set(className, callback);
             return () => observer.handlers.delete(className);
+        },
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            observer.readyHandlers.push(handler);
+            if (observer.domReady) callback();
+            return () => {
+                observer.readyHandlers = observer.readyHandlers.filter((h) => h !== handler);
+            };
         },
     },
 }));
@@ -104,6 +116,8 @@ beforeEach(() => {
     game.currentActions = [];
     game.actions = {};
     observer.handlers.clear();
+    observer.readyHandlers = [];
+    observer.domReady = true;
     calc.calls = 0;
     calc.drinks = [{ itemHrid: '/items/wisdom_tea', name: 'Wisdom Tea', totalSeconds: 10 * 3600 }];
     config.getSetting = () => false;
@@ -172,6 +186,17 @@ describe('drink timer updates', () => {
         game.listeners.get('items_updated')();
         vi.advanceTimersByTime(300);
         expect(calc.calls).toBe(2);
+    });
+
+    test('a container mounted before the shared observer is ready is picked up at readiness', () => {
+        observer.domReady = false;
+        const container = mountContainer();
+
+        drinkTimer.initialize();
+        expect(container.querySelector('.mwi-drink-timer')).toBeNull();
+
+        observer.readyHandlers.forEach((h) => h.callback());
+        expect(container.querySelector('.mwi-drink-timer')).not.toBeNull();
     });
 
     test('a character switch re-arms the low-supply alert for the new character', () => {
