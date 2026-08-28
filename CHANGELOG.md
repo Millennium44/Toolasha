@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Start-up catch-up scans no longer race the DOM observer
+
+The observer-readiness lifecycle the character-select display adopted last release is now rolled out across the codebase: all 52 features that scanned for already-rendered game UI at initialize — across actions, alchemy, chat, collection, combat, the simulators, the dictionary, inventory, market, tasks, and ui — now wait for the shared observer to actually attach before their catch-up scan, so UI that mounts during the readiness gap at page start can no longer be permanently missed.
+
 ### Boss countdown next to the battle counter
 
 Combat zones with a boss cycle now show "N to boss · ~Xm Ys left" beside the battle number — the estimate targets the boss's defeat (when you're free to start another action), from a rolling average of your recent battle times. Toggleable; skips dungeons and the labyrinth.
