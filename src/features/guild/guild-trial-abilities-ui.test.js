@@ -556,6 +556,31 @@ describe('trial abilities panel', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    test('a guild switch drops an unsaved plan draft instead of leaking it onto the new guild', async () => {
+        // One account running a main plus alts sees this mid-session: the lead
+        // starts typing a plan, then the trial's guild name resolves to (or the
+        // character switches to) a different guild before "Save plan" is clicked.
+        // The draft used to survive the redraw regardless of guild, so the box
+        // kept showing the old guild's half-written text over the new guild's
+        // saved plan — and clicking Save would have written it there.
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+        await guildTrialPlan.setText('Alice: Sweep');
+
+        openTrialAbilitiesPanel();
+        const box = () => guildTrialAbilitiesPanel.panel.querySelector('textarea');
+        expect(box().value).toBe('Alice: Sweep');
+        box().value = 'Alice: Fierce Aura 200 (not saved yet)';
+        box().dispatchEvent(new Event('input'));
+
+        await guildTrialAbilities.setGuildName('Dogs');
+        guildTrialAbilitiesPanel.render();
+
+        // Dogs has no saved plan, and the stale Cats draft must not stand in for it
+        expect(box().value).toBe('');
+        expect(text()).not.toContain(FAILED);
+    });
+
     test('the export carries the plan and each captured player’s verdict', async () => {
         await feature.initialize('Cats');
         guildTrialAbilities.setRoster(['Alice']);

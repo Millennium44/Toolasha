@@ -402,6 +402,39 @@ const planUi = { open: false, draft: null };
 export function resetPlanUi() {
     planUi.open = false;
     planUi.draft = null;
+    planUiGuildName = undefined;
+}
+
+/**
+ * The guild the Plan section's draft was last drawn for.
+ *
+ * `undefined` until the first draw, deliberately distinct from `null` (the
+ * "no guild known yet" state), so a first draw with no guild known does not
+ * itself look like a change and clear a draft nothing has touched.
+ */
+let planUiGuildName;
+
+/**
+ * Drop an unsaved draft that belongs to a guild this trial has left.
+ *
+ * `guildTrialPlan` is keyed per guild, so its saved text already changes
+ * correctly under {@link drawPlan}'s `guildTrialPlan.text()` fallback — but
+ * `planUi.draft` does not know a guild from a stack of characters, and once
+ * typed it survives a redraw on purpose (so a live trial's ticks do not eat
+ * what the lead is mid-sentence writing). Left unguarded, that same
+ * durability leaks: a lead switches character mid-session (one account
+ * running a main plus alts, each in a different guild) or the trial's own
+ * guild name resolves late, the box still shows the previous guild's
+ * half-written plan over the new guild's saved one, and "Save plan" would
+ * write it there. Compared against the guild the *state* now carries, not
+ * against `guildTrialPlan`'s own key, so the reset lands the moment the panel
+ * itself starts speaking for a different guild.
+ *
+ * @param {string|null} guildName - `state.guildName` for this draw
+ */
+function guardPlanUiGuild(guildName) {
+    if (planUiGuildName !== undefined && planUiGuildName !== guildName) resetPlanUi();
+    planUiGuildName = guildName;
 }
 
 /**
@@ -445,6 +478,9 @@ export function verdictLine(verdict) {
  * @param {Object} state - From `guildTrialAbilities.state()`
  */
 function drawPlan(body, state) {
+    // Checked before the fold check: a stale draft is wrong whether or not
+    // the card happens to be collapsed on the draw that crosses the guild
+    guardPlanUiGuild(state.guildName ?? null);
     const { card, collapsed } = collapsibleCard(body, 'Plan', 'plan');
     if (collapsed) return;
     card.appendChild(panelNote(planStatusLine(state.planCompare)));
