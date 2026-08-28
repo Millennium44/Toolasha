@@ -1511,6 +1511,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'taskClaimToast',
+            name: 'Task Claim Toast',
+            category: 'Tasks',
+            module: UI.taskClaimToast,
+            async: false,
+        },
+        {
             key: 'taskRerollProtection',
             name: 'Task Reroll Protection',
             category: 'Tasks',

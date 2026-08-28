@@ -51,6 +51,7 @@ import taskStatistics from '../features/tasks/task-statistics.js';
 // Side-effect import: registers the Task Tokens overlay row
 import '../features/tasks/task-tokens-row.js';
 import taskClaimCollector from '../features/tasks/task-claim-collector.js';
+import taskClaimToast from '../features/tasks/task-claim-toast.js';
 import taskRerollProtection from '../features/tasks/task-reroll-protection.js';
 import taskAutoReroll from '../features/tasks/task-auto-reroll.js';
 import taskRerollWalk from '../features/tasks/task-reroll-walk.js';
@@ -197,6 +198,7 @@ toolashaRoot.UI = {
     taskInventoryHighlighter,
     taskStatistics,
     taskClaimCollector,
+    taskClaimToast,
     taskRerollProtection,
     taskAutoReroll,
     taskRerollWalk,

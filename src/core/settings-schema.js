@@ -2686,6 +2686,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Moves all Claim Reward buttons to a stack at the top of the task list so you can click the same spot repeatedly to claim all completed tasks',
             },
+            taskClaimToast: {
+                id: 'taskClaimToast',
+                label: 'Show a toast summary when a task is claimed',
+                type: 'checkbox',
+                default: true,
+                help: 'Pops a brief toast naming the coins, tokens, and items a claimed task paid out — the reward the claimed card no longer shows once it is gone.',
+            },
             taskGoMerge: {
                 id: 'taskGoMerge',
                 label: 'Merge duplicate tasks on Go',

@@ -114,6 +114,7 @@ beforeEach(() => {
     game.charId = 'cow1';
     game.quests = [];
     tracker.forget();
+    tracker.subscribers.clear();
 });
 
 describe('telling a completion from everything else', () => {
@@ -223,6 +224,54 @@ describe('telling a completion from everything else', () => {
         expect(isReroll(before, questSnapshot(quest({ cowbellRerollCount: 1 })))).toBe(true);
         expect(isReroll(before, questSnapshot(quest({ actionHrid: '/actions/foraging/egg' })))).toBe(true);
         expect(isReroll(before, questSnapshot(quest({ goalCount: 400 })))).toBe(true);
+    });
+});
+
+describe('telling subscribers about a completion', () => {
+    test('a subscriber is told the batch a claim was recorded in', () => {
+        const seen = [];
+        tracker.onCompletion((entries) => seen.push(entries));
+
+        tracker.ingest([quest()]);
+        tracker.ingest([claimed()], 1_700_000_000_000);
+
+        expect(seen).toHaveLength(1);
+        expect(seen[0]).toHaveLength(1);
+        expect(seen[0][0]).toMatchObject({ questId: 101, tokens: 4 });
+    });
+
+    test('a discard notifies nobody — nothing was recorded', () => {
+        const seen = [];
+        tracker.onCompletion((entries) => seen.push(entries));
+
+        tracker.ingest([quest()]);
+        tracker.ingest([quest({ status: '/quest_status/discarded' })]);
+
+        expect(seen).toHaveLength(0);
+    });
+
+    test('unsubscribing stops further notifications', () => {
+        const seen = [];
+        const unsubscribe = tracker.onCompletion((entries) => seen.push(entries));
+        unsubscribe();
+
+        tracker.ingest([quest()]);
+        tracker.ingest([claimed()]);
+
+        expect(seen).toHaveLength(0);
+    });
+
+    test('one subscriber throwing does not stop the others from being told', () => {
+        const seen = [];
+        tracker.onCompletion(() => {
+            throw new Error('boom');
+        });
+        tracker.onCompletion((entries) => seen.push(entries));
+
+        tracker.ingest([quest()]);
+        tracker.ingest([claimed()]);
+
+        expect(seen).toHaveLength(1);
     });
 });
 

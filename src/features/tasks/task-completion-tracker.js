@@ -297,6 +297,8 @@ class TaskCompletionTracker {
         this.entries = [];
         /** questIds already recorded, so a re-delivered claim is not income twice */
         this.recordedIds = new Set();
+        /** Callbacks told about newly-recorded completions, e.g. the claim toast */
+        this.subscribers = new Set();
         this.isInitialized = false;
         this.unregisterHandlers = [];
         this._loaded = false;
@@ -464,8 +466,42 @@ class TaskCompletionTracker {
             if (entry) recorded.push(entry);
         }
 
-        if (recorded.length > 0) this._pending = this._persist();
+        if (recorded.length > 0) {
+            this._pending = this._persist();
+            this._notify(recorded);
+        }
         return recorded;
+    }
+
+    /**
+     * Be told about completions as they are recorded.
+     *
+     * Fired synchronously from `ingest`, with the batch that call recorded —
+     * almost always one entry, since claims arrive one WebSocket message at a
+     * time. A subscriber's own failure is caught here rather than left to
+     * escape from inside a WebSocket handler.
+     *
+     * @param {(entries: Array<Object>) => void} callback
+     * @returns {() => void} Unsubscribe
+     */
+    onCompletion(callback) {
+        this.subscribers.add(callback);
+        return () => this.subscribers.delete(callback);
+    }
+
+    /**
+     * Tell every subscriber about a batch of newly-recorded completions.
+     * @param {Array<Object>} entries
+     * @private
+     */
+    _notify(entries) {
+        for (const callback of this.subscribers) {
+            try {
+                callback(entries);
+            } catch (error) {
+                console.error('[TaskCompletionTracker] A completion subscriber failed:', error);
+            }
+        }
     }
 
     /**
