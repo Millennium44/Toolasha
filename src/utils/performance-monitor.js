@@ -381,19 +381,24 @@ const performanceMonitor = new PerformanceMonitor();
  */
 const TIMER_TRACE_INTERNALS = new Set(['timerCallSite', 'traced', 'tracedTimeout', 'installIntervalTracing']);
 
-function timerCallSite() {
-    const stack = new Error().stack || '';
+export function timerCallSite(stack = new Error().stack || '') {
     for (const raw of stack.split('\n')) {
         const line = raw.trim();
         if (!line || line === 'Error') continue;
-        // Chrome: "at name (url:line:col)" or "at url:line:col" — Firefox: "name@url:line:col"
-        const chrome = /^at (?:(\S+) \()?.*?(\d+):\d+\)?$/.exec(line);
-        const firefox = /^([^@\s]*)@.*?(\d+):\d+$/.exec(line);
+        // Chrome: "at name (url:line:col)" or "at url:line:col". Async
+        // resumption frames carry an "async " prefix and constructor frames a
+        // "new " prefix — both are call shape, not the name, and swallowing
+        // them into the name test used to drop the name to "anon".
+        // Firefox: "name@url:line:col", an empty name for anonymous frames,
+        // and an "async*" prefix on awaiting callers.
+        const chrome = /^at (?:async )?(?:new )?(?:(\S+) \()?.*?(\d+):\d+\)?$/.exec(line);
+        const firefox = /^(?:async\*)?([^@\s]*)@.*?(\d+):\d+$/.exec(line);
         const match = chrome || firefox;
         if (!match) continue;
         // "Proxy.traced" / "Object.installIntervalTracing" — the qualifier is
         // the call shape, not the function; strip it before the internals check
-        const name = (match[1] || '').split('.').pop() || '';
+        let name = (match[1] || '').split('.').pop() || '';
+        if (name === '<anonymous>') name = '';
         if (TIMER_TRACE_INTERNALS.has(name)) continue;
         return `${name || 'anon'}@${match[2]}`;
     }

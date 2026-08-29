@@ -2,7 +2,7 @@
  * Tests for Performance Monitor
  */
 import { describe, test, expect, beforeEach, vi } from 'vitest';
-import performanceMonitor, { installIntervalTracing } from './performance-monitor.js';
+import performanceMonitor, { installIntervalTracing, timerCallSite } from './performance-monitor.js';
 
 describe('PerformanceMonitor', () => {
     beforeEach(() => {
@@ -342,5 +342,116 @@ describe('interval tracing wrapper semantics (against a fake target)', () => {
         expect(target.setTimeout).not.toBe(bareTimeout);
         expect(target.setTimeout.__toolashaTraced).toBe(true);
         expect(target.setInterval.__toolashaTraced).toBe(true);
+    });
+});
+
+describe('timerCallSite parsing (synthetic stacks)', () => {
+    test('Chrome: first frame past the trace internals names the caller and line', () => {
+        const stack = [
+            'Error',
+            '    at timerCallSite (https://host/toolasha.user.js:100:15)',
+            '    at Object.traced (https://host/toolasha.user.js:120:20)',
+            '    at _startRefreshing (https://host/toolasha.user.js:53201:9)',
+            '    at initialize (https://host/toolasha.user.js:53300:5)',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('_startRefreshing@53201');
+    });
+
+    test('Chrome: an async-prefixed caller frame keeps its name', () => {
+        const stack = [
+            'Error',
+            '    at timerCallSite (https://host/t.js:100:15)',
+            '    at traced (https://host/t.js:120:20)',
+            '    at async loadPrices (https://host/t.js:4210:11)',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('loadPrices@4210');
+    });
+
+    test('Chrome: a constructor frame ("new Foo") keeps its name', () => {
+        const stack = [
+            'Error',
+            '    at timerCallSite (https://host/t.js:100:15)',
+            '    at tracedTimeout (https://host/t.js:150:20)',
+            '    at new MarketFilter (https://host/t.js:900:7)',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('MarketFilter@900');
+    });
+
+    test('Chrome: an anonymous frame (arrow in minified prod) yields anon plus line', () => {
+        const stack = [
+            'Error',
+            '    at timerCallSite (https://host/t.js:100:15)',
+            '    at traced (https://host/t.js:120:20)',
+            '    at https://host/t.js:7777:3',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('anon@7777');
+    });
+
+    test('Chrome: "Object.<anonymous>" normalizes to anon instead of leaking "<anonymous>"', () => {
+        const stack = [
+            'Error',
+            '    at timerCallSite (https://host/t.js:100:15)',
+            '    at traced (https://host/t.js:120:20)',
+            '    at Object.<anonymous> (https://host/t.js:88:1)',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('anon@88');
+    });
+
+    test('Chrome: an eval frame is parsed without crashing and keeps a line number', () => {
+        const stack = [
+            'Error',
+            '    at timerCallSite (https://host/t.js:100:15)',
+            '    at traced (https://host/t.js:120:20)',
+            '    at eval (eval at run (https://host/t.js:10:5), <anonymous>:3:7)',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('eval@3');
+    });
+
+    test('Firefox: named frames skip the internals with @-syntax', () => {
+        const stack = [
+            'timerCallSite@https://host/t.js:100:15',
+            'traced@https://host/t.js:120:20',
+            '_startRefreshing@https://host/t.js:53201:9',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('_startRefreshing@53201');
+    });
+
+    test('Firefox: a bare "@" frame with no name yields anon plus line', () => {
+        const stack = [
+            'timerCallSite@https://host/t.js:100:15',
+            'traced@https://host/t.js:120:20',
+            '@https://host/t.js:640:5',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('anon@640');
+    });
+
+    test('Firefox: an async* caller marker does not swallow the name', () => {
+        const stack = [
+            'timerCallSite@https://host/t.js:100:15',
+            'traced@https://host/t.js:120:20',
+            'async*refreshLoop@https://host/t.js:311:9',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('refreshLoop@311');
+    });
+
+    test('Firefox: eval frames ("line 10 > eval") still parse to a name and line', () => {
+        const stack = [
+            'timerCallSite@https://host/t.js:100:15',
+            'tracedTimeout@https://host/t.js:150:20',
+            'runMacro@https://host/t.js line 10 > eval:2:3',
+        ].join('\n');
+        expect(timerCallSite(stack)).toBe('runMacro@2');
+    });
+
+    test('an unparseable stack falls back to "unknown"', () => {
+        expect(timerCallSite('')).toBe('unknown');
+        expect(timerCallSite('Error\n    at <anonymous>')).toBe('unknown');
+        expect(timerCallSite('total garbage')).toBe('unknown');
+    });
+
+    test('without an injected stack it reads its own call stack', () => {
+        const site = timerCallSite();
+        expect(typeof site).toBe('string');
+        expect(site.length).toBeGreaterThan(0);
     });
 });
