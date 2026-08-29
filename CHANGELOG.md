@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Two more character-switch leaks closed
+
+Prediction calibration's slow forecast pass could resume after a switch and file the departing character's forecast/actual pair under the arriving character (action ids repeat across characters); it now re-checks ownership at every write and aborts instead. And the build score's in-flight calculation could land after a switch and repopulate with the departed character's score — or leave the refresh latch stuck so the new character never got a first score; both are generation-guarded now.
+
 ### Watchlist and charm-table fixes
 
 A tracked item you were wearing (and held nowhere else) showed as 0 held — equipped copies arrive without a count field, the same family as the loadout fixes. And sorting the Charms panel by price ascending put unpriced tiers at the top, because their "no data" marker of 0 slipped past the sort's finite check; unpriced rows now sort last both ways.
