@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 14: five small debts paid
+
+Reset layout now unpins and restores the shipped column count, so a pinned single column can't flatten the default arrangement. The combat chips' teardown clears its timers before anything that could throw. The Lab Sim level input accepts down to 1, matching the finder's own floor. The pformance report remembers the session's worst stall even after it ages out of the ring. And a battle message without an id keeps the counter's last number instead of blanking it.
+
 ### Round 14: two more account-wide leaks join the per-character fold
 
 The key-scoping sweep (about 120 storage keys classified) found the idle consumables plan's two pins — which loadout and which simmed zone price it — stored account-wide and read once at page load, so whichever character logged in first set them for everyone. Both are per-character now, reloading on every switch. And bulk sell's remembered inventory tab survived a character switch in memory, filtering the arriving character's sell queue by the departing character's tab.
