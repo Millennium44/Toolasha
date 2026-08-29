@@ -17,15 +17,22 @@ const storageMock = vi.hoisted(() => {
     return {
         storeFor,
         unavailable: false,
+        // key → Promise, awaited inside tryGet before it answers. Lets a race
+        // test make one character's probe resolve after another's despite
+        // starting first.
+        delays: new Map(),
         reset() {
             stores.clear();
             storageMock.unavailable = false;
+            storageMock.delays.clear();
         },
         get: vi.fn(async (key, store = 'settings', fallback = null) => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
         }),
         tryGet: vi.fn(async (key, store = 'settings') => {
+            const delay = storageMock.delays.get(key);
+            if (delay) await delay;
             if (storageMock.unavailable) return null;
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null
@@ -161,6 +168,38 @@ describe('the XP history survives', () => {
         expect(theirs.foraging.map((s) => s.xp)).toEqual([7]);
         expect(theirs.milking.map((s) => s.xp)).toEqual([9]);
         expect(stored().milking.map((s) => s.xp)).toEqual([20]);
+    });
+
+    test('a slow init for the departing character does not bleed into the arriving one', async () => {
+        // `character_initialized` handlers are fired unawaited by data-manager
+        // (only its own internal state updates are serialised), so a second
+        // switch's init can start, and finish, while the first one's is still
+        // awaiting its storage probe — e.g. a player tabbing between
+        // characters faster than one IndexedDB round trip.
+        storageMock.delays.set(KEY, new Promise((resolve) => setTimeout(resolve, 20)));
+
+        const staleInit = xpTracker._onCharacterInit(init('char1', 2 * HOUR, 20));
+
+        // Flush microtasks so char1's call reaches its storage probe (and
+        // parks on the delay) before char2 arrives — otherwise both calls
+        // would race the same probe and the bug this test targets would not
+        // be exercised.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        game.characterId = 'char2';
+        await xpTracker._onCharacterInit(init('char2', 3 * HOUR, 9));
+        await xpTracker.history.flushed();
+
+        expect(xpTracker.xpHistory.milking.map((s) => s.xp)).toEqual([9]);
+
+        // Let char1's stale init land. It must not push char1's reading into
+        // what is now char2's record, nor persist it under char2's key.
+        await staleInit;
+        await xpTracker.history.flushed();
+
+        expect(xpTracker.xpHistory.milking.map((s) => s.xp)).toEqual([9]);
+        const theirs = storageMock.storeFor('xpHistory').get('xpHistory_char2');
+        expect(theirs.milking.map((s) => s.xp)).toEqual([9]);
     });
 });
 

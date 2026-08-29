@@ -315,6 +315,18 @@ class XPTracker {
         // leaves whatever is in memory standing rather than blanking it.
         await this.history.load();
 
+        // `character_initialized` is fired unawaited, so a second switch's
+        // init can start — and finish — while this one is still awaiting the
+        // load above (a player tabbing between characters faster than one
+        // IndexedDB round trip). `this.history` itself guards its own memory
+        // against that (a stale load is a no-op), but this call would still
+        // push `charId`'s reading into whatever record is now live and save
+        // it under the *new* character's key. Two characters' XP do not
+        // belong on the same series — `pushXP`'s "XP never falls" rule reads
+        // one of them as the other going backwards and silently drops it, so
+        // this does not just mislabel data, it deletes some of it.
+        if (this.characterId !== charId) return;
+
         const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
 
         const characterSkills = data.characterSkills || [];
