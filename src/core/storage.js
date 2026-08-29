@@ -1245,7 +1245,24 @@ class Storage {
                     // whichever of request-success and abort arrives first, and a request
                     // succeeds before the commit that then rolls it back — so it would
                     // call an aborted key written.
-                    const stragglers = items.filter((item) => !writtenKeys.has(item.key));
+                    // A key another write has claimed since the snapshot is not
+                    // retried. The bulk transaction is opened in the same tick
+                    // the values are snapshotted, so nothing can overtake it —
+                    // but this second pass opens a *new* transaction after that
+                    // one has finished, and an immediate `set` or a `delete` in
+                    // between is the newest word on the key. Both go through
+                    // `_supersedePending`, which takes the entry out of
+                    // `pendingWrites` precisely so an older value cannot land on
+                    // top of them; the debounced failure path already consults
+                    // that, and this one used not to, so the retry put the stale
+                    // value back over a fresh write or resurrected a deleted
+                    // key. Identity rather than presence, so a newer *debounced*
+                    // write — which replaces the entry rather than removing it,
+                    // and lands the key itself when its timer fires — is skipped
+                    // by the same test.
+                    const stragglers = items.filter(
+                        (item) => !writtenKeys.has(item.key) && this.pendingWrites.get(item.timerKey) === item.pending
+                    );
                     if (stragglers.length > 0) {
                         const retried = await Promise.all(
                             stragglers.map((item) => this._putAllWritten(storeName, { [item.key]: item.pending.value }))

@@ -1237,3 +1237,112 @@ describe('Storage: an immediate write against an outstanding debounced one', () 
         expect(dataByStore.get('xpHistory').get('k')).toBe('new');
     });
 });
+
+describe('Storage.flushAll: a straggler retry against a write that overtook it', () => {
+    beforeEach(() => {
+        storage.cleanupPendingWrites();
+        storage.db = null;
+    });
+
+    afterEach(() => {
+        storage.cleanupPendingWrites();
+        storage.db = null;
+    });
+
+    /**
+     * A database whose first transaction aborts and whose later ones work.
+     *
+     * That is what puts a key on flushAll's straggler path: the bulk write
+     * reports nothing landed, and the per-key second pass runs afterwards — in
+     * a transaction opened long after the values were snapshotted.
+     * @returns {{db: object, written: Map<string, *>}} Fake db and what landed
+     */
+    function createFirstTransactionAbortsDb() {
+        const written = new Map();
+        let transactions = 0;
+        const db = {
+            objectStoreNames: ['xpHistory'],
+            transaction() {
+                const abort = transactions++ === 0;
+                const handlers = {};
+                const staged = [];
+                const store = {
+                    put(value, key) {
+                        const request = { onsuccess: null, onerror: null };
+                        staged.push(() => {
+                            if (!abort) written.set(key, value);
+                            request.onsuccess?.();
+                        });
+                        return request;
+                    },
+                    delete(key) {
+                        const request = { onsuccess: null, onerror: null };
+                        staged.push(() => {
+                            if (!abort) written.delete(key);
+                            request.onsuccess?.();
+                        });
+                        return request;
+                    },
+                };
+                queueMicrotask(() => {
+                    for (const run of staged) run();
+                    queueMicrotask(() => (abort ? handlers.onabort?.() : handlers.oncomplete?.()));
+                });
+                return {
+                    objectStore: () => store,
+                    error: null,
+                    set oncomplete(fn) {
+                        handlers.oncomplete = fn;
+                    },
+                    set onerror(fn) {
+                        handlers.onerror = fn;
+                    },
+                    set onabort(fn) {
+                        handlers.onabort = fn;
+                    },
+                };
+            },
+        };
+        return { db, written };
+    }
+
+    test('an immediate set that lands mid-flush is not overwritten by the retry', async () => {
+        // flushAll snapshots the queued values up front, and its straggler pass
+        // re-writes that snapshot in a fresh transaction after the bulk one has
+        // already finished. An immediate `set` in that window is the newest word
+        // on the key — it cancels the queued entry and bumps the write
+        // generation exactly so nothing older can land on top — but the
+        // straggler pass consulted neither, and put the stale value back.
+        //
+        // This is the ordering a character switch runs into: the switch awaits
+        // `flushAll()` while feature teardown is writing its final scoped state.
+        const { db, written } = createFirstTransactionAbortsDb();
+        storage.db = db;
+
+        const queued = storage.set('k', 'stale', 'xpHistory');
+        const flush = storage.flushAll();
+        // Let the bulk transaction abort, so 'k' reaches the straggler pass
+        await Promise.resolve();
+        await storage.set('k', 'fresh', 'xpHistory', true);
+
+        await flush;
+        await queued;
+
+        expect(written.get('k')).toBe('fresh');
+    });
+
+    test('a delete that lands mid-flush is not undone by the retry', async () => {
+        const { db, written } = createFirstTransactionAbortsDb();
+        storage.db = db;
+
+        const queued = storage.set('k', 'stale', 'xpHistory');
+        const flush = storage.flushAll();
+        await Promise.resolve();
+        await storage.delete('k', 'xpHistory');
+
+        await flush;
+        await queued;
+
+        expect(written.has('k')).toBe(false);
+    });
+});
