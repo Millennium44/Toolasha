@@ -214,6 +214,47 @@ describe('combat battle counter', () => {
         expect(counterText()).toBeNull();
     });
 
+    test('character switching clears state so the poll cannot re-paint the old chip', () => {
+        combatBattleCounter.disable();
+        vi.useFakeTimers();
+        combatBattleCounter.initialize();
+        game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
+        game.wsHandlers.new_battle({ battleId: 7 });
+        expect(counterText()).toBe('· Battle #7');
+
+        // The registry's disableAllFeatures runs later on the async lifecycle
+        // chain — the immediate cleanup-phase event is the module's own (and
+        // only prompt) chance to drop the departing character's numbers.
+        expect(game.dmHandlers.character_switching).toBeTypeOf('function');
+        game.dmHandlers.character_switching();
+        expect(counterText()).toBeNull();
+
+        // The arriving character's header is already up while their first
+        // messages are still in flight — the re-inject poll must find nothing
+        // to paint, not the previous character's battle number.
+        game.actions = [];
+        vi.advanceTimersByTime(5000);
+        expect(counterText()).toBeNull();
+        vi.useRealTimers();
+    });
+
+    test('character switching also clears a labyrinth attempt count', () => {
+        buildHeader('Labyrinth - Chimerical Beast');
+        game.wsHandlers.labyrinth_updated({
+            labyrinth: {
+                isActive: true,
+                pathData: JSON.stringify([{ x: 0, y: 0 }]),
+                roomData: [[{ roomType: '/labyrinth_room_types/combat', entryCount: 4 }]],
+            },
+        });
+        expect(counterText()).toBe('· Attempt #4');
+
+        game.dmHandlers.character_switching();
+
+        expect(counterText()).toBeNull();
+    });
+
     test('disable removes the counter element and resets state', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };

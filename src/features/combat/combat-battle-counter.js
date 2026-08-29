@@ -40,12 +40,29 @@ class CombatBattleCounter {
         this.initialized = false;
         this.newBattleHandler = null;
         this.labyrinthHandler = null;
+        this._onCharacterSwitching = null;
         this.unregisterObserver = null;
         this.battleId = 0;
         this.currentWave = 0;
         this.isDungeon = false;
         this.labyrinthAttempt = 0;
         this.timers = createTimerRegistry();
+    }
+
+    /**
+     * Drop all tracked numbers and the injected span. Mirrors combat-boss-eta:
+     * called on character_switching (the immediate cleanup-phase event) because
+     * the registry's disableAllFeatures runs later on the async lifecycle
+     * chain — until it lands, the re-inject poll would keep painting the
+     * departing character's "Battle #N" / "Attempt #N" into the arriving
+     * character's header.
+     */
+    _reset() {
+        this.battleId = 0;
+        this.currentWave = 0;
+        this.isDungeon = false;
+        this.labyrinthAttempt = 0;
+        document.getElementById(COUNTER_ID)?.remove();
     }
 
     initialize() {
@@ -60,6 +77,9 @@ class CombatBattleCounter {
 
         this._onActionsUpdated = (data) => this._checkCombatEnded(data);
         dataManager.on('actions_updated', this._onActionsUpdated);
+
+        this._onCharacterSwitching = () => this._reset();
+        dataManager.on('character_switching', this._onCharacterSwitching);
 
         this.unregisterObserver = domObserver.onClass('CombatBattleCounter', 'Header_actionName', () =>
             this._injectOrUpdate()
@@ -92,11 +112,7 @@ class CombatBattleCounter {
         );
 
         if (combatEnded || (hasNewNonCombatAction && !hasCombatAction)) {
-            this.battleId = 0;
-            this.currentWave = 0;
-            this.isDungeon = false;
-            this.labyrinthAttempt = 0;
-            document.getElementById(COUNTER_ID)?.remove();
+            this._reset();
             return;
         }
 
@@ -228,16 +244,16 @@ class CombatBattleCounter {
                 dataManager.off('actions_updated', this._onActionsUpdated);
                 this._onActionsUpdated = null;
             }
+            if (this._onCharacterSwitching) {
+                dataManager.off('character_switching', this._onCharacterSwitching);
+                this._onCharacterSwitching = null;
+            }
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
             }
             this.timers.clearAll();
-            document.getElementById(COUNTER_ID)?.remove();
-            this.battleId = 0;
-            this.currentWave = 0;
-            this.isDungeon = false;
-            this.labyrinthAttempt = 0;
+            this._reset();
             this.initialized = false;
         } catch (error) {
             console.error('[Combat Battle Counter] Disable failed part-way:', error);
