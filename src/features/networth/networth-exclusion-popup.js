@@ -13,6 +13,20 @@ import { getExclusions, isExcluded, addExclusion, removeExclusion, clearExclusio
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 
+/**
+ * The market price of one loadout slot at the level it actually wears.
+ * Enhanced levels are thinly traded — when the book has nothing at the worn
+ * level, the base price stands in rather than pricing the piece at zero.
+ * @param {{itemHrid: string, enhancementLevel?: number}} eq - A resolved equipment entry
+ * @returns {{ask: number|null, bid: number|null}|null}
+ */
+function priceAtWornLevel(eq) {
+    const level = eq.enhancementLevel || 0;
+    const price = marketAPI.getPrice(eq.itemHrid, level);
+    if (price || level === 0) return price;
+    return marketAPI.getPrice(eq.itemHrid);
+}
+
 class NetworthExclusionPopup {
     constructor() {
         this.container = null;
@@ -163,10 +177,16 @@ class NetworthExclusionPopup {
         }
 
         // Loadout snapshots — only show if not already excluded
-        for (const snapshot of (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots()) {
+        const store = loadoutSnapshot() || bundledLoadoutSnapshot;
+        for (const snapshot of store.getAllSnapshots()) {
             if (!snapshot.name || isExcluded('loadout', snapshot.name)) continue;
-            const amount = snapshot.equipment.reduce((sum, eq) => {
-                const price = marketAPI.getPrice(eq.itemHrid);
+            // Resolved levels, not stored: a "highest owned" loadout wears the
+            // best copy owned now, and pricing at the level actually worn (base
+            // as a fallback when that level has no book) is what the exclusion
+            // really removes from the total.
+            const equipment = store.resolveEquipment?.(snapshot) || snapshot.equipment;
+            const amount = equipment.reduce((sum, eq) => {
+                const price = priceAtWornLevel(eq);
                 return sum + (price?.ask ?? 0);
             }, 0);
             add({ type: 'loadout', value: snapshot.name, name: `Loadout: ${snapshot.name}`, amount });
@@ -448,14 +468,17 @@ class NetworthExclusionPopup {
         }
 
         if (entry.type === 'loadout') {
-            const snapshot = (loadoutSnapshot() || bundledLoadoutSnapshot)
-                .getAllSnapshots()
-                .find((s) => s.name === entry.value);
+            const store = loadoutSnapshot() || bundledLoadoutSnapshot;
+            const snapshot = store.getAllSnapshots().find((s) => s.name === entry.value);
             if (snapshot) {
-                return snapshot.equipment.map((eq) => {
+                // Resolved, not stored — same reasoning as _buildSearchList
+                const equipment = store.resolveEquipment?.(snapshot) || snapshot.equipment;
+                return equipment.map((eq) => {
                     const details = dataManager.getItemDetails(eq.itemHrid);
-                    const name = details?.name || eq.itemHrid.replace('/items/', '');
-                    const price = marketAPI.getPrice(eq.itemHrid);
+                    const baseName = details?.name || eq.itemHrid.replace('/items/', '');
+                    const level = eq.enhancementLevel || 0;
+                    const name = level > 0 ? `${baseName} +${level}` : baseName;
+                    const price = priceAtWornLevel(eq);
                     return { name, value: price?.ask ?? 0 };
                 });
             }
