@@ -109,6 +109,7 @@ const {
     matchesBeyondTopRow,
 } = await import('./estimated-listing-age.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
+const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
 /** The key this character's listing log lives under */
 const LOG_KEY = 'marketListingTimestamps_market123';
@@ -633,6 +634,68 @@ describe('_evictToCapacity — bounding the anchor pool', () => {
             { id: 2, timestamp: 2 },
         ];
         expect(estimatedListingAge._evictToCapacity(points)).toEqual(points);
+    });
+});
+
+describe('a sync pull combines the anchor pool rather than replacing it', () => {
+    test('the anchor key is claimed by a merge, not written whole', () => {
+        expect(mergeForKey('marketListings', 'marketListingAnchors')).not.toBeNull();
+    });
+
+    test('the merge is the union of both devices, deduped by id and id-sorted', () => {
+        const registration = mergeForKey('marketListings', 'marketListingAnchors');
+        const local = [
+            { id: 10, timestamp: 100 },
+            { id: 30, timestamp: 300 },
+        ];
+        const incoming = [
+            { id: 20, timestamp: 200 },
+            // An id both devices anchored: this device's reading stands, as it
+            // does in `addAnchors`, so a pull cannot move an estimate that was
+            // already grounded
+            { id: 30, timestamp: 999 },
+        ];
+
+        expect(registration.merge(local, incoming)).toEqual([
+            { id: 10, timestamp: 100 },
+            { id: 20, timestamp: 200 },
+            { id: 30, timestamp: 300 },
+        ]);
+    });
+
+    test('applying the same pull twice changes nothing', () => {
+        const registration = mergeForKey('marketListings', 'marketListingAnchors');
+        const local = [{ id: 10, timestamp: 100 }];
+        const incoming = [{ id: 20, timestamp: 200 }];
+
+        const once = registration.merge(local, incoming);
+        expect(registration.merge(once, incoming)).toEqual(once);
+    });
+
+    test('the union is still bounded by the pool cap', () => {
+        const registration = mergeForKey('marketListings', 'marketListingAnchors');
+        const local = Array.from({ length: ANCHOR_POOL_MAX }, (_, i) => ({ id: i * 2, timestamp: i }));
+        const incoming = Array.from({ length: ANCHOR_POOL_MAX }, (_, i) => ({ id: i * 2 + 1, timestamp: i }));
+
+        expect(registration.merge(local, incoming)).toHaveLength(ANCHOR_POOL_MAX);
+    });
+
+    test('junk on either side is dropped rather than poisoning the pool', () => {
+        const registration = mergeForKey('marketListings', 'marketListingAnchors');
+        const merged = registration.merge(
+            [{ id: 1, timestamp: 1 }, null, { id: 'x', timestamp: 2 }],
+            [{ id: 2, timestamp: NaN }, { id: 3, timestamp: 3 }]
+        );
+        expect(merged).toEqual([
+            { id: 1, timestamp: 1 },
+            { id: 3, timestamp: 3 },
+        ]);
+    });
+
+    test('a side that is not an array at all leaves the other one standing', () => {
+        const registration = mergeForKey('marketListings', 'marketListingAnchors');
+        expect(registration.merge([{ id: 1, timestamp: 1 }], null)).toEqual([{ id: 1, timestamp: 1 }]);
+        expect(registration.merge(undefined, [{ id: 2, timestamp: 2 }])).toEqual([{ id: 2, timestamp: 2 }]);
     });
 });
 

@@ -144,6 +144,74 @@ function mergeListingLogs(base, fresh) {
 }
 
 /**
+ * Trim a sorted anchor array down to ANCHOR_POOL_MAX, thinning the densest
+ * neighborhoods first.
+ *
+ * Repeatedly removes whichever interior point has the smallest combined gap
+ * to its neighbors (points[i+1].id - points[i-1].id) — that point is the
+ * most redundant one for interpolation, since its neighbors already bracket
+ * it tightly. The two endpoints are never evicted: they define the id range
+ * the pool can interpolate across at all, and losing either would shrink
+ * coverage rather than just density.
+ *
+ * Module-level and pure, because the sync merge below needs it without an
+ * instance — a registered merge is called with two values and nothing else.
+ * @param {Array<{id: number, timestamp: number}>} sorted - Anchors sorted by id
+ * @returns {Array<{id: number, timestamp: number}>} At most ANCHOR_POOL_MAX anchors, still sorted by id
+ */
+function evictAnchorsToCapacity(sorted) {
+    if (sorted.length <= ANCHOR_POOL_MAX) {
+        return sorted;
+    }
+
+    const points = [...sorted];
+    while (points.length > ANCHOR_POOL_MAX && points.length > 2) {
+        let victimIndex = 1;
+        let smallestGap = Infinity;
+        for (let i = 1; i < points.length - 1; i++) {
+            const gap = points[i + 1].id - points[i - 1].id;
+            if (gap < smallestGap) {
+                smallestGap = gap;
+                victimIndex = i;
+            }
+        }
+        points.splice(victimIndex, 1);
+    }
+
+    return points;
+}
+
+/**
+ * Fold two devices' anchor pools together.
+ *
+ * The pool is the one thing in this module that is neither personal nor
+ * derivable: shared id→timestamp calibration points, collected from whatever
+ * order books each device happened to look at, and only ever added to. Two
+ * devices therefore hold genuinely different pools, and a pull that wrote the
+ * key whole threw away every anchor the receiving device had gathered — the
+ * age column then re-derived its estimates from a strictly worse pool, which
+ * is the same loss the listing log next door is registered to avoid.
+ *
+ * Deduped by id with the FIRST side standing, matching `addAnchors`: an id
+ * already anchored keeps its reading, so folding in a remote pool can only add
+ * points to interpolate between, never move an estimate that already had one.
+ * Capped afterwards, so a union of two full pools is still a legal pool.
+ * @param {Array<{id: number, timestamp: number}>} base - This device's pool
+ * @param {Array<{id: number, timestamp: number}>} fresh - The pool coming down
+ * @returns {Array<{id: number, timestamp: number}>} The union, sorted by id and capped
+ */
+function mergeAnchorPools(base, fresh) {
+    const byId = new Map();
+    for (const anchor of [...(Array.isArray(base) ? base : []), ...(Array.isArray(fresh) ? fresh : [])]) {
+        if (!anchor || typeof anchor.id !== 'number' || typeof anchor.timestamp !== 'number') continue;
+        if (isNaN(anchor.id) || isNaN(anchor.timestamp)) continue;
+        if (byId.has(anchor.id)) continue;
+        byId.set(anchor.id, { id: anchor.id, timestamp: anchor.timestamp });
+    }
+    return evictAnchorsToCapacity([...byId.values()].sort((a, b) => a.id - b.id));
+}
+
+/**
  * When a listing was created, for retention: its recorded `timestamp`, else
  * its `createdTimestamp`, else 0 (undatable rows sort as the oldest).
  * @param {Object} listing
@@ -486,38 +554,13 @@ class EstimatedListingAge {
     }
 
     /**
-     * Trim a sorted anchor array down to ANCHOR_POOL_MAX, thinning the densest
-     * neighborhoods first.
-     *
-     * Repeatedly removes whichever interior point has the smallest combined gap
-     * to its neighbors (points[i+1].id - points[i-1].id) — that point is the
-     * most redundant one for interpolation, since its neighbors already bracket
-     * it tightly. The two endpoints are never evicted: they define the id range
-     * the pool can interpolate across at all, and losing either would shrink
-     * coverage rather than just density.
+     * Trim a sorted anchor array down to ANCHOR_POOL_MAX — see
+     * {@link evictAnchorsToCapacity}, which the sync merge shares.
      * @param {Array<{id: number, timestamp: number}>} sorted - Anchors sorted by id
      * @returns {Array<{id: number, timestamp: number}>} At most ANCHOR_POOL_MAX anchors, still sorted by id
      */
     _evictToCapacity(sorted) {
-        if (sorted.length <= ANCHOR_POOL_MAX) {
-            return sorted;
-        }
-
-        const points = [...sorted];
-        while (points.length > ANCHOR_POOL_MAX && points.length > 2) {
-            let victimIndex = 1;
-            let smallestGap = Infinity;
-            for (let i = 1; i < points.length - 1; i++) {
-                const gap = points[i + 1].id - points[i - 1].id;
-                if (gap < smallestGap) {
-                    smallestGap = gap;
-                    victimIndex = i;
-                }
-            }
-            points.splice(victimIndex, 1);
-        }
-
-        return points;
+        return evictAnchorsToCapacity(sorted);
     }
 
     /**
@@ -1884,6 +1927,19 @@ registerSyncMerge({
     base: LISTINGS_BASE,
     merge: mergeListingLogs,
     label: 'Market listing log',
+});
+
+/*
+ * The anchor pool is the module's other growth-only record, and it lives in a
+ * global key rather than a scoped one — so nothing above claimed it and a pull
+ * wrote it whole, discarding every calibration point the receiving device had
+ * collected. An exact-key registration, since ANCHORS_KEY is not scoped.
+ */
+registerSyncMerge({
+    store: LISTINGS_STORE,
+    key: ANCHORS_KEY,
+    merge: mergeAnchorPools,
+    label: 'Market listing anchors',
 });
 
 export default estimatedListingAge;
