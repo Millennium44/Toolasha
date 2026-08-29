@@ -28,7 +28,7 @@ describe('columnsFor', () => {
         expect(columnsFor(370)).toBe(1);
         expect(columnsFor(700)).toBe(3);
         expect(columnsFor(1200)).toBe(5);
-        expect(columnsFor(1800)).toBe(MAX_SPAN);
+        expect(columnsFor(2300)).toBe(MAX_SPAN);
     });
 
     test('never fewer than one, whatever it is handed', () => {
@@ -169,7 +169,7 @@ describe('columnsForLayout', () => {
     });
 
     test('never past the ceiling, and never below one', () => {
-        expect(columnsForLayout(2000, 9)).toBe(MAX_SPAN);
+        expect(columnsForLayout(2000, 12)).toBe(MAX_SPAN);
         expect(columnsForLayout(458, undefined)).toBe(2);
     });
 });
@@ -488,8 +488,8 @@ describe('a real layout, exported from the build before the rework', () => {
         expect(Object.keys(v1.positions).length).toBeGreaterThan(0);
     });
 
-    test('is read as eight columns: the finest grid the spans can use', () => {
-        expect(migrate(v1).columns).toBe(8);
+    test('is read as nine columns: the finest grid its lines resolve to', () => {
+        expect(migrate(v1).columns).toBe(9);
     });
 
     test('keeps every line as it was, with the relative widths on it', () => {
@@ -497,14 +497,14 @@ describe('a real layout, exported from the build before the rework', () => {
         // roughly equal width, line two is a 170 beside a 120 and a 170, and
         // the two tall blocks are followed by their own right-hand columns
         expect(lines(migrate(v1))).toEqual([
-            ['battleTimer:2', 'experiencePerHour:2', 'deathsPerHour:1', 'combatStatus:3'],
-            ['combatRevenue:3', 'timeToLevel:2', 'houses:3'],
-            ['totalProfit:5', 'consumables:3'],
-            ['equipmentWatch:4', 'coins:2', 'marketListings:2'],
-            ['dps:1', 'overExpected:1', 'luck:1', 'watchlist:2', 'skillBooks:2', 'inventoryValue:1'],
-            ['manaPerFight:5', 'treasure:3'],
-            ['buildScore:2', 'netWorth:3', 'charmValue:3'],
-            ['replayCheck:8'],
+            ['battleTimer:2', 'experiencePerHour:2', 'deathsPerHour:2', 'combatStatus:3'],
+            ['combatRevenue:3', 'timeToLevel:3', 'houses:3'],
+            ['totalProfit:6', 'consumables:3'],
+            ['equipmentWatch:4', 'coins:3', 'marketListings:2'],
+            ['dps:1', 'overExpected:1', 'luck:1', 'watchlist:2', 'skillBooks:2', 'inventoryValue:2'],
+            ['manaPerFight:6', 'treasure:3'],
+            ['buildScore:2', 'netWorth:4', 'charmValue:3'],
+            ['replayCheck:9'],
         ]);
     });
 
@@ -520,7 +520,7 @@ describe('a real layout, exported from the build before the rework', () => {
             expect(v2.order).toContain(key);
         }
         // The one that is switched *on* is kept, even though it was in the pile
-        expect(v2.span.replayCheck).toBe(8);
+        expect(v2.span.replayCheck).toBe(9);
     });
 
     test('every visible tile is placed exactly once', () => {

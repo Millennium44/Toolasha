@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Eight columns
+### Ten columns
 
-The overlay's span ceiling rises from five to eight: tiles may span up to eight columns, the width can afford up to eight, and the stepper pins up to eight. A pre-rework pixel layout now migrates onto the finer grid, which lands closer to its original proportions than the five-column reading did.
+The overlay's span ceiling rises from five to ten: tiles may span up to ten columns, the width can afford up to ten, and the stepper pins up to ten. A pre-rework pixel layout now migrates onto the finer grid, which lands closer to its original proportions than the five-column reading did.
 
 ### The skip-threshold searches can answer past +300
 

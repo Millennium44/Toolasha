@@ -42,7 +42,7 @@ export const GAP = 4;
  * be trusted to mean something at any width, and an unbounded one read off a
  * corrupt record could ask for four hundred columns.
  */
-export const MAX_SPAN = 8;
+export const MAX_SPAN = 10;
 
 /**
  * Percent of the panel's base font size; a tile can be made to read larger or
