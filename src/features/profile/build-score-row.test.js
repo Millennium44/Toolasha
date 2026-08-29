@@ -51,7 +51,10 @@ vi.mock('../../utils/overlay-rows.js', () => ({
     },
 }));
 vi.mock('./score-calculator.js', () => ({
-    calculateCombatScore: async () => game.scoreResult,
+    calculateCombatScore: async () => {
+        if (game.scoreGate) await game.scoreGate;
+        return game.scoreResult;
+    },
 }));
 vi.mock('./build-score-panel.js', () => ({
     buildScorePanel: {
@@ -248,6 +251,34 @@ describe('BuildScore', () => {
 
         expect(buildScore.score).toBeNull();
         expect(buildScore.watching).toBe(false);
+    });
+
+    test('a refresh in flight when the character switches must not repopulate the departed score', async () => {
+        // calculateCombatScore prices every worn item and can simulate enhancement
+        // chains — slow enough that a character switch can land while it is still
+        // running. character_switching clears the score and detaches the
+        // listeners synchronously; the profile snapshot the gated call closed over
+        // still describes the departing character, and its `finally` still runs.
+        let releaseGate;
+        game.scoreGate = new Promise((resolve) => {
+            releaseGate = resolve;
+        });
+        game.scoreResult = { total: 42 };
+
+        buildScore.ensureWatching();
+        // Let the microtask queue advance to the gated await inside refresh().
+        await Promise.resolve();
+        await Promise.resolve();
+
+        game.dmHandlers.character_switching();
+        expect(buildScore.score).toBeNull();
+
+        releaseGate();
+        await vi.runAllTimersAsync();
+
+        expect(buildScore.score).toBeNull();
+
+        game.scoreGate = null;
     });
 });
 

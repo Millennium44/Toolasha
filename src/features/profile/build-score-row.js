@@ -104,6 +104,12 @@ class BuildScore {
         this.computedAt = 0;
         this.pending = null;
         this.running = false;
+        // Bumped by disable(). calculateCombatScore prices every worn item and
+        // can simulate enhancement chains, so a refresh can still be awaiting
+        // it when the character switches; the generation it captured before
+        // that await lets it recognise, once the result comes back, that it is
+        // no longer answering for anyone current.
+        this.generation = 0;
     }
 
     /**
@@ -142,9 +148,14 @@ class BuildScore {
         const profileData = ownProfileData();
         if (!profileData) return;
 
+        const generation = this.generation;
         this.running = true;
         try {
             const result = await calculateCombatScore(profileData);
+            // disable() bumps `generation` on a character switch; a result that
+            // lands after that is priced from the departing character's gear
+            // and must not be written under whoever is current now
+            if (generation !== this.generation) return;
             // A score of zero means the pricing came back empty, not that the
             // build is worthless — keeping the last real answer beats replacing
             // it with a wrong one
@@ -155,7 +166,9 @@ class BuildScore {
         } catch (error) {
             console.error('[BuildScore] Scoring the build failed:', error);
         } finally {
-            this.running = false;
+            // Same guard: a stale call's finally must not clear the `running`
+            // flag a newer generation's refresh has since set
+            if (generation === this.generation) this.running = false;
         }
     }
 
@@ -165,6 +178,8 @@ class BuildScore {
         this.detach = null;
         this.watching = false;
         this.score = null;
+        this.running = false;
+        this.generation += 1;
     }
 }
 
