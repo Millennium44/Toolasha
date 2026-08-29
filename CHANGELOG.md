@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Watchlist and charm-table fixes
+
+A tracked item you were wearing (and held nowhere else) showed as 0 held — equipped copies arrive without a count field, the same family as the loadout fixes. And sorting the Charms panel by price ascending put unpriced tiers at the top, because their "no data" marker of 0 slipped past the sort's finite check; unpriced rows now sort last both ways.
+
 ### The overlay tick names its slowest tile
 
 pformance's "Busiest" table showed the overlay's once-a-second refresh as one number (a startup trace put it at 89 ms a tick); each row's render is now timed under its own `overlayRow:` metric, so the next trace says which tile is spending it. The live panel gets an "Overlay Rows" section showing the same per-tile costs, sorted by CPU share.
