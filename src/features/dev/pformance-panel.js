@@ -57,6 +57,7 @@ class PFormancePanel {
         this.featureSectionCollapsed = false;
         this.domSectionCollapsed = false;
         this.activitySectionCollapsed = false;
+        this.overlayRowSectionCollapsed = false;
         this.stallSectionCollapsed = false;
         this.startupCollapsed = false;
     }
@@ -298,9 +299,12 @@ class PFormancePanel {
         // event fan-outs, the networth recalc — is the attribution the stall
         // ledger draws from, and worth seeing live for the same reason
         const activityEntries = [];
+        const overlayRowEntries = [];
         for (const [name, stats] of allStats) {
             if (name.startsWith('dom:')) {
                 domEntries.push({ name: name.slice(4), ...stats });
+            } else if (name.startsWith('overlayRow:')) {
+                overlayRowEntries.push({ name: name.slice(11), ...stats });
             } else if (!name.startsWith('init:') && !name.startsWith('bg:')) {
                 activityEntries.push({ name, ...stats });
             }
@@ -322,6 +326,7 @@ class PFormancePanel {
         initEntries.sort((a, b) => b.totalMs - a.totalMs);
         domEntries.sort((a, b) => b.cpuPercent - a.cpuPercent);
         activityEntries.sort((a, b) => b.cpuPercent - a.cpuPercent);
+        overlayRowEntries.sort((a, b) => b.cpuPercent - a.cpuPercent);
 
         this.contentEl.innerHTML = '';
         this.contentEl.appendChild(this._createStartupSection(pm, snapshots));
@@ -340,6 +345,15 @@ class PFormancePanel {
                 this.activitySectionCollapsed = v;
             })
         );
+        // Only once the overlay has reported a row — a session with the
+        // overlay off has no section to show
+        if (overlayRowEntries.length) {
+            this.contentEl.appendChild(
+                this._createSection('Overlay Rows', overlayRowEntries, this.overlayRowSectionCollapsed, (v) => {
+                    this.overlayRowSectionCollapsed = v;
+                })
+            );
+        }
         this.contentEl.appendChild(
             this._createSection('Main-thread Stalls', stallEntries, this.stallSectionCollapsed, (v) => {
                 this.stallSectionCollapsed = v;

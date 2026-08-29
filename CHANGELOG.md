@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The overlay tick names its slowest tile
 
-pformance's "Busiest" table showed the overlay's once-a-second refresh as one number (a startup trace put it at 89 ms a tick); each row's render is now timed under its own `overlayRow:` metric, so the next trace says which tile is spending it.
+pformance's "Busiest" table showed the overlay's once-a-second refresh as one number (a startup trace put it at 89 ms a tick); each row's render is now timed under its own `overlayRow:` metric, so the next trace says which tile is spending it. The live panel gets an "Overlay Rows" section showing the same per-tile costs, sorted by CPU share.
 
 ### Three more switch-and-teardown races closed
 
