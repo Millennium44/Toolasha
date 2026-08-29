@@ -13,6 +13,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import config from '../../core/config.js';
 import { calculateEnhancementBatch } from '../../utils/enhancement-worker-manager.js';
+import { applyMirrorOptimization } from '../../utils/enhancement-calculator.js';
 import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhancement/tooltip-enhancement.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
@@ -645,16 +646,9 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
                 }
                 targetCosts.push(minCost ?? getRealisticBaseItemPrice(item.itemHrid));
             }
-            // Apply Philosopher's Mirror optimization (same pass as tooltip)
-            const mirrorPrice = getRealisticBaseItemPrice('/items/philosophers_mirror');
-            if (mirrorPrice > 0) {
-                for (let level = 3; level <= item.enhancementLevel; level++) {
-                    const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
-                    if (mirrorCost < targetCosts[level]) {
-                        targetCosts[level] = mirrorCost;
-                    }
-                }
-            }
+            // Apply Philosopher's Mirror optimization — literally the tooltip's pass now, not a
+            // copy of it that had drifted into starting at level 3 and skipping the +2 mirror
+            applyMirrorOptimization(targetCosts, getRealisticBaseItemPrice('/items/philosophers_mirror'));
             itemCost = targetCosts[item.enhancementLevel];
         } else {
             // Use market price (already checked or not needed)

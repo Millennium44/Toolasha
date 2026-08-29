@@ -4,7 +4,12 @@
  */
 
 import WorkerPool, { createIdlePoolReaper } from './worker-pool.js';
-import { BASE_SUCCESS_RATES, BLESSED_TEA_BASE_CHANCE, buildEnhancementMarkov } from './enhancement-calculator.js';
+import {
+    applyMirrorOptimization,
+    BASE_SUCCESS_RATES,
+    BLESSED_TEA_BASE_CHANCE,
+    buildEnhancementMarkov,
+} from './enhancement-calculator.js';
 import { createMatrixMath } from './matrix-inverse.js';
 
 // Worker pool instance
@@ -32,6 +37,7 @@ const valuationCache = new Map();
 const BASE_SUCCESS_RATES = ${JSON.stringify(BASE_SUCCESS_RATES)};
 const DEFAULT_BLESSED_TEA_CHANCE = ${BLESSED_TEA_BASE_CHANCE};
 const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
+const applyMirrorOptimization = ${applyMirrorOptimization.toString()};
 
 /**
  * Calculate production cost from crafting/upgrading recipe
@@ -201,21 +207,14 @@ function calculateEnhancementCost(params) {
         targetCosts[level] = minCost;
     }
 
-    // Apply Philosopher's Mirror optimization
+    // Apply Philosopher's Mirror optimization, through the same serialised sweep the tooltip
+    // path runs — the worker's own copy started at level 3 and never let +2 be mirrored.
     let mirrorPrice = priceMap['/items/philosophers_mirror:0'] || 0;
     if (mirrorPrice === 0) {
         mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, recipes);
     }
 
-    if (mirrorPrice > 0) {
-        for (let level = 3; level <= targetLevel; level++) {
-            const traditionalCost = targetCosts[level];
-            const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
-            if (mirrorCost < traditionalCost) {
-                targetCosts[level] = mirrorCost;
-            }
-        }
-    }
+    applyMirrorOptimization(targetCosts, mirrorPrice);
 
     return targetCosts[targetLevel];
 }

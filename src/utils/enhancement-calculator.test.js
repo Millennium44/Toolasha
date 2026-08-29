@@ -7,7 +7,12 @@
 
 import { describe, test, expect, beforeAll } from 'vitest';
 import * as mathjs from 'mathjs';
-import { calculateEnhancement, buildEnhancementMarkov, BLESSED_TEA_BASE_CHANCE } from './enhancement-calculator.js';
+import {
+    applyMirrorOptimization,
+    calculateEnhancement,
+    buildEnhancementMarkov,
+    BLESSED_TEA_BASE_CHANCE,
+} from './enhancement-calculator.js';
 
 beforeAll(() => {
     globalThis.math = mathjs;
@@ -151,5 +156,43 @@ describe('buildEnhancementMarkov as shared worker source', () => {
 
         expect(markov.get([0, 1])).toBeCloseTo(1, 9);
         expect(markov.get([0, 0])).toBeCloseTo(0, 9);
+    });
+});
+
+describe('applyMirrorOptimization', () => {
+    test('mirrors +2 from a +1 and a plain +0 — the level a level-3 start never reaches', () => {
+        // Hard-way costs rise steeply while the mirror is cheap, so every level from 2 up
+        // should be bought as two smaller items welded together.
+        const costs = [100, 10_100, 33_433, 85_285];
+        const used = applyMirrorOptimization(costs, 2000);
+
+        expect(used[2]).toBe(true);
+        expect(costs[2]).toBe(100 + 10_100 + 2000);
+        // And the saving compounds: +3 is built from the mirrored +2, not the hard-way one
+        expect(used[3]).toBe(true);
+        expect(costs[3]).toBe(10_100 + 12_200 + 2000);
+    });
+
+    test('leaves a level alone when welding it costs more than building it', () => {
+        const costs = [100, 200, 250];
+        const used = applyMirrorOptimization(costs, 5000);
+
+        expect(used).toEqual([false, false, false]);
+        expect(costs).toEqual([100, 200, 250]);
+    });
+
+    test('an unpriced mirror changes nothing', () => {
+        const costs = [100, 10_100, 33_433];
+        expect(applyMirrorOptimization(costs, 0)).toEqual([false, false, false]);
+        expect(costs).toEqual([100, 10_100, 33_433]);
+    });
+
+    test('+0 and +1 can never be mirrored — there is nothing below them to combine', () => {
+        const costs = [1, 1, 1];
+        const used = applyMirrorOptimization(costs, 0.000001);
+        expect(used[0]).toBe(false);
+        expect(used[1]).toBe(false);
+        expect(costs[0]).toBe(1);
+        expect(costs[1]).toBe(1);
     });
 });

@@ -174,6 +174,56 @@ describe('generated worker sources', () => {
         expect(calculateProductionCost('/items/plank', askOnlyMap, withLogRecipe)).toBe(0);
     });
 
+    test("the networth worker mirrors from +2, like the path the tooltip quotes", async () => {
+        // A Philosopher's Mirror combines a +(n-1) and a +(n-2) into a +n, and
+        // +2 is reachable that way from a +1 and a plain +0 — which is why
+        // calculateEnhancementPath's mirror pass runs from level 2. The worker
+        // ran its copy of the same pass from level 3, so +2 never got the
+        // mirror price and every level above it compounded the miss.
+        vi.resetModules();
+        const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
+        const source = await captureWorkerScript(() =>
+            calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
+        );
+        const calculateEnhancementCost = new Function('self', `${source}\n; return calculateEnhancementCost;`)({
+            postMessage: () => {},
+            onmessage: null,
+        });
+
+        // enhancingLevel === itemLevel, so the success multiplier is exactly 1
+        // and the chain runs on the documented base rates: +1 at 50%, +2 at 45%.
+        const priceMap = {
+            '/items/test_sword:0': 100,
+            '/items/test_sword:0_ask': 100,
+            '/items/test_sword:0_bid': 90,
+            '/items/test_material:0': 5000,
+            '/items/test_material:0_ask': 5000,
+            '/items/philosophers_mirror:0': 2000,
+        };
+        const params = {
+            itemHrid: '/items/test_sword',
+            enhancementParams: { enhancingLevel: 10, toolBonus: 0 },
+            itemDetails: {
+                itemLevel: 10,
+                enhancementCosts: [{ itemHrid: '/items/test_material', count: 1 }],
+                allItemDetails: {},
+            },
+            priceMap,
+            recipes: {},
+        };
+
+        // +1 costs the base item plus two attempts' materials, and nothing can
+        // mirror it — the anchor both branches agree on.
+        expect(calculateEnhancementCost({ ...params, targetLevel: 1 })).toBeCloseTo(100 + 2 * 5000, 6);
+
+        // +2 built the hard way expects 1.5 / 0.225 attempts; mirroring a +0
+        // onto a +1 costs 100 + 10100 + 2000 and is far cheaper, so it wins.
+        expect(calculateEnhancementCost({ ...params, targetLevel: 2 })).toBeCloseTo(12200, 6);
+
+        // And the saving carries: +3 mirrors the now-cheaper +2 with the +1.
+        expect(calculateEnhancementCost({ ...params, targetLevel: 3 })).toBeCloseTo(24300, 6);
+    });
+
     test('the pruned closure prices every hrid the worker can reach', async () => {
         // Differential proof that pruning is invisible: the real manager runs
         // end-to-end through a fake Worker (so the batch carries only the

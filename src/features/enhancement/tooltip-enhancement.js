@@ -9,7 +9,7 @@
  * - Item tooltips: Shows optimal path to reach current enhancement level
  */
 
-import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
+import { applyMirrorOptimization, calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import config from '../../core/config.js';
 const toolashaConfig = config;
 import dataManager from '../../core/data-manager.js';
@@ -154,22 +154,10 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     const traditionalProtections = [...targetProtections];
 
     // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
-    // Like Enhancelator lines 456-465
+    // Like Enhancelator lines 456-465. The pass itself lives in the calculator so the networth
+    // worker and the profile score run the identical sweep instead of three copies of it.
     const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
-    const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
-
-    if (mirrorPrice > 0) {
-        // +2 is reachable by mirroring a +0 and a +1, so it belongs in the search as well
-        for (let level = 2; level <= currentEnhancementLevel; level++) {
-            const traditionalCost = targetCosts[level];
-            const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
-
-            if (mirrorCost < traditionalCost) {
-                usedMirror[level] = true;
-                targetCosts[level] = mirrorCost;
-            }
-        }
-    }
+    const usedMirror = applyMirrorOptimization(targetCosts, mirrorPrice);
 
     // Step 4: Build final result with breakdown
     const _finalCost = targetCosts[currentEnhancementLevel];

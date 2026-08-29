@@ -115,6 +115,42 @@ export function buildEnhancementMarkov(math, options) {
 }
 
 /**
+ * Fold Philosopher's Mirror combinations into a per-level cost array.
+ *
+ * A mirror welds a +(n−1) and a +(n−2) into a +n, so a level can always be bought either the
+ * hard way or as two cheaper items plus one mirror. Sweeping upwards once is enough: by the
+ * time level n is considered, n−1 and n−2 already hold the cheapest way to reach them, so the
+ * comparison is against the best available and not against a stale figure.
+ *
+ * The sweep starts at **2**, not 3. A +2 is reachable by mirroring a +1 onto a plain +0, and
+ * skipping that level does not merely misprice +2 — every level above it is built from a +2
+ * that was never allowed to get cheap, so the whole array drifts upwards.
+ *
+ * Like `buildEnhancementMarkov`, this closes over nothing: the networth worker serialises it
+ * with `toString()`, so a module-scope read from here would not exist inside the worker.
+ *
+ * @param {number[]} targetCosts - Cost to reach each level, index 0 being the unenhanced item.
+ *   Mutated in place, each entry lowered to the mirror price when mirroring is cheaper.
+ * @param {number} mirrorPrice - Coins one Philosopher's Mirror costs; a non-positive price
+ *   means mirroring is not available and nothing is changed
+ * @returns {boolean[]} Per-level flag, true where the mirror combination won
+ */
+export function applyMirrorOptimization(targetCosts, mirrorPrice) {
+    const usedMirror = new Array(targetCosts.length).fill(false);
+    if (!(mirrorPrice > 0)) return usedMirror;
+
+    for (let level = 2; level < targetCosts.length; level++) {
+        const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
+        if (mirrorCost < targetCosts[level]) {
+            usedMirror[level] = true;
+            targetCosts[level] = mirrorCost;
+        }
+    }
+
+    return usedMirror;
+}
+
+/**
  * Variance of the number of attempts an enhancement run takes.
  *
  * The expected count on its own says nothing about the spread, and for this chain the spread is
