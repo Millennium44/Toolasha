@@ -106,6 +106,51 @@ describe('a finger as the pointer', () => {
     });
 });
 
+describe('pointer capture, so a release outside the browser window still ends the drag', () => {
+    // Without capture, a mouse button released while the cursor is outside the
+    // browser window never reaches the document at all — no pointerup fires,
+    // `dragging` stays true forever, and the panel keeps following every
+    // pointermove for the rest of the session. Capturing the pointer on the
+    // handle is what makes the browser still deliver that pointerup to it.
+    test('taking hold of the header captures the pointer', () => {
+        const capture = vi.spyOn(handle, 'setPointerCapture');
+
+        press(120, 120);
+
+        expect(capture).toHaveBeenCalled();
+    });
+
+    test('releasing ends the capture', () => {
+        const release_ = vi.spyOn(handle, 'releasePointerCapture');
+
+        press(120, 120);
+        move(200, 180);
+        release();
+
+        expect(release_).toHaveBeenCalled();
+    });
+
+    test('a cancelled touch ends the capture too', () => {
+        const release_ = vi.spyOn(handle, 'releasePointerCapture');
+
+        press(120, 120);
+        interrupt();
+
+        expect(release_).toHaveBeenCalled();
+    });
+
+    test('the resize grip captures its own pointer the same way', () => {
+        panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200, right: 400, bottom: 300 });
+        makeResizable(panel, { minWidth: 100, minHeight: 50 });
+        const grip = panel.lastElementChild;
+        const capture = vi.spyOn(grip, 'setPointerCapture');
+
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 400, clientY: 300 }));
+
+        expect(capture).toHaveBeenCalled();
+    });
+});
+
 describe('the resize grip', () => {
     test('resizes by pointer', () => {
         panel.getBoundingClientRect = () => ({ left: 100, top: 100, width: 300, height: 200, right: 400, bottom: 300 });

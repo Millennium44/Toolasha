@@ -14,6 +14,49 @@ import { markPanelInteracted } from './panel-geometry.js';
 import { hasCoarsePointer } from './mobile.js';
 
 /**
+ * Capture a pointer on the element that started tracking it.
+ *
+ * Without this, a drag or resize ended by releasing the mouse button outside
+ * the browser window's content area never reaches any DOM listener — the OS
+ * keeps the event, no `pointerup` fires anywhere, and whatever flag was
+ * tracking "is this still happening" never clears. Capture is what makes the
+ * browser keep delivering that pointer's events to this element regardless of
+ * what is or is not under the cursor when it happens. Guarded because a
+ * synthetic event in a test, or a pointer type that does not support capture,
+ * should not be able to throw out of a pointerdown handler.
+ *
+ * @param {HTMLElement} el - The handle or grip that owns this pointer stream
+ * @param {PointerEvent} event - The pointerdown that started it
+ */
+function captureFrom(el, event) {
+    try {
+        el.setPointerCapture?.(event.pointerId);
+    } catch {
+        // A pointer id the browser already dropped, or a target that cannot
+        // capture — either way the drag still works via the document
+        // listeners, just without the outside-the-window guarantee.
+    }
+}
+
+/**
+ * Let go of a capture taken by {@link captureFrom}.
+ *
+ * The browser releases capture on its own once the pointer lifts, but not on
+ * `pointercancel`, and calling it here regardless costs nothing and leaves no
+ * doubt that a cancelled touch does not leave the handle still capturing.
+ *
+ * @param {HTMLElement} el - The handle or grip
+ * @param {PointerEvent} event - The pointerup or pointercancel ending it
+ */
+function releaseCapture(el, event) {
+    try {
+        el.releasePointerCapture?.(event.pointerId);
+    } catch {
+        // Already released, or never captured — nothing to undo
+    }
+}
+
+/**
  * Let a panel be dragged by one of its parts.
  *
  * Listeners live on the document rather than the handle, because a fast drag
@@ -51,12 +94,13 @@ export function makeDraggable(panel, handle, onDrop) {
         panel.style.bottom = 'auto';
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (event) => {
         if (!dragging) return;
         dragging = false;
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('pointercancel', onPointerUp);
+        releaseCapture(handle, event);
 
         // A press that never moved is a click, not a drag. Saving one is
         // harmless for a panel that only remembers where it is, and wrong for
@@ -86,6 +130,12 @@ export function makeDraggable(panel, handle, onDrop) {
         // A touch interrupted by the system (notification, palm rejection)
         // cancels rather than lifts; without this the panel stays glued
         document.addEventListener('pointercancel', onPointerUp);
+        // Captured on the handle so the browser still delivers the matching
+        // pointerup here even if the button is released outside the browser
+        // window entirely — without capture that release reaches no DOM
+        // listener at all, `dragging` never clears, and the panel keeps
+        // following every later pointermove until the next click-drag cycle.
+        captureFrom(handle, event);
         event.preventDefault();
     };
 
@@ -152,12 +202,13 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
         panel.style.height = `${Math.max(minHeight, startHeight + event.clientY - startY)}px`;
     };
 
-    const onPointerUp = () => {
+    const onPointerUp = (event) => {
         if (!resizing) return;
         resizing = false;
         document.removeEventListener('pointermove', onPointerMove);
         document.removeEventListener('pointerup', onPointerUp);
         document.removeEventListener('pointercancel', onPointerUp);
+        releaseCapture(grip, event);
         const rect = panel.getBoundingClientRect();
         onResize?.({ width: Math.round(rect.width), height: Math.round(rect.height) });
     };
@@ -174,6 +225,9 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
         document.addEventListener('pointermove', onPointerMove);
         document.addEventListener('pointerup', onPointerUp);
         document.addEventListener('pointercancel', onPointerUp);
+        // Same reasoning as the drag handle: without this, releasing the
+        // mouse outside the window mid-resize leaves `resizing` stuck true
+        captureFrom(grip, event);
         event.preventDefault();
         event.stopPropagation();
     };
