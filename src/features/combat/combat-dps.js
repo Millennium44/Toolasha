@@ -110,12 +110,25 @@ class CombatDPS {
     _onBattleUpdated(data) {
         try {
             const now = Date.now();
+            const battleId = data?.battleId;
 
             // A new battle is a new set of monsters, so last tick's health is
             // about somebody else and comparing against it would count a fresh
             // monster's full health as damage
-            if (data?.battleId !== this.battleId) {
-                this.battleId = data?.battleId;
+            if (battleId !== this.battleId) {
+                // A battleId that dropped back down, rather than merely
+                // changed, is a new run rather than a new wave within the same
+                // one — the same signal combat-stats-data-collector's
+                // shouldResetTracking uses. Without this the damage/taken/
+                // seconds accumulators below never reset, so DPS/DTPS keeps
+                // blending in every run played since the feature was enabled.
+                if (this.battleId !== null && Number(battleId) < Number(this.battleId)) {
+                    this.damage = 0;
+                    this.taken = 0;
+                    this.seconds = 0;
+                    this.lastTickAt = 0;
+                }
+                this.battleId = battleId;
                 this.monsterHp.clear();
                 this.playerHp.clear();
             }

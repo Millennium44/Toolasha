@@ -9,7 +9,7 @@
  * a party figure under a heading that reads as yours.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const tracker = vi.hoisted(() => ({ breakdown: { seconds: 0, startedAt: 0, players: [] } }));
 const registered = vi.hoisted(() => ({ row: null }));
@@ -112,6 +112,39 @@ describe('with attribution', () => {
         const container = draw();
         const totalCell = [...container.children].find((el) => el.textContent === 'Total DPS');
         expect(totalCell.style.cursor).not.toBe('pointer');
+    });
+});
+
+describe('tracking a health-diff run', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a battleId that drops back down starts a new run instead of blending into the last one', () => {
+        // First run: battleId 5, a monster drops 80 health over one second
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: { 0: { cHP: 100 } }, pMap: {} });
+        vi.setSystemTime(1000);
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: { 0: { cHP: 20 } }, pMap: {} });
+        expect(combatDPS.damage).toBe(80);
+
+        // A new run starts and the game's battleId drops back down — the same
+        // signal combat-stats-data-collector's shouldResetTracking treats as a
+        // reset. A wave change within a run only ever increases battleId, so
+        // this is not a false positive on ordinary wave progression.
+        vi.setSystemTime(2000);
+        combatDPS._onBattleUpdated({ battleId: 1, mMap: { 0: { cHP: 100 } }, pMap: {} });
+        vi.setSystemTime(3000);
+        combatDPS._onBattleUpdated({ battleId: 1, mMap: { 0: { cHP: 90 } }, pMap: {} });
+
+        // Only the new run's 10 damage over 1 second, not the first run's 80
+        // still sitting in the total
+        expect(combatDPS.damage).toBe(10);
+        expect(combatDPS.seconds).toBeCloseTo(1);
     });
 });
 
