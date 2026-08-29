@@ -3398,3 +3398,45 @@ describe('combat recommend search under cancellation', () => {
         labyrinthClearRate._simCancelRequested = false;
     });
 });
+
+describe('recommend badge at the search ceiling', () => {
+    const cellHtml =
+        '<table><tbody><tr>' +
+        '<td class="LabyrinthPanel_roomLabel__x"><svg><use href="/sprite#imp"></use></svg></td>' +
+        '<td class="LabyrinthPanel_skipThreshold__x"></td>' +
+        '</tr></tbody></table>';
+
+    afterEach(() => {
+        labyrinthClearRate.recommendations.clear();
+        document.body.innerHTML = '';
+        vi.restoreAllMocks();
+    });
+
+    test('a threshold equal to the window edge is shown as at-least, not as an answer', () => {
+        document.body.innerHTML = cellHtml;
+        vi.spyOn(labyrinthClearRate, 'getCombatSkipThreshold').mockReturnValue(60);
+        labyrinthClearRate._recommendTargetPct = 70;
+        labyrinthClearRate.recommendations.set('/monsters/imp', { threshold: 1000 });
+
+        labyrinthClearRate.injectRecommendationBadges();
+
+        const badge = document.querySelector('.mwi-labyrinth-recommend');
+        expect(badge.textContent).toBe('Rec: ≥+1000');
+        expect(badge.title).toContain('at least +1000');
+        expect(badge.title).toContain('top of its ±1000 window');
+    });
+
+    test('an interior threshold keeps the plain form', () => {
+        document.body.innerHTML = cellHtml;
+        vi.spyOn(labyrinthClearRate, 'getCombatSkipThreshold').mockReturnValue(60);
+        labyrinthClearRate._recommendTargetPct = 70;
+        labyrinthClearRate.recommendations.set('/monsters/imp', { threshold: 40 });
+
+        labyrinthClearRate.injectRecommendationBadges();
+
+        const badge = document.querySelector('.mwi-labyrinth-recommend');
+        expect(badge.textContent).toBe('Rec: +40');
+        expect(badge.title).not.toContain('at least');
+        expect(badge.title).not.toContain('window');
+    });
+});

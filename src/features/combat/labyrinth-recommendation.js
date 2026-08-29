@@ -355,7 +355,12 @@ export const recommendationMethods = {
             const badge = document.createElement('span');
             badge.className = RECOMMEND_CLASS;
             badge.style.cssText = 'font-size:0.7rem; white-space:nowrap; font-weight:bold;';
-            badge.textContent = `Rec: ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
+            // A best threshold still sitting on the search window's top edge is
+            // the clamp, not a measurement — every probed room cleared, so the
+            // real answer is "at least this". Shown as ≥ rather than as a number
+            // the search never actually placed.
+            const atCeiling = rec.threshold >= SKIP_THRESHOLD_RANGE;
+            badge.textContent = `Rec: ${atCeiling ? '≥' : ''}${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
 
             // Four states, not three. Sitting below the recommendation used to
             // share the colour of sitting exactly on it, which hid the one case
@@ -396,11 +401,21 @@ export const recommendationMethods = {
      * @private
      */
     _recommendationTooltip(roomHrid, rec, currentThreshold, note, target) {
-        const head = `Recommended skip trigger for a ${target}: ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
+        const atCeiling = rec.threshold >= SKIP_THRESHOLD_RANGE;
+        const head =
+            `Recommended skip trigger for a ${target}: ` +
+            `${atCeiling ? 'at least ' : ''}${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
+        const ceilingNote = atCeiling
+            ? `Every room searched cleared — the search hit the top of its ±${SKIP_THRESHOLD_RANGE} window, ` +
+              `so the true trigger may be higher`
+            : null;
         const tail = `Currently set to ${currentThreshold}. ${note}.`;
-        if (!roomHrid.startsWith('/skills/')) return `${head}\n${tail}`;
+        if (!roomHrid.startsWith('/skills/')) {
+            return [head, ceilingNote, tail].filter(Boolean).join('\n');
+        }
 
         const lines = [head];
+        if (ceilingNote) lines.push(ceilingNote);
         const effLevel = this.getEffectiveLevel(roomHrid);
         if (Number.isFinite(effLevel) && Number.isFinite(rec.threshold)) {
             const room = Math.floor(effLevel + rec.threshold - 1);
