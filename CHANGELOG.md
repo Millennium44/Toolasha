@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 15: sync stops losing the last few seconds, and the enhancement math converges
+
+Five sync fixes, all real data-loss shapes: a pull now quiesces the write queue before folding (an entry recorded seconds before a pull was computed out of the union and overwritten); the handoff and on-switch pushes flush first so the other device never receives a truncated copy; the shared market-listing age anchors are merged instead of overwritten; the restore latch now covers the bulk write path the in-memory recorders actually flush through; and a chunked history still on its legacy key merges instead of being replaced wholesale.
+
+Five enhancement fixes: the Philosopher's Mirror sweep starts at +2 everywhere (the tooltip knew; the networth worker and build score started at +3 and compounded the miss — the sweep now lives once, shared); the enhancing panel keys XP on the item level, not a skill requirement (a level-10 weapon gated behind attack 70 quoted 34.6K XP/hr against the真 4K); the panel runs on the live Blessed Tea chance and quotes the same success rate its own table computes from; and the networth worker stops keeping the marketplace's −1 "no order" sentinel as a price, which had runs coming out cheaper than their own base item.
+
 ### Round 15: four core-plumbing fixes and two panel fixes
 
 The core audit's haul: a DOM handler unregistering during its own dispatch no longer makes the observer skip its neighbour (a silent one-shot-handler hazard); an immediate storage write or delete can no longer be undone seconds later by an older queued write for the same key — deletes especially used to resurrect; config.onSettingChange finally returns the unregister function one caller was already written against, closing a per-character-switch listener leak; and one throwing setting-change listener no longer starves every listener behind it (worst on the character-switch resync path). Panels: drag and resize handles capture the pointer, so releasing the mouse outside the window can't leave a panel glued to the cursor, and a slow-loading minimize state no longer re-collapses a panel the user already toggled.
