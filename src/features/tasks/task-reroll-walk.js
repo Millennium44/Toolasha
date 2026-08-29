@@ -62,6 +62,7 @@ import { clickThroughReact } from '../../utils/react-click.js';
 import taskSorter from './task-sorter.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { readScoped } from '../../utils/character-key.js';
 import {
     createFloatingWidget,
     widgetCheckboxRow,
@@ -346,23 +347,18 @@ class TaskRerollWalk {
 
     /**
      * Read the shield popup's block thresholds — the same keys it writes, per
-     * character with the legacy global as a fallback, so the two features
-     * cannot drift apart.
+     * character and through the same adopt-once migration, so the two features
+     * cannot drift apart and an alt cannot inherit the main's thresholds.
      * @private
      */
     async _loadThresholds() {
         try {
-            const charId = dataManager.getCurrentCharacterId() || 'default';
             this.coinThreshold =
-                Number(
-                    (await storage.get(`taskCapCoinThreshold_${charId}`, 'settings', null)) ??
-                        (await storage.get('taskCapCoinThreshold', 'settings', DEFAULT_COIN_THRESHOLD))
-                ) || DEFAULT_COIN_THRESHOLD;
+                Number(await readScoped('taskCapCoinThreshold', 'settings', DEFAULT_COIN_THRESHOLD)) ||
+                DEFAULT_COIN_THRESHOLD;
             this.cowbellThreshold =
-                Number(
-                    (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
-                        (await storage.get('taskCapCowbellThreshold', 'settings', DEFAULT_COWBELL_THRESHOLD))
-                ) || DEFAULT_COWBELL_THRESHOLD;
+                Number(await readScoped('taskCapCowbellThreshold', 'settings', DEFAULT_COWBELL_THRESHOLD)) ||
+                DEFAULT_COWBELL_THRESHOLD;
         } catch (error) {
             console.error('[TaskRerollWalk] Failed to read the block-reroll thresholds:', error);
         }

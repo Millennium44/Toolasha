@@ -40,6 +40,21 @@ vi.mock('../../core/storage.js', () => ({
         set: async () => {},
         getJSON: async (key, _store, fallback) => stored.values[key] ?? fallback,
         setJSON: async () => {},
+        delete: async (key) => {
+            delete stored.values[key];
+            return true;
+        },
+    },
+}));
+// The walk reads its thresholds through readScoped, whose adopt-once migration
+// asks who owns pre-scoping data. The dialog is the consent module's business;
+// here the answer is just set.
+const consent = vi.hoisted(() => ({ target: null, requested: 0 }));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => consent.target,
+    requestAdoptionConsent: async () => {
+        consent.requested += 1;
+        return null;
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -221,6 +236,8 @@ beforeEach(() => {
         tasks_rerollWalkTrashAtLimit: true,
     };
     stored.values = {};
+    consent.target = null;
+    consent.requested = 0;
     market.cowbellValue = 8000;
     walk.protectedHrids = new Set();
     walk.state = 'idle';
@@ -754,6 +771,50 @@ describe('the control only exists when it is turned on', () => {
 
         expect(walk.coinThreshold).toBe(40000);
         expect(walk.cowbellThreshold).toBe(4);
+        taskRerollWalkFeature.cleanup();
+    });
+
+    test('an alt does not inherit the pre-scoping thresholds, which stay for the main', async () => {
+        consent.target = 'someoneElse';
+        stored.values.taskCapCoinThreshold = 40000;
+        stored.values.taskCapCowbellThreshold = 4;
+        walk.isInitialized = false;
+
+        await taskRerollWalkFeature.initialize();
+
+        expect(walk.coinThreshold).toBe(320000);
+        expect(walk.cowbellThreshold).toBe(32);
+        // Untouched: they belong to whoever the user said owns them
+        expect(stored.values.taskCapCoinThreshold).toBe(40000);
+        expect(stored.values.taskCapCowbellThreshold).toBe(4);
+        taskRerollWalkFeature.cleanup();
+    });
+
+    test('the chosen character adopts the pre-scoping thresholds and the bare keys go', async () => {
+        consent.target = 7;
+        stored.values.taskCapCoinThreshold = 40000;
+        stored.values.taskCapCowbellThreshold = 4;
+        walk.isInitialized = false;
+
+        await taskRerollWalkFeature.initialize();
+
+        expect(walk.coinThreshold).toBe(40000);
+        expect(walk.cowbellThreshold).toBe(4);
+        expect('taskCapCoinThreshold' in stored.values).toBe(false);
+        expect('taskCapCowbellThreshold' in stored.values).toBe(false);
+        taskRerollWalkFeature.cleanup();
+    });
+
+    test('a scoped threshold wins over a leftover bare one', async () => {
+        consent.target = 7;
+        stored.values.taskCapCoinThreshold_7 = 80000;
+        stored.values.taskCapCoinThreshold = 40000;
+        walk.isInitialized = false;
+
+        await taskRerollWalkFeature.initialize();
+
+        expect(walk.coinThreshold).toBe(80000);
+        expect(stored.values.taskCapCoinThreshold).toBe(40000);
         taskRerollWalkFeature.cleanup();
     });
 });

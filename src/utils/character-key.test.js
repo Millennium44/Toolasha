@@ -47,7 +47,7 @@ vi.mock('../core/data-manager.js', () => ({ default: mockDataManager }));
 vi.mock('../core/storage.js', () => ({ default: mockStorage }));
 vi.mock('./adoption-consent.js', () => mockConsent);
 
-import { characterKey, readScoped, writeScoped, _resetAdoptionCache } from './character-key.js';
+import { characterKey, readScoped, readScopedFrom, writeScoped, _resetAdoptionCache } from './character-key.js';
 
 /** Let the fire-and-forget consent request settle. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -217,6 +217,60 @@ describe('readScoped', () => {
         expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
         await settle();
         expect(mockConsent.requestAdoptionConsent).not.toHaveBeenCalled();
+    });
+});
+
+describe('readScopedFrom', () => {
+    /** The map a `storage.getMany` for one base would return. */
+    const batch = (entries) => new Map(Object.entries(entries));
+
+    beforeEach(() => {
+        mockStorage.reset();
+        mockDataManager.currentCharacterId = 'market123';
+        mockDataManager.currentGameMode = 'standard';
+        mockDataManager.currentName = 'Millennium';
+        mockConsent.target = null;
+        mockConsent.requestAdoptionConsent.mockClear();
+        _resetAdoptionCache();
+    });
+
+    it('takes the scoped value out of the batch without reading storage again', async () => {
+        const values = batch({ taskCapCoinThreshold_market123: 80000, taskCapCoinThreshold: 40000 });
+        mockStorage.get.mockClear();
+        expect(await readScopedFrom('taskCapCoinThreshold', values, 'settings', 320000)).toBe(80000);
+        expect(mockStorage.get).not.toHaveBeenCalled();
+    });
+
+    it('keeps a stored false rather than falling through to the legacy value', async () => {
+        const values = batch({ taskCapProtection_market123: false, taskCapProtection: true });
+        expect(await readScopedFrom('taskCapProtection', values, 'settings', false)).toBe(false);
+    });
+
+    it('returns the default when the batch has neither key', async () => {
+        expect(await readScopedFrom('taskCapCoinThreshold', batch({}), 'settings', 320000)).toBe(320000);
+    });
+
+    it('leaves the legacy value alone for an alt, which gets the default', async () => {
+        mockConsent.target = 'other456';
+        mockStorage.storeFor('settings').set('taskCapCoinThreshold', 40000);
+        const values = batch({ taskCapCoinThreshold_market123: null, taskCapCoinThreshold: 40000 });
+        expect(await readScopedFrom('taskCapCoinThreshold', values, 'settings', 320000)).toBe(320000);
+        expect(mockStorage.storeFor('settings').get('taskCapCoinThreshold')).toBe(40000);
+    });
+
+    it('adopts the legacy value for the chosen character and deletes the bare key', async () => {
+        mockConsent.target = 'market123';
+        mockStorage.storeFor('settings').set('taskCapCoinThreshold', 40000);
+        const values = batch({ taskCapCoinThreshold_market123: null, taskCapCoinThreshold: 40000 });
+        expect(await readScopedFrom('taskCapCoinThreshold', values, 'settings', 320000)).toBe(40000);
+        expect(mockStorage.storeFor('settings').get('taskCapCoinThreshold_market123')).toBe(40000);
+        expect(mockStorage.storeFor('settings').has('taskCapCoinThreshold')).toBe(false);
+    });
+
+    it('asks who owns the data while the choice is undecided', async () => {
+        const values = batch({ taskCapCoinThreshold: 40000 });
+        expect(await readScopedFrom('taskCapCoinThreshold', values, 'settings', 320000)).toBe(320000);
+        expect(await recommendedId()).toBe('market123');
     });
 });
 

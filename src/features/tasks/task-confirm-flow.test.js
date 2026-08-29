@@ -79,6 +79,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../../utils/character-key.js', () => ({
     characterKey: (key) => `${key}_7`,
     readScoped: async (_key, _store, fallback) => fallback,
+    readScopedFrom: async (base, values, _store, fallback) => values.get(`${base}_7`) ?? fallback,
     writeScoped: async () => true,
 }));
 

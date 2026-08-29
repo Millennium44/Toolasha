@@ -150,8 +150,6 @@ async function isAdoptionCandidate(charId) {
  * @returns {Promise<*>} The stored value or default
  */
 export async function readScoped(base, storeName = 'settings', defaultValue = null, options = {}) {
-    const { migrate = 'adopt' } = options;
-
     const scopedKey = characterKey(base);
     const scoped = await storage.get(scopedKey, storeName, null);
     if (scoped !== null) {
@@ -159,6 +157,55 @@ export async function readScoped(base, storeName = 'settings', defaultValue = nu
     }
 
     const legacy = await storage.get(base, storeName, null);
+    return migrateLegacy(base, scopedKey, legacy, storeName, defaultValue, options);
+}
+
+/**
+ * `readScoped` over values a caller already read in one batched transaction.
+ *
+ * A feature that pulls several of its records at startup with
+ * {@link module:core/storage.getMany} would lose that single-transaction read
+ * by switching to one `readScoped` await per key. Pass the resulting map here
+ * instead: the scoped-then-legacy resolution and the one-time adoption are the
+ * same as `readScoped`'s, only the two reads come from the batch. The batch
+ * must contain both `characterKey(base)` and `base` — a key that is missing
+ * from it reads as absent, exactly as `getMany` reports an absent record.
+ *
+ * @param {string} base - The unscoped key
+ * @param {Map<string, *>} values - Batched reads, as returned by `storage.getMany`
+ * @param {string} [storeName] - Object store the batch came from (default: 'settings')
+ * @param {*} [defaultValue] - Value returned when neither key was present
+ * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
+ * @returns {Promise<*>} The stored value or default
+ */
+export async function readScopedFrom(base, values, storeName = 'settings', defaultValue = null, options = {}) {
+    const scopedKey = characterKey(base);
+    const scoped = values.get(scopedKey) ?? null;
+    if (scoped !== null) {
+        return scoped;
+    }
+
+    return migrateLegacy(base, scopedKey, values.get(base) ?? null, storeName, defaultValue, options);
+}
+
+/**
+ * The legacy half of a scoped read: adopt, discard, or leave the bare value.
+ *
+ * Shared by {@link readScoped} and {@link readScopedFrom} so the two cannot
+ * drift — whichever way the values were read, a bare key is claimed only by
+ * the character the user confirmed, and is deleted when it is.
+ *
+ * @param {string} base - The unscoped key
+ * @param {string} scopedKey - `characterKey(base)`, already computed
+ * @param {*} legacy - The bare key's value, or null when absent
+ * @param {string} storeName - Object store name
+ * @param {*} defaultValue - Value returned when the legacy value is not claimed
+ * @param {{migrate?: 'adopt'|'discard'}} options - Legacy migration mode
+ * @returns {Promise<*>} The adopted value or the default
+ */
+async function migrateLegacy(base, scopedKey, legacy, storeName, defaultValue, options) {
+    const { migrate = 'adopt' } = options;
+
     if (legacy === null) {
         return defaultValue;
     }

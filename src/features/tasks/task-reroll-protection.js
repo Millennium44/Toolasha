@@ -17,9 +17,16 @@ import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } fro
 import { findRerollOptions } from './task-reroll-options.js';
 import { questForTaskCard } from './task-card-quest.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { characterKey, readScopedFrom } from '../../utils/character-key.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
+
+/** The cap-block settings, in the order the batched startup read wants them. */
+const CAP_BASES = ['taskCapProtection', 'taskCapCoinThreshold', 'taskCapCowbellThreshold'];
+
+const DEFAULT_COIN_THRESHOLD = 320000;
+const DEFAULT_COWBELL_THRESHOLD = 32;
 
 /**
  * Get character-scoped storage key.
@@ -35,8 +42,8 @@ class TaskRerollProtection {
         this.isInitialized = false;
         this.protectedHrids = new Set();
         this.capProtectionEnabled = false;
-        this.coinThreshold = 320000;
-        this.cowbellThreshold = 32;
+        this.coinThreshold = DEFAULT_COIN_THRESHOLD;
+        this.cowbellThreshold = DEFAULT_COWBELL_THRESHOLD;
         this.unregisterHandlers = [];
         this.confirmTimers = new WeakMap(); // taskCard → timeout ID, for the "same card clicked again" replace
         // A WeakMap cannot be iterated, so it cannot cancel every pending
@@ -52,31 +59,29 @@ class TaskRerollProtection {
 
         this.isInitialized = true;
 
-        // Cap settings are per character, falling back to the legacy global
-        // values so existing users keep their configuration. The protected
-        // list and the six cap records are read together — one JSON read and
-        // one readonly transaction for the rest — instead of seven awaited
-        // round trips one after another.
-        const charId = dataManager.getCurrentCharacterId() || 'default';
+        // Cap settings are per character. A pre-scoping install's bare keys go
+        // through the adopt-once migration — the character the user confirmed
+        // claims them and the bare key is deleted — so an alt that never opened
+        // the shield config gets the defaults instead of the main's thresholds.
+        // The protected list and the six cap records are still read together —
+        // one JSON read and one readonly transaction for the rest — instead of
+        // seven awaited round trips one after another.
         const [saved, caps] = await Promise.all([
             storage.getJSON(getStorageKey(), 'settings', []),
             storage.getMany(
-                [
-                    `taskCapProtection_${charId}`,
-                    'taskCapProtection',
-                    `taskCapCoinThreshold_${charId}`,
-                    'taskCapCoinThreshold',
-                    `taskCapCowbellThreshold_${charId}`,
-                    'taskCapCowbellThreshold',
-                ],
+                CAP_BASES.flatMap((base) => [characterKey(base), base]),
                 'settings'
             ),
         ]);
         this.protectedHrids = new Set(saved);
-        this.capProtectionEnabled = caps.get(`taskCapProtection_${charId}`) ?? caps.get('taskCapProtection') ?? false;
-        this.coinThreshold = caps.get(`taskCapCoinThreshold_${charId}`) ?? caps.get('taskCapCoinThreshold') ?? 320000;
-        this.cowbellThreshold =
-            caps.get(`taskCapCowbellThreshold_${charId}`) ?? caps.get('taskCapCowbellThreshold') ?? 32;
+        this.capProtectionEnabled = await readScopedFrom('taskCapProtection', caps, 'settings', false);
+        this.coinThreshold = await readScopedFrom('taskCapCoinThreshold', caps, 'settings', DEFAULT_COIN_THRESHOLD);
+        this.cowbellThreshold = await readScopedFrom(
+            'taskCapCowbellThreshold',
+            caps,
+            'settings',
+            DEFAULT_COWBELL_THRESHOLD
+        );
 
         // Watch for task cards appearing. Draw at once so the protected border
         // is there the instant the card is — the observer only ever fires for a
@@ -885,4 +890,6 @@ export default {
         taskRerollProtection.openConfigPopup();
     },
     isTaskProtected: (taskCard) => taskRerollProtection.isTaskProtected(taskCard),
+    /** The feature itself, for tests that read the settings it loaded */
+    protection: taskRerollProtection,
 };
