@@ -196,6 +196,10 @@ function persist() {
  * @param {number} [attempt.playerHits] - Your swings that landed on the monster
  * @param {number} [attempt.playerMisses] - Your swings that missed
  * @param {number} [attempt.playerCrits] - Your landed swings that critted
+ * @param {number} [attempt.playerDotTicks] - Damage-over-time ticks that landed on
+ *   the monster — health it lost with no swing behind it. Counted apart from
+ *   `playerHits` because a tick rings no attack counter, and kept so the replay
+ *   can compare the swing/tick mix against the sim's
  * @param {number} [attempt.battleStartedAt] - When the fight opened (ms epoch)
  * @param {number} [attempt.firstUpdateAt] - First battle_updated processed
  * @param {number} [attempt.lastTickAt] - Last battle_updated processed
@@ -222,6 +226,7 @@ export function noteAttempt(attempt) {
     const playerHits = Number(attempt.playerHits);
     const playerMisses = Number(attempt.playerMisses);
     const playerCrits = Number(attempt.playerCrits);
+    const playerDotTicks = Number(attempt.playerDotTicks);
     const predicted = Number(attempt.predicted);
     // Null when not measured, so a reader can tell "absent" from zero
     const nonNegOrNull = (v) => {
@@ -272,6 +277,9 @@ export function noteAttempt(attempt) {
         // Null on recordings from before crits were tracked, so a rate reads as
         // "unknown" rather than "zero crits"
         playerCrits: Number.isFinite(playerCrits) && playerCrits >= 0 ? playerCrits : null,
+        // Null on recordings from before the hit mix was tracked, so a fight
+        // that predates the counter is not read as one that never ticked
+        playerDotTicks: Number.isFinite(playerDotTicks) && playerDotTicks >= 0 ? playerDotTicks : null,
         fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
         // The clear chance the sim was claiming when the fight was recorded —
         // the prediction at entry, not one recomputed later by a newer engine.

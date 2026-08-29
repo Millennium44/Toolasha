@@ -449,7 +449,7 @@ export function isDamagingAction(action, nonDamaging = NON_DAMAGING) {
  * @param {Array<Object>} events - From `attributeTick`
  * @param {Object} [options] - `{filterNonDamaging, nonDamaging, nameOf}`. `nameOf`
  *   turns a monster index into a name; without it the per-enemy split is skipped.
- * @returns {Object} Player index → `{damage, dotDamage, hits, crits, misses, byAbility, byEnemy}`
+ * @returns {Object} Player index → `{damage, dotDamage, dotTicks, hits, crits, misses, byAbility, byEnemy}`
  */
 export function foldEvents(tally, events, { filterNonDamaging = true, nonDamaging, nameOf } = {}) {
     for (const event of events || []) {
@@ -460,14 +460,16 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
         const player = (tally[event.playerIndex] = tally[event.playerIndex] || {
             damage: 0,
             dotDamage: 0,
+            dotTicks: 0,
             hits: 0,
             crits: 0,
             misses: 0,
             byAbility: {},
             byEnemy: {},
         });
-        // A row banked before this field existed, or merged from one
+        // A row banked before these fields existed, or merged from one
         if (!Number.isFinite(player.dotDamage)) player.dotDamage = 0;
+        if (!Number.isFinite(player.dotTicks)) player.dotTicks = 0;
         const weight = Number.isFinite(event.weight) && event.weight > 0 ? event.weight : 1;
 
         // Counted before the filter: a miss is a swing that happened, and
@@ -478,6 +480,13 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
         if (event.isDot) {
             player.damage += event.amount;
             player.dotDamage += event.amount;
+            // Counted, not merely summed. A tick lands for a fraction of the
+            // blow that applied it, so the RATIO of ticks to swings moves
+            // damage-per-hit on its own — and the damage subtotal cannot say
+            // how many ticks made it up. The labyrinth replay compares this
+            // ratio against the sim's to decide whether a soft-hit gap is the
+            // monster's mitigation or just a different hit mix.
+            player.dotTicks += weight;
         } else if (!event.isMiss && !event.isHeal) {
             player.damage += event.amount;
             player.hits += weight;

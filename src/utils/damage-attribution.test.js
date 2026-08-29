@@ -446,6 +446,9 @@ describe('damage over time and reflect', () => {
         expect(tally['0'].hits).toBe(0);
         expect(tally['0'].crits).toBe(0);
         expect(tally['0'].misses).toBe(0);
+        // Counted on its own, so the swing/tick MIX is recoverable — the damage
+        // subtotal alone cannot say how many ticks made it up
+        expect(tally['0'].dotTicks).toBe(1);
     });
 
     test('a hit on the same run still counts as a hit and only as a hit', () => {
@@ -459,6 +462,7 @@ describe('damage over time and reflect', () => {
         expect(tally['0'].hits).toBe(1);
         expect(tally['0'].damage).toBe(400);
         expect(tally['0'].dotDamage).toBe(120);
+        expect(tally['0'].dotTicks).toBe(1);
     });
 
     test('health rising with no counter is not damage', () => {

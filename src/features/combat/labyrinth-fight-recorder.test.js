@@ -139,6 +139,16 @@ describe('labyrinth fight recorder', () => {
         expect(b.playerCrits).toBeNull();
     });
 
+    test('DoT tick counts are kept, and null on recordings without them', () => {
+        recorder.noteAttempt(attempt({ playerHits: 40, playerDotTicks: 10 }));
+        recorder.noteAttempt(attempt({ playerHits: 40, playerDotTicks: 0 })); // a real zero
+        recorder.noteAttempt(attempt()); // recorded before ticks were counted
+        const [a, b, c] = recorder.recordedAttempts();
+        expect(a.playerDotTicks).toBe(10);
+        expect(b.playerDotTicks).toBe(0);
+        expect(c.playerDotTicks).toBeNull();
+    });
+
     test('the buffer is bounded to the newest 500', () => {
         for (let i = 0; i < 550; i++) recorder.noteAttempt(attempt());
         expect(recorder.recordingStatus().attempts).toBe(500);
