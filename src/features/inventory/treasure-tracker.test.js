@@ -100,6 +100,9 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     reopenIfLeftOpen: () => {},
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1, getPricingMode: () => 'bid' }));
+// The overlay tile's `version()` counts price feeds, so the module imports the
+// market API directly now — and the real one opens a socket on import
+vi.mock('../../api/marketplace.js', () => ({ default: { on: () => {} } }));
 // Pricing untradables at their token cost reaches the market API, which opens a
 // socket on import; the unit under test here is the formatting, not the pricing.
 // The shop-line summing is the real implementation, because that is what the
@@ -876,5 +879,71 @@ describe('which chests are expanded is remembered', () => {
 
         expect(treasureTracker.expanded.has(CHEST)).toBe(true);
         treasureTracker.disable();
+    });
+});
+
+// The real overlay registry, so the Treasure tile can be asked for its version
+const { registeredRows } = await import('../../utils/overlay-rows.js');
+
+/**
+ * The Treasure tile's `version()`.
+ *
+ * `_summary()` prices every item of every chest's drop table against what
+ * actually dropped, and the overlay asked it to do that once a second — for a
+ * verdict that only moves when a chest is opened, a price lands, or the settings
+ * that value an unpriceable reward change.
+ */
+describe('the Treasure tile summarises its own inputs', () => {
+    const version = () =>
+        registeredRows()
+            .find((row) => row.key === 'treasure')
+            .version();
+
+    beforeEach(() => {
+        treasureTracker.isInitialized = true;
+        treasureTracker.tally = {};
+        treasureTracker.settings = { ...treasureTracker.settings, capeValue: 'zero', valueCowbells: false };
+    });
+
+    afterEach(() => {
+        treasureTracker.isInitialized = false;
+        treasureTracker.tally = {};
+    });
+
+    test('a tracker that has not started is one settled version', () => {
+        treasureTracker.isInitialized = false;
+        expect(version()).toBe('blank');
+        expect(version()).toBe(version());
+    });
+
+    test('it holds still while the ledger and the settings do', () => {
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 90 } } };
+        expect(version()).toBe(version());
+    });
+
+    test('a chest opened moves it', () => {
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 90 } } };
+        const before = version();
+
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 4, loot: { '/items/coin': 120 } } };
+        expect(version()).not.toBe(before);
+    });
+
+    test('a different haul under the same count moves it too', () => {
+        // An import in replace mode can land exactly that, and the verdict is a
+        // comparison of the haul against the drop table
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 90 } } };
+        const before = version();
+
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 900 } } };
+        expect(version()).not.toBe(before);
+    });
+
+    test('and so does changing what an unpriceable reward is worth', () => {
+        treasureTracker.tally = { '/items/chimerical_chest': { opened: 3, loot: { '/items/coin': 90 } } };
+        const before = version();
+
+        treasureTracker.settings = { ...treasureTracker.settings, capeValue: 'mirror' };
+        expect(version()).not.toBe(before);
     });
 });

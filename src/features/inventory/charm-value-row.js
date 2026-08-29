@@ -30,6 +30,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import marketAPI from '../../api/marketplace.js';
 import { loadWhenReady } from '../../utils/deferred-load.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
@@ -437,11 +438,41 @@ export const charmPanel = createPanel({
     },
 });
 
+/**
+ * How many price feeds have landed.
+ *
+ * `familyRows()` asks the market for every enhancement level of every charm in
+ * the family — around a hundred lookups — and the overlay was making it do that
+ * once a second. What the answer depends on is the charm you are wearing and the
+ * prices; the charms themselves and the shop's fixed prices are static data.
+ */
+let priceFeed = 0;
+
+marketAPI.on(() => {
+    priceFeed++;
+});
+
+/**
+ * What the Charm Value tile would compare, without comparing it.
+ *
+ * The charm in the slot decides which family is priced and what the upgrade is
+ * measured against, and the feed decides what any of it costs. Read straight off
+ * the equipment map rather than counted off an event, because it is a single map
+ * lookup — cheaper than the event bookkeeping would be.
+ *
+ * @returns {string}
+ */
+function charmVersion() {
+    const worn = dataManager.getEquipment?.()?.get?.(CHARM_SLOT);
+    return `${worn?.itemHrid || ''}:${worn?.enhancementLevel || 0}|${priceFeed}`;
+}
+
 registerRow({
     key: 'charmValue',
     empty: 'No charms held',
     name: 'Charm Value',
     defaultSize: { width: 230, height: 30 },
+    version: charmVersion,
     render: (container) => {
         const worn = equippedCharm();
         // The best buy within the family, which is the only comparison worth

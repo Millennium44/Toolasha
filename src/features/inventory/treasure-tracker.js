@@ -24,6 +24,7 @@ import config from '../../core/config.js';
 import settingsStorage from '../../core/settings-storage.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import { getItemPrice, getPricingMode } from '../../utils/market-data.js';
 import {
     recordOpening,
@@ -2101,11 +2102,59 @@ treasureTracker.restore();
 
 // Registered at module scope so the overlay has the row whether or not this
 // feature has started yet. It draws nothing until a chest has been opened.
+/**
+ * How many price feeds have landed.
+ *
+ * `_summary()` prices every item of every chest's drop table against what
+ * actually dropped, and the overlay tile asked it to do that once a second for a
+ * verdict that only moves when a chest is opened or a price changes.
+ */
+let priceFeed = 0;
+
+marketAPI.on(() => {
+    priceFeed++;
+});
+
+/**
+ * What the Treasure tile would summarise, without summarising it.
+ *
+ * How many of each kind of chest have been opened, the price feed, and the two
+ * settings that decide what an unpriceable reward is worth. Opened counts are
+ * enough to stand for the ledger: nothing adds items to a chest's tally without
+ * adding to its opened count, and the reset, merge and import paths all move it
+ * too. The drop tables themselves are static game data, and the sort mode
+ * reorders rows this tile does not draw.
+ *
+ * @returns {string}
+ */
+function treasureVersion() {
+    if (!treasureTracker.isInitialized) return 'blank';
+
+    const ledger = Object.entries(treasureTracker.tally || {}).map(([chestHrid, entry]) => {
+        // The loot total as well as the opened count: an import in replace mode
+        // can land a different haul under the same number of openings, and the
+        // verdict is a comparison of the haul against the drop table
+        const loot = Object.values(entry?.loot || {}).reduce((sum, count) => sum + count, 0);
+        return `${chestHrid}:${entry?.opened || 0}:${loot}`;
+    });
+    const settings = treasureTracker.settings || {};
+    return [
+        ledger.join(','),
+        priceFeed,
+        // Which side of the book the rewards are priced at is a setting of its
+        // own, and it moves every figure on the tile without touching the ledger
+        getPricingMode('profit', 'sell'),
+        settings.capeValue,
+        settings.valueCowbells ? 1 : 0,
+    ].join('|');
+}
+
 registerRow({
     key: 'treasure',
     empty: 'No chests opened',
     name: 'Treasure',
     defaultSize: { width: 200, height: 30 },
+    version: treasureVersion,
     render: (container) => {
         if (!treasureTracker.isInitialized) return blank(container);
 

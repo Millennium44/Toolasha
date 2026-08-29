@@ -13,7 +13,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ equipment: new Map(), prices: {} }));
+const game = vi.hoisted(() => ({ equipment: new Map(), prices: {}, rows: {}, priceListeners: [] }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -40,7 +40,16 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () =>
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
 }));
-vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
+// Kept, so the tile's `version()` — which is what spares the overlay a hundred
+// market lookups a second — can be tested against the same fixtures
+vi.mock('../../utils/overlay-rows.js', () => ({
+    registerRow: (definition) => {
+        game.rows[definition.key] = definition;
+    },
+}));
+vi.mock('../../api/marketplace.js', () => ({
+    default: { on: (handler) => game.priceListeners.push(handler) },
+}));
 
 // The folds are persisted, and IndexedDB is not what this file is about
 vi.mock('../../core/storage.js', () => ({
@@ -205,5 +214,51 @@ describe('the panel renders', () => {
 
         expect(charmPanel.panel.textContent).toContain('Ask');
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+/**
+ * The Charm Value tile's `version()`.
+ *
+ * `familyRows()` asks the market for every enhancement level of every charm in
+ * the family — around a hundred lookups — and the overlay called it once a
+ * second. The two things that can change the answer are the charm in the slot
+ * and the price feed, and both have to move the version.
+ */
+describe('the Charm Value tile summarises its own inputs', () => {
+    const version = () => game.rows.charmValue.version();
+
+    test('it holds still while the slot and the feed do', () => {
+        game.equipment = new Map([
+            ['/item_locations/charm', { itemHrid: '/items/gathering_charm', enhancementLevel: 3 }],
+        ]);
+        expect(version()).toBe(version());
+    });
+
+    test('changing the charm moves it', () => {
+        game.equipment = new Map([
+            ['/item_locations/charm', { itemHrid: '/items/gathering_charm', enhancementLevel: 3 }],
+        ]);
+        const before = version();
+
+        game.equipment = new Map([
+            ['/item_locations/charm', { itemHrid: '/items/gathering_charm', enhancementLevel: 4 }],
+        ]);
+        expect(version()).not.toBe(before);
+    });
+
+    test('and so does a new price feed, with the slot untouched', () => {
+        game.equipment = new Map([
+            ['/item_locations/charm', { itemHrid: '/items/gathering_charm', enhancementLevel: 3 }],
+        ]);
+        const before = version();
+
+        game.priceListeners.forEach((handler) => handler());
+        expect(version()).not.toBe(before);
+    });
+
+    test('an empty slot is one settled version', () => {
+        game.equipment = new Map();
+        expect(version()).toBe(version());
     });
 });
