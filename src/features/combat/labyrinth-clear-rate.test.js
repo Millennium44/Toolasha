@@ -3440,3 +3440,96 @@ describe('recommend badge at the search ceiling', () => {
         expect(badge.title).not.toContain('window');
     });
 });
+
+describe('formulas across the widened ±1000 threshold range', () => {
+    const zeroMetrics = () => ({
+        skillLevelBonus: 0,
+        efficiencyBonus: 0,
+        actionSpeedBonus: 0,
+        successBonus: 0,
+        doubleProgressBonus: 0,
+        gatheringBonus: 0,
+        experienceBonus: 0,
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        dataManagerMock.getSkills.mockImplementation(() => []);
+    });
+
+    test('skilling at eff+999 clamps success to the 5% floor and reports an impossible room as 0', () => {
+        // Level 100 against room 1099 — the top of the new window
+        const result = labyrinthClearRate.computeSkillingClearWithParams(zeroMetrics(), 100, 1099);
+        expect(result.successChance).toBeCloseTo(0.05, 12);
+        expect(result.clearChance).toBe(0);
+        expect(result.expectedSeconds).toBe(Infinity);
+        expect(Number.isNaN(result.xpPerRoom)).toBe(false);
+    });
+
+    test('a heavily buffed character at eff+999 still gets a bounded, finite clear chance', () => {
+        const metrics = {
+            ...zeroMetrics(),
+            efficiencyBonus: 2,
+            actionSpeedBonus: 1,
+            doubleProgressBonus: 1,
+            successBonus: 1,
+        };
+        const result = labyrinthClearRate.computeSkillingClearWithParams(metrics, 200, 1199);
+        // The floor holds even with +100% success gear: the level penalty dwarfs it
+        expect(result.successChance).toBeCloseTo(0.05, 12);
+        expect(result.clearChance).toBeGreaterThanOrEqual(0);
+        expect(result.clearChance).toBeLessThan(1e-6);
+        expect(Number.isFinite(result.clearChance)).toBe(true);
+        expect(Number.isNaN(result.expectedSeconds)).toBe(false);
+    });
+
+    test('enhancing at eff+999 clamps to the floor and never reports NaN', () => {
+        const result = labyrinthClearRate.computeEnhancingClearWithParams(zeroMetrics(), 100, 1099);
+        expect(result.successChance).toBeCloseTo(0.05, 12);
+        expect(result.clearChance).toBeGreaterThanOrEqual(0);
+        expect(result.clearChance).toBeLessThan(0.001);
+        expect(Number.isNaN(result.clearChance)).toBe(false);
+        expect(Number.isNaN(result.expectedSeconds)).toBe(false);
+    });
+
+    test('the 100% ceiling holds when the character towers over the room', () => {
+        const result = labyrinthClearRate.computeSkillingClearWithParams(zeroMetrics(), 1000, 1);
+        expect(result.successChance).toBe(1);
+        expect(result.clearChance).toBeLessThanOrEqual(1);
+    });
+
+    test('the skilling recommend search stays inside the window and off the clamp', () => {
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/milking', level: 100 }]);
+        const threshold = labyrinthClearRate.findRecommendedThreshold('/skills/milking', 0.7);
+        expect(Number.isFinite(threshold)).toBe(true);
+        expect(threshold).toBeGreaterThanOrEqual(-1000);
+        // A level-100 character cannot clear rooms 999 above them at 70% — the
+        // answer must be a real threshold, not the window edge
+        expect(threshold).toBeLessThan(1000);
+        // The search invariant: one step higher no longer meets the bar
+        const eff = labyrinthClearRate.getEffectiveLevel('/skills/milking');
+        const above = labyrinthClearRate.computeSkillingClear('/skills/milking', Math.floor(eff + threshold + 1 - 1));
+        expect(above.clearChance).toBeLessThan(0.7);
+    });
+
+    test('the enhancing recommend search terminates finitely over the widened window', () => {
+        dataManagerMock.getSkills.mockImplementation(() => [{ skillHrid: '/skills/enhancing', level: 150 }]);
+        const threshold = labyrinthClearRate.findRecommendedThreshold('/skills/enhancing', 0.7);
+        expect(threshold === null || Number.isFinite(threshold)).toBe(true);
+        if (threshold !== null) {
+            expect(threshold).toBeGreaterThanOrEqual(-1000);
+            expect(threshold).toBeLessThan(1000);
+        }
+    });
+
+    test('a level-1 character searches the mostly-negative window without hanging', () => {
+        const threshold = labyrinthClearRate.findRecommendedThreshold('/skills/milking', 0.7);
+        expect(threshold === null || (Number.isFinite(threshold) && Math.abs(threshold) <= 1000)).toBe(true);
+    });
+
+    test('getCombatSkipRoomLevel does the plain arithmetic at the new range', () => {
+        vi.spyOn(labyrinthClearRate, 'getCombatSkipThreshold').mockReturnValue(1000);
+        vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(150);
+        expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(1149);
+    });
+});
