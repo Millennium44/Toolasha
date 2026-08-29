@@ -138,6 +138,12 @@ class ActionCountdown {
             return;
         }
 
+        // A background tab shows the readout to nobody, and each tick below
+        // pays for a computed-style read of the animated bar. The browser
+        // throttles the interval to about one wake a second back there; this
+        // makes those wakes free, and the first visible tick repaints.
+        if (document.hidden) return;
+
         if (!this.totalTime) return;
 
         const span = this.textEl.querySelector('span');

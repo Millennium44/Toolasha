@@ -93,6 +93,24 @@ describe('tick loop lifetime', () => {
         expect(actionCountdown.cachedDuration).toBeNull();
     });
 
+    test('a hidden tab is not repainted, and coming back is', () => {
+        const bar = mountBar();
+        actionCountdown.initialize();
+        actionCountdown.totalTime = 5;
+        actionCountdown.lastCompletedAt = Date.now();
+        const span = bar.querySelector('span');
+        span.textContent = 'untouched';
+
+        const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+        vi.advanceTimersByTime(1000);
+        expect(span.textContent).toBe('untouched');
+
+        hidden.mockReturnValue(false);
+        vi.advanceTimersByTime(200);
+        expect(span.textContent).toMatch(/s \/ 5\.0s$/);
+        hidden.mockRestore();
+    });
+
     test('a bar mounted before the shared observer is ready is picked up at readiness', () => {
         handlers.domReady = false;
         mountBar();
