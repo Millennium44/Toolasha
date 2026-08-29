@@ -986,6 +986,42 @@ describe('the deeper cost-basis fallback', () => {
         expect(alchemySessionNet(session, price, basis)).toBe(2_000_000);
     });
 
+    test('an item transmuted back into itself nets only the real loss', () => {
+        // Three transmutes that returned two capes lost ONE cape, not three —
+        // the returned capes must be credited at the same material-cost basis
+        // the consumed ones were charged at
+        const session = {
+            startTime: 1000,
+            totalAttempts: 3,
+            totalCoinsEarned: 0,
+            inputItemHrid: '/items/culinary_cape',
+            enhancementLevel: 0,
+            results: { '/items/culinary_cape': { count: 2, totalValue: 0 } },
+        };
+        const price = () => null;
+        const basis = (hrid) => (hrid === '/items/culinary_cape' ? 74_000_000 : null);
+
+        expect(alchemySessionNet(session, price, basis)).toBe(-74_000_000);
+    });
+
+    test('an unpriced output of a different kind gets the basis credit too', () => {
+        // Cape-cycling yields OTHER unpriced capes; without the symmetric
+        // basis the whole yield read as zero
+        const session = {
+            startTime: 1000,
+            totalAttempts: 1,
+            totalCoinsEarned: 0,
+            inputItemHrid: '/items/culinary_cape',
+            enhancementLevel: 0,
+            results: { '/items/artificer_cape': { count: 1, totalValue: 0 } },
+        };
+        const price = () => null;
+        const basis = (hrid) =>
+            hrid === '/items/culinary_cape' ? 74_000_000 : hrid === '/items/artificer_cape' ? 70_000_000 : null;
+
+        expect(alchemySessionNet(session, price, basis)).toBe(-4_000_000);
+    });
+
     test('a chest with no market price is netted against its expected value', () => {
         const row = {
             d: '2026-08-28',

@@ -395,7 +395,13 @@ export function alchemySessionNet(session, price, basisPrice = price) {
     for (const [itemHrid, result] of Object.entries(session.results || {})) {
         const count = num(result?.count);
         if (count <= 0) continue;
-        const unit = price(itemHrid, 0);
+        // The same basis fallback the input gets, or the books don't balance:
+        // transmuting a cape into another unpriced cape charged the full
+        // material cost going in and credited nothing coming out, so cycling
+        // one cape three times read as three capes lost. Priced symmetrically,
+        // a returned item cancels a consumed one and only the real loss nets.
+        let unit = price(itemHrid, 0);
+        if (!Number.isFinite(unit)) unit = basisPrice(itemHrid, 0);
         outputs += Number.isFinite(unit) ? unit * count : num(result?.totalValue);
     }
 

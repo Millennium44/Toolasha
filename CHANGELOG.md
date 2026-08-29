@@ -8,6 +8,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The gold panel's cost bases fall back before giving up
 
+Alchemy outputs get the same fallback as the input, which is what makes the books balance: transmuting a cape into another unpriced cape used to charge the full material cost going in and credit nothing coming out, so cycling one cape three times read as three capes lost. Priced symmetrically, a returned item cancels a consumed one and only the real loss nets.
+
 Two of "Where the gold came from"'s exclusions get the deeper fallback the net worth engine already uses. An alchemy input with no market price is valued at its material cost, and an opened chest with no market price is netted against its expected value — so a transmuted cape or a labyrinth box no longer sends its whole session to the residual. Only when market price, expected value, and material cost all fail does an entry stay footnoted in the residual.
 
 ### Pick your own column count
