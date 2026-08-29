@@ -218,6 +218,12 @@ describe('sortCharmRows', () => {
     test('unpriced sorts last whichever way the column points', () => {
         expect(sortCharmRows(rows, 'perMillion', 'asc')[3].tier).toBe('basic');
         expect(sortCharmRows(rows, 'price', 'desc')[3].tier).toBe('basic');
+        // Ascending price is the case 'desc' cannot catch: a real cheapest price
+        // and an unpriced "nobody sells this" both sort towards the low end, and
+        // only the unpriced one is supposed to land at the bottom regardless of
+        // direction. Sorting on the raw `price` (0 for unpriced, same as a free
+        // item) rather than treating 0 as unknown put it first instead.
+        expect(sortCharmRows(rows, 'price', 'asc')[3].tier).toBe('basic');
     });
 
     test('it does not modify the array it was given', () => {

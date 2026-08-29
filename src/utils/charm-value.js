@@ -227,8 +227,13 @@ export function sortCharmRows(rows, column, direction = 'desc') {
             // the charms actually come in — alphabetical puts Advanced first
             case 'name':
                 return tiers.indexOf(row.tier) * 100 + (row.enhancementLevel || 0);
+            // 0 is not a price here, it is "nobody sells this" — the same
+            // convention `charm.price > 0 ? … : 'no data'` reads elsewhere.
+            // Sorting on the raw number let an unpriced row's 0 read as the
+            // cheapest price there is, landing it first on an ascending sort
+            // instead of last with the rest of the unpriced rows.
             case 'price':
-                return row.price;
+                return row.price > 0 ? row.price : null;
             case 'perMillion':
                 return row.experiencePerMillion;
             default:
