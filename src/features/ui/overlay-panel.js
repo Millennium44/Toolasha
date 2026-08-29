@@ -117,7 +117,7 @@ import {
 } from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
 import {
-    columnsFor,
+    columnsForLayout,
     spanFor,
     seedSpan,
     migrate,
@@ -283,6 +283,8 @@ function defaultSettings() {
     return {
         /** Version 2: an order and a set of spans, rather than pixels — see `migrate` */
         version: 2,
+        /** The grid the spans are written for; a span only means anything against one */
+        columns: 2,
         visible: {},
         /** Reading order, and the layout itself */
         order: [],
@@ -398,6 +400,8 @@ class OverlayPanel {
         this.panelObserver = null;
         /** How many columns the grid currently has, so a resize can tell a change from a nudge */
         this.columns = 0;
+        /** The scroller width the tiles were last drawn for */
+        this.lastWidth = 0;
         this.canvasEl = null;
         this.pickerEl = null;
         /** The header band, which the popover is never allowed to cover */
@@ -631,6 +635,13 @@ class OverlayPanel {
             // holding an item name
             gridTemplateColumns: `repeat(var(${COLUMN_VARIABLE}, 2), minmax(0, 1fr))`,
             gap: `${GAP}px`,
+            // A tile spanning past the explicit tracks would otherwise make the
+            // grid grow implicit ones sized to their *content*, which is a
+            // canvas that will not come back down when the panel narrows and a
+            // horizontal scrollbar on everything around it. Implicit tracks
+            // behave exactly like explicit ones instead.
+            gridAutoColumns: 'minmax(0, 1fr)',
+            minWidth: '0',
             // Every tile in a grid row is drawn to the height of the tallest in
             // it, which used to be computed and written into both of them
             alignItems: 'stretch',
@@ -675,13 +686,18 @@ class OverlayPanel {
         if (typeof ResizeObserver !== 'function' || !this.panel) return;
 
         this.panelObserver = new ResizeObserver(() => {
-            // Only the column count, and only when it has actually changed. The
-            // redraw loop this used to guard against — the draw writing the
+            // Any change of width, not only one that moves the column count.
+            // Guarding on the count alone meant a panel that grew and shrank
+            // again could keep tile styling worked out for the wider state, and
+            // the redraw loop the guard existed for — the draw writing the
             // canvas's own width, which the observer then saw — cannot happen
             // any more, because nothing writes the canvas a width.
-            const before = this.columns;
+            const width = this.scrollEl?.offsetWidth || 0;
+            if (width === this.lastWidth) return;
+            this.lastWidth = width;
+
             this._applyColumns();
-            if (this.columns !== before) this._renderBody();
+            this._renderBody();
             this._placePicker();
         });
         this.panelObserver.observe(this.panel);
@@ -2309,6 +2325,14 @@ class OverlayPanel {
         if (Object.keys(geometry).length) await saveGeometry(GEOMETRY_KEY, geometry);
         await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
 
+        // The arriving layout brings its own column count and its own text
+        // scale, and neither is picked up by drawing alone: the grid reads the
+        // count from a custom property and the panel's base font size is set on
+        // the frame. Left out, an imported four-column layout is drawn on the
+        // two columns the last one had, which flattens every span in it.
+        this._applyColumns();
+        if (this.panel) this.panel.style.fontSize = `${this._baseFontPx()}px`;
+
         this._refreshLockButton();
         this._refreshStacking();
         this._renderPicker();
@@ -2357,7 +2381,7 @@ class OverlayPanel {
      */
     _columns() {
         const outer = this.scrollEl?.offsetWidth || this.scrollEl?.clientWidth || DEFAULT_PANEL.width;
-        return columnsFor(outer - SCROLLER_PADDING);
+        return columnsForLayout(outer - SCROLLER_PADDING, this.settings.columns);
     }
 
     /**

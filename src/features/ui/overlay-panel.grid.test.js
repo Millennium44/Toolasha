@@ -23,6 +23,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, Z_HUD: 50, Z_FLOATING_PANEL: 1100, Z_POPUP: 9000 },
@@ -59,11 +60,17 @@ vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
     registeredRows: () => registry.rows,
     moveRow: (order) => order,
 }));
-vi.mock('../../utils/opanel-config.js', () => ({ fromOPanelConfig: () => null, toOPanelConfig: () => ({}) }));
+// Mocked for the rest of the file, which never imports anything; the import
+// tests below reach for the real reader, because the round trip is the point
+vi.mock('../../utils/opanel-config.js', async (importActual) => {
+    const real = await importActual();
+    return { ...real, toOPanelConfig: () => ({}) };
+});
 vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }));
 
 const overlayPanel = (await import('./overlay-panel.js')).default;
 const { COLUMN_MIN, GAP, MAX_SPAN } = await import('../../utils/overlay-flow.js');
+const { fromOPanelConfig: realFromOPanelConfig } = await import('../../utils/opanel-config.js');
 
 /**
  * A row that always has something to say.
@@ -468,5 +475,97 @@ describe('arranging by hand', () => {
         document.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true }));
 
         expect(overlayPanel.settings.span.a).toBe(2);
+    });
+});
+
+describe('a panel that grew and then shrank again', () => {
+    /** Three tiles, the middle one wide enough to want every column there is */
+    function wideMiddle() {
+        registry.rows = [speaking('a'), speaking('b'), speaking('c')];
+        overlayPanel.settings.visible = { a: true, b: true, c: true };
+        overlayPanel.settings.order = ['a', 'b', 'c'];
+        overlayPanel.settings.span = { b: 3 };
+        overlayPanel.show();
+    }
+
+    test('the column count comes back down, not only up', () => {
+        wideMiddle();
+
+        scrollerIs(712);
+        expect(overlayPanel.columns).toBe(3);
+
+        scrollerIs(492);
+        expect(overlayPanel.columns).toBe(2);
+
+        scrollerIs(382);
+        expect(overlayPanel.columns).toBe(1);
+    });
+
+    test('and no tile is left spanning more columns than the grid has', () => {
+        // A grid item spanning past the explicit tracks makes the grid create
+        // implicit ones, sized to content — which is exactly a canvas that will
+        // not come back down and a horizontal scrollbar on everything around it
+        wideMiddle();
+
+        for (const outer of [712, 492, 382, 712, 382]) {
+            scrollerIs(outer);
+
+            const tracks = Number(overlayPanel.canvasEl.style.getPropertyValue('--overlay-columns'));
+            for (const key of ['a', 'b', 'c']) {
+                const span = Number(column(key).replace('span ', ''));
+                expect(span).toBeLessThanOrEqual(tracks);
+            }
+        }
+    });
+
+    test('implicit tracks can never be sized by content', () => {
+        // Belt and braces for the same failure: even a span left stale for one
+        // frame must not be able to widen the grid past its container
+        wideMiddle();
+        expect(overlayPanel.canvasEl.style.gridAutoColumns).toBe('minmax(0, 1fr)');
+    });
+});
+
+describe('importing the layout a pre-rework build exported', () => {
+    const file = JSON.parse(readFileSync('src/utils/__fixtures__/overlay-v1-export.json', 'utf8'));
+
+    test('applies it, rather than storing it and drawing the old one', () => {
+        const keys = Object.keys(file.toolasha.settings.positions);
+        registry.rows = keys.map((key) => speaking(key));
+        overlayPanel.settings.visible = Object.fromEntries(keys.map((key) => [key, true]));
+        overlayPanel.settings.order = [...keys].reverse();
+        overlayPanel.settings.columns = 2;
+        overlayPanel.show();
+
+        const read = realFromOPanelConfig(file);
+        expect(read).toBeTruthy();
+        expect(read.native).toBe(true);
+
+        return overlayPanel._applyLayout(read, 'Import').then(() => {
+            // The grid is told the layout's own column count, not the one the
+            // last layout happened to use
+            expect(overlayPanel.settings.columns).toBe(4);
+            expect(overlayPanel.canvasEl.style.getPropertyValue('--overlay-columns')).toBe('4');
+
+            // And it is on screen, in the order the file described
+            expect(drawn().slice(0, 4)).toEqual(['battleTimer', 'experiencePerHour', 'deathsPerHour', 'combatStatus']);
+            expect(column('totalProfit')).toBe('span 3');
+            expect(column('combatRevenue')).toBe('span 2');
+        });
+    });
+
+    test('carries across everything that was never geometry', () => {
+        registry.rows = [speaking('battleTimer')];
+        overlayPanel.settings.visible = { battleTimer: true };
+        overlayPanel.settings.order = ['battleTimer'];
+        overlayPanel.show();
+
+        return overlayPanel._applyLayout(realFromOPanelConfig(file), 'Import').then(() => {
+            expect(overlayPanel.settings.textScale).toBe(80);
+            expect(overlayPanel.settings.zoom.timeToLevel).toBe(100);
+            // And drops what has nothing left to mean
+            expect(overlayPanel.settings.snapToGrid).toBeUndefined();
+            expect(overlayPanel.settings.positions).toBeUndefined();
+        });
     });
 });
