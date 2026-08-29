@@ -652,7 +652,8 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
         warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
         warning.textContent =
             `${unpriced} enhancement session${unpriced === 1 ? '' : 's'} could not be valued — the item has no ` +
-            'market price at one of its two levels — so they are in the residual rather than the enhancement row.';
+            'market price at one of its two levels and no material cost to fall back to — so they are in the ' +
+            'residual rather than the enhancement row.';
         body.appendChild(warning);
     }
 

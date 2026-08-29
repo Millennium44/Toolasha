@@ -191,6 +191,37 @@ describe('enhancementSessionNet', () => {
         const session = { itemHrid: '/items/sword', startLevel: 0, currentLevel: 20, totalCost: 10 };
         expect(enhancementSessionNet(session, price)).toBeNull();
     });
+
+    test('an unpriced base level falls back to its cost basis, the one net worth carries it at', () => {
+        // A craftable item nobody lists: no market at +0, a real market at +5.
+        // Net worth values the unpriced base at its material cost, so the run
+        // measured against that basis is exactly the net worth movement.
+        const marketOnly = (itemHrid, level) => (level === 5 ? 9000 : null);
+        const basis = (itemHrid, level) => (level === 0 ? 2000 : null);
+        const session = { itemHrid: '/items/handmade_cape', startLevel: 0, currentLevel: 5, totalCost: 3000 };
+
+        expect(enhancementSessionNet(session, marketOnly)).toBeNull();
+        expect(enhancementSessionNet(session, marketOnly, basis)).toBe(9000 - 2000 - 3000);
+    });
+
+    test('a high level the basis pricer declines still nulls the session', () => {
+        // The basis pricer only answers at level 0 — a material cost is a
+        // base-item figure — so an unpriced +20 is not mis-valued at it
+        const marketOnly = () => null;
+        const basis = (itemHrid, level) => (level === 0 ? 2000 : null);
+        const session = { itemHrid: '/items/handmade_cape', startLevel: 0, currentLevel: 20, totalCost: 10 };
+
+        expect(enhancementSessionNet(session, marketOnly, basis)).toBeNull();
+    });
+
+    test('a run that went nowhere on an unpriced item is its cost, not unvaluable', () => {
+        // Start and end both at the basis: the item's valuation did not move,
+        // and the account is down exactly what the run spent
+        const basis = (itemHrid, level) => (level === 0 ? 2000 : null);
+        const session = { itemHrid: '/items/handmade_cape', startLevel: 0, currentLevel: 0, totalCost: 500 };
+
+        expect(enhancementSessionNet(session, () => null, basis)).toBe(-500);
+    });
 });
 
 describe('marketplaceByDay', () => {
@@ -414,6 +445,21 @@ describe('attributeGoldSources', () => {
 
         expect(result.unpricedEnhancementSessions).toBe(1);
         expect(result.totals.sources.enhancement).toBe(9000 - 1000 - 1000);
+    });
+
+    test('the enhancement row reaches the cost-basis fallback the alchemy row gets', () => {
+        const result = attributeGoldSources({
+            ...base,
+            basisPrice: (itemHrid, level) =>
+                itemHrid === '/items/handmade_cape' && level === 0 ? 2000 : price(itemHrid, level),
+            enhancementSessions: [
+                // No market at +0; the basis prices it where net worth does
+                { startTime: D20, itemHrid: '/items/handmade_cape', startLevel: 0, currentLevel: 0, totalCost: 700 },
+            ],
+        });
+
+        expect(result.unpricedEnhancementSessions).toBe(0);
+        expect(result.totals.sources.enhancement).toBe(-700);
     });
 
     test('unpriceable alchemy inputs are counted, not silently valued at zero', () => {

@@ -434,15 +434,30 @@ export function alchemySessionNet(session, price, basisPrice = price) {
  * enhancement levels frequently have no market at all — returns null rather
  * than a number built on a missing half.
  *
+ * A level the market cannot price still gets the cost-basis fallback, the
+ * same one the alchemy input gets: net worth itself carries an unpriced BASE
+ * item at its material cost, so measuring the run against that basis is
+ * exactly the net worth movement the run caused — a craftable item nobody
+ * lists is not a session the panel has to give up on. The basis pricer only
+ * answers at level 0 (an expected value or a material cost is a base-item
+ * figure and a +8 is worth far more than its +0 materials), so an unpriced
+ * HIGH level still nulls the session rather than being mis-valued.
+ *
  * @param {Object} session - A stored enhancement session
  * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @param {Function} [basisPrice] - Deeper cost-basis lookup, tried where the
+ *   market is silent
  * @returns {number|null} Coins, which may be negative, or null when unpriceable
  */
-export function enhancementSessionNet(session, price) {
+export function enhancementSessionNet(session, price, basisPrice = price) {
     if (!session?.itemHrid) return null;
 
-    const from = price(session.itemHrid, num(session.startLevel));
-    const to = price(session.itemHrid, num(session.currentLevel ?? session.startLevel));
+    const startLevel = num(session.startLevel);
+    const endLevel = num(session.currentLevel ?? session.startLevel);
+    let from = price(session.itemHrid, startLevel);
+    if (!Number.isFinite(from)) from = basisPrice(session.itemHrid, startLevel);
+    let to = price(session.itemHrid, endLevel);
+    if (!Number.isFinite(to)) to = basisPrice(session.itemHrid, endLevel);
     if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
 
     return to - from - num(session.totalCost);
@@ -978,7 +993,7 @@ export function attributeGoldSources(input) {
     for (const session of enhancementSessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
-        const net = enhancementSessionNet(session, price);
+        const net = enhancementSessionNet(session, price, basisPrice);
         if (net === null) {
             if (inWindow.has(localDayId(t))) unpricedEnhancementSessions += 1;
             continue;
