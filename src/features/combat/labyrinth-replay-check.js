@@ -585,14 +585,30 @@ function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null, critRat
     // When the damage gap decomposes, name the half that is off: fewer hits than
     // predicted is an accuracy gap (the monster's evasion is under-modelled — a
     // buff like Guardian Aura); softer hits are a mitigation gap (its resistance
-    // or armour is under-modelled — a buff like Toughness).
+    // or armour is under-modelled — a buff like Toughness) OR a difference in
+    // what counted as a hit, which is not the same finding and is spelled out
+    // where the sentence is built below.
     const missingHits = hitRate?.verdict === 'below';
     const softHits = dmgPerHit?.verdict === 'below';
     // The crit tiebreaker on a soft-hit gap: crits are the player's own roll,
     // so a real crit rate under the sim's means the damage roll itself is
     // over-credited — the gap is not the monster's mitigation at all
     const fewCrits = critRate?.verdict === 'below';
-    const critsMatch = critRate?.verdict === 'consistent';
+    // "Consistent" is not "matches". A crit rate is measured over landed hits,
+    // so its band is the widest of the four — 15% is normal at a few hundred
+    // hits — and a real 12% shortfall sits inside it. Reading that as a
+    // positive result and printing "your crit rate matches" turns "the sample
+    // cannot tell" into evidence, and it pointed the Pyre Hunter diagnosis at
+    // the monster's mitigation (observed dmg/hit −6.26%, crit rate −11.97%
+    // against a 15.2% band) when the monster stat check had already shown its
+    // armour and all three resistances matching the game exactly. Only a
+    // deviation well inside its own band rules anything out.
+    const critsMatch =
+        critRate?.verdict === 'consistent' &&
+        Number.isFinite(critRate.deviationPct) &&
+        Number.isFinite(critRate.marginPct) &&
+        Math.abs(critRate.deviationPct) <= critRate.marginPct / 2;
+    const critsUndecided = critRate?.verdict === 'consistent' && !critsMatch;
     let because = '';
     if (missingHits && softHits) {
         because =
@@ -605,9 +621,26 @@ function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null, critRat
             ' — each hit lands softer than it predicts and you crit less than it predicts, so the sim over-credits ' +
             'your crits rather than under-modelling the monster';
     } else if (softHits) {
+        // Two mechanisms produce a soft-hit gap and this row cannot separate
+        // them. One is mitigation. The other is the hit MIX: a damage-over-time
+        // tick rings the monster's damage counter, so the recorder counts it as
+        // a landed hit and the sim counts its own DoT ticks the same way — and
+        // those ticks are a fraction of the blow that applied them. Against a
+        // Pyre Hunter at room 239 they were 24% of every hit landed at a mean of
+        // 81 against 219 for a swing, so a rotation the sim lands more or less
+        // often than you moves damage-per-hit by several percent with the
+        // monster's armour untouched. The monster stat check reads the armour
+        // and resistances straight off the game, which settles that half.
         because =
-            ' — each hit lands softer than it predicts, so its mitigation runs light (an unmodelled resistance/armour buff like Toughness)' +
-            (critsMatch ? '; your crit rate matches, which rules the crit roll out' : '');
+            ' — each hit lands softer than it predicts. Either its mitigation runs light (an unmodelled ' +
+            'resistance/armour buff like Toughness), or the sim lands a different mix of swings and ' +
+            'damage-over-time ticks than you do — both move damage per hit. Run the monster stat check on ' +
+            'this room to settle the mitigation half' +
+            (critsMatch
+                ? '; your crit rate matches, which rules the crit roll out'
+                : critsUndecided
+                  ? '; your crit rate reads low too but stays inside its band, so the crit roll is not ruled out'
+                  : '');
     }
 
     if (yourDamage === 'over' && monsterDamage === 'under') {

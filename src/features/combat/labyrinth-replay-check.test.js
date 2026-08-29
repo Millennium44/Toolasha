@@ -377,6 +377,45 @@ describe('the damage gap decomposes into accuracy and mitigation', () => {
             expect(result.diagnosis).toMatch(/rules the crit roll out/i);
         });
 
+        // The Pyre Hunter case (room levels 226-239, Aug 2026): damage per hit
+        // came in 6.26% under prediction while the crit rate came in 11.97%
+        // under with a 15.2% binomial band — "consistent" only because the band
+        // is wider than the gap. The diagnosis used to read that as a positive
+        // result and print "your crit rate matches, which rules the crit roll
+        // out", which is a claim the sample cannot support.
+        test('a crit rate that only just fits its band does not rule the crit roll out', () => {
+            // 15 fights x 40 hits = 600 hits at 22.5%, against a predicted
+            // 25.56% — a 12% shortfall inside a ~15% band
+            const wideBandLosses = Array.from({ length: 15 }, () =>
+                attempt({
+                    monsterMaxHp: 100000,
+                    monsterHpEnd: 92000,
+                    seconds: 50,
+                    playerHits: 40,
+                    playerMisses: 10,
+                    playerCrits: 9,
+                })
+            );
+            const result = compareLab(
+                deriveObserved(wideBandLosses)[0],
+                predictedLike({ dps: 200, dmgPerHit: 260, critRate: 0.2556 })
+            );
+            const crit = result.metrics.find((m) => m.key === 'critRate');
+            expect(crit.verdict).toBe('consistent');
+            expect(Math.abs(crit.deviationPct)).toBeGreaterThan(crit.marginPct / 2);
+            expect(result.diagnosis).not.toMatch(/rules the crit roll out/i);
+            expect(result.diagnosis).toMatch(/not ruled out/i);
+        });
+
+        test('a soft-hit gap names the hit mix beside the mitigation, and where to settle it', () => {
+            const result = compareLab(
+                deriveObserved(critLosses())[0],
+                predictedLike({ dps: 200, dmgPerHit: 260, critRate: 0.25 })
+            );
+            expect(result.diagnosis).toMatch(/damage-over-time/i);
+            expect(result.diagnosis).toMatch(/monster stat check/i);
+        });
+
         test('fights recorded before crits were kept contribute no crit data', () => {
             const [g] = deriveObserved(swingLosses()); // hits, no playerCrits
             expect(g.critRate).toBeNull();
