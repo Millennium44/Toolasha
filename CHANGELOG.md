@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skilling gets its own Time to Level, and combat targets stop following the account
+
+Three fixes around one report — a tailoring character's Time to Level tile pinned to "Melee: —":
+
+- A new **Skill Time to Level** tile reports the skill the front queued action trains, and nothing else: no Combat Level target can redirect it, and a combat or labyrinth action blanks it. The Skilling preset uses it now.
+- The Combat Level panel's target selection is stored **per character**; the old account-wide value (the leak itself) is discarded rather than inherited.
+- The original Time to Level tile no longer lets a target gaining nothing pin the tile while a skilling skill climbs — the target waits in the tooltip. Inside combat, a chosen target still always wins.
+
 ### Two preset tiles get the width their content needs
 
 Reviewed every shipped overlay preset against live data. The Labyrinth preset's Session tile and the Skilling preset's Total Profit tile were drawing at one column and truncating; both now take a full line (Treasure widens with Session to keep the labyrinth lines even).

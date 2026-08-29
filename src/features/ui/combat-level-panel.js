@@ -48,7 +48,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
-import { loadWhenReady } from '../../utils/deferred-load.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -291,12 +291,34 @@ const SELECTION_KEY = 'combatLevelSelection';
  */
 const COMBAT_TARGET = 'combat';
 
-// Fire and forget: the panel opens on today's defaults and settles a moment
-// later, which is the same trade `restoreGeometry` makes for the same reason
-// Kept asking until the database opens, which happens after the libraries are
-// evaluated — a read at module scope always returns the default, and the tile
-// silently reverts to whichever skill is going up fastest
-loadWhenReady(SELECTION_KEY, 'settings', (saved) => Object.assign(selection, saved), 'the target selection');
+/**
+ * Load this character's selection, replacing whatever character's was held.
+ *
+ * Scoped per character: a target is a choice about one character's skills, and
+ * under the old bare key a Melee target picked on the combat main followed the
+ * account onto every alt, pinning their Time to Level tiles to a skill gaining
+ * nothing. `migrate: 'discard'` drops any legacy bare-key value rather than
+ * adopting it, for the same reason — inheriting another character's target IS
+ * the leak being fixed.
+ *
+ * Fire and forget: the panel opens on today's defaults and settles a moment
+ * later, which is the same trade `restoreGeometry` makes for the same reason.
+ */
+async function reloadSelection() {
+    clearSelection();
+    try {
+        await storage.ready;
+        const saved = await readScoped(SELECTION_KEY, 'settings', null, { migrate: 'discard' });
+        if (saved) Object.assign(selection, saved);
+    } catch (error) {
+        console.error('[CombatLevel] Reading the target selection failed:', error);
+    }
+}
+
+// Once the character is known (a module-scope read would key on 'default'),
+// and again on every switch so one character's target never outlives them
+dataManager.on('character_initialized', reloadSelection);
+dataManager.on('character_switched', reloadSelection);
 
 /**
  * What the Target Selector and the share assignment are set to.
@@ -312,9 +334,9 @@ export function currentSelection() {
  */
 export function select(change) {
     Object.assign(selection, change);
-    storage
-        .setJSON(SELECTION_KEY, { ...selection }, 'settings')
-        .catch((error) => console.error('[CombatLevel] Saving the target failed:', error));
+    writeScoped(SELECTION_KEY, { ...selection }, 'settings').catch((error) =>
+        console.error('[CombatLevel] Saving the target failed:', error)
+    );
 }
 
 /** Forget the selection, so the defaults apply again. Exported for tests. */

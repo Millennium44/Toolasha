@@ -61,7 +61,12 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 
 // The selection is persisted, and IndexedDB is not what this file is about
 vi.mock('../../core/storage.js', () => ({
-    default: { getJSON: async () => null, setJSON: async () => {} },
+    default: { getJSON: async () => null, setJSON: async () => {}, ready: Promise.resolve() },
+}));
+vi.mock('../../utils/character-key.js', () => ({
+    readScoped: async () => null,
+    writeScoped: async () => true,
+    characterKey: (base) => `${base}_test`,
 }));
 
 /**

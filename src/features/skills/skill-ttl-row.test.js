@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ skills: [], table: [], dmHandlers: {} }));
+const game = vi.hoisted(() => ({ skills: [], table: [], dmHandlers: {}, actions: [], actionDetails: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -25,6 +25,8 @@ vi.mock('../../core/data-manager.js', () => ({
             if (game.dmHandlers[event] === handler) delete game.dmHandlers[event];
         },
         getCurrentCharacterId: () => 'char1',
+        getCurrentActions: () => game.actions,
+        getActionDetails: (hrid) => game.actionDetails[hrid],
     },
 }));
 
@@ -101,6 +103,8 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-02T12:00:00Z'));
     character();
+    game.actions = [];
+    game.actionDetails = {};
     clearSelection();
 });
 
@@ -175,6 +179,82 @@ describe('with a target chosen in the panel', () => {
 
         clearSelection();
         expect(draw()).toContain('Melee');
+    });
+});
+
+describe('a combat target yields the tile, but only to a skilling skill', () => {
+    function addSkill(name, level) {
+        game.skills.push({ skillHrid: `/skills/${name}`, level, experience: game.table[level] });
+    }
+
+    test('a target gaining nothing steps aside while tailoring climbs, and keeps the tooltip', () => {
+        addSkill('tailoring', 150);
+        select({ skill: 'melee', level: 140 });
+        train('tailoring', 1000000);
+
+        const container = document.createElement('div');
+        ttlRow.render(container);
+        expect(container.textContent).toContain('Tailoring 151');
+        expect(container.textContent).not.toContain('Melee');
+        expect(container.title).toContain('Target Melee 140 is set but gaining nothing');
+    });
+
+    test('with nothing climbing at all, the target holds the tile', () => {
+        select({ skill: 'melee', level: 140 });
+
+        const drawn = draw();
+        expect(drawn).toContain('Melee 140');
+        expect(drawn).toContain('—');
+    });
+});
+
+describe('the Skill Time to Level tile answers only for the queue', () => {
+    const skillingRow = registeredRows().find((row) => row.key === 'skillTimeToLevel');
+
+    function drawSkilling() {
+        const container = document.createElement('div');
+        skillingRow.render(container);
+        return container;
+    }
+
+    function queueTailoring() {
+        game.skills.push({ skillHrid: '/skills/tailoring', level: 150, experience: game.table[150] });
+        game.actions = [{ actionHrid: '/actions/tailoring/kraken_tunic', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/tailoring/kraken_tunic'] = { type: '/action_types/tailoring' };
+    }
+
+    test('it reports the queued skill with a measured time, and no target can redirect it', () => {
+        // The module-level history carries earlier tests' readings, and its
+        // sample throttle would swallow this test's second reading — start it
+        // the way a fresh character does
+        game.dmHandlers.character_switching();
+        queueTailoring();
+        select({ skill: 'melee', level: 140 });
+
+        drawSkilling();
+        grant('tailoring', 1000000);
+        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        const container = drawSkilling();
+
+        expect(container.textContent).toContain('Tailoring 151');
+        expect(container.textContent).not.toContain('Melee');
+        expect(container.title).toContain('xp/hr');
+    });
+
+    test('no rate yet shows the skill with a dash rather than nothing', () => {
+        queueTailoring();
+
+        const container = drawSkilling();
+        expect(container.textContent).toContain('Tailoring 151');
+        expect(container.textContent).toContain('—');
+    });
+
+    test('a combat action up front blanks it rather than borrowing combat numbers', () => {
+        train('melee', 1000000);
+        game.actions = [{ actionHrid: '/actions/combat/golem_cave', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/combat/golem_cave'] = { type: '/action_types/combat' };
+
+        expect(drawSkilling().textContent).toBe('');
     });
 });
 

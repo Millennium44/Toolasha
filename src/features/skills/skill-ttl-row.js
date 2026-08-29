@@ -37,7 +37,9 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { timeToNextLevel, fastestGaining, skillName } from '../../utils/skill-progress.js';
 import { createSkillHistory } from '../../utils/skill-history.js';
+import { COMBAT_SKILLS } from '../../utils/combat-level.js';
 import { combatLevelPanel, selectedTarget } from '../ui/combat-level-panel.js';
+import { activeSkillProgress } from './skill-level-row.js';
 
 /** How far back the rate is measured over */
 const WINDOW_MS = 10 * 60 * 1000;
@@ -120,10 +122,19 @@ registerRow({
         // fastest, which is not the question you asked by choosing a target —
         // and a selector that changes nothing you can see is a selector that
         // looks broken.
+        //
+        // Unless the target is gaining nothing while a *skilling* skill
+        // visibly climbs: then the target holds only the tooltip, not the
+        // tile. A combat target pinning "Melee: —" over a week of tailoring is
+        // a dead tile, which looks more broken than a selector that waits its
+        // turn. Only a non-combat skill can displace it — inside combat, a
+        // Defense target must keep the tile even when nothing is pointed at
+        // Defense yet, which is the selector bug this row was built to fix.
         const chosen = selectedTarget();
-        if (chosen) return drawChosen(container, chosen);
-
         const training = trainingSkill();
+        const skillingOver = !!training && !COMBAT_SKILLS.includes(training.name.toLowerCase());
+        if (chosen && (chosen.perHour || !skillingOver)) return drawChosen(container, chosen);
+
         if (!training) return blank(container);
 
         // At the cap there is no next level, which is a different answer from
@@ -146,6 +157,7 @@ registerRow({
         container.title =
             `${Math.round(training.xpPerHour).toLocaleString()} xp/hr over the last ten minutes.\n` +
             (training.seconds === null ? 'No next level — this skill is at the cap.' : 'Time to the next level.') +
+            (chosen ? `\nTarget ${chosen.name} ${chosen.target} is set but gaining nothing right now.` : '') +
             '\nDouble-click for every skill, with targets.';
     },
     // One line about the skill going up fastest; the panel behind it is the
@@ -189,3 +201,46 @@ function drawChosen(container, chosen) {
             : 'Nothing is pointed at this skill, so there is no time to give.') +
         '\nDouble-click to change it.';
 }
+
+registerRow({
+    key: 'skillTimeToLevel',
+    empty: 'No skilling action',
+    name: 'Skill Time to Level',
+    defaultSize: { width: 200, height: 30 },
+    // The same question as Time to Level, asked only of the queue. Where that
+    // row follows the fastest-gaining skill — combat included — and yields to
+    // the Combat Level panel's target, this one reports the skill the front
+    // queued action trains and nothing else: no target can redirect it, and a
+    // combat or labyrinth action blanks it rather than borrowing combat's
+    // numbers. The pairing keeps combat and skilling answers on separate tiles.
+    render: (container) => {
+        sample();
+
+        const active = activeSkillProgress();
+        if (!active) return blank(container);
+
+        const rate = history.rates()[active.hrid] || 0;
+        const atCap = active.remaining === null;
+        const seconds = !atCap && rate > 0 ? (active.remaining / rate) * 3600 : null;
+
+        row(container, [
+            // The level being worked towards, not the one in hand — except at
+            // the cap, where there is no next number to introduce
+            {
+                text: `${active.name} ${atCap ? active.level : active.level + 1}:`,
+                color: ROW_COLORS.gold,
+                ellipsis: true,
+            },
+            {
+                text: seconds === null ? '—' : shortDuration(seconds),
+                color: ROW_COLORS.accent,
+                push: true,
+            },
+        ]);
+        container.title = atCap
+            ? `${active.name} is at the level cap.`
+            : rate > 0
+              ? `${Math.round(rate).toLocaleString()} xp/hr over the last ten minutes.\nTime to ${active.name} ${active.level + 1}.`
+              : 'No experience rate measured yet — it settles within a minute of skilling.';
+    },
+});

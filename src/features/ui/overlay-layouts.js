@@ -312,7 +312,7 @@ export const PRESET_LAYOUTS = {
         // queue is worth running
         order: [
             'skillLevel',
-            'timeToLevel',
+            'skillTimeToLevel',
             'experiencePerHour',
             'queueTimeLeft',
             'coins',
