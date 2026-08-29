@@ -1579,15 +1579,22 @@ class EstimatedListingAge {
                     if (price === null) continue;
                     const quantity = this.parseQuantity(quantityText);
 
-                    // Find matching listing from YOUR listings
-                    const matchedListing = this.knownListings.find((listing) => {
+                    // Find matching listings from YOUR listings. Unlike matchesExpiredRow/
+                    // matchesBeyondTopRow this cannot also compare itemHrid or enhancementLevel
+                    // — the item is exactly what this branch is trying to learn, and no
+                    // enhancement badge is available without the current-item element that
+                    // sent us to TERTIARY in the first place. So two of your own listings for
+                    // different items that happen to share a price and a remaining quantity
+                    // are genuinely ambiguous here: return every match rather than only the
+                    // first, and only use it when they all agree on the item.
+                    const matches = this.knownListings.filter((listing) => {
                         const priceMatch = Math.abs(listing.price - price) < 0.01;
                         const qtyMatch = listing.orderQuantity - listing.filledQuantity === quantity;
                         return priceMatch && qtyMatch;
                     });
 
-                    if (matchedListing) {
-                        return matchedListing.itemHrid;
+                    if (matches.length > 0 && matches.every((listing) => listing.itemHrid === matches[0].itemHrid)) {
+                        return matches[0].itemHrid;
                     }
                 }
             }

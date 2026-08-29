@@ -1,9 +1,12 @@
 /**
  * Estimated Listing Age — the pure ID→timestamp estimation math and the
  * listing bookkeeping around it (status tracking, reconciliation, price/qty
- * text parsing). DOM injection (addAgeColumn, processOrderBook,
- * checkForExpiredListings) is not exercised here.
+ * text parsing), plus the TERTIARY `getCurrentItemHrid` DOM fallback. Most of
+ * the DOM injection (addAgeColumn, processOrderBook, checkForExpiredListings)
+ * is not exercised here.
  */
+
+/** @vitest-environment happy-dom */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
@@ -1301,5 +1304,51 @@ describe('matchesBeyondTopRow — disambiguating a your-listing row past the top
         const plusTen = { ...base, enhancementLevel: 10 };
         expect(matchesBeyondTopRow(plusTen, row)).toBe(false);
         expect(matchesBeyondTopRow(base, row)).toBe(true);
+    });
+});
+
+describe('getCurrentItemHrid — TERTIARY fallback via a Cancel row', () => {
+    /**
+     * Order-book DOM shape the TERTIARY branch reads: a container holding a
+     * table whose row carries a remaining-quantity cell, a `[class*="price"]`
+     * cell, and a "Cancel" button (the marker for "this row is one of yours").
+     */
+    function renderCancelRow({ quantity, price }) {
+        document.body.innerHTML = `
+            <div class="MarketplacePanel_orderBooksContainer">
+                <table><tbody><tr>
+                    <td>${quantity}</td>
+                    <td class="price">${price}</td>
+                    <td>Cancel</td>
+                </tr></tbody></table>
+            </div>`;
+    }
+
+    beforeEach(() => {
+        // Force past PRIMARY (no currentItem element in the DOM above) and
+        // SECONDARY (no WebSocket-tracked item) so only TERTIARY runs.
+        estimatedListingAge.currentItemHrid = null;
+    });
+
+    test('resolves the item when exactly one of your listings matches price and remaining quantity', () => {
+        knownAs([{ id: 1, itemHrid: '/items/sword', price: 100, orderQuantity: 5, filledQuantity: 0 }]);
+        renderCancelRow({ quantity: 5, price: 100 });
+
+        expect(estimatedListingAge.getCurrentItemHrid()).toBe('/items/sword');
+    });
+
+    test('does not guess an item when two different items collide on price and remaining quantity', () => {
+        // Nothing here disambiguates by item — this branch exists precisely to learn the
+        // item hrid, so it cannot filter on it the way matchesExpiredRow/matchesBeyondTopRow
+        // do. Two of your own listings for different items that happen to share a price and a
+        // remaining quantity must not resolve to whichever one .find() happens to hit first —
+        // that silently mislabels every order book row for the rest of this render.
+        knownAs([
+            { id: 1, itemHrid: '/items/sword', price: 100, orderQuantity: 5, filledQuantity: 0 },
+            { id: 2, itemHrid: '/items/shield', price: 100, orderQuantity: 5, filledQuantity: 0 },
+        ]);
+        renderCancelRow({ quantity: 5, price: 100 });
+
+        expect(estimatedListingAge.getCurrentItemHrid()).toBeNull();
     });
 });
