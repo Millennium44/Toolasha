@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 14: the captured Trial Stats modal stops leaking across guilds
+
+The scraped post-trial stats modal was cached by trial name alone, and neither a guild switch nor a character switch cleared it — so the arriving guild's scoreboard could reconcile against the departing guild's captured member totals for the same-named trial. The cache now resets on both paths, like every sibling cache already did.
+
 ### Round 14: listing-age's last-resort item match stops guessing on collision
 
 The order-book age column's tertiary fallback — matching a Cancel row's price and quantity against your listing log — returned the first hit, so two of your listings for different items sharing a price and remaining quantity mislabeled every row of the panel. It now trusts the match only when every candidate agrees on the item, and reports unknown otherwise, matching the enhancement-level guards its two sibling matchers got earlier.
