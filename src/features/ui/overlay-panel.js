@@ -81,6 +81,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -2926,7 +2927,13 @@ class OverlayPanel {
             // Left dim by a previous failure, the tile stays dim for every
             // successful render after it
             if (tile._content.style.color) tile._content.style.color = '';
+            // Timed per row, because the tick's total says the overlay was
+            // busy and only this says which tile — most rows have no
+            // `version()` and pay their full compute every second even when
+            // the draw-signature skip saves the DOM write
+            const drawStart = performance.now();
             row.render(tile._content);
+            performanceMonitor.record(`overlayRow:${row.key}`, performance.now() - drawStart);
             tile._version = version;
             // The content is new, so the height measured off the old content is
             // no longer an answer about this tile — see `_drawnHeight`

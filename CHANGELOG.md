@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The overlay tick names its slowest tile
+
+pformance's "Busiest" table showed the overlay's once-a-second refresh as one number (a startup trace put it at 89 ms a tick); each row's render is now timed under its own `overlayRow:` metric, so the next trace says which tile is spending it.
+
 ### Three more switch-and-teardown races closed
 
 A shrine plan edited in the last few hundred milliseconds before a character switch is now written instead of silently dropped (the reset used to beat the debounced save every time). Labyrinth room logs no longer leak the XP-grace timer past disable — the final room is reported during teardown rather than firing four seconds later into a torn-down module, possibly under the wrong character. And turning Iron Cow mode off during a character switch now deletes the snapshot it actually restored, not the arriving character's.
