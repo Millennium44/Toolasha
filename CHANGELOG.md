@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The lab replay shows the sim's damage mix, and decides what a soft-hit gap means
+
+Each replay group now carries the sim's per-source damage tally (auto attack, each ability, damage-over-time, mean and share of landed hits), drawn in the panel and included in the recording export, plus a "DoT ticks / swing" metric — recorded fights count their own DoT ticks from now on. With both sides measured, the diagnosis decides between its two candidate mechanisms instead of naming both: a matching mix rules the mix out and points at the damage roll; a mismatched one explains the soft hits without any unmodelled mitigation.
+
 ### A lab upgrade that pays for itself stops hiding its price
 
 The all-fights upgrade table read a negative cost — selling the replaced piece brings back more than the new one costs — as "no coin price", blanking the Cost and Per-1M cells and dropping the best-value row from the ranking (the budget planner had already learned this; the ranking hadn't). Such a row now shows its credit ("+17.7M back"), reads "pays for itself" in the value column, and sorts first among priced rows.
