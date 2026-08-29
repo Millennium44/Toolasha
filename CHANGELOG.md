@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 14: the dungeon and damage ledgers stop believing everything they read
+
+Four fixes from the combat-observability audit. The dungeon chat annotations no longer trust a hardcoded hash-suffixed selector (the one the normalization refactor missed) and no longer read a player typing "Key counts: […]" as a real run boundary — the same sender-name guard the tracker itself always had. The damage-taken tally no longer files a hit that landed in the same tick as a bigger heal as a miss, dropping both the hit and the heal. And the fallback DPS/DTPS readout resets between runs instead of blending every fight since the page loaded into one lifetime average.
+
 ### Round 14: the networth worker finally prices like the main thread
 
 Four proven divergences closed. The worker's craft-cost fallback honours the net worth pricing mode instead of always quoting ask; it matches any recipe output and divides by the batch size (a by-product priced at 0 and a batch recipe charged per whole batch before); the prices it receives are reconciled against the official market value the way the main thread's always were; and enhancement materials and protection items now get live prices fetched at all instead of falling to vendor values. Pinned by a main-vs-worker differential test running the real worker source against the real calculator.
