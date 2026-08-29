@@ -14,24 +14,13 @@
  *
  * Target: Header_actionName (inline with zone name, e.g. "Chimerical Den · Wave 5")
  * domObserver watches Header_actionName so the span is re-injected whenever
- * React replaces that element wholesale between waves or zone changes.
- *
- * That only fires on a full element replacement, though. Queuing another
- * action mid-combat makes React re-render the header's Header_currentAction
- * container without necessarily swapping out Header_actionName itself — it
- * can rewrite the row's children in place, which silently detaches our
- * appended span without ever inserting a new Header_actionName node for the
- * class observer to catch. Left alone, the chip stays gone until the next
- * new_battle message, which on live can be minutes away. A plain
- * MutationObserver on the container catches that case too, since it fires on
- * any child/text change rather than only a class-matching insertion.
+ * React replaces that element between waves or zone changes.
  */
 
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import { createMutationWatcher, hasExternalMutation } from '../../utils/dom-observer-helpers.js';
 
 const COUNTER_ID = 'mwi-battle-counter';
 const ACTION_NAME_SELECTOR = '[class*="Header_actionName"]';
@@ -43,8 +32,6 @@ class CombatBattleCounter {
         this.newBattleHandler = null;
         this.labyrinthHandler = null;
         this.unregisterObserver = null;
-        this._unwatchContainer = null;
-        this._watchedContainer = null;
         this.battleId = 0;
         this.currentWave = 0;
         this.isDungeon = false;
@@ -158,33 +145,10 @@ class CombatBattleCounter {
         this._injectOrUpdate();
     }
 
-    /**
-     * Watch the current-action container for changes React makes without
-     * replacing the container element itself — a re-render that swaps
-     * children/text in place, which `domObserver.onClass` cannot see because
-     * no new Header_actionName node is ever inserted.
-     * @param {Element} container
-     * @private
-     */
-    _watchContainer(container) {
-        if (this._watchedContainer === container) return;
-        this._unwatchContainer?.();
-        this._watchedContainer = container;
-        this._unwatchContainer = createMutationWatcher(
-            container,
-            (mutations) => {
-                if (hasExternalMutation(mutations)) this._injectOrUpdate();
-            },
-            { childList: true, subtree: true, characterData: true }
-        );
-    }
-
     _injectOrUpdate() {
         const currentAction = document.querySelector(CURRENT_ACTION_SELECTOR);
         const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);
         if (!currentAction || !nameRow) return;
-
-        this._watchContainer(currentAction);
 
         // The header title decides the variant: labyrinth fights are titled
         // "Labyrinth - <Monster>" (our appended counter text never contains
@@ -248,11 +212,6 @@ class CombatBattleCounter {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
             }
-            if (this._unwatchContainer) {
-                this._unwatchContainer();
-                this._unwatchContainer = null;
-            }
-            this._watchedContainer = null;
             document.getElementById(COUNTER_ID)?.remove();
             this.battleId = 0;
             this.currentWave = 0;

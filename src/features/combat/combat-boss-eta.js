@@ -20,13 +20,6 @@
  *
  * Target: same `Header_actionName` row the battle counter injects into, so
  * this reuses its `domObserver` watch point.
- *
- * That watch point only fires on a full element replacement. Queuing another
- * action mid-combat can make React rewrite the row's children in place
- * instead, silently detaching this chip without inserting a new
- * Header_actionName node — see combat-battle-counter.js for the fuller
- * explanation. A plain MutationObserver on the container, shared via
- * `createMutationWatcher`, catches that case too.
  */
 
 import webSocketHook from '../../core/websocket.js';
@@ -34,7 +27,6 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { battlesToBoss, addBattleGap, averageBattleMs, formatBossEta, bossEtaTooltip } from '../../utils/boss-eta.js';
-import { createMutationWatcher, hasExternalMutation } from '../../utils/dom-observer-helpers.js';
 
 const ETA_ID = 'mwi-boss-eta';
 const ACTION_NAME_SELECTOR = '[class*="Header_actionName"]';
@@ -51,8 +43,6 @@ class CombatBossEta {
         this._onActionsUpdated = null;
         this._onCharacterSwitching = null;
         this.unregisterObserver = null;
-        this._unwatchContainer = null;
-        this._watchedContainer = null;
 
         this._resetTracking();
     }
@@ -155,32 +145,10 @@ class CombatBossEta {
         this._injectOrUpdate();
     }
 
-    /**
-     * Watch the current-action container for changes React makes without
-     * replacing the container element itself — see combat-battle-counter.js's
-     * copy of this method for the full explanation.
-     * @param {Element} container
-     * @private
-     */
-    _watchContainer(container) {
-        if (this._watchedContainer === container) return;
-        this._unwatchContainer?.();
-        this._watchedContainer = container;
-        this._unwatchContainer = createMutationWatcher(
-            container,
-            (mutations) => {
-                if (hasExternalMutation(mutations)) this._injectOrUpdate();
-            },
-            { childList: true, subtree: true, characterData: true }
-        );
-    }
-
     _injectOrUpdate() {
         const currentAction = document.querySelector(CURRENT_ACTION_SELECTOR);
         const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);
         if (!currentAction || !nameRow) return;
-
-        this._watchContainer(currentAction);
 
         // Same guards as the battle counter: never show on a labyrinth fight
         // (no boss-cycle concept there) or beside a skilling action queued in
@@ -236,11 +204,6 @@ class CombatBossEta {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
             }
-            if (this._unwatchContainer) {
-                this._unwatchContainer();
-                this._unwatchContainer = null;
-            }
-            this._watchedContainer = null;
             this._reset();
         } catch (error) {
             console.error('[Combat Boss ETA] Disable failed part-way:', error);
