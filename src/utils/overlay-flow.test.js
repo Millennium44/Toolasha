@@ -487,8 +487,8 @@ describe('a real layout, exported from the build before the rework', () => {
         expect(Object.keys(v1.positions).length).toBeGreaterThan(0);
     });
 
-    test('is read as four columns, which its densest line needs', () => {
-        expect(migrate(v1).columns).toBe(4);
+    test('is read as five columns: the narrowest tile needs that fine a grid', () => {
+        expect(migrate(v1).columns).toBe(5);
     });
 
     test('keeps every line as it was, with the relative widths on it', () => {
@@ -496,15 +496,15 @@ describe('a real layout, exported from the build before the rework', () => {
         // roughly equal width, line two is a 170 beside a 120 and a 170, and
         // the two tall blocks are followed by their own right-hand columns
         expect(lines(migrate(v1))).toEqual([
-            ['battleTimer:1', 'experiencePerHour:1', 'deathsPerHour:1', 'combatStatus:1'],
-            ['combatRevenue:2', 'timeToLevel:1', 'houses:1'],
-            ['totalProfit:3', 'consumables:1'],
-            ['equipmentWatch:2', 'coins:1', 'marketListings:1'],
-            ['dps:1', 'overExpected:1', 'luck:1', 'watchlist:1'],
-            ['skillBooks:2', 'inventoryValue:2'],
-            ['manaPerFight:3', 'treasure:1'],
-            ['buildScore:1', 'netWorth:2', 'charmValue:1'],
-            ['replayCheck:4'],
+            ['battleTimer:1', 'experiencePerHour:1', 'deathsPerHour:1', 'combatStatus:2'],
+            ['combatRevenue:2', 'timeToLevel:1', 'houses:2'],
+            ['totalProfit:3', 'consumables:2'],
+            ['equipmentWatch:2', 'coins:2', 'marketListings:1'],
+            ['dps:1', 'overExpected:1', 'luck:1', 'watchlist:1', 'skillBooks:1'],
+            ['inventoryValue:5'],
+            ['manaPerFight:3', 'treasure:2'],
+            ['buildScore:1', 'netWorth:2', 'charmValue:2'],
+            ['replayCheck:5'],
         ]);
     });
 
@@ -520,7 +520,7 @@ describe('a real layout, exported from the build before the rework', () => {
             expect(v2.order).toContain(key);
         }
         // The one that is switched *on* is kept, even though it was in the pile
-        expect(v2.span.replayCheck).toBe(4);
+        expect(v2.span.replayCheck).toBe(5);
     });
 
     test('every visible tile is placed exactly once', () => {

@@ -544,8 +544,8 @@ describe('importing the layout a pre-rework build exported', () => {
         return overlayPanel._applyLayout(read, 'Import').then(() => {
             // The grid is told the layout's own column count, not the one the
             // last layout happened to use
-            expect(overlayPanel.settings.columns).toBe(4);
-            expect(overlayPanel.canvasEl.style.getPropertyValue('--overlay-columns')).toBe('4');
+            expect(overlayPanel.settings.columns).toBe(5);
+            expect(overlayPanel.canvasEl.style.getPropertyValue('--overlay-columns')).toBe('5');
 
             // And it is on screen, in the order the file described
             expect(drawn().slice(0, 4)).toEqual(['battleTimer', 'experiencePerHour', 'deathsPerHour', 'combatStatus']);

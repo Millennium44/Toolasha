@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reverted: the combat-chip header watcher froze tabs
+
+The fix that re-injected the battle counter and boss countdown after an in-place header rewrite watched the combat header with a mutation observer — which, on the game's constantly-ticking header, fed back into itself and could hard-freeze the tab within half a minute of combat. Reverted (bisected and confirmed against live combat); the chips still work and still re-inject on each new battle, so the only regression is the original small gap after queuing an action mid-combat. A safe re-implementation will follow. Also, tiles may now span up to five columns instead of four, which reads imported freeform layouts at a finer, truer grain.
+
 ### The overlay becomes a real grid
 
 The overlay's layout engine was replaced outright: tiles now live in a browser-native grid in reading order, with a column span and a natural height, instead of hand-placed pixel rectangles reconciled by five correction passes. Arranging is drag-to-reorder plus a right-edge width handle; overlaps, off-panel drops, and layout oscillation are structurally impossible now, and one saved arrangement is correct at every panel width (two columns by default, three when wide, one when narrow). Existing layouts migrate automatically — order and relative widths survive; the old data is kept untouched under its original key, so rolling back is just installing the previous version. Reset layout now asks first and restores the shipped Default; the gear popover says which layout is showing; Snap and Autogrid are gone because the grid does their jobs. Net: about 1,700 lines of layout machinery deleted. Freeform pixel placement is retired — that's the one deliberate loss.
