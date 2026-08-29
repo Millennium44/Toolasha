@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 15: the equipped-copy rule reaches equipment savings, and the optimizer confesses its guesses
+
+The audit fleet's third find of the equipped-copy bug family: the equipment savings panel treated a worn piece with no count field as unowned, pricing the run from a lower bag duplicate instead of the cape on your back. And the skilling optimizer's Equipment Progression table now carries the "leans on an unpriced material" warning the tea stats already had — an item can no longer top a slot on a free-material guess with nothing on screen saying so. The tasks and notifications families both passed their audits clean.
+
 ### The round-14 leftovers, closed
 
 Three items the audits flagged as their own pieces of work. Guild trial forecasts stop merging two characters' own stats: the personal half of the shared guild record is per-character now, with the un-split legacy figures adopted by the first character that reads them so nothing is orphaned — plus the trial-abilities pre-name fallback goes per-character like its siblings, and the current overlay layout key joins the repair tool's registry. The task reroll-shield thresholds get the honest migration: an alt no longer inherits the main's caps through the never-deleted bare keys, the main adopts them once through the consent flow, and the repair tool covers all three. And a refactor along the way was caught adding a microtask hop to scoped reads that reordered a ledger load — absent legacy values answer synchronously again.
