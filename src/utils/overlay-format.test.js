@@ -263,3 +263,55 @@ describe('glyphs, as the game draws them or as text', () => {
         expect(glyph('nonsense')).toEqual({ text: '' });
     });
 });
+
+describe('the identical-draw fast path', () => {
+    test('an identical draw keeps the same nodes rather than rebuilding them', () => {
+        const container = document.createElement('div');
+        row(container, [
+            { text: 'Coins', color: '#fff' },
+            { text: '43T', push: true },
+        ]);
+        const line = container.firstChild;
+
+        row(container, [
+            { text: 'Coins', color: '#fff' },
+            { text: '43T', push: true },
+        ]);
+        expect(container.firstChild).toBe(line);
+    });
+
+    test('a changed segment rebuilds', () => {
+        const container = document.createElement('div');
+        row(container, [{ text: '43T' }]);
+        const line = container.firstChild;
+
+        row(container, [{ text: '44T' }]);
+        expect(container.firstChild).not.toBe(line);
+        expect(container.textContent).toBe('44T');
+    });
+
+    test('a caller that appended its own extras is rebuilt, not skipped over them', () => {
+        // The child count is part of the comparison: a container no longer
+        // holding exactly what the helper drew gets the full rebuild it always
+        // got, so nothing stale survives and nothing appended is duplicated
+        const container = document.createElement('div');
+        row(container, [{ text: 'DPS' }]);
+        container.appendChild(document.createElement('span'));
+
+        row(container, [{ text: 'DPS' }]);
+        expect(container.childElementCount).toBe(1);
+        expect(container.textContent).toBe('DPS');
+    });
+
+    test('rows() diffs too, and switching shape redraws', () => {
+        const container = document.createElement('div');
+        rows(container, [[{ text: 'a' }], [{ text: 'b' }]]);
+        const first = container.firstChild;
+        rows(container, [[{ text: 'a' }], [{ text: 'b' }]]);
+        expect(container.firstChild).toBe(first);
+
+        row(container, [{ text: 'a' }]);
+        expect(container.textContent).toBe('a');
+        expect(container.childElementCount).toBe(1);
+    });
+});

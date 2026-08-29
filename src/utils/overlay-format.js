@@ -328,7 +328,50 @@ export function drawLine(host, segments) {
  *   a price read as one phrase, and pushing the price to the far edge of a
  *   resized tile puts a gap in the middle of it.
  */
+/**
+ * Whether the container already shows exactly this draw, recording it if not.
+ *
+ * The overlay redraws every visible tile once a second, and most tiles say the
+ * same thing they said last second — a net worth, a queue, a coin count. Under
+ * `replaceChildren` every one of those identical draws still tore down and
+ * rebuilt its nodes, and the style and layout work that followed is what made
+ * the game's own progress bars stutter once a second. Segments are plain data,
+ * so an identical draw can be recognised before any node is touched.
+ *
+ * The child count is part of the check: a row that appends its own extras after
+ * calling `row()` changes the count, fails the comparison on the next tick, and
+ * gets the full rebuild it always got — this fast path only ever applies to a
+ * container holding exactly what the helper drew.
+ *
+ * @param {HTMLElement} container - The row's container
+ * @param {string} kind - Which helper is asking, so their signatures never collide
+ * @param {*} payload - The draw, as JSON-serialisable data
+ * @returns {boolean} True when the previous draw was identical and still intact
+ */
+function unchangedDraw(container, kind, payload) {
+    let signature;
+    try {
+        signature = kind + JSON.stringify(payload);
+    } catch {
+        return false;
+    }
+    if (container._overlayDrawSig === signature && container.childElementCount === container._overlayDrawKids) {
+        return true;
+    }
+    container._overlayDrawSig = signature;
+    return false;
+}
+
+/**
+ * Remember what a completed draw left in the container.
+ * @param {HTMLElement} container - The row's container
+ */
+function recordDraw(container) {
+    container._overlayDrawKids = container.childElementCount;
+}
+
 export function row(container, segments, { center = false } = {}) {
+    if (unchangedDraw(container, 'row', [segments, center])) return;
     container.replaceChildren();
 
     // The line goes in a box of its own height, and that box sits at the top of
@@ -352,6 +395,7 @@ export function row(container, segments, { center = false } = {}) {
     // resized tile puts a gap in the middle of it
     if (center) line.style.justifyContent = 'center';
     container.appendChild(line);
+    recordDraw(container);
 }
 
 /**
@@ -373,6 +417,7 @@ export function row(container, segments, { center = false } = {}) {
  * @param {boolean} [options.align] - Share columns between the lines
  */
 export function rows(container, lines, { align = false } = {}) {
+    if (unchangedDraw(container, 'rows', [lines, align])) return;
     container.replaceChildren();
 
     const drawn = lines.filter((segments) => segments?.length);
@@ -398,6 +443,7 @@ export function rows(container, lines, { align = false } = {}) {
         drawLine(line, segments);
         container.appendChild(line);
     }
+    recordDraw(container);
 }
 
 /**
@@ -456,11 +502,14 @@ function alignedRows(container, lines) {
             container.appendChild(span);
         }
     }
+    recordDraw(container);
 }
 
 /** Draw nothing, for a row with nothing to say yet */
 export function blank(container) {
+    if (unchangedDraw(container, 'blank', 0)) return;
     container.replaceChildren();
+    recordDraw(container);
 }
 
 /**

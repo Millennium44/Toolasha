@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The overlay stops repainting tiles that have nothing new to say
+
+The once-a-second refresh rebuilt every visible tile's DOM even when it read exactly the same — and the style and layout work that followed is what made the game's own progress bars stutter once a second. The shared tile renderers now recognise an identical draw from its data and leave the nodes alone; a tile whose value changed, or that draws its own extras, still gets the full rebuild.
+
 ### Skilling gets its own Time to Level, and combat targets stop following the account
 
 Three fixes around one report — a tailoring character's Time to Level tile pinned to "Melee: —":
