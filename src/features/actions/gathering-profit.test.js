@@ -423,13 +423,12 @@ describe('calculateGatheringProfit — bonus revenue and edge cases', () => {
         expect(result.profitPerHour).toBeCloseTo(74000 * (1 - MARKET_TAX), 6);
     });
 
-    test('the displayed bonus-revenue breakdown matches what efficiency actually adds to profit', async () => {
-        // Same setup as the case above: efficiency doubles the bonus-revenue contribution
-        // to profitPerHour (1,000 → 2,000). The breakdown handed back for display —
-        // totalBonusRevenue and each bonusDrops entry — must show that same doubled
-        // number, not the pre-efficiency 1,000 the mocked calculator returned, or the
-        // panel's "Bonus revenue: X/hour" line would silently understate what the
-        // headline profit number already includes.
+    test('the returned bonusRevenue stays at base actions/hour (display scales it itself)', async () => {
+        // profitPerHour folds in efficiency (1,000 → 2,000, per the case above), but the
+        // bonusRevenue object handed back is deliberately left at the calculator's raw,
+        // pre-efficiency rate: profit-display.js's getBonusDropPerHourTotals(drop,
+        // efficiencyMultiplier) is what applies efficiencyMultiplier for display, and it
+        // would double it if this object were already scaled.
         buffs.bonusRevenue = {
             ...noBonusRevenue(),
             totalBonusRevenue: 1000,
@@ -453,9 +452,9 @@ describe('calculateGatheringProfit — bonus revenue and edge cases', () => {
 
         const result = await calculateGatheringProfit(COW);
 
-        expect(result.bonusRevenue.totalBonusRevenue).toBeCloseTo(2000, 6);
-        expect(result.bonusRevenue.bonusDrops[0].revenuePerHour).toBeCloseTo(2000, 6);
-        expect(result.bonusRevenue.bonusDrops[0].dropsPerHour).toBeCloseTo(20, 6);
+        expect(result.bonusRevenue.totalBonusRevenue).toBeCloseTo(1000, 6);
+        expect(result.bonusRevenue.bonusDrops[0].revenuePerHour).toBeCloseTo(1000, 6);
+        expect(result.bonusRevenue.bonusDrops[0].dropsPerHour).toBeCloseTo(10, 6);
     });
 
     test('missing bonus-drop prices propagate to hasMissingPrices', async () => {

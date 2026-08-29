@@ -293,23 +293,13 @@ export async function calculateGatheringProfit(actionHrid) {
         }
     }
 
-    // Calculate bonus revenue from essence and rare find drops
-    const rawBonusRevenue = calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap);
+    // Calculate bonus revenue from essence and rare find drops. This is intentionally returned
+    // as-is (base actions/hour, not efficiency-scaled): profit-display.js's bonusDrops rendering
+    // depends on that and re-applies efficiencyMultiplier itself via getBonusDropPerHourTotals.
+    const bonusRevenue = calculateBonusRevenue(actionDetail, actionsPerHour, equipment, gameData.itemDetailMap);
 
-    // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls).
-    // The scaled totals/drops (not rawBonusRevenue) are what gets returned to the caller, so the
-    // "Bonus revenue" breakdown shown to the player matches what profitPerHour actually includes —
-    // rawBonusRevenue.totalBonusRevenue alone would silently understate it by efficiencyMultiplier.
-    const efficiencyBoostedBonusRevenue = rawBonusRevenue.totalBonusRevenue * efficiencyMultiplier;
-    const bonusRevenue = {
-        ...rawBonusRevenue,
-        totalBonusRevenue: efficiencyBoostedBonusRevenue,
-        bonusDrops: rawBonusRevenue.bonusDrops.map((drop) => ({
-            ...drop,
-            dropsPerHour: drop.dropsPerHour * efficiencyMultiplier,
-            revenuePerHour: drop.revenuePerHour * efficiencyMultiplier,
-        })),
-    };
+    // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
+    const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
 
     const revenuePerHour =
         baseRevenuePerHour + gourmetRevenueBonus + processingRevenueBonus + efficiencyBoostedBonusRevenue;
