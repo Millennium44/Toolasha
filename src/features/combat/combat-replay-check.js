@@ -1665,6 +1665,14 @@ class ReplayCheck {
         this.running = false;
         this.error = null;
         this.progress = 0;
+        // Bumped by `disable()`. `check()` runs a 12-simulated-hour
+        // `runSimulation` behind one `await`, which a character switch's
+        // synchronous `disable()` has every chance of landing inside of — the
+        // switch does not wait for this to unwind. Captured before that await
+        // and compared after it, so a superseded check discards its result
+        // instead of writing the departing character's numbers, and their
+        // storage, as though they were whoever the overlay shows next.
+        this.generation = 0;
         // The full SimResult behind the latest comparison, kept so downstream
         // decompositions (the zone uptime harness) can read its per-ability
         // attack histograms without paying for a second simulation.
@@ -1979,6 +1987,7 @@ class ReplayCheck {
     async check() {
         if (this.running) return this.comparison;
 
+        const generation = this.generation;
         const observed = this.observed();
         if (!observed) {
             this.error = 'Nothing recorded yet — press Record during a fight.';
@@ -2031,6 +2040,11 @@ class ReplayCheck {
                     this.progress = percent;
                 }
             );
+
+            // A character switch's disable() ran while the simulation was in
+            // flight — this run is for a character that has already left, and
+            // must not appear as this one's, or be written to its storage.
+            if (generation !== this.generation) return null;
 
             this.lastSimResult = simResult;
             this.comparison = compareRun(observed, predictFromSim(simResult));
@@ -2112,6 +2126,7 @@ class ReplayCheck {
     }
 
     disable() {
+        this.generation += 1;
         this.detach?.();
         this.detachCheckpoint?.();
         this.detachStopped?.();

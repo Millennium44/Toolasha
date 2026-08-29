@@ -29,6 +29,8 @@ const game = vi.hoisted(() => ({
     zone: { zoneHrid: '/actions/combat/fly', difficultyTier: 0 },
     lastRun: null,
     simResult: {},
+    /** Set to a pending promise to park `runSimulation` mid-flight */
+    runGate: null,
     /** data-manager event → handlers, so a test can fire a character switch */
     characterHandlers: new Map(),
 }));
@@ -97,6 +99,10 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runSimulation: async (options) => {
         game.lastRun = options;
+        // A test can arm `game.runGate` to park the simulation mid-flight —
+        // long enough to fire a character switch before it resolves, which is
+        // the shape a real 12-simulated-hour run gives a real switch every time.
+        if (game.runGate) await game.runGate;
         return game.simResult;
     },
 }));
@@ -194,6 +200,7 @@ beforeEach(() => {
     game.zone = { zoneHrid: '/actions/combat/fly', difficultyTier: 0 };
     game.lastRun = null;
     game.simResult = {};
+    game.runGate = null;
     replayCheck.observations = [];
     replayCheck.history = [];
     replayCheck.comparison = null;
@@ -1168,6 +1175,39 @@ describe('a character switch', () => {
         // no-op against the stale `watching` flag
         replayCheck.ensureWatching();
         expect(replayCheck.watching).toBe(true);
+    });
+
+    test('a check still in flight does not land its result under the character that arrives next', async () => {
+        // `check()` awaits a 12-simulated-hour `runSimulation` call, which on a
+        // real switch has every chance of still being in flight when
+        // `character_switching` fires and `disable()` runs synchronously.
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+        let releaseSim;
+        game.runGate = new Promise((resolve) => {
+            releaseSim = resolve;
+        });
+        game.simResult = {
+            simulatedTime: 3600 * 1e9,
+            encounters: 360,
+            deaths: {},
+            totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+            warnings: [],
+        };
+
+        const pending = replayCheck.check();
+
+        // The switch: tears the feature down while the simulation is parked
+        emitCharacter('character_switching', {});
+        expect(replayCheck.comparison).toBeNull();
+
+        releaseSim();
+        await pending;
+
+        // The departing character's comparison must not appear as though it
+        // belongs to whoever the overlay is showing now, and must not have
+        // been written to the storage key the arriving character reads from.
+        expect(replayCheck.comparison).toBeNull();
+        expect(replayCheck.lastSimResult).toBeNull();
     });
 });
 
