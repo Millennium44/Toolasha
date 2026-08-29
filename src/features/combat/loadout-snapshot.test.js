@@ -151,6 +151,27 @@ describe('a whole loadout at once', () => {
         expect(loadoutSnapshot.resolveEquipment(null)).toEqual([]);
         expect(loadoutSnapshot.resolveEquipment({})).toEqual([]);
     });
+
+    test('getSnapshotForSkill wears the resolved levels, not the stored ones', () => {
+        // The path every calculator reads gear through. Unresolved, the
+        // enhancing outfit was quoted at the level it had when the loadout was
+        // last saved — +12 gear the character had long since taken to +20.
+        game.items = [owned(CAPE, 20)];
+        const store = new loadoutSnapshot.constructor();
+        store.snapshotsReady = true;
+        store.snapshots = {
+            Enhancing: {
+                name: 'Enhancing',
+                actionTypeHrid: '/action_types/enhancing',
+                isDefault: true,
+                useExactEnhancement: false,
+                equipment: [{ itemLocationHrid: '/item_locations/back', itemHrid: CAPE, enhancementLevel: 12 }],
+            },
+        };
+
+        const map = store.getSnapshotForSkill('/action_types/enhancing');
+        expect(map.get('/item_locations/back').enhancementLevel).toBe(20);
+    });
 });
 
 /**

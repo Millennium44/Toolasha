@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loadout gear is quoted at the level you own, everywhere
+
+The map every calculator wears — enhancement predictions, profit tables — came from the loadout snapshot's stored levels, frozen at whatever the gear was when the loadout was last saved. The resolver that takes each slot to the highest copy owned existed but this path skipped it, so an enhancing outfit long since taken to +20 was still quoted at +12. Loadouts pinned with "use exact enhancement" keep their frozen level, as before.
+
 ### The gold panel's cost bases fall back before giving up
 
 Alchemy outputs get the same fallback as the input, which is what makes the books balance: transmuting a cape into another unpriced cape used to charge the full material cost going in and credit nothing coming out, so cycling one cape three times read as three capes lost. Priced symmetrically, a returned item cancels a consumed one and only the real loss nets.

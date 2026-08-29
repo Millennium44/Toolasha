@@ -386,7 +386,13 @@ class LoadoutSnapshot {
     getSnapshotForSkill(actionTypeHrid) {
         const snapshot = this._findSnapshot(actionTypeHrid);
         if (!snapshot || !snapshot.equipment?.length) return null;
-        return new Map(snapshot.equipment.map((e) => [e.itemLocationHrid, e]));
+        // Through resolveEquipment, not the raw stored levels: this is the map
+        // the enhancement and profit calculators wear, and reading it literally
+        // quoted the enhancing outfit at the level it had when the loadout was
+        // last saved — +12 gear the character had long since taken to +20
+        // (reported 2026-08-29). Exact-pinned loadouts keep their frozen level
+        // inside the resolver.
+        return new Map(this.resolveEquipment(snapshot).map((e) => [e.itemLocationHrid, e]));
     }
 
     /**
