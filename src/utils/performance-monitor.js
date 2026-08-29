@@ -442,6 +442,12 @@ const performanceMonitor = new PerformanceMonitor();
 const TIMER_TRACE_INTERNALS = new Set(['timerCallSite', 'traced', 'tracedTimeout', 'installIntervalTracing']);
 
 export function timerCallSite(stack = new Error().stack || '') {
+    // The wrapper shares the page's window, so the page's own timers land in
+    // this net too — and an 80ms game interval wearing one of our labels sent
+    // the 2026-08-29 trial hunt chasing `create@34705` through our bundle.
+    // The skipped internal frames below carry THIS script's URL in the very
+    // stack being parsed; a reported frame from any other file is the page's.
+    let ownSource = null;
     for (const raw of stack.split('\n')) {
         const line = raw.trim();
         if (!line || line === 'Error') continue;
@@ -451,16 +457,22 @@ export function timerCallSite(stack = new Error().stack || '') {
         // them into the name test used to drop the name to "anon".
         // Firefox: "name@url:line:col", an empty name for anonymous frames,
         // and an "async*" prefix on awaiting callers.
-        const chrome = /^at (?:async )?(?:new )?(?:(\S+) \()?.*?(\d+):\d+\)?$/.exec(line);
-        const firefox = /^(?:async\*)?([^@\s]*)@.*?(\d+):\d+$/.exec(line);
+        const chrome = /^at (?:async )?(?:new )?(?:(\S+) \()?(.*?):(\d+):\d+\)?$/.exec(line);
+        const firefox = /^(?:async\*)?([^@\s]*)@(.*?):(\d+):\d+$/.exec(line);
         const match = chrome || firefox;
         if (!match) continue;
         // "Proxy.traced" / "Object.installIntervalTracing" — the qualifier is
         // the call shape, not the function; strip it before the internals check
         let name = (match[1] || '').split('.').pop() || '';
         if (name === '<anonymous>') name = '';
-        if (TIMER_TRACE_INTERNALS.has(name)) continue;
-        return `${name || 'anon'}@${match[2]}`;
+        if (TIMER_TRACE_INTERNALS.has(name)) {
+            ownSource = match[2];
+            continue;
+        }
+        // Containment rather than equality: an eval frame wraps the source
+        // URL in "eval at …" / "line 10 > eval" but is still this script
+        const foreign = ownSource !== null && !match[2].includes(ownSource);
+        return `${name || 'anon'}@${match[3]}${foreign ? ' (page)' : ''}`;
     }
     return 'unknown';
 }

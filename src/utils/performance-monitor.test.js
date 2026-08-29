@@ -475,6 +475,24 @@ describe('timerCallSite parsing (synthetic stacks)', () => {
         expect(timerCallSite(stack)).toBe('anon@88');
     });
 
+    test("a frame from another file is tagged as the page's, both stack formats", () => {
+        // The wrapper shares the page's window, so game timers land in the
+        // net too — an 80ms game interval wearing a bare label sent a stall
+        // hunt through our bundle for a call site that was never in it
+        const chrome = [
+            'Error',
+            '    at traced (https://host/toolasha.user.js:120:20)',
+            '    at create (https://game.example/bundle.js:34705:5)',
+        ].join('\n');
+        expect(timerCallSite(chrome)).toBe('create@34705 (page)');
+
+        const firefox = [
+            'traced@https://host/toolasha.user.js:120:20',
+            'create@https://game.example/bundle.js:34705:5',
+        ].join('\n');
+        expect(timerCallSite(firefox)).toBe('create@34705 (page)');
+    });
+
     test('Chrome: an eval frame is parsed without crashing and keeps a line number', () => {
         const stack = [
             'Error',
