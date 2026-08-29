@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial-signups fold keeps its promise
+
+"Remembered across reloads" said the tooltip, but the remembered state loaded a beat after the block drew and was never applied — production reloads always came back unfolded. The remembered fold now lands when it arrives, unless the user has already toggled by hand. Alongside: dragging a game modal captures the pointer (releasing the mouse outside the window no longer glues the modal to the cursor), and tab reordering was proven immune to that bug by its first tests — native drag-and-drop cleans itself up.
+
 ### Round 15: sync stops losing the last few seconds, and the enhancement math converges
 
 Five sync fixes, all real data-loss shapes: a pull now quiesces the write queue before folding (an entry recorded seconds before a pull was computed out of the union and overwritten); the handoff and on-switch pushes flush first so the other device never receives a truncated copy; the shared market-listing age anchors are merged instead of overwritten; the restore latch now covers the bulk write path the in-memory recorders actually flush through; and a chunked history still on its legacy key merges instead of being replaced wholesale.
