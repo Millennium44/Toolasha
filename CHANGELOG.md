@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial's Party DPS stops double-counting the swarm
+
+Replaying a real hour-long trial trace against the game's own end-of-trial totals showed the per-player split was accurate to 0.015% — and Party DPS was 2.4× too high, because the tick stream delivers only the monsters that changed and the pool reader priced "the wave" off whichever subset arrived, tripping the boss-cleared detector 112 times across 20 actual waves. The pool now holds each slot's last known bar for the whole wave, seeded at the wave start. Party DPS on a swarm drops to the split's figure, the "Split disagrees" row stops appearing there, and kill-in/on-pace projections move with it. The stats block also wraps to a full-width row under a four-monster wave instead of forcing a horizontal scrollbar, and the fight view is swept once a second instead of on every trial tick.
+
 ### The overlay tick got its memos, and the trace stops blaming us for the game's timers
 
 Fourteen overlay rows now summarise their inputs and skip their whole render when nothing moved — Equipment Watch (the measured 85% of one tick), the combat-stats rows, net worth, watchlist, houses, build score, charms, treasure, and task tokens; the consumables row also stops re-forecasting every party member's slots each second. Time-varying tiles (clocks, countdowns) and rows whose read has a sampling side effect are deliberately left live. Separately, the timer tracer now labels a page-owned timer "(page)" — the biggest stall in the trial trace was the game's own 80–105ms interval wearing one of our labels.
