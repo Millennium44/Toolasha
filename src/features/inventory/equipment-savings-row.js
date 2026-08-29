@@ -1101,7 +1101,11 @@ function cheapestProtection(itemHrid, priceOf) {
 function highestOwnedLevel(itemHrid) {
     let best = null;
     for (const item of dataManager.getInventory?.() || []) {
-        if (item.itemHrid !== itemHrid || !(item.count > 0)) continue;
+        // Equipped copies don't reliably carry a count field the way stacked
+        // inventory items do — requiring count > 0 dropped them, so the piece
+        // on your back read as unowned. Skip only an explicit zero (a consumed
+        // stack), matching highestOwnedEnhancements in loadout-snapshot.js.
+        if (item.itemHrid !== itemHrid || item.count === 0) continue;
         const level = item.enhancementLevel || 0;
         if (best === null || level > best) best = level;
     }
@@ -1128,7 +1132,9 @@ function highestOwnedLevel(itemHrid) {
 function ladderStart(itemHrid) {
     const levels = [];
     for (const item of dataManager.getInventory?.() || []) {
-        if (item.itemHrid !== itemHrid || !(item.count > 0)) continue;
+        // Same equipped-copy caveat as highestOwnedLevel above: only an
+        // explicit zero disqualifies an entry.
+        if (item.itemHrid !== itemHrid || item.count === 0) continue;
         const level = item.enhancementLevel || 0;
         levels.push(level);
         // A stack of two is two copies, and the second one is the spare

@@ -1184,6 +1184,26 @@ describe('the ladder', () => {
 
         expect(watchedTargets()[0].ladder).toBeNull();
     });
+
+    test('an equipped copy with no count field still counts as owned', () => {
+        // Equipped pieces don't reliably carry a count field the way stacked
+        // inventory items do (see loadout-snapshot.js highestOwnedEnhancements
+        // and the custom-tabs binding-sync fix for the same family of bug).
+        // Replace the +5 worn copy with one that has no `count` at all.
+        game.inventory = game.inventory.filter((item) => item.itemLocationHrid !== '/item_locations/back');
+        game.inventory.push({
+            itemHrid: '/items/sinister_cape',
+            itemLocationHrid: '/item_locations/back',
+            enhancementLevel: 5,
+        });
+        watchTarget('/items/sinister_cape', 7);
+        const target = watchedTargets()[0];
+
+        // Direct cost should still count from the equipped +5, not treat it as
+        // unowned and price from +0
+        expect(target.fromLevel).toBe(5);
+        expect(target.cost).toBe(44_000_000);
+    });
 });
 
 describe('which run the card is saving towards', () => {
