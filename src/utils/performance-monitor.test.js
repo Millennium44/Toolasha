@@ -149,6 +149,54 @@ describe('PerformanceMonitor', () => {
     });
 });
 
+describe('measurement history bounds', () => {
+    beforeEach(() => {
+        performanceMonitor.reset();
+        performanceMonitor.enabled = true;
+        performanceMonitor._tabVisible = true;
+    });
+
+    test('a metric never read between stat pulls stays bounded per name', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        // An enabled session with the panel closed: hours of ticks, no reads
+        for (let i = 0; i < 2500; i++) {
+            vi.setSystemTime(1000 + i);
+            performanceMonitor.record('interval:busy@1', 2);
+        }
+        expect(performanceMonitor.measurements.get('interval:busy@1').length).toBeLessThanOrEqual(1000);
+        vi.useRealTimers();
+    });
+
+    test('bounding prefers dropping entries the rolling window no longer covers', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        for (let i = 0; i < 1200; i++) {
+            performanceMonitor.record('interval:old@1', 2);
+        }
+        // Move past the window, then one more record triggers the prune
+        vi.setSystemTime(performanceMonitor.windowMs + 1);
+        performanceMonitor.record('interval:old@1', 7);
+
+        const entries = performanceMonitor.measurements.get('interval:old@1');
+        expect(entries.length).toBe(1);
+        expect(entries[0].duration).toBe(7);
+        vi.useRealTimers();
+    });
+
+    test('the freshest entries survive the cap, so stats stay correct', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        for (let i = 0; i < 1500; i++) {
+            performanceMonitor.record('interval:hot@1', 1);
+        }
+        performanceMonitor.record('interval:hot@1', 99);
+        const entries = performanceMonitor.measurements.get('interval:hot@1');
+        expect(entries[entries.length - 1].duration).toBe(99);
+        vi.useRealTimers();
+    });
+});
+
 describe('stall attribution', () => {
     beforeEach(() => {
         performanceMonitor.reset();

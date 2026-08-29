@@ -7,6 +7,15 @@
 const WINDOW_MS = 5000;
 
 /**
+ * Hard ceiling on entries kept per metric. Stale entries are pruned when the
+ * stats are read, but a session with measuring on and the panel closed never
+ * reads them — a busy interval would otherwise grow its array all afternoon.
+ * The rolling window rarely holds more than a few hundred entries, so the cap
+ * never bites a metric that is actually being watched.
+ */
+const MAX_ENTRIES_PER_METRIC = 1000;
+
+/**
  * When the script started, as the clock the rest of the timings are quoted
  * against. `performance.now()` is already relative to page navigation, but the
  * userscript runs at document-start and the difference matters when the
@@ -44,7 +53,21 @@ class PerformanceMonitor {
         if (!this.measurements.has(name)) {
             this.measurements.set(name, []);
         }
-        this.measurements.get(name).push({ time: Date.now(), duration: durationMs });
+        const entries = this.measurements.get(name);
+        entries.push({ time: Date.now(), duration: durationMs });
+        if (entries.length > MAX_ENTRIES_PER_METRIC) {
+            // Prefer dropping what the window no longer covers; fall back to
+            // dropping the oldest so the array is bounded even inside a window
+            const cutoff = Date.now() - this.windowMs;
+            let firstValid = 0;
+            while (firstValid < entries.length && entries[firstValid].time < cutoff) {
+                firstValid++;
+            }
+            if (firstValid < entries.length - MAX_ENTRIES_PER_METRIC) {
+                firstValid = entries.length - MAX_ENTRIES_PER_METRIC;
+            }
+            if (firstValid > 0) entries.splice(0, firstValid);
+        }
     }
 
     /**
