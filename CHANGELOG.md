@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The lab replay's hit metrics divide by the same thing on both sides
+
+Predicted hit rate, damage per hit, and crit rate counted every landed sim entry — damage-over-time ticks, thorns — while the observed side counted only swings, and observed damage per hit carried tick damage in its numerator. All three are now swing-only on both sides (fights record their DoT damage share from now on); old fights without the split keep the mixed figure, honestly labelled "incl. DoT", compared against a matching mixed prediction. On the Pyre Hunter sample this reveals the real like-for-like gap is ~-33% (not -6%), with the crit rate now clearly below prediction — the sim over-credits crits rather than under-modelling the monster.
+
 ### The lab replay shows the sim's damage mix, and decides what a soft-hit gap means
 
 Each replay group now carries the sim's per-source damage tally (auto attack, each ability, damage-over-time, mean and share of landed hits), drawn in the panel and included in the recording export, plus a "DoT ticks / swing" metric — recorded fights count their own DoT ticks from now on. With both sides measured, the diagnosis decides between its two candidate mechanisms instead of naming both: a matching mix rules the mix out and points at the damage roll; a mismatched one explains the soft hits without any unmodelled mitigation.
