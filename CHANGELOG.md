@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The round-14 leftovers, closed
+
+Three items the audits flagged as their own pieces of work. Guild trial forecasts stop merging two characters' own stats: the personal half of the shared guild record is per-character now, with the un-split legacy figures adopted by the first character that reads them so nothing is orphaned — plus the trial-abilities pre-name fallback goes per-character like its siblings, and the current overlay layout key joins the repair tool's registry. The task reroll-shield thresholds get the honest migration: an alt no longer inherits the main's caps through the never-deleted bare keys, the main adopts them once through the consent flow, and the repair tool covers all three. And a refactor along the way was caught adding a microtask hop to scoped reads that reordered a ledger load — absent legacy values answer synchronously again.
+
 ### Round 14: the dungeon and damage ledgers stop believing everything they read
 
 Four fixes from the combat-observability audit. The dungeon chat annotations no longer trust a hardcoded hash-suffixed selector (the one the normalization refactor missed) and no longer read a player typing "Key counts: […]" as a real run boundary — the same sender-name guard the tracker itself always had. The damage-taken tally no longer files a hit that landed in the same tick as a bigger heal as a miss, dropping both the hit and the heal. And the fallback DPS/DTPS readout resets between runs instead of blending every fight since the page loaded into one lifetime average.
