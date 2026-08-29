@@ -569,3 +569,74 @@ describe('importing the layout a pre-rework build exported', () => {
         });
     });
 });
+
+describe('the brake on a runaway redraw', () => {
+    /** @returns {number} How many times the panel actually drew */
+    function drawsWhile(run) {
+        const drawn = vi.spyOn(overlayPanel, '_drawRow');
+        drawn.mockClear();
+        run();
+        const count = drawn.mock.calls.length;
+        drawn.mockRestore();
+        return count;
+    }
+
+    beforeEach(() => {
+        registry.rows = [speaking('a')];
+        overlayPanel.settings.visible = { a: true };
+        overlayPanel.settings.order = ['a'];
+        overlayPanel.show();
+        overlayPanel.drawPausedUntil = 0;
+        overlayPanel.drawsInWindow = 0;
+        overlayPanel.drawWindowAt = 0;
+    });
+
+    test('a storm of redraws nobody asked for is stopped', () => {
+        // A userscript must never be able to freeze the game tab. Whatever the
+        // loop turns out to be, this is the floor under it.
+        const drew = drawsWhile(() => {
+            for (let tick = 0; tick < 200; tick += 1) overlayPanel._renderBody('a test pretending to be a loop');
+        });
+
+        expect(drew).toBeLessThanOrEqual(21);
+        expect(overlayPanel.drawPausedUntil).toBeGreaterThan(Date.now());
+    });
+
+    test('and says what asked for the last one, so the loop can be found', () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        for (let tick = 0; tick < 40; tick += 1) overlayPanel._renderBody('the panel being resized');
+
+        expect(errors).toHaveBeenCalled();
+        expect(errors.mock.calls.at(-1).join(' ')).toContain('the panel being resized');
+        errors.mockRestore();
+    });
+
+    test('a redraw somebody actually asked for is never braked', () => {
+        // A preset applied, a row toggled, a drag — these come in bursts and are
+        // not loops however fast they go
+        const drew = drawsWhile(() => {
+            for (let tick = 0; tick < 200; tick += 1) overlayPanel._renderBody();
+        });
+
+        expect(drew).toBe(200);
+        expect(overlayPanel.drawPausedUntil).toBe(0);
+    });
+
+    test('and clears a tally the automatic ones had run up', () => {
+        for (let tick = 0; tick < 15; tick += 1) overlayPanel._renderBody('resize');
+        expect(overlayPanel.drawsInWindow).toBe(15);
+
+        overlayPanel._renderBody();
+        expect(overlayPanel.drawsInWindow).toBe(0);
+    });
+
+    test('the panel comes back once the cooldown is over', () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        for (let tick = 0; tick < 40; tick += 1) overlayPanel._renderBody('resize');
+        expect(drawsWhile(() => overlayPanel._renderBody('resize'))).toBe(0);
+
+        overlayPanel.drawPausedUntil = Date.now() - 1;
+        expect(drawsWhile(() => overlayPanel._renderBody('resize'))).toBeGreaterThan(0);
+        vi.restoreAllMocks();
+    });
+});

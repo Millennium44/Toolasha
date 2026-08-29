@@ -237,6 +237,18 @@ export const VISIBILITY_EVENT = 'toolasha:overlay-visibility';
  * hung off the bottom of the window. The height is measured against the window
  * instead — see `_fitDock`.
  */
+/**
+ * The draw brake's window, ceiling and cooldown.
+ *
+ * Twenty in a second is far above anything the panel does when it is working —
+ * the tick is one a second, and a drag is bounded by how fast a hand moves — and
+ * far below the hundreds a `ResizeObserver` feedback loop reaches before the
+ * frame budget is gone.
+ */
+const DRAW_WINDOW_MS = 1000;
+const MAX_DRAWS_PER_WINDOW = 20;
+const DRAW_COOLDOWN_MS = 5000;
+
 const DOCK_CSS = `
     .${DOCK_HOST_CLASS} {
         display: flex !important;
@@ -402,6 +414,14 @@ class OverlayPanel {
         this.columns = 0;
         /** The scroller width the tiles were last drawn for */
         this.lastWidth = 0;
+        /** The draw brake — see `_takeDrawBudget` */
+        this.drawWindowAt = 0;
+        this.drawsInWindow = 0;
+        this.drawPausedUntil = 0;
+        /** What asked for the most recent redraw, so a runaway can name its trigger */
+        this.drawReason = '';
+        /** Whether the redraw about to happen is one nobody asked for */
+        this.drawAutomatic = false;
         this.canvasEl = null;
         this.pickerEl = null;
         /** The header band, which the popover is never allowed to cover */
@@ -697,7 +717,7 @@ class OverlayPanel {
             this.lastWidth = width;
 
             this._applyColumns();
-            this._renderBody();
+            this._renderBody('the panel being resized');
             this._placePicker();
         });
         this.panelObserver.observe(this.panel);
@@ -2439,8 +2459,64 @@ class OverlayPanel {
      * second's emptiness — costs a frame of lag on every tile that starts or
      * stops reporting, which is exactly the moment you are looking at it.
      */
-    _renderBody() {
+    _renderBody(reason = '') {
+        if (reason) {
+            this.drawReason = reason;
+            this.drawAutomatic = true;
+        }
         this._drawBody();
+    }
+
+    /**
+     * Whether there is budget left to draw, and stop everything if there is not.
+     *
+     * A brake, and it is here rather than at any particular suspected loop
+     * because of what the failure was: a userscript froze the game tab hard
+     * enough that the debugger could not attach to ask it why. Whatever the
+     * cause, and however carefully the next one is reasoned about, the overlay
+     * must not be able to do that. A degraded overlay beats a dead browser, and
+     * it beats it by so much that the trade is not worth thinking about.
+     *
+     * Only draws nobody asked for are counted. A drag reorders on every pointer
+     * move and is meant to; the tick is once a second and cannot run away by
+     * itself. What this catches is a feedback loop — a draw that changes a size,
+     * which a `ResizeObserver` sees, which draws again — where the frames come
+     * back to back and each one is a full rebuild of two dozen tiles.
+     *
+     * @returns {boolean} False when the panel has drawn too often to be trusted
+     */
+    _takeDrawBudget() {
+        const now = Date.now();
+        if (now < this.drawPausedUntil) return false;
+
+        // Only draws nobody asked for are counted, and anything anybody *did*
+        // ask for clears the tally. A loop is a chain of automatic redraws with
+        // no request anywhere in it; a burst of explicit ones — a preset
+        // applied, a row toggled, a test driving the panel — is not a loop
+        // however fast it goes.
+        if (!this.drawAutomatic) {
+            this.drawWindowAt = now;
+            this.drawsInWindow = 0;
+            return true;
+        }
+
+        if (now - this.drawWindowAt > DRAW_WINDOW_MS) {
+            this.drawWindowAt = now;
+            this.drawsInWindow = 0;
+        }
+
+        this.drawsInWindow += 1;
+        if (this.drawsInWindow <= MAX_DRAWS_PER_WINDOW) return true;
+
+        this.drawPausedUntil = now + DRAW_COOLDOWN_MS;
+        this.drawsInWindow = 0;
+        console.error(
+            `[OverlayPanel] Redrew more than ${MAX_DRAWS_PER_WINDOW} times in ${DRAW_WINDOW_MS}ms, which is a ` +
+                `feedback loop rather than anything a player did. Pausing the overlay for ${DRAW_COOLDOWN_MS}ms ` +
+                'rather than letting it lock the tab. Last redraw was asked for by:',
+            this.drawReason || 'unknown'
+        );
+        return false;
     }
 
     /** The drawing itself — see {@link _renderBody}, which is how it is reached */
@@ -2451,6 +2527,8 @@ class OverlayPanel {
         // one second in. Nothing needs redrawing while a gesture is in progress
         // anyway.
         if (this.interacting) return;
+        if (!this._takeDrawBudget()) return;
+        this.drawAutomatic = false;
 
         const full = this._visibleRows();
         if (!full.length) {
