@@ -256,13 +256,22 @@ function nameOf(itemHrid) {
  * enhancement levels is several inventory entries, and reporting one of them is
  * reporting a number that is right for nothing.
  *
+ * Equipped items don't reliably carry a count field the way stacked inventory
+ * items do (see loadout-snapshot.js `highestOwnedEnhancements` and
+ * equipment-savings-row.js `highestOwnedLevel`/`ladderStart` for the same
+ * family of bug) — a weapon sitting only in its equipment slot arrives with no
+ * `count` at all. Reading that as `0` reported a tracked item you are wearing
+ * as zero held. A missing count is one held; an explicit `0` (removed from
+ * this location) is skipped, as it is everywhere else this pattern lives.
+ *
  * @param {string} itemHrid - The item
  * @returns {number}
  */
 function heldCount(itemHrid) {
     let total = 0;
     for (const entry of dataManager.getInventory?.() || []) {
-        if (entry?.itemHrid === itemHrid) total += entry.count || 0;
+        if (entry?.itemHrid !== itemHrid || entry.count === 0) continue;
+        total += entry.count ?? 1;
     }
     return total;
 }

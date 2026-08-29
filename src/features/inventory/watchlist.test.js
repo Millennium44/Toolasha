@@ -354,6 +354,25 @@ describe('the rows', () => {
         expect(watchlistRows()[0].quantity).toBe(42);
     });
 
+    test('an equipped copy with no count field still counts as held', () => {
+        // Equipped items don't reliably carry a count field the way stacked
+        // inventory items do (see loadout-snapshot.js highestOwnedEnhancements
+        // and equipment-savings-row.js highestOwnedLevel/ladderStart for the
+        // same family of bug). A tracked item sitting only in an equipment
+        // slot must still read as one held, not zero.
+        game.inventory = [
+            { itemHrid: '/items/rare_hat', itemLocationHrid: '/item_locations/head', enhancementLevel: 3 },
+        ];
+        watchItem('/items/rare_hat');
+        expect(watchlistRows()[0].quantity).toBe(1);
+    });
+
+    test('a stack removed from a location (count 0) does not count as held', () => {
+        game.inventory = [{ itemHrid: '/items/cheese', count: 0 }];
+        watchItem('/items/cheese');
+        expect(watchlistRows()[0].quantity).toBe(0);
+    });
+
     test('a bid below the vendor price is flagged, and the vendor price is used', () => {
         // Rare Hat bids 400 against a 5,000 vendor price
         watchItem('/items/rare_hat');
