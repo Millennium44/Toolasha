@@ -520,7 +520,7 @@ class Config {
             const prevVal = prev.hasOwnProperty('value') ? prev.value : prev.isTrue;
             const currVal = curr.hasOwnProperty('value') ? curr.value : curr.isTrue;
             if (prevVal !== currVal) {
-                for (const cb of this.settingChangeCallbacks[key]) cb(currVal);
+                this._notifySettingChange(key, currVal);
             }
         }
 
@@ -686,9 +686,7 @@ class Config {
             }
 
             // Trigger registered callbacks for this setting
-            if (this.settingChangeCallbacks[key]) {
-                for (const cb of this.settingChangeCallbacks[key]) cb(value);
-            }
+            this._notifySettingChange(key, value);
         }
     }
 
@@ -708,8 +706,35 @@ class Config {
             }
 
             // Trigger registered callbacks for this setting
-            if (this.settingChangeCallbacks[key]) {
-                for (const cb of this.settingChangeCallbacks[key]) cb(value);
+            this._notifySettingChange(key, value);
+        }
+    }
+
+    /**
+     * Hand a setting's new value to everyone watching that key.
+     *
+     * Each listener is isolated. The loop this replaces was unguarded, so one
+     * feature's listener throwing took out every listener registered behind it for
+     * that key, and the throw escaped `setSetting` into whichever toggle handler
+     * made the change — which then did not finish either. Worst on the
+     * `loadSettings` path, where the fan-out is the character-switch resync and a
+     * single throw stopped the resync for every key after it. The two dispatch
+     * sites in core that fan out to many subscribers (`domObserver`,
+     * `webSocketHook`) already isolate each one; so does `settingsLoadedCallbacks`
+     * a few lines above the first caller.
+     * @param {string} key - Setting key that changed
+     * @param {*} value - Its new value
+     * @returns {void}
+     * @private
+     */
+    _notifySettingChange(key, value) {
+        const callbacks = this.settingChangeCallbacks[key];
+        if (!callbacks) return;
+        for (const cb of callbacks) {
+            try {
+                cb(value);
+            } catch (error) {
+                console.error(`[Config] Setting-change listener for '${key}' failed:`, error);
             }
         }
     }

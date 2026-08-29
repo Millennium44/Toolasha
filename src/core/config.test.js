@@ -358,3 +358,58 @@ describe('setting-change listener registration', () => {
         expect(config.settingsLoadedCallbacks).not.toContain(cb);
     });
 });
+
+describe('setting-change listener dispatch', () => {
+    beforeEach(() => {
+        config.settingsMap = { probe: { isTrue: false }, probeValue: { value: 1 } };
+        config.settingChangeCallbacks = {};
+        settingsStorageMock.saveSettings.mockClear();
+        settingsStorageMock.saveSettingsKeepingStored.mockClear();
+    });
+
+    // The loop was unguarded, so one feature's listener throwing took out every
+    // listener registered behind it for that key — and the throw escaped setSetting
+    // into whichever toggle handler made the change, which then did not finish
+    // either. Both dispatch sites in core that fan out to many subscribers
+    // (domObserver, webSocketHook) already isolate each one.
+    test('a throwing listener does not starve the ones behind it', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        config.onSettingChange('probe', () => {
+            throw new Error('boom');
+        });
+        const second = vi.fn();
+        config.onSettingChange('probe', second);
+
+        expect(() => config.setSetting('probe', true)).not.toThrow();
+
+        expect(second).toHaveBeenCalledWith(true);
+        expect(spy).toHaveBeenCalled();
+        spy.mockRestore();
+    });
+
+    test('setSettingValue isolates its listeners the same way', () => {
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        config.onSettingChange('probeValue', () => {
+            throw new Error('boom');
+        });
+        const second = vi.fn();
+        config.onSettingChange('probeValue', second);
+
+        expect(() => config.setSettingValue('probeValue', 7)).not.toThrow();
+
+        expect(second).toHaveBeenCalledWith(7);
+        spy.mockRestore();
+    });
+
+    test('a listener that unregisters another mid-dispatch does not skip it', () => {
+        const third = vi.fn();
+        const box = {};
+        config.onSettingChange('probe', () => box.unregisterSecond());
+        box.unregisterSecond = config.onSettingChange('probe', vi.fn());
+        config.onSettingChange('probe', third);
+
+        config.setSetting('probe', true);
+
+        expect(third).toHaveBeenCalledWith(true);
+    });
+});
