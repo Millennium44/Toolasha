@@ -2398,6 +2398,11 @@ class OverlayPanel {
         this.settings.span = { ...shipped.span };
         this.settings.zoom = {};
         this.settings.textScale = 100;
+        // "The arrangement the script ships with" is unpinned — a pin from
+        // before Reset would hold the shipped spans to whatever grid was
+        // pinned, which for a 1-column pin flattens every span back to one.
+        this.settings.columns = 2;
+        this.settings.columnsPinned = false;
 
         clearGeometry(GEOMETRY_KEY);
         this.panel.style.width = `${DEFAULT_PANEL.width}px`;

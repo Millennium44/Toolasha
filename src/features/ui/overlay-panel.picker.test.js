@@ -541,4 +541,21 @@ describe('resetting to the default tiles', () => {
         await overlayPanel._resetLayout();
         expect(overlayPanel.settings.span).not.toEqual({ dps: 2 });
     });
+
+    test('Reset layout also unpins columns, so the shipped spans are not flattened', async () => {
+        // A pin left over from a narrow window — columns stepped down to 1 and
+        // held there — used to survive Reset. The Default preset's spans came
+        // back, but pinned at 1 column every one of them draws as a single
+        // column anyway: "the arrangement the script ships with" never actually
+        // reappeared.
+        openGear();
+        overlayPanel.settings.columns = 1;
+        overlayPanel.settings.columnsPinned = true;
+
+        dialog.answer = 'reset';
+        await overlayPanel._resetLayout();
+
+        expect(overlayPanel.settings.columnsPinned).toBe(false);
+        expect(overlayPanel.settings.columns).toBe(2);
+    });
 });
