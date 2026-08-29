@@ -197,6 +197,28 @@ describe('reading the team off a message', () => {
     });
 });
 
+describe('finding the party chat tab button', () => {
+    test('a hash-suffixed tab container is still found, like the message selector', () => {
+        // The game's CSS-module hashes drift release to release (e.g.
+        // ChatMessage_chatMessage__abc today, something else tomorrow); every
+        // other selector in this file matches on `[class*="Prefix_stem"]` for
+        // exactly that reason. The tab container selector must too, rather than
+        // pinning today's exact hash.
+        const container = document.createElement('div');
+        container.className = 'Chat_tabsComponentContainer__someOtherHash';
+        const button = document.createElement('button');
+        button.className = 'MuiButtonBase-root';
+        button.textContent = 'Party';
+        container.appendChild(button);
+        document.body.appendChild(container);
+
+        annotations.observeTabSwitches();
+
+        button.click();
+        expect(annotations.tabClickHandlers.has(button)).toBe(true);
+    });
+});
+
 describe('sorting chat into events', () => {
     test('each kind of line becomes its own kind of event', () => {
         message('[08/04 10:00:00 AM]', 'Battle started: Chimerical Den');

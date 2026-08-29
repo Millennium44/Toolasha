@@ -151,7 +151,7 @@ class DungeonTrackerChatAnnotations {
      */
     observeTabSwitches() {
         // Find all chat tab buttons
-        const tabButtons = document.querySelectorAll('.Chat_tabsComponentContainer__3ZoKe .MuiButtonBase-root');
+        const tabButtons = document.querySelectorAll('[class*="Chat_tabsComponentContainer"] .MuiButtonBase-root');
 
         for (const button of tabButtons) {
             if (button.textContent.includes('Party')) {
