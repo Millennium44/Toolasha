@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat trackers stop bleeding across character switches
+
+Drop-luck analysis in flight when you switch no longer finishes late and shows the old character's luck on the new character's tile; the sim-accuracy check no longer files a check started before the switch into the arriving character's history; and the mana tally resets on switch instead of blending both characters' casts.
+
 ### Two more character-switch leaks closed
 
 Prediction calibration's slow forecast pass could resume after a switch and file the departing character's forecast/actual pair under the arriving character (action ids repeat across characters); it now re-checks ownership at every write and aborts instead. And the build score's in-flight calculation could land after a switch and repopulate with the departed character's score — or leave the refresh latch stuck so the new character never got a first score; both are generation-guarded now.
