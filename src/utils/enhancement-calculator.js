@@ -372,7 +372,7 @@ export function costExceedanceProbability(cost, threshold) {
  * @param {number} params.itemLevel - Item level being enhanced
  * @returns {number} Success rate multiplier (e.g., 1.0519 = 105.19% of base rates)
  */
-function calculateSuccessMultiplier(params) {
+export function calculateSuccessMultiplier(params) {
     const { enhancingLevel, toolBonus, itemLevel } = params;
 
     // Total bonus calculation

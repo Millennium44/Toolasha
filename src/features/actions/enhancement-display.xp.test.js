@@ -17,7 +17,12 @@ import * as mathjs from 'mathjs';
 
 const state = vi.hoisted(() => ({
     settings: { enhanceSim: true, enhanceSim_autoDetect: false },
-    prices: { '/items/cheese': 500, '/items/cheese_sword': 50_000, '/items/gouda_sword': 50_000 },
+    prices: {
+        '/items/cheese': 500,
+        '/items/cheese_sword': 50_000,
+        '/items/gouda_sword': 50_000,
+        '/items/brie_sword': 50_000,
+    },
     blessedTeaBonus: 0.01,
     teas: { blessed: false },
     items: {
@@ -35,6 +40,14 @@ const state = vi.hoisted(() => ({
             hrid: '/items/gouda_sword',
             name: 'Gouda Sword',
             itemLevel: 10,
+            enhancementCosts: [{ itemHrid: '/items/cheese', count: 2 }],
+            equipmentDetail: { levelRequirements: [] },
+        },
+        // Far above the enhancer's level, so the chain takes the deficit penalty
+        '/items/brie_sword': {
+            hrid: '/items/brie_sword',
+            name: 'Brie Sword',
+            itemLevel: 100,
             enhancementCosts: [{ itemHrid: '/items/cheese', count: 2 }],
             equipmentDetail: { levelRequirements: [] },
         },
@@ -154,5 +167,29 @@ describe('the costs-by-level chain', () => {
         const generous = await xpColumn('/items/cheese_sword');
 
         expect(stingy).not.toEqual(generous);
+    });
+});
+
+describe('the success-rate breakdown', () => {
+    test('quotes the rate the chain actually runs on when the enhancer is under-levelled', () => {
+        // Enhancing 60 against a level-100 item: the calculator's multiplier is
+        // 1 - 0.5 x (1 - 60/100) + 3/100 = 0.83, so a 50% base rate is really 41.5%.
+        // The panel used to build its own multiplier as 1 + bonuses/100, which knows
+        // nothing about the deficit and quoted 51.5% - beside a table of attempts and
+        // costs computed from 0.83.
+        const panel = document.createElement('div');
+        panel.innerHTML =
+            '<div><span>Target Level</span><input type="number" value="5"></div>' +
+            '<div><span>Protect From Level</span><input type="number" value="0"></div>' +
+            '<div class="protectionItemInputContainer"></div>' +
+            '<div class="SkillActionDetail_item__2vEAz"><div class="Item_name__2C42x">Brie Sword +0</div></div>';
+        document.body.appendChild(panel);
+
+        return displayEnhancementStats(panel, '/items/brie_sword').then(() => {
+            const text = panel.textContent;
+            const quoted = text.match(/\+0 → \+1:\s*50%\s*→\s*([\d.]+)%/);
+            expect(quoted).toBeTruthy();
+            expect(Number(quoted[1])).toBeCloseTo(50 * (1 - 0.5 * (1 - 60 / 100) + 3 / 100), 2);
+        });
     });
 });

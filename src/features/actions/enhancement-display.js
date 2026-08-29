@@ -8,7 +8,11 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
-import { calculateEnhancement, BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
+import {
+    calculateEnhancement,
+    calculateSuccessMultiplier,
+    BASE_SUCCESS_RATES,
+} from '../../utils/enhancement-calculator.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
 import marketAPI from '../../api/marketplace.js';
@@ -894,7 +898,16 @@ function formatEnhancementDisplay(
 
         if (currentLevel !== null && currentLevel >= 0 && currentLevel < BASE_SUCCESS_RATES.length) {
             const baseRate = BASE_SUCCESS_RATES[currentLevel];
-            const successMultiplier = 1 + totalSuccess / 100;
+            // The multiplier the chain in this very panel runs on, not a second one built from
+            // the bonus rows above. `1 + bonuses / 100` has no term for enhancing below the
+            // item's level, where the real multiplier takes a deficit penalty — so an
+            // under-levelled enhancer was shown a success rate well above the one the attempt
+            // and cost columns beside it were computed from.
+            const successMultiplier = calculateSuccessMultiplier({
+                enhancingLevel: params.enhancingLevel,
+                toolBonus: params.toolBonus,
+                itemLevel: itemDetails.itemLevel,
+            });
             const finalRate = Math.min(100, baseRate * successMultiplier);
             lines.push(
                 `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">+${currentLevel} → +${currentLevel + 1}:</span> ${baseRate}% → ${finalRate.toFixed(2)}%</div>`
