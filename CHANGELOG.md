@@ -1562,6 +1562,141 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.29.0](https://github.com/Millennium44/Toolasha/compare/v3.28.0...v3.29.0) (2026-08-29)
+
+
+### Features
+
+* add boss-eta battle/time math for combat zones ([ad0dc8e](https://github.com/Millennium44/Toolasha/commit/ad0dc8ef3df47c083952184156a2490a5b489e1a))
+* add pinning to the Enhance Item picker ([abc6df1](https://github.com/Millennium44/Toolasha/commit/abc6df10d5ad70761793accabe0e7f95ca73832d))
+* add reset-position control for pop-out chat window ([a3407b4](https://github.com/Millennium44/Toolasha/commit/a3407b429199354dd5018aa9df17b6c2381db7eb))
+* add Skill Level overlay row ([f4199fc](https://github.com/Millennium44/Toolasha/commit/f4199fc78c513a3e1938b2e03003a58e39cd51dc))
+* command palette can open the Philo Gamba calculator ([8eab625](https://github.com/Millennium44/Toolasha/commit/8eab62558b1ae576ca908c77ecad34bd29ffd8d7))
+* diagnostics copy report names the enabled features ([caee47e](https://github.com/Millennium44/Toolasha/commit/caee47eb246c23a6983b89a34609029892554b16))
+* drag a tile to move it through the order, its edge to set its width ([e0aab28](https://github.com/Millennium44/Toolasha/commit/e0aab28cde9b12a1608c8eeb36bf4c2ee8056be8))
+* drop the per-player DPS list from the In Progress boss block ([3a879b5](https://github.com/Millennium44/Toolasha/commit/3a879b5cc851b4373d5051de06ca8738e0c6fbbf))
+* enhancement tracker panel is resizable, and remembers the size ([b4be4f2](https://github.com/Millennium44/Toolasha/commit/b4be4f25247469f22394d054f282681c98e85bdf))
+* move collectable listings to top of My Listings ([af9a4a6](https://github.com/Millennium44/Toolasha/commit/af9a4a6b79d2178a086a377014ae1407170f7529))
+* networth records slow single items and splits display-update timing ([62d16aa](https://github.com/Millennium44/Toolasha/commit/62d16aaced60c896368a5fa5e15d5e0a5366e8c0))
+* overlay-flow, the arithmetic a flowed layout still needs ([efc4920](https://github.com/Millennium44/Toolasha/commit/efc4920aa55062541da179eb51602d0be0d8a683))
+* pair Skill Level with Time to Level in the Skilling preset ([8bccf86](https://github.com/Millennium44/Toolasha/commit/8bccf863335afd682b00097058448dc9dc063304))
+* pformance panel shows the stall ledger and traced timers live ([62c456e](https://github.com/Millennium44/Toolasha/commit/62c456e46026b0d3b44d2c1d887829b20a423753))
+* pformance records main-thread stalls with named suspects ([7c7e862](https://github.com/Millennium44/Toolasha/commit/7c7e862d21e6ac0dfbcc43a57e007769dae16d41))
+* Reset layout goes back to the arrangement the script ships with ([727bd32](https://github.com/Millennium44/Toolasha/commit/727bd3227dd195ef4f055fbdf79cbd8b60b07b8b))
+* show battles/time until the boss dies next to the battle counter ([c1f94d6](https://github.com/Millennium44/Toolasha/commit/c1f94d6a9b58f75420dc9ede5ccd6607b0cc44aa))
+* skilling optimizer warns when a gold figure leans on a free item ([a9ce50b](https://github.com/Millennium44/Toolasha/commit/a9ce50b7b065be50ab89c442caddd3c595a9f86b))
+* startup trace and health report name the dev build they ran under ([72bc13e](https://github.com/Millennium44/Toolasha/commit/72bc13e4c7390138d4298de7d94cc2c9ed6bcdd6))
+* tea recommendation popup warns on unpriced-material gold recs ([8995169](https://github.com/Millennium44/Toolasha/commit/8995169f21cf2743a678a3fd4fb0e1dd91f33fe4))
+* the empty-tile modes say what they do ([adad95f](https://github.com/Millennium44/Toolasha/commit/adad95f88c869f224d6d0819755a52ffc2543e26))
+* the overlay canvas is a CSS grid ([342ec18](https://github.com/Millennium44/Toolasha/commit/342ec18055c0380199080b6bc564fe826359895a))
+* tiles may span five columns ([8a34b37](https://github.com/Millennium44/Toolasha/commit/8a34b3749c7cdb796bddf784133a2d67d39ff447))
+* what's-new popup gets a copy-changelog button ([b324254](https://github.com/Millennium44/Toolasha/commit/b324254995cda54ef854cfff9a6c58f6e9b98c97))
+
+
+### Bug Fixes
+
+* a labyrinth finished days ago is not a labyrinth run now ([b18f93a](https://github.com/Millennium44/Toolasha/commit/b18f93a4bd2e0d71c3dae6623d463bfbedab9d4f))
+* a layout a few pixels too wide is squeezed, not dealt into one column ([d330486](https://github.com/Millennium44/Toolasha/commit/d330486477f786ef1b8f92d810e1c2b04610431f))
+* a name clipped in an overlay tile says itself in full on hover ([d41b92a](https://github.com/Millennium44/Toolasha/commit/d41b92a72c740953b0e50fabd51e7c05f3034383))
+* a new overlay tile settles somewhere instead of moving every tick ([e68ebb0](https://github.com/Millennium44/Toolasha/commit/e68ebb09da793f18da392c183dad1ba1f6def21a))
+* a preset switches off the tiles it does not name ([4460e2b](https://github.com/Millennium44/Toolasha/commit/4460e2bbffbea8bf0f608ca925117fc37e1cf5c4))
+* a tile with no saved place stops landing on one that has ([2d21dc6](https://github.com/Millennium44/Toolasha/commit/2d21dc6647e5b747289bd8022dee66130b69dd7c))
+* an empty overlay tile keeps its slot instead of leaving a hole ([d6b7e1d](https://github.com/Millennium44/Toolasha/commit/d6b7e1d65bd334b114ef5a4dfbc5f7910ddd9c9c))
+* an empty tile's strip stays inside its own cell ([e497413](https://github.com/Millennium44/Toolasha/commit/e49741399b035b425fad8dc2800134cac3b80c8d))
+* an imported pixel layout keeps its lines and their proportions ([0c59d85](https://github.com/Millennium44/Toolasha/commit/0c59d85aac9c1c90e5b1f38ffc10ed6f00111956))
+* battle chips recover from in-place header rewrites via a poll ([6d31b02](https://github.com/Millennium44/Toolasha/commit/6d31b0236c3005e985f403953ad808920e7421d6))
+* beyond-top-20 age match ignored enhancement level, misattributing timestamps ([26b7641](https://github.com/Millennium44/Toolasha/commit/26b764194bd54cb3cc552c543f2df5b4177c1efb))
+* bind DataManager character state to the socket that owns the character ([445d53c](https://github.com/Millennium44/Toolasha/commit/445d53cddb759c7d01ec61ecbe5d58f44973f734))
+* catch up Action Countdown after the shared observer is actually ready ([cd594f5](https://github.com/Millennium44/Toolasha/commit/cd594f531475bb203dc1719560bc608773c0949d))
+* catch up alchemy panel scans after observer readiness (TLA-025 gap) ([6820f67](https://github.com/Millennium44/Toolasha/commit/6820f67f2260fad5812484bf3fd42d4dff5de750))
+* catch up Character Activity Status when it mounts before observer readiness (TLA-025) ([d7ae13e](https://github.com/Millennium44/Toolasha/commit/d7ae13e454f1cf4fa86546d9d648fb0c3a5249e2))
+* catch up chat features' existing-DOM scans after observer readiness (TLA-025 gap) ([a526d3c](https://github.com/Millennium44/Toolasha/commit/a526d3c55d621bba791ea250475cba05b80a12b6))
+* catch up Collection Navigation panel and tile scans after observer readiness (TLA-025 gap) ([67f61db](https://github.com/Millennium44/Toolasha/commit/67f61db112bab569a880361c5387d9b1da85c466))
+* catch up combat features' existing-DOM scans after observer readiness (TLA-025 gap) ([b519e74](https://github.com/Millennium44/Toolasha/commit/b519e749f5d8f36c689d26497e8daf62a9c13b4f))
+* catch up Combat Sim and Lab Sim button injection after observer readiness (TLA-025 gap) ([96bc8c9](https://github.com/Millennium44/Toolasha/commit/96bc8c964dbf62c34b55b73b9954cdccc2f4f038))
+* catch up inventory and market features' existing-DOM scans after observer readiness (TLA-025 gap) ([be59ab8](https://github.com/Millennium44/Toolasha/commit/be59ab8d604e046f3f43cb839f846f57cbb62d70))
+* catch up Pinned Actions nav injection after observer readiness (TLA-025 gap) ([9f0f8ed](https://github.com/Millennium44/Toolasha/commit/9f0f8ed96795ad01f434493727e75da789355bd9))
+* catch up tea recommendation and drink timer scans after observer readiness (TLA-025 gap) ([59322d3](https://github.com/Millennium44/Toolasha/commit/59322d35071da2c5c4e2242bd50021b2bb1903e9))
+* catch up ui and tasks features' existing-DOM scans after observer readiness (TLA-025 gap) ([ad3d2e0](https://github.com/Millennium44/Toolasha/commit/ad3d2e05bd162984dddec65481424ee92e3384e7))
+* catch up View Action button injection after observer readiness (TLA-025 gap) ([ade0181](https://github.com/Millennium44/Toolasha/commit/ade01813b96924b5c07c8353d80f6e605c6df327))
+* category totals re-price on an inventory change instead of re-adding ([b0e6d2b](https://github.com/Millennium44/Toolasha/commit/b0e6d2bd8ed1fb9b29723f97626f3a7b017a2989))
+* coalesce the feature teardown of a rapid character-switch burst ([165aede](https://github.com/Millennium44/Toolasha/commit/165aede1219b18d65d91efc827860e6e0e53e6a9))
+* combat header chips survive an in-place React re-render ([854c04f](https://github.com/Millennium44/Toolasha/commit/854c04f80084949d89c3119f10fea501c8077e0d))
+* dedupe unrecognised/ambiguous plan tokens case-insensitively ([985b830](https://github.com/Millennium44/Toolasha/commit/985b8305f443901227c5b8ff580d924f49d3211b))
+* defer the existing-enhancing-panel scan until the shared observer is ready ([1c262a7](https://github.com/Millennium44/Toolasha/commit/1c262a71704d8729f9e1c1332df406d6b03b6e60))
+* enhancement tracker header no longer clips the session indicator ([66f63cc](https://github.com/Millennium44/Toolasha/commit/66f63ccd266ec71189c24832f481e28b1aeb0333))
+* equipment savings menu-button listener re-registers on every character switch ([cce68e6](https://github.com/Millennium44/Toolasha/commit/cce68e68759cfe31c958552d8ee9916d56878ae9))
+* exchange advisor priced the sell-rebuy comparison off the wrong quantity ([144ab88](https://github.com/Millennium44/Toolasha/commit/144ab88abdb8048a9d2061c6d31434999a0144af))
+* expired-listing matching ignored enhancement level, mislabeling the wrong listing ([db6f864](https://github.com/Millennium44/Toolasha/commit/db6f86424052cd31ddd46c07186260235dd12f48))
+* find the Enhance Item picker menu by its real DOM structure ([896fe13](https://github.com/Millennium44/Toolasha/commit/896fe1350b859a51b7acab202e8ceb442c2e6bf3))
+* gathering luck window floors at the session's own maximum payout ([c10b184](https://github.com/Millennium44/Toolasha/commit/c10b1843436f22b39b8375ac5baf04523e07bf2e))
+* guild trial bar stops bouncing between two guilds after a character switch ([6ae6848](https://github.com/Millennium44/Toolasha/commit/6ae68486686539f89fd8413f9bd079fdc960fc77))
+* guild trial plan draft no longer leaks across a guild switch ([5d68c08](https://github.com/Millennium44/Toolasha/commit/5d68c08938fdb0a74d7b81b55164fae1c036e7d2))
+* listing refresh session resumes correctly when a row lacks a listingId ([bf77a1d](https://github.com/Millennium44/Toolasha/commit/bf77a1d69f5d0d419386602c9b9f8fa9f6f6c60f))
+* loadout badge listens for the character event a switch can deliver ([7f263ca](https://github.com/Millennium44/Toolasha/commit/7f263ca6c0b4da9f9d6cfcd022321829abe54546))
+* mention popup's copy button does not stick on the checkmark ([3334d86](https://github.com/Millennium44/Toolasha/commit/3334d86664298c60264b95030645567abb725d34))
+* notice-log's switch clear no longer arms a write that empties the saved log ([ab2e0e8](https://github.com/Millennium44/Toolasha/commit/ab2e0e84c3f1cb7103195ed5894ee7891a48007f))
+* offline economics block could be wiped by a stale previous character's modal watch ([d87f936](https://github.com/Millennium44/Toolasha/commit/d87f936205fc0e0f453d7f40453589324b6277fa))
+* overlay lines close up to what their tiles actually drew ([af57604](https://github.com/Millennium44/Toolasha/commit/af57604c9d4514cc2938988bb4db28614a31f0f1))
+* overlay tiles side by side start their line at the same height ([58021c9](https://github.com/Millennium44/Toolasha/commit/58021c9ff03123c48dd78dd1debecfdef551c934))
+* overlay tiles stop jumbling as they come and go ([45195dc](https://github.com/Millennium44/Toolasha/commit/45195dc776f20be6086449cef0f94be049b50d3c))
+* pop-out chat window trusts saved position across monitors ([165dbb5](https://github.com/Millennium44/Toolasha/commit/165dbb52728ccc258030b65fff77854bf8980041))
+* preset tiles that truncated get the width their content needs ([db45754](https://github.com/Millennium44/Toolasha/commit/db4575450bc4fe892cf07aa8dc891d4e6bf08a21))
+* queue monitor panel does not re-arm on a reconnect and leaks drag listeners ([2d64d30](https://github.com/Millennium44/Toolasha/commit/2d64d30f81ce3268d21b834dbcedba09748240db))
+* rapid character switch no longer skips the per-character settings reload ([1a7a6f7](https://github.com/Millennium44/Toolasha/commit/1a7a6f75c2a9aafa683466696c00fe9ef298a70e))
+* readable options in every injected select's open dropdown ([0d6d565](https://github.com/Millennium44/Toolasha/commit/0d6d565e5493416afe4e715a478ba8138d2a9521))
+* reroll spend badge appears on a Tasks panel that is already open ([8a99821](https://github.com/Millennium44/Toolasha/commit/8a99821bcca61a657d4a748d36190095b62caa30))
+* resolve trial-damage placeholder names against the guild roster ([cd0587e](https://github.com/Millennium44/Toolasha/commit/cd0587eb706a2d9ed768b26f1e70fc20804514c7))
+* scope WebSocket dedup to the socket that delivered the message ([f4f5b6e](https://github.com/Millennium44/Toolasha/commit/f4f5b6e3ee3b0f662b6e1c9fee407aa907a0a320))
+* show 3 significant digits for enhancing rate/min-sell tooltip ([805f747](https://github.com/Millennium44/Toolasha/commit/805f747c0954b01c7b5012aca8c0c2b67a4a2bed))
+* shrine plan leaked from one character to another on an in-page switch ([2b1e24d](https://github.com/Millennium44/Toolasha/commit/2b1e24dacc737ea27c0f220ea6ce787a446a3bcd))
+* skilling gets its own Time to Level and combat targets stop leaking across characters ([1d5fd0f](https://github.com/Millennium44/Toolasha/commit/1d5fd0fe0fced3c6de94999a24f4369b2e066681))
+* stale character read can overwrite a newer switch's savings goals ([e647fe5](https://github.com/Millennium44/Toolasha/commit/e647fe5efd0d4ac994c22011353ee111a5877368))
+* stop a late chest opening being recorded against the wrong character ([563b2ba](https://github.com/Millennium44/Toolasha/commit/563b2bac96d853276a4233f58d77a82f04bf46df))
+* stop stale action filter from hiding Combat Zones ([83ddb7f](https://github.com/Millennium44/Toolasha/commit/83ddb7f2f88572e97c04460543701bfd9de1c03f))
+* tea optimizer's unpriced-materials flag uses the signal that still fires ([a24932d](https://github.com/Millennium44/Toolasha/commit/a24932d3f6284914fad0441cec53239efec278e2))
+* the overlay cannot redraw itself into a frozen tab ([738c04b](https://github.com/Millennium44/Toolasha/commit/738c04bc57252a0b0b04430dfc92f3ad5efe9825))
+* the overlay comes back down when the panel is narrowed again ([249aefe](https://github.com/Millennium44/Toolasha/commit/249aefeec5578e82fc687ab826d16c6f59dd2dd6))
+* the overlay stops reflowing itself when a scrollbar appears ([77d404b](https://github.com/Millennium44/Toolasha/commit/77d404be05551c6eb82066a2e2f2d21ac480bb82))
+* the resize observers stop redrawing themselves in a loop ([2144e1c](https://github.com/Millennium44/Toolasha/commit/2144e1ccccd7fe03d2bf22257a46886e4f8c2e6a))
+* tiles sharing a line are drawn to the same height ([8f579df](https://github.com/Millennium44/Toolasha/commit/8f579df1ecaf6a918b104c85f0934376128088b4))
+* trial role guesser stops calling mages Tank off a bare threat number ([b99ea12](https://github.com/Millennium44/Toolasha/commit/b99ea1238aaa7c08c5e178300f7a716e6eb72261))
+
+
+### Code Refactoring
+
+* delete the pixel-layout machinery ([a36270c](https://github.com/Millennium44/Toolasha/commit/a36270c787f31dac8f90fa3b2e1351a4e47d9cac))
+* extract alchemy item-picker pin logic into shared utils ([a21e0b9](https://github.com/Millennium44/Toolasha/commit/a21e0b9fe2e7cd2ce707ff8286eb49caf26be982))
+* presets are an order and a set of spans ([93c1d7e](https://github.com/Millennium44/Toolasha/commit/93c1d7e09df94a081f82131ba3614a89131b2455))
+
+
+### Performance Improvements
+
+* crafting-tile count refresh stops stalling on every action completion ([2274ed3](https://github.com/Millennium44/Toolasha/commit/2274ed349203019de59e131580126b09faa2306e))
+* networth recalculation stops stalling the frame ([20a527a](https://github.com/Millennium44/Toolasha/commit/20a527a6466ccae4224d61ad801f9fad905eaec5))
+* networth worker batches carry a pruned closure instead of the whole game ([5baa77a](https://github.com/Millennium44/Toolasha/commit/5baa77ad6efe86c6e68d98c8a1312f0a904bc843))
+* overlay tiles skip identical redraws instead of rebuilding every second ([ecb9fb9](https://github.com/Millennium44/Toolasha/commit/ecb9fb97922f47cfefd0911cab781314ade27616))
+
+
+### Documentation
+
+* changelog for enhancing pins and header-chip persistence ([1beb50d](https://github.com/Millennium44/Toolasha/commit/1beb50dcd2fa0ef60b2d16c746cbcc49e803046b))
+* changelog for seventh audit round ([0e9a0a8](https://github.com/Millennium44/Toolasha/commit/0e9a0a89b6224a806cd0bff4f897ec73a6747a1e))
+* changelog for the boss countdown, socket binding, and upstream ports ([e9e29bc](https://github.com/Millennium44/Toolasha/commit/e9e29bc21a2a75c56f78f0a85a011a3af117e4f5))
+* changelog for the observer-readiness catch-up rollout ([eac8ad2](https://github.com/Millennium44/Toolasha/commit/eac8ad2caa19f1e6bc63f994a0d5d078c77c3a9e))
+* changelog for the overlay grid rework ([f765de9](https://github.com/Millennium44/Toolasha/commit/f765de97b2819941aee20f1390486ad71b9cd4f0))
+* changelog for the overlay rework, dropdowns, and tracker panel ([eead68a](https://github.com/Millennium44/Toolasha/commit/eead68a02e601919764ddc4206700dcb84f124f2))
+* changelog for the skill-level tile and overlay stability rounds ([26653cb](https://github.com/Millennium44/Toolasha/commit/26653cb96d394adf279c0ba8c823890c7b3dc982))
+* drop-luck's income seed floor is not the guarantee its test implied ([4af3656](https://github.com/Millennium44/Toolasha/commit/4af36563c1deabf80b059043b560c37bed8d1811))
+* overlay layout rework design ([89a724d](https://github.com/Millennium44/Toolasha/commit/89a724d22a698bb855cd910b4990a481a2937206))
+
+
+### Tests
+
+* a preset's grid is one the lines can settle ([b4bf31a](https://github.com/Millennium44/Toolasha/commit/b4bf31a02d988570ff084a634cc69508fd46c40c))
+* pin where the all-zones "Finalizing" status is set, not just its order ([9541d71](https://github.com/Millennium44/Toolasha/commit/9541d71662fa46a21d5623af1de8732b4f94a567))
+* the migration's evidence, end to end through the panel ([c877f6e](https://github.com/Millennium44/Toolasha/commit/c877f6e3b7ee7e0895202d5bb1ce19f521cc6d30))
+
 ## [3.28.0](https://github.com/Millennium44/Toolasha/compare/v3.27.0...v3.28.0) (2026-08-28)
 
 ### Features
