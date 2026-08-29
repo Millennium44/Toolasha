@@ -4744,6 +4744,27 @@ function isExclusive(candidate) {
  * @returns {{picks: Array<Object>, totalCost: number, attemptsSaved: number,
  *   skipped: Array<{result: Object, reason: string}>, budget: number}}
  */
+/**
+ * Attempts saved per million coins — the all-fights table's value figure.
+ *
+ * A swap can price NEGATIVE: selling the replaced piece brings back more than
+ * the new one costs (a Cursed Bow +7 funding a Sundering Crossbow +7 with
+ * 17.7M left over, 2026-08-29). `cost > 0` alone read that as "no coin price"
+ * and dropped the best-value row in the table from the ranking. A priced swap
+ * that costs nothing (or pays) and still helps is the best value there is —
+ * Infinity sorts it first; one that costs nothing and does not help has no
+ * value figure worth ranking on, same as the unpriceable rows.
+ *
+ * @param {number|null|undefined} cost - Net coin cost; negative is a credit
+ * @param {number} attemptsSaved - Expected attempts saved across the run
+ * @returns {number|null} Attempts saved per 1M coins, Infinity, or null
+ */
+export function valuePerMillion(cost, attemptsSaved) {
+    if (!Number.isFinite(cost)) return null;
+    if (cost > 0) return (attemptsSaved / cost) * 1e6;
+    return attemptsSaved > 0 ? Infinity : null;
+}
+
 export function planWithinBudget(results, budget, { baselineFights = [], includeUnmeasured = false } = {}) {
     const baseTries = baselineFights.map((fight) => expectedFightAttempts(fight.winRate || 0));
 
@@ -5462,7 +5483,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         // says so. Candidates with no gold price — a combat level costs
         // experience — get null rather than a zero that would sort them last.
         const attemptsSaved = -attemptsDelta;
-        const perGold = cost > 0 ? (attemptsSaved / cost) * 1e6 : null;
+        const perGold = valuePerMillion(cost, attemptsSaved);
 
         results.push({
             candidate,

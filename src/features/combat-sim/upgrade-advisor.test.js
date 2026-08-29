@@ -177,6 +177,7 @@ const {
     conflictKey,
     conflictKeys,
     planWithinBudget,
+    valuePerMillion,
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
@@ -2345,6 +2346,30 @@ describe('what cannot be bought together', () => {
         const b = { type: 'ability_swap', slot: 'ability_2', replacesHrid: POKE, upgradeHrid: '/abilities/entangle' };
 
         expect(sharesConflict(a, b)).toBe(false);
+    });
+});
+
+describe('the value figure a row is ranked on', () => {
+    test('a plain purchase is attempts saved per million', () => {
+        expect(valuePerMillion(2_000_000, 4)).toBe(2);
+    });
+
+    test('a swap whose resale beats its purchase is the best value there is', () => {
+        // Selling a Cursed Bow +7 funded a Sundering Crossbow +7 with 17.7M
+        // left over; `cost > 0` read that as "no coin price" and the table's
+        // best row lost its Cost and Per-1M cells and its place in the ranking
+        expect(valuePerMillion(-17_700_000, 2.5)).toBe(Infinity);
+        expect(valuePerMillion(0, 2.5)).toBe(Infinity);
+    });
+
+    test('costing nothing does not rank a row that does not help', () => {
+        expect(valuePerMillion(-17_700_000, 0)).toBeNull();
+        expect(valuePerMillion(-17_700_000, -1)).toBeNull();
+    });
+
+    test('a row with no coin price at all has no value figure', () => {
+        expect(valuePerMillion(null, 5)).toBeNull();
+        expect(valuePerMillion(undefined, 5)).toBeNull();
     });
 });
 

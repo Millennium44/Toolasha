@@ -3781,7 +3781,7 @@ class LabSimUI {
             <thead><tr>
                 ${th('upgrade', 'Upgrade', 'Sort by name')}
                 ${th('cost', 'Cost', 'What it would cost in coins. Combat levels cost experience, not gold.')}
-                ${th('perMillion', 'Per 1M', 'Attempts saved across a whole run per million coins spent — the value figure. Blank where there is no coin price.')}
+                ${th('perMillion', 'Per 1M', 'Attempts saved across a whole run per million coins spent — the value figure. Blank where there is no coin price; "pays for itself" where selling the replaced piece covers the purchase.')}
                 ${th('attempts', 'Attempts', 'Expected combat attempts to clear every fight once (retrying failed rooms)')}
                 ${th('attemptsDelta', 'ΔAttempts', 'Change in expected attempts vs baseline — negative is better. The ± is one standard error of the simulation; a change smaller than about twice that has not been measured, and is shown grey.')}
                 ${th('rooms', 'Rooms', 'How many fights this upgrade actually reaches. A combat level is every fight; a piece of gear only the loadouts that wear what it replaces.')}
@@ -3794,7 +3794,16 @@ class LabSimUI {
             // A dash rather than a zero where there is no coin price: a combat
             // level is not free, it is paid for in experience, and a zero here
             // would read as "costs nothing" instead of "not a coin question"
-            const cost = r.cost > 0 ? formatKMB(r.cost) : r.cost === 0 ? 'free' : '—';
+            // Negative is real: a swap whose sold piece brings back more than
+            // the new one costs is a credit, not a row with no price
+            const cost =
+                r.cost > 0
+                    ? formatKMB(r.cost)
+                    : r.cost === 0
+                      ? 'free'
+                      : Number.isFinite(r.cost)
+                        ? `+${formatKMB(-r.cost)} back`
+                        : '—';
             // How many rooms it reaches — a sword upgrade is only about the
             // loadouts carrying that sword, and a row that does not say so
             // reads as an upgrade to the whole run
@@ -3803,7 +3812,9 @@ class LabSimUI {
             const perGold =
                 r.attemptsSavedPerMillion === null
                     ? '—'
-                    : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
+                    : r.attemptsSavedPerMillion === Infinity
+                      ? 'pays for itself'
+                      : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
             // A change smaller than the sampling error of the sims behind it has
             // not been measured — colouring it green sells an upgrade on noise
             const measured = r.significant !== false;
@@ -3872,7 +3883,9 @@ class LabSimUI {
             rows: [...sorted, ...tokenResults].map((r) => ({
                 upgrade: r.candidate?.description || '',
                 cost: r.cost ?? null,
-                perMillion: r.attemptsSavedPerMillion ?? null,
+                // Infinity does not survive a spreadsheet; the credit-funded
+                // row's value figure is its (negative) cost column
+                perMillion: r.attemptsSavedPerMillion === Infinity ? null : (r.attemptsSavedPerMillion ?? null),
                 attempts: r.expectedAttempts,
                 attemptsDelta: r.attemptsDelta,
                 attemptsNoise: r.attemptsDeltaNoise ?? null,

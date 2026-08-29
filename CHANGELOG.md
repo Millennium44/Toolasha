@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A lab upgrade that pays for itself stops hiding its price
+
+The all-fights upgrade table read a negative cost — selling the replaced piece brings back more than the new one costs — as "no coin price", blanking the Cost and Per-1M cells and dropping the best-value row from the ranking (the budget planner had already learned this; the ranking hadn't). Such a row now shows its credit ("+17.7M back"), reads "pays for itself" in the value column, and sorts first among priced rows.
+
 ### The lab replay's diagnosis stops asserting the cause it can't see
 
 Investigating a Pyre Hunter "sim over-credits your damage" verdict showed the monster's armour and all three resistances match the game exactly (the stat check covers them), while a quarter of landed hits are Maim's damage-over-time ticks at a third of a swing's size — so damage-per-hit is a mix statistic that moves when the swing/DoT ratio drifts, not proof of unmodelled mitigation. The diagnosis now names both possible mechanisms, and a crit rate that leans low inside a wide statistical band reads "not ruled out" instead of "matches".
