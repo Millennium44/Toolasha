@@ -42,6 +42,22 @@ function fromNetworth(pick) {
 }
 
 /**
+ * A published net worth field, rounded the way a tile draws it.
+ *
+ * This is what every figure row here reports as its `version`: the whole tile is
+ * one number and a fixed tooltip, so the number as drawn covers every input it
+ * has. Rounded rather than raw, because a memo finer than the display would
+ * redraw for changes nobody can see.
+ *
+ * @param {Function} pick - `(data) => number|undefined`
+ * @returns {string} The figure, or `blank` when there is nothing published yet
+ */
+function figureVersion(pick) {
+    const value = fromNetworth(pick);
+    return value === null ? 'blank' : String(Math.round(value));
+}
+
+/**
  * Open the net worth history chart, or close it if it is already up.
  *
  * Each of these tiles is one field of the same calculation, and the chart plots
@@ -67,6 +83,7 @@ registerRow({
     empty: 'No coins counted',
     name: 'Coins',
     defaultSize: { width: 160, height: 30 },
+    version: () => figureVersion((data) => data.coins),
     render: (container) => {
         const coins = fromNetworth((data) => data.coins);
         // Zero coins is a real answer and worth showing; no answer yet is not
@@ -86,6 +103,7 @@ registerRow({
     empty: 'No listings',
     name: 'Market Listings',
     defaultSize: { width: 180, height: 30 },
+    version: () => figureVersion((data) => data.currentAssets?.listings?.value),
     render: (container) => {
         const listings = fromNetworth((data) => data.currentAssets?.listings?.value);
         if (listings === null) return blank(container);
@@ -104,6 +122,7 @@ registerRow({
     empty: 'No inventory value yet',
     name: 'Inventory Value',
     defaultSize: { width: 180, height: 30 },
+    version: () => figureVersion((data) => data.currentAssets?.inventory?.value),
     render: (container) => {
         const inventory = fromNetworth((data) => data.currentAssets?.inventory?.value);
         if (inventory === null) return blank(container);
@@ -133,6 +152,15 @@ registerRow({
     empty: 'No books held',
     name: 'Skill Books',
     defaultSize: { width: 180, height: 30 },
+    // Deliberately without a `version()`, unlike the three figure rows above.
+    // `abilityPlans` samples the ability experience history on its way past, and
+    // this row is the only thing in the script that calls it regularly — the
+    // panel calls it only while it is open. A memo here would stop the sampling
+    // on every tick it skipped, so the panel's experience-per-hour column would
+    // be back to taking ten minutes to say anything, which is precisely what the
+    // sampling was moved out of the panel to prevent. The row is cheap in the
+    // way that matters anyway: `row()` compares its own draw and skips the DOM
+    // write when the figures have not moved.
     render: (container) => {
         const books = networthFeature.currentData?.fixedAssets?.abilityBooks;
         const breakdown = books?.breakdown || [];

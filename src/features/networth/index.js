@@ -333,6 +333,13 @@ registerRow({
     empty: 'No net worth yet',
     name: 'Net Worth',
     defaultSize: { width: 180, height: 30 },
+    // The tile is one number and a fixed tooltip, so the number as drawn is the
+    // whole input — and the number is published by the net worth pass rather
+    // than computed here, so nothing about reading it can be out of date
+    version: () => {
+        const total = networthFeature.currentData?.totalNetworth;
+        return total > 0 ? String(Math.round(total)) : 'blank';
+    },
     render: (container) => {
         const total = networthFeature.currentData?.totalNetworth;
         if (!(total > 0)) return blank(container);

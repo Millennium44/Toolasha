@@ -157,3 +157,63 @@ describe('the skill books tile', () => {
         expect(game.chartToggles).toBe(0);
     });
 });
+
+/**
+ * The figure tiles' `version()`.
+ *
+ * The overlay redraws every visible tile once a second and skips a row whose
+ * version has not moved. Each of these tiles is one published figure and a fixed
+ * tooltip, so the figure as drawn is the whole input — but only if the version
+ * really does move when the figure does, which is what these pin down.
+ */
+describe('the figure tiles summarise their own inputs', () => {
+    const version = (key) => game.rows[key].version();
+
+    beforeEach(() => {
+        game.currentData = {
+            coins: 1_000,
+            totalNetworth: 5_000,
+            currentAssets: { listings: { value: 20 }, inventory: { value: 300 } },
+        };
+    });
+
+    test('nothing published yet is one settled version', () => {
+        game.currentData = null;
+        for (const key of ['coins', 'marketListings', 'inventoryValue']) {
+            expect(version(key)).toBe('blank');
+            expect(version(key)).toBe(version(key));
+        }
+    });
+
+    test('each tile holds still while its own figure does', () => {
+        const before = ['coins', 'marketListings', 'inventoryValue'].map(version);
+        expect(['coins', 'marketListings', 'inventoryValue'].map(version)).toEqual(before);
+    });
+
+    test('and moves as soon as its figure does', () => {
+        const coins = version('coins');
+        game.currentData = { ...game.currentData, coins: 1_001 };
+        expect(version('coins')).not.toBe(coins);
+    });
+
+    test('a tile does not move for a figure that is not its own', () => {
+        // Three tiles off one calculation: the listings tile has no business
+        // redrawing because the coin count changed
+        const listings = version('marketListings');
+        game.currentData = { ...game.currentData, coins: 999_999 };
+        expect(version('marketListings')).toBe(listings);
+    });
+
+    test('a published zero is a figure, and not the same as no answer yet', () => {
+        game.currentData = { ...game.currentData, coins: 0 };
+        expect(version('coins')).toBe('0');
+        expect(version('coins')).not.toBe('blank');
+    });
+
+    test('Skill Books stays without one, because reading it feeds the experience sampler', () => {
+        // `abilityPlans` samples the ability experience history on its way past,
+        // and this row is the only thing that calls it regularly. A memo would
+        // stop the sampling on every tick it skipped.
+        expect(game.rows.skillBooks.version).toBeUndefined();
+    });
+});
