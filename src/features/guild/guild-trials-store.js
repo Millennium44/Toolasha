@@ -87,6 +87,127 @@ export function guildTrialsStorageKey(guildName, characterId = null) {
 }
 
 /**
+ * The slot a character's own action stats live in, inside a tile.
+ *
+ * The record itself is keyed by guild and must stay that way — two characters
+ * in one guild are two views of the same trial, and the samples, the tiers and
+ * the points are the guild's. The footer's figures are not: Work Power and
+ * Success Rate are the *reader's* own, and they were being merged field by
+ * field into one shared `personal` block. Two alts in one guild overwrote each
+ * other's every time either opened the tab, and the forecast — which fits a
+ * success-rate decline across tiers from exactly these numbers — was fitting a
+ * curve through two characters' readings at once. The provenance guard could
+ * not see it: both records are the same guild's, which is all it checks.
+ *
+ * So the guild half stays shared and the personal half is split by character
+ * underneath it.
+ *
+ * @param {string|number|null} [characterId] - The viewing character
+ * @returns {string} Slot name inside `tile.personalByCharacter`
+ */
+export function personalSlot(characterId) {
+    return characterId === null || characterId === undefined ? 'default' : String(characterId);
+}
+
+/** A plain object, or an empty one */
+const asObject = (value) => (value && typeof value === 'object' ? value : {});
+
+/**
+ * One character's action stats off a tile.
+ *
+ * A tile written before the split carries its figures at the top level and has
+ * no `personalByCharacter` at all; those are read as-is until somebody adopts
+ * them ({@link adoptPersonalStats}), because a legacy record's personal half is
+ * almost certainly the reader's own and dropping it would cost a forecast that
+ * has been building all hour. Once the split exists, a character that is not in
+ * it has no readings — which is the correct answer, not a gap to be filled from
+ * somebody else's.
+ *
+ * @param {Object|null} tile - A stored tile
+ * @param {string|number|null} [characterId] - The viewing character
+ * @returns {{personal: Object, personalByTier: Object}} That character's figures
+ */
+export function tilePersonalStats(tile, characterId = null) {
+    const byCharacter = tile?.personalByCharacter;
+    if (byCharacter && typeof byCharacter === 'object') {
+        const slice = asObject(byCharacter[personalSlot(characterId)]);
+        return { personal: asObject(slice.personal), personalByTier: asObject(slice.personalByTier) };
+    }
+    return { personal: asObject(tile?.personal), personalByTier: asObject(tile?.personalByTier) };
+}
+
+/**
+ * Move a tile's un-split figures under one character, once.
+ *
+ * Two sources are claimed: the top-level `personal`/`personalByTier` of a tile
+ * written before the split, and the `default` slot a tile sampled before the
+ * character's id was known wrote to. Both are claimed only by a character that
+ * has no slot of its own yet — a character with its own readings has nothing to
+ * inherit, and taking the shared block on top of them would be the original bug
+ * running in the other direction.
+ *
+ * @param {Object} tile - A stored tile (not mutated)
+ * @param {string|number|null} characterId - The viewing character
+ * @returns {{tile: Object, changed: boolean}} The tile, and whether anything moved
+ */
+export function adoptTilePersonal(tile, characterId) {
+    const slot = personalSlot(characterId);
+    if (slot === 'default') return { tile, changed: false };
+
+    const byCharacter = { ...asObject(tile?.personalByCharacter) };
+    // A character with its own readings has nothing to inherit. The shared
+    // block is left where it is rather than swept up, so the *other* character
+    // in the guild can still claim it on its own first read
+    if (byCharacter[slot]) return { tile, changed: false };
+
+    const legacyPersonal = asObject(tile?.personal);
+    const legacyByTier = asObject(tile?.personalByTier);
+    const orphan = asObject(byCharacter.default);
+    const populated = (block) =>
+        Object.keys(asObject(block?.personal)).length > 0 || Object.keys(asObject(block?.personalByTier)).length > 0;
+    if (!populated({ personal: legacyPersonal, personalByTier: legacyByTier }) && !populated(orphan)) {
+        return { tile, changed: false };
+    }
+
+    byCharacter[slot] = {
+        // The top-level block is the newer statement of the two: it is what
+        // every build wrote last, `default` only ever held the pre-id window
+        personal: { ...asObject(orphan.personal), ...legacyPersonal },
+        personalByTier: { ...asObject(orphan.personalByTier), ...legacyByTier },
+    };
+    delete byCharacter.default;
+
+    const adopted = { ...tile, personalByCharacter: byCharacter };
+    delete adopted.personal;
+    delete adopted.personalByTier;
+    return { tile: adopted, changed: true };
+}
+
+/**
+ * {@link adoptTilePersonal} across a record's live tiles.
+ *
+ * The archived cycles are deliberately left alone: they are a finished week's
+ * figures nothing forecasts from, and re-attributing them would put a name on
+ * numbers that never carried one.
+ *
+ * @param {Object} record - A stored record (not mutated)
+ * @param {string|number|null} characterId - The viewing character
+ * @returns {{record: Object, changed: boolean}} The record, and whether anything moved
+ */
+export function adoptPersonalStats(record, characterId) {
+    if (personalSlot(characterId) === 'default') return { record, changed: false };
+
+    const tiles = {};
+    let changed = false;
+    for (const [key, tile] of Object.entries(asObject(record?.tiles))) {
+        const result = adoptTilePersonal(tile, characterId);
+        tiles[key] = result.tile;
+        changed = changed || result.changed;
+    }
+    return changed ? { record: { ...record, tiles }, changed } : { record, changed };
+}
+
+/**
  * An empty record for a week.
  * @param {number} weekStart - Week start, in ms
  * @param {Object} [provenance] - `{guildId, guildName}` the record belongs to
@@ -203,13 +324,20 @@ export function tileKey(tile) {
  * @param {Object} record - Existing record (not mutated)
  * @param {Object} tile - A tile from `readTrialTiles`
  * @param {number} at - Sample time, in ms
+ * @param {string|number|null} [characterId] - Whose footer the personal figures were read off
  * @returns {Object} The updated record
  */
-export function recordTileSample(record, tile, at) {
+export function recordTileSample(record, tile, at, characterId = null) {
     const weekStart = record?.weekStart ?? trialWeekStart(at);
     const tiles = { ...(record?.tiles || {}) };
     const key = tileKey(tile);
-    const existing = tiles[key] || { name: tile?.name || '', kind: tile?.kind || 'skilling', samples: [], tiers: [] };
+    // The sampling character claims an un-split tile's figures on its way past,
+    // so a record that reaches here without having been adopted on load does
+    // not strand them
+    const existing = adoptTilePersonal(
+        tiles[key] || { name: tile?.name || '', kind: tile?.kind || 'skilling', samples: [], tiers: [] },
+        characterId
+    ).tile;
 
     const readings = tile?.readings || [];
     const samples = existing.samples.filter((sample) => sample?.t !== at);
@@ -247,6 +375,8 @@ export function recordTileSample(record, tile, at) {
     // on `observationTier` meant a skilling trial's whole run of Success Rate
     // readings landed in the flat `personal` and nothing in `personalByTier`.
     const personalTier = Number.isFinite(tile?.personalTier) ? tile.personalTier : observationTier;
+    const personalSlotKey = personalSlot(characterId);
+    const mine = asObject(existing.personalByCharacter?.[personalSlotKey]);
     const tiers = [...(existing.tiers || [])];
     if (Number.isFinite(observationTier)) {
         for (const reading of readings) {
@@ -321,19 +451,25 @@ export function recordTileSample(record, tile, at) {
         // Sticky: a finished trial does not become unfinished, and the In
         // Progress card that carries the reading does not carry the word
         completed: Boolean(tile?.completed) || Boolean(existing.completed),
-        // The player's own action stats, from the In Progress footer. Merged
+        // The reader's own action stats, from the In Progress footer, filed
+        // under the character that read them — see {@link personalSlot}. Merged
         // rather than replaced: the footer shows what it shows, and a redraw
-        // that omits one stat is not the stat going away
-        personal: { ...(existing.personal || {}), ...(tile?.personal || {}) },
-        // …and kept per tier as well, because they are not constant across one:
-        // the same character's success rate fell eight points a tier through a
-        // watched trial, which is a thing the forecast has to model rather than
-        // a reading it can overwrite
-        personalByTier: {
-            ...(existing.personalByTier || {}),
-            ...(Number.isFinite(personalTier) && tile?.personal && Object.keys(tile.personal).length
-                ? { [personalTier]: { ...(existing.personalByTier?.[personalTier] || {}), ...tile.personal } }
-                : {}),
+        // that omits one stat is not the stat going away. Kept per tier as
+        // well, because they are not constant across one: the same character's
+        // success rate fell eight points a tier through a watched trial, which
+        // is a thing the forecast has to model rather than a reading it can
+        // overwrite
+        personalByCharacter: {
+            ...(existing.personalByCharacter || {}),
+            [personalSlotKey]: {
+                personal: { ...(mine.personal || {}), ...(tile?.personal || {}) },
+                personalByTier: {
+                    ...(mine.personalByTier || {}),
+                    ...(Number.isFinite(personalTier) && tile?.personal && Object.keys(tile.personal).length
+                        ? { [personalTier]: { ...(mine.personalByTier?.[personalTier] || {}), ...tile.personal } }
+                        : {}),
+                },
+            },
         },
         signups: tile?.signups || existing.signups || null,
         pointsByTier,
@@ -347,6 +483,44 @@ export function recordTileSample(record, tile, at) {
     // the provenance stamp or the archived cycles off it, which is a thing this
     // returned-a-fresh-object shape did quietly for both
     return { ...(record || {}), weekStart, tiles };
+}
+
+/**
+ * Carry an un-split tile's top-level figures through a merge, when there are
+ * any. Omitted entirely otherwise, so a split tile never grows an empty legacy
+ * block for {@link adoptTilePersonal} to trip over.
+ * @param {Object} staler - The older side
+ * @param {Object} fresher - The newer side
+ * @returns {{personal?: Object, personalByTier?: Object}} Fields to spread onto the merged tile
+ */
+function mergeLegacyPersonal(staler, fresher) {
+    const personal = { ...asObject(staler?.personal), ...asObject(fresher?.personal) };
+    const personalByTier = { ...asObject(staler?.personalByTier), ...asObject(fresher?.personalByTier) };
+    const merged = {};
+    if (Object.keys(personal).length) merged.personal = personal;
+    if (Object.keys(personalByTier).length) merged.personalByTier = personalByTier;
+    return merged;
+}
+
+/**
+ * Union two tiles' per-character figures, one character at a time.
+ * @param {Object} staler - The older side
+ * @param {Object} fresher - The newer side
+ * @returns {Object} One `personalByCharacter` map
+ */
+function mergePersonalByCharacter(staler, fresher) {
+    const a = asObject(staler?.personalByCharacter);
+    const b = asObject(fresher?.personalByCharacter);
+    const merged = {};
+    for (const slot of new Set([...Object.keys(a), ...Object.keys(b)])) {
+        const older = asObject(a[slot]);
+        const newer = asObject(b[slot]);
+        merged[slot] = {
+            personal: { ...asObject(older.personal), ...asObject(newer.personal) },
+            personalByTier: { ...asObject(older.personalByTier), ...asObject(newer.personalByTier) },
+        };
+    }
+    return merged;
 }
 
 /**
@@ -459,8 +633,13 @@ export function mergeTrialRecords(base, incoming) {
             name: fresher.name || existing.name,
             kind: fresher.kind || existing.kind,
             completed: Boolean(existing.completed) || Boolean(tile.completed),
-            personal: { ...(staler.personal || {}), ...(fresher.personal || {}) },
-            personalByTier: { ...(staler.personalByTier || {}), ...(fresher.personalByTier || {}) },
+            // Per character, slot by slot: merging the two sides' blocks flat
+            // is what this file's split exists to stop. An un-split side keeps
+            // its top-level copy through the merge rather than being folded
+            // into anybody's slot — the merge does not know whose it is, and
+            // the next load by a character without one will claim it
+            ...mergeLegacyPersonal(staler, fresher),
+            personalByCharacter: mergePersonalByCharacter(staler, fresher),
             level: Number.isFinite(fresher.level) ? fresher.level : existing.level,
             tier: Number.isFinite(fresher.tier) ? fresher.tier : existing.tier,
             // Both halves of the socket statement travel together: a liveTier
@@ -571,13 +750,27 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             guildName: record.guildName ?? guildName,
         });
 
-        if (cleaned.purged.length) {
-            console.warn('[GuildTrialsStore] Dropping stored tiles that are not trials:', cleaned.purged.join(', '));
+        // The other half of the way in: a record written before the personal
+        // figures were split by character carries them at the top level, and
+        // they are almost certainly this reader's — nobody else has opened the
+        // tab in this build. Handing them to the first character to read them
+        // keeps the forecast it has been building all hour; leaving them shared
+        // is the bug. A character that already has its own slot inherits
+        // nothing, so the second alt through does not take the first one's.
+        const adopted = adoptPersonalStats(cleaned.record, characterId);
+
+        if (cleaned.purged.length || adopted.changed) {
+            if (cleaned.purged.length) {
+                console.warn(
+                    '[GuildTrialsStore] Dropping stored tiles that are not trials:',
+                    cleaned.purged.join(', ')
+                );
+            }
             // As-is: the record was read a moment ago, and the heal is meant to
             // lose tiles a merge would bring straight back
-            await saveTrialRecord(guildName, cleaned.record, characterId, { guildId, overwrite: true });
+            await saveTrialRecord(guildName, adopted.record, characterId, { guildId, overwrite: true });
         }
-        return cleaned.record;
+        return adopted.record;
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
         return null;

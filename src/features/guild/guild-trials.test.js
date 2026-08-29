@@ -240,7 +240,7 @@ const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { trialWeekStart } = await import('./guild-trials-math.js');
-const { saveTrialRecord } = await import('./guild-trials-store.js');
+const { saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 
@@ -1775,7 +1775,9 @@ describe('the panel, end to end', () => {
         root.appendChild(footer);
         fire(root);
 
-        expect(guildTrials.record.tiles['skilling::alchemy'].personal).toMatchObject({
+        expect(
+            tilePersonalStats(guildTrials.record.tiles['skilling::alchemy'], game.characterId).personal
+        ).toMatchObject({
             'Work Time': '3.14s',
             'Success Rate': '60.8%',
         });
@@ -2910,7 +2912,7 @@ describe('the panel, end to end', () => {
         seedForaging();
         fire(root);
 
-        const tile = guildTrials.record.tiles['skilling::foraging'];
+        const tile = tilePersonalStats(guildTrials.record.tiles['skilling::foraging'], game.characterId);
         // Four banked, so the readings are the fifth tier's
         expect(tile.personalByTier['5']).toMatchObject({ 'Success Rate': '49.6%' });
         expect(tile.personal['Success Rate']).toBe('49.6%');
@@ -2924,7 +2926,7 @@ describe('the panel, end to end', () => {
         seedForaging();
         fire(root);
 
-        const tile = guildTrials.record.tiles['skilling::foraging'];
+        const tile = tilePersonalStats(guildTrials.record.tiles['skilling::foraging'], game.characterId);
         expect(tile.personalByTier['4']).toMatchObject({ 'Success Rate': '49.6%' });
     });
 
@@ -2934,7 +2936,7 @@ describe('the panel, end to end', () => {
         seedForaging();
         fire(root);
 
-        const tile = guildTrials.record.tiles['skilling::foraging'];
+        const tile = tilePersonalStats(guildTrials.record.tiles['skilling::foraging'], game.characterId);
         expect(Object.keys(tile.personal)).toEqual(['Work Power', 'Success Rate']);
         expect(tile.personal['59m']).toBeUndefined();
         expect(tile.personal['1m']).toBeUndefined();
@@ -3005,7 +3007,9 @@ describe('the panel, end to end', () => {
         expect(tile.samples[0].readings[0]).toEqual({ current: 21_608, max: 88_920 });
         // The tier is the payload's own, not a badge plus an assumption
         expect(tile.tiers).toContainEqual({ tier: 10, total: 88_920 });
-        expect(tile.personalByTier['10']).toMatchObject({ 'Success Rate': '8.0%' });
+        expect(tilePersonalStats(tile, game.characterId).personalByTier['10']).toMatchObject({
+            'Success Rate': '8.0%',
+        });
     });
 
     test('the socket-stated tier reaches the panel, not only the observation filing', async () => {
@@ -4189,7 +4193,8 @@ describe('the forecast walks the same ladder as the pace', () => {
     // past the current tier, and its one-tier walk rendered as the hour's
     // verdict with no "at least" — that caption belongs to the pace row it
     // was suppressing.
-    const screen = () => ({
+    const screen = (extra = {}) => ({
+        ...extra,
         name: 'Crafting',
         kind: 'skilling',
         tier: 12,
@@ -4224,6 +4229,26 @@ describe('the forecast walks the same ladder as the pace', () => {
         const html = renderTrialBlock(analysis, 7, { measured: false, reason: 'none' }, { phase: 'live', forecast });
         expect(html).toContain('17 tiers → T17');
         expect(html).not.toContain('13 tiers');
+    });
+
+    test('the personal figures the analysis carries are the reading character’s', () => {
+        // The record is the guild's and both alts write to it; the footer's
+        // figures are the reader's own, and a decline fitted across two
+        // characters' readings is a curve through two different players
+        const shared = screen({
+            personalByCharacter: {
+                111: { personal: {}, personalByTier: { 13: { 'Success Rate': '49.6%' } } },
+                222: { personal: {}, personalByTier: { 13: { 'Success Rate': '8.0%' } } },
+            },
+        });
+
+        expect(analyseTrial(shared, { ...options, characterId: 111 }).personalByTier).toEqual({
+            13: { 'Success Rate': '49.6%' },
+        });
+        expect(analyseTrial(shared, { ...options, characterId: 222 }).personalByTier).toEqual({
+            13: { 'Success Rate': '8.0%' },
+        });
+        expect(analyseTrial(shared, { ...options, characterId: 333 }).personalByTier).toEqual({});
     });
 });
 

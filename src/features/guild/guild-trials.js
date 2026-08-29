@@ -178,6 +178,7 @@ import {
     saveTrialRecord,
     saveWorkBases,
     tileKey,
+    tilePersonalStats,
 } from './guild-trials-store.js';
 import { FOREIGN_CYCLE_REASON, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
 
@@ -274,6 +275,7 @@ const DEFAULT_WORK_BASES = {
  * @param {number|null} [options.buildersHallBonus] - Builders Hall bonus fraction, for reading the card's points
  * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`, for the first-tier rule
  * @param {number|null} [options.workBase] - The skill's learned first-tier work, for the work-ladder tier rung
+ * @param {string|number|null} [options.characterId] - Whose personal figures the analysis reports
  * @returns {{kind: string, tier: number|null, level: number|null, tiersClearedSoFar: number,
  *   rate: number|null, rateNote: string|null, remaining: number|null, total: number|null,
  *   etaMs: number|null, growthPerTier: number|null, next: Object|null, pace: Object|null,
@@ -289,6 +291,7 @@ export function analyseTrial(
         phase = null,
         workBase = null,
         liveTierFloor = null,
+        characterId = null,
     } = {}
 ) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
@@ -518,8 +521,11 @@ export function analyseTrial(
         // because a live forecast suppresses the exact-ladder pace row. The
         // success-decline model starved the same way, silently.
         tiers: observations,
-        personalByTier:
-            record?.personalByTier && typeof record.personalByTier === 'object' ? record.personalByTier : {},
+        // …and the personal half of them read for *this* character only. The
+        // record is the guild's and shared between alts; the footer's figures
+        // are the reader's own, and a decline fitted across two characters'
+        // readings is a curve through two different players
+        personalByTier: tilePersonalStats(record, characterId).personalByTier,
         // Carried through so the block can tell "no pace because no clock" from
         // "no pace because no rate yet" — they read identically on screen and
         // only one of them is something the player can do anything about
@@ -2876,7 +2882,7 @@ class GuildTrials {
                 if (readingTier !== null) sampled.readingTier = readingTier;
                 if (Number.isFinite(personalTier)) sampled.personalTier = personalTier;
 
-                this.record = recordTileSample(this.record, sampled, now);
+                this.record = recordTileSample(this.record, sampled, now, this.characterId);
             }
             // Persisted at the sampling cadence, never the render cadence: the
             // observer fires on every React burst and this used to write the
@@ -2949,6 +2955,7 @@ class GuildTrials {
                             phase,
                             workBase: this._workBase(record),
                             liveTierFloor,
+                            characterId: this.characterId,
                         })
                     );
                 }

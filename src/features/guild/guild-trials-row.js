@@ -102,7 +102,7 @@ registerRow({
         // ladder walk `projectPace` does is not available — the projection here
         // is the one that needs no deadline: when the tier in progress clears
         // at the rate that was measured
-        const analysis = analyseTrial(tile);
+        const analysis = analyseTrial(tile, { characterId: guildTrials?.characterId ?? null });
         const tier = Number.isFinite(analysis.tier) ? analysis.tier : null;
         const level = tier === null ? null : levelFromTier(tier);
 

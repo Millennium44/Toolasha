@@ -86,6 +86,10 @@ const {
     readPayoutBonuses,
     recordTileSample,
     saveTrialRecord,
+    personalSlot,
+    tilePersonalStats,
+    adoptTilePersonal,
+    adoptPersonalStats,
     loadWorkBases,
     saveWorkBases,
     loadTrialRoster,
@@ -297,6 +301,137 @@ describe('loading and saving', () => {
         );
         expect(await saveTrialRecord('Milky Way', record)).toBe(true);
         expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ tiles: record.tiles });
+    });
+});
+
+describe('the personal half of a guild-keyed record', () => {
+    /** An In Progress card carrying the footer's own figures */
+    const footer = (personal, overrides = {}) => ({
+        name: 'Foraging',
+        kind: 'skilling',
+        tier: 4,
+        personalTier: 5,
+        readings: [{ current: 10, max: 100 }],
+        personal,
+        ...overrides,
+    });
+
+    const forageTile = (record) => record.tiles['skilling::foraging'];
+
+    test('two characters in one guild keep their own figures', () => {
+        // The record is keyed by guild name and must stay that way — the
+        // samples are the guild's. The footer's Success Rate is not: merging
+        // both alts' into one block fitted the decline model across two players
+        let record = recordTileSample(emptyRecord(thisWeek), footer({ 'Success Rate': '49.6%' }), now, 111);
+        record = recordTileSample(record, footer({ 'Success Rate': '8.0%' }), now + 5000, 222);
+
+        const tile = forageTile(record);
+        expect(tilePersonalStats(tile, 111).personal['Success Rate']).toBe('49.6%');
+        expect(tilePersonalStats(tile, 222).personal['Success Rate']).toBe('8.0%');
+        expect(tilePersonalStats(tile, 111).personalByTier['5']['Success Rate']).toBe('49.6%');
+        expect(tilePersonalStats(tile, 222).personalByTier['5']['Success Rate']).toBe('8.0%');
+
+        // …while the guild's own half is still shared between them
+        expect(tile.samples).toHaveLength(2);
+    });
+
+    test('a character with no readings of its own is told so, not handed somebody else’s', () => {
+        const record = recordTileSample(emptyRecord(thisWeek), footer({ 'Success Rate': '49.6%' }), now, 111);
+        expect(tilePersonalStats(forageTile(record), 333)).toEqual({ personal: {}, personalByTier: {} });
+    });
+
+    test('one character’s repeated readings still merge field by field', () => {
+        let record = recordTileSample(emptyRecord(thisWeek), footer({ 'Work Power': '161' }), now, 111);
+        record = recordTileSample(record, footer({ 'Success Rate': '49.6%' }), now + 5000, 111);
+
+        expect(tilePersonalStats(forageTile(record), 111).personal).toEqual({
+            'Work Power': '161',
+            'Success Rate': '49.6%',
+        });
+    });
+
+    test('a legacy record’s personal half survives to the first character that reads it', async () => {
+        game.store['guildTrials_Milky Way'] = {
+            weekStart: thisWeek,
+            guildName: 'Milky Way',
+            guildId: 'g1',
+            tiles: {
+                'skilling::foraging': {
+                    name: 'Foraging',
+                    kind: 'skilling',
+                    samples: [{ t: now, readings: [{ current: 10, max: 100 }] }],
+                    personal: { 'Success Rate': '49.6%' },
+                    personalByTier: { 5: { 'Success Rate': '49.6%' } },
+                },
+            },
+        };
+
+        // It was almost certainly this character's — nobody else has opened the
+        // tab in a build that could file it anywhere else — so the forecast it
+        // has been building all hour is kept rather than dropped
+        const first = await loadTrialRecord('Milky Way', now, 111, { guildId: 'g1' });
+        expect(tilePersonalStats(forageTile(first), 111).personal['Success Rate']).toBe('49.6%');
+        expect(tilePersonalStats(forageTile(first), 111).personalByTier['5']['Success Rate']).toBe('49.6%');
+        // Adopted on disk, not only in hand
+        expect(forageTile(game.store['guildTrials_Milky Way']).personal).toBeUndefined();
+
+        // …and the alt through the same door afterwards inherits nothing
+        const second = await loadTrialRecord('Milky Way', now, 222, { guildId: 'g1' });
+        expect(tilePersonalStats(forageTile(second), 222)).toEqual({ personal: {}, personalByTier: {} });
+        // while the first character still has what it claimed
+        expect(tilePersonalStats(forageTile(second), 111).personal['Success Rate']).toBe('49.6%');
+    });
+
+    test('an un-adopted tile answers with its own figures, so nothing is lost before the migration runs', () => {
+        const tile = { name: 'Foraging', personal: { 'Work Power': '161' }, personalByTier: { 5: {} } };
+        expect(tilePersonalStats(tile, 111).personal['Work Power']).toBe('161');
+        expect(tilePersonalStats(tile).personal['Work Power']).toBe('161');
+    });
+
+    test('a character that already has its own slot inherits nothing', () => {
+        const tile = {
+            name: 'Foraging',
+            personal: { 'Success Rate': '8.0%' },
+            personalByCharacter: { 111: { personal: { 'Success Rate': '49.6%' }, personalByTier: {} } },
+        };
+        const { tile: after, changed } = adoptTilePersonal(tile, 111);
+        expect(changed).toBe(false);
+        expect(tilePersonalStats(after, 111).personal['Success Rate']).toBe('49.6%');
+    });
+
+    test('with no character known there is nothing to adopt to', () => {
+        expect(personalSlot(null)).toBe('default');
+        const record = { tiles: { a: { personal: { x: '1' } } } };
+        expect(adoptPersonalStats(record, null).changed).toBe(false);
+    });
+
+    test('a merge keeps both characters’ figures apart', () => {
+        const base = recordTileSample(emptyRecord(thisWeek), footer({ 'Success Rate': '49.6%' }), now, 111);
+        const incoming = recordTileSample(emptyRecord(thisWeek), footer({ 'Success Rate': '8.0%' }), now + 5000, 222);
+
+        const merged = mergeTrialRecords(base, incoming);
+        expect(tilePersonalStats(forageTile(merged), 111).personal['Success Rate']).toBe('49.6%');
+        expect(tilePersonalStats(forageTile(merged), 222).personal['Success Rate']).toBe('8.0%');
+    });
+
+    test('the guild identity checks are untouched by the split', async () => {
+        expect(recordProvenance({ guildId: 'g1' }, { guildId: 'g2' })).toBe('foreign');
+        expect(recordProvenance({ guildName: 'Milky Way' }, { guildName: 'milky way' })).toBe('own');
+
+        // A foreign record is still discarded whole, personal half included
+        game.store['guildTrials_New Guild'] = {
+            weekStart: thisWeek,
+            guildId: 'old-guild',
+            tiles: {
+                'skilling::foraging': { name: 'Foraging', samples: [], personal: { 'Success Rate': '49.6%' } },
+            },
+        };
+        const record = await loadTrialRecord('New Guild', now, 111, { guildId: 'new-guild' });
+        expect(record.tiles).toEqual({});
+
+        // …and adoption leaves the stamp exactly as it found it
+        const stamped = { weekStart: thisWeek, guildId: 'g1', guildName: 'Milky Way', tiles: {} };
+        expect(adoptPersonalStats(stamped, 111).record).toEqual(stamped);
     });
 });
 
