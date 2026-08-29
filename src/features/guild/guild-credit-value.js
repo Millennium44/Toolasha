@@ -76,7 +76,23 @@ const shrinePlanRecord = createCuratedRecord({
 // the same class of leak `loot-log-history.js` guards against for its own
 // record. `reset()` is exactly what a character switch calls for — see its
 // docstring in persisted-record.js.
-dataManager.on('character_switching', () => shrinePlanRecord.reset());
+//
+// The pending edit is flushed *first*, and this is why the listener is async.
+// This module's listener is registered at import time, which is before
+// entrypoint.js installs feature-registry's — so on a switch it runs first,
+// and a bare `reset()` here emptied the record before the registry's teardown
+// could reach `cleanup()`'s "a plan edited in the last few hundred
+// milliseconds is written now rather than dropped with the timer". Nothing was
+// corrupted (an empty memory merges to whatever is stored, and `reset()`'s
+// generation bump stands the save down rather than letting it write under the
+// wrong key) — the edit was simply lost. Flushing here, before the reset,
+// keeps that promise; `character_switching` is awaited by data-manager and
+// fires before `currentCharacterId` moves, so the write lands under the
+// departing character's key.
+dataManager.on('character_switching', async () => {
+    await guildCreditValue.flushPendingPlanSave();
+    shrinePlanRecord.reset();
+});
 
 /**
  * The saved plan with its shape guaranteed — `targets` always an object.
@@ -1262,6 +1278,27 @@ class GuildCreditValue {
             this._planSaveTimer = null;
             shrinePlanRecord.save();
         }, PLAN_SAVE_DEBOUNCE_MS);
+    }
+
+    /**
+     * Write a debounced plan edit that has not landed yet, and wait for it.
+     *
+     * The shared step behind `cleanup()`'s flush and the module-level
+     * character-switch listener's. The trailing `flushed()` is not redundant:
+     * the two run concurrently during a switch — the listener starts first,
+     * `disableAllFeatures()` reaches `cleanup()` on its own chain — so
+     * whichever of them finds the timer already cleared still has to wait for
+     * the save the other one started before the record may be reset.
+     *
+     * @returns {Promise<void>} Settles once nothing is left to write
+     */
+    async flushPendingPlanSave() {
+        if (this._planSaveTimer) {
+            clearTimeout(this._planSaveTimer);
+            this._planSaveTimer = null;
+            await shrinePlanRecord.save();
+        }
+        await shrinePlanRecord.flushed();
     }
 
     /** Release the exchange advisor's selection observer and any pending re-render */

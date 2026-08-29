@@ -832,6 +832,37 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         expect(game.storage['settings:guildShrinePlan_char1'].targets).toEqual({ [FORCE]: 5 });
     });
 
+    test('a plan edited moments before a character switch is written under the departing character', async () => {
+        const modal = openModal();
+        const input = inputFor(modal, FORCE);
+        input.value = '7';
+        input.dispatchEvent(new Event('input'));
+
+        // Most of the 400 ms debounce is still to run: nothing is stored yet,
+        // and the timer is all that is holding the edit.
+        vi.advanceTimersByTime(100);
+        await shrinePlanRecord.flushed();
+        expect(game.storage['settings:guildShrinePlan_char1']).toBeUndefined();
+
+        try {
+            // The switch. Data-manager awaits every `character_switching`
+            // listener before it moves `currentCharacterId`, which is exactly
+            // the window a pending write has to land under the character who
+            // made the edit. The module-level listener used to `reset()` the
+            // record here and be done — the edit went out with the timer.
+            await Promise.all(game.listeners['character_switching'].map((fn) => fn()));
+
+            game.currentCharId = 'char2';
+            expect(game.storage['settings:guildShrinePlan_char1'].targets).toEqual({ [FORCE]: 7 });
+            expect(game.storage['settings:guildShrinePlan_char2']).toBeUndefined();
+            // And the reset still happened: the arriving character must not
+            // inherit this plan through the curated record's pre-load merge.
+            expect(shrinePlanRecord.get()).toEqual({});
+        } finally {
+            game.currentCharId = 'char1';
+        }
+    });
+
     test('next buys list every unlocked buff, cheapest guild-token cost first', () => {
         const modal = openModal();
         const rows = nextBuyRows(modal).map((r) => r.textContent.replace(/\s+/g, ' ').trim());
@@ -2188,8 +2219,11 @@ describe('guild credit value — shrine plan record on a character switch', () =
 
         // feature-registry.js fires this before the id changes and re-inits
         // every feature; nothing else in this file clears the record's memory.
+        // Awaited the way data-manager awaits it: the listener flushes a
+        // pending plan edit before resetting, so the reset lands a microtask
+        // later rather than synchronously.
         expect(game.listeners['character_switching']).toBeTruthy();
-        game.listeners['character_switching'].forEach((fn) => fn());
+        await Promise.all(game.listeners['character_switching'].map((fn) => fn()));
         expect(shrinePlanRecord.get()).toEqual({});
 
         // Character 2 has never set a target for this buff. Without the reset,
@@ -2206,7 +2240,7 @@ describe('guild credit value — shrine plan record on a character switch', () =
         game.storage['settings:guildShrinePlan_char1'] = { targets: { forceBuff: 5 } };
         await shrinePlanRecord.load();
 
-        game.listeners['character_switching'].forEach((fn) => fn());
+        await Promise.all(game.listeners['character_switching'].map((fn) => fn()));
         game.currentCharId = 'char2';
         game.storage['settings:guildShrinePlan_char2'] = { targets: { scholarBuff: 2 } };
         await shrinePlanRecord.load();
