@@ -115,6 +115,21 @@ describe('combat battle counter', () => {
         expect(counterText()).toBe('· Wave 5 · Battle #3');
     });
 
+    test('a new_battle with no battleId keeps showing the last known number, rather than zeroing it', () => {
+        // boss-eta tolerates the same gap by text-parsing this counter's own
+        // last-shown number, so zeroing here would blank the counter and take
+        // away the very text boss-eta falls back to reading.
+        game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
+
+        game.wsHandlers.new_battle({ battleId: 7 });
+        expect(counterText()).toBe('· Battle #7');
+
+        game.wsHandlers.new_battle({});
+
+        expect(counterText()).toBe('· Battle #7');
+    });
+
     test('a labyrinth fight shows "Attempt #N" from the room entry count, never a battle number', () => {
         buildHeader('Labyrinth - Chimerical Beast');
         game.wsHandlers.new_battle({ battleId: 99 });

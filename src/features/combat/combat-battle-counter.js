@@ -170,7 +170,13 @@ class CombatBattleCounter {
     }
 
     _onNewBattle(data) {
-        this.battleId = data.battleId || 0;
+        // A `new_battle` message with no battleId still means a battle
+        // happened — boss-eta tolerates the same gap by text-parsing this
+        // counter's own last-shown number as a fallback. Zeroing here would
+        // both blank the counter and take away the very text boss-eta reads,
+        // so a missing id keeps whatever id was last known instead.
+        const battleId = Number(data?.battleId) || 0;
+        if (battleId) this.battleId = battleId;
 
         const actions = dataManager.getCurrentActions();
         const combatAction = actions.find((a) => a.actionHrid?.startsWith('/actions/combat/') && !a.isDone);
