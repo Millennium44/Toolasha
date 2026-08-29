@@ -231,6 +231,10 @@ const trialsFeature = (await import('./guild-trials.js')).default;
 // about what the button must NOT feed it after the fight is torn down
 const guildTrialAbilities = (await import('./guild-trial-abilities.js')).default;
 
+// Real, not mocked: the leak under test is in whether this module's own cache
+// is reset on a guild/character switch, which a mock would paper over
+const guildTrialStatsModal = (await import('./guild-trial-stats-modal.js')).default;
+
 const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
 const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
@@ -2611,6 +2615,58 @@ describe('the panel, end to end', () => {
         const tile = guildTrials.record.tiles['skilling::alchemy'];
         const reading = tile?.samples?.at(-1)?.readings?.[0];
         expect(reading).not.toEqual({ current: 120_000, max: 400_000 });
+    });
+
+    test('a guild switch clears the captured Trial Stats modal, so a same-named trial cannot inherit the old guild’s member figures', async () => {
+        // Same class of leak as the skilling socket cache: guild-trial-stats-modal.js
+        // keys its capture of the game's own post-trial "Combat Trial Stats" modal
+        // by trial NAME alone ("Trial Chameleon"), with no guild or character
+        // scoping. Two guilds running the same combat trial in the same week is
+        // routine, and the scoreboard's reconciliation reads straight off this
+        // cache by trial name — so a guild switch that leaves it standing hands
+        // the new guild's scoreboard the old guild's captured member totals under
+        // names that mean nothing there.
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'Testmaxxing';
+        game.store = {};
+        await trialsFeature.initialize();
+
+        guildTrialStatsModal.statsByTrial.set('Trial Chameleon', {
+            kind: 'combat',
+            columns: ['damage', 'healing', 'damageTaken'],
+            members: [{ name: 'OldGuildMember', values: { damage: 999, healing: 0, damageTaken: 0 } }],
+            at: now,
+        });
+
+        game.guildName = 'SuperMoo';
+        fire(buildTab([{ name: 'Milking', level: 130, bar: '0 / 65,280' }]));
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(guildTrials.guildName).toBe('SuperMoo');
+        expect(guildTrialStatsModal.getStats('Trial Chameleon')).toBeNull();
+    });
+
+    test('a character switch clears the captured Trial Stats modal cache', async () => {
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'Old Guild';
+        game.store = {};
+        await trialsFeature.initialize();
+
+        guildTrialStatsModal.statsByTrial.set('Trial Chameleon', {
+            kind: 'combat',
+            columns: ['damage', 'healing', 'damageTaken'],
+            members: [{ name: 'OldGuildMember', values: { damage: 999, healing: 0, damageTaken: 0 } }],
+            at: now,
+        });
+
+        game.dmHandlers.character_switching.forEach((handler) => handler({ oldId: 111, newId: 222 }));
+        await vi.advanceTimersByTimeAsync(0);
+        game.characterId = 222;
+        game.guildName = 'New Guild';
+
+        expect(guildTrialStatsModal.getStats('Trial Chameleon')).toBeNull();
     });
 
     test('the fresh character draws its own empty state, not the last one’s', async () => {

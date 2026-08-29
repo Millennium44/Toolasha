@@ -244,6 +244,22 @@ class GuildTrialStatsModal {
     }
 
     /**
+     * Forget every captured reading, for a character or guild switch.
+     *
+     * Captures are keyed by trial NAME alone — no guild or character scoping —
+     * because the modal itself carries none. Two guilds routinely run the same
+     * combat trial in the same week, and the scoreboard's reconciliation
+     * (`guild-trial-scoreboard.js`) reads straight off this cache by trial name,
+     * so leaving it standing across a switch hands the arriving guild's card the
+     * departing guild's captured member totals under names that mean nothing
+     * there — the same shape of leak `guild-trial-skilling.js`'s socket cache
+     * had. The listener itself stays wired; only the readings are dropped.
+     */
+    reset() {
+        this.statsByTrial.clear();
+    }
+
+    /**
      * Everything captured this session, keyed by trial name — for the export.
      * @returns {Object<string, {members: Array, at: number}>}
      */

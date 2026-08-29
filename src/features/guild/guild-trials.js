@@ -2436,6 +2436,9 @@ class GuildTrials {
             // switch. A session with several alts read as a trial that would
             // not hold still.
             guildTrialSkilling.reset?.();
+            // Same leak, one module over: the captured Trial Stats modal is also
+            // keyed by trial name alone, and the scoreboard reads it by that name
+            guildTrialStatsModal.reset?.();
             this.phase = null;
             // The recorder session cached for the last-trial readout is the
             // departing character's; the arriving one is asked for afresh
@@ -2682,6 +2685,8 @@ class GuildTrials {
                 // behind can still answer for "Alchemy" on the guild just
                 // joined for up to fifteen seconds
                 guildTrialSkilling.reset?.();
+                // …and the Trial Stats modal cache, keyed the same fragile way
+                guildTrialStatsModal.reset?.();
             } else {
                 // The name is adopted either way; a record under it that could
                 // not be read now is folded in by the next save's re-read
