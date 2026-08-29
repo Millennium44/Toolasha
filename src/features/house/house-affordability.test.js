@@ -5,13 +5,17 @@ const roomDetails = {
     '/house_rooms/gym': { name: 'Gym' },
 };
 
+// Mutable so the character-switch race test can move the active character
+// mid-flight, the way a real switch does.
+let currentCharacterId = 'char1';
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ houseRoomDetailMap: roomDetails }),
         getCombinedData: () => ({}),
         // The untracked list is keyed per character, and the module asks to be
         // told when that changes
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => currentCharacterId,
         getCurrentCharacterGameMode: () => 'standard',
         on: () => {},
         off: () => {},
@@ -31,19 +35,27 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (_hrid, options = {}) => (options.mode === 'bid' ? 2 : 1),
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+// Per-key data and per-key artificial delays, so a race test can make one
+// character's read resolve after another's despite starting first.
+const storageState = vi.hoisted(() => ({ data: new Map(), delays: new Map() }));
+
 vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(true),
         getJSON: async (_k, _s, fallback) => fallback,
         setJSON: async () => true,
-        get: async (_k, _s, fallback = null) => fallback,
+        get: async (key, _s, fallback = null) => {
+            const delay = storageState.delays.get(key);
+            if (delay) await delay;
+            return storageState.data.has(key) ? storageState.data.get(key) : fallback;
+        },
         set: async () => true,
         delete: async () => true,
         getAllKeys: async () => [],
     },
 }));
 
-const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked, materialsCost } =
+const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked, materialsCost, loadUntrackedRooms } =
     await import('./house-affordability.js');
 
 describe('nextLevelCost', () => {
@@ -138,6 +150,49 @@ describe('rooms you are not saving for', () => {
         await setRoomTracked('/house_rooms/gym', true);
 
         expect(affordableUpgrades(rooms, 5000).total).toBe(2);
+    });
+});
+
+describe('a character switch mid-read', () => {
+    afterEach(() => {
+        currentCharacterId = 'char1';
+        storageState.data.clear();
+        storageState.delays.clear();
+    });
+
+    test('a slow read for the departed character does not overwrite the arriving one', async () => {
+        // char1's read is artificially slow (imagine a legacy-adoption check or
+        // a busy IndexedDB transaction); char2's is instant. Both
+        // `character_initialized`/`character_switched` handlers fire
+        // unawaited, so char2's call can finish and render before char1's
+        // stale answer comes back.
+        storageState.data.set('housesUntracked_char1', ['/house_rooms/dojo']);
+        storageState.data.set('housesUntracked_char2', ['/house_rooms/gym']);
+        storageState.delays.set('housesUntracked_char1', new Promise((resolve) => setTimeout(resolve, 20)));
+
+        currentCharacterId = 'char1';
+        const staleRead = loadUntrackedRooms();
+
+        // Flush microtasks so char1's call runs past `await storage.ready` and
+        // computes its scoped key (`characterKey()`, live off
+        // `getCurrentCharacterId()`) *while it is still the active character*,
+        // then parks on the delayed `storage.get`. Without this flush the
+        // character flip below would happen before char1's call ever reaches
+        // that computation, and both calls would end up reading char2's key —
+        // masking the bug this test exists to catch.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        currentCharacterId = 'char2';
+        await loadUntrackedRooms();
+
+        expect(isRoomTracked('/house_rooms/gym')).toBe(false);
+        expect(isRoomTracked('/house_rooms/dojo')).toBe(true);
+
+        // Let char1's late answer land. It must not clobber char2's set.
+        await staleRead;
+
+        expect(isRoomTracked('/house_rooms/gym')).toBe(false);
+        expect(isRoomTracked('/house_rooms/dojo')).toBe(true);
     });
 });
 

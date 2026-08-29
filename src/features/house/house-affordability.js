@@ -146,12 +146,24 @@ export async function setRoomTracked(houseRoomHrid, tracked) {
  * @returns {Promise<Set<string>>}
  */
 export async function loadUntrackedRooms() {
+    // Captured before the first await: `character_initialized` and
+    // `character_switched` both call this, unawaited, so a fast switch (or a
+    // switch landing while the previous character's read is still in flight)
+    // can have two calls outstanding at once. Whichever started for this
+    // character is the one that gets to decide whether its answer still
+    // applies once it comes back.
+    const charId = dataManager.getCurrentCharacterId();
     // Called at module scope, which is long before the database is open. Read
     // there unguarded it came back with the default — every room counted, and a
     // "Database not available" line in the console saying so.
     try {
         await storage.ready;
         const saved = await readScoped(UNTRACKED_KEY, 'settings', null, { migrate: 'adopt' });
+        // The character has moved on since this read started — a slower call
+        // for the departed character resolving after a faster call for the
+        // new one would otherwise overwrite the new character's set with the
+        // old one's, silently applying the wrong exclusions to the wrong house.
+        if (dataManager.getCurrentCharacterId() !== charId) return untracked;
         untracked = Array.isArray(saved) ? new Set(saved) : new Set();
     } catch (error) {
         console.error('[Houses] Reading which rooms to count failed:', error);
