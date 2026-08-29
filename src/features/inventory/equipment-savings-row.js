@@ -71,6 +71,7 @@ import {
     drawLine,
     blank,
     shortDuration,
+    spriteUrl,
     ROW_COLORS,
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -217,6 +218,85 @@ reload();
 // Module-scope state outlives the feature's own re-initialisation on a switch
 dataManager.on('character_initialized', reload);
 dataManager.on('character_switched', reload);
+
+/**
+ * How many times the game has told us something the savings figures depend on.
+ *
+ * The overlay redraws every visible tile once a second, and this tile's render
+ * is the most expensive one in the panel — a live trace put it at 4.2 ms, which
+ * was 85% of a seven-tile tick. It earns that: `everything()` resolves a loadout
+ * per target, scans the action map for a recipe, and prices an enhancement run,
+ * all against coins, inventory, worn gear and levels that had not moved since
+ * the last tick.
+ *
+ * So the tile's `version()` needs a summary of everything that compute reads,
+ * and the game-side half of it is this counter. Deliberately broad: an
+ * enhancement run is priced through the loadout, which is gear, teas, community
+ * buffs and levels together, so anything that could move one of those bumps it.
+ * A counter that is bumped too often only costs a redraw that was going to
+ * happen anyway; one that misses an input shows a stale price, which is the one
+ * outcome worth avoiding.
+ */
+let gameRevision = 0;
+
+[
+    'character_initialized',
+    'character_switched',
+    'items_updated',
+    'action_completed',
+    'actions_updated',
+    'skills_updated',
+    'abilities_updated',
+    'house_rooms_updated',
+    'market_listings_updated',
+    'consumables_updated',
+    'buffs_updated',
+    'community_buffs_updated',
+    'personal_buffs_updated',
+    'new_battle',
+].forEach((event) =>
+    dataManager.on(event, () => {
+        gameRevision++;
+    })
+);
+
+// Every figure on the tile is a price or a difference of prices, so a new feed
+// is a new tile
+marketAPI.on(() => {
+    gameRevision++;
+});
+
+/**
+ * The savings list itself, as a string.
+ *
+ * Read rather than counted, because the list is edited from a panel, a context
+ * menu and a sim hand-off, and a counter would have to be bumped in all three.
+ * It is a handful of short entries — this is cheaper than one market lookup.
+ *
+ * @returns {string}
+ */
+function listStamp() {
+    const targets = Object.entries(state.targets).map(
+        ([itemHrid, target]) =>
+            `${itemHrid}:${target.enhancementLevel || 0}:${target.noSell ?? ''}:${target.craft ?? ''}:${target.mode ?? ''}`
+    );
+    const abilities = abilityGoals().map((goal) => `${goal.abilityHrid}:${goal.targetLevel}:${goal.cost ?? ''}`);
+    const houses = houseGoals().map((goal) => `${goal.houseRoomHrid}:${goal.targetLevel}:${goal.cost ?? ''}`);
+
+    return [
+        targets.join(','),
+        abilities.join(','),
+        houses.join(','),
+        state.selected ?? '',
+        state.noSell ? 1 : 0,
+        state.marketValue ? 1 : 0,
+    ].join('|');
+}
+
+/** @returns {boolean} Whether anything at all is being saved for */
+function savingForAnything() {
+    return Boolean(Object.keys(state.targets).length || abilityGoals().length || houseGoals().length);
+}
 
 /** Write the list back, without making anybody wait for it */
 function persist() {
@@ -3529,7 +3609,37 @@ registerRow({
     empty: 'Nothing watched',
     name: 'Equipment Watch',
     defaultSize: { width: 240, height: 46 },
+    /**
+     * What this tile would draw from, in three cheap reads.
+     *
+     * The list itself, the game's own revision counter, and a minute bucket.
+     * The bucket is the honest way to cover the one input the other two cannot:
+     * the arrival estimate divides the shortfall by an income, and the net worth
+     * trend that stands in for combat income is measured over a rolling window,
+     * so its slope drifts with the clock rather than with any event. Bucketing
+     * to the minute bounds that drift at a minute on a figure drawn as "3d" or
+     * "5h" — and leaves an idle tile drawing once a minute instead of sixty
+     * times. Everything that can move faster than that (a price, a coin, a piece
+     * of gear, a level, an edit to the list) moves the other two immediately.
+     */
+    version: () => {
+        if (!savingForAnything()) return 'blank';
+        // The sprite sheets too: an icon drawn before the game has loaded one is
+        // a spacer, and the sheet turning up a second later changes nothing else
+        return [
+            gameRevision,
+            Math.floor(Date.now() / 60_000),
+            listStamp(),
+            spriteUrl('items'),
+            spriteUrl('skills'),
+        ].join('|');
+    },
     render: (container) => {
+        // Asked before `everything()` rather than after it: an empty tile that
+        // resolves a loadout to find out it is empty is the expensive case for
+        // the player who has never opened this feature at all
+        if (!savingForAnything()) return blank(container);
+
         const plan = everything();
         if (!plan.targets.length && !plan.abilities.length && !plan.houses.length) return blank(container);
 

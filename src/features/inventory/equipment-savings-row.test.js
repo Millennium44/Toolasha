@@ -24,6 +24,10 @@ const game = vi.hoisted(() => ({
     // tests that are not about the fallback see the same "nothing measured"
     // behaviour they did before it existed
     networthSeries: () => [],
+    // What the tile's `version()` subscribes to, so a test can fire a price
+    // update or a game event the way the real feeds would
+    priceListeners: [],
+    gameListeners: {},
     // Everything the module has written back, so a test about a setting
     // surviving a reload can look at what would actually be reloaded rather
     // than at the module's own memory of it
@@ -63,7 +67,9 @@ vi.mock('../../core/data-manager.js', () => ({
         // and listens for the switch
         getCurrentCharacterId: () => 'char1',
         getCurrentCharacterGameMode: () => 'standard',
-        on: () => {},
+        on: (event, handler) => {
+            (game.gameListeners[event] ||= []).push(handler);
+        },
         off: () => {},
     },
 }));
@@ -117,13 +123,21 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/game-lookups.js', () => ({ getItemHridFromName: () => null }));
-vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
+// Kept rather than discarded, so the tile's own `version()` — which is what
+// spares the overlay this module's whole render sixty times a minute — can be
+// tested against the same fixtures the arithmetic is
+const rowsByKey = vi.hoisted(() => new Map());
+vi.mock('../../utils/overlay-rows.js', () => ({
+    registerRow: (definition) => rowsByKey.set(definition.key, definition),
+}));
 vi.mock('../../api/marketplace.js', () => ({
     default: {
         getDataAge: () => 60_000,
         fetch: async () => {},
         // The book price, which is what an ability level is actually bought with
         getPrice: (hrid) => game.bookPrices[hrid] || null,
+        // The tile's `version()` treats a new price feed as a new tile
+        on: (handler) => game.priceListeners.push(handler),
     },
 }));
 vi.mock('../networth/networth-history.js', () => ({
@@ -1955,5 +1969,110 @@ describe('the base a refinement recipe consumes is priced at the output level', 
         game.inventory = [];
         game.prices['/items/spear:5'] = { ask: 1, bid: 1 }; // absurdly cheap direct listing
         expect(upgradeBaseCost(recipe, 5, priceBase)).toBe(1);
+    });
+});
+
+/**
+ * The tile's `version()`.
+ *
+ * The overlay panel redraws every visible tile once a second, and skips a row's
+ * whole render when its `version()` comes back unchanged. This tile is the
+ * expensive one — a loadout resolved per target, the action map scanned for a
+ * recipe, an enhancement run priced — so the memo is worth a lot and a memo that
+ * misses an input is worth less than nothing: it would leave a price on screen
+ * that the market has moved past.
+ *
+ * So each test below moves exactly one of the things the render reads.
+ */
+describe('the Equipment Watch tile summarises its own inputs', () => {
+    const tile = () => rowsByKey.get('equipmentWatch');
+    const version = () => tile().version();
+
+    const fire = (event) => (game.gameListeners[event] || []).forEach((handler) => handler({}));
+
+    test('nothing watched is one settled version, and a blank tile', () => {
+        expect(version()).toBe('blank');
+        expect(version()).toBe(version());
+
+        const container = document.createElement('div');
+        tile().render(container);
+        expect(container.textContent.trim()).toBe('');
+    });
+
+    test('adding, pinning and dropping a target each move it', () => {
+        const empty = version();
+
+        watchTarget('/items/holy_sword', 0);
+        const watched = version();
+        expect(watched).not.toBe(empty);
+
+        // The same list read twice is the same version — that is the whole
+        // point, and the thing the render is spared
+        expect(version()).toBe(watched);
+
+        // The pin decides which of several targets the tile shows
+        selectTarget('/items/holy_sword');
+        expect(version()).not.toBe(watched);
+    });
+
+    test('the trade-in switch moves it, because it changes every figure on the tile', () => {
+        watchTarget('/items/holy_sword', 0);
+        const before = version();
+
+        setNoSell(true);
+        expect(version()).not.toBe(before);
+    });
+
+    test('a different enhancement of the same piece is a different purchase', () => {
+        watchTarget('/items/holy_sword', 0);
+        const plain = version();
+
+        watchTarget('/items/holy_sword', 10);
+        expect(version()).not.toBe(plain);
+    });
+
+    test('an ability goal is on the list too', async () => {
+        const before = version();
+        await watchAbility('/abilities/fierce_aura', 46, 1_000_000);
+        expect(version()).not.toBe(before);
+    });
+
+    test('a new price feed moves it, even though nothing was edited', () => {
+        watchTarget('/items/holy_sword', 0);
+        const before = version();
+
+        // Every figure on the tile is a price or a difference of prices
+        game.priceListeners.forEach((handler) => handler());
+        expect(version()).not.toBe(before);
+    });
+
+    test('what the game says about coins, gear and levels moves it', () => {
+        watchTarget('/items/holy_sword', 0);
+
+        // Each of these can change a cost without anything being edited: coins
+        // and inventory decide the shortfall, worn gear the trade-in, levels and
+        // buffs the price of an enhancement run
+        for (const event of ['items_updated', 'skills_updated', 'house_rooms_updated', 'community_buffs_updated']) {
+            const before = version();
+            fire(event);
+            expect(version(), `${event} should move the version`).not.toBe(before);
+        }
+    });
+
+    test('a rendered tile still shows what the list says after an edit', () => {
+        // The memo is only as good as the render it gates: a version that moved
+        // has to be followed by a tile that says the new thing
+        game.prices['/items/holy_sword:0'] = { ask: 1_000_000_000, bid: 900_000_000 };
+        game.prices['/items/rough_boots:0'] = { ask: 2_000_000_000, bid: 1_900_000_000 };
+        watchTarget('/items/holy_sword', 0);
+
+        const container = document.createElement('div');
+        tile().render(container);
+        expect(container.textContent).toContain('Holy Sword');
+
+        watchTarget('/items/rough_boots', 0);
+        selectTarget('/items/rough_boots');
+        tile().render(container);
+        expect(container.textContent).toContain('Rough Boots');
     });
 });
