@@ -188,9 +188,9 @@ describe('a character who arranged the overlay before the curated set existed', 
         saved.legacy = {
             visible: { luck: true, dps: true },
             order: ['dps', 'luck'],
-            // Two columns of 200, luck across both — the shape a v1 record has
-            positions: { dps: { x: 0, y: 0 }, luck: { x: 0, y: 30 } },
-            sizes: { dps: { width: 200, height: 30 }, luck: { width: 400, height: 30 } },
+            // A line of two unequal tiles, which is the shape a v1 record has
+            positions: { dps: { x: 0, y: 0 }, luck: { x: 100, y: 0 } },
+            sizes: { dps: { width: 100, height: 30 }, luck: { width: 300, height: 30 } },
         };
 
         await overlayPanel.initialize();
@@ -198,8 +198,10 @@ describe('a character who arranged the overlay before the curated set existed', 
 
         expect(overlayPanel.settings.version).toBe(2);
         expect(overlayPanel.settings.order).toEqual(['dps', 'luck']);
-        expect(overlayPanel.settings.span.luck).toBe(2);
-        expect(tiles().get('luck').style.gridColumn).toBe('span 2');
+        // Three times the width of the tile beside it, and it keeps that
+        expect(overlayPanel.settings.span.luck).toBe(3);
+        expect(overlayPanel.settings.span.dps).toBe(1);
+        expect(tiles().get('luck').style.gridColumn).toBe('span 3');
         // And the pixels are gone rather than left to be written out again
         expect(overlayPanel.settings.positions).toBeUndefined();
         expect(overlayPanel.settings.sizes).toBeUndefined();

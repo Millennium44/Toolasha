@@ -210,6 +210,7 @@ function readToolashaSection(json) {
     // takes, so an old export of ours costs no separate code path.
     if (saved.version >= 2) {
         settings.version = 2;
+        settings.columns = Number.isFinite(saved.columns) ? saved.columns : 2;
         settings.span = {};
         for (const [key, value] of Object.entries(saved.span || {})) {
             if (Number.isFinite(value) && value > 0) settings.span[key] = Math.round(value);
@@ -315,6 +316,9 @@ export function toOPanelConfig(settings, geometry = null) {
 function nativeSection(settings) {
     return {
         version: 2,
+        // The grid the spans are written for; without it a span is a number
+        // with no unit, and a four-column layout reads as a two-column one
+        columns: Number.isFinite(settings?.columns) ? settings.columns : 2,
         order: [...(settings?.order || [])],
         span: { ...(settings?.span || {}) },
         visible: { ...(settings?.visible || {}) },

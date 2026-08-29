@@ -467,6 +467,8 @@ export function presetFile(name, { rows = null } = {}) {
 
     return toOPanelConfig({
         version: 2,
+        // Every preset is written for the two columns the default panel gives
+        columns: 2,
         order: [...preset.order],
         span: { ...preset.span },
         visible,

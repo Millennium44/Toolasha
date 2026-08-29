@@ -84,6 +84,31 @@ export function columnsFor(width) {
 }
 
 /**
+ * How many columns the grid should have for a layout.
+ *
+ * A span only means anything relative to the grid it was written in: two of four
+ * is half the panel, two of two is all of it. So the layout carries its own
+ * column count and this is what reconciles it with the panel there is.
+ *
+ * The wider of the two, because a layout authored for four columns drawn on a
+ * two-column grid has every span clamped and every proportion in it flattened —
+ * which is the whole of what went wrong importing a real hand-made layout. The
+ * exception is a panel narrow enough to hold one column at all: a phone gets one
+ * column whatever the layout wanted, which is what it always got.
+ *
+ * @param {number} width - Canvas width in pixels
+ * @param {number} [authored] - The columns the layout was written for
+ * @returns {number} Between 1 and {@link MAX_SPAN}
+ */
+export function columnsForLayout(width, authored = 2) {
+    const affords = columnsFor(width);
+    if (affords <= 1) return 1;
+
+    const wanted = Number.isFinite(authored) ? Math.round(authored) : 2;
+    return Math.min(MAX_SPAN, Math.max(1, affords, wanted));
+}
+
+/**
  * How many columns a tile takes, given what it asked for and what there is.
  *
  * Clamped to the columns available rather than stored per width, which is what
@@ -132,47 +157,81 @@ export function seedSpan(row) {
 function rectangles(v1) {
     const positions = v1?.positions || {};
     const sizes = v1?.sizes || {};
+    const visible = v1?.visible || {};
 
     const tiles = [];
     for (const [key, spot] of Object.entries(positions)) {
         const size = sizes[key];
         if (!Number.isFinite(spot?.x) || !Number.isFinite(spot?.y)) continue;
         if (!(size?.width > 0) || !(size?.height > 0)) continue;
+        // A row explicitly switched off is not part of the arrangement, and a
+        // real export is full of them: the maintainer's own had six leftovers
+        // parked on top of each other at the bottom of the panel, most of them
+        // off. Swept in, they read as a line and scramble everything after it.
+        // An *unmentioned* row is not the same thing — it falls back to its own
+        // default, which is on for nearly every row in the script.
+        if (visible[key] === false) continue;
         tiles.push({ key, x: spot.x, y: spot.y, w: size.width, h: size.height });
     }
     return tiles;
 }
 
 /**
- * The column width the old layout was built on.
+ * Share `columns` out between tiles, in proportion to how wide they were.
  *
- * Derived rather than assumed, because a v1 layout could have been built against
- * any panel width — the packer used `floor(canvas / columns)` snapped to ten, so
- * the unit is 220 on one character and 240 on another.
+ * The replacement for deriving one global column unit from the tile edges, which
+ * looked reasonable and fell over on the first real layout it met. That layout
+ * had a build-score tile 110 wide beside a net-worth tile 180 wide, so the edge
+ * set contained both 110 and 120 — a ten-pixel difference — and the smallest gap
+ * between consecutive edges *is* the unit by that reckoning. Ten pixels. Which
+ * made the layout forty-seven columns wide, clamped to four, and every tile in
+ * it four columns wide: one tile per line, the whole arrangement gone. A single
+ * unit only exists if the original was built on a grid, and a hand-arranged one
+ * was not.
  *
- * Every edge of every tile is a boundary that layout used, and the smallest gap
- * between two consecutive boundaries is one column. **Both** edges, left and
- * right: a layout whose only narrow tile sits in the left column above a
- * full-width one has no tile *starting* at the column boundary, so taking left
- * edges alone finds no interior boundary at all and reads the whole panel as one
- * column — which then flattens every span to 1. A layout genuinely one tile wide
- * has no interior boundary either way, and its own width is the unit.
+ * Proportions within a line need no unit at all. Each tile gets its share of the
+ * line's total width, rounded by largest remainder so the spans still sum to
+ * exactly `columns`, and never less than one — a tile that rounds to nothing is
+ * a tile that has been deleted.
  *
- * @param {Array<Object>} tiles - Rectangles
- * @returns {{unit: number, width: number}} The column unit and the layout's full width
+ * @param {number[]} widths - The tiles' widths, in order along the line
+ * @param {number} columns - How many columns the line is to be shared into
+ * @returns {number[]} A span per tile, summing to `columns`
  */
-export function columnUnit(tiles) {
-    const width = tiles.reduce((widest, tile) => Math.max(widest, tile.x + tile.w), 0);
-    if (!(width > 0)) return { unit: 0, width: 0 };
+export function allocateSpans(widths, columns) {
+    const total = widths.reduce((sum, width) => sum + Math.max(0, width), 0);
+    const wanted = Math.max(1, Math.min(columns, MAX_SPAN));
+    if (!widths.length) return [];
+    if (!(total > 0)) return widths.map(() => Math.max(1, Math.floor(wanted / widths.length)));
 
-    const edges = [...new Set(tiles.flatMap((tile) => [tile.x, tile.x + tile.w]))].sort((a, b) => a - b);
+    const raw = widths.map((width) => (Math.max(0, width) / total) * wanted);
+    const spans = raw.map((value) => Math.max(1, Math.floor(value)));
 
-    let unit = width;
-    for (let index = 1; index < edges.length; index += 1) {
-        const step = edges[index] - edges[index - 1];
-        if (step > 0) unit = Math.min(unit, step);
+    // Largest remainder, measured against what each tile actually got rather
+    // than against its own floor: a tile held up to one column by the minimum
+    // has already had more than its share and must not be first in the queue
+    // for another
+    let leftover = wanted - spans.reduce((sum, span) => sum + span, 0);
+    while (leftover > 0) {
+        let best = 0;
+        for (let index = 1; index < spans.length; index += 1) {
+            if (raw[index] - spans[index] > raw[best] - spans[best]) best = index;
+        }
+        spans[best] += 1;
+        leftover -= 1;
     }
-    return { unit: unit > 0 ? unit : width, width };
+    // And the other way, when the minimum of one has overdrawn the line
+    while (leftover < 0) {
+        let best = -1;
+        for (let index = 0; index < spans.length; index += 1) {
+            if (spans[index] <= 1) continue;
+            if (best < 0 || raw[index] - spans[index] < raw[best] - spans[best]) best = index;
+        }
+        if (best < 0) break;
+        spans[best] -= 1;
+        leftover += 1;
+    }
+    return spans;
 }
 
 /**
@@ -240,18 +299,38 @@ export function sweepLines(tiles) {
  */
 export function migrate(v1) {
     const tiles = rectangles(v1);
-    if (!tiles.length) return { version: 2, order: [...(v1?.order || [])], span: {} };
+    if (!tiles.length) return { version: 2, columns: 2, order: [...(v1?.order || [])], span: {} };
 
-    const { unit, width } = columnUnit(tiles);
-    const columns = Math.min(MAX_SPAN, Math.max(1, Math.round(width / unit)));
+    // A line with more tiles than there are columns cannot be drawn as one, so
+    // it wraps — in order, deterministically, into runs of at most `MAX_SPAN`.
+    // The layout's own column count is then the longest run there is: enough to
+    // hold its densest line and no more, so a two-column layout stays two.
+    const runs = [];
+    for (const line of sweepLines(tiles)) {
+        for (let at = 0; at < line.length; at += MAX_SPAN) runs.push(line.slice(at, at + MAX_SPAN));
+    }
+    // Enough columns to say what the layout said. Two things set the floor: the
+    // densest line needs a column per tile, and the narrowest tile needs the
+    // grid fine enough to distinguish it from a wider one — without the second,
+    // a line of one 300-wide tile beside one 150-wide tile has only two columns
+    // to share and comes out as an even pair.
+    const width = tiles.reduce((widest, tile) => Math.max(widest, tile.x + tile.w), 0);
+    const narrowest = tiles.reduce((thinnest, tile) => Math.min(thinnest, tile.w), Infinity);
+    const fine = narrowest > 0 && Number.isFinite(narrowest) ? Math.round(width / narrowest) : 1;
+    const columns = Math.min(MAX_SPAN, Math.max(1, fine, ...runs.map((run) => run.length)));
 
     const span = {};
-    for (const tile of tiles) {
-        const wanted = Math.max(1, Math.round(tile.w / unit));
-        span[tile.key] = Math.min(columns, wanted);
+    for (const run of runs) {
+        const shares = allocateSpans(
+            run.map((tile) => tile.w),
+            columns
+        );
+        run.forEach((tile, index) => {
+            span[tile.key] = shares[index];
+        });
     }
 
-    const order = sweepLines(tiles).flatMap((line) => line.map((tile) => tile.key));
+    const order = runs.flatMap((run) => run.map((tile) => tile.key));
 
     // Keys the old record ordered but never placed — a row switched off, or one
     // that arrived after the last arrangement — keep their relative order at the
@@ -265,9 +344,8 @@ export function migrate(v1) {
         }
     }
 
-    return { version: 2, order, span };
+    return { version: 2, columns, order, span };
 }
-
 // ─── Arranging ──────────────────────────────────────────────────────────────
 
 /**

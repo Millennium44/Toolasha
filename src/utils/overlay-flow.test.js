@@ -1,9 +1,11 @@
 import { describe, test, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     columnsFor,
     spanFor,
     seedSpan,
-    columnUnit,
+    allocateSpans,
+    columnsForLayout,
     sweepLines,
     migrate,
     moveTo,
@@ -105,43 +107,69 @@ describe('seedSpan', () => {
     });
 });
 
-describe('columnUnit', () => {
-    test('finds the column a two-column layout was built on', () => {
-        const tiles = [
-            { key: 'a', x: 0, y: 0, w: 220, h: 30 },
-            { key: 'b', x: 220, y: 0, w: 220, h: 30 },
-            { key: 'wide', x: 0, y: 30, w: 440, h: 40 },
-        ];
-        expect(columnUnit(tiles)).toEqual({ unit: 220, width: 440 });
+describe('allocateSpans', () => {
+    test('shares a line out in proportion to the widths', () => {
+        expect(allocateSpans([170, 120, 170], 4)).toEqual([2, 1, 1]);
+        expect(allocateSpans([290, 170], 4)).toEqual([3, 1]);
+        expect(allocateSpans([110, 180, 170], 4)).toEqual([1, 2, 1]);
     });
 
-    test('and one built on a different panel, without being told which', () => {
-        // The old packer used floor(canvas / columns) snapped to ten, so the
-        // unit is 220 on one character and 240 on another
-        const tiles = [
-            { key: 'a', x: 0, y: 0, w: 240, h: 30 },
-            { key: 'b', x: 240, y: 0, w: 240, h: 30 },
-        ];
-        expect(columnUnit(tiles)).toEqual({ unit: 240, width: 480 });
+    test('always sums to the columns it was given', () => {
+        for (const widths of [[120, 90, 80, 170], [290, 170, 170], [160, 50, 90, 170], [500], [10, 10]]) {
+            for (const columns of [1, 2, 3, 4]) {
+                const spans = allocateSpans(widths, columns);
+                const total = spans.reduce((sum, span) => sum + span, 0);
+                // Unless the minimum of one has overdrawn it, which it can only
+                // do when there are more tiles than columns — `migrate` wraps a
+                // line before it can ask for that
+                expect(total).toBe(Math.max(columns, widths.length));
+            }
+        }
     });
 
-    test('finds it from a tile edge even when nothing starts on the boundary', () => {
-        // A narrow tile in the left column above a full-width one: no tile
-        // *begins* at 200, so left edges alone would read this as one column
-        // and flatten every span to 1
-        const tiles = [
-            { key: 'narrow', x: 0, y: 0, w: 200, h: 30 },
-            { key: 'wide', x: 0, y: 30, w: 400, h: 30 },
-        ];
-        expect(columnUnit(tiles)).toEqual({ unit: 200, width: 400 });
+    test('never gives a tile nothing, however narrow it was', () => {
+        // A tile rounded down to no columns is a tile that has been deleted
+        for (const spans of [allocateSpans([500, 5, 5, 5], 4), allocateSpans([1000, 1], 2)]) {
+            for (const span of spans) expect(span).toBeGreaterThanOrEqual(1);
+        }
     });
 
-    test('a single full-width tile is its own unit', () => {
-        expect(columnUnit([{ key: 'a', x: 0, y: 0, w: 440, h: 30 }])).toEqual({ unit: 440, width: 440 });
+    test('the extra column goes to the tile most short-changed, not the narrowest', () => {
+        // 110 rounds up to its minimum of one and has already had more than its
+        // share; the extra belongs to the 180 beside it
+        expect(allocateSpans([110, 180, 170], 4)).toEqual([1, 2, 1]);
     });
 
-    test('nothing placed has no unit rather than a divide by zero', () => {
-        expect(columnUnit([])).toEqual({ unit: 0, width: 0 });
+    test('a line of equal tiles is shared equally', () => {
+        expect(allocateSpans([170, 170], 4)).toEqual([2, 2]);
+        expect(allocateSpans([100, 100, 100, 100], 4)).toEqual([1, 1, 1, 1]);
+    });
+
+    test('nothing to share is no spans rather than a divide by zero', () => {
+        expect(allocateSpans([], 4)).toEqual([]);
+        expect(allocateSpans([0, 0], 2)).toEqual([1, 1]);
+    });
+});
+
+describe('columnsForLayout', () => {
+    test('a layout authored for more columns than the width affords keeps them', () => {
+        // Which is the whole of importing a hand-made layout: clamped to what
+        // the width affords, every proportion in it is flattened
+        expect(columnsForLayout(458, 4)).toBe(4);
+        expect(columnsForLayout(458, 2)).toBe(2);
+    });
+
+    test('a wider panel still gains columns for a layout that wants fewer', () => {
+        expect(columnsForLayout(700, 2)).toBe(3);
+    });
+
+    test('a phone is one column whatever the layout wanted', () => {
+        expect(columnsForLayout(370, 4)).toBe(1);
+    });
+
+    test('never past the ceiling, and never below one', () => {
+        expect(columnsForLayout(2000, 9)).toBe(MAX_SPAN);
+        expect(columnsForLayout(458, undefined)).toBe(2);
     });
 });
 
@@ -276,12 +304,12 @@ describe('migrate', () => {
 
     test('a record with nothing placed keeps the order it had', () => {
         const v2 = migrate({ order: ['coins', 'netWorth'], positions: {}, sizes: {} });
-        expect(v2).toEqual({ version: 2, order: ['coins', 'netWorth'], span: {} });
+        expect(v2).toEqual({ version: 2, columns: 2, order: ['coins', 'netWorth'], span: {} });
     });
 
     test('and an empty record migrates to an empty layout rather than throwing', () => {
-        expect(migrate({})).toEqual({ version: 2, order: [], span: {} });
-        expect(migrate(null)).toEqual({ version: 2, order: [], span: {} });
+        expect(migrate({})).toEqual({ version: 2, columns: 2, order: [], span: {} });
+        expect(migrate(null)).toEqual({ version: 2, columns: 2, order: [], span: {} });
     });
 
     test('a key with half a rectangle is not placed on the strength of it', () => {
@@ -327,7 +355,7 @@ describe('migrate', () => {
         // The caller merges this over the record it loaded, which is what keeps
         // the four *Only* row options alive
         const v2 = migrate(combatOn440());
-        expect(Object.keys(v2).sort()).toEqual(['order', 'span', 'version']);
+        expect(Object.keys(v2).sort()).toEqual(['columns', 'order', 'span', 'version']);
     });
 });
 
@@ -418,5 +446,96 @@ describe('clampZoom', () => {
     test('nonsense falls back to the default rather than to zero', () => {
         expect(clampZoom(undefined)).toBe(DEFAULT_ZOOM);
         expect(clampZoom(NaN)).toBe(DEFAULT_ZOOM);
+    });
+});
+
+describe('a real layout, exported from the build before the rework', () => {
+    // The maintainer's own, taken off a live character. One key is renamed: the
+    // export names a companion script this repository is not allowed to mention,
+    // and it appears only in `order` and `visible` — never placed — so nothing
+    // about the arrangement changes.
+    const file = JSON.parse(readFileSync('src/utils/__fixtures__/overlay-v1-export.json', 'utf8'));
+    const v1 = file.toolasha.settings;
+
+    /**
+     * The migrated layout as lines, the way the grid will draw it.
+     * @param {Object} v2 - A migrated layout
+     * @returns {Array<Array<string>>} Keys per line, with their spans
+     */
+    function lines(v2) {
+        const out = [];
+        let line = [];
+        let used = 0;
+        for (const key of v2.order) {
+            const span = v2.span[key];
+            if (!span) continue;
+            if (used + span > v2.columns) {
+                out.push(line);
+                line = [];
+                used = 0;
+            }
+            line.push(`${key}:${span}`);
+            used += span;
+        }
+        if (line.length) out.push(line);
+        return out;
+    }
+
+    test('parses at all — the old export shape is still readable', () => {
+        expect(file.toolasha.version).toBe(1);
+        expect(v1.order.length).toBeGreaterThan(0);
+        expect(Object.keys(v1.positions).length).toBeGreaterThan(0);
+    });
+
+    test('is read as four columns, which its densest line needs', () => {
+        expect(migrate(v1).columns).toBe(4);
+    });
+
+    test('keeps every line as it was, with the relative widths on it', () => {
+        // Checked against the original by hand: line one is four tiles of
+        // roughly equal width, line two is a 170 beside a 120 and a 170, and
+        // the two tall blocks are followed by their own right-hand columns
+        expect(lines(migrate(v1))).toEqual([
+            ['battleTimer:1', 'experiencePerHour:1', 'deathsPerHour:1', 'combatStatus:1'],
+            ['combatRevenue:2', 'timeToLevel:1', 'houses:1'],
+            ['totalProfit:3', 'consumables:1'],
+            ['equipmentWatch:2', 'coins:1', 'marketListings:1'],
+            ['dps:1', 'overExpected:1', 'luck:1', 'watchlist:1'],
+            ['skillBooks:2', 'inventoryValue:2'],
+            ['manaPerFight:3', 'treasure:1'],
+            ['buildScore:1', 'netWorth:2', 'charmValue:1'],
+            ['replayCheck:4'],
+        ]);
+    });
+
+    test('does not let the pile of switched-off leftovers scramble the sweep', () => {
+        // Six rows are parked on top of each other at the bottom of this panel,
+        // most of them switched off. Swept in, they read as a line and every
+        // line after them is wrong.
+        const v2 = migrate(v1);
+        for (const key of ['combatSession', 'combatText', 'combatLevel', 'predictionCalibration']) {
+            expect(v2.span[key]).toBeUndefined();
+            // Still in the order, at the end, so switching one back on is not a
+            // surprise
+            expect(v2.order).toContain(key);
+        }
+        // The one that is switched *on* is kept, even though it was in the pile
+        expect(v2.span.replayCheck).toBe(4);
+    });
+
+    test('every visible tile is placed exactly once', () => {
+        const v2 = migrate(v1);
+        const placed = v2.order.filter((key) => v2.span[key]);
+
+        expect(new Set(placed).size).toBe(placed.length);
+        for (const key of placed) expect(v1.visible[key]).not.toBe(false);
+    });
+
+    test('no line asks for more columns than the grid has', () => {
+        const v2 = migrate(v1);
+        for (const line of lines(v2)) {
+            const used = line.reduce((sum, entry) => sum + Number(entry.split(':')[1]), 0);
+            expect(used).toBeLessThanOrEqual(v2.columns);
+        }
     });
 });

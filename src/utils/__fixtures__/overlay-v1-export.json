@@ -1,0 +1,531 @@
+{
+    "config": {
+        "order": [
+            "battleTimer",
+            "combatRevenue",
+            "totalProfit",
+            "gwhizTTL",
+            "equipmentWatch",
+            "dps",
+            "luck",
+            "kollectionBuildScore",
+            "kollectionNetWorth",
+            "combatStatus",
+            "experiencePerHour",
+            "deathsPerHour",
+            "houses",
+            "consumables",
+            "ewatchCoins",
+            "ewatchMarket",
+            "ntallyInventory",
+            "skillBooks",
+            "treasure"
+        ],
+        "sizes": {
+            "battleTimer": {
+                "width": 120,
+                "height": 30
+            },
+            "combatRevenue": {
+                "width": 170,
+                "height": 30
+            },
+            "totalProfit": {
+                "width": 290,
+                "height": 70
+            },
+            "gwhizTTL": {
+                "width": 120,
+                "height": 30
+            },
+            "equipmentWatch": {
+                "width": 290,
+                "height": 50
+            },
+            "dps": {
+                "width": 160,
+                "height": 80
+            },
+            "overExpected": {
+                "width": 50,
+                "height": 80
+            },
+            "luck": {
+                "width": 90,
+                "height": 80
+            },
+            "kollectionBuildScore": {
+                "width": 110,
+                "height": 30
+            },
+            "kollectionNetWorth": {
+                "width": 180,
+                "height": 30
+            },
+            "combatStatus": {
+                "width": 170,
+                "height": 30
+            },
+            "experiencePerHour": {
+                "width": 90,
+                "height": 30
+            },
+            "deathsPerHour": {
+                "width": 80,
+                "height": 30
+            },
+            "houses": {
+                "width": 170,
+                "height": 40
+            },
+            "consumables": {
+                "width": 170,
+                "height": 70
+            },
+            "ewatchCoins": {
+                "width": 170,
+                "height": 20
+            },
+            "ewatchMarket": {
+                "width": 170,
+                "height": 20
+            },
+            "ntallyInventory": {
+                "width": 170,
+                "height": 20
+            },
+            "skillBooks": {
+                "width": 170,
+                "height": 30
+            },
+            "treasure": {
+                "width": 170,
+                "height": 20
+            }
+        },
+        "positions": {
+            "battleTimer": {
+                "x": 0,
+                "y": 0
+            },
+            "combatRevenue": {
+                "x": 0,
+                "y": 30
+            },
+            "totalProfit": {
+                "x": 0,
+                "y": 60
+            },
+            "gwhizTTL": {
+                "x": 170,
+                "y": 30
+            },
+            "equipmentWatch": {
+                "x": 0,
+                "y": 130
+            },
+            "dps": {
+                "x": 0,
+                "y": 180
+            },
+            "overExpected": {
+                "x": 160,
+                "y": 180
+            },
+            "luck": {
+                "x": 160,
+                "y": 180
+            },
+            "kollectionBuildScore": {
+                "x": 0,
+                "y": 280
+            },
+            "kollectionNetWorth": {
+                "x": 110,
+                "y": 280
+            },
+            "combatStatus": {
+                "x": 300,
+                "y": 0
+            },
+            "experiencePerHour": {
+                "x": 120,
+                "y": 0
+            },
+            "deathsPerHour": {
+                "x": 210,
+                "y": 0
+            },
+            "houses": {
+                "x": 300,
+                "y": 30
+            },
+            "consumables": {
+                "x": 300,
+                "y": 70
+            },
+            "ewatchCoins": {
+                "x": 300,
+                "y": 140
+            },
+            "ewatchMarket": {
+                "x": 300,
+                "y": 160
+            },
+            "ntallyInventory": {
+                "x": 300,
+                "y": 240
+            },
+            "skillBooks": {
+                "x": 300,
+                "y": 210
+            },
+            "treasure": {
+                "x": 300,
+                "y": 260
+            }
+        },
+        "firstLoad": false,
+        "battleTimer": true,
+        "combatRevenue": true,
+        "consumables": true,
+        "experiencePerHour": true,
+        "totalProfit": true,
+        "dps": true,
+        "overExpected": true,
+        "luck": true,
+        "deathsPerHour": true,
+        "houses": true,
+        "equipmentWatch": true,
+        "combatStatus": true,
+        "treasure": true,
+        "ntallyInventory": true,
+        "kollectionBuildScore": true,
+        "kollectionNetWorth": true,
+        "ewatchCoins": true,
+        "ewatchMarket": true,
+        "skillBooks": true,
+        "gwhizTTL": true,
+        "snapToGrid": true
+    },
+    "is_locked": true,
+    "position": {
+        "top": 0,
+        "left": 0
+    },
+    "size": {
+        "width": 492,
+        "height": 322
+    },
+    "zoom_levels": {
+        "gwhizTTL": 100
+    },
+    "toolasha": {
+        "version": 1,
+        "settings": {
+            "order": [
+                "battleTimer",
+                "combatRevenue",
+                "totalProfit",
+                "timeToLevel",
+                "equipmentWatch",
+                "dps",
+                "luck",
+                "buildScore",
+                "netWorth",
+                "combatStatus",
+                "experiencePerHour",
+                "deathsPerHour",
+                "houses",
+                "consumables",
+                "coins",
+                "marketListings",
+                "inventoryValue",
+                "skillBooks",
+                "treasure",
+                "charmValue",
+                "watchlist",
+                "manaPerFight",
+                "combatText",
+                "combatLevel",
+                "combatSession",
+                "companionRow",
+                "guildRoster",
+                "predictionCalibration",
+                "replayCheck",
+                "accountView",
+                "goalNextStep",
+                "taskTokens",
+                "enhancementSession",
+                "guildTrialsPace",
+                "queueTimeLeft",
+                "ironBellNextStep",
+                "noticeLog",
+                "sessionBriefing",
+                "guildTrialLedger"
+            ],
+            "visible": {
+                "battleTimer": true,
+                "combatRevenue": true,
+                "consumables": true,
+                "experiencePerHour": true,
+                "totalProfit": true,
+                "dps": true,
+                "overExpected": true,
+                "luck": true,
+                "deathsPerHour": true,
+                "houses": true,
+                "equipmentWatch": true,
+                "combatStatus": true,
+                "treasure": true,
+                "inventoryValue": true,
+                "buildScore": true,
+                "netWorth": true,
+                "coins": true,
+                "marketListings": true,
+                "skillBooks": true,
+                "timeToLevel": true,
+                "watchlist": true,
+                "combatLevel": false,
+                "combatSession": false,
+                "combatText": false,
+                "guildRoster": false,
+                "companionRow": false,
+                "predictionCalibration": false,
+                "accountView": false,
+                "replayCheck": true
+            },
+            "positions": {
+                "battleTimer": {
+                    "x": 0,
+                    "y": 0
+                },
+                "combatRevenue": {
+                    "x": 0,
+                    "y": 30
+                },
+                "totalProfit": {
+                    "x": 0,
+                    "y": 60
+                },
+                "timeToLevel": {
+                    "x": 170,
+                    "y": 30
+                },
+                "equipmentWatch": {
+                    "x": 0,
+                    "y": 130
+                },
+                "dps": {
+                    "x": 0,
+                    "y": 180
+                },
+                "overExpected": {
+                    "x": 160,
+                    "y": 180
+                },
+                "luck": {
+                    "x": 160,
+                    "y": 180
+                },
+                "buildScore": {
+                    "x": 0,
+                    "y": 280
+                },
+                "netWorth": {
+                    "x": 110,
+                    "y": 280
+                },
+                "combatStatus": {
+                    "x": 300,
+                    "y": 0
+                },
+                "experiencePerHour": {
+                    "x": 120,
+                    "y": 0
+                },
+                "deathsPerHour": {
+                    "x": 210,
+                    "y": 0
+                },
+                "houses": {
+                    "x": 300,
+                    "y": 30
+                },
+                "consumables": {
+                    "x": 300,
+                    "y": 70
+                },
+                "coins": {
+                    "x": 300,
+                    "y": 140
+                },
+                "marketListings": {
+                    "x": 300,
+                    "y": 160
+                },
+                "inventoryValue": {
+                    "x": 300,
+                    "y": 240
+                },
+                "skillBooks": {
+                    "x": 300,
+                    "y": 210
+                },
+                "treasure": {
+                    "x": 300,
+                    "y": 260
+                },
+                "charmValue": {
+                    "x": 300,
+                    "y": 280
+                },
+                "watchlist": {
+                    "x": 300,
+                    "y": 180
+                },
+                "manaPerFight": {
+                    "x": 0,
+                    "y": 260
+                },
+                "combatLevel": {
+                    "x": 300,
+                    "y": 310
+                },
+                "combatSession": {
+                    "x": 0,
+                    "y": 310
+                },
+                "combatText": {
+                    "x": 0,
+                    "y": 310
+                },
+                "replayCheck": {
+                    "x": 0,
+                    "y": 310
+                },
+                "predictionCalibration": {
+                    "x": 0,
+                    "y": 310
+                }
+            },
+            "sizes": {
+                "battleTimer": {
+                    "width": 120,
+                    "height": 30
+                },
+                "combatRevenue": {
+                    "width": 170,
+                    "height": 30
+                },
+                "totalProfit": {
+                    "width": 290,
+                    "height": 70
+                },
+                "timeToLevel": {
+                    "width": 120,
+                    "height": 30
+                },
+                "equipmentWatch": {
+                    "width": 290,
+                    "height": 50
+                },
+                "dps": {
+                    "width": 160,
+                    "height": 80
+                },
+                "overExpected": {
+                    "width": 50,
+                    "height": 80
+                },
+                "luck": {
+                    "width": 90,
+                    "height": 80
+                },
+                "buildScore": {
+                    "width": 110,
+                    "height": 30
+                },
+                "netWorth": {
+                    "width": 180,
+                    "height": 30
+                },
+                "combatStatus": {
+                    "width": 170,
+                    "height": 30
+                },
+                "experiencePerHour": {
+                    "width": 90,
+                    "height": 30
+                },
+                "deathsPerHour": {
+                    "width": 80,
+                    "height": 30
+                },
+                "houses": {
+                    "width": 170,
+                    "height": 40
+                },
+                "consumables": {
+                    "width": 170,
+                    "height": 70
+                },
+                "coins": {
+                    "width": 170,
+                    "height": 20
+                },
+                "marketListings": {
+                    "width": 170,
+                    "height": 20
+                },
+                "inventoryValue": {
+                    "width": 170,
+                    "height": 20
+                },
+                "skillBooks": {
+                    "width": 170,
+                    "height": 30
+                },
+                "treasure": {
+                    "width": 170,
+                    "height": 20
+                },
+                "charmValue": {
+                    "width": 170,
+                    "height": 30
+                },
+                "watchlist": {
+                    "width": 170,
+                    "height": 30
+                },
+                "manaPerFight": {
+                    "width": 290,
+                    "height": 20
+                },
+                "combatText": {
+                    "width": 140,
+                    "height": 30
+                },
+                "combatSession": {
+                    "width": 230,
+                    "height": 30
+                },
+                "combatLevel": {
+                    "width": 170,
+                    "height": 30
+                },
+                "replayCheck": {
+                    "width": 230,
+                    "height": 30
+                }
+            },
+            "zoom": {
+                "timeToLevel": 100
+            },
+            "snapToGrid": true,
+            "locked": true,
+            "separators": true,
+            "textScale": 80
+        }
+    }
+}
