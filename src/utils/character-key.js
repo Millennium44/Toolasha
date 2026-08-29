@@ -157,6 +157,11 @@ export async function readScoped(base, storeName = 'settings', defaultValue = nu
     }
 
     const legacy = await storage.get(base, storeName, null);
+    // Answered here, not in migrateLegacy: calling into another async function
+    // costs a microtask hop, and the absent-legacy case is the overwhelmingly
+    // common one — load machinery interleaves against it (a prediction-
+    // calibration test caught the extra tick as a reordering).
+    if (legacy === null) return defaultValue;
     return migrateLegacy(base, scopedKey, legacy, storeName, defaultValue, options);
 }
 
@@ -185,7 +190,9 @@ export async function readScopedFrom(base, values, storeName = 'settings', defau
         return scoped;
     }
 
-    return migrateLegacy(base, scopedKey, values.get(base) ?? null, storeName, defaultValue, options);
+    const legacy = values.get(base) ?? null;
+    if (legacy === null) return defaultValue;
+    return migrateLegacy(base, scopedKey, legacy, storeName, defaultValue, options);
 }
 
 /**
