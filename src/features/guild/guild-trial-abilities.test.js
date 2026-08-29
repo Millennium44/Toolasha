@@ -27,12 +27,19 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
+/** Which character the tab is showing; the fallback key is built from it */
+const game = vi.hoisted(() => ({ characterId: null }));
+
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => ({ abilityDetailMap: {} }) },
+    default: {
+        getInitClientData: () => ({ abilityDetailMap: {} }),
+        getCurrentCharacterId: () => game.characterId,
+    },
 }));
 
 const {
     GuildTrialAbilities,
+    sessionStorageKey,
     SESSION_MAX_AGE_MS,
     TRIAL_START_GRACE_MS,
     playerKey,
@@ -92,6 +99,40 @@ beforeEach(() => {
     disk.value = null;
     disk.saved = null;
     disk.keys = {};
+    game.characterId = null;
+});
+
+describe('the key before the guild name is known', () => {
+    test('two characters do not share the fallback key', () => {
+        // The same leak the trial record and the recorder were fixed for:
+        // everything collected before the name arrives went to
+        // `guildTrialAbilities_default`, which both characters read back
+        expect(sessionStorageKey(null, 30404)).not.toBe(sessionStorageKey(null, 99));
+        // And a guild's own key is still shared, which is the point of it
+        expect(sessionStorageKey('Milky Way', 30404)).toBe(sessionStorageKey('Milky Way', 99));
+        // No character known at all is still the old shared bucket
+        expect(sessionStorageKey(null)).toBe('guildTrialAbilities_default');
+    });
+
+    test('an alt does not read back the session captured before the name arrived', async () => {
+        game.characterId = 30404;
+        const main = new GuildTrialAbilities();
+        await main.initialize(null);
+        main.setRoster(['Alice', 'Bob']);
+        main.recordCapture(snap('Alice', 1, []), { at: NOW });
+        expect(disk.keys[sessionStorageKey(null, 30404)]).toBeTruthy();
+
+        game.characterId = 99;
+        const alt = new GuildTrialAbilities();
+        await alt.initialize(null);
+        expect(alt.session).toBeNull();
+
+        // …and the main still finds its own on the next load
+        game.characterId = 30404;
+        const again = new GuildTrialAbilities();
+        await again.initialize(null);
+        expect(Object.keys(again.session?.players || {})).toEqual(['id:1']);
+    });
 });
 
 describe('playerKey and roster plumbing', () => {

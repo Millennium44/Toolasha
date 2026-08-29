@@ -80,11 +80,23 @@ export const TRIAL_START_GRACE_MS = 5 * 60 * 1000;
 
 /**
  * Storage key for a guild's capture session.
+ *
+ * Falls back to the character rather than to one shared bucket, for the reason
+ * `guildTrialsStorageKey` spells out and `trialSessionStorageKey` mirrors: this
+ * module initialises before the guild's name is knowable, so every session
+ * collected in that window went to `guildTrialAbilities_default` — one bucket
+ * two characters in the same tab both read back, handing the alt the mains's
+ * captures for a trial it was never in.
+ *
  * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback key
  * @returns {string} Storage key
  */
-export function sessionStorageKey(guildName) {
-    return `${SESSION_KEY_PREFIX}_${guildName || 'default'}`;
+export function sessionStorageKey(guildName, characterId = null) {
+    if (guildName) return `${SESSION_KEY_PREFIX}_${guildName}`;
+    return characterId === null || characterId === undefined
+        ? `${SESSION_KEY_PREFIX}_default`
+        : `${SESSION_KEY_PREFIX}_char_${characterId}`;
 }
 
 /**
@@ -334,6 +346,8 @@ class GuildTrialAbilities {
     constructor() {
         this.initialized = false;
         this.guildName = null;
+        /** The viewing character, for the fallback key before the guild's name lands */
+        this.characterId = null;
         /** `{startedAt, guildName, captureTier, capturedTiers, completedAt, players}` or null */
         this.session = null;
         /** Current trial participants, fed in by the caller */
@@ -374,6 +388,7 @@ class GuildTrialAbilities {
      */
     async initialize(guildName = null) {
         if (guildName) this.guildName = guildName;
+        this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         this.initialized = true;
         // The session's read is issued first and in this same tick: a capture
         // landing while it is in flight is merged into it, while one landing
@@ -399,12 +414,12 @@ class GuildTrialAbilities {
      * @returns {Promise<void>}
      */
     async _restore() {
-        const key = sessionStorageKey(this.guildName);
+        const key = sessionStorageKey(this.guildName, this.characterId);
         try {
             const stored = await storage.get(key, SESSION_STORE, null);
             // The key moved while the read was in flight — this answer is the
             // old key's and says nothing about the new one
-            if (key !== sessionStorageKey(this.guildName)) return;
+            if (key !== sessionStorageKey(this.guildName, this.characterId)) return;
 
             const usable = Number.isFinite(stored?.startedAt);
             const sameGuild = !stored?.guildName || !this.guildName || stored.guildName === this.guildName;
@@ -455,6 +470,10 @@ class GuildTrialAbilities {
         }
         const changed = next !== this.guildName;
         this.guildName = next;
+        // Re-read here as the recorder does: the name usually arrives long
+        // after `initialize`, and the fallback key is only right while this is
+        // the character the tab is actually showing
+        this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         // Only a real name is stamped: forgetting the name must not also
         // forget which guild the session in hand was collected in, which is
         // what the check above reads on the next name to arrive
@@ -961,7 +980,11 @@ class GuildTrialAbilities {
             // joined view — it is display state, not part of the session's
             // reset rules, which is why it is stamped here rather than kept
             // on the session object itself
-            .set(sessionStorageKey(this.guildName), { ...this.session, roster: [...this.roster] }, SESSION_STORE)
+            .set(
+                sessionStorageKey(this.guildName, this.characterId),
+                { ...this.session, roster: [...this.roster] },
+                SESSION_STORE
+            )
             .catch((error) => console.error('[GuildTrialAbilities] Saving the session failed:', error));
     }
 }
