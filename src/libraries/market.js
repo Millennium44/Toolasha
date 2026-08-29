@@ -52,6 +52,7 @@ import * as productionProfit from '../features/actions/production-profit.js';
 
 // Networth/Economy features
 import networthFeature from '../features/networth/index.js';
+import * as networthCalculator from '../features/networth/networth-calculator.js';
 // Side-effect import: registers the coins, listings, inventory and books overlay rows
 import '../features/networth/networth-rows.js';
 import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
@@ -115,6 +116,7 @@ toolashaRoot.Market = {
     profitCalculator,
     alchemyProfitCalculator,
     networthFeature,
+    networthCalculator,
     offlineProgressEconomics,
     inventoryBadgeManager,
     inventorySort,

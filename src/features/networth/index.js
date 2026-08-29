@@ -37,6 +37,7 @@ class NetworthFeature {
         this.itemsUpdateHandler = null;
         this.priceUpdateDebounceTimer = null;
         this.itemsUpdateDebounceTimer = null;
+        this.lastRecalcAt = 0;
     }
 
     /**
@@ -125,26 +126,40 @@ class NetworthFeature {
 
         // Listen for inventory changes
         this.itemsUpdateHandler = () => {
-            // Debounce item updates with a maxWait so continuous actions still trigger a refresh
+            // Debounce item updates, with a floor: under a queue completing an
+            // action every few seconds, the 500ms debounce alone re-ran the
+            // full valuation on every completion — a synchronous block big
+            // enough to stutter the game's progress bars each time (the
+            // "purple bars hitch every few seconds" report of 2026-08-29). A
+            // fresh figure is not worth more than a smooth frame, so a recalc
+            // that would land inside the cooldown waits out the remainder
+            // instead.
+            const COOLDOWN_MS = 15000;
+            const sinceLast = Date.now() - (this.lastRecalcAt || 0);
+            const delay = Math.max(500, COOLDOWN_MS - sinceLast);
+
             clearTimeout(this.itemsUpdateDebounceTimer);
             this.itemsUpdateDebounceTimer = setTimeout(() => {
                 if (this.isActive && connectionState.isConnected()) {
                     clearTimeout(this.itemsUpdateMaxWaitTimer);
                     this.itemsUpdateMaxWaitTimer = null;
+                    this.lastRecalcAt = Date.now();
                     this.recalculate();
                 }
-            }, 500); // 500ms debounce for inventory changes
+            }, delay);
 
-            // maxWait: force a recalculation at least every 30s under continuous load
+            // maxWait: the debounce resets on every update, so under continuous
+            // load this is what guarantees a refresh actually happens
             if (!this.itemsUpdateMaxWaitTimer) {
                 this.itemsUpdateMaxWaitTimer = setTimeout(() => {
                     this.itemsUpdateMaxWaitTimer = null;
                     clearTimeout(this.itemsUpdateDebounceTimer);
                     this.itemsUpdateDebounceTimer = null;
                     if (this.isActive && connectionState.isConnected()) {
+                        this.lastRecalcAt = Date.now();
                         this.recalculate();
                     }
-                }, 5000);
+                }, 30000);
             }
         };
 

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The networth engine stops stalling the game every few seconds
+
+The real cause of the stuttering progress bars, found by phase-timing the calculation: every completed action re-ran the full networth valuation ~500ms later, a synchronous block of 150-300ms. Three fixes: item→crafting-action lookups come from a once-built index instead of scanning every action per item; the valuation and price-map loops hand the browser a frame every ~12ms instead of running to completion; and inventory-driven recalculations respect a 15s cooldown (a 30s ceiling guarantees freshness under continuous load, and market-price updates still refresh as before). Per-phase timings from the last run stay readable at `Toolasha.Market.networthCalculator.lastCalcPhases`.
+
 ### Reports say which build they came from
 
 The startup trace and health report printed only the release number, which a dev build shares with GreasyFork — a paste from a tab could not say which build it was actually running. The dev bundle now stamps its build time on the namespace and every report prints it: `3.28.0 (dev build 2026-08-29T03:03:23Z)`.

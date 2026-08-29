@@ -299,51 +299,92 @@ function calculateCurrencyValue(itemHrid) {
 }
 
 /**
+ * Item → crafting action lookups, built once per game data.
+ *
+ * Every recalculation used to rediscover which action makes an item by scanning
+ * the whole `actionDetailMap` — per item, so a full pass was
+ * O(items × actions), and on a live account that scan alone was most of a
+ * ~350ms synchronous block every few seconds (the stutter of 2026-08-29).
+ * Two maps from one pass instead: by first output (the "this item is crafted
+ * as" relation `addItemWithUpgrades` wants) and by any output with its count
+ * (what `calculateCraftingCost` prices against).
+ *
+ * Keyed on the actionDetailMap object itself, so a character switch or data
+ * reload rebuilds it and nothing has to remember to invalidate.
+ */
+let actionIndexes = null;
+let actionIndexSource = null;
+
+/** The last calculateNetworth run's per-phase milliseconds, for diagnosis. */
+export let lastCalcPhases = null;
+
+function getActionIndexes() {
+    const map = dataManager.getInitClientData()?.actionDetailMap || null;
+    if (!map) return null;
+    if (actionIndexSource !== map) {
+        actionIndexSource = map;
+        const byPrimaryOutput = new Map();
+        const byAnyOutput = new Map();
+        for (const action of Object.values(map)) {
+            if (!action.outputItems?.length) continue;
+            const primary = action.outputItems[0].itemHrid;
+            if (!byPrimaryOutput.has(primary)) byPrimaryOutput.set(primary, action);
+            for (const output of action.outputItems) {
+                if (!byAnyOutput.has(output.itemHrid)) byAnyOutput.set(output.itemHrid, { action, output });
+            }
+        }
+        actionIndexes = { byPrimaryOutput, byAnyOutput };
+    }
+    return actionIndexes;
+}
+
+/**
+ * Hand the browser a frame.
+ *
+ * The valuation loops run entirely on already-resolved promises, so plain
+ * `await`s never leave the microtask queue and a long loop is still one long
+ * task. A macrotask boundary is what lets a progress bar animate through a
+ * recalculation.
+ * @returns {Promise<void>}
+ */
+function yieldToBrowser() {
+    if (typeof scheduler !== 'undefined' && typeof scheduler.yield === 'function') return scheduler.yield();
+    return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
  * Calculate crafting cost for an item (simple version without efficiency bonuses)
  * Applies Artisan Tea reduction (0.9x) to input materials
  * @param {string} itemHrid - Item HRID
  * @returns {number} Total material cost or 0 if not craftable
  */
 function calculateCraftingCost(itemHrid) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData) return 0;
+    // The producing action comes from the once-built index rather than a scan
+    // of every action in the game — see getActionIndexes
+    const found = getActionIndexes()?.byAnyOutput.get(itemHrid);
+    if (!found) return 0;
+    const { action, output } = found;
 
-    // Find the action that produces this item
-    for (const action of Object.values(gameData.actionDetailMap || {})) {
-        if (action.outputItems) {
-            for (const output of action.outputItems) {
-                if (output.itemHrid === itemHrid) {
-                    // Found the crafting action, calculate material costs
-                    let inputCost = 0;
-
-                    // Add input items
-                    if (action.inputItems && action.inputItems.length > 0) {
-                        for (const input of action.inputItems) {
-                            const inputPrice = getMarketPrice(input.itemHrid, 0, null);
-                            inputCost += inputPrice * input.count;
-                        }
-                    }
-
-                    // Apply Artisan Tea reduction (0.9x) to input materials
-                    inputCost *= 0.9;
-
-                    // Add upgrade item cost (not affected by Artisan Tea)
-                    let upgradeCost = 0;
-                    if (action.upgradeItemHrid) {
-                        const upgradePrice = getMarketPrice(action.upgradeItemHrid, 0, null);
-                        upgradeCost = upgradePrice;
-                    }
-
-                    const totalCost = inputCost + upgradeCost;
-
-                    // Divide by output count to get per-item cost
-                    return totalCost / (output.count || 1);
-                }
-            }
+    let inputCost = 0;
+    if (action.inputItems && action.inputItems.length > 0) {
+        for (const input of action.inputItems) {
+            const inputPrice = getMarketPrice(input.itemHrid, 0, null);
+            inputCost += inputPrice * input.count;
         }
     }
 
-    return 0;
+    // Apply Artisan Tea reduction (0.9x) to input materials
+    inputCost *= 0.9;
+
+    // Add upgrade item cost (not affected by Artisan Tea)
+    let upgradeCost = 0;
+    if (action.upgradeItemHrid) {
+        const upgradePrice = getMarketPrice(action.upgradeItemHrid, 0, null);
+        upgradeCost = upgradePrice;
+    }
+
+    // Divide by output count to get per-item cost
+    return (inputCost + upgradeCost) / (output.count || 1);
 }
 
 /**
@@ -539,6 +580,52 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
  * @param {Object} gameData - Game data
  * @returns {Promise<Array>} Array of values in same order as items
  */
+/**
+ * The flat price map a worker batch is handed, built once per price cache.
+ *
+ * Flattening the whole cache is O(prices) on the main thread, and one
+ * recalculation used to do it twice — once for the equipped batch and once for
+ * the inventory batch, most of a 100ms synchronous block each. The map only
+ * depends on the cache and the pricing mode, so it is memoised on the cache
+ * object itself and the build loop hands the browser a frame on a clock, the
+ * same way the valuation loop does.
+ */
+const priceMapMemo = new WeakMap();
+
+async function priceMapFor(priceCache, pricingMode) {
+    if (!priceCache) return {};
+    const memo = priceMapMemo.get(priceCache);
+    if (memo && memo.pricingMode === pricingMode) return memo.priceMap;
+
+    const priceMap = {};
+    let sliceStart = performance.now();
+    for (const [key, prices] of priceCache.entries()) {
+        if (typeof prices === 'number') {
+            priceMap[key] = prices;
+        } else if (prices && typeof prices === 'object') {
+            // Store ask and bid WITHOUT coalescing null to 0 (preserve null for "no data" vs "0 price")
+            priceMap[key + '_ask'] = prices.ask;
+            priceMap[key + '_bid'] = prices.bid;
+            // Store selected pricing mode at the base key for worker item valuation.
+            // Leave it unset when the mode price is missing so the worker falls
+            // back to enhancement-cost calculation like calculateItemValue does,
+            // instead of silently substituting ask.
+            const modePrice = prices[pricingMode];
+            if (modePrice && modePrice > 0) {
+                priceMap[key] = modePrice;
+            }
+        } else {
+            priceMap[key] = 0;
+        }
+        if (performance.now() - sliceStart > 12) {
+            await yieldToBrowser();
+            sliceStart = performance.now();
+        }
+    }
+    priceMapMemo.set(priceCache, { pricingMode, priceMap });
+    return priceMap;
+}
+
 async function calculateItemValuesParallel(items, priceCache, gameData) {
     // Prepare configuration options
     const useHighEnhancementCost = config.getSetting('networth_highEnhancementUseCost');
@@ -592,28 +679,7 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
         // Worker group
         itemsNeedingWorkers.length > 0
             ? (async () => {
-                  const priceMap = {};
-                  if (priceCache) {
-                      for (const [key, prices] of priceCache.entries()) {
-                          if (typeof prices === 'number') {
-                              priceMap[key] = prices;
-                          } else if (prices && typeof prices === 'object') {
-                              // Store ask and bid WITHOUT coalescing null to 0 (preserve null for "no data" vs "0 price")
-                              priceMap[key + '_ask'] = prices.ask;
-                              priceMap[key + '_bid'] = prices.bid;
-                              // Store selected pricing mode at the base key for worker item valuation.
-                              // Leave it unset when the mode price is missing so the worker falls
-                              // back to enhancement-cost calculation like calculateItemValue does,
-                              // instead of silently substituting ask.
-                              const modePrice = prices[pricingMode];
-                              if (modePrice && modePrice > 0) {
-                                  priceMap[key] = modePrice;
-                              }
-                          } else {
-                              priceMap[key] = 0;
-                          }
-                      }
-                  }
+                  const priceMap = await priceMapFor(priceCache, pricingMode);
 
                   try {
                       const values = await calculateItemValueBatch(
@@ -639,9 +705,16 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
         itemsNotNeedingWorkers.length > 0
             ? (async () => {
                   const values = [];
+                  // Yield on a clock, not a count: item costs vary by orders of
+                  // magnitude, and what the frame budget cares about is time
+                  let sliceStart = performance.now();
                   for (const item of itemsNotNeedingWorkers) {
                       const value = await calculateItemValue(item, priceCache);
                       values.push(value);
+                      if (performance.now() - sliceStart > 12) {
+                          await yieldToBrowser();
+                          sliceStart = performance.now();
+                      }
                   }
                   return values;
               })()
@@ -666,6 +739,17 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
  * @returns {Promise<Object>} Networth data with breakdowns
  */
 export async function calculateNetworth() {
+    // Where the time went, phase by phase, for the last run — readable at
+    // `Toolasha.Market.networthCalculator.lastCalcPhases` when hunting a stall. Kept always-on
+    // because recording eight numbers costs nothing and the 2026-08-29 stutter
+    // hunt spent its hours exactly here, guessing.
+    const phases = {};
+    let phaseStart = performance.now();
+    const phase = (name) => {
+        phases[name] = Math.round(performance.now() - phaseStart);
+        phaseStart = performance.now();
+    };
+
     const gameData = dataManager.getCombinedData();
     if (!gameData) {
         console.error('[Networth] No game data available');
@@ -699,24 +783,22 @@ export async function calculateNetworth() {
         if (itemsToFetch.has(itemHrid)) return; // Already added
         itemsToFetch.add(itemHrid);
 
-        // Find the crafting action for this item
-        for (const actionHrid in gameData.actionDetailMap) {
-            const action = gameData.actionDetailMap[actionHrid];
-            if (action.outputItems && action.outputItems.length > 0 && action.outputItems[0].itemHrid === itemHrid) {
-                // Add all input materials to price fetch list
-                if (action.inputItems) {
-                    for (const input of action.inputItems) {
-                        if (!itemsToFetch.has(input.itemHrid)) {
-                            itemsToFetch.add(input.itemHrid);
-                        }
+        // The crafting action for this item, from the once-built index — the
+        // per-item actionDetailMap scan this replaces was O(items × actions)
+        const action = getActionIndexes()?.byPrimaryOutput.get(itemHrid);
+        if (action) {
+            // Add all input materials to price fetch list
+            if (action.inputItems) {
+                for (const input of action.inputItems) {
+                    if (!itemsToFetch.has(input.itemHrid)) {
+                        itemsToFetch.add(input.itemHrid);
                     }
                 }
+            }
 
-                // If this item has an upgrade item (e.g., refined items), recursively fetch that too
-                if (action.upgradeItemHrid) {
-                    addItemWithUpgrades(action.upgradeItemHrid); // Recursive call
-                }
-                break;
+            // If this item has an upgrade item (e.g., refined items), recursively fetch that too
+            if (action.upgradeItemHrid) {
+                addItemWithUpgrades(action.upgradeItemHrid); // Recursive call
             }
         }
     };
@@ -740,6 +822,7 @@ export async function calculateNetworth() {
 
     // Batch fetch all prices at once (eliminates ~400 redundant lookups)
     const priceCache = marketAPI.getPricesBatch(itemsToPrice);
+    phase('collectAndPrice');
 
     // Precompute loadout-excluded item hrids: Map<itemHrid → loadoutName>
     const loadoutExcludedHridToName = new Map();
@@ -808,6 +891,8 @@ export async function calculateNetworth() {
         });
     }
 
+    phase('equipped');
+
     // Calculate inventory items value using workers
     let inventoryValue = 0;
     const inventoryBreakdown = [];
@@ -822,6 +907,7 @@ export async function calculateNetworth() {
 
     const inventoryItems = characterItems.filter((item) => item.itemLocationHrid === '/item_locations/inventory');
     const inventoryValues = await calculateItemValuesParallel(inventoryItems, priceCache, gameData);
+    phase('inventoryValues');
 
     for (let i = 0; i < inventoryItems.length; i++) {
         const item = inventoryItems[i];
@@ -905,6 +991,8 @@ export async function calculateNetworth() {
     // Sort ability books by value descending
     abilityBooksBreakdown.sort((a, b) => b.value - a.value);
 
+    phase('inventoryBreakdown');
+
     // Calculate market listings value
     let listingsValue = 0;
     const listingsBreakdown = [];
@@ -972,6 +1060,8 @@ export async function calculateNetworth() {
         trackExcluded('assetType', 'listings', 'All Market Listings', listingsValue);
         listingsValue = 0;
     }
+
+    phase('listings');
 
     // Calculate houses value — apply per-room and whole-section exclusions
     let housesData = calculateAllHousesCost(characterHouseRooms);
@@ -1072,6 +1162,8 @@ export async function calculateNetworth() {
         }
     }
 
+    phase('housesAbilitiesShrines');
+
     // Build excluded summary
     const excludedItems = [...excludedByKey.values()].sort((a, b) => b.amount - a.amount);
     const excludedTotal = excludedItems.reduce((sum, e) => sum + e.amount, 0);
@@ -1081,6 +1173,9 @@ export async function calculateNetworth() {
     const fixedAssetsTotal =
         housesData.totalCost + abilitiesData.totalCost + abilityBooksValue + guildShrinesData.totalCost;
     const totalNetworth = currentAssetsTotal + fixedAssetsTotal;
+
+    phase('totals');
+    lastCalcPhases = phases;
 
     // Sort breakdowns by value descending
     equippedBreakdown.sort((a, b) => b.value - a.value);
