@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 15: four core-plumbing fixes and two panel fixes
+
+The core audit's haul: a DOM handler unregistering during its own dispatch no longer makes the observer skip its neighbour (a silent one-shot-handler hazard); an immediate storage write or delete can no longer be undone seconds later by an older queued write for the same key — deletes especially used to resurrect; config.onSettingChange finally returns the unregister function one caller was already written against, closing a per-character-switch listener leak; and one throwing setting-change listener no longer starves every listener behind it (worst on the character-switch resync path). Panels: drag and resize handles capture the pointer, so releasing the mouse outside the window can't leave a panel glued to the cursor, and a slow-loading minimize state no longer re-collapses a panel the user already toggled.
+
 ### Artisan Tea stops being recommended for gathering
 
 Artisan is production-only — the maintainer confirmed the game never lets it buff a gathering action — but the tea optimizer offered it for milking, foraging and woodcutting and scored combos on its Action Level bonus as though it applied. Gathering candidate lists drop it now, which also zeroes the phantom bonus in those calculations. Alongside, the gathering profit calculator's bonus-revenue contract (base rate, efficiency applied by the display) is pinned by test so the double-count mistake it invites cannot land silently.
