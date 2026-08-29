@@ -319,6 +319,9 @@ let actionIndexSource = null;
 /** The last calculateNetworth run's per-phase milliseconds, for diagnosis. */
 export let lastCalcPhases = null;
 
+/** Single items whose valuation exceeded ~15ms in the last run — the indivisible chunks. */
+export let lastSlowItems = null;
+
 function getActionIndexes() {
     const map = dataManager.getInitClientData()?.actionDetailMap || null;
     if (!map) return null;
@@ -694,15 +697,29 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
                   const values = [];
                   // Yield on a clock, not a count: item costs vary by orders of
                   // magnitude, and what the frame budget cares about is time
+                  const slow = [];
                   let sliceStart = performance.now();
                   for (const item of itemsNotNeedingWorkers) {
+                      const itemStart = performance.now();
                       const value = await calculateItemValue(item, priceCache);
+                      const itemMs = performance.now() - itemStart;
+                      // One item over the frame budget is an indivisible chunk
+                      // no slicing can help — record it so the next stall hunt
+                      // reads a name instead of re-instrumenting
+                      if (itemMs > 15) {
+                          slow.push({
+                              itemHrid: item.itemHrid,
+                              enhancementLevel: item.enhancementLevel || 0,
+                              ms: Math.round(itemMs),
+                          });
+                      }
                       values.push(value);
                       if (performance.now() - sliceStart > 12) {
                           await yieldToBrowser();
                           sliceStart = performance.now();
                       }
                   }
+                  lastSlowItems = slow;
                   return values;
               })()
             : Promise.resolve([]),

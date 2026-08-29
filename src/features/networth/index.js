@@ -203,7 +203,10 @@ class NetworthFeature {
             const networthData = await calculateNetworth();
             this.currentData = networthData;
 
-            // Update displays
+            // Update displays — measured apart from the calculation: the DOM
+            // work here is synchronous and unsliced, so when a stall points at
+            // networth:recalculate this split says which half to open
+            const displaysStartedAt = recalcStartedAt ? performance.now() : 0;
             if (config.isFeatureEnabled('networth')) {
                 networthHeaderDisplay.update(networthData);
             }
@@ -214,6 +217,9 @@ class NetworthFeature {
 
             // Refresh exclusion popup if open (updates amounts after recalculation)
             networthExclusionPopup.refresh(networthData);
+            if (displaysStartedAt) {
+                performanceMonitor.record('networth:updateDisplays', performance.now() - displaysStartedAt);
+            }
         } catch (error) {
             console.error('[Networth] Error calculating networth:', error);
         } finally {

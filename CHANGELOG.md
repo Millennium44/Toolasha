@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The networth engine explains its own last stall
+
+Two more permanent diagnostics ahead of deeper off-thread work: single items whose valuation exceeds ~15ms are recorded (`lastSlowItems` beside `lastCalcPhases`), and the display-update half of a recalculation is measured apart from the calculation (`networth:updateDisplays` in the rolling stats) — so a stall pointing at the recalc now says which half, and which item.
+
 ### The stall ledger shows up in the panel itself
 
 The stalls and the widened attribution net (traced timers, message dispatch, event fan-outs) were only in the exported trace; the live pformance panel now carries them too — a "Timers & Events" section for the rolling activity and a "Main-thread Stalls" section listing recent stalls with their suspects, red past 100ms.
