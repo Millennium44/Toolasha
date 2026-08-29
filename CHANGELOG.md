@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 14 begins: gold spreads over the days a run actually spent
+
+Alchemy sessions now record when they last acted, and the gold panel spreads each alchemy and enhancement session's net across the days it ran — the same by-time mechanism combat already used — instead of booking a multi-day AFK grind entirely to its start day, often outside every window. Old sessions without the stamp book to their start day exactly as before; enhancement runs use the end/last-update times they already carried.
+
 ### Round 13: the rest of the fleet lands
 
 Twenty more commits from the audit round, integrated and re-verified:
