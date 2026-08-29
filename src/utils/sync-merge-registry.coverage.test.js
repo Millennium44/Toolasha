@@ -1,0 +1,220 @@
+/**
+ * Overlap and coverage probe over the registry's real production registrations.
+ *
+ * `sync-merge-registry.test.js` exercises the matching engine in isolation,
+ * registering fake entries and clearing them between tests. This file never
+ * calls `clearSyncMerges()` — it imports every module that calls
+ * `registerSyncMerge()` (or, for a `ChunkedHistory`, causes it to be called)
+ * and then checks the registry those imports actually built.
+ *
+ * Two things are worth automating here, because both silently degrade rather
+ * than error:
+ *
+ * 1. **Disjointness.** `mergeForKey()`'s contract is that exactly one
+ *    registration claims a key; a second match is a bug that resolves to
+ *    "whichever bundle happened to load first" (see the registry's own
+ *    doc comment) and is reported with a `console.warn`, not thrown. A test
+ *    that never looks for that warning would not notice a new registration
+ *    quietly starting to shadow an old one.
+ * 2. **Coverage.** Every additive history this script keeps is on this list
+ *    because a whole-key sync pull would otherwise throw away one device's
+ *    entries. A rename that drops a `Rec` suffix or a scoping underscore
+ *    would make `registerSyncMerge`'s matcher stop matching the real keys
+ *    the feature writes, and nothing before this would fail — a pull would
+ *    just start overwriting silently again. Asserting each real key shape
+ *    still resolves to its registration is what makes that fail loudly.
+ *
+ * The import list below covers every `registerSyncMerge()` call site in
+ * `src/` (grep is `grep -rl registerSyncMerge src`), grouped the way the
+ * registry's own header describes the bundles: `utils` shapes first, then
+ * `market`, `combat`/`labyrinth`, `guild`, `insights`, `inventory`,
+ * `leaderboard`, `skills`, `networth`, `tasks`, `alchemy` — one instance of
+ * this module, imported before any of them, is exactly what makes the
+ * registrations from every bundle land in the same array.
+ */
+import { describe, test, expect, vi } from 'vitest';
+
+import { mergeForKey } from './sync-merge-registry.js';
+
+await import('./chest-tally.js');
+await import('../features/market/trade-history.js');
+await import('../features/market/trade-ledger-store.js');
+await import('../features/market/estimated-listing-age.js');
+await import('../features/combat-stats/combat-session-history.js');
+await import('../features/combat/labyrinth-fight-recorder.js');
+await import('../features/combat/labyrinth-room-logs.js');
+await import('../features/combat/labyrinth-run-ledger.js');
+await import('../features/combat/labyrinth-tracker.js');
+await import('../features/guild/guild-xp-tracker.js');
+await import('../features/guild/guild-trials-store.js');
+await import('../features/insights/enhancement-calibration.js');
+await import('../features/insights/prediction-calibration.js');
+await import('../features/inventory/custom-tabs/custom-tabs-data.js');
+await import('../features/leaderboard/leaderboard-xp-tracker.js');
+await import('../features/skills/xp-tracker.js');
+await import('../features/actions/loot-log-history.js');
+await import('../features/networth/networth-history.js');
+await import('../features/networth/chest-opening-recorder.js');
+await import('../features/networth/production-income-recorder.js');
+await import('../features/tasks/task-completion-tracker.js');
+await import('../features/alchemy/transmute-history-tracker.js');
+await import('../features/alchemy/decompose-history-tracker.js');
+await import('../features/alchemy/coinify-history-tracker.js');
+
+const CHAR = 'char-A';
+
+/**
+ * Every real key shape the registrations above are meant to own, mined from
+ * the registering modules themselves (their `store`/`base`/`prefix`/`key`
+ * constants and, for a `ChunkedHistory`, its `prefix` + `legacyKey`):
+ *
+ * - the bare base for a scoped key (`xpHistory`)
+ * - the character-scoped form (`xpHistory_char-A`)
+ * - a chunked record key, `<recordPrefix>_<charId>_<chunkId>`
+ * - a chunked history's legacy pre-split key, bare and scoped
+ *
+ * `label: null` marks a key that must land unclaimed — a lookalike key that a
+ * broad matcher must NOT pick up (`sync-merge-registry.js`'s whole point is
+ * that overlap is a bug, so a near-miss is worth checking as hard as a hit).
+ *
+ * @type {Array<{store: string, key: string, label: string|null}>}
+ */
+const corpus = [
+    // skills/xp-tracker.js
+    { store: 'xpHistory', key: 'xpHistory', label: 'Skill XP history' },
+    { store: 'xpHistory', key: `xpHistory_${CHAR}`, label: 'Skill XP history' },
+
+    // leaderboard/leaderboard-xp-tracker.js
+    { store: 'leaderboardHistory', key: 'playerXP', label: 'Leaderboard XP' },
+
+    // guild/guild-xp-tracker.js
+    { store: 'guildHistory', key: 'guildXP_Some Guild', label: 'Guild XP history' },
+    { store: 'guildHistory', key: `memberXP_${CHAR}`, label: 'Guild member XP' },
+
+    // guild/guild-trials-store.js — and the cache key its prefix must not eat
+    { store: 'guildHistory', key: 'guildTrials_Some Guild', label: 'Guild trial records' },
+    { store: 'guildHistory', key: 'guildTrialsRoster', label: null },
+
+    // market/trade-history.js
+    { store: 'settings', key: 'tradeHistory', label: 'Personal trade prices' },
+    { store: 'settings', key: `tradeHistory_${CHAR}`, label: 'Personal trade prices' },
+
+    // market/trade-ledger-store.js — RECORDS_BASE ("tradeLedgerRecords") is
+    // deliberately spelled apart from RECORD_PREFIX ("tradeLedgerRec_") so the
+    // scoped base's own `_<id>` suffix can never be mistaken for a chunk key
+    { store: 'marketListings', key: 'tradeLedgerRecords', label: 'Trade ledger fills' },
+    { store: 'marketListings', key: `tradeLedgerRecords_${CHAR}`, label: 'Trade ledger fills' },
+    { store: 'marketListings', key: `tradeLedgerRec_${CHAR}_2026-01-15`, label: 'Trade ledger fills (daily)' },
+    { store: 'marketListings', key: 'tradeLedgerState', label: 'Trade ledger baselines' },
+    { store: 'marketListings', key: `tradeLedgerState_${CHAR}`, label: 'Trade ledger baselines' },
+
+    // market/estimated-listing-age.js
+    { store: 'marketListings', key: 'marketListingTimestamps', label: 'Market listing log' },
+    { store: 'marketListings', key: `marketListingTimestamps_${CHAR}`, label: 'Market listing log' },
+    { store: 'marketListings', key: 'marketListingAnchors', label: 'Market listing anchors' },
+
+    // combat-stats/combat-session-history.js
+    { store: 'combatStats', key: 'combatSessionHistory', label: 'Combat sessions' },
+    { store: 'combatStats', key: `combatSessionHistory_${CHAR}`, label: 'Combat sessions' },
+
+    // combat/labyrinth-fight-recorder.js
+    { store: 'labyrinth', key: 'labyrinthFightRecorder', label: 'Labyrinth fights' },
+    { store: 'labyrinth', key: `labyrinthFightRecorder_${CHAR}`, label: 'Labyrinth fights' },
+
+    // combat/labyrinth-room-logs.js (lives in the settings store)
+    { store: 'settings', key: 'labyrinthRoomLogs', label: 'Labyrinth room logs' },
+    { store: 'settings', key: `labyrinthRoomLogs_${CHAR}`, label: 'Labyrinth room logs' },
+
+    // combat/labyrinth-run-ledger.js
+    { store: 'labyrinth', key: 'labyrinthRunLedger', label: 'Labyrinth run ledger' },
+    { store: 'labyrinth', key: `labyrinthRunLedger_${CHAR}`, label: 'Labyrinth run ledger' },
+
+    // combat/labyrinth-tracker.js
+    { store: 'labyrinth', key: 'monsterBestLevels', label: 'Labyrinth best levels' },
+    { store: 'labyrinth', key: `monsterBestLevels_${CHAR}`, label: 'Labyrinth best levels' },
+
+    // insights/enhancement-calibration.js and prediction-calibration.js — the
+    // near-miss between "calibration" and "calibrationEnhancing" is exactly
+    // the kind of collision this registry exists to catch
+    { store: 'lootLogHistory', key: 'calibrationEnhancing', label: 'Enhancement calibration' },
+    { store: 'lootLogHistory', key: `calibrationEnhancing_${CHAR}`, label: 'Enhancement calibration' },
+    { store: 'lootLogHistory', key: 'calibration', label: 'Prediction calibration' },
+    { store: 'lootLogHistory', key: `calibration_${CHAR}`, label: 'Prediction calibration' },
+
+    // inventory/custom-tabs/custom-tabs-data.js — a bespoke `match`, not `base`
+    { store: 'settings', key: 'inventoryTabs_config', label: 'Custom inventory tabs' },
+    { store: 'settings', key: `${CHAR}_inventoryTabs_config`, label: 'Custom inventory tabs' },
+
+    // utils/chest-tally.js — and the lookalike record it must not absorb
+    { store: 'settings', key: 'treasureTally', label: 'Treasure tally' },
+    { store: 'settings', key: `treasureTally_${CHAR}`, label: 'Treasure tally' },
+    { store: 'settings', key: 'treasureTallySettings', label: null },
+
+    // actions/loot-log-history.js — chunked, plus its legacy pre-split key
+    { store: 'lootLogHistory', key: `lootLogRec_${CHAR}_2026-01`, label: 'LootLogHistory records' },
+    { store: 'lootLogHistory', key: `lootLog_${CHAR}`, label: 'LootLogHistory legacy key' },
+
+    // networth/networth-history.js — chunked
+    { store: 'networthHistory', key: `networthSeries_${CHAR}_2026-01`, label: 'NetworthHistory records' },
+    { store: 'networthHistory', key: `networth_${CHAR}`, label: 'NetworthHistory legacy key' },
+
+    // networth/chest-opening-recorder.js — chunked
+    { store: 'networthHistory', key: `chestOpenRec_${CHAR}_2026-01-15`, label: 'ChestOpenings records' },
+    { store: 'networthHistory', key: `chestOpenings_${CHAR}`, label: 'ChestOpenings legacy key' },
+
+    // networth/production-income-recorder.js — chunked
+    { store: 'networthHistory', key: `prodIncomeRec_${CHAR}_2026-01-15`, label: 'ProductionIncome records' },
+    { store: 'networthHistory', key: `prodIncome_${CHAR}`, label: 'ProductionIncome legacy key' },
+
+    // tasks/task-completion-tracker.js — chunked, weekly buckets
+    { store: 'rerollSpending', key: `taskCompletionRec_${CHAR}_2026-W03`, label: 'TaskCompletionTracker records' },
+    { store: 'rerollSpending', key: `taskCompletions_${CHAR}`, label: 'TaskCompletionTracker legacy key' },
+
+    // alchemy/transmute-history-tracker.js — chunked, daily buckets
+    { store: 'alchemyHistory', key: `transmuteSessionsRec_${CHAR}_2026-01-15`, label: 'TransmuteHistoryTracker records' },
+    { store: 'alchemyHistory', key: `transmuteSessions_${CHAR}`, label: 'TransmuteHistoryTracker legacy key' },
+    // NO_CHARACTER's pre-login sessions live at the bare legacy key
+    { store: 'alchemyHistory', key: 'transmuteSessions', label: 'TransmuteHistoryTracker legacy key' },
+
+    // alchemy/decompose-history-tracker.js — chunked, daily buckets
+    { store: 'alchemyHistory', key: `decomposeSessionsRec_${CHAR}_2026-01-15`, label: 'DecomposeHistoryTracker records' },
+    { store: 'alchemyHistory', key: `decomposeSessions_${CHAR}`, label: 'DecomposeHistoryTracker legacy key' },
+
+    // alchemy/coinify-history-tracker.js — chunked, daily buckets
+    { store: 'alchemyHistory', key: `coinifySessionsRec_${CHAR}_2026-01-15`, label: 'CoinifyHistoryTracker records' },
+    { store: 'alchemyHistory', key: `coinifySessions_${CHAR}`, label: 'CoinifyHistoryTracker legacy key' },
+];
+
+describe('every registered store is disjoint over the real key corpus', () => {
+    test('no key in the corpus is claimed by more than one registration', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        for (const { store, key } of corpus) mergeForKey(store, key);
+
+        // mergeForKey() only ever warns when a second registration also
+        // matched a key it had already resolved — see its own doc comment.
+        // Silence across the whole corpus is the disjointness property.
+        if (warnSpy.mock.calls.length > 0) {
+            throw new Error(
+                `Overlapping sync-merge registrations:\n${warnSpy.mock.calls.map((call) => call[0]).join('\n')}`
+            );
+        }
+
+        warnSpy.mockRestore();
+    });
+});
+
+describe('every additive history is reachable by its real key shape', () => {
+    test.each(corpus.filter((entry) => entry.label !== null))(
+        '$store/$key resolves to "$label"',
+        ({ store, key, label }) => {
+            expect(mergeForKey(store, key)?.label).toBe(label);
+        }
+    );
+});
+
+describe('lookalike keys are not swept up by a broader matcher', () => {
+    test.each(corpus.filter((entry) => entry.label === null))('$store/$key has no merge', ({ store, key }) => {
+        expect(mergeForKey(store, key)).toBeNull();
+    });
+});
