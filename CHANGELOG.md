@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Opening another player's Battle Info is cheap again
+
+The game reuses one message for your end-of-session summary and for another player's sheet — and a sheet carries their totals, so the revenue block and the drop-luck model (60–100 ms per open) both ran on every profile a trial capture opened, injecting nonsense figures into the other player's popup along the way. A sheet naming a different character is now refused outright.
+
+### Two switch races in houses and XP history
+
+The house rows' untracked-rooms read could resolve late and apply the departed character's exclusions, and a fast double-switch could push the departed character's XP reading into the new character's history — where the "XP never falls" rule then silently dropped the new character's legitimate samples. Both now check the character still matches after the read.
+
 ### Combat trackers stop bleeding across character switches
 
 Drop-luck analysis in flight when you switch no longer finishes late and shows the old character's luck on the new character's tile; the sim-accuracy check no longer files a check started before the switch into the arriving character's history; and the mana tally resets on switch instead of blending both characters' casts.
