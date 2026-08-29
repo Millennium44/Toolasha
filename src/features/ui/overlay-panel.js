@@ -2291,6 +2291,12 @@ class OverlayPanel {
     _snapshot(what) {
         this.undoState = {
             what,
+            // A span only means anything against the grid it was written for,
+            // so the count and its pin have to come back with the spans — undone
+            // without them, a two-column arrangement restored onto an imported
+            // ten-column grid has every proportion in it flattened
+            columns: this.settings.columns,
+            columnsPinned: this.settings.columnsPinned === true,
             span: { ...this.settings.span },
             zoom: { ...this.settings.zoom },
             textScale: this.settings.textScale,
@@ -2304,10 +2310,21 @@ class OverlayPanel {
     _undo() {
         if (!this.undoState) return;
 
-        const { span, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
-        this.settings = { ...this.settings, span, zoom, textScale, visible, order, curatedDefaults };
+        const { columns, columnsPinned, span, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
+        this.settings = {
+            ...this.settings,
+            columns,
+            columnsPinned,
+            span,
+            zoom,
+            textScale,
+            visible,
+            order,
+            curatedDefaults,
+        };
         this.undoState = null;
         this._save();
+        this._applyColumns();
         if (this.panel) this.panel.style.fontSize = `${this._baseFontPx()}px`;
         this._renderBody();
         this._renderPicker();

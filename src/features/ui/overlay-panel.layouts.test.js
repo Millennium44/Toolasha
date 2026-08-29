@@ -255,6 +255,23 @@ describe('saving and switching named layouts', () => {
         expect(worn().order).toEqual(['luck', 'dps']);
     });
 
+    test('taking a switch back puts the column count and its pin back too', async () => {
+        // The restored spans were written for the old grid; left on the new
+        // layout's count they are a two-column arrangement drawn on ten columns
+        // - and the next export would persist the mismatch
+        wear({ ...dungeonLayout(), columns: 9, columnsPinned: true });
+        await overlayPanel.saveNamedLayout('Wide');
+        wear({ ...marketLayout(), columns: 2, columnsPinned: false });
+
+        await overlayPanel.applyNamedLayout('Wide');
+        expect(overlayPanel.settings.columns).toBe(9);
+
+        overlayPanel._undo();
+
+        expect(overlayPanel.settings.columns).toBe(2);
+        expect(overlayPanel.settings.columnsPinned).toBe(false);
+    });
+
     test('the gear popover offers the saved layouts, then the presets', async () => {
         wear(dungeonLayout());
         await overlayPanel.saveNamedLayout('Dungeon');
