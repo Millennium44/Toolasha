@@ -180,7 +180,16 @@ class IronCowMode {
      * @returns {Promise<void>}
      */
     async disable() {
-        const snapshot = await storage.getJSON(this._snapshotKey(), 'settings', null);
+        // The key is decided once, synchronously, before the first await.
+        // `_snapshotKey()` reads the *current* character, and this method spans
+        // two storage round-trips — a character switch landing between them (the
+        // player toggles the mode off just as the switch goes through) would
+        // otherwise have the delete below aimed at the arriving character's
+        // snapshot while the departing character's is left orphaned. Same
+        // capture-before-await discipline as `dungeon-tracker.js`'s scoped
+        // writes.
+        const key = this._snapshotKey();
+        const snapshot = await storage.getJSON(key, 'settings', null);
         if (snapshot) {
             for (const [id, entry] of Object.entries(snapshot)) {
                 if (!IRON_COW_SETTINGS.has(id)) continue;
@@ -193,7 +202,7 @@ class IronCowMode {
                 }
             }
         }
-        await storage.delete(this._snapshotKey(), 'settings');
+        await storage.delete(key, 'settings');
     }
 }
 
