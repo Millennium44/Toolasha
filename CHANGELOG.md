@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 14: listing-age's last-resort item match stops guessing on collision
+
+The order-book age column's tertiary fallback — matching a Cancel row's price and quantity against your listing log — returned the first hit, so two of your listings for different items sharing a price and remaining quantity mislabeled every row of the panel. It now trusts the match only when every candidate agrees on the item, and reports unknown otherwise, matching the enhancement-level guards its two sibling matchers got earlier.
+
 ### Round 14 begins: gold spreads over the days a run actually spent
 
 Alchemy sessions now record when they last acted, and the gold panel spreads each alchemy and enhancement session's net across the days it ran — the same by-time mechanism combat already used — instead of booking a multi-day AFK grind entirely to its start day, often outside every window. Old sessions without the stamp book to their start day exactly as before; enhancement runs use the end/last-update times they already carried.
