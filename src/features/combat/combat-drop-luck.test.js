@@ -24,6 +24,30 @@ vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
 
+// A gate `_analyse` can be made to pause inside, so a test can land `disable()`
+// in the middle of it — the shape a character switch's teardown actually takes.
+const yieldGate = vi.hoisted(() => {
+    let release = () => {};
+    let pending = Promise.resolve();
+    return {
+        arm: () => {
+            pending = new Promise((resolve) => {
+                release = resolve;
+            });
+        },
+        release: () => release(),
+        wait: () => pending,
+    };
+});
+vi.mock('../../utils/yield-to-browser.js', () => ({ yieldToBrowser: () => yieldGate.wait() }));
+vi.mock('../../utils/combat-drop-model.js', () => ({
+    buildCombatSession: () => ({}),
+    lootValue: () => 100,
+    sessionMean: () => 100,
+}));
+vi.mock('../../utils/drop-luck.js', () => ({ sessionLuck: () => ({ percentile: 0.5 }) }));
+vi.mock('./party-luck.js', () => ({ partyLuck: () => ({ players: [] }) }));
+
 const {
     default: combatDropLuck,
     formatOrdinal,
@@ -320,5 +344,43 @@ describe('watching a dungeon pay out', () => {
         const [mine] = combatDropLuck.dungeonChestLuck().players;
         expect(mine.chests).toBe(65);
         expect(mine.luck.completions).toBe(1);
+    });
+});
+
+describe('an analysis in flight when the character switches', () => {
+    beforeEach(() => {
+        combatDropLuck.context = {
+            actionHrid: '/actions/combat/test',
+            difficultyTier: 0,
+            isDungeon: false,
+            battles: 5,
+            partySize: 1,
+            bonuses: {},
+            levelGaps: {},
+            hasBonuses: true,
+        };
+        combatDropLuck.lastResult = null;
+        combatDropLuck.isInitialized = true;
+        yieldGate.arm();
+    });
+
+    test('does not write its result after disable() has torn the feature down', async () => {
+        // Started for the departing character, mid-flight when the switch's
+        // synchronous disable() runs — the character-switch handler awaits
+        // disable() and then moves the pointer, but disable() here is sync and
+        // returns before this promise chain has a chance to unwind.
+        const analysis = combatDropLuck._analyse({ '/items/coin': 1000 });
+
+        // The switch's teardown: happens while `_analyse` is parked on its
+        // first `yieldToBrowser()`, exactly as it would mid-battle.
+        combatDropLuck.disable();
+
+        // Let the parked analysis run to completion.
+        yieldGate.release();
+        await analysis;
+
+        // A result computed for the character that just left must not appear
+        // as though it belongs to whoever the overlay is showing next.
+        expect(combatDropLuck.lastResult).toBeNull();
     });
 });

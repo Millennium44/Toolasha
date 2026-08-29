@@ -530,6 +530,18 @@ class CombatDropLuck {
     }
 
     /**
+     * Whether an in-flight `_analyse` has been overtaken — by `disable()`
+     * tearing the feature down, or by a newer context replacing the one this
+     * run started with.
+     *
+     * @param {Object} context - The `this.context` captured when this analysis began
+     * @returns {boolean}
+     */
+    _stale(context) {
+        return !this.isInitialized || this.context !== context;
+    }
+
+    /**
      * Work out the luck for the session that just ended and show it.
      * @param {Object} message - `battle_unit_fetched` message
      */
@@ -588,7 +600,13 @@ class CombatDropLuck {
      *   when the zone cannot be modelled
      */
     async _analyse(lootMap) {
-        const { actionHrid, difficultyTier, battles, partySize, bonuses, hasBonuses } = this.context;
+        // Captured before the first await: a character switch's teardown is
+        // synchronous and does not wait for this to unwind, so a switch that
+        // lands while this is parked on `yieldToBrowser()` must stop it from
+        // writing the departing character's figures into `lastResult` as if
+        // they belonged to whoever the overlay shows next.
+        const context = this.context;
+        const { actionHrid, difficultyTier, battles, partySize, bonuses, hasBonuses } = context;
 
         const actionDetail = dataManager.getActionDetails(actionHrid);
         const monsterDetailMap = dataManager.getInitClientData()?.combatMonsterDetailMap;
@@ -615,6 +633,10 @@ class CombatDropLuck {
         // busy zone costs never lands as one block (the stall ledger's last
         // named single-frame hitch, 2026-08-29)
         await yieldToBrowser();
+        // Torn down, or moved on to a different context, while this was
+        // parked — the departing character's numbers are of no use to
+        // whoever the overlay is showing now
+        if (this._stale(context)) return null;
         const { percentile } = sessionLuck(session, income);
 
         // The other half of the same question. The percentile says where the
@@ -625,7 +647,10 @@ class CombatDropLuck {
         const expected = sessionMean(session);
 
         await yieldToBrowser();
-        this.lastResult = { percentile, income, expected, battles, hasBonuses, players: await this._playerLuck() };
+        if (this._stale(context)) return null;
+        const players = await this._playerLuck();
+        if (this._stale(context)) return null;
+        this.lastResult = { percentile, income, expected, battles, hasBonuses, players };
         return this.lastResult;
     }
 
