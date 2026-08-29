@@ -349,7 +349,25 @@ function setupCharacterSwitchHandler() {
         if (config && typeof config.clearSettingsCache === 'function') {
             config.clearSettingsCache();
         }
-        enqueue(async () => {
+        // Returned, not merely enqueued.
+        //
+        // `character_switching` is data-manager's one awaited emit, and it is
+        // awaited for a reason: it fires *before* `currentCharacterId` moves so
+        // that a feature's disable() can persist the departing character's
+        // state under the departing character's key, and data-manager must not
+        // move the pointer until that has happened. Handing back only
+        // `undefined` made the await a formality — the teardown was queued and
+        // the pointer moved on the next microtask, so every disable() that
+        // crossed an await before writing (a read-modify-write through
+        // `readScoped`/`writeScoped` is the normal shape) evaluated
+        // `characterKey()` against the *arriving* character and filed the
+        // departing character's state under their key, overwriting whatever
+        // they had.
+        //
+        // `enqueue` returns the chain as of this step, so this promise settles
+        // when this teardown has run and not when later steps have — the emit
+        // waits for the teardown it asked for, and no longer.
+        return enqueue(async () => {
             // Mid-burst the layer is already down and every feature's disable()
             // is a no-op — a hundred of them per switch is the storm the old
             // rapid-switch guard was defending against. Skip, and let the
@@ -369,6 +387,16 @@ function setupCharacterSwitchHandler() {
 
         enqueue(async () => {
             if (isStale()) return;
+            // A newer switch is already under way. `currentCharacterId` has not
+            // moved yet — it moves after the awaited `character_switching` — so
+            // `isStale()` cannot see this one, and doing the work anyway would
+            // be worse than wasted now that the newer switch's teardown waits
+            // behind this step: `initializeFeatures()` refuses during a switch
+            // regardless, so all this could contribute is a settings reload and
+            // a settle delay holding up the character the player is actually
+            // looking at. Leave `tornDown` set, so the switch that settles is
+            // the one that brings the layer back up.
+            if (dataManager.getIsCharacterSwitching()) return;
 
             // Load settings BEFORE any feature initialization so every feature
             // sees the new character's values (loadSettings reads the current id).
