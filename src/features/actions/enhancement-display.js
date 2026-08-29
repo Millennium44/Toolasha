@@ -189,7 +189,11 @@ function generateCostsByLevelTable(
     const lines = [];
     const gameData = dataManager.getInitClientData();
     const itemLevel = itemDetails.itemLevel || 1;
-    const xpBaseLevel = itemDetails.level || itemDetails.equipmentDetail?.levelRequirements?.[0]?.level || 0;
+    // The XP formula keys on the item's own level - the same reading calculateSuccessXP
+    // takes. Falling back to a level *requirement* answered with whatever skill the item
+    // happens to gate on, which is a different number and made the panel and the tooltip
+    // quote different XP for one item.
+    const xpBaseLevel = itemDetails.itemLevel || 0;
     const wisdomDecimal = params.experienceBonus / 100;
 
     lines.push('<div style="margin-top: 12px; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px;">');
@@ -649,7 +653,11 @@ export function protectSweepHTML({
             else materialsUnpriced = true;
         }
 
-        const xpBaseLevel = itemDetails.level || itemDetails.equipmentDetail?.levelRequirements?.[0]?.level || 0;
+        // The XP formula keys on the item's own level - the same reading calculateSuccessXP
+        // takes. Falling back to a level *requirement* answered with whatever skill the item
+        // happens to gate on, which is a different number and made the panel and the tooltip
+        // quote different XP for one item.
+        const xpBaseLevel = itemDetails.itemLevel || 0;
         const sweep = sweepProtectFromMemo({
             chain: {
                 enhancingLevel: params.enhancingLevel,
