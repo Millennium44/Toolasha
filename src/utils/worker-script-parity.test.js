@@ -224,6 +224,49 @@ describe('generated worker sources', () => {
         expect(calculateEnhancementCost({ ...params, targetLevel: 3 })).toBeCloseTo(24300, 6);
     });
 
+    test('an unquoted enhancement material falls back to its sell price, never to a negative one', async () => {
+        // The marketplace answers "no quote" with -1 on a side, which is why the
+        // worker already swaps a negative side for the positive one. When BOTH
+        // sides are -1 there is nothing to swap to, and `ask || 0` handed the
+        // material a price of -1 — an attempt that pays the enhancer to make it,
+        // dragging the whole run's cost below the base item. Main's
+        // getEnhancementMaterialPrice treats a book with no positive side as no
+        // book at all and takes the item's sell price.
+        vi.resetModules();
+        const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
+        const source = await captureWorkerScript(() =>
+            calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
+        );
+        const calculateEnhancementCost = new Function('self', `${source}\n; return calculateEnhancementCost;`)({
+            postMessage: () => {},
+            onmessage: null,
+        });
+
+        const params = {
+            itemHrid: '/items/test_sword',
+            targetLevel: 1,
+            enhancementParams: { enhancingLevel: 10, toolBonus: 0 },
+            itemDetails: {
+                itemLevel: 10,
+                enhancementCosts: [{ itemHrid: '/items/test_material', count: 1 }],
+                allItemDetails: { '/items/test_material': { sellPrice: 300, name: 'Test Material' } },
+            },
+            priceMap: {
+                '/items/test_sword:0': 100,
+                '/items/test_sword:0_ask': 100,
+                '/items/test_sword:0_bid': 90,
+                // Listed, but with no live order on either side
+                '/items/test_material:0_ask': -1,
+                '/items/test_material:0_bid': -1,
+            },
+            recipes: {},
+        };
+
+        // +1 takes two attempts on the 50% base rate, so the run is the base item
+        // plus two materials at their sell price
+        expect(calculateEnhancementCost(params)).toBeCloseTo(100 + 2 * 300, 6);
+    });
+
     test('the pruned closure prices every hrid the worker can reach', async () => {
         // Differential proof that pruning is invisible: the real manager runs
         // end-to-end through a fake Worker (so the batch carries only the

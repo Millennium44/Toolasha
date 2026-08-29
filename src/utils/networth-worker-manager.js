@@ -156,9 +156,18 @@ function calculateEnhancementCost(params) {
                         }
 
                         // MCS uses just ask for material prices (matches main thread)
-                        materialPrice = ask || 0;
+                        materialPrice = ask > 0 ? ask : 0;
                     } else {
-                        // Fallback to sellPrice if no market data (matches main thread)
+                        materialPrice = 0;
+                    }
+
+                    // A key present but quoted -1 on both sides — the marketplace's "no live
+                    // order" — is not a price, it is an absent book, and taking it literally
+                    // charged the run a negative amount per attempt. Main's
+                    // getEnhancementMaterialPrice reaches for the sell price in exactly this
+                    // case, so an entry with nothing positive on either side falls through here
+                    // the same way a missing entry does.
+                    if (!(materialPrice > 0)) {
                         materialPrice = materialDetail?.sellPrice || 0;
                     }
                 }
