@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Eight columns
+
+The overlay's span ceiling rises from five to eight: tiles may span up to eight columns, the width can afford up to eight, and the stepper pins up to eight. A pre-rework pixel layout now migrates onto the finer grid, which lands closer to its original proportions than the five-column reading did.
+
 ### The skip-threshold searches can answer past +300
 
 A character strong enough to clear every room in the search window was handed the window's edge (+300) dressed as a recommendation, and the automation table could never be auto-set higher. The shared search range is ±1000 now — the searches are binary, so the wider window costs two extra probes — and the Lab Sim's room-level inputs accept up to 1300 to match.
