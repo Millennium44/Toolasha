@@ -472,10 +472,64 @@ class Storage {
         }
 
         if (immediate) {
-            return this._saveToIndexedDB(key, value, storeName);
+            return this._writeNow(key, value, storeName);
         } else {
             return this._debouncedSave(key, value, storeName);
         }
+    }
+
+    /**
+     * An immediate write, superseding whatever the debounce queue holds for the key.
+     *
+     * Without the supersede, `set(key, v, store, true)` went straight to IndexedDB
+     * and left an older value still armed on a 3 s timer for the same key — which
+     * then landed on top of it. "Immediate" is not only about when the write
+     * happens; it is a claim to be the current value of the key, and a queued
+     * write to that key predates it by definition.
+     * @param {string} key - Storage key
+     * @param {*} value - Value to store
+     * @param {string} storeName - Object store name
+     * @returns {Promise<boolean>} Success status
+     * @private
+     */
+    async _writeNow(key, value, storeName) {
+        const superseded = this._supersedePending(`${storeName}:${key}`);
+        const success = await this._saveToIndexedDB(key, value, storeName);
+        // The coalesced callers were awaiting a write to this key; this is it.
+        for (const resolve of superseded?.resolvers || []) resolve(success);
+        return success;
+    }
+
+    /**
+     * Drop the debounced write outstanding for a key, and hand back what was dropped.
+     *
+     * Used by the two paths that state a key's value outright — an immediate `set`
+     * and a `delete`. Both are the newest word on the key, so a queued older value
+     * must not survive them.
+     *
+     * The generation bump covers the narrower case a cancelled timer cannot: a timer
+     * that has already fired and is awaiting its own transaction has taken its entry
+     * out of the queue, so there is nothing here to cancel. It cannot be stopped, but
+     * its transaction was opened before ours and so commits before ours; the bump is
+     * what stops its *failure* path from requeueing the stale value behind us.
+     * @param {string} timerKey - `${storeName}:${key}`
+     * @returns {{value: *, storeName: string, resolvers: Array<Function>, generation: number}|null}
+     *   The cancelled entry, or null when nothing was queued
+     * @private
+     */
+    _supersedePending(timerKey) {
+        const timer = this.saveDebounceTimers.get(timerKey);
+        if (timer) clearTimeout(timer);
+        this.saveDebounceTimers.delete(timerKey);
+
+        const pending = this.pendingWrites.get(timerKey);
+        const generation = this._writeGeneration.get(timerKey);
+        if (generation !== undefined) this._writeGeneration.set(timerKey, generation + 1);
+        if (!pending) return null;
+
+        this.pendingWrites.delete(timerKey);
+        this._flushFailures.delete(timerKey);
+        return pending;
     }
 
     /**
@@ -745,7 +799,12 @@ class Storage {
                 const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
 
                 if (!success) {
-                    if (!this.pendingWrites.has(timerKey)) {
+                    // `_writeGeneration` still naming this write is what says nothing
+                    // newer has spoken for the key. An immediate set or a delete that
+                    // landed while this transaction was in flight bumps it, and
+                    // requeueing behind one of those would put the stale value back.
+                    const stillCurrent = this._writeGeneration.get(timerKey) === pending.generation;
+                    if (stillCurrent && !this.pendingWrites.has(timerKey)) {
                         // Requeue without a timer so the value survives for the next
                         // flushAll() or the next debounced write to this key. This is also
                         // what makes a quota failure recoverable: once space is freed, the
@@ -867,6 +926,13 @@ class Storage {
             console.warn(`[Storage] Database not available, cannot delete key: ${key}`);
             return false;
         }
+
+        // A queued debounced write to this key predates the delete, and used to
+        // land three seconds after it — so a prune, or a "clear this character's
+        // record", quietly undid itself. Its callers are told the write did not
+        // happen, which is true: the key is being removed instead.
+        const superseded = this._supersedePending(`${storeName}:${key}`);
+        for (const resolve of superseded?.resolvers || []) resolve(false);
 
         return new Promise((resolve, _reject) => {
             try {

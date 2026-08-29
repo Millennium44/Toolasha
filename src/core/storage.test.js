@@ -54,6 +54,18 @@ function createFakeDb(storeNames, initialData = {}) {
                     });
                     return request;
                 },
+                delete(key) {
+                    const request = { onsuccess: null, onerror: null };
+                    pendingPuts.push(() => {
+                        if (storeData) {
+                            storeData.delete(key);
+                            request.onsuccess?.();
+                        } else {
+                            request.onerror?.();
+                        }
+                    });
+                    return request;
+                },
             };
 
             queueMicrotask(() => {
@@ -1146,5 +1158,65 @@ describe('Storage flush-failure counting', () => {
         await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
 
         expect(storage._flushFailures.has('settings:loot')).toBe(false);
+    });
+});
+
+describe('Storage: an immediate write against an outstanding debounced one', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        storage.cleanupPendingWrites();
+        storage.db = null;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        storage.cleanupPendingWrites();
+        storage.db = null;
+    });
+
+    // `set(..., immediate)` used to go straight to IndexedDB without touching the
+    // debounce queue, so an older value already queued for the same key landed on
+    // top of it three seconds later — last write wins, except when it doesn't.
+    test('the immediate value survives the debounce window', async () => {
+        const { db, dataByStore } = createFakeDb(['xpHistory']);
+        storage.db = db;
+
+        const debounced = storage.set('k', 'old', 'xpHistory');
+        await storage.set('k', 'new', 'xpHistory', true);
+        expect(dataByStore.get('xpHistory').get('k')).toBe('new');
+
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(dataByStore.get('xpHistory').get('k')).toBe('new');
+        // The superseded caller is told how the write it was coalesced into went,
+        // rather than being left awaiting a timer that will never fire.
+        await expect(debounced).resolves.toBe(true);
+    });
+
+    // Same hazard, worse outcome: the queued value resurrected a key that had
+    // just been deleted, so a prune or a "clear this character's record" undid
+    // itself a debounce later.
+    test('a delete is not undone by a queued debounced write to the same key', async () => {
+        const { db, dataByStore } = createFakeDb(['xpHistory'], { xpHistory: { k: 'seed' } });
+        storage.db = db;
+
+        const debounced = storage.set('k', 'old', 'xpHistory');
+        await storage.delete('k', 'xpHistory');
+        expect(dataByStore.get('xpHistory').has('k')).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(dataByStore.get('xpHistory').has('k')).toBe(false);
+        await expect(debounced).resolves.toBe(false);
+    });
+
+    test('a debounced write to a different key in the same store is untouched', async () => {
+        const { db, dataByStore } = createFakeDb(['xpHistory']);
+        storage.db = db;
+
+        storage.set('other', 'kept', 'xpHistory');
+        await storage.set('k', 'new', 'xpHistory', true);
+
+        await vi.advanceTimersByTimeAsync(4000);
+        expect(dataByStore.get('xpHistory').get('other')).toBe('kept');
+        expect(dataByStore.get('xpHistory').get('k')).toBe('new');
     });
 });
