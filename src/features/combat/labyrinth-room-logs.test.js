@@ -329,6 +329,75 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(text()).toContain('vs sim');
     });
 
+    test("the per-source tally says what the sim's damage is made of", async () => {
+        labyrinthRoomLogs.replayResult = {
+            groups: [
+                {
+                    monsterHrid: '/monsters/pyre_hunter',
+                    monsterName: 'Pyre Hunter',
+                    roomLevel: 230,
+                    fights: 6,
+                    clears: 2,
+                    metrics: [
+                        {
+                            key: 'dotPerSwing',
+                            label: 'DoT ticks / swing',
+                            observed: 0.26,
+                            predicted: 0.1,
+                            deviationPct: 160,
+                            marginPct: 10,
+                            verdict: 'above',
+                        },
+                    ],
+                    simTally: {
+                        sources: [
+                            {
+                                source: 'autoAttack',
+                                landedHits: 100,
+                                misses: 20,
+                                totalDamage: 22000,
+                                meanDamage: 220,
+                                shareOfLandedHits: 0.8,
+                            },
+                            {
+                                source: 'damageOverTime',
+                                landedHits: 25,
+                                misses: 0,
+                                totalDamage: 2000,
+                                meanDamage: 80,
+                                shareOfLandedHits: 0.2,
+                            },
+                            // Nothing landed, so it has no mean and no row
+                            {
+                                source: '/abilities/maim',
+                                landedHits: 0,
+                                misses: 4,
+                                totalDamage: 0,
+                                meanDamage: null,
+                                shareOfLandedHits: 0,
+                            },
+                        ],
+                        swings: 100,
+                        dotTicks: 25,
+                        dotPerSwing: 0.25,
+                    },
+                    diagnosis: 'Sim over-credits your damage.',
+                },
+            ],
+        };
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(text()).toContain('Sim damage by source');
+        expect(text()).toContain('Auto attack');
+        expect(text()).toContain('Damage over time');
+        // Share of landed hits and the mean each source lands for
+        expect(text()).toContain('20.0%');
+        // A ratio reads to two places, not as a percentage
+        expect(text()).toContain('0.26 vs sim 0.10');
+        // A source that never landed has no mean to print and is left out
+        expect(text()).not.toContain('Maim');
+    });
+
     test('one room type opening does not open the others', async () => {
         labyrinthRoomLogs.simSource = {
             accuracy: async () => ({

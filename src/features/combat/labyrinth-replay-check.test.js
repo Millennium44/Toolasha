@@ -14,6 +14,7 @@ import {
     relMarginPct,
     binomialMarginPct,
     summarizePool,
+    simDamageTally,
 } from './labyrinth-replay-check.js';
 
 function attempt(overrides = {}) {
@@ -622,5 +623,179 @@ describe('summarizePool', () => {
         expect(groups[0].levelLow).toBe(196);
         expect(groups[0].levelHigh).toBe(204);
         expect(groups[1].fights).toBe(1);
+    });
+});
+
+/**
+ * The hit MIX — damage-over-time ticks per landed swing — is the measurement
+ * that decides a soft-hit gap. A DoT tick lands for a fraction of the blow that
+ * applied it, so a sim that ticks more or less often than you moves damage per
+ * hit with the monster's armour untouched.
+ */
+describe('simDamageTally', () => {
+    const tallySim = () => ({
+        simulatedTime: 100e9,
+        labyAttemptCount: 1,
+        encounters: 1,
+        totalDamageDealt: { player1: 5200, '/monsters/pyre_hunter': 0 },
+        attacks: {
+            player1: {
+                '/monsters/pyre_hunter': {
+                    autoAttack: { miss: 5, 200: 10 },
+                    '/abilities/maim': { 400: 5 },
+                    damageOverTime: { 80: 5, 100: 5 },
+                },
+            },
+        },
+    });
+
+    test('splits the sim damage by what dealt it, with counts, totals and means', () => {
+        const tally = simDamageTally(tallySim(), {
+            playerHrid: 'player1',
+            monsterHrid: '/monsters/pyre_hunter',
+        });
+        // Biggest damage source first
+        expect(tally.sources.map((s) => s.source)).toEqual(['autoAttack', '/abilities/maim', 'damageOverTime']);
+
+        const dot = tally.sources.find((s) => s.source === 'damageOverTime');
+        expect(dot.landedHits).toBe(10);
+        expect(dot.misses).toBe(0);
+        expect(dot.totalDamage).toBe(900);
+        expect(dot.meanDamage).toBeCloseTo(90, 5);
+        expect(dot.shareOfLandedHits).toBeCloseTo(10 / 25, 5);
+
+        const auto = tally.sources.find((s) => s.source === 'autoAttack');
+        expect(auto.misses).toBe(5);
+        expect(auto.meanDamage).toBeCloseTo(200, 5);
+
+        expect(tally.landedHits).toBe(25);
+        expect(tally.misses).toBe(5);
+        expect(tally.totalDamage).toBe(2000 + 2000 + 900);
+    });
+
+    test('names the deciding ratio: DoT ticks per landed swing', () => {
+        const tally = simDamageTally(tallySim(), {
+            playerHrid: 'player1',
+            monsterHrid: '/monsters/pyre_hunter',
+        });
+        expect(tally.swings).toBe(15);
+        expect(tally.dotTicks).toBe(10);
+        expect(tally.dotPerSwing).toBeCloseTo(10 / 15, 5);
+    });
+
+    test('a sim that never ticked reads zero ticks, not "no data"', () => {
+        const tally = simDamageTally(
+            {
+                attacks: { p: { '/m': { autoAttack: { 100: 4 } } } },
+            },
+            { playerHrid: 'p', monsterHrid: '/m' }
+        );
+        expect(tally.dotTicks).toBe(0);
+        expect(tally.dotPerSwing).toBe(0);
+    });
+
+    test('no tally at all is null, not a fabricated zero', () => {
+        expect(simDamageTally({}, { playerHrid: 'p', monsterHrid: '/m' })).toBeNull();
+        expect(simDamageTally(null, {})).toBeNull();
+    });
+
+    test('the prediction carries the tally through for the export', () => {
+        const predicted = predictedFromSim(tallySim(), {
+            playerHrid: 'player1',
+            monsterHrid: '/monsters/pyre_hunter',
+        });
+        expect(predicted.tally.dotTicks).toBe(10);
+        expect(predicted.dotPerSwing).toBeCloseTo(10 / 15, 5);
+        // The existing hit figures still count every landed entry
+        expect(predicted.hitRate).toBeCloseTo(25 / 30, 5);
+    });
+});
+
+describe('the observed hit mix', () => {
+    const mixAttempt = (overrides = {}) =>
+        attempt({
+            monsterMaxHp: 100000,
+            monsterHpEnd: 92000,
+            seconds: 50,
+            playerHits: 40,
+            playerMisses: 10,
+            playerDotTicks: 10,
+            ...overrides,
+        });
+
+    test('DoT ticks per swing pool over the fights that recorded them', () => {
+        const [group] = deriveObserved([mixAttempt(), mixAttempt({ playerDotTicks: 30 })]);
+        expect(group.dotDataFights).toBe(2);
+        expect(group.dotPerSwing).toBeCloseTo(40 / 80, 5);
+    });
+
+    test('an attempt recorded before DoT ticks were counted contributes none', () => {
+        const [group] = deriveObserved([mixAttempt(), mixAttempt({ playerDotTicks: null })]);
+        expect(group.dotDataFights).toBe(1);
+        expect(group.dotPerSwing).toBeCloseTo(10 / 40, 5);
+    });
+
+    test('no fight carried DoT counts, so the mix is unknown rather than zero', () => {
+        const [group] = deriveObserved([mixAttempt({ playerDotTicks: null })]);
+        expect(group.dotPerSwing).toBeNull();
+        expect(group.dotDataFights).toBe(0);
+    });
+});
+
+describe('the mix decides a soft-hit gap', () => {
+    /** Six fights: 40 swings / 10 misses, 10 DoT ticks, 8000 damage each */
+    const mixLosses = (dotTicks) =>
+        Array.from({ length: 6 }, () =>
+            attempt({
+                monsterMaxHp: 100000,
+                monsterHpEnd: 92000,
+                seconds: 50,
+                playerHits: 40,
+                playerMisses: 10,
+                playerDotTicks: dotTicks,
+            })
+        );
+    /** Predicted: damage per hit 10% over what was observed, everything else level */
+    const softPrediction = (dotPerSwing) => ({
+        dps: 200,
+        takenPerSecond: 10,
+        clearRate: 0.2,
+        secondsPerFight: 50,
+        hitRate: 0.8,
+        dmgPerHit: 220,
+        critRate: null,
+        dotPerSwing,
+        tally: { sources: [], swings: 100, dotTicks: Math.round(100 * dotPerSwing), dotPerSwing },
+    });
+
+    test('the mix rides in as its own metric row', () => {
+        const result = compareLab(deriveObserved(mixLosses(10))[0], softPrediction(0.25));
+        const mix = result.metrics.find((m) => m.key === 'dotPerSwing');
+        expect(mix.observed).toBeCloseTo(0.25, 5);
+        expect(mix.predicted).toBeCloseTo(0.25, 5);
+        expect(mix.verdict).toBe('consistent');
+        expect(result.simTally).toEqual(softPrediction(0.25).tally);
+    });
+
+    test('a matching mix rules the mix out and leaves the damage roll', () => {
+        const result = compareLab(deriveObserved(mixLosses(10))[0], softPrediction(0.25));
+        expect(result.diagnosis).toContain('same mix');
+        expect(result.diagnosis).toMatch(/0\.25 DoT ticks per swing/);
+        expect(result.diagnosis).not.toContain('Either its mitigation');
+    });
+
+    test('a mix that is off explains the soft hits by itself', () => {
+        const result = compareLab(deriveObserved(mixLosses(40))[0], softPrediction(0.1));
+        const mix = result.metrics.find((m) => m.key === 'dotPerSwing');
+        expect(mix.verdict).toBe('above');
+        expect(result.diagnosis).toContain('mix');
+        expect(result.diagnosis).toMatch(/1\.00 DoT ticks per swing against the sim’s 0\.10/);
+        expect(result.diagnosis).not.toContain('Either its mitigation');
+    });
+
+    test('without an observed mix the diagnosis still offers both mechanisms', () => {
+        const result = compareLab(deriveObserved(mixLosses(null))[0], softPrediction(0.25));
+        expect(result.metrics.find((m) => m.key === 'dotPerSwing')).toBeUndefined();
+        expect(result.diagnosis).toContain('Either its mitigation');
     });
 });

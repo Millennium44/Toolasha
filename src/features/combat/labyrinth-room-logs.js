@@ -47,19 +47,29 @@ export { ROOM_TRAVEL_SECONDS };
  * crit buffs imply is the sim over-crediting crits (a soft-hit gap that isn't the
  * monster's mitigation); a matching crit rate points the soft-hit gap back at the
  * monster instead. Recorded so a later export can tell the two apart.
- * @param {Object} tally - From `foldEvents`, player index → `{hits, misses, crits, ...}`
- * @returns {{playerHits: number, playerMisses: number, playerCrits: number}}
+ *
+ * Damage-over-time ticks come along for the same reason and are counted apart
+ * from the swings: a tick rings the monster's damage counter but never the
+ * player's attack counter, and it lands for a fraction of the blow that applied
+ * it. The ratio of ticks to swings is what the replay puts beside the sim's to
+ * decide whether a soft-hit gap is the monster's mitigation or just a mix the
+ * sim gets wrong.
+ *
+ * @param {Object} tally - From `foldEvents`, player index → `{hits, misses, crits, dotTicks, ...}`
+ * @returns {{playerHits: number, playerMisses: number, playerCrits: number, playerDotTicks: number}}
  */
 function tallyHitsMisses(tally) {
     let playerHits = 0;
     let playerMisses = 0;
     let playerCrits = 0;
+    let playerDotTicks = 0;
     for (const entry of Object.values(tally || {})) {
         playerHits += Number(entry?.hits) || 0;
         playerMisses += Number(entry?.misses) || 0;
         playerCrits += Number(entry?.crits) || 0;
+        playerDotTicks += Number(entry?.dotTicks) || 0;
     }
-    return { playerHits, playerMisses, playerCrits };
+    return { playerHits, playerMisses, playerCrits, playerDotTicks };
 }
 
 /**
@@ -1196,7 +1206,8 @@ class LabyrinthRoomLogs {
             resolveReason: reason,
             complete: attempt.complete,
             // Your swings on the monster, hits and misses, summed across the
-            // fight — the replay reads hit-rate and damage-per-hit from these
+            // fight — the replay reads hit-rate and damage-per-hit from these,
+            // and the damage-over-time tick count beside them for the hit mix
             ...tallyHitsMisses(fight.attrTally),
             fingerprint: this.simSource?.fingerprint?.() || null,
             // The clear chance in effect while the fight ran — captured at room
@@ -2143,8 +2154,67 @@ class LabyrinthRoomLogs {
         if (!Number.isFinite(value)) return '—';
         if (key === 'clearRate' || key === 'hitRate' || key === 'critRate') return `${Math.round(value * 100)}%`;
         if (key === 'secondsPerFight') return `${value.toFixed(1)}s`;
+        // A ratio, not a rate: two decimals, because the whole question is
+        // whether 0.26 ticks per swing is really 0.10
+        if (key === 'dotPerSwing') return value.toFixed(2);
         if (key === 'dmgPerHit') return formatKMB(value);
         return `${formatKMB(value)}/s`;
+    }
+
+    /** How one attack-tally source reads: an ability's name, or the engine's own label */
+    prettyDamageSource(source) {
+        const key = String(source || '');
+        if (key === 'autoAttack') return 'Auto attack';
+        if (key === 'damageOverTime') return 'Damage over time';
+        if (!key.includes('/')) return key.charAt(0).toUpperCase() + key.slice(1);
+        const tail = key.split('/').pop().replace(/_/g, ' ');
+        return tail.replace(/\b\w/g, (c) => c.toUpperCase()) || key;
+    }
+
+    /**
+     * The sim's damage split by what dealt it, under a group's metric rows.
+     *
+     * The rates above say the sim's damage-per-hit is off; this says what the
+     * sim thinks it is made of. A damage-over-time tick counts as a landed hit
+     * on both sides of the comparison and lands for a fraction of a swing, so
+     * its SHARE of the landed hits is what decides whether a soft-hit gap is
+     * the monster's mitigation or a mix the sim gets wrong.
+     *
+     * @param {Object} tally - `group.simTally` from the replay comparison
+     * @returns {HTMLElement|null}
+     */
+    renderSimTally(tally) {
+        const sources = Array.isArray(tally?.sources) ? tally.sources.filter((row) => row.landedHits > 0) : [];
+        if (!sources.length) return null;
+
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'margin:3px 0 4px; padding-left:6px; border-left:2px solid rgba(146,182,255,0.25);';
+
+        const head = document.createElement('div');
+        head.style.cssText = 'color:#9ab0d8; font-size:10px; margin-bottom:1px;';
+        head.textContent = 'Sim damage by source — share of landed hits, mean damage';
+        wrap.appendChild(head);
+
+        for (const row of sources) {
+            const line = document.createElement('div');
+            line.style.cssText = 'display:flex; justify-content:space-between; gap:8px; padding:1px 0; font-size:10px;';
+
+            const left = document.createElement('span');
+            left.style.cssText = 'color:#9ab0d8;';
+            left.textContent = this.prettyDamageSource(row.source);
+
+            const right = document.createElement('span');
+            right.style.cssText = 'color:#e6eefc; text-align:right;';
+            const share = `${(row.shareOfLandedHits * 100).toFixed(1)}%`;
+            const mean = Number.isFinite(row.meanDamage) ? formatKMB(row.meanDamage) : '—';
+            right.textContent = `${share} · ${mean} avg · ${formatKMB(row.totalDamage)} total`;
+
+            line.appendChild(left);
+            line.appendChild(right);
+            wrap.appendChild(line);
+        }
+
+        return wrap;
     }
 
     /**
@@ -2230,6 +2300,9 @@ class LabyrinthRoomLogs {
                 row.appendChild(right);
                 box.appendChild(row);
             }
+
+            const tally = this.renderSimTally(group.simTally);
+            if (tally) box.appendChild(tally);
         }
 
         const save = document.createElement('button');
