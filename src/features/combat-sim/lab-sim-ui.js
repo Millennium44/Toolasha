@@ -628,7 +628,7 @@ class LabSimUI {
             <label style="color:#888; font-size:12px;">Monster</label>
             <select class="toolasha-select" id="mwi-labsim-monster" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Level</label>
-            <input id="mwi-labsim-level" type="number" min="20" max="300" value="100" style="${inputStyle}">
+            <input id="mwi-labsim-level" type="number" min="20" max="1300" value="100" style="${inputStyle}">
         `;
 
         const crateRow = document.createElement('div');
@@ -991,7 +991,7 @@ class LabSimUI {
         `;
         skillingControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Room Level</label>
-            <input id="mwi-labsim-skilling-level" type="number" min="1" max="300" value="100" disabled style="${inputStyle}">
+            <input id="mwi-labsim-skilling-level" type="number" min="1" max="1300" value="100" disabled style="${inputStyle}">
             <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
                 title="Use each skill's automation skip level to derive its room level (effective level + skip - 1)">
                 <input type="checkbox" id="mwi-labsim-skilling-useskip" checked style="margin:0; cursor:pointer;">

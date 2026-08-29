@@ -35,8 +35,13 @@ export const UPGRADE_MAX_LEVEL = 12;
  * search so the two answer the same question over the same window — Find Max
  * used to search a fixed 20–300, which stopped short for a high-level character
  * and wasted probes below the floor for a low-level one.
+ *
+ * 1000, not the 300 it used to be: a strong character cleared every room the
+ * old window held, so the Recommend search returned its own clamp (+300)
+ * dressed as an answer, and the automation table could never be auto-set past
+ * it. The searches are binary, so tripling the window costs two extra probes.
  */
-export const SKIP_THRESHOLD_RANGE = 300;
+export const SKIP_THRESHOLD_RANGE = 1000;
 
 /**
  * Clamp a labyrinth skilling/enhancing success rate to the game's bounds:

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The skip-threshold searches can answer past +300
+
+A character strong enough to clear every room in the search window was handed the window's edge (+300) dressed as a recommendation, and the automation table could never be auto-set higher. The shared search range is ±1000 now — the searches are binary, so the wider window costs two extra probes — and the Lab Sim's room-level inputs accept up to 1300 to match.
+
 ### Loadout gear is quoted at the level you own, everywhere
 
 The sweep for the same bug found four more raw readers, now resolved the same way: the labyrinth sim's loadout equipment buffs, the skilling optimizer's loadout comparison and its Load Loadout button, and the bulk-sell assistant's hold list — which now protects both the stored copy and the one the loadout would actually wear, so the equipped +20 can never be sold while a phantom +12 key stands guard.

@@ -27,7 +27,7 @@ vi.mock('./combat-sim-runner.js', () => ({
 
 // The finder only wants the shared search range off this module; everything
 // else in it drags in the whole labyrinth panel
-vi.mock('../combat/labyrinth-clear-rate.js', () => ({ SKIP_THRESHOLD_RANGE: 300, default: {} }));
+vi.mock('../combat/labyrinth-clear-rate.js', () => ({ SKIP_THRESHOLD_RANGE: 1000, default: {} }));
 
 const { findMaxLabyrinthLevel, searchWindowFor, defaultThreshold } = await import('./labyrinth-level-finder.js');
 
@@ -49,9 +49,9 @@ beforeEach(() => {
 
 describe('the search window', () => {
     test('follows the character rather than a fixed 20-300', () => {
-        // A level-500 character was previously capped at 300 — below their own
-        // level, so Find Max could not answer the question at all
-        expect(searchWindowFor(500)).toEqual({ minLevel: 200, maxLevel: 799 });
+        // A level-1500 character was once capped at a fixed 300 — below their
+        // own level, so Find Max could not answer the question at all
+        expect(searchWindowFor(1500)).toEqual({ minLevel: 500, maxLevel: 2499 });
     });
 
     test('never goes below level 1, however low the character is', () => {
@@ -59,7 +59,7 @@ describe('the search window', () => {
     });
 
     test('an unknown level searches the whole positive range rather than inventing one', () => {
-        expect(searchWindowFor(null)).toEqual({ minLevel: 1, maxLevel: 300 });
+        expect(searchWindowFor(null)).toEqual({ minLevel: 1, maxLevel: 1000 });
     });
 });
 
@@ -90,7 +90,7 @@ describe('findMaxLabyrinthLevel', () => {
         expect(result.maxLevel).toBe(0);
         // The caller needs the window to say what was ruled out
         expect(result.minLevel).toBe(1);
-        expect(result.maxSearched).toBe(419);
+        expect(result.maxSearched).toBe(1119);
     });
 
     test('still clearing at the top of the window is flagged, not reported as the answer', async () => {
@@ -113,7 +113,7 @@ describe('findMaxLabyrinthLevel', () => {
         sim.winRateAt = (level) => (level <= 150 ? 0.9 : 0.1);
         await findMaxLabyrinthLevel(params({ referenceLevel: 120 }));
         expect(Math.min(...sim.probed)).toBeGreaterThanOrEqual(1);
-        expect(Math.max(...sim.probed)).toBeLessThanOrEqual(419);
+        expect(Math.max(...sim.probed)).toBeLessThanOrEqual(1119);
     });
 
     test('an explicit window overrides the derived one', async () => {
