@@ -9,7 +9,16 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ items: [], details: {}, watched: [], loadouts: [] }));
+const game = vi.hoisted(() => ({
+    items: [],
+    details: {},
+    watched: [],
+    loadouts: [],
+    characterId: 'char',
+    tabsByCharacter: {},
+}));
+/** The settings store, so a per-character key can be proved to be per character */
+const store = vi.hoisted(() => ({ data: {} }));
 const settings = vi.hoisted(() => ({}));
 
 vi.mock('../../core/config.js', () => ({
@@ -23,7 +32,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getCurrentCharacterId: () => 'char',
+        getCurrentCharacterId: () => game.characterId,
         getInitClientData: () => ({ itemDetailMap: game.details }),
         get characterItems() {
             return game.items;
@@ -32,11 +41,19 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, register: () => () => {} } }));
 vi.mock('../../core/storage.js', () => ({
-    default: { get: async () => null, set: async () => {}, setJSON: async () => {} },
+    default: {
+        get: async (key, _store, fallback = null) => store.data[key] ?? fallback,
+        set: async (key, value) => {
+            store.data[key] = value;
+        },
+        setJSON: async () => {},
+    },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => ({ ask: 100, bid: 90 }) } }));
 vi.mock('../inventory/custom-tabs/custom-tabs-data.js', () => ({
-    loadConfig: async () => ({ tabs: [] }),
+    // Keyed by character: an inventory tab config belongs to one character,
+    // which is the whole reason the remembered tab id has to as well
+    loadConfig: async (charId) => ({ tabs: game.tabsByCharacter[charId] || [] }),
     findTab: () => null,
     collectTabItems: () => new Set(),
     collectItemsAboveTab: () => new Set(),
@@ -101,6 +118,10 @@ beforeEach(() => {
     bulkSell.holdProviders = new Map();
     bulkSell.selectedTabId = 'all';
     game.loadouts = [];
+    game.characterId = 'char';
+    game.tabsByCharacter = {};
+    store.data = {};
+    bulkSell._tabPrefLoaded = false;
 });
 
 const queued = () => bulkSell.queue.map((entry) => entry.itemHrid);
@@ -440,5 +461,71 @@ describe('watching for the modal to close', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('the remembered inventory tab across a character switch', () => {
+    /**
+     * The chip's tab picker, reduced to what `_populateTabSelect` needs of it:
+     * a select it can read a value off and write options into.
+     */
+    const CHIP = 'mwi-bulk-sell-chip';
+    const withChip = () => {
+        const chip = document.createElement('div');
+        for (const [tag, part] of [
+            ['select', 'tab'],
+            ['span', 'status'],
+            ['button', 'main'],
+            ['button', 'stop'],
+        ]) {
+            const el = document.createElement(tag);
+            el.className = `${CHIP}-${part}`;
+            chip.appendChild(el);
+        }
+        bulkSell.chip = chip;
+        return chip.querySelector(`.${CHIP}-tab`);
+    };
+
+    test('cleanup drops the tab so the next character does not inherit it', async () => {
+        // The main picked one of its own tabs and it was remembered
+        store.data['char_bulkSell_lastTab'] = 'tab-7';
+        game.tabsByCharacter = { char: [{ id: 'tab-7', name: 'Cheese' }] };
+        withChip();
+        await bulkSell._populateTabSelect();
+        expect(bulkSell.selectedTabId).toBe('tab-7');
+        expect(bulkSell._tabPrefLoaded).toBe(true);
+
+        // A switch tears the feature down and builds it again for the alt.
+        // Tab ids come out of a per-character inventory tab config, so the
+        // main's id means nothing here — the alt must start on 'all' and the
+        // picker must actually read again rather than short-circuit.
+        bulkSell.cleanup();
+        expect(bulkSell.selectedTabId).toBe('all');
+        expect(bulkSell._tabPrefLoaded).toBe(false);
+
+        game.characterId = 'alt';
+        withChip();
+        await bulkSell._populateTabSelect();
+        expect(bulkSell.selectedTabId).toBe('all');
+    });
+
+    test('and each character still gets its own remembered tab back', async () => {
+        store.data['char_bulkSell_lastTab'] = 'tab-7';
+        store.data['alt_bulkSell_lastTab'] = 'tab-2';
+        game.tabsByCharacter = {
+            char: [{ id: 'tab-7', name: 'Cheese' }],
+            alt: [{ id: 'tab-2', name: 'Ore' }],
+        };
+
+        game.characterId = 'alt';
+        withChip();
+        await bulkSell._populateTabSelect();
+        expect(bulkSell.selectedTabId).toBe('tab-2');
+
+        bulkSell.cleanup();
+        game.characterId = 'char';
+        withChip();
+        await bulkSell._populateTabSelect();
+        expect(bulkSell.selectedTabId).toBe('tab-7');
     });
 });

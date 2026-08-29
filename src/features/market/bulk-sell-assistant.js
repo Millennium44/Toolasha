@@ -1212,6 +1212,18 @@ class BulkSellAssistant {
         this._removeButton();
         this._removePanel();
         this.panelVisible = false;
+
+        // The remembered tab is this character's, and cleanup() is what a
+        // character switch runs — the registry tears the feature down on
+        // `character_switching` and initializes it again for the arriving
+        // character. Left standing, `_tabPrefLoaded` made `_populateTabSelect`
+        // skip its read, so `selectedTabId` went on holding a tab id out of the
+        // *departing* character's inventory tab config (which is itself
+        // per-character) and the sell queue was filtered by a tab the arriving
+        // character does not have.
+        this._tabPrefLoaded = false;
+        this.selectedTabId = 'all';
+
         this.isInitialized = false;
     }
 
