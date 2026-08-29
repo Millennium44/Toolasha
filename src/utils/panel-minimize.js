@@ -53,6 +53,13 @@ export function attachMinimize({
     restore = true,
 }) {
     let collapsed = false;
+    // Set the moment anything outside the delayed restore below changes this
+    // panel's collapsed state, so that restore — reading storage, which can
+    // answer long after the panel opened — knows its answer is stale and
+    // drops it instead of overwriting whatever the user (or caller) already
+    // did. Mirrors `markPanelInteracted` in panel-geometry.js, for the same
+    // "slow read outlived by a fast click" race.
+    let interacted = false;
     // The height to return to. Captured when folding an expanded panel, so a
     // panel resized before minimizing springs back to the size it was resized to.
     let expandedHeight = null;
@@ -88,8 +95,26 @@ export function attachMinimize({
     }
 
     function apply(next, { persist = true } = {}) {
+        const wasAlreadyThere = collapsed === Boolean(next);
         collapsed = Boolean(next);
         const gs = grips();
+        // A no-op call — most often the delayed, fire-and-forget persisted-state
+        // read landing after the user has already toggled the panel by hand —
+        // still has to update the button glyph and persist idempotently below,
+        // but must not repeat the fold/unfold bookkeeping. Re-running it while
+        // already collapsed re-captures `savedDisplays` from the bodies' current
+        // (already display:none) state, permanently overwriting what they looked
+        // like before the *first* collapse; re-running it while already expanded
+        // overwrites a still-visible body's display with '' when nothing was hidden
+        // to restore.
+        if (wasAlreadyThere) {
+            button.textContent = collapsed ? RESTORE_GLYPH : MINIMIZE_GLYPH;
+            button.title = collapsed ? 'Restore' : 'Minimize';
+            panel.dataset.minimized = collapsed ? 'true' : 'false';
+            if (persist && panelKey) saveCollapsed(panelKey, collapsed);
+            if (onToggle) onToggle(collapsed);
+            return;
+        }
         if (collapsed) {
             if (expandedHeight == null) {
                 expandedHeight = panel.style.height || (defaultHeight != null ? `${defaultHeight}px` : '');
@@ -125,6 +150,7 @@ export function attachMinimize({
 
     button.addEventListener('click', (event) => {
         event.stopPropagation();
+        interacted = true;
         apply(!collapsed);
     });
 
@@ -145,8 +171,12 @@ export function attachMinimize({
         (async () => {
             try {
                 if (!(await wasCollapsed(panelKey))) return;
-                if (!panel.isConnected) return;
+                // Two await points below this one, and either can land after
+                // the button was clicked or `setCollapsed` was called by hand —
+                // that later action is the one that should stand.
+                if (interacted || !panel.isConnected) return;
                 const size = await savedSize(panelKey);
+                if (interacted) return;
                 if (size?.height) expandedHeight = `${size.height}px`;
                 apply(true, { persist: false });
             } catch (error) {
@@ -160,7 +190,10 @@ export function attachMinimize({
         get collapsed() {
             return collapsed;
         },
-        setCollapsed: (value) => apply(Boolean(value)),
+        setCollapsed: (value) => {
+            interacted = true;
+            apply(Boolean(value));
+        },
         destroy: () => button.remove(),
     };
 }

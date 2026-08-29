@@ -14,6 +14,7 @@ vi.mock('./panel-geometry.js', () => ({
 }));
 
 import { attachMinimize } from './panel-minimize.js';
+import { wasCollapsed } from './panel-geometry.js';
 
 /** Build a panel with a header (close button) and one or more body children. */
 function buildPanel({ bodies = 1, withGrip = false } = {}) {
@@ -143,6 +144,74 @@ describe('attachMinimize', () => {
         });
         await Promise.resolve();
         expect(ctl.collapsed).toBe(false);
+        expect(bodyEls[0].style.display).toBe('flex');
+    });
+
+    test('a manual toggle that wins the race is not undone by the delayed restore', async () => {
+        // The persisted-collapsed read is fire-and-forget and can resolve well
+        // after the panel is already up. If the user manually minimizes and
+        // then expands again before it resolves, the stale "was collapsed"
+        // answer must not re-fold the panel — and, worse, must not re-run the
+        // collapse bookkeeping over a panel that is already collapsed, which is
+        // what corrupts the remembered body display (see the test below).
+        geo.collapsed['k'] = true;
+        let resolveRestore;
+        wasCollapsed.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveRestore = resolve;
+                })
+        );
+
+        const { panel, header, close, bodyEls } = buildPanel();
+        const ctl = attachMinimize({ panel, header, body: bodyEls[0], panelKey: 'k', beforeEl: close });
+
+        // The user acts before storage has answered at all
+        ctl.button.click(); // collapse
+        ctl.button.click(); // expand
+        expect(bodyEls[0].style.display).toBe('flex');
+
+        // Now the delayed read finally resolves, saying "it was left collapsed"
+        resolveRestore(true);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The user's own, later action wins — the panel stays expanded and the
+        // body stays visible
+        expect(ctl.collapsed).toBe(false);
+        expect(bodyEls[0].style.display).toBe('flex');
+    });
+
+    test('double-collapsing does not overwrite the remembered body display with "hidden"', async () => {
+        // Same race, arranged so the delayed restore's apply(true) actually
+        // runs while the panel is *already* collapsed by hand — the case that
+        // used to re-capture savedDisplays from the already-folded (display:
+        // none) bodies, permanently losing what they looked like beforehand.
+        geo.collapsed['k'] = true;
+        let resolveRestore;
+        wasCollapsed.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveRestore = resolve;
+                })
+        );
+
+        const { panel, header, close, bodyEls } = buildPanel();
+        const ctl = attachMinimize({ panel, header, body: bodyEls[0], panelKey: 'k', beforeEl: close });
+
+        ctl.button.click(); // the user collapses it by hand, first
+        expect(bodyEls[0].style.display).toBe('none');
+
+        // The delayed restore now agrees it should be collapsed — a no-op in
+        // effect, but it used to still re-run the collapse bookkeeping
+        resolveRestore(true);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(ctl.collapsed).toBe(true);
+
+        ctl.button.click(); // expand
         expect(bodyEls[0].style.display).toBe('flex');
     });
 
