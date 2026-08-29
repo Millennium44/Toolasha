@@ -127,8 +127,12 @@ class TransmuteHistoryTracker {
                 // Different item — end current session and start new one
                 await this.endSession();
                 await this.startSession(inputItemHrid, Date.now());
+            } else {
+                // Same item, same session — the player restarted the action, so
+                // nothing about the record changes except that it was still
+                // running at this moment
+                this.activeSession.lastActivityTime = Date.now();
             }
-            // Same item and active session — nothing to do (player restarted same action)
         } else if (this.activeSession) {
             // No transmute action in the update — end any active session
             await this.endSession();
@@ -154,6 +158,7 @@ class TransmuteHistoryTracker {
         if (!this.activeSession || this.activeSession.inputItemHrid !== inputItemHrid) {
             await this.startSession(inputItemHrid, Date.now());
         }
+        this.activeSession.lastActivityTime = Date.now();
 
         // bulkMultiplier defines how many items are consumed and returned per action
         const itemDetailsForBulk = dataManager.getItemDetails(inputItemHrid);
@@ -293,6 +298,12 @@ class TransmuteHistoryTracker {
         this.activeSession = {
             id: `transmute_${timestamp}`,
             startTime: timestamp,
+            // The last moment this run was seen acting. A multi-day AFK grind
+            // is one session, and the gold attribution spreads its net over
+            // [startTime, lastActivityTime] rather than dropping the lot on the
+            // day it began. Sessions recorded before this field existed have
+            // none, and are read as their start instant — exactly as before.
+            lastActivityTime: timestamp,
             inputItemHrid,
             totalAttempts: 0,
             totalSuccesses: 0,

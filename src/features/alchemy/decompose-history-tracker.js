@@ -139,8 +139,12 @@ class DecomposeHistoryTracker {
                 // Different item or enhancement level — end current session and start new one
                 await this.endSession();
                 await this.startSession(inputItemHrid, enhancementLevel, Date.now());
+            } else {
+                // Same item and level, same session — the player restarted the
+                // action, so nothing about the record changes except that it
+                // was still running at this moment
+                this.activeSession.lastActivityTime = Date.now();
             }
-            // Same item and level and active session — nothing to do
         } else if (this.activeSession) {
             // No decompose action in the update — end any active session
             await this.endSession();
@@ -172,6 +176,7 @@ class DecomposeHistoryTracker {
         ) {
             await this.startSession(inputItemHrid, enhancementLevel, Date.now());
         }
+        this.activeSession.lastActivityTime = Date.now();
 
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
         const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
@@ -303,6 +308,12 @@ class DecomposeHistoryTracker {
         this.activeSession = {
             id: `decompose_${timestamp}`,
             startTime: timestamp,
+            // The last moment this run was seen acting. A multi-day AFK grind
+            // is one session, and the gold attribution spreads its net over
+            // [startTime, lastActivityTime] rather than dropping the lot on the
+            // day it began. Sessions recorded before this field existed have
+            // none, and are read as their start instant — exactly as before.
+            lastActivityTime: timestamp,
             inputItemHrid,
             enhancementLevel,
             totalAttempts: 0,

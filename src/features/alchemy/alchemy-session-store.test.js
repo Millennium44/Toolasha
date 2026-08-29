@@ -65,6 +65,17 @@ describe('key shape', () => {
         expect([...storageMock.store.keys()]).toEqual(['transmuteSessionsRec_char-1_2026-08-04']);
     });
 
+    test('a run that spilled into the next day is still filed by, and read back from, its start day', async () => {
+        // `lastActivityTime` is the far end of the span the gold attribution
+        // spreads a session over, so it has to survive the store — and it must
+        // not move the record, which is keyed by the day the run began
+        const spanning = { ...session(AUG_4), lastActivityTime: AUG_5 };
+        await store.save('char-1', [spanning]);
+
+        expect([...storageMock.store.keys()]).toEqual(['transmuteSessionsRec_char-1_2026-08-04']);
+        expect(await store.load('char-1')).toEqual([spanning]);
+    });
+
     test('the record prefix cannot be confused with the legacy key of any character', () => {
         // `transmuteSessionsRec_...` vs `transmuteSessions_<id>` — the character
         // after the base is `R`, never `_`, so no scan for the legacy shape
