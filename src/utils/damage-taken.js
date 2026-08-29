@@ -168,12 +168,24 @@ export function attributeIncoming(tick, state) {
 
         const lost = beforeHealth - health;
         if (counter > beforeCounter) {
+            // The counter rising says the swing landed, whatever health did.
+            // `lost === 0` is the one case a health diff cannot tell apart
+            // from a miss — MCS's own rule, kept as-is. `lost < 0` is a
+            // different animal: health *rose* despite the hit, because a
+            // bigger heal shared the tick. The delta can no longer say how
+            // much of the swing got through, so the hit is filed at zero
+            // damage rather than invented — but it is still a hit, not a
+            // miss, and the net rise is real regen that would otherwise
+            // vanish along with it.
             events.push({
                 playerIndex: index,
                 monsters: attackers,
                 damage: Math.max(0, lost),
-                isMiss: lost <= 0,
+                isMiss: lost === 0,
             });
+            if (lost < 0) {
+                events.push({ playerIndex: index, damage: -lost, isRegen: true });
+            }
         } else if (lost < 0) {
             events.push({ playerIndex: index, damage: -lost, isRegen: true });
         }

@@ -90,6 +90,23 @@ describe('what counts as being hit', () => {
         expect(events).toEqual([{ playerIndex: '0', isDeath: true }]);
     });
 
+    test('a hit landing the same tick as a larger heal is a hit, not a miss, and the heal still counts', () => {
+        // The counter rose, so it was not a miss — a miss is health unchanged
+        // with the counter up, not health unchanged (or up) for any reason. The
+        // health delta cannot say how much of the swing landed once a bigger
+        // heal is folded into the same tick, so the hit is filed at zero
+        // damage rather than invented, and the net rise is still banked as
+        // regen so total sustain (taken vs. healed) stays honest.
+        const state = newTakenState();
+        attributeIncoming(tick({ 0: { hp: 400, dmg: 3 } }), state);
+        const events = attributeIncoming(tick({ 0: { hp: 460, dmg: 4 } }), state);
+
+        expect(events).toEqual([
+            { playerIndex: '0', monsters: [], damage: 0, isMiss: false },
+            { playerIndex: '0', damage: 60, isRegen: true },
+        ]);
+    });
+
     test('staying dead is not another death', () => {
         const state = newTakenState();
         attributeIncoming(tick({ 0: { hp: 40, dmg: 3 } }), state);
