@@ -203,6 +203,11 @@ class CombatBossEta {
     }
 
     disable() {
+        // Timers cleared first and unconditionally: a later step throwing (an
+        // observer teardown, say) must not leave a live interval running while
+        // `finally` marks us disabled — the next enable() would then stack a
+        // second poll on top of one nothing ever stopped.
+        this.timers.clearAll();
         try {
             if (this.newBattleHandler) {
                 webSocketHook.off('new_battle', this.newBattleHandler);
@@ -220,7 +225,6 @@ class CombatBossEta {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
             }
-            this.timers.clearAll();
             this._reset();
         } catch (error) {
             console.error('[Combat Boss ETA] Disable failed part-way:', error);

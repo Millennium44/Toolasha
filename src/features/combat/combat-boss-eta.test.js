@@ -18,6 +18,7 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     dmHandlers: {},
     domObserverCallback: null,
+    throwOnUnregister: false,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -39,6 +40,7 @@ vi.mock('../../core/dom-observer.js', () => ({
             game.domObserverCallback = callback;
             return () => {
                 game.domObserverCallback = null;
+                if (game.throwOnUnregister) throw new Error('boom');
             };
         },
     },
@@ -87,6 +89,7 @@ describe('combat boss eta', () => {
         game.actionDetails = {};
         game.wsHandlers = {};
         game.dmHandlers = {};
+        game.throwOnUnregister = false;
         combatBossEta.disable();
         buildHeader('Planet Of The Eyes');
         combatBossEta.initialize();
@@ -263,5 +266,25 @@ describe('combat boss eta', () => {
         game.domObserverCallback();
 
         expect(etaText()).toBe('· 7 to boss');
+    });
+
+    test('disable() stops the re-inject poll even when unregistering the observer throws', () => {
+        // The teardown used to be one try block: if unregisterObserver() threw,
+        // timers.clearAll() below it never ran, yet `finally` still marked the
+        // feature disabled — so a later initialize() started a second poll on
+        // top of one nothing had stopped.
+        game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        game.wsHandlers.new_battle({ battleId: 323 });
+        expect(etaText()).toBe('· 7 to boss');
+
+        game.throwOnUnregister = true;
+        combatBossEta.disable();
+        game.throwOnUnregister = false;
+
+        buildHeader('Golem Cave (T2)');
+        vi.advanceTimersByTime(5000);
+
+        expect(etaText()).toBeNull();
     });
 });

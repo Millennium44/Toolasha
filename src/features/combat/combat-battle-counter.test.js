@@ -17,6 +17,7 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     dmHandlers: {},
     domObserverCallback: null,
+    throwOnUnregister: false,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -38,6 +39,7 @@ vi.mock('../../core/dom-observer.js', () => ({
             game.domObserverCallback = callback;
             return () => {
                 game.domObserverCallback = null;
+                if (game.throwOnUnregister) throw new Error('boom');
             };
         },
     },
@@ -81,6 +83,7 @@ describe('combat battle counter', () => {
         game.actionDetails = {};
         game.wsHandlers = {};
         game.dmHandlers = {};
+        game.throwOnUnregister = false;
         combatBattleCounter.disable();
         buildHeader('Chimerical Den');
         combatBattleCounter.initialize();
@@ -322,6 +325,26 @@ describe('the re-inject poll', () => {
         combatBattleCounter.disable();
         document.querySelector('[class*="Header_actionName"]').textContent = 'Golem Cave (T2)';
 
+        vi.advanceTimersByTime(5000);
+        expect(document.getElementById('mwi-battle-counter')).toBeNull();
+        vi.useRealTimers();
+    });
+
+    test('disable() stops the poll even when unregistering the observer throws', () => {
+        // The teardown used to be one try block: if unregisterObserver() threw,
+        // timers.clearAll() below it never ran, yet `finally` still marked the
+        // feature disabled — so a later initialize() started a second poll on
+        // top of one nothing had stopped.
+        combatBattleCounter.disable();
+        vi.useFakeTimers();
+        combatBattleCounter.initialize();
+        game.wsHandlers['new_battle']({ battleId: 42 });
+
+        game.throwOnUnregister = true;
+        combatBattleCounter.disable();
+        game.throwOnUnregister = false;
+
+        document.querySelector('[class*="Header_actionName"]').textContent = 'Golem Cave (T2)';
         vi.advanceTimersByTime(5000);
         expect(document.getElementById('mwi-battle-counter')).toBeNull();
         vi.useRealTimers();
