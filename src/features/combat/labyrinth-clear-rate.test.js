@@ -3346,3 +3346,55 @@ describe('the Automation table looks up what it stores', () => {
         }
     });
 });
+
+describe('combat recommend search under cancellation', () => {
+    afterEach(() => {
+        labyrinthClearRate.recommendations.clear();
+        vi.restoreAllMocks();
+    });
+
+    test('a probe cancelled from outside the batch discards the partial search', async () => {
+        vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
+        let probes = 0;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            probes++;
+            // The first probe passes — bestThreshold is now set — and then a
+            // Stop pressed somewhere else (Lab Sim, Combat Sim) kills the
+            // worker without setting this batch's cancel flag
+            if (probes === 1) return { clearChance: 1, expectedSeconds: 10 };
+            return { clearChance: 0, expectedSeconds: Infinity, failed: true, cancelled: true };
+        });
+
+        labyrinthClearRate.beginSimBatch();
+        const threshold = await labyrinthClearRate.findRecommendedThresholdCombat('/monsters/imp', 0.7);
+        // A half-finished search is a lower bound, not a recommendation
+        expect(threshold).toBeNull();
+    });
+
+    test('an uncancelled search still lands on the highest passing threshold', async () => {
+        vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async (hrid, roomLevel) => ({
+            clearChance: roomLevel <= 100 + 5 - 1 ? 1 : 0,
+            expectedSeconds: 10,
+        }));
+
+        labyrinthClearRate.beginSimBatch();
+        const threshold = await labyrinthClearRate.findRecommendedThresholdCombat('/monsters/imp', 0.7);
+        expect(threshold).toBe(5);
+    });
+
+    test("the batch's own cancel flag also discards the room mid-search", async () => {
+        vi.spyOn(labyrinthClearRate, 'getPlayerEffectiveCombatLevel').mockReturnValue(100);
+        let probes = 0;
+        vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            probes++;
+            if (probes === 2) labyrinthClearRate._simCancelRequested = true;
+            return { clearChance: 1, expectedSeconds: 10 };
+        });
+
+        labyrinthClearRate.beginSimBatch();
+        const threshold = await labyrinthClearRate.findRecommendedThresholdCombat('/monsters/imp', 0.7);
+        expect(threshold).toBeNull();
+        labyrinthClearRate._simCancelRequested = false;
+    });
+});

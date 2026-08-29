@@ -78,7 +78,7 @@ export const recommendationMethods = {
                 low = mid + 1;
                 continue;
             }
-            if (this.simCancelled()) break;
+            if (this.simCancelled()) return null;
             // The search only needs this level placed above or below the bar,
             // not measured against it — at the Automation tab's own precision
             // and fight ceiling, which is what every sim this tab runs uses
@@ -86,7 +86,13 @@ export const recommendationMethods = {
                 ...this.automationSimOptions(),
                 decideAgainst: targetRate,
             });
-            if (result.cancelled) break;
+            // A cancelled probe means the search never finished, and not every
+            // cancel comes through this panel's own button: the Lab Sim's Stop
+            // and a fresh Combat Sim run both kill every worker without setting
+            // this batch's flag. The partial bestThreshold at that point is a
+            // lower bound, not the answer, and returning it had the badge
+            // present it as final — so an interrupted room reports nothing.
+            if (result.cancelled) return null;
             if (result.clearChance >= targetRate) {
                 bestThreshold = mid;
                 low = mid + 1;
