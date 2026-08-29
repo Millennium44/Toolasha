@@ -185,6 +185,24 @@ describe('a round trip through our own section', () => {
         expect(read.settings.textScale).toBe(0.8);
     });
 
+    test('a pinned column count survives, still pinned', () => {
+        // The pin is the difference between "three columns" and "three columns
+        // until the width says otherwise" — reapplied without it, the automatic
+        // law raises the count right back to whatever the panel affords
+        const pinned = { ...settings, columns: 3, columnsPinned: true };
+        const read = fromOPanelConfig(toOPanelConfig(pinned, null));
+
+        expect(read.settings.columns).toBe(3);
+        expect(read.settings.columnsPinned).toBe(true);
+    });
+
+    test('an unpinned count comes back saying so, not merely saying nothing', () => {
+        // Explicit false rather than absent, so applying this layout releases a
+        // pin the previous arrangement was holding
+        const read = fromOPanelConfig(toOPanelConfig(settings, null));
+        expect(read.settings.columnsPinned).toBe(false);
+    });
+
     test('nothing is reported missing, because nothing is', () => {
         expect(fromOPanelConfig(toOPanelConfig(settings, null)).unknown).toEqual([]);
     });

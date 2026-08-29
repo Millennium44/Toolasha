@@ -211,6 +211,7 @@ function readToolashaSection(json) {
     if (saved.version >= 2) {
         settings.version = 2;
         settings.columns = Number.isFinite(saved.columns) ? saved.columns : 2;
+        if (typeof saved.columnsPinned === 'boolean') settings.columnsPinned = saved.columnsPinned;
         settings.span = {};
         for (const [key, value] of Object.entries(saved.span || {})) {
             if (Number.isFinite(value) && value > 0) settings.span[key] = Math.round(value);
@@ -319,6 +320,10 @@ function nativeSection(settings) {
         // The grid the spans are written for; without it a span is a number
         // with no unit, and a four-column layout reads as a two-column one
         columns: Number.isFinite(settings?.columns) ? settings.columns : 2,
+        // Whether that count is a person's pin rather than the automatic law's
+        // answer. Without it a pinned layout comes back advisory, and the width
+        // overrules the very count that was chosen the moment it is reapplied.
+        columnsPinned: settings?.columnsPinned === true,
         order: [...(settings?.order || [])],
         span: { ...(settings?.span || {}) },
         visible: { ...(settings?.visible || {}) },

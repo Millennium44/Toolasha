@@ -219,6 +219,30 @@ describe('saving and switching named layouts', () => {
         expect(worn().positions).toEqual(dungeonLayout().positions);
     });
 
+    test('a pinned column count survives being saved under a name and switched back to', async () => {
+        // The pin is part of the arrangement: a layout pinned to three columns
+        // that comes back advisory is redrawn at whatever the width affords,
+        // which is exactly the count the pin existed to overrule
+        wear({ ...dungeonLayout(), columns: 3, columnsPinned: true });
+        await overlayPanel.saveNamedLayout('Pinned');
+        wear({ ...marketLayout(), columns: 2, columnsPinned: false });
+
+        await overlayPanel.applyNamedLayout('Pinned');
+
+        expect(overlayPanel.settings.columns).toBe(3);
+        expect(overlayPanel.settings.columnsPinned).toBe(true);
+    });
+
+    test('a layout saved unpinned releases a pin when it is applied', async () => {
+        wear({ ...dungeonLayout(), columns: 2, columnsPinned: false });
+        await overlayPanel.saveNamedLayout('Loose');
+        wear({ ...marketLayout(), columns: 3, columnsPinned: true });
+
+        await overlayPanel.applyNamedLayout('Loose');
+
+        expect(overlayPanel.settings.columnsPinned).toBe(false);
+    });
+
     test('a switch can be taken back', async () => {
         wear(dungeonLayout());
         await overlayPanel.saveNamedLayout('Dungeon');
