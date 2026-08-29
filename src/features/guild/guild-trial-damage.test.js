@@ -838,6 +838,34 @@ describe('the spectated trial fight', () => {
         expect(pool.current).toBe(640_000);
     });
 
+    test('the fight view is swept once a second, not once a tick', () => {
+        // Sixty ticks a second, each sweeping the document twice, for a view
+        // that repaints far slower. The portraits are therefore held for a
+        // second — the resolution still runs per tick, so a name can still be
+        // corrected, but a portrait that appears mid-second waits for it.
+        const portraits = (names) =>
+            `<div class="BattlePanel_playersArea__a">${names
+                .map(
+                    (name) =>
+                        `<div class="CombatUnit_combatUnit__u"><div class="CombatUnit_name__n">${name}</div></div>`
+                )
+                .join('')}</div>`;
+        const held = document.body.innerHTML;
+        document.body.innerHTML = portraits([]);
+        const tick = { battleId: 11, tier: 1, pMap: { 0: { cHP: 100, mHP: 100 } }, mMap: {} };
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick);
+        expect(guildTrialDamage.breakdown().names['0'].source).toBe('placeholder');
+
+        document.body.innerHTML = portraits(['Sarin']);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick);
+        expect(guildTrialDamage.breakdown().names['0'].source).toBe('placeholder');
+
+        vi.setSystemTime(at + 1000);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick);
+        expect(guildTrialDamage.breakdown().names['0']).toMatchObject({ name: 'Sarin' });
+        document.body.innerHTML = held;
+    });
+
     test('a wave’s monsters are forgotten when the next wave starts', () => {
         game.wsHandlers[GUILD_BATTLE_MESSAGE]({
             battleId: 9,

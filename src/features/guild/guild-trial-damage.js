@@ -193,6 +193,18 @@ const SPECTATOR_LIVE_WINDOW_MS = 8000;
 const STALE_STREAM_MS = 3 * 60 * 1000;
 
 /**
+ * How long a tick may reuse the last sweep of the fight view's portraits.
+ *
+ * The stream ticks about sixty times a second and the view it reads repaints
+ * nowhere near as often, so re-sweeping the document per tick asks the same
+ * question sixty times for an answer that changed at most once. A second is
+ * imperceptible for a name settling in. It caps only the DOM read: the name
+ * resolution itself still runs per tick, because it corrects names as well as
+ * filling them. See {@link GuildTrialDamage#_nameUnits}.
+ */
+const NAME_REFRESH_MS = 1000;
+
+/**
  * How long after `end_guild_battle` the game's own per-member totals are still
  * expected.
  *
@@ -729,6 +741,8 @@ class GuildTrialDamage {
          * map summed rather than the tick summed — see {@link _readPool}.
          */
         this.poolSlots = {};
+        /** The last sweep of the fight view's names, held for {@link NAME_REFRESH_MS} */
+        this.fightViewCache = null;
         /** Index → `{name, source}`, from `guild-trial-units.js` */
         this.unitNames = {};
         /**
@@ -1237,7 +1251,7 @@ class GuildTrialDamage {
             // A session that missed the tier's opening message — a refresh —
             // reads the persisted roster back, gated on the battle id matching
             if (!Object.keys(this.roster).length) this._adoptStoredRoster(battleId, tier);
-            this._nameUnits(pMap);
+            this._nameUnits(pMap, now);
             this._noteClassEvidence(pMap);
             this._readPool(mMap, tier, now);
 
@@ -1524,6 +1538,10 @@ class GuildTrialDamage {
         this.support.lastHP = {};
         this.support.lastMP = {};
         this.playersHP = {};
+        // The slots are re-dealt, so the last wave's portraits describe nobody
+        // here: the next tick sweeps the view again rather than resolving this
+        // wave's units against the last one's names
+        this.fightViewCache = null;
         // The pool is the wave's monsters summed, and the wave that just ended
         // is not this one: a dead wave's bars left in the sum would price the
         // new wave at its predecessor's health plus whatever has arrived so far
@@ -1620,9 +1638,25 @@ class GuildTrialDamage {
 
     /**
      * Put names to the tick's unit indexes.
+     *
+     * The resolution itself runs on every tick — it corrects names as well as
+     * filling them, and a correction that waits is a wrong name on screen — but
+     * its *inputs* do not all have to be re-read that often. The fight view's
+     * portraits are two document sweeps (`fightViewNames`,
+     * `fightViewPartyNames`), the stream ticks about sixty times a second, and
+     * the view they read repaints nowhere near that fast: the same two sweeps,
+     * sixty times, for an answer that changed at most once. They are therefore
+     * cached for {@link NAME_REFRESH_MS} and re-read on the wave boundaries that
+     * re-deal the slots.
+     *
      * @param {Object} pMap - The tick's players
+     * @param {number} [now] - Clock, injectable for tests
      */
-    _nameUnits(pMap) {
+    _nameUnits(pMap, now = Date.now()) {
+        if (!this.fightViewCache || now - this.fightViewCache.at >= NAME_REFRESH_MS) {
+            this.fightViewCache = { at: now, portraits: fightViewNames(), partyNames: fightViewPartyNames() };
+        }
+
         // The one slot the stream carries attack counters for is the watcher's
         // own unit — the only slot their own name may bind to
         const ownSlot = this.countedSlots.size === 1 ? [...this.countedSlots][0] : null;
@@ -1630,8 +1664,8 @@ class GuildTrialDamage {
         const resolved = resolveUnitNames({
             pMap,
             roster: this.roster,
-            portraits: fightViewNames(),
-            partyNames: fightViewPartyNames(),
+            portraits: this.fightViewCache.portraits,
+            partyNames: this.fightViewCache.partyNames,
             loadouts: guildLoadoutCapture.seen?.() || [],
             known: this.unitNames,
             own: { slot: ownSlot, name: dataManager.getCurrentCharacterName?.() || null },
