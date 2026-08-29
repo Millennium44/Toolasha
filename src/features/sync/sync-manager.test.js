@@ -18,8 +18,13 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 const stored = vi.hoisted(() => ({ map: {} }));
+/** What the manager did to storage, in order, so a test can see when it did it */
+const storageCalls = vi.hoisted(() => []);
 vi.mock('../../core/storage.js', () => ({
     default: {
+        flushAll: async () => {
+            storageCalls.push('flushAll');
+        },
         get: async (key, _store, fallback = null) => stored.map[key] ?? fallback,
         set: async (key, value) => {
             stored.map[key] = value;
@@ -52,7 +57,10 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 
 const payload = vi.hoisted(() => ({ text: '{"local":1}' }));
 vi.mock('./sync-payload.js', () => ({
-    buildPayloadJSON: async () => payload.text,
+    buildPayloadJSON: async () => {
+        storageCalls.push('buildPayloadJSON');
+        return payload.text;
+    },
     applyPayload: async (json) => {
         payload.applied = json;
         return {
@@ -105,6 +113,7 @@ const { default: syncManager, isNewer } = await import('./sync-manager.js');
 beforeEach(() => {
     settings.values = { sync_enabled: true, sync_token: 'ghp_secret', sync_scope: 'settings', sync_auto: false };
     stored.map = {};
+    storageCalls.length = 0;
     toasts.length = 0;
     dialog.answer = null;
     dialog.last = null;
@@ -712,6 +721,23 @@ describe('push on character switch', () => {
             pushes.mockRestore();
             vi.useRealTimers();
         }
+    });
+});
+
+describe('what a push actually carries', () => {
+    test('the debounce queue is landed before the payload is read', async () => {
+        // `storage.set` holds a value for three seconds, and
+        // `buildPayloadJSON` reads IndexedDB — so a payload built without
+        // flushing first is missing whatever this session recorded in that
+        // window. Usually the next interval push corrects it; the two pushes
+        // that exist precisely because there will be no next one — the
+        // handoff push when another device takes the session over, and the
+        // character-switch push — cannot rely on that, so they would hand
+        // over a copy with the last few seconds cut off.
+        await syncManager.push();
+
+        expect(storageCalls.indexOf('flushAll')).toBeGreaterThanOrEqual(0);
+        expect(storageCalls.indexOf('flushAll')).toBeLessThan(storageCalls.indexOf('buildPayloadJSON'));
     });
 });
 

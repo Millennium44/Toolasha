@@ -205,6 +205,17 @@ class SyncManager {
         const token = this._token();
         const scope = config.getSetting('sync_scope', 'settings');
 
+        // `buildPayloadJSON` reads IndexedDB, and `storage.set` holds a value
+        // for three seconds before it gets there — so an unflushed payload is
+        // this session's data minus whatever it recorded last. The interval
+        // push can shrug that off, because the next tick picks the write up.
+        // The two pushes that exist *because* there will be no next tick
+        // cannot: the handoff push fires when another device has taken the
+        // session over, and the character-switch push fires as the character
+        // being left goes away. Both would upload a copy with the final
+        // seconds cut off, and nothing would ever put them back.
+        await storage.flushAll?.();
+
         const payload = await buildPayloadJSON(scope);
         const hash = contentHash(payload);
 
