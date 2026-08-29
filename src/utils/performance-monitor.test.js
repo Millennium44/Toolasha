@@ -204,4 +204,130 @@ describe('interval tracing', () => {
         installIntervalTracing();
         expect(globalThis.setInterval).toBe(once);
     });
+
+    test('clearInterval/clearTimeout still work with ids returned by the traced timers', async () => {
+        installIntervalTracing();
+        performanceMonitor.enabled = true;
+
+        const tick = vi.fn();
+        const intervalId = setInterval(tick, 5);
+        clearInterval(intervalId);
+        const timeoutId = setTimeout(tick, 5);
+        clearTimeout(timeoutId);
+
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(tick).not.toHaveBeenCalled();
+    });
+
+    test('a traced handler scheduling another timeout inside its tick does not re-wrap the globals', async () => {
+        installIntervalTracing();
+        const tracedTimeout = globalThis.setTimeout;
+        const tracedInterval = globalThis.setInterval;
+
+        let innerRan = false;
+        await new Promise((resolve) => {
+            setTimeout(() => {
+                setTimeout(() => {
+                    innerRan = true;
+                    resolve();
+                }, 0);
+            }, 0);
+        });
+
+        expect(innerRan).toBe(true);
+        expect(globalThis.setTimeout).toBe(tracedTimeout);
+        expect(globalThis.setInterval).toBe(tracedInterval);
+    });
+});
+
+describe('interval tracing wrapper semantics (against a fake target)', () => {
+    /** A fake timer host that records registrations and lets tests fire ticks by hand. */
+    function makeTarget() {
+        const registered = { interval: [], timeout: [] };
+        return {
+            registered,
+            setInterval: vi.fn(function (handler, delay, ...args) {
+                registered.interval.push({ handler, delay, args, thisArg: this });
+                return 111;
+            }),
+            setTimeout: vi.fn(function (handler, delay, ...args) {
+                registered.timeout.push({ handler, delay, args, thisArg: this });
+                return 222;
+            }),
+        };
+    }
+
+    beforeEach(() => {
+        performanceMonitor.reset();
+        performanceMonitor.enabled = true;
+        performanceMonitor._tabVisible = true;
+    });
+
+    test('string handlers pass through untouched to the original timers', () => {
+        const target = makeTarget();
+        const original = { setInterval: target.setInterval, setTimeout: target.setTimeout };
+        installIntervalTracing(target);
+
+        target.setInterval('code()', 50);
+        target.setTimeout('code()', 50);
+
+        expect(original.setInterval).toHaveBeenCalledWith('code()', 50);
+        expect(original.setTimeout).toHaveBeenCalledWith('code()', 50);
+        expect(target.registered.interval[0].handler).toBe('code()');
+        expect(target.registered.timeout[0].handler).toBe('code()');
+    });
+
+    test('extra arguments are forwarded to the registration and to the handler on tick', () => {
+        const target = makeTarget();
+        installIntervalTracing(target);
+
+        const handler = vi.fn();
+        const id = target.setInterval(handler, 10, 'a', 42);
+        expect(id).toBe(111);
+        expect(target.registered.interval[0].delay).toBe(10);
+        expect(target.registered.interval[0].args).toEqual(['a', 42]);
+
+        // The host fires the tick with the extra args, like real timers do
+        target.registered.interval[0].handler('a', 42);
+        expect(handler).toHaveBeenCalledWith('a', 42);
+    });
+
+    test('`this` is preserved both when registering and when the tick fires', () => {
+        const target = makeTarget();
+        installIntervalTracing(target);
+
+        const handler = vi.fn();
+        const someThis = { site: 'window-like' };
+        target.setTimeout.call(someThis, handler, 5);
+        expect(target.registered.timeout[0].thisArg).toBe(someThis);
+
+        const tickThis = { tick: true };
+        target.registered.timeout[0].handler.call(tickThis);
+        expect(handler.mock.contexts[0]).toBe(tickThis);
+    });
+
+    test('repeated install does not double-wrap either timer on the target', () => {
+        const target = makeTarget();
+        installIntervalTracing(target);
+        const tracedInterval = target.setInterval;
+        const tracedTimeout = target.setTimeout;
+        installIntervalTracing(target);
+        expect(target.setInterval).toBe(tracedInterval);
+        expect(target.setTimeout).toBe(tracedTimeout);
+    });
+
+    test('a restored setTimeout is re-netted on reinstall even though setInterval is still traced', () => {
+        const target = makeTarget();
+        const bareTimeout = target.setTimeout;
+        installIntervalTracing(target);
+        expect(target.setTimeout).not.toBe(bareTimeout);
+
+        // Page code saved setTimeout before install and put it back afterwards
+        target.setTimeout = bareTimeout;
+        installIntervalTracing(target);
+
+        expect(target.setTimeout).not.toBe(bareTimeout);
+        expect(target.setTimeout.__toolashaTraced).toBe(true);
+        expect(target.setInterval.__toolashaTraced).toBe(true);
+    });
 });
