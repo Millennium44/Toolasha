@@ -1117,4 +1117,43 @@ describe('teardown is awaitable, so the switch waits for the log to land', () =>
 
         expect(stored()?.map((s) => s.startedAt)).toEqual([1]);
     });
+
+    test('disable() leaves no experience-grace timer to fire into a torn-down feature', async () => {
+        // `disable()` flushes the pending report early on, then finalizes the
+        // room in progress — and finalizing schedules the XP grace timer that
+        // holds a finished room back for a few seconds in case its experience
+        // has not been credited yet. Scheduled during a teardown, that timer
+        // outlives the feature: it fires into a disabled module, and on a
+        // character switch it fires after `currentCharacterId` has moved, so
+        // the departing character's room is recorded against the arriving
+        // character's sim record. There is no grace left to wait for once the
+        // feature is going away, so the room is reported now instead.
+        vi.useFakeTimers();
+        const recorded = [];
+        labyrinthRoomLogs.simSource = { record: (entry) => recorded.push(entry) };
+        labyrinthRoomLogs.activeSession = room({
+            subjectHrid: '/monsters/cyclops',
+            roomLevel: 200,
+            mode: 'combat',
+            startedAt: 1,
+            endedAt: 0,
+            cleared: true,
+            actions: [],
+        });
+
+        await labyrinthRoomLogs.disable();
+
+        // Reported by the teardown itself, while the departing character is
+        // still the current one
+        expect(recorded).toHaveLength(1);
+        expect(labyrinthRoomLogs.reportTimer).toBeNull();
+        expect(labyrinthRoomLogs.pendingReport).toBeNull();
+
+        // ...and nothing is left to go off afterwards
+        vi.advanceTimersByTime(10 * 1000);
+        expect(recorded).toHaveLength(1);
+
+        vi.useRealTimers();
+        labyrinthRoomLogs.simSource = null;
+    });
 });

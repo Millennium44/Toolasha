@@ -397,6 +397,13 @@ class LabyrinthRoomLogs {
     }
 
     async disable() {
+        // Down first, and before anything below can schedule work. The feature
+        // is going away, and the one path that arms a timer during a teardown
+        // — `finalizeActiveSession`'s experience-grace timeout — checks this
+        // flag rather than firing into a disabled module several seconds later.
+        // It is cleared at the end of `disable()` as well as here for readers
+        // who only look there; setting it twice costs nothing.
+        this.isInitialized = false;
         if (this.progressHandler) {
             webSocketHook.off('labyrinth_room_progress', this.progressHandler);
             this.progressHandler = null;
@@ -433,6 +440,12 @@ class LabyrinthRoomLogs {
         }
         this.resolveFight('feature_disabled');
         this.finalizeActiveSession('feature_disabled');
+        // The room finalized a line above is held as `pendingReport` with no
+        // timer behind it (see `finalizeActiveSession`). Report it now: there
+        // is no experience grace to wait out once the feature is down, and
+        // waiting would either drop the room or file it under whichever
+        // character has arrived by then.
+        this.flushReport();
         document.getElementById(TAB_ID)?.remove();
         this.tabButton = null;
         document.getElementById(PANEL_ID)?.remove();
@@ -1227,7 +1240,15 @@ class LabyrinthRoomLogs {
         // payment arrives is a record of a room that earned nothing
         this.flushReport();
         this.pendingReport = session;
-        this.reportTimer = setTimeout(() => this.flushReport(), XP_GRACE_MS);
+        // Not while the feature is being torn down: `disable()` finalizes the
+        // room in progress, and a grace timer armed there outlives everything
+        // it belongs to — it fires into a disabled module, and on a character
+        // switch it fires after `currentCharacterId` has moved, recording this
+        // character's room against the arriving one. `disable()` flushes the
+        // pending report itself instead of waiting for a grace it cannot have.
+        if (this.isInitialized) {
+            this.reportTimer = setTimeout(() => this.flushReport(), XP_GRACE_MS);
+        }
 
         this.sessions.unshift(session);
         this.sessions = this.sessions.slice(0, this.logSize());
