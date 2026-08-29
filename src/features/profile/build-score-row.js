@@ -210,6 +210,37 @@ registerRow({
     empty: 'No build score yet',
     name: 'Build Score',
     defaultSize: { width: 180, height: 30 },
+    /**
+     * Every component the tile draws, at the one decimal it draws them to.
+     *
+     * The score is not computed here — it is recomputed on the game's own item
+     * and house messages, debounced, and left on `buildScore.score` — so a
+     * transcript of that object is a complete summary of what the render reads.
+     * The components are in it as well as the total, because they are the
+     * tooltip, and a tooltip is part of the tile.
+     *
+     * `ensureWatching()` is called from here as well as from the render: it is
+     * what starts the score being computed at all, it early-returns once it has,
+     * and a memo that skipped it would be a tile that never starts.
+     */
+    version: () => {
+        buildScore.ensureWatching();
+
+        const score = buildScore.score;
+        if (!score) return 'blank';
+        return [
+            score.total,
+            score.equipment,
+            score.ability,
+            score.house,
+            score.guildShrineCombat || 0,
+            score.skillerTotal,
+            score.guildShrine,
+            score.guildShrineTokens,
+        ]
+            .map((value) => Number(value || 0).toFixed(1))
+            .join('|');
+    },
     render: (container) => {
         buildScore.ensureWatching();
 

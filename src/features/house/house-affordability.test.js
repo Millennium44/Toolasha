@@ -9,10 +9,14 @@ const roomDetails = {
 // mid-flight, the way a real switch does.
 let currentCharacterId = 'char1';
 
+// What the Houses tile reads: the rooms the character has, and the coins the
+// affordability comparison is against
+const game = vi.hoisted(() => ({ combined: {}, rows: {} }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ houseRoomDetailMap: roomDetails }),
-        getCombinedData: () => ({}),
+        getCombinedData: () => game.combined,
         // The untracked list is keyed per character, and the module asks to be
         // told when that changes
         getCurrentCharacterId: () => currentCharacterId,
@@ -26,7 +30,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/house-cost-calculator.js', () => ({
     calculateHouseBuildCost: (hrid, level) => (hrid === '/house_rooms/dojo' ? 100 : 1000) * level,
 }));
-vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
+vi.mock('../../utils/overlay-rows.js', () => ({
+    registerRow: (definition) => {
+        game.rows[definition.key] = definition;
+    },
+}));
 vi.mock('../../utils/formatters.js', () => ({ formatLargeNumber: (n) => String(n) }));
 vi.mock('../../utils/market-data.js', () => ({
     // ask/bid genuinely differ, so a call site that forwards `side` incorrectly
@@ -226,5 +234,78 @@ describe('both sides of the book', () => {
         const priced = [{ itemHrid: '/items/birch_lumber', count: 300 }];
         expect(materialsCost(priced, 'bid')).not.toBe(materialsCost(priced, 'ask'));
         expect(materialsCost(priced, 'bid')).toBe(300 * 2);
+    });
+});
+
+/**
+ * The Houses tile's `version()`.
+ *
+ * The overlay redraws every visible tile once a second and skips a row whose
+ * version has not moved. This row's render walks every room in the game and
+ * prices each one's next level, so the memo is worth having — and worth being
+ * exact about, since a room built or a coin spent has to show.
+ */
+describe('the Houses tile summarises its own inputs', () => {
+    const version = () => game.rows.houses.version();
+
+    afterEach(() => {
+        game.combined = {};
+    });
+
+    test('no house data at all is one settled version', () => {
+        game.combined = {};
+        expect(version()).toBe('blank');
+        expect(version()).toBe(version());
+    });
+
+    test('it holds still while the rooms and the coins do', () => {
+        game.combined = {
+            characterHouseRoomMap: { '/house_rooms/dojo': { level: 2 } },
+            characterItems: [{ itemHrid: '/items/coin', count: 500 }],
+        };
+        expect(version()).toBe(version());
+    });
+
+    test('a level gained moves it', () => {
+        game.combined = {
+            characterHouseRoomMap: { '/house_rooms/dojo': { level: 2 } },
+            characterItems: [{ itemHrid: '/items/coin', count: 500 }],
+        };
+        const before = version();
+
+        game.combined = {
+            characterHouseRoomMap: { '/house_rooms/dojo': { level: 3 } },
+            characterItems: [{ itemHrid: '/items/coin', count: 500 }],
+        };
+        expect(version()).not.toBe(before);
+    });
+
+    test('coins moving moves it, because the whole tile is a comparison against them', () => {
+        game.combined = {
+            characterHouseRoomMap: { '/house_rooms/dojo': { level: 2 } },
+            characterItems: [{ itemHrid: '/items/coin', count: 500 }],
+        };
+        const before = version();
+
+        game.combined = {
+            characterHouseRoomMap: { '/house_rooms/dojo': { level: 2 } },
+            characterItems: [{ itemHrid: '/items/coin', count: 5_000_000 }],
+        };
+        expect(version()).not.toBe(before);
+    });
+
+    test('so does saying you are no longer saving for a room', () => {
+        game.combined = {
+            characterHouseRoomMap: { '/house_rooms/dojo': { level: 2 } },
+            characterItems: [{ itemHrid: '/items/coin', count: 500 }],
+        };
+        // The switch-race suite above may have left the gym untracked; the
+        // move under test is tracked → untracked, so start from tracked
+        setRoomTracked('/house_rooms/gym', true);
+        const before = version();
+
+        setRoomTracked('/house_rooms/gym', false);
+        expect(version()).not.toBe(before);
+        setRoomTracked('/house_rooms/gym', true);
     });
 });

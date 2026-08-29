@@ -315,3 +315,44 @@ describe('the tile and the panel behind it', () => {
         expect(game.wsHandlers.items_updated).toBeDefined();
     });
 });
+
+/**
+ * The Build Score tile's `version()`.
+ *
+ * The score is recomputed on the game's own item and house messages, debounced,
+ * and left on `buildScore.score` — so between those messages the tile was
+ * rebuilding an identical line sixty times a minute. The version is a transcript
+ * of that object at the one decimal the tile draws.
+ */
+describe('the Build Score tile summarises its own inputs', () => {
+    const version = () => game.rows.buildScore.version();
+
+    test('no score yet is one settled version', () => {
+        buildScore.score = null;
+        expect(version()).toBe('blank');
+        expect(version()).toBe(version());
+    });
+
+    test('it holds still while the score does', () => {
+        buildScore.score = { total: 42.5, equipment: 20, ability: 10, house: 5, skillerTotal: 7.5 };
+        expect(version()).toBe(version());
+    });
+
+    test('the total moving moves it', () => {
+        buildScore.score = { total: 42.5, equipment: 20, ability: 10, house: 5, skillerTotal: 7.5 };
+        const before = version();
+
+        buildScore.score = { total: 43.5, equipment: 21, ability: 10, house: 5, skillerTotal: 7.5 };
+        expect(version()).not.toBe(before);
+    });
+
+    test('and so does a component that only shows in the tooltip', () => {
+        // The tooltip is part of the tile: a version keyed on the total alone
+        // would leave the breakdown behind whenever two components traded places
+        buildScore.score = { total: 42.5, equipment: 20, ability: 10, house: 5, skillerTotal: 7.5 };
+        const before = version();
+
+        buildScore.score = { total: 42.5, equipment: 15, ability: 15, house: 5, skillerTotal: 7.5 };
+        expect(version()).not.toBe(before);
+    });
+});

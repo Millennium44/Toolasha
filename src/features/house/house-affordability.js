@@ -19,6 +19,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import marketAPI from '../../api/marketplace.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { rows, blank, itemIcon, skillIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
@@ -766,11 +767,46 @@ dataManager.on('character_initialized', loadUntrackedRooms);
 dataManager.on('character_switched', loadUntrackedRooms);
 housesPanel.restore();
 
+/**
+ * How many times a price feed has landed.
+ *
+ * An upgrade is costed from the market price of its materials, so a new feed can
+ * change the tile without a single room or coin moving. Counted rather than read
+ * off the tile's own arithmetic, because that arithmetic — a walk of every room
+ * in the game, pricing each one's next level — is exactly what the tile's
+ * `version()` exists to avoid doing once a second.
+ */
+let priceFeed = 0;
+
+marketAPI.on(() => {
+    priceFeed++;
+});
+
+/**
+ * What the Houses tile would count, without counting it.
+ *
+ * The rooms you own and the level of each, the coins the comparison is against,
+ * the rooms you have said you are not saving for, and the price feed. Between
+ * them those are every input `affordableUpgrades` has that can change: the
+ * game's room list and its build costs are static data, and the pricing of the
+ * materials moves with the feed.
+ *
+ * @returns {string}
+ */
+function housesVersion() {
+    const rooms = dataManager.getCombinedData()?.characterHouseRoomMap;
+    if (!rooms) return 'blank';
+
+    const levels = Object.entries(rooms).map(([hrid, room]) => `${hrid}:${room?.level || 0}`);
+    return `${levels.join(',')}|${coinBalance()}|${[...untrackedRooms()].sort().join(',')}|${priceFeed}`;
+}
+
 registerRow({
     key: 'houses',
     empty: 'No house data',
     name: 'Houses',
     defaultSize: { width: 200, height: 50 },
+    version: housesVersion,
     render: (container) => {
         const rooms = dataManager.getCombinedData()?.characterHouseRoomMap;
         if (!rooms) return blank(container);

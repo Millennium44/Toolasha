@@ -37,6 +37,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import marketAPI from '../../api/marketplace.js';
 import { createCuratedRecord, mergeById } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
@@ -1055,11 +1056,50 @@ export default {
     },
 };
 
+/**
+ * How many times something the tile counts has landed.
+ *
+ * The tile is four figures over the whole watched list, and producing them costs
+ * a price lookup, a held count and a listing walk per watched item — once a
+ * second, for a list that is often a hundred items long. What can move those
+ * figures without the list itself being edited is exactly this: what you are
+ * holding, what you have listed, and what the market says things are worth.
+ */
+let feed = 0;
+
+['character_initialized', 'character_switched', 'items_updated', 'action_completed', 'market_listings_updated'].forEach(
+    (event) =>
+        dataManager.on(event, () => {
+            feed++;
+        })
+);
+
+marketAPI.on(() => {
+    feed++;
+});
+
+/**
+ * What the Watchlist tile would count, without counting it.
+ *
+ * The watched hrids and the feed counter. Only the hrid of an entry reaches this
+ * tile — the sort and the per-entry columns belong to the panel behind it, and
+ * the four figures up here are order-blind — so the list of hrids is the whole
+ * of the list's contribution.
+ *
+ * @returns {string}
+ */
+function watchlistVersion() {
+    const entries = state.entries || [];
+    if (!entries.length) return 'blank';
+    return `${entries.map((entry) => entry.hrid).join(',')}|${feed}`;
+}
+
 registerRow({
     key: 'watchlist',
     empty: 'Nothing watched',
     name: 'Watchlist',
     defaultSize: { width: 230, height: 30 },
+    version: watchlistVersion,
     render: (container) => {
         const rows = watchlistRows();
         if (!rows.length) return blank(container);

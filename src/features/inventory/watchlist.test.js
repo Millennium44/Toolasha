@@ -85,8 +85,19 @@ vi.mock('../../core/data-manager.js', () => ({
         // asks to be told when it changes
         getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterGameMode: () => game.gameMode,
+        // Two things in this module listen for the same events now — the list's
+        // own reload, and the counter the overlay tile's `version()` reads — so
+        // the mock has to fan out rather than keep only the last registration.
+        // The first handler's return value is the one handed back, because that
+        // is the reload, and the tests await it.
         on: (event, handler) => {
-            game.dmHandlers[event] = handler;
+            const existing = game.dmHandlers[event];
+            game.dmHandlers[event] = existing
+                ? (...args) => {
+                      handler(...args);
+                      return existing(...args);
+                  }
+                : handler;
         },
         off: () => {},
     },
@@ -159,6 +170,9 @@ const {
     default: watchlist,
 } = await import('./watchlist.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
+// The real registry, so the overlay tile registered by the module above can be
+// asked for its `version()`
+const { registeredRows } = await import('../../utils/overlay-rows.js');
 
 const itemDetailMap = {
     '/items/coin': { name: 'Coin' },
@@ -767,5 +781,68 @@ describe('the stored list survives a read that cannot be made', () => {
         await flushWatchlistWrites();
         expect(storedHrids()).toEqual(['/items/rare_hat', '/items/trainee_charm']);
         expect(isWatched('/items/cheese')).toBe(false);
+    });
+});
+
+/**
+ * The Watchlist tile's `version()`.
+ *
+ * The overlay redraws every visible tile once a second and skips a row whose
+ * version has not moved. This row's four figures cost a price lookup, a held
+ * count and a listing walk per watched item, and the list is often long — so the
+ * memo matters, and so does its being exact: an item picked up or a price that
+ * moved has to reach the tile.
+ */
+describe('the Watchlist tile summarises its own inputs', () => {
+    const version = () =>
+        registeredRows()
+            .find((row) => row.key === 'watchlist')
+            .version();
+
+    test('nothing watched is one settled version', async () => {
+        await clearWatchlist();
+        expect(version()).toBe('blank');
+        expect(version()).toBe(version());
+    });
+
+    test('it holds still while the list and the game do', async () => {
+        await clearWatchlist();
+        await watchItem('/items/cheese');
+        expect(version()).toBe(version());
+    });
+
+    test('watching and unwatching move it', async () => {
+        await clearWatchlist();
+        const empty = version();
+
+        await watchItem('/items/cheese');
+        const watched = version();
+        expect(watched).not.toBe(empty);
+
+        await watchItem('/items/rare_hat');
+        expect(version()).not.toBe(watched);
+
+        await unwatchItem('/items/rare_hat');
+        expect(version()).toBe(watched);
+    });
+
+    test('so does the game saying the inventory changed, with the list untouched', async () => {
+        await clearWatchlist();
+        await watchItem('/items/cheese');
+        const before = version();
+
+        // How many you hold is one of the four figures, and it moves without
+        // anybody editing the list
+        game.dmHandlers.items_updated({});
+        expect(version()).not.toBe(before);
+    });
+
+    test('and the market listings changing, which are counted as held', async () => {
+        await clearWatchlist();
+        await watchItem('/items/cheese');
+        const before = version();
+
+        game.dmHandlers.market_listings_updated({});
+        expect(version()).not.toBe(before);
     });
 });
