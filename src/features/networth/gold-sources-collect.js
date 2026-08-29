@@ -83,6 +83,14 @@ export function createBasisPricer(price = createPricer()) {
         if (Number.isFinite(direct)) return direct;
         if (!itemHrid) return null;
 
+        // Both fallbacks below price the BASE item: an expected value and a
+        // material cost know nothing about enhancement levels, and a +8 input
+        // is worth far more than its +0 materials — decompose exists to
+        // salvage exactly those. Answering an enhanced lookup with the base
+        // figure would silently mis-cost the session, which is worse than the
+        // counted "could not be valued" that null produces.
+        if ((enhancementLevel || 0) > 0) return null;
+
         const key = `${itemHrid}:${enhancementLevel || 0}`;
         if (cache.has(key)) return cache.get(key);
 

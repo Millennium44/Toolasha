@@ -42,8 +42,14 @@ vi.mock('../actions/loot-log-history.js', () => ({
 vi.mock('./networth-history.js', () => ({ default: { getHistory: () => [] } }));
 vi.mock('./production-income-recorder.js', () => ({ default: { load: async () => [] } }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0 }));
+vi.mock('./networth-calculator.js', () => ({
+    calculateCraftingCost: (itemHrid) => (itemHrid === '/items/culinary_cape' ? 300_000 : 0),
+}));
+vi.mock('../market/expected-value-calculator.js', () => ({
+    default: { isInitialized: false, calculateExpectedValue: () => null },
+}));
 
-const { collectGoldSourceInputs } = await import('./gold-sources-collect.js');
+const { collectGoldSourceInputs, createBasisPricer } = await import('./gold-sources-collect.js');
 
 const session = (start, names = ['Me']) => ({
     key: `${names.join(',')}|${start}`,
@@ -86,5 +92,26 @@ describe('the live combat session', () => {
         const inputs = await collectGoldSourceInputs({ price: () => 0 });
         expect(inputs.combatSessions).toHaveLength(1);
         expect(inputs.combatSessions[0].combatStartTime).toBe('2026-08-27T01:00:00Z');
+    });
+});
+
+describe('the cost-basis pricer', () => {
+    test('falls back to material cost for a base item the market cannot price', () => {
+        const basis = createBasisPricer(() => null);
+        expect(basis('/items/culinary_cape', 0)).toBe(300_000);
+    });
+
+    test('never answers an enhanced lookup with the base item’s cost', () => {
+        // A decompose session records the enhancement level of what it ate,
+        // and a +8 cape is worth far more than its +0 materials. Falling back
+        // to the base figure silently mis-costed the session; null sends it
+        // to the counted "could not be valued" path instead.
+        const basis = createBasisPricer(() => null);
+        expect(basis('/items/culinary_cape', 8)).toBeNull();
+    });
+
+    test('a real market price is used at any level before any fallback', () => {
+        const basis = createBasisPricer((itemHrid, level) => (level === 8 ? 5_000_000 : null));
+        expect(basis('/items/culinary_cape', 8)).toBe(5_000_000);
     });
 });
