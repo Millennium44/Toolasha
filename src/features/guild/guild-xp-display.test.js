@@ -51,6 +51,20 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: {} }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        // Resolves a tick late on purpose: the fold preference arrives from
+        // IndexedDB after the block has drawn, which is the race under test
+        get: async (key, store, fallback) => {
+            await Promise.resolve();
+            return game.stored?.[key] ?? fallback;
+        },
+        set: async (key, value) => {
+            (game.stored ??= {})[key] = value;
+            return true;
+        },
+    },
+}));
 vi.mock('../chat/chat-profile-link.js', () => ({ markAsProfileLink: () => {} }));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerInterval: () => {}, registerTimeout: () => {}, clearAll: () => {} }),
@@ -128,6 +142,7 @@ beforeEach(() => {
     game.wsHandlers = {};
     game.members = [];
     game.meta = {};
+    game.stored = {};
     guildXPDisplay.initialized = false;
     guildXPDisplay.unregisterObservers = [];
     document.body.innerHTML = '';
@@ -139,6 +154,24 @@ afterEach(() => {
 });
 
 describe('the trial sign-up block', () => {
+    test('a remembered fold is applied even though it loads after the first draw', async () => {
+        // The production report: the tooltip promises "remembered across
+        // reloads", but the async read landed after the block was drawn and
+        // nothing re-applied it — every reload came back unfolded
+        game.stored = { guildTrialSignupsCollapsed: true };
+        unsignedMember('Ada');
+        guildXPDisplay.initialize();
+
+        buildTab();
+        game.observers['GuildPanel_trialsContent']();
+
+        await vi.waitFor(() => {
+            const body = block().children[1];
+            expect(body.style.display).toBe('none');
+            expect(block().textContent).toContain('▸');
+        });
+    });
+
     test('is drawn when the tab is called what it was assumed to be called', () => {
         unsignedMember('Ada');
         guildXPDisplay.initialize();

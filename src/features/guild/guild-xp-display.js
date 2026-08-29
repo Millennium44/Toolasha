@@ -21,15 +21,21 @@ import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/tabl
 
 /** Whether the trial-signups block is folded; hydrated from storage, survives redraws */
 let trialSignupsCollapsed = false;
-let trialSignupsCollapsedLoaded = false;
-async function hydrateTrialSignupsCollapsed() {
-    if (trialSignupsCollapsedLoaded) return;
-    trialSignupsCollapsedLoaded = true;
-    try {
-        trialSignupsCollapsed = (await storage.get('guildTrialSignupsCollapsed', 'settings', false)) === true;
-    } catch {
-        /* an unreadable preference is just the default */
+let trialSignupsHydration = null;
+function hydrateTrialSignupsCollapsed() {
+    // Memoised as the promise, not a flag: the first render draws before the
+    // read lands, and needs something to await so it can apply the remembered
+    // fold — a boolean latch left it drawn unfolded on every reload
+    if (!trialSignupsHydration) {
+        trialSignupsHydration = (async () => {
+            try {
+                trialSignupsCollapsed = (await storage.get('guildTrialSignupsCollapsed', 'settings', false)) === true;
+            } catch {
+                /* an unreadable preference is just the default */
+            }
+        })();
     }
+    return trialSignupsHydration;
 }
 
 const CSS_PREFIX = 'mwi-guild-xp';
@@ -931,7 +937,6 @@ class GuildXPDisplay {
 
         // A hundred-name list twice over is most of the tab; it folds from
         // its heading, and the fold is remembered
-        hydrateTrialSignupsCollapsed();
         const header = document.createElement('div');
         header.style.cssText = 'cursor:pointer; color:#9ca3af; user-select:none;';
         const drawHeader = () => {
@@ -946,7 +951,19 @@ class GuildXPDisplay {
         body.innerHTML = makeList('Skilling', unsignedSkilling) + makeList('Combat', unsignedCombat);
         body.style.display = trialSignupsCollapsed ? 'none' : '';
 
+        // The remembered fold arrives from IndexedDB after the block is
+        // already drawn on the first render of a session — apply it when it
+        // lands, unless the user has toggled by hand in the meantime (the
+        // same late-restore-respects-the-user rule panel-minimize follows)
+        let foldInteracted = false;
+        hydrateTrialSignupsCollapsed().then(() => {
+            if (foldInteracted || !body.isConnected) return;
+            body.style.display = trialSignupsCollapsed ? 'none' : '';
+            drawHeader();
+        });
+
         header.addEventListener('click', () => {
+            foldInteracted = true;
             trialSignupsCollapsed = !trialSignupsCollapsed;
             body.style.display = trialSignupsCollapsed ? 'none' : '';
             drawHeader();
