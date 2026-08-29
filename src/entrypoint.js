@@ -1972,6 +1972,10 @@ if (isCombatSimulatorPage()) {
     // Start capturing client data from localStorage (for Combat Sim export)
     webSocketHook.captureClientDataFromLocalStorage();
 
+    // From here on, every interval the script creates reports into the rolling
+    // stats while measuring is on — the stall ledger's attribution net
+    Core.installIntervalTracing?.();
+
     performanceMonitor.mark('script:start');
 
     // Register all features from libraries

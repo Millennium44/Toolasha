@@ -7,6 +7,7 @@
 
 import { setCurrentProfile } from './profile-manager.js';
 import storage from './storage.js';
+import performanceMonitor from '../utils/performance-monitor.js';
 
 /**
  * Message types that bypass the content-hash deduplication.
@@ -558,6 +559,13 @@ class WebSocketHook {
             // handlers written as `(data) => …` simply ignore it.
             const context = { socket };
 
+            // While the pformance panel measures, each message's arrival and the
+            // cost of our handlers for it go into the rolling stats — a stall
+            // with no Toolasha work in it but a big game message just before it
+            // points at the game's own processing (see recentEvents on stalls)
+            const dispatchStartedAt = performanceMonitor.enabled ? performance.now() : 0;
+            if (dispatchStartedAt) performanceMonitor.noteEvent(`ws:${parsedMessageType}`);
+
             // Call registered handlers for this message type. Snapshot the array:
             // a handler that off()s itself mid-dispatch would otherwise shift the
             // list under the loop and skip the next handler.
@@ -589,6 +597,10 @@ class WebSocketHook {
                 } catch (error) {
                     console.error('[WebSocket] Wildcard handler error:', error);
                 }
+            }
+
+            if (dispatchStartedAt) {
+                performanceMonitor.record(`ws:${parsedMessageType}`, performance.now() - dispatchStartedAt);
             }
         } catch (error) {
             console.error('[WebSocket] Failed to process message:', error);

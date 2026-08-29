@@ -55,6 +55,12 @@ const projectRoot = join(__dirname, '..');
  */
 const ALLOWLIST = new Map([
     [
+        'src/utils/yield-to-browser.js',
+        // One exported function, closes over nothing: a duplicated copy
+        // behaves identically to a shared one.
+        'stateless single-function macrotask yield; no module state to share',
+    ],
+    [
         'src/utils/game-server.js',
         // Pure hostname checks (isTestServer and friends), no module state.
         // Imported by core/settings-schema.js to hide a test-server-only

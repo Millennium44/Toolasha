@@ -261,6 +261,7 @@ class PerformanceMonitor {
                         sinceBoot: Math.round(entry.startTime),
                         duration: Math.round(entry.duration),
                         suspects: this._suspectsFor(entry),
+                        recentEvents: this._eventsFor(entry),
                     });
                     if (this.stalls.length > 200) this.stalls.shift();
                 }
@@ -308,6 +309,42 @@ class PerformanceMonitor {
     }
 
     /**
+     * Note that something arrived or happened, without a duration.
+     *
+     * For work this script can see but cannot time — a game message whose
+     * processing happens in the page's own handler. A stall carrying no
+     * measured suspects but a `ws:action_completed` moments before it is the
+     * game's work, and knowing that ends the hunt instead of widening it.
+     *
+     * @param {string} name - e.g. `ws:items_updated`
+     */
+    noteEvent(name) {
+        if (!this.enabled) return;
+        this.events = this.events || [];
+        this.events.push({ name, time: Date.now() });
+        if (this.events.length > 300) this.events.shift();
+    }
+
+    /**
+     * The noted events shortly before and inside a stall's window.
+     * @param {PerformanceEntry} entry - The longtask
+     * @returns {string[]} Names, most recent last, at most five
+     */
+    _eventsFor(entry) {
+        if (!this.events?.length) return [];
+        const clockSkew = Date.now() - performance.now();
+        const windowStart = entry.startTime + clockSkew - 300;
+        const windowEnd = entry.startTime + entry.duration + clockSkew;
+        const names = [];
+        for (let i = this.events.length - 1; i >= 0; i--) {
+            const event = this.events[i];
+            if (event.time < windowStart) break;
+            if (event.time <= windowEnd) names.unshift(event.name);
+        }
+        return names.slice(-5);
+    }
+
+    /**
      * The recorded stalls, oldest first.
      * @returns {Array<{time: number, sinceBoot: number, duration: number, suspects: Array}>}
      */
@@ -329,5 +366,81 @@ class PerformanceMonitor {
 }
 
 const performanceMonitor = new PerformanceMonitor();
+
+/**
+ * Name the code that asked for a timer, from the stack.
+ *
+ * In the bundled script every frame shares one filename, so the line number is
+ * what identifies the caller — stable within a build, which is the lifetime of
+ * a stutter hunt. Falls back to 'unknown' where stacks are cut short.
+ *
+ * @returns {string} e.g. `Toolasha-dev.user.js:52344`
+ */
+function timerCallSite() {
+    const stack = new Error().stack || '';
+    const lines = stack.split('\n');
+    // Skip the Error line, this helper, and the setInterval wrapper itself
+    for (let i = 3; i < lines.length; i++) {
+        const match = /([^/\\\s(]+:\d+):\d+\)?$/.exec(lines[i].trim());
+        if (match) return match[1];
+    }
+    return 'unknown';
+}
+
+/**
+ * Every interval this script creates reports into the rolling stats.
+ *
+ * The stall ledger can only name work that was measured, and hand-picking
+ * which intervals to instrument is how the 2026-08-29 hunt kept finding
+ * "nothing instrumented overlapped it". Wrapping the sandbox's setInterval
+ * catches them all — the game is untouched, it has its own window — and the
+ * wrapper costs one `enabled` check per tick while measuring is off.
+ */
+export function installIntervalTracing() {
+    const target = globalThis;
+    const original = target.setInterval;
+    if (typeof original !== 'function' || original.__toolashaTraced) return;
+
+    const traced = function (handler, delay, ...args) {
+        if (typeof handler !== 'function') return original.call(this, handler, delay, ...args);
+        const name = `interval:${timerCallSite()}`;
+        const wrapped = function (...tickArgs) {
+            if (!performanceMonitor.enabled) return handler.apply(this, tickArgs);
+            const startedAt = performance.now();
+            try {
+                return handler.apply(this, tickArgs);
+            } finally {
+                const duration = performance.now() - startedAt;
+                if (duration >= 1) performanceMonitor.record(name, duration);
+            }
+        };
+        return original.call(this, wrapped, delay, ...args);
+    };
+    traced.__toolashaTraced = true;
+    target.setInterval = traced;
+
+    // Timeouts get the same net. Only ticks over the 1ms floor are recorded,
+    // so the zero-delay yields sprinkled through chunked work stay invisible.
+    const originalTimeout = target.setTimeout;
+    if (typeof originalTimeout === 'function' && !originalTimeout.__toolashaTraced) {
+        const tracedTimeout = function (handler, delay, ...args) {
+            if (typeof handler !== 'function') return originalTimeout.call(this, handler, delay, ...args);
+            const name = `timeout:${timerCallSite()}`;
+            const wrapped = function (...tickArgs) {
+                if (!performanceMonitor.enabled) return handler.apply(this, tickArgs);
+                const startedAt = performance.now();
+                try {
+                    return handler.apply(this, tickArgs);
+                } finally {
+                    const duration = performance.now() - startedAt;
+                    if (duration >= 1) performanceMonitor.record(name, duration);
+                }
+            };
+            return originalTimeout.call(this, wrapped, delay, ...args);
+        };
+        tracedTimeout.__toolashaTraced = true;
+        target.setTimeout = tracedTimeout;
+    }
+}
 
 export default performanceMonitor;

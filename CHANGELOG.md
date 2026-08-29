@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The stall ledger's first conviction: the crafting-tile counts
+
+With every Toolasha timer now auto-reporting into the stall ledger (intervals and timeouts wrapped at boot, named by call site; game messages noted for correlation), the ledger immediately named the next stutterer: the "Can produce" refresh re-computed and re-laid-out every visible crafting tile in one burst after each action completion — a ~200ms stall. It now updates tiles a frame-slice at a time, the same clock-yield the networth engine uses (now a shared helper). Stalls on the test character dropped from seven in 30s (worst 209ms) to one 64ms slice.
+
 ### The pformance panel records stalls and names their suspects
 
 Every stutter hunt so far began by hand-building a longtask observer in the console and guessing at attribution. While the pformance panel has measuring on, main-thread stalls (blocks over 50ms) are now recorded automatically, each stamped with whatever instrumented work finished inside it — and the startup trace grows a "Main-thread stalls" section listing them. Data-manager event fan-outs (`event:<type>`) and the networth recalculation now feed those rolling stats, so the usual suspects come pre-named.

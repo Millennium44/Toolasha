@@ -10,6 +10,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import actionPanelSort from './action-panel-sort.js';
@@ -544,11 +545,19 @@ class MaxProduceable {
         // Build inventory index once (O(n) cost, but amortized across all panels)
         const inventoryIndex = buildInventoryIndex(inventory);
 
-        // Clean up stale references and update valid ones
-        const updatePromises = [];
+        // Clean up stale references and update valid ones. One panel at a
+        // time with the frame handed back on a clock — fired as one burst,
+        // twenty-plus tile updates and their layout were a 200ms stall on
+        // every action completion (found by the pformance stall ledger,
+        // 2026-08-29: `timeout:` at this debounce, 70ms of it measured here)
+        let sliceStart = performance.now();
         for (const actionPanel of [...this.actionElements.keys()]) {
             if (document.body.contains(actionPanel)) {
-                updatePromises.push(this.updateCount(actionPanel, inventoryIndex));
+                await this.updateCount(actionPanel, inventoryIndex);
+                if (performance.now() - sliceStart > 10) {
+                    await yieldToBrowser();
+                    sliceStart = performance.now();
+                }
             } else {
                 // Panel no longer in DOM - remove injected elements BEFORE deleting from Map
                 const data = this.actionElements.get(actionPanel);
@@ -568,9 +577,6 @@ class MaxProduceable {
                 actionPanelSort.unregisterPanel(actionPanel);
             }
         }
-
-        // Wait for all updates to complete
-        await Promise.all(updatePromises);
 
         // Find best actions and add indicators
         this.addBestActionIndicators();

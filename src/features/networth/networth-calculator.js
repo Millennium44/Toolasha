@@ -10,6 +10,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import marketAPI from '../../api/marketplace.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -336,20 +337,6 @@ function getActionIndexes() {
         actionIndexes = { byPrimaryOutput, byAnyOutput };
     }
     return actionIndexes;
-}
-
-/**
- * Hand the browser a frame.
- *
- * The valuation loops run entirely on already-resolved promises, so plain
- * `await`s never leave the microtask queue and a long loop is still one long
- * task. A macrotask boundary is what lets a progress bar animate through a
- * recalculation.
- * @returns {Promise<void>}
- */
-function yieldToBrowser() {
-    if (typeof scheduler !== 'undefined' && typeof scheduler.yield === 'function') return scheduler.yield();
-    return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /**

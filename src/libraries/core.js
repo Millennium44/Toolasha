@@ -20,7 +20,7 @@ import { settingsGroups, getAllSettingIds, getSettingDefinition } from '../core/
 import { setCurrentProfile, getCurrentProfile, clearCurrentProfile } from '../core/profile-manager.js';
 import tooltipObserver from '../core/tooltip-observer.js';
 import * as dualInstallGuard from '../core/dual-install-guard.js';
-import performanceMonitor from '../utils/performance-monitor.js';
+import performanceMonitor, { installIntervalTracing } from '../utils/performance-monitor.js';
 
 // API modules
 import marketAPI from '../api/marketplace.js';
@@ -54,6 +54,7 @@ toolashaRoot.Core = {
     },
     marketAPI,
     performanceMonitor,
+    installIntervalTracing,
 };
 
 console.log('[Toolasha] Core library loaded');

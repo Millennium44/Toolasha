@@ -217,7 +217,9 @@ export function formatReport({
         for (const stall of stalls.slice(-15)) {
             const who = stall.suspects?.length
                 ? stall.suspects.map((suspect) => `${suspect.name} ${suspect.ms}ms`).join(', ')
-                : 'nothing instrumented overlapped it';
+                : stall.recentEvents?.length
+                  ? `no measured work; just after ${stall.recentEvents.join(', ')} (likely the game's own processing)`
+                  : 'nothing instrumented overlapped it';
             lines.push(`${ms(stall.duration).padStart(9)}  at ${ms(stall.sinceBoot).padStart(8)}  ${who}`);
         }
         if (stalls.length > 15) lines.push(`           ...and ${stalls.length - 15} earlier`);

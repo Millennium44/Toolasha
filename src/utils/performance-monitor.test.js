@@ -2,7 +2,7 @@
  * Tests for Performance Monitor
  */
 import { describe, test, expect, beforeEach, vi } from 'vitest';
-import performanceMonitor from './performance-monitor.js';
+import performanceMonitor, { installIntervalTracing } from './performance-monitor.js';
 
 describe('PerformanceMonitor', () => {
     beforeEach(() => {
@@ -175,5 +175,33 @@ describe('stall attribution', () => {
 
     test('getStalls() is empty and safe before the watch ever starts', () => {
         expect(performanceMonitor.getStalls()).toEqual([]);
+    });
+});
+
+describe('interval tracing', () => {
+    test('a traced interval reports its ticks into the rolling stats under a call-site name', async () => {
+        installIntervalTracing();
+        performanceMonitor.reset();
+        performanceMonitor.enabled = true;
+        performanceMonitor._tabVisible = true;
+
+        const id = setInterval(() => {
+            const t0 = performance.now();
+            while (performance.now() - t0 < 3) {
+                // burn >1ms so the tick clears the recording floor
+            }
+        }, 5);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        clearInterval(id);
+
+        const traced = [...performanceMonitor.measurements.keys()].filter((name) => name.startsWith('interval:'));
+        expect(traced.length).toBeGreaterThan(0);
+    });
+
+    test('installing twice does not double-wrap', () => {
+        installIntervalTracing();
+        const once = globalThis.setInterval;
+        installIntervalTracing();
+        expect(globalThis.setInterval).toBe(once);
     });
 });
