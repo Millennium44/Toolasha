@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 14: two more account-wide leaks join the per-character fold
+
+The key-scoping sweep (about 120 storage keys classified) found the idle consumables plan's two pins — which loadout and which simmed zone price it — stored account-wide and read once at page load, so whichever character logged in first set them for everyone. Both are per-character now, reloading on every switch. And bulk sell's remembered inventory tab survived a character switch in memory, filtering the arriving character's sell queue by the departing character's tab.
+
 ### Round 14: the captured Trial Stats modal stops leaking across guilds
 
 The scraped post-trial stats modal was cached by trial name alone, and neither a guild switch nor a character switch cleared it — so the arriving guild's scoreboard could reconcile against the departing guild's captured member totals for the same-named trial. The cache now resets on both paths, like every sibling cache already did.
