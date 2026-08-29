@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 13: the gold panel's cost bases, corrected and extended
+
+The audit fleet caught a regression in the day-old basis fallback: a decomposed +8 item with no market price was being charged its +0 material cost, understating the input side. An enhanced lookup with no market price honestly refuses now. And enhancement sessions gain the fallback where it is provable — an unpriced base item is valued at its cost basis, matching how net worth itself values it; unpriced high levels still sit in the residual, footnoted.
+
+### Round 13: labyrinth recommendations stop lying at the edges
+
+A recommend search whose sims were cancelled part-way (a Lab Sim Stop, a preempting sim run) was storing its partial lower bound as the final answer — an interrupted search now reports nothing. And a threshold that hit the top of the ±1000 window is badged "Rec: ≥+1000" with the tooltip saying the true trigger may be higher, instead of the clamp dressed as an answer. The skilling and enhancing formulas are pinned sane at extreme room levels by new tests.
+
 ### Round 13, first finding: the battle counter forgets the departing character
 
 The audit fleet's combat-chips agent found the battle counter carrying its number across a character switch — and the new re-inject poll actively repainting the old "Battle #N" into the arriving character's header until the next message. It now resets on the switch, the way the boss countdown always did.
