@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync claims are now machine-checked, and imports strip what exports always did
+
+A new probe test imports all 24 sync-merge registrants and asserts, over a 54-key corpus of real key shapes, that every additive-history key is claimed by exactly the right merge and nothing overlaps — so a future rename that quietly drops a suffix fails the suite instead of silently overwriting on pull. And importEverything now strips excluded keys the way the exporter always did, so an old backup or payload can no longer plant a trace chunk back into the database.
+
 ### The trial-signups fold keeps its promise
 
 "Remembered across reloads" said the tooltip, but the remembered state loaded a beat after the block drew and was never applied — production reloads always came back unfolded. The remembered fold now lands when it arrives, unless the user has already toggled by hand. Alongside: dragging a game modal captures the pointer (releasing the mouse outside the window no longer glues the modal to the cursor), and tab reordering was proven immune to that bug by its first tests — native drag-and-drop cleans itself up.
