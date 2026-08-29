@@ -812,7 +812,9 @@ class LabyrinthClearRate {
         const toolSlot = `/item_locations/${skillId}_tool`;
 
         const totals = {};
-        for (const equip of snapshot.equipment) {
+        // Resolved, not stored: a "highest owned" loadout wears the best copy
+        // owned now, and the stored level is only what it was at last save
+        for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
             if (!equip.itemHrid || !equip.itemLocationHrid) continue;
 
             // Filter tool slots: only include the tool slot matching this skill

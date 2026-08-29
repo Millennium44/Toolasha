@@ -8,6 +8,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Loadout gear is quoted at the level you own, everywhere
 
+The sweep for the same bug found four more raw readers, now resolved the same way: the labyrinth sim's loadout equipment buffs, the skilling optimizer's loadout comparison and its Load Loadout button, and the bulk-sell assistant's hold list — which now protects both the stored copy and the one the loadout would actually wear, so the equipped +20 can never be sold while a phantom +12 key stands guard.
+
 The map every calculator wears — enhancement predictions, profit tables — came from the loadout snapshot's stored levels, frozen at whatever the gear was when the loadout was last saved. The resolver that takes each slot to the highest copy owned existed but this path skipped it, so an enhancing outfit long since taken to +20 was still quoted at +12. Loadouts pinned with "use exact enhancement" keep their frozen level, as before.
 
 ### The gold panel's cost bases fall back before giving up

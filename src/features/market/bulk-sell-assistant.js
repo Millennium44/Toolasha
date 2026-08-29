@@ -109,8 +109,16 @@ const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputE
  */
 export function loadoutHoldKeys() {
     const keys = [];
-    for (const snapshot of (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots?.() || []) {
+    const store = loadoutSnapshot() || bundledLoadoutSnapshot;
+    for (const snapshot of store.getAllSnapshots?.() || []) {
+        // Both the stored level and the resolved one are protected: a "highest
+        // owned" loadout will wear the best copy owned now (the resolved key),
+        // but the copy the snapshot was saved with may still be in the bags —
+        // and a hold list that guards the wrong one lets the equipped copy sell
         for (const piece of snapshot.equipment || []) {
+            if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
+        }
+        for (const piece of store.resolveEquipment?.(snapshot) || []) {
             if (piece?.itemHrid) keys.push(holdKey(piece.itemHrid, piece.enhancementLevel));
         }
     }

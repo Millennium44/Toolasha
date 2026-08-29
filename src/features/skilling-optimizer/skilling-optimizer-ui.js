@@ -405,7 +405,8 @@ class SkillingSimulatorUI {
                         // Build loadout item map for comparison
                         const loadoutItemMap = new Map();
                         if (this.optimizerLoadout) {
-                            for (const eq of this.optimizerLoadout.equipment || []) {
+                            // Resolved levels — the stored ones are frozen at last save
+                            for (const eq of getLoadoutSnapshot().resolveEquipment(this.optimizerLoadout)) {
                                 if (eq.itemHrid)
                                     loadoutItemMap.set(eq.itemLocationHrid, {
                                         itemHrid: eq.itemHrid,
@@ -573,7 +574,7 @@ class SkillingSimulatorUI {
 
         // Load equipment
         this.equipment.clear();
-        for (const eq of snap.equipment || []) {
+        for (const eq of getLoadoutSnapshot().resolveEquipment(snap)) {
             if (eq.itemHrid) {
                 this.equipment.set(eq.itemLocationHrid, {
                     itemHrid: eq.itemHrid,
