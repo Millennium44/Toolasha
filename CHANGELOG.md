@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Character switches wait for the departing character's writes
+
+The switch handler fired feature teardowns and moved the character pointer on without waiting, so any teardown that crossed an await could persist the old character's state under the arriving character's key. The switch now awaits its own teardown before the pointer moves (and skips the superseded re-init a rapid burst would have queued behind it). Two teardowns that were losing an internal race with their own cleanup — the labyrinth room log for the room you were in when you switched, and estimated listing ages — now finish their flush before wiping memory. And storage's straggler-retry pass no longer writes a snapshotted value back over a newer write or resurrects a deleted key.
+
 ### Sync claims are now machine-checked, and imports strip what exports always did
 
 A new probe test imports all 24 sync-merge registrants and asserts, over a 54-key corpus of real key shapes, that every additive-history key is claimed by exactly the right merge and nothing overlaps — so a future rename that quietly drops a suffix fails the suite instead of silently overwriting on pull. And importEverything now strips excluded keys the way the exporter always did, so an old backup or payload can no longer plant a trace chunk back into the database.
