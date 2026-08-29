@@ -36,6 +36,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { yieldToBrowser } from '../../utils/yield-to-browser.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { sessionLuck } from '../../utils/drop-luck.js';
 import { buildCombatSession, lootValue, sessionMean } from '../../utils/combat-drop-model.js';
@@ -521,11 +522,9 @@ class CombatDropLuck {
         this.liveAt = now;
 
         const deferred = setTimeout(() => {
-            try {
-                this._analyse(lootMap);
-            } catch (error) {
+            this._analyse(lootMap).catch((error) => {
                 console.error('[CombatDropLuck] Live luck calculation failed:', error);
-            }
+            });
         }, 0);
         this.timerRegistry.registerTimeout(deferred);
     }
@@ -558,9 +557,9 @@ class CombatDropLuck {
      * @param {HTMLElement} line - The row to fill in
      * @param {Object} lootMap - The session's `totalLootMap`
      */
-    _fillIn(line, lootMap) {
+    async _fillIn(line, lootMap) {
         try {
-            const result = this._analyse(lootMap);
+            const result = await this._analyse(lootMap);
             if (!result) {
                 line.remove();
                 return;
@@ -588,7 +587,7 @@ class CombatDropLuck {
      * @returns {Object|null} `{ percentile, income, battles, hasBonuses }`, or null
      *   when the zone cannot be modelled
      */
-    _analyse(lootMap) {
+    async _analyse(lootMap) {
         const { actionHrid, difficultyTier, battles, partySize, bonuses, hasBonuses } = this.context;
 
         const actionDetail = dataManager.getActionDetails(actionHrid);
@@ -611,6 +610,11 @@ class CombatDropLuck {
         if (!session) return null;
 
         const income = lootValue(lootMap, priceOf);
+        // Frame boundaries between the three heavy pieces — the model build,
+        // the party distribution, and each player's own — so the ~60-100ms a
+        // busy zone costs never lands as one block (the stall ledger's last
+        // named single-frame hitch, 2026-08-29)
+        await yieldToBrowser();
         const { percentile } = sessionLuck(session, income);
 
         // The other half of the same question. The percentile says where the
@@ -620,7 +624,8 @@ class CombatDropLuck {
         // and reads as bad luck. Against the mean it reads as par.
         const expected = sessionMean(session);
 
-        this.lastResult = { percentile, income, expected, battles, hasBonuses, players: this._playerLuck() };
+        await yieldToBrowser();
+        this.lastResult = { percentile, income, expected, battles, hasBonuses, players: await this._playerLuck() };
         return this.lastResult;
     }
 
@@ -643,7 +648,7 @@ class CombatDropLuck {
      *
      * @returns {Array<Object>} `{name, isCurrentPlayer, percentile}`, empty solo
      */
-    _playerLuck() {
+    async _playerLuck() {
         try {
             const party = partyLuck(this.context);
             // Solo, the session percentile already *is* this player's: the model
@@ -651,11 +656,19 @@ class CombatDropLuck {
             // number computed a second way.
             if (party.players.length < 2) return [];
 
-            return party.players.map((player) => ({
-                name: player.name,
-                isCurrentPlayer: player.isCurrentPlayer,
-                percentile: player.session ? sessionLuck(player.session, player.actualValue).percentile : null,
-            }));
+            // One distribution per party member is the multiplier that makes a
+            // full party's luck the expensive half — a frame between each keeps
+            // five players from being one task
+            const placed = [];
+            for (const player of party.players) {
+                placed.push({
+                    name: player.name,
+                    isCurrentPlayer: player.isCurrentPlayer,
+                    percentile: player.session ? sessionLuck(player.session, player.actualValue).percentile : null,
+                });
+                await yieldToBrowser();
+            }
+            return placed;
         } catch (error) {
             console.error('[CombatDropLuck] Placing each player in their own distribution failed:', error);
             return [];

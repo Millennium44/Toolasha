@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pick your own column count
+
+The overlay's layout controls gain a Columns stepper. The automatic law stays the default — the panel's width decides, and a layout's own count can raise it — but stepping − or + now pins an exact count that holds at any width, with an Auto button to hand it back. Applying a preset or importing a layout unpins.
+
+### Combat-tab tickers stop redrawing what didn't change
+
+The portrait DPS tick now goes through the signature diff it already owned instead of rebuilding every meter each second, and the floating combat panels draw into a detached scratch box and swap only when the markup actually changed — out of combat both now cost nothing. The drop-luck live percentile (60–100ms on a busy zone) computes across frame boundaries, one party member at a time.
+
 ### Traced timers get real names on both engines
 
 The stall ledger's timer names were parsed from Chrome-shaped stacks by position; on Firefox (and through proxies) the wrong frame was picked and every interval collapsed into one line. Frames are skipped by name now, the caller's function name is part of the label (`interval:_startRefreshing@253591`), and both stack formats parse.

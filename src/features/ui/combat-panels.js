@@ -492,7 +492,6 @@ class CombatPanel {
 
     _render() {
         if (!this.bodyEl) return;
-        this.bodyEl.replaceChildren();
 
         if (this.controls && this.controlsEl) {
             this.controlsEl.replaceChildren();
@@ -503,14 +502,25 @@ class CombatPanel {
             }
         }
 
+        // Drawn into a detached scratch box and swapped in only when the
+        // markup actually changed: the tick rebuilds every open panel once per
+        // REFRESH_MS, and out of combat (or on a quiet panel) that was a full
+        // teardown, rebuild, and layout for pixels identical to the ones on
+        // screen. Comparing serialised markup costs microseconds against that.
+        // Controls are exempt above — they hold focusable inputs whose state
+        // is not in their markup.
+        //
         // One panel that cannot be drawn says so rather than showing an empty
         // box, which reads as a feature that has nothing to report
+        const scratch = document.createElement('div');
         try {
-            this.draw(this.bodyEl);
+            this.draw(scratch);
         } catch (error) {
             console.error(`[CombatPanels] ${this.title} could not be drawn:`, error);
-            this.bodyEl.appendChild(note(`This could not be drawn: ${error.message}`, ROW_COLORS.bad));
+            scratch.appendChild(note(`This could not be drawn: ${error.message}`, ROW_COLORS.bad));
         }
+        if (scratch.innerHTML === this.bodyEl.innerHTML) return;
+        this.bodyEl.replaceChildren(...scratch.childNodes);
     }
 }
 

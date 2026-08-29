@@ -325,7 +325,10 @@ class PortraitDps {
         this.timers.registerInterval(
             setInterval(() => {
                 if (document.hidden) return;
-                this._draw();
+                // Through the signature diff, not straight to _draw: out of
+                // combat the breakdowns stop changing, and this tick was the
+                // one caller still rebuilding every meter once a second anyway
+                this._drawIfChanged();
             }, REFRESH_MS)
         );
         // @run-at document-start: a battle panel rendered before the shared observer attaches to
