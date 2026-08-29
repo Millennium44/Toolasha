@@ -539,6 +539,20 @@ describe('the five-second redraw', () => {
         vi.advanceTimersByTime(REFRESH_MS);
         expect(render).toHaveBeenCalled();
     });
+
+    test('unchanged inputs leave the DOM nodes alone', async () => {
+        consumablesPanel.show({ remember: false });
+        await vi.advanceTimersByTimeAsync(0);
+
+        consumablesPanel._render();
+        const before = consumablesPanel.bodyEl.firstElementChild;
+        expect(before).not.toBeNull();
+
+        // Same game state, so the scratch build serialises identically and the
+        // live body is kept rather than swapped — node identity is the proof
+        consumablesPanel._render();
+        expect(consumablesPanel.bodyEl.firstElementChild).toBe(before);
+    });
 });
 
 describe('switching character', () => {

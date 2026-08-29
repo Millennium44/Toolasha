@@ -1321,9 +1321,19 @@ class ConsumablesPanel {
         if (!this.bodyEl) return;
         this.targetBtn.textContent = `Last ${this.target.label}`;
 
-        this.bodyEl.replaceChildren();
+        // Drawn into a detached scratch box and swapped in only when the markup
+        // actually changed — the same idiom as combat-panels.js `_render`. The
+        // five-second tick otherwise tears down and re-lays-out a body of
+        // identical pixels whenever stock, rates and prices have all held
+        // still, which out of combat is most ticks. The source pickers set
+        // their selection via `.value`, which is not in the markup on either
+        // side of the compare — keeping the live DOM keeps the selection on
+        // screen, and a real swap rebuilds it from the same stored state.
+        const scratch = document.createElement('div');
+
         // Rebuilt from what this render finds short, so a section that has been
-        // topped up stops being offered
+        // topped up stops being offered — on every pass, swap or no swap,
+        // because the buy widget reads these queues rather than the DOM
         this._buyQueues = [];
         const players = this._players();
 
@@ -1332,7 +1342,7 @@ class ConsumablesPanel {
         // draw when there are no players at all, which is exactly the lobby
         try {
             const readiness = this._readinessSection(players);
-            if (readiness) this.bodyEl.appendChild(readiness);
+            if (readiness) scratch.appendChild(readiness);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the dungeon readiness card failed:', error);
         }
@@ -1344,22 +1354,26 @@ class ConsumablesPanel {
             // shrugging, when the setting allows and either source exists.
             const idle = config.getSetting('consumables_idleLoadoutPlan') ? this._idleSection() : null;
             if (idle) {
-                this.bodyEl.appendChild(idle);
+                scratch.appendChild(idle);
             } else {
                 const empty = document.createElement('div');
                 empty.style.color = COLORS.textDim;
                 empty.textContent = 'No consumable data yet. Fight something with food or drinks equipped.';
-                this.bodyEl.appendChild(empty);
+                scratch.appendChild(empty);
             }
         }
 
-        for (const player of players) this.bodyEl.appendChild(this._playerSection(player));
+        for (const player of players) scratch.appendChild(this._playerSection(player));
 
         try {
             const lab = this._labSection();
-            if (lab) this.bodyEl.appendChild(lab);
+            if (lab) scratch.appendChild(lab);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the labyrinth section failed:', error);
+        }
+
+        if (scratch.innerHTML !== this.bodyEl.innerHTML) {
+            this.bodyEl.replaceChildren(...scratch.childNodes);
         }
 
         this._syncBuyWidget();
