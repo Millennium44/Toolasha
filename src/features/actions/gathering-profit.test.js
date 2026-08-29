@@ -423,6 +423,41 @@ describe('calculateGatheringProfit — bonus revenue and edge cases', () => {
         expect(result.profitPerHour).toBeCloseTo(74000 * (1 - MARKET_TAX), 6);
     });
 
+    test('the displayed bonus-revenue breakdown matches what efficiency actually adds to profit', async () => {
+        // Same setup as the case above: efficiency doubles the bonus-revenue contribution
+        // to profitPerHour (1,000 → 2,000). The breakdown handed back for display —
+        // totalBonusRevenue and each bonusDrops entry — must show that same doubled
+        // number, not the pre-efficiency 1,000 the mocked calculator returned, or the
+        // panel's "Bonus revenue: X/hour" line would silently understate what the
+        // headline profit number already includes.
+        buffs.bonusRevenue = {
+            ...noBonusRevenue(),
+            totalBonusRevenue: 1000,
+            bonusDrops: [
+                {
+                    itemHrid: '/items/prism_shard',
+                    itemName: 'Prism Shard',
+                    dropRate: 0.01,
+                    dropsPerHour: 10,
+                    priceEach: 100,
+                    revenuePerHour: 1000,
+                    type: 'rare_find',
+                    missingPrice: false,
+                },
+            ],
+        };
+        buffs.context = efficiencyContext({
+            efficiencyMultiplier: 2,
+            efficiencyBreakdown: { totalEfficiency: 100, levelEfficiency: 100 },
+        });
+
+        const result = await calculateGatheringProfit(COW);
+
+        expect(result.bonusRevenue.totalBonusRevenue).toBeCloseTo(2000, 6);
+        expect(result.bonusRevenue.bonusDrops[0].revenuePerHour).toBeCloseTo(2000, 6);
+        expect(result.bonusRevenue.bonusDrops[0].dropsPerHour).toBeCloseTo(20, 6);
+    });
+
     test('missing bonus-drop prices propagate to hasMissingPrices', async () => {
         buffs.bonusRevenue = { ...noBonusRevenue(), hasMissingPrices: true };
 
