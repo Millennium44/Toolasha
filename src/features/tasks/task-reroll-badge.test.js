@@ -108,4 +108,28 @@ describe('appearing on a panel that is already open', () => {
 
         expect(header.querySelector('.toolasha-reroll-spend-badge')).not.toBeNull();
     });
+
+    test('an unchanged spend leaves the badge’s text node alone', async () => {
+        const { default: taskRerollTracker } = await import('./task-reroll-tracker.js');
+        const header = document.createElement('div');
+        header.className = 'TasksPanel_taskSlotCount__abc';
+        document.body.appendChild(header);
+
+        board.quests = [{ id: 1, category: '/quest_category/random_task', status: '/quest_status/in_progress' }];
+        const savedData = taskRerollTracker.taskRerollData;
+        taskRerollTracker.taskRerollData = new Map([[1, { coinRerollCount: 2, cowbellRerollCount: 0 }]]);
+        try {
+            taskRerollBadge.initialize();
+            const badge = header.querySelector('.toolasha-reroll-spend-badge');
+            expect(badge.textContent).toContain('Rerolls');
+            const textNode = badge.firstChild;
+
+            // The observer fires for every task-list mutation; the same spend
+            // must not rewrite the text node it would only replace in kind
+            taskRerollBadge._render();
+            expect(badge.firstChild).toBe(textNode);
+        } finally {
+            taskRerollTracker.taskRerollData = savedData;
+        }
+    });
 });

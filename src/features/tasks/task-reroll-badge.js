@@ -146,8 +146,12 @@ class TaskRerollBadge {
 
         const spend = sumBoardRerollSpend(taskRerollTracker.taskRerollData, activeTaskIds());
         const text = formatRerollSpendBadge(spend);
-        this.badge.textContent = text;
-        this.badge.style.display = text ? '' : 'none';
+        // Write-level diff: the observer fires for every task-list mutation —
+        // progress counts ticking up during combat included — and rewriting an
+        // identical string still replaces the text node each time
+        if (this.badge.textContent !== text) this.badge.textContent = text;
+        const display = text ? '' : 'none';
+        if (this.badge.style.display !== display) this.badge.style.display = display;
     }
 
     disable() {
