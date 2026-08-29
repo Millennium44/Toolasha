@@ -56,6 +56,8 @@ class PFormancePanel {
         this.isCollapsed = false;
         this.featureSectionCollapsed = false;
         this.domSectionCollapsed = false;
+        this.activitySectionCollapsed = false;
+        this.stallSectionCollapsed = false;
         this.startupCollapsed = false;
     }
 
@@ -292,14 +294,34 @@ class PFormancePanel {
             }
         }
 
+        // Everything else the rolling stats hold — traced timers, ws dispatch,
+        // event fan-outs, the networth recalc — is the attribution the stall
+        // ledger draws from, and worth seeing live for the same reason
+        const activityEntries = [];
         for (const [name, stats] of allStats) {
             if (name.startsWith('dom:')) {
                 domEntries.push({ name: name.slice(4), ...stats });
+            } else if (!name.startsWith('init:') && !name.startsWith('bg:')) {
+                activityEntries.push({ name, ...stats });
             }
         }
 
+        const stallEntries = (pm.getStalls?.() || [])
+            .slice(-12)
+            .reverse()
+            .map((stall) => ({
+                stallMs: stall.duration,
+                at: stall.sinceBoot,
+                who: stall.suspects?.length
+                    ? stall.suspects.map((suspect) => `${suspect.name} ${suspect.ms}ms`).join(', ')
+                    : stall.recentEvents?.length
+                      ? `after ${stall.recentEvents.join(', ')} (likely the game)`
+                      : 'nothing instrumented',
+            }));
+
         initEntries.sort((a, b) => b.totalMs - a.totalMs);
         domEntries.sort((a, b) => b.cpuPercent - a.cpuPercent);
+        activityEntries.sort((a, b) => b.cpuPercent - a.cpuPercent);
 
         this.contentEl.innerHTML = '';
         this.contentEl.appendChild(this._createStartupSection(pm, snapshots));
@@ -311,6 +333,16 @@ class PFormancePanel {
         this.contentEl.appendChild(
             this._createSection('DOM Observers', domEntries, this.domSectionCollapsed, (v) => {
                 this.domSectionCollapsed = v;
+            })
+        );
+        this.contentEl.appendChild(
+            this._createSection('Timers & Events', activityEntries, this.activitySectionCollapsed, (v) => {
+                this.activitySectionCollapsed = v;
+            })
+        );
+        this.contentEl.appendChild(
+            this._createSection('Main-thread Stalls', stallEntries, this.stallSectionCollapsed, (v) => {
+                this.stallSectionCollapsed = v;
             })
         );
     }
@@ -509,7 +541,11 @@ class PFormancePanel {
         const thead = document.createElement('thead');
         const headRow = document.createElement('tr');
         const columns =
-            title === 'Feature Init' ? ['Name', 'Started', 'Time (ms)'] : ['Name', 'Calls/s', 'Total ms', 'CPU %'];
+            title === 'Feature Init'
+                ? ['Name', 'Started', 'Time (ms)']
+                : title === 'Main-thread Stalls'
+                  ? ['Suspects', 'At', 'Stall ms']
+                  : ['Name', 'Calls/s', 'Total ms', 'CPU %'];
 
         for (const col of columns) {
             const th = document.createElement('th');
@@ -535,6 +571,12 @@ class PFormancePanel {
                 row.appendChild(this._cell((entry.startedAt / 1000).toFixed(1) + 's', 'right'));
                 row.appendChild(this._cell(entry.totalMs.toFixed(1), 'right'));
                 if (entry.background) row.style.color = COLORS.textDim;
+            } else if (title === 'Main-thread Stalls') {
+                row.appendChild(this._cell(entry.who, 'left'));
+                row.appendChild(this._cell((entry.at / 1000).toFixed(1) + 's', 'right'));
+                const stallCell = this._cell(String(entry.stallMs), 'right');
+                if (entry.stallMs >= 100) stallCell.style.color = COLORS.danger;
+                row.appendChild(stallCell);
             } else {
                 const callsPerSec = (entry.calls / ((getPerformanceMonitor()?.windowMs || 5000) / 1000)).toFixed(1);
                 row.appendChild(this._cell(entry.name, 'left'));

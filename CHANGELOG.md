@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The stall ledger shows up in the panel itself
+
+The stalls and the widened attribution net (traced timers, message dispatch, event fan-outs) were only in the exported trace; the live pformance panel now carries them too — a "Timers & Events" section for the rolling activity and a "Main-thread Stalls" section listing recent stalls with their suspects, red past 100ms.
+
 ### The stall ledger's first conviction: the crafting-tile counts
 
 With every Toolasha timer now auto-reporting into the stall ledger (intervals and timeouts wrapped at boot, named by call site; game messages noted for correlation), the ledger immediately named the next stutterer: the "Can produce" refresh re-computed and re-laid-out every visible crafting tile in one burst after each action completion — a ~200ms stall. It now updates tiles a frame-slice at a time, the same clock-yield the networth engine uses (now a shared helper). Stalls on the test character dropped from seven in 30s (worst 209ms) to one 64ms slice.
