@@ -1596,27 +1596,24 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.30.0](https://github.com/Millennium44/Toolasha/compare/v3.29.0...v3.30.0) (2026-08-29)
 
-
 ### Features
 
-* gold attribution prices cost bases by material cost and expected value ([3f5e9cd](https://github.com/Millennium44/Toolasha/commit/3f5e9cdff8f9a9d688ab7d8b6e9de193ce131890))
-* overlay columns stepper pins an exact count ([a4f653d](https://github.com/Millennium44/Toolasha/commit/a4f653d2a2d0a7f75815fa064606651f731075ce))
-* overlay span ceiling rises to ten columns ([e62e5f0](https://github.com/Millennium44/Toolasha/commit/e62e5f0da50b98e950259786055f6f527f73cec1))
-* overlay tiles may span eight columns ([d16d54a](https://github.com/Millennium44/Toolasha/commit/d16d54a0c399cb6b7d2f37093016cde9ca4b2be9))
-
+- gold attribution prices cost bases by material cost and expected value ([3f5e9cd](https://github.com/Millennium44/Toolasha/commit/3f5e9cdff8f9a9d688ab7d8b6e9de193ce131890))
+- overlay columns stepper pins an exact count ([a4f653d](https://github.com/Millennium44/Toolasha/commit/a4f653d2a2d0a7f75815fa064606651f731075ce))
+- overlay span ceiling rises to ten columns ([e62e5f0](https://github.com/Millennium44/Toolasha/commit/e62e5f0da50b98e950259786055f6f527f73cec1))
+- overlay tiles may span eight columns ([d16d54a](https://github.com/Millennium44/Toolasha/commit/d16d54a0c399cb6b7d2f37093016cde9ca4b2be9))
 
 ### Bug Fixes
 
-* alchemy outputs credited at the same cost basis their input is charged at ([130c3b4](https://github.com/Millennium44/Toolasha/commit/130c3b4b19e688d7730f2b3df1a04d11813fd265))
-* four more loadout readers resolve enhancement levels instead of trusting stored ones ([3e6abbb](https://github.com/Millennium44/Toolasha/commit/3e6abbb57c438d04ab5a2d9f3dce4a6c78722d62))
-* getSnapshotForSkill wears resolved enhancement levels, not stored ones ([7dcda8c](https://github.com/Millennium44/Toolasha/commit/7dcda8c4e5aca4ea4572f9bc88d81fc22ff4d2cb))
-* skip-threshold searches reach past +300 instead of clamping there ([baf4c0c](https://github.com/Millennium44/Toolasha/commit/baf4c0ce7ae57462beb7d7d6d1d2887c6876d55e))
-* timer call-site names parse Firefox stacks and skip wrapper frames by name ([6adaa07](https://github.com/Millennium44/Toolasha/commit/6adaa075719d157f621bcf607a30d05dcfd7ea23))
-
+- alchemy outputs credited at the same cost basis their input is charged at ([130c3b4](https://github.com/Millennium44/Toolasha/commit/130c3b4b19e688d7730f2b3df1a04d11813fd265))
+- four more loadout readers resolve enhancement levels instead of trusting stored ones ([3e6abbb](https://github.com/Millennium44/Toolasha/commit/3e6abbb57c438d04ab5a2d9f3dce4a6c78722d62))
+- getSnapshotForSkill wears resolved enhancement levels, not stored ones ([7dcda8c](https://github.com/Millennium44/Toolasha/commit/7dcda8c4e5aca4ea4572f9bc88d81fc22ff4d2cb))
+- skip-threshold searches reach past +300 instead of clamping there ([baf4c0c](https://github.com/Millennium44/Toolasha/commit/baf4c0ce7ae57462beb7d7d6d1d2887c6876d55e))
+- timer call-site names parse Firefox stacks and skip wrapper frames by name ([6adaa07](https://github.com/Millennium44/Toolasha/commit/6adaa075719d157f621bcf607a30d05dcfd7ea23))
 
 ### Performance Improvements
 
-* combat tickers skip unchanged redraws and the drop-luck model yields between players ([6b2797a](https://github.com/Millennium44/Toolasha/commit/6b2797a8a81e4949450bbf947c656b36eb599f6a))
+- combat tickers skip unchanged redraws and the drop-luck model yields between players ([6b2797a](https://github.com/Millennium44/Toolasha/commit/6b2797a8a81e4949450bbf947c656b36eb599f6a))
 
 ## [3.29.0](https://github.com/Millennium44/Toolasha/compare/v3.28.0...v3.29.0) (2026-08-29)
 
