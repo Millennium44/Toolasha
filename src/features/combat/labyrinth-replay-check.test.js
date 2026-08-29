@@ -222,7 +222,8 @@ describe('predictedFromSim', () => {
             { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
         );
         expect(predicted.hitRate).toBeCloseTo(15 / 20, 5);
-        expect(predicted.dmgPerHit).toBeCloseTo(1500 / 15, 5);
+        // 10 × 100 + 5 × 400 over the 15 that landed
+        expect(predicted.dmgPerHit).toBeCloseTo(3000 / 15, 5);
     });
 
     test("the sim run's own counters ride through for the export", () => {
@@ -408,13 +409,16 @@ describe('the damage gap decomposes into accuracy and mitigation', () => {
             expect(result.diagnosis).toMatch(/not ruled out/i);
         });
 
-        test('a soft-hit gap names the hit mix beside the mitigation, and where to settle it', () => {
+        test('a soft-hit gap names the mitigation and where to settle it, not the mix', () => {
             const result = compareLab(
                 deriveObserved(critLosses())[0],
                 predictedLike({ dps: 200, dmgPerHit: 260, critRate: 0.25 })
             );
-            expect(result.diagnosis).toMatch(/damage-over-time/i);
             expect(result.diagnosis).toMatch(/monster stat check/i);
+            expect(result.diagnosis).toMatch(/mitigation/i);
+            // The mix was one of this row's two candidate mechanisms only while
+            // both sides counted DoT ticks as landed hits. They no longer do.
+            expect(result.diagnosis).not.toMatch(/damage-over-time/i);
         });
 
         test('fights recorded before crits were kept contribute no crit data', () => {
@@ -706,8 +710,148 @@ describe('simDamageTally', () => {
         });
         expect(predicted.tally.dotTicks).toBe(10);
         expect(predicted.dotPerSwing).toBeCloseTo(10 / 15, 5);
-        // The existing hit figures still count every landed entry
-        expect(predicted.hitRate).toBeCloseTo(25 / 30, 5);
+        // The hit rate counts the swings alone — 15 landed against 5 missed.
+        // Folding the 10 DoT ticks in as landed hits read it 25/30 and flattered
+        // the sim by eight points against a counter that never saw them.
+        expect(predicted.hitRate).toBeCloseTo(15 / 20, 5);
+    });
+});
+
+/**
+ * The two sides of hit-rate and damage-per-hit have to divide by the same thing.
+ *
+ * The observed counts come off the monster's damage counter: a swing that landed,
+ * a swing that missed, and — separately — health that fell with no counter behind
+ * it (a bleed, a thorns reflect). The sim's tally has to be read the same way, or
+ * the comparison silently pits "every entry the engine filed" against "the swings
+ * the game counted".
+ */
+describe('the two sides divide by the same thing', () => {
+    const dotSim = () => ({
+        simulatedTime: 100e9,
+        labyAttemptCount: 1,
+        encounters: 1,
+        totalDamageDealt: { player1: 2900, '/monsters/pyre_hunter': 0 },
+        crits: { player1: 3 },
+        attacks: {
+            player1: {
+                '/monsters/pyre_hunter': {
+                    autoAttack: { miss: 5, 200: 10 },
+                    // Uncounted health loss: neither rings the monster's hit counter
+                    damageOverTime: { 80: 5, 100: 5 },
+                    physicalThorns: { 25: 4 },
+                },
+            },
+        },
+    });
+
+    test('the sim hit rate counts swings, not damage-over-time ticks', () => {
+        const predicted = predictedFromSim(dotSim(), {
+            playerHrid: 'player1',
+            monsterHrid: '/monsters/pyre_hunter',
+        });
+        // 10 landed swings against 5 missed swings — the 14 uncounted ticks are
+        // not attempts and must not inflate the rate towards 24/29
+        expect(predicted.hitRate).toBeCloseTo(10 / 15, 5);
+    });
+
+    test('the sim damage-per-hit divides swing damage by swing hits', () => {
+        const predicted = predictedFromSim(dotSim(), {
+            playerHrid: 'player1',
+            monsterHrid: '/monsters/pyre_hunter',
+        });
+        // 2000 from swings over 10 of them — not 2900 (with DoT and thorns) over 24
+        expect(predicted.dmgPerHit).toBeCloseTo(200, 5);
+        // The mixed figure stays available for a pool that can only be read mixed
+        expect(predicted.dmgPerHitAllSources).toBeCloseTo(2900 / 24, 5);
+    });
+
+    test('the sim crit rate divides by swings too', () => {
+        const predicted = predictedFromSim(dotSim(), {
+            playerHrid: 'player1',
+            monsterHrid: '/monsters/pyre_hunter',
+        });
+        expect(predicted.critRate).toBeCloseTo(3 / 10, 5);
+    });
+
+    test('thorns are uncounted health loss, so they tick rather than swing', () => {
+        const tally = simDamageTally(dotSim(), {
+            playerHrid: 'player1',
+            monsterHrid: '/monsters/pyre_hunter',
+        });
+        expect(tally.swings).toBe(10);
+        expect(tally.swingDamage).toBe(2000);
+        expect(tally.dotTicks).toBe(14);
+        expect(tally.dotDamage).toBe(900 + 100);
+        expect(tally.dotPerSwing).toBeCloseTo(14 / 10, 5);
+    });
+
+    test('an observed fight subtracts its DoT damage before dividing by swings', () => {
+        // 8000 dealt over 40 landed swings, of which 800 was DoT: 180 per swing
+        const [g] = deriveObserved([
+            attempt({
+                monsterMaxHp: 100000,
+                monsterHpEnd: 92000,
+                seconds: 50,
+                playerHits: 40,
+                playerMisses: 10,
+                playerDotTicks: 10,
+                playerDotDamage: 800,
+            }),
+        ]);
+        expect(g.dmgPerHit).toBeCloseTo(180, 5);
+        expect(g.dmgPerHitIncludesDot).toBe(false);
+        expect(g.dmgPerHitFights).toBe(1);
+    });
+
+    test('a fight recorded before DoT damage was split keeps the mixed figure, marked', () => {
+        const [g] = deriveObserved([
+            attempt({
+                monsterMaxHp: 100000,
+                monsterHpEnd: 92000,
+                seconds: 50,
+                playerHits: 40,
+                playerMisses: 10,
+            }),
+        ]);
+        expect(g.dmgPerHit).toBeCloseTo(200, 5);
+        expect(g.dmgPerHitIncludesDot).toBe(true);
+    });
+
+    test('the two pools never mix: a split fight is not averaged with a legacy one', () => {
+        const [g] = deriveObserved([
+            attempt({
+                monsterMaxHp: 100000,
+                monsterHpEnd: 92000,
+                seconds: 50,
+                playerHits: 40,
+                playerMisses: 10,
+                playerDotDamage: 800,
+            }),
+            attempt({ monsterMaxHp: 100000, monsterHpEnd: 92000, seconds: 50, playerHits: 40, playerMisses: 10 }),
+        ]);
+        expect(g.dmgPerHit).toBeCloseTo(180, 5);
+        expect(g.dmgPerHitFights).toBe(1);
+        expect(g.dmgPerHitIncludesDot).toBe(false);
+    });
+
+    test('a mixed observed pool is compared against the mixed prediction, and says so', () => {
+        const legacy = Array.from({ length: 6 }, () =>
+            attempt({ monsterMaxHp: 100000, monsterHpEnd: 92000, seconds: 50, playerHits: 40, playerMisses: 10 })
+        );
+        const result = compareLab(deriveObserved(legacy)[0], {
+            dps: 160,
+            takenPerSecond: 10,
+            clearRate: 0.2,
+            secondsPerFight: 50,
+            hitRate: 0.8,
+            dmgPerHit: 150,
+            dmgPerHitAllSources: 200,
+        });
+        const dph = result.metrics.find((m) => m.key === 'dmgPerHit');
+        expect(dph.predicted).toBe(200);
+        expect(dph.label).toMatch(/incl\. DoT/);
+        expect(dph.verdict).toBe('consistent');
     });
 });
 
@@ -777,25 +921,29 @@ describe('the mix decides a soft-hit gap', () => {
         expect(result.simTally).toEqual(softPrediction(0.25).tally);
     });
 
-    test('a matching mix rules the mix out and leaves the damage roll', () => {
+    test('a matching mix adds nothing: the mix cannot move a swing-only row', () => {
         const result = compareLab(deriveObserved(mixLosses(10))[0], softPrediction(0.25));
-        expect(result.diagnosis).toContain('same mix');
-        expect(result.diagnosis).toMatch(/0\.25 DoT ticks per swing/);
-        expect(result.diagnosis).not.toContain('Either its mitigation');
+        expect(result.diagnosis).toContain('Both sides count swings only');
+        expect(result.diagnosis).toContain('mitigation');
+        expect(result.diagnosis).not.toContain('off as well');
     });
 
-    test('a mix that is off explains the soft hits by itself', () => {
+    test('a mix that is off is reported as its own finding, not as the soft hits', () => {
         const result = compareLab(deriveObserved(mixLosses(40))[0], softPrediction(0.1));
         const mix = result.metrics.find((m) => m.key === 'dotPerSwing');
         expect(mix.verdict).toBe('above');
-        expect(result.diagnosis).toContain('mix');
         expect(result.diagnosis).toMatch(/1\.00 DoT ticks per swing against the sim’s 0\.10/);
-        expect(result.diagnosis).not.toContain('Either its mitigation');
+        expect(result.diagnosis).toContain('off as well');
+        // It moves damage per second, not the row it sits under
+        expect(result.diagnosis).toMatch(/damage per second rather than this row/);
+        // And it never claims the mitigation question is settled
+        expect(result.diagnosis).toContain('monster stat check');
     });
 
-    test('without an observed mix the diagnosis still offers both mechanisms', () => {
+    test('without an observed mix the soft-hit sentence is unchanged', () => {
         const result = compareLab(deriveObserved(mixLosses(null))[0], softPrediction(0.25));
         expect(result.metrics.find((m) => m.key === 'dotPerSwing')).toBeUndefined();
-        expect(result.diagnosis).toContain('Either its mitigation');
+        expect(result.diagnosis).toContain('Both sides count swings only');
+        expect(result.diagnosis).not.toContain('off as well');
     });
 });

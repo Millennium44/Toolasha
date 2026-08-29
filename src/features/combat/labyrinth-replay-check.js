@@ -253,6 +253,17 @@ export function deriveObserved(attempts) {
                 totalPlayerMisses: 0,
                 totalHitDataDealt: 0,
                 hitDataFights: 0,
+                // Damage-per-hit's like-for-like pool, kept apart from the
+                // mixed one above. `totalHitDataDealt` is every point the
+                // monster lost, damage-over-time included, over the swings
+                // alone — the numerator counts a source the denominator does
+                // not. These two accumulate only over fights that recorded
+                // their DoT damage, so the subtraction is measured rather
+                // than assumed, and a legacy fight never dilutes it.
+                totalSwingDealt: 0,
+                totalSwingHits: 0,
+                swingDamageFights: 0,
+                swingDmgPerHitSamples: [],
                 // Crits accumulate over their own fights: an attempt can carry
                 // hit counts without a crit count (recorded between the two
                 // features landing), and folding it in would drag the rate down
@@ -302,6 +313,23 @@ export function deriveObserved(attempts) {
             if (hits > 0) {
                 group.totalHitDataDealt += monsterDamage;
                 group.dmgPerHitSamples.push(monsterDamage / hits);
+                // The like-for-like numerator: what the swings did, with the
+                // uncounted health loss taken back out. Tested on the RAW
+                // value — a fight recorded before the split stores null, and
+                // Number(null) is 0, which would read as a fight that bled for
+                // nothing and quietly leave the mixed figure in the pool under
+                // a like-for-like label. `monsterDamage` can exceed the
+                // tick-summed total when the endpoints reconcile higher, so
+                // the residual the ticks missed stays in the numerator; it is
+                // unattributed, not attributed to DoT.
+                if (Number.isFinite(attempt.playerDotDamage)) {
+                    const dotDamage = Math.max(0, Number(attempt.playerDotDamage));
+                    const swingDealt = Math.max(0, monsterDamage - dotDamage);
+                    group.totalSwingDealt += swingDealt;
+                    group.totalSwingHits += hits;
+                    group.swingDamageFights += 1;
+                    group.swingDmgPerHitSamples.push(swingDealt / hits);
+                }
             }
             // The crit share of landed hits — the tiebreaker on a soft-hit
             // gap: a low real crit rate says the sim over-credits crits, a
@@ -352,7 +380,25 @@ export function deriveObserved(attempts) {
             group.totalPlayerHits + group.totalPlayerMisses > 0
                 ? group.totalPlayerHits / (group.totalPlayerHits + group.totalPlayerMisses)
                 : null,
-        dmgPerHit: group.totalPlayerHits > 0 ? group.totalHitDataDealt / group.totalPlayerHits : null,
+        // Damage-per-hit, on the best basis the pool supports. When any fight
+        // recorded its DoT damage the whole row switches to the swing-only pool
+        // — swing damage over swing hits, the same quantity the sim's
+        // `dmgPerHit` now reports. When none did, the mixed figure survives with
+        // its old meaning and `dmgPerHitIncludesDot` says so, so the comparison
+        // can pick the prediction that matches rather than pretending the old
+        // recording measured something it did not.
+        ...(group.swingDamageFights > 0
+            ? {
+                  dmgPerHit: group.totalSwingHits > 0 ? group.totalSwingDealt / group.totalSwingHits : null,
+                  dmgPerHitSamples: group.swingDmgPerHitSamples,
+                  dmgPerHitFights: group.swingDamageFights,
+                  dmgPerHitIncludesDot: false,
+              }
+            : {
+                  dmgPerHit: group.totalPlayerHits > 0 ? group.totalHitDataDealt / group.totalPlayerHits : null,
+                  dmgPerHitFights: group.hitDataFights,
+                  dmgPerHitIncludesDot: true,
+              }),
         hitDataFights: group.hitDataFights,
         critRate: group.totalCritDataHits > 0 ? group.totalPlayerCrits / group.totalCritDataHits : null,
         critDataFights: group.critDataFights,
@@ -485,18 +531,36 @@ export function summarizePool(attempts) {
 export const DOT_SOURCE = 'damageOverTime';
 
 /**
- * Whether a tally source is a swing the player's own attack counter rang.
+ * The reflect sources the engine files, from `CombatUtilities`' `thornType`.
  *
- * The observed side counts a swing off `atkCounter` moving, so only the two
- * sources that move it — the auto attack and a cast ability — belong in the
- * denominator of the mix ratio. `parry`, `retaliation` and thorns are the
- * player's damage but nobody's swing, and a DoT tick is neither.
+ * Grouped with damage-over-time rather than with swings because the observed
+ * side groups them there: `attributeTick` calls a health loss with no
+ * `dmgCounter` movement behind it a tick, and the module's own field note says
+ * a thorns reflect is exactly that — health lost without the monster's hit
+ * counter rising. Whatever the recorder cannot see as a counted hit, the sim
+ * must not offer as one.
+ */
+const THORN_SOURCES = new Set(['physicalThorns', 'elementalThorns']);
+
+/**
+ * Whether a tally source is one the monster's damage counter counted.
+ *
+ * This is the whole of the like-for-like question. The observed hit and miss
+ * counts are not health diffs — `attributeTick` calls a hit `dmgCounter`
+ * **rising**, a miss the same counter rising with the health unchanged, and
+ * everything else (a bleed ticking, a reflect firing) an uncounted tick that
+ * `foldEvents` banks under `dotTicks`, never under `hits`. So the sim's side
+ * has to be read the same way: `autoAttack`, an ability, `parry` and
+ * `retaliation` are attacks the game counts — and they are the only sources
+ * the engine ever files a `'miss'` under, which is the tell, since a miss can
+ * only exist as a counted attempt that dealt nothing. `damageOverTime` and the
+ * thorn types are real damage with no counted attempt behind them.
  *
  * @param {string} source - A key of `attacks[player][monster]`
  * @returns {boolean}
  */
-function isSwingSource(source) {
-    return source === 'autoAttack' || String(source).startsWith('/abilities/');
+function isCountedSource(source) {
+    return source !== DOT_SOURCE && !THORN_SOURCES.has(source);
 }
 
 /**
@@ -508,20 +572,26 @@ function isSwingSource(source) {
  * totals and means per source recoverable without the engine keeping any of
  * them, which is why this lives here rather than in the engine.
  *
- * The point of the split is `dotPerSwing`. A damage-over-time tick rings the
- * monster's damage counter, so it lands in the same "hit" bucket as a swing on
- * both sides of the comparison — and it lands for a fraction of the blow that
- * applied it. A sim that ticks more or less often than you moves damage-per-hit
- * by several percent with the monster's mitigation untouched, which is exactly
- * the ambiguity the soft-hit diagnosis could not resolve.
+ * The split does two jobs. It supplies the swing-only figures the hit rate and
+ * damage-per-hit are compared on — the sim files every DoT tick and thorns
+ * reflect as an entry here, and pooling those with the swings put a denominator
+ * against the recorder's that never counted them. And it supplies `dotPerSwing`:
+ * a tick lands for a fraction of the blow that applied it, so a sim that ticks
+ * more or less often than you moves damage-per-hit by several percent with the
+ * monster's mitigation untouched, which is the ambiguity the soft-hit diagnosis
+ * could not otherwise resolve.
  *
  * @param {Object} simResult - From runLabyrinthSimulation
  * @param {Object} keys
  * @param {string} keys.playerHrid - The player DTO's hrid
  * @param {string} keys.monsterHrid - The monster fought
  * @returns {Object|null} `{sources, landedHits, misses, totalDamage, meanDamage,
- *   swings, dotTicks, dotPerSwing}`, or null when the result carries no tally at
- *   all — which must not read as a run that dealt nothing
+ *   swings, swingMisses, swingDamage, dotTicks, dotDamage, dotPerSwing}`, or null
+ *   when the result carries no tally at all — which must not read as a run that
+ *   dealt nothing. The first four are every entry the engine filed, kept for the
+ *   export and for a recorded pool that can only be read mixed; the `swing*`
+ *   figures are the subset the monster's damage counter would have counted, which
+ *   is what the observed side measures
  */
 export function simDamageTally(simResult, { playerHrid, monsterHrid } = {}) {
     const abilityTally = simResult?.attacks?.[playerHrid]?.[monsterHrid];
@@ -532,7 +602,10 @@ export function simDamageTally(simResult, { playerHrid, monsterHrid } = {}) {
     let misses = 0;
     let totalDamage = 0;
     let swings = 0;
+    let swingMisses = 0;
+    let swingDamage = 0;
     let dotTicks = 0;
+    let dotDamage = 0;
 
     for (const [source, stats] of Object.entries(abilityTally)) {
         let sourceLanded = 0;
@@ -551,8 +624,14 @@ export function simDamageTally(simResult, { playerHrid, monsterHrid } = {}) {
         landedHits += sourceLanded;
         misses += sourceMisses;
         totalDamage += sourceDamage;
-        if (source === DOT_SOURCE) dotTicks += sourceLanded;
-        else if (isSwingSource(source)) swings += sourceLanded;
+        if (isCountedSource(source)) {
+            swings += sourceLanded;
+            swingMisses += sourceMisses;
+            swingDamage += sourceDamage;
+        } else {
+            dotTicks += sourceLanded;
+            dotDamage += sourceDamage;
+        }
 
         sources.push({
             source,
@@ -579,7 +658,13 @@ export function simDamageTally(simResult, { playerHrid, monsterHrid } = {}) {
         totalDamage,
         meanDamage: landedHits > 0 ? totalDamage / landedHits : null,
         swings,
+        swingMisses,
+        swingDamage,
+        // Null rather than zero when nothing landed, the same contract the
+        // per-source means keep
+        meanSwingDamage: swings > 0 ? swingDamage / swings : null,
         dotTicks,
+        dotDamage,
         // Null only when the run threw no swings at all; a run that swung and
         // never ticked is a real zero and a finding when you tick
         dotPerSwing: swings > 0 ? dotTicks / swings : null,
@@ -620,8 +705,15 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
     // split by source is computed once and carried through, so the export and
     // the panel read the same numbers the rates were derived from.
     const tally = simDamageTally(simResult, { playerHrid, monsterHrid });
+    // Every entry the engine filed. Only the mixed damage-per-hit still divides
+    // by this, and only for a recorded pool that cannot be read any other way.
     const simHits = tally?.landedHits ?? 0;
-    const simMisses = tally?.misses ?? 0;
+    // The counted subset — what the observed hit and miss counts are. A
+    // damage-over-time tick and a thorns reflect are damage with no counted
+    // attempt behind them, so they are neither a hit nor an attempt here.
+    const simSwings = tally?.swings ?? 0;
+    const simSwingMisses = tally?.swingMisses ?? 0;
+    const simSwingAttempts = simSwings + simSwingMisses;
 
     // The sim's landed crits. The property's PRESENCE is the discriminator —
     // an engine that counts crits always creates the map, so a run that never
@@ -636,9 +728,22 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
         takenPerSecond: taken / rateSeconds,
         secondsPerFight: attempts > 0 ? simSeconds / attempts : 0,
         clearRate: attempts > 0 ? wins / attempts : 0,
-        hitRate: simHits + simMisses > 0 ? simHits / (simHits + simMisses) : null,
-        dmgPerHit: simHits > 0 ? dealt / simHits : null,
-        critRate: hasCritData && simHits > 0 ? simCrits / simHits : null,
+        hitRate: simSwingAttempts > 0 ? simSwings / simSwingAttempts : null,
+        // Swing damage over swing hits. `tally.swingDamage` rather than
+        // `dealt`: the latter is `totalDamageDealt`, which is every point the
+        // player dealt from every source, so dividing it by swings would leave
+        // the DoT damage in the numerator and take it out of the denominator —
+        // wrong in the opposite direction to the bug this replaces.
+        dmgPerHit: simSwings > 0 ? tally.swingDamage / simSwings : null,
+        // The old mixed figure, kept for a recorded pool that predates the
+        // observed DoT-damage split and can therefore only be compared mixed.
+        // Both sides of THAT comparison count every source, so it is still
+        // like-for-like — just against a coarser quantity.
+        dmgPerHitAllSources: simHits > 0 ? dealt / simHits : null,
+        // Crits divide by swings for the same reason: the engine passes
+        // `isCrit` only from the counted attack paths, and the recorder counts a
+        // crit only when the monster's crit counter moved on a counted hit
+        critRate: hasCritData && simSwings > 0 ? simCrits / simSwings : null,
         // The per-source split, and the one ratio that decides a soft-hit gap
         tally,
         dotPerSwing: tally?.dotPerSwing ?? null,
@@ -742,15 +847,12 @@ function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null, critRat
         Math.abs(critRate.deviationPct) <= critRate.marginPct / 2;
     const critsUndecided = critRate?.verdict === 'consistent' && !critsMatch;
 
-    // The mix ratio, held to the same rigour as the crit tiebreaker: only a
-    // deviation well inside its own band is evidence the mixes agree. A ratio
-    // that merely fits a wide band decides nothing, and the sentence falls back
-    // to naming both mechanisms.
-    const mixMatches =
-        mix?.verdict === 'consistent' &&
-        Number.isFinite(mix.deviationPct) &&
-        Number.isFinite(mix.marginPct) &&
-        Math.abs(mix.deviationPct) <= mix.marginPct / 2;
+    // The mix ratio. It used to be one of the two explanations for a soft-hit
+    // gap, because both sides counted a damage-over-time tick as a landed hit
+    // and a tick is a fraction of the blow that applied it. Both sides now
+    // divide swing damage by swings, so a tick is in neither half of that row
+    // and the mix cannot move it — which makes a mix that is off its own
+    // finding about the rotation rather than an alternative to mitigation.
     const mixIsOff = mix?.verdict === 'above' || mix?.verdict === 'below';
     // Both ratios, quoted, because the ratio IS the finding — a reader who
     // disagrees with the verdict can redo the division from the sentence
@@ -770,49 +872,35 @@ function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null, critRat
         because =
             ' — each hit lands softer than it predicts and you crit less than it predicts, so the sim over-credits ' +
             'your crits rather than under-modelling the monster';
-    } else if (softHits && mixIsOff && mixNumbers) {
-        // The mix is measured and does not agree: it moves damage-per-hit by
-        // itself, so there is nothing left for the monster's mitigation to
-        // explain and no reason to send the reader to the stat check.
-        because =
-            ' — each hit lands softer than it predicts, and the sim lands a different mix of swings and ' +
-            `damage-over-time ticks than you do: you land ${mixNumbers}. A tick is a fraction of the blow ` +
-            'that applied it, so the mix moves damage per hit on its own — the monster’s mitigation need ' +
-            'not be involved';
-    } else if (softHits && mixMatches && mixNumbers) {
-        // The mixes agree, so the ambiguity is settled the other way: what is
-        // left is the damage roll itself (or the monster's mitigation, which
-        // the stat check reads straight off the game).
-        because =
-            ' — each hit lands softer than it predicts, and the sim lands the same mix of swings and ' +
-            `damage-over-time ticks you do (${mixNumbers}), which rules the mix out. What is left is the ` +
-            'damage roll itself: run the monster stat check on this room to settle the mitigation half' +
-            (critsMatch
-                ? '; your crit rate matches, which rules the crit roll out too'
-                : critsUndecided
-                  ? '; your crit rate reads low too but stays inside its band, so the crit roll is not ruled out'
-                  : '');
     } else if (softHits) {
-        // Two mechanisms produce a soft-hit gap and this row cannot separate
-        // them. One is mitigation. The other is the hit MIX: a damage-over-time
-        // tick rings the monster's damage counter, so the recorder counts it as
-        // a landed hit and the sim counts its own DoT ticks the same way — and
-        // those ticks are a fraction of the blow that applied them. Against a
-        // Pyre Hunter at room 239 they were 24% of every hit landed at a mean of
-        // 81 against 219 for a swing, so a rotation the sim lands more or less
-        // often than you moves damage-per-hit by several percent with the
-        // monster's armour untouched. The monster stat check reads the armour
-        // and resistances straight off the game, which settles that half.
+        // A soft-hit gap used to have two candidate mechanisms, mitigation and
+        // the hit MIX, because a damage-over-time tick counted as a landed hit
+        // on both sides and lands for a fraction of the blow that applied it.
+        // Against a Pyre Hunter at room 239 that was 26 ticks per 100 swings at
+        // a mean of 81 against 219 for a swing — enough to move the row by
+        // several percent on its own, which is why the ambiguity was real.
+        //
+        // It is not any more. Both sides divide swing damage by swing hits, so
+        // a tick is in neither half of this row and the mix cannot move it. The
+        // mechanisms left are the monster's mitigation, which the stat check
+        // reads straight off the game, and the damage roll itself. A mix that
+        // is off is still worth saying — it moves your damage per second — but
+        // it is a separate finding, and offering it as an explanation for THIS
+        // row would send the reader after the wrong thing.
         because =
-            ' — each hit lands softer than it predicts. Either its mitigation runs light (an unmodelled ' +
-            'resistance/armour buff like Toughness), or the sim lands a different mix of swings and ' +
-            'damage-over-time ticks than you do — both move damage per hit. Run the monster stat check on ' +
-            'this room to settle the mitigation half' +
+            ' — each hit lands softer than it predicts. Both sides count swings only, so the hit mix is out ' +
+            'of this row: what is left is the monster’s mitigation (an unmodelled resistance/armour buff ' +
+            'like Toughness) or the damage roll itself. Run the monster stat check on this room to settle ' +
+            'the mitigation half' +
             (critsMatch
                 ? '; your crit rate matches, which rules the crit roll out'
                 : critsUndecided
                   ? '; your crit rate reads low too but stays inside its band, so the crit roll is not ruled out'
-                  : '');
+                  : '') +
+            (mixIsOff && mixNumbers
+                ? `. Your hit mix is off as well — ${mixNumbers} — which is its own finding: a tick is ` +
+                  'damage with no swing behind it, so it moves your damage per second rather than this row'
+                : '');
     }
 
     if (yourDamage === 'over' && monsterDamage === 'under') {
@@ -902,15 +990,29 @@ export function compareLab(observed, predicted) {
               observed.hitDataFights
           )
         : null;
+    // Damage-per-hit, compared on whichever basis BOTH sides can state. A pool
+    // whose fights recorded their DoT damage divides swing damage by swing hits
+    // and meets the sim's swing-only figure; a pool recorded before that split
+    // can only offer the mixed number, so it is put against the sim's mixed one
+    // and the label says which it is. What must never happen is the two crossed:
+    // the observed side counting DoT damage into a numerator whose denominator
+    // is swings, against a prediction that counted it into neither.
+    const mixedBasis = observed.dmgPerHitIncludesDot === true;
+    // A prediction from before the split carries only the one figure; falling
+    // back to it keeps the old row rather than dropping it, and it IS the mixed
+    // figure on such a prediction
+    const predictedDmgPerHit = mixedBasis
+        ? (predicted?.dmgPerHitAllSources ?? predicted?.dmgPerHit)
+        : predicted?.dmgPerHit;
     const dmgPerHit =
-        hasHitData && observed.dmgPerHit !== null && Number.isFinite(predicted?.dmgPerHit)
+        hasHitData && observed.dmgPerHit !== null && Number.isFinite(predictedDmgPerHit)
             ? compareMetric(
                   'dmgPerHit',
-                  'Damage / hit',
+                  mixedBasis ? 'Damage / hit (incl. DoT)' : 'Damage / hit',
                   observed.dmgPerHit,
-                  predicted.dmgPerHit,
+                  predictedDmgPerHit,
                   observed.dmgPerHitSamples,
-                  observed.hitDataFights
+                  observed.dmgPerHitFights ?? observed.hitDataFights
               )
             : null;
     // The crit share of landed hits, the soft-hit tiebreaker: a real crit rate
