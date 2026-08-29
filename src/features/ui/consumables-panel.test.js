@@ -652,3 +652,49 @@ describe('the labyrinth buy all', () => {
         expect(buyAll).toBeUndefined();
     });
 });
+
+describe('the idle plan pins across a character switch', () => {
+    test('each character keeps its own loadout and zone pin', async () => {
+        // char1 pins a loadout it has and a zone it simmed
+        bus.characterId = 'char1';
+        await consumablesPanel.reloadIdlePins();
+        consumablesPanel.pinIdleLoadout('Bruiser');
+        consumablesPanel.pinIdleZone('/actions/combat/jungle|3');
+        await settled();
+        expect(consumablesPanel._idleLoadoutName).toBe('Bruiser');
+        expect(consumablesPanel._idleZoneKey).toBe('/actions/combat/jungle|3');
+
+        // The alt arrives: it must start clean rather than plan against a
+        // loadout it does not own and a zone it has never simmed
+        bus.characterId = 'char2';
+        dataManager.emit('character_switched', {});
+        await settled();
+        expect(consumablesPanel._idleLoadoutName).toBeNull();
+        expect(consumablesPanel._idleZoneKey).toBe('last');
+
+        // and its own choice does not reach back to char1
+        consumablesPanel.pinIdleLoadout('Tank');
+        consumablesPanel.pinIdleZone('/actions/combat/swamp|0');
+        await settled();
+        bus.characterId = 'char1';
+        dataManager.emit('character_switched', {});
+        await settled();
+        expect(consumablesPanel._idleLoadoutName).toBe('Bruiser');
+        expect(consumablesPanel._idleZoneKey).toBe('/actions/combat/jungle|3');
+    });
+
+    test('a legacy bare pin is discarded rather than inherited', async () => {
+        store.data.consumablesIdleLoadout = 'MainsLoadout';
+        store.data.consumablesIdleZone = '/actions/combat/jungle|5';
+
+        bus.characterId = 'char2';
+        dataManager.emit('character_initialized', {});
+        await settled();
+
+        expect(consumablesPanel._idleLoadoutName).toBeNull();
+        expect(consumablesPanel._idleZoneKey).toBe('last');
+        // and the bare key is gone, so it cannot leak onto the next character either
+        expect(store.data.consumablesIdleLoadout).toBeUndefined();
+        expect(store.data.consumablesIdleZone).toBeUndefined();
+    });
+});

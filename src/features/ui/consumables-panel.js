@@ -76,7 +76,7 @@ import combatStatsDataCollector from '../combat-stats/combat-stats-data-collecto
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { queueLengthEstimator } from '../../utils/bundle-bridge.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
-import { readScoped } from '../../utils/character-key.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 const PANEL_ID = 'toolasha-consumables-panel';
 
@@ -112,6 +112,15 @@ function burnStamp(forecasts) {
  */
 const BUY_CHIP_ID = 'toolasha-lab-buy-next';
 const BUY_WIDGET_POSITION_KEY = 'consumablesBuyWidgetPosition';
+
+/**
+ * How the idle plan's pins treat a value left behind by the pre-scoping build.
+ *
+ * Discarded rather than adopted: a loadout name and a simmed zone key only mean
+ * anything inside the character they were chosen on, so handing them to anyone
+ * is the leak rather than a rescue of the main's data.
+ */
+const DISCARD_LEGACY = { migrate: 'discard' };
 
 /**
  * The rules the Buy-all walk decides by, editable from its own widget.
@@ -268,8 +277,7 @@ class ConsumablesPanel {
         this._labRuns = Number(await storage.get('consumablesLabRuns', 'settings', 5)) || 5;
         this._buyWidgetPosition = await storage.get(BUY_WIDGET_POSITION_KEY, 'settings', null);
         // The idle plan's pins: which loadout to plan for, which simmed zone rates its food
-        this._idleLoadoutName = await storage.get('consumablesIdleLoadout', 'settings', null);
-        this._idleZoneKey = await storage.get('consumablesIdleZone', 'settings', 'last');
+        await this.reloadIdlePins();
         // The sims' measured consumable use, for rating food while idle
         this._simRates = await readScoped('simConsumableRates', 'combatExport', null).catch(() => null);
         this._simRatesByZone =
@@ -283,6 +291,53 @@ class ConsumablesPanel {
         this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
         // Everything the readiness memo is a function of has just been re-read
         this._readinessMemo = null;
+    }
+
+    /**
+     * Re-read the idle plan's two pins for whoever is logged in now.
+     *
+     * Both name something that exists only inside one character: the loadout
+     * pin is a name out of *that* character's combat loadouts, and the zone pin
+     * indexes *that* character's `simConsumableRatesByZone` — which is already
+     * character-scoped. Under the old bare keys the pins followed the account,
+     * so an alt planned against a loadout it does not have (silently falling
+     * back to its first) and against a zone it has never simmed (drawn
+     * "(unsimmed)"). `migrate: 'discard'` for the same reason the combat target
+     * uses it: inheriting the other character's pin IS the leak.
+     *
+     * Reloaded on every switch, because a pin read once at start-up is the same
+     * leak arriving a little later.
+     */
+    async reloadIdlePins() {
+        try {
+            this._idleLoadoutName = await readScoped('consumablesIdleLoadout', 'settings', null, DISCARD_LEGACY);
+            this._idleZoneKey = (await readScoped('consumablesIdleZone', 'settings', null, DISCARD_LEGACY)) || 'last';
+            this._readinessMemo = null;
+        } catch (error) {
+            console.error('[Consumables] Reading the idle plan pins failed:', error);
+        }
+    }
+
+    /**
+     * Pin the loadout the idle plan is drawn from, for this character only.
+     * @param {string} value - A loadout name out of this character's snapshots
+     */
+    pinIdleLoadout(value) {
+        this._idleLoadoutName = value;
+        writeScoped('consumablesIdleLoadout', value, 'settings').catch((error) => {
+            console.error('[Consumables] Saving the idle loadout pin failed:', error);
+        });
+    }
+
+    /**
+     * Pin the simmed zone whose measured rates price the idle plan's food.
+     * @param {string} value - A zone key out of this character's sim results
+     */
+    pinIdleZone(value) {
+        this._idleZoneKey = value;
+        writeScoped('consumablesIdleZone', value, 'settings').catch((error) => {
+            console.error('[Consumables] Saving the idle zone pin failed:', error);
+        });
     }
 
     /** The duration everything is measured against */
@@ -1447,19 +1502,13 @@ class ConsumablesPanel {
             combat.map((snap) => ({ value: snap.name, label: snap.isDefault ? `${snap.name} ★` : snap.name })),
             loadout.name,
             'Which combat loadout the idle plan is drawn from.',
-            (value) => {
-                this._idleLoadoutName = value;
-                storage.set('consumablesIdleLoadout', value, 'settings').catch(() => {});
-            }
+            (value) => this.pinIdleLoadout(value)
         );
         const zonePick = this._idleSelect(
             this._zoneOptions(),
             this._idleZoneKey || 'last',
             'Which simmed zone rates the food. Drinks are arithmetic and need no sim.',
-            (value) => {
-                this._idleZoneKey = value;
-                storage.set('consumablesIdleZone', value, 'settings').catch(() => {});
-            }
+            (value) => this.pinIdleZone(value)
         );
 
         const source = document.createElement('span');
@@ -2281,8 +2330,14 @@ consumablesPanel.restore();
 // arrangement into the arriving character's flags.
 dataManager.on('character_switched', () => {
     consumablesPanel.hide({ remember: false });
+    consumablesPanel.reloadIdlePins();
     consumablesPanel.restore();
 });
+
+// The module-scope `loadSettings()` above runs before anyone is logged in, so
+// the pins it read were keyed on 'default' — this is the first read that can
+// name a character
+dataManager.on('character_initialized', () => consumablesPanel.reloadIdlePins());
 
 /** Console handle, since a panel that only opens from the overlay is hard to reach */
 if (typeof window !== 'undefined') {
