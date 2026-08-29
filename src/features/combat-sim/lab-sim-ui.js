@@ -628,7 +628,7 @@ class LabSimUI {
             <label style="color:#888; font-size:12px;">Monster</label>
             <select class="toolasha-select" id="mwi-labsim-monster" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Level</label>
-            <input id="mwi-labsim-level" type="number" min="20" max="1300" value="100" style="${inputStyle}">
+            <input id="mwi-labsim-level" type="number" min="1" max="1300" value="100" style="${inputStyle}">
         `;
 
         const crateRow = document.createElement('div');

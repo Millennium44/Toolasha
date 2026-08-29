@@ -1065,6 +1065,15 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         await settle();
         expect(storage.written['labSimUpgradeLevelSource_me']).toBe('skip');
     });
+
+    test('the Level box allows any room level the finder can hand it, down to 1', () => {
+        // The labyrinth level finder's window can resolve below 20, and the
+        // Configure source writes into this box programmatically — bypassing
+        // the browser's own min clamp, which only applies to typing and the
+        // spinner. A min of 20 was therefore never a real floor, just a
+        // misleading one for anybody who did type into the box by hand.
+        expect(ui.panel.querySelector('#mwi-labsim-level').min).toBe('1');
+    });
 });
 
 describe('a single-target result can be read against the last one', () => {
