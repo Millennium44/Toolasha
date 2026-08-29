@@ -216,6 +216,9 @@ class PredictionCalibration {
         if (this.ready) await this.ready;
         this._store();
         if (!this.records) await this._load();
+        // Captured after the load has settled ownership, so a switch racing the
+        // load itself is already accounted for by `_store()`'s reset above.
+        const owner = this.owner;
 
         const sorted = entries
             .filter((entry) => entry?.characterActionId && entry.actionHrid)
@@ -228,17 +231,31 @@ class PredictionCalibration {
         // would be measured against whatever the character is wearing later
         if (!this.pending.has(running.characterActionId) && !this.recorded.has(running.characterActionId)) {
             const predicted = await this._predict(running.actionHrid);
-            if (predicted !== null) {
+            // `_predict` can take a while (it runs the same calculators the
+            // action panels use), long enough for a character switch to land
+            // mid-await. `disable()` already cleared `pending` for the
+            // departing character by then; filing this forecast afterwards
+            // would revive it under whoever is current now — a stale pair
+            // filed for a run that was never played under that character's
+            // gear, prices or teas, and if that character's own ledger loads
+            // before the matching "finished" entry is processed, a run that
+            // was actually the departing character's would be written into
+            // the arriving character's history as if it were theirs.
+            if (predicted !== null && dataManager.getCurrentCharacterId() === owner) {
                 this.pending.set(running.characterActionId, { predicted, at: Date.now() });
             }
         }
+
+        // Same race, same guard: a switch during the predict above must not
+        // let this pass write finished runs into whoever is current now.
+        if (dataManager.getCurrentCharacterId() !== owner) return;
 
         let changed = false;
         for (const entry of finished) {
             if (await this._record(entry)) changed = true;
         }
 
-        if (changed) await this._save();
+        if (changed && dataManager.getCurrentCharacterId() === owner) await this._save();
     }
 
     /**

@@ -68,7 +68,10 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 vi.mock('../actions/gathering-profit.js', () => ({
-    calculateGatheringProfit: async () => ({ profitPerHour: game.profitPerHour, hasMissingPrices: false }),
+    calculateGatheringProfit: async () => {
+        if (game.gate) await game.gate;
+        return { profitPerHour: game.profitPerHour, hasMissingPrices: false };
+    },
 }));
 vi.mock('../actions/production-profit.js', () => ({
     calculateProductionProfit: async () => ({ profitPerHour: game.profitPerHour, hasMissingPrices: false }),
@@ -109,8 +112,10 @@ let calibration;
 beforeEach(async () => {
     game.stored = {};
     game.handlers = {};
+    game.characterId = 'char-1';
     game.profitPerHour = 1000;
     game.runProfit = { askProfit: 500, bidProfit: 400 };
+    game.gate = null;
     calibration = new PredictionCalibration();
     await calibration.initialize();
 });
@@ -232,6 +237,42 @@ describe('pairing a forecast with a finished run', () => {
         expect(await calibration.addRecord(record)).toBe(false);
         expect(await calibration.addRecord({ actionType: 'combat', predicted: 1, actual: 1 })).toBe(false);
         expect(await calibration.getRecords()).toHaveLength(1);
+    });
+
+    test('a character switch mid-predict must not carry the departing forecast into the arriving ledger', async () => {
+        let releaseGate;
+        game.gate = new Promise((resolve) => {
+            releaseGate = resolve;
+        });
+
+        // char-1's run starts; the forecast calculation is in flight (gated) when
+        // the character-switch teardown fires.
+        game.handlers.loot_log_updated({ lootLog: [entry(1, '2026-08-04T10:00:00Z')] });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // feature-registry tears the module down before currentCharacterId moves,
+        // then the id moves and the module is brought back up for char-2.
+        calibration.disable();
+        game.characterId = 'char-2';
+        await calibration.initialize();
+        await calibration.ready;
+
+        // The gated forecast for char-1's run resolves only now, after the switch.
+        releaseGate();
+        await calibration.queue;
+
+        // char-2's own loot log reuses a characterActionId — ids are only unique
+        // within one character's history — so char-1's leftover pending forecast
+        // must not be mistaken for a real char-2 pair.
+        game.handlers.loot_log_updated({
+            lootLog: [entry(3, '2026-08-04T12:00:00Z'), entry(1, '2026-08-04T10:00:00Z')],
+        });
+        await calibration.queue;
+
+        const records = await calibration.getRecords();
+        expect(records.find((r) => r.id === 1)).toBeUndefined();
+        expect(game.stored['lootLogHistory:calibration_char-2']?.find((r) => r.id === 1)).toBeUndefined();
     });
 
     test('drops the oldest pairs rather than growing without end', async () => {
