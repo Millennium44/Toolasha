@@ -100,11 +100,19 @@ export function columnsFor(width) {
  * @param {number} [authored] - The columns the layout was written for
  * @returns {number} Between 1 and {@link MAX_SPAN}
  */
-export function columnsForLayout(width, authored = 2) {
+export function columnsForLayout(width, authored = 2, { pinned = false } = {}) {
+    const wanted = Number.isFinite(authored) ? Math.round(authored) : 2;
+
+    // Pinned is a person's explicit choice from the columns stepper, and it is
+    // exact: under the automatic law below the authored count can only raise
+    // the answer, so "fewer columns than the width affords" was unreachable
+    // until this. A pinned count holds on any width — that is what choosing it
+    // means.
+    if (pinned) return Math.min(MAX_SPAN, Math.max(1, wanted));
+
     const affords = columnsFor(width);
     if (affords <= 1) return 1;
 
-    const wanted = Number.isFinite(authored) ? Math.round(authored) : 2;
     return Math.min(MAX_SPAN, Math.max(1, affords, wanted));
 }
 

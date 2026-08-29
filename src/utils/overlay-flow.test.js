@@ -539,3 +539,20 @@ describe('a real layout, exported from the build before the rework', () => {
         }
     });
 });
+
+describe('columnsForLayout pinned', () => {
+    test('a pinned count holds below what the width affords, which auto never could', () => {
+        // 1200px affords 5 (COLUMN_MIN 220); automatic law answers 5 regardless of authored 2
+        expect(columnsForLayout(1200, 2)).toBe(5);
+        expect(columnsForLayout(1200, 2, { pinned: true })).toBe(2);
+    });
+
+    test('a pinned count holds above what the width affords, like an import always did', () => {
+        expect(columnsForLayout(200, 5, { pinned: true })).toBe(5);
+    });
+
+    test('pinned still clamps to the span range', () => {
+        expect(columnsForLayout(1200, 0, { pinned: true })).toBe(1);
+        expect(columnsForLayout(1200, 99, { pinned: true })).toBe(MAX_SPAN);
+    });
+});

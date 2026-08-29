@@ -118,6 +118,7 @@ import {
 import { hasCoarsePointer } from '../../utils/mobile.js';
 import {
     columnsForLayout,
+    MAX_SPAN,
     spanFor,
     seedSpan,
     migrate,
@@ -2103,6 +2104,32 @@ class OverlayPanel {
 
         controls.appendChild(this._emptyTilesControl());
 
+        // The column count, steppable at last: the automatic law only ever
+        // raises the authored count to what the width affords, so until this
+        // control "fewer columns than fit" had no way to be said. Stepping
+        // pins the count exactly; Auto hands it back to the width.
+        const columnsBox = document.createElement('div');
+        Object.assign(columnsBox.style, { display: 'inline-flex', alignItems: 'center', gap: '4px' });
+        const fewerColumns = this._textButton('−', 'One column fewer, held at that count', () => this._stepColumns(-1));
+        const moreColumns = this._textButton('+', 'One column more, held at that count', () => this._stepColumns(1));
+        const columnsLabel = document.createElement('span');
+        const pinnedColumns = this.settings.columnsPinned === true;
+        columnsLabel.textContent = `Columns ${this.columns || this._columns()}${pinnedColumns ? '' : ' (auto)'}`;
+        columnsLabel.style.color = COLORS.textDim;
+        columnsLabel.style.minWidth = '86px';
+        columnsBox.append(columnsLabel, fewerColumns, moreColumns);
+        if (pinnedColumns) {
+            const autoColumns = this._textButton('Auto', 'Let the panel width decide the column count again', () => {
+                this.settings.columnsPinned = false;
+                this._save();
+                this._applyColumns();
+                this._renderBody();
+                this._renderPicker();
+            });
+            columnsBox.appendChild(autoColumns);
+        }
+        controls.appendChild(columnsBox);
+
         const textSize = document.createElement('div');
         Object.assign(textSize.style, { display: 'inline-flex', alignItems: 'center', gap: '4px' });
         const smaller = this._textButton('−', 'Smaller text in every tile', () => this._stepTextScale(-ZOOM_STEP));
@@ -2408,6 +2435,11 @@ class OverlayPanel {
         delete this.settings.positions;
         delete this.settings.sizes;
         delete this.settings.snapToGrid;
+        // An arriving layout's column count is advisory (the automatic law
+        // raises it to the width), not a pin — unless the layout itself was
+        // saved with one. A pin from the previous arrangement must not hold a
+        // preset to the wrong grid.
+        if (arriving.columnsPinned !== true) this.settings.columnsPinned = false;
 
         this._save();
 
@@ -2450,6 +2482,28 @@ class OverlayPanel {
      * Change the base text size for every tile at once.
      * @param {number} delta - Percentage points
      */
+    /**
+     * Pin the column count one step up or down from what is drawn now.
+     *
+     * From the *effective* count, not the stored one: unpinned, the stored
+     * number and the drawn number routinely differ (the width raised it), and
+     * a first press that appeared to do nothing would read as a broken button.
+     * @param {number} delta - +1 or -1
+     */
+    _stepColumns(delta) {
+        const current = this.columns || this._columns();
+        const next = Math.min(MAX_SPAN, Math.max(1, current + delta));
+        if (next === current && this.settings.columnsPinned === true) return;
+
+        this.settings.columns = next;
+        this.settings.columnsPinned = true;
+        this._save();
+        this._applyColumns();
+        this._renderBody();
+        this._renderPicker();
+        this._placePicker();
+    }
+
     _stepTextScale(delta) {
         const next = clampZoom((this.settings.textScale ?? 100) + delta);
         if (next === this.settings.textScale) return;
@@ -2474,7 +2528,9 @@ class OverlayPanel {
      */
     _columns() {
         const outer = this.scrollEl?.offsetWidth || this.scrollEl?.clientWidth || DEFAULT_PANEL.width;
-        return columnsForLayout(outer - SCROLLER_PADDING, this.settings.columns);
+        return columnsForLayout(outer - SCROLLER_PADDING, this.settings.columns, {
+            pinned: this.settings.columnsPinned === true,
+        });
     }
 
     /**
