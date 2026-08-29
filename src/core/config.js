@@ -717,14 +717,24 @@ class Config {
     /**
      * Register a callback to be called when a specific setting changes.
      * Multiple callbacks per key are supported.
+     *
+     * Returns its own unregister function, like every other subscribe in core. A
+     * feature that tears down and comes back — which is every feature, on every
+     * character switch — otherwise has to remember both the key and the exact
+     * callback reference to call `offSettingChange` with, and a caller that
+     * assumed this shape (custom-tabs-ui pushes the return value onto its
+     * teardown list, where `undefined` is silently skipped) accumulated a fresh
+     * pair of listeners per switch, each firing into a torn-down panel.
      * @param {string} key - Setting key to watch
      * @param {Function} callback - Callback function to call when setting changes
+     * @returns {Function} Unregister function; safe to call more than once
      */
     onSettingChange(key, callback) {
         if (!this.settingChangeCallbacks[key]) {
             this.settingChangeCallbacks[key] = [];
         }
         this.settingChangeCallbacks[key].push(callback);
+        return () => this.offSettingChange(key, callback);
     }
 
     /**
@@ -744,9 +754,11 @@ class Config {
      * because the previous map was empty. For persistent features that never
      * re-initialize and so need to resync their UI to the new character's values.
      * @param {Function} callback - Called with no arguments after settings load
+     * @returns {Function} Unregister function; safe to call more than once
      */
     onSettingsLoaded(callback) {
         this.settingsLoadedCallbacks.push(callback);
+        return () => this.offSettingsLoaded(callback);
     }
 
     /**

@@ -307,3 +307,54 @@ describe('Config and a settings store that cannot be read', () => {
         expect(settingsStorageMock.saveSettingsKeepingStored).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('setting-change listener registration', () => {
+    beforeEach(() => {
+        config.settingsMap = { probe: { isTrue: false } };
+        config.settingChangeCallbacks = {};
+        settingsStorageMock.saveSettings.mockClear();
+        settingsStorageMock.saveSettingsKeepingStored.mockClear();
+    });
+
+    // Every other subscribe in core (domObserver.register/onClass, onQuotaExceeded,
+    // inventorySort.onModeChange) hands back an unregister function, and at least one
+    // caller already assumed this one did too — custom-tabs-ui pushes the return value
+    // onto its teardown list, where `undefined` is silently skipped. Its two setting
+    // listeners survived every disable(), so a character switch left another pair
+    // behind, each firing into a torn-down panel.
+    test('onSettingChange hands back an unregister function', () => {
+        const cb = vi.fn();
+        const unregister = config.onSettingChange('probe', cb);
+
+        expect(typeof unregister).toBe('function');
+        unregister();
+        config.setSetting('probe', true);
+
+        expect(cb).not.toHaveBeenCalled();
+    });
+
+    test('unregistering one listener leaves the others subscribed', () => {
+        const kept = vi.fn();
+        const unregister = config.onSettingChange('probe', vi.fn());
+        config.onSettingChange('probe', kept);
+
+        unregister();
+        config.setSetting('probe', true);
+
+        expect(kept).toHaveBeenCalledWith(true);
+    });
+
+    test('unregistering twice is harmless', () => {
+        const unregister = config.onSettingChange('probe', vi.fn());
+        unregister();
+        expect(() => unregister()).not.toThrow();
+    });
+
+    test('onSettingsLoaded hands back an unregister function too', () => {
+        const cb = vi.fn();
+        const unregister = config.onSettingsLoaded(cb);
+        expect(typeof unregister).toBe('function');
+        unregister();
+        expect(config.settingsLoadedCallbacks).not.toContain(cb);
+    });
+});
