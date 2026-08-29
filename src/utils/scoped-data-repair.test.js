@@ -110,6 +110,18 @@ describe('moveScopedData', () => {
         expect(mockStorage.storeFor('settings').has('watchlist_marketChar')).toBe(false);
     });
 
+    it('lists every adopt-migrated overlay layout key, v2 included', async () => {
+        expect(ADOPTED_BASES.settings).toContain('overlayPanelV2');
+
+        mockStorage.storeFor('settings').set('overlayPanelV2', { tiles: ['a'] });
+        mockStorage.storeFor('settings').set('overlayPanelV2_restored', { tiles: [] });
+
+        const result = await claimLegacyData('restored');
+        expect(result.claimed).toContain('settings:overlayPanelV2');
+        expect(mockStorage.storeFor('settings').get('overlayPanelV2_restored')).toEqual({ tiles: ['a'] });
+        expect(mockStorage.storeFor('settings').has('overlayPanelV2')).toBe(false);
+    });
+
     it('leaves genuinely per-character history bases out of the move list', () => {
         const allBases = Object.values(ADOPTED_BASES).flat();
         for (const base of ['networth', 'networthSeries', 'xpHistory', 'lootLog', 'lootLogRec', 'tradeHistory']) {

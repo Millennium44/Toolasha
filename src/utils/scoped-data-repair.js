@@ -40,6 +40,11 @@ export const ADOPTED_BASES = {
         'taskCapCowbellThreshold',
         'panelOpenState',
         'overlayPanel',
+        // The v2 layout record, which is what a current build actually reads —
+        // `overlay-panel.js` adopt-migrates both keys, and listing only the
+        // pre-v2 one meant the restore-after-decision trap above was
+        // unrepairable for the layout every live build stores
+        'overlayPanelV2',
         'combatSimUpgradeModes',
         'enhancementTracker_sessions',
         'enhancementTracker_currentSession',
