@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 14: the networth worker finally prices like the main thread
+
+Four proven divergences closed. The worker's craft-cost fallback honours the net worth pricing mode instead of always quoting ask; it matches any recipe output and divides by the batch size (a by-product priced at 0 and a batch recipe charged per whole batch before); the prices it receives are reconciled against the official market value the way the main thread's always were; and enhancement materials and protection items now get live prices fetched at all instead of falling to vendor values. Pinned by a main-vs-worker differential test running the real worker source against the real calculator.
+
 ### Round 14: five small debts paid
 
 Reset layout now unpins and restores the shipped column count, so a pinned single column can't flatten the default arrangement. The combat chips' teardown clears its timers before anything that could throw. The Lab Sim level input accepts down to 1, matching the finder's own floor. The pformance report remembers the session's worst stall even after it ages out of the ring. And a battle message without an id keeps the counter's last number instead of blanking it.
