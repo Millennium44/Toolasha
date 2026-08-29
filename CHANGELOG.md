@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Updating a saved layout is one press
+
+The layout in force gets an Update "name" button beside Save as… — one press resaves it as what is on screen, no retyping the name. The "Showing: name" line now says "(edited)" whenever the screen has drifted from the saved copy, so the button is legible: geometry alone never counts as drift, and Update clears the marker.
+
 ### Ten columns
 
 The overlay's span ceiling rises from five to ten: tiles may span up to ten columns, the width can afford up to ten, and the stepper pins up to ten. A pre-rework pixel layout now migrates onto the finer grid, which lands closer to its original proportions than the five-column reading did.

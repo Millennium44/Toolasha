@@ -258,6 +258,47 @@ describe('saving and switching named layouts', () => {
         ]);
     });
 
+    test('the layout in force gets a one-press Update button that resaves it', async () => {
+        wear(dungeonLayout());
+        await overlayPanel.saveNamedLayout('Dungeon');
+        await overlayPanel.applyNamedLayout('Dungeon');
+
+        // Drift the screen from the saved copy
+        overlayPanel.settings.span = { ...overlayPanel.settings.span, battleTimer: 3 };
+
+        overlayPanel.pickerEl.style.display = '';
+        await overlayPanel._refreshLayoutNames();
+
+        const update = [...overlayPanel.pickerEl.querySelectorAll('button')].find((b) =>
+            b.textContent.startsWith('Update')
+        );
+        expect(update.textContent).toBe('Update "Dungeon"');
+
+        update.click();
+        await vi.waitFor(async () => {
+            const { loadLayouts } = await import('./overlay-layouts.js');
+            const map = await loadLayouts();
+            expect(map.Dungeon.file.toolasha.settings.span.battleTimer).toBe(3);
+        });
+    });
+
+    test('the active-layout line says when the screen has drifted from the saved copy', async () => {
+        wear(dungeonLayout());
+        await overlayPanel.saveNamedLayout('Dungeon');
+        await overlayPanel.applyNamedLayout('Dungeon');
+
+        overlayPanel.pickerEl.style.display = '';
+        await overlayPanel._refreshLayoutNames();
+        let active = overlayPanel.pickerEl.querySelector('[data-overlay-active-layout]');
+        // Unchanged: the drift check settles without annotating
+        await vi.waitFor(() => expect(active.textContent).toBe('Showing: Dungeon'));
+
+        overlayPanel.settings.span = { ...overlayPanel.settings.span, battleTimer: 3 };
+        await overlayPanel._refreshLayoutNames();
+        active = overlayPanel.pickerEl.querySelector('[data-overlay-active-layout]');
+        await vi.waitFor(() => expect(active.textContent).toBe('Showing: Dungeon (edited)'));
+    });
+
     test('with nothing saved the popover still has the presets to offer', async () => {
         overlayPanel.pickerEl.style.display = '';
         await overlayPanel._refreshLayoutNames();

@@ -1602,6 +1602,29 @@ class OverlayPanel {
         );
         bar.appendChild(saveBtn);
 
+        // One press to resave the layout in force. Updating used to mean Save
+        // as… and retyping the exact name — enough friction that layouts
+        // quietly drifted from their saved copies instead. On a preset name
+        // this saves the shadowing copy, which is the same thing "Save as…
+        // Combat" always meant.
+        if (this.appliedLayout) {
+            const updateBtn = this._textButton(
+                `Update "${this.appliedLayout}"`,
+                'Resave that layout as what is on screen now',
+                async () => {
+                    const saved = await this.saveNamedLayout(this.appliedLayout);
+                    updateBtn.textContent = saved ? 'Saved ✓' : 'Could not save';
+                    setTimeout(() => {
+                        if (this.isPickerOpen) {
+                            this._renderPicker();
+                            this._placePicker();
+                        }
+                    }, 900);
+                }
+            );
+            bar.appendChild(updateBtn);
+        }
+
         const deleteBtn = this._textButton('Delete', 'Forget a saved layout', () => this._promptDeleteLayout(select));
         deleteBtn.style.color = '#ff9d9d';
         // Only your own can be forgotten; the presets are not yours to lose
@@ -1623,6 +1646,12 @@ class OverlayPanel {
             active.textContent = `Showing: ${this.appliedLayout}`;
             Object.assign(active.style, { color: COLORS.textDim, flexBasis: '100%', marginTop: '2px' });
             bar.appendChild(active);
+
+            // Whether the screen still matches the saved copy, answered a beat
+            // late (the stored file lives in IndexedDB). "(edited)" is what
+            // makes the Update button legible: without it, "Showing: X" says a
+            // layout is in force that the screen may have long since left.
+            this._markAppliedLayoutDrift(active);
         }
 
         bar.appendChild(this._autoSwitchControls(offered));
@@ -1869,6 +1898,33 @@ class OverlayPanel {
         } catch (error) {
             console.error('[OverlayPanel] Saving the named layout failed:', error);
             return false;
+        }
+    }
+
+    /**
+     * Append "(edited)" to the active-layout line when the screen has drifted
+     * from the saved copy.
+     *
+     * Compared as the files the save button would write: `toOPanelConfig` of
+     * the live settings against the stored file (or the preset's), both
+     * reduced to their layout half — geometry is not part of what Update would
+     * change, so it must not be able to say "edited" on its own.
+     *
+     * @param {HTMLElement} active - The "Showing: X" line to annotate
+     */
+    async _markAppliedLayoutDrift(active) {
+        try {
+            const key = normalizeName(this.appliedLayout);
+            if (!key) return;
+            const map = await loadLayouts();
+            const saved = map[key]?.file || presetFile(key, { rows: registeredRows() });
+            if (!saved || !active.isConnected) return;
+
+            const layoutHalf = (file) => JSON.stringify(file?.toolasha?.settings ?? null);
+            const drifted = layoutHalf(saved) !== layoutHalf(toOPanelConfig(this.settings, null));
+            if (drifted) active.textContent = `Showing: ${this.appliedLayout} (edited)`;
+        } catch (error) {
+            console.error('[OverlayPanel] Comparing the applied layout failed:', error);
         }
     }
 
