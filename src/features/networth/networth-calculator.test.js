@@ -91,6 +91,7 @@ vi.mock('../../utils/guild-credit-pricing.js', () => ({
 
 const {
     calculateItemValue,
+    calculateCraftingCost,
     calculateAllHousesCost,
     calculateAllAbilitiesCost,
     calculateGuildShrinesCost,
@@ -431,5 +432,145 @@ describe('isUnpricedCurrency', () => {
 
     test('an ordinary item is never a currency', () => {
         expect(isUnpricedCurrency('/items/cheese')).toBe(false);
+    });
+});
+
+/**
+ * The worker computes its own craft-cost fallback from a pruned recipe index,
+ * and every difference between its arithmetic and calculateCraftingCost's is a
+ * silent valuation split between two items in the same inventory. These drive
+ * the real worker source (captured off the Blob the manager builds) against the
+ * real main-thread function over the same fixture.
+ */
+describe('craft-cost parity between the main thread and the worker', () => {
+    /**
+     * The worker source the manager ships, with its production-cost helper
+     * exposed. Built once: the manager memoises its pool, and a memoised pool
+     * builds no second Blob.
+     */
+    let workerProductionCostMemo = null;
+    async function loadWorkerProductionCost() {
+        if (workerProductionCostMemo) return workerProductionCostMemo;
+        let captured = null;
+        vi.stubGlobal(
+            'Blob',
+            class {
+                constructor(parts) {
+                    captured = parts[0];
+                }
+            }
+        );
+        vi.stubGlobal('navigator', { hardwareConcurrency: 2 });
+        // The mock at the top of this file stands in for the manager everywhere
+        // else; here the real one is wanted, for the source it generates.
+        const manager = await vi.importActual('../../utils/networth-worker-manager.js');
+        // No real Worker here, so pool creation throws once the Blob exists
+        await manager
+            .calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
+            .catch(() => {});
+        vi.unstubAllGlobals();
+        expect(captured).toBeTruthy();
+        workerProductionCostMemo = new Function('self', `${captured}\n; return calculateProductionCost;`)({
+            postMessage: () => {},
+            onmessage: null,
+        });
+        return workerProductionCostMemo;
+    }
+
+    /** The pruned shapes the manager ships, built off the same fixture. */
+    function shippedContext() {
+        const priceMap = {};
+        for (const [hrid, prices] of Object.entries(mocks.itemPrices)) {
+            priceMap[`${hrid}:0_ask`] = prices.ask;
+            priceMap[`${hrid}:0_bid`] = prices.bid;
+            const mode = prices[mocks.settings.networth_pricingMode || 'ask'];
+            if (mode > 0) priceMap[`${hrid}:0`] = mode;
+        }
+        const recipes = {};
+        for (const action of Object.values(mocks.initData.actionDetailMap)) {
+            for (const output of action.outputItems || []) {
+                if (output.itemHrid in recipes) continue;
+                recipes[output.itemHrid] = {
+                    inputItems: action.inputItems || null,
+                    upgradeItemHrid: action.upgradeItemHrid || null,
+                    outputCount: output.count || 1,
+                };
+            }
+        }
+        return { priceMap, recipes };
+    }
+
+    test('a batch recipe costs one item, not the whole batch, on both threads', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            actionDetailMap: {
+                '/actions/saw_planks': {
+                    outputItems: [{ itemHrid: '/items/plank', count: 10 }],
+                    inputItems: [{ itemHrid: '/items/log', count: 3 }],
+                },
+            },
+        };
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+
+        // 3 logs x 10, Artisan Tea 0.9, split ten ways = 2.7 apiece
+        const fromMain = calculateCraftingCost('/items/plank');
+        expect(fromMain).toBeCloseTo(2.7, 9);
+
+        const workerProductionCost = await loadWorkerProductionCost();
+        const { priceMap, recipes } = shippedContext();
+        expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+    });
+
+    test('a by-product is priced by the action that makes it, on both threads', async () => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            actionDetailMap: {
+                '/actions/smelt_bar': {
+                    outputItems: [
+                        { itemHrid: '/items/iron_bar', count: 1 },
+                        { itemHrid: '/items/slag', count: 2 },
+                    ],
+                    inputItems: [{ itemHrid: '/items/ore', count: 4 }],
+                },
+            },
+        };
+        mocks.itemPrices['/items/ore'] = { ask: 5, bid: 3 };
+
+        // Indexing on the primary output alone left slag with no recipe at all
+        // in the worker, so a by-product stack priced at zero there and at 9
+        // apiece on the main thread.
+        const barFromMain = calculateCraftingCost('/items/iron_bar');
+        const slagFromMain = calculateCraftingCost('/items/slag');
+        expect(barFromMain).toBeCloseTo(18, 9);
+        expect(slagFromMain).toBeCloseTo(9, 9);
+
+        const workerProductionCost = await loadWorkerProductionCost();
+        const { priceMap, recipes } = shippedContext();
+        expect(workerProductionCost('/items/iron_bar', priceMap, recipes)).toBeCloseTo(barFromMain, 9);
+        expect(workerProductionCost('/items/slag', priceMap, recipes)).toBeCloseTo(slagFromMain, 9);
+    });
+
+    test('both threads price craft inputs at the configured mode', async () => {
+        mocks.settings.networth_pricingMode = 'bid';
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            actionDetailMap: {
+                '/actions/saw_planks': {
+                    outputItems: [{ itemHrid: '/items/plank', count: 2 }],
+                    inputItems: [{ itemHrid: '/items/log', count: 3 }],
+                },
+            },
+        };
+        mocks.itemPrices['/items/log'] = { ask: 10, bid: 6 };
+
+        // 3 x 6 x 0.9 / 2 = 8.1 — on the ask side it would be 13.5
+        const fromMain = calculateCraftingCost('/items/plank');
+        expect(fromMain).toBeCloseTo(8.1, 9);
+
+        const workerProductionCost = await loadWorkerProductionCost();
+        const { priceMap, recipes } = shippedContext();
+        expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
     });
 });

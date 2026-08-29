@@ -41,8 +41,8 @@ const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
  * @returns {number} Production cost
  */
 function calculateProductionCost(itemHrid, priceMap, recipes) {
-    // The recipe index is built on the main thread from the same
-    // first-output-wins rule the scan this replaces used
+    // The recipe index is built on the main thread from the same any-output
+    // rule calculateCraftingCost uses, and carries the matched output's count
     const action = recipes[itemHrid] || null;
 
     if (!action) {
@@ -90,7 +90,9 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
         totalPrice += upgradePrice;
     }
 
-    return totalPrice;
+    // Divide by the matched output's count, as calculateCraftingCost does: an
+    // action that yields ten of something does not make each one cost a batch.
+    return totalPrice / (action.outputCount || 1);
 }
 
 /**
@@ -504,8 +506,15 @@ async function getWorkerPool() {
  * The worker used to receive the whole actionDetailMap and scan it per lookup;
  * structured-cloning that map into every chunk of every batch was most of the
  * networth recalc's remaining main-thread stall (2026-08-29). The index keeps
- * the scan's exact rule — first output wins — and lets each batch carry only
- * the recipes its items can actually reach.
+ * only the recipes each batch can actually reach.
+ *
+ * It mirrors the main thread's `byAnyOutput` index exactly (see
+ * getActionIndexes in networth-calculator.js): an item is "produced by" the
+ * first action that lists it among *any* of its outputs, not only as the
+ * primary one, and the matched output's count rides along so the worker can
+ * divide a batch cost down to a per-item cost the way calculateCraftingCost
+ * does. Indexing on the primary output alone left every secondary output — the
+ * by-products of a craft — with no recipe at all in the worker.
  */
 const recipeIndexMemo = new WeakMap();
 
@@ -516,12 +525,12 @@ function recipeIndexFor(actionDetailMap) {
     for (const actionHrid in actionDetailMap) {
         const action = actionDetailMap[actionHrid];
         if (!action.outputItems || action.outputItems.length === 0) continue;
-        const outputHrid = action.outputItems[0].itemHrid;
-        if (!index.has(outputHrid)) {
-            index.set(outputHrid, {
+        for (const output of action.outputItems) {
+            if (index.has(output.itemHrid)) continue;
+            index.set(output.itemHrid, {
                 inputItems: action.inputItems || null,
                 upgradeItemHrid: action.upgradeItemHrid || null,
-                outputItems: action.outputItems,
+                outputCount: output.count || 1,
             });
         }
     }

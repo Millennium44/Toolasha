@@ -245,8 +245,18 @@ describe('generated worker sources', () => {
         const gameData = {
             actionDetailMap: {
                 '/actions/craft_sword': {
-                    outputItems: [{ itemHrid: '/items/iron_sword', count: 1 }],
+                    // Two outputs: the sword, and slag as a by-product. Only an
+                    // any-output index can price the slag at all.
+                    outputItems: [
+                        { itemHrid: '/items/iron_sword', count: 1 },
+                        { itemHrid: '/items/iron_slag', count: 2 },
+                    ],
                     inputItems: [{ itemHrid: '/items/iron_bar', count: 2 }],
+                },
+                '/actions/craft_ingot': {
+                    // A batch recipe, so the per-item divide has to happen too
+                    outputItems: [{ itemHrid: '/items/ingot', count: 4 }],
+                    inputItems: [{ itemHrid: '/items/iron_slag', count: 3 }],
                 },
                 '/actions/craft_prot_orb': {
                     outputItems: [{ itemHrid: '/items/prot_orb', count: 1 }],
@@ -311,6 +321,10 @@ describe('generated worker sources', () => {
             { itemHrid: '/items/iron_sword', enhancementLevel: 3, count: 1 },
             // Unpriced base item reachable only through core_dust production
             { itemHrid: '/items/orb_core', enhancementLevel: 0, count: 4 },
+            // Unpriced, and reachable only through a by-product of another
+            // action: slag is 2 iron_bar x 100 x 0.9 / 2 = 90, so an ingot is
+            // 3 x 90 x 0.9 / 4 = 60.75 apiece
+            { itemHrid: '/items/ingot', enhancementLevel: 0, count: 2 },
         ];
 
         const { calculateItemValueBatch, terminateItemValueWorkerPool } = await import('./networth-worker-manager.js');
@@ -329,12 +343,14 @@ describe('generated worker sources', () => {
         });
         const fullRecipes = {};
         for (const action of Object.values(gameData.actionDetailMap)) {
-            const primary = action.outputItems[0].itemHrid;
-            if (!(primary in fullRecipes)) {
-                fullRecipes[primary] = {
+            // Mirrors the main thread's byAnyOutput index: any output, first
+            // action wins, carrying that output's count
+            for (const output of action.outputItems) {
+                if (output.itemHrid in fullRecipes) continue;
+                fullRecipes[output.itemHrid] = {
                     inputItems: action.inputItems || null,
                     upgradeItemHrid: action.upgradeItemHrid || null,
-                    outputItems: action.outputItems,
+                    outputCount: output.count || 1,
                 };
             }
         }
@@ -365,12 +381,19 @@ describe('generated worker sources', () => {
         });
 
         expect(values).toEqual(expected);
+        // Pinned, so a regression in either index shows as a number rather than
+        // as both sides agreeing on the same wrong answer
+        expect(values[3]).toBeCloseTo(60.75 * 2, 9);
         // Nothing degenerated to zero: the deep chains actually priced
         for (const value of values) expect(value).toBeGreaterThan(0);
 
         // And the closure the chunk carried names the deep reaches explicitly
         expect(sentParams.length).toBeGreaterThan(0);
         const shared = sentParams[0];
+        // A by-product carries its own recipe entry, with the count it is made in
+        expect(shared.recipes).toHaveProperty('/items/iron_slag');
+        expect(shared.recipes['/items/iron_slag'].outputCount).toBe(2);
+        expect(shared.recipes['/items/ingot'].outputCount).toBe(4);
         expect(shared.recipes).toHaveProperty('/items/prot_orb');
         expect(shared.recipes).toHaveProperty('/items/orb_core');
         expect(shared.recipes).toHaveProperty('/items/philosophers_mirror');
