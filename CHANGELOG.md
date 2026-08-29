@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 13, first finding: the battle counter forgets the departing character
+
+The audit fleet's combat-chips agent found the battle counter carrying its number across a character switch — and the new re-inject poll actively repainting the old "Battle #N" into the arriving character's header until the next message. It now resets on the switch, the way the boss countdown always did.
+
 ### Updating a saved layout is one press
 
 The layout in force gets an Update "name" button beside Save as… — one press resaves it as what is on screen, no retyping the name. The "Showing: name" line now says "(edited)" whenever the screen has drifted from the saved copy, so the button is legible: geometry alone never counts as drift, and Update clears the marker.
