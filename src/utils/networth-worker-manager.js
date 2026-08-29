@@ -54,10 +54,15 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
     // Sum up input material costs
     if (action.inputItems) {
         for (const input of action.inputItems) {
-            // Match main thread: getItemPrice(input.itemHrid, { mode: 'ask' }) || 0
-            let inputPrice = priceMap[input.itemHrid + ':0_ask'];
-            if (inputPrice === undefined) inputPrice = priceMap[input.itemHrid + ':0'];
-            if (inputPrice === null || inputPrice === undefined) inputPrice = 0;
+            // Match main thread: calculateCraftingCost prices inputs through
+            // getMarketPrice, which honors networth_pricingMode. The manager
+            // writes that mode's price at the plain base key (see priceMapFor)
+            // and leaves the key unset when the mode has no price, which is
+            // exactly main's "no price -> fall through" case. Reading :0_ask
+            // here instead priced every input on the ask side no matter what
+            // the setting said.
+            let inputPrice = priceMap[input.itemHrid + ':0'];
+            if (!(inputPrice > 0)) inputPrice = 0;
 
             // Recursively calculate production cost if no market price (matches main thread)
             if (inputPrice === 0) {
@@ -73,10 +78,9 @@ function calculateProductionCost(itemHrid, priceMap, recipes) {
 
     // Add upgrade item cost if this is an upgrade recipe (for refined items)
     if (action.upgradeItemHrid) {
-        // Match main thread: getItemPrice(action.upgradeItemHrid, { mode: 'ask' }) || 0
-        let upgradePrice = priceMap[action.upgradeItemHrid + ':0_ask'];
-        if (upgradePrice === undefined) upgradePrice = priceMap[action.upgradeItemHrid + ':0'];
-        if (upgradePrice === null || upgradePrice === undefined) upgradePrice = 0;
+        // Same mode-priced base key as the inputs above
+        let upgradePrice = priceMap[action.upgradeItemHrid + ':0'];
+        if (!(upgradePrice > 0)) upgradePrice = 0;
 
         // Recursively calculate production cost if no market price (matches main thread)
         if (upgradePrice === 0) {

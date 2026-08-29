@@ -131,6 +131,49 @@ describe('generated worker sources', () => {
         expect(byIndex.get(3)).toBe(0);
     });
 
+    test('production cost prices inputs at the configured mode, not always at ask', async () => {
+        // Main's calculateCraftingCost prices every input through getMarketPrice,
+        // which reads `networth_pricingMode`. The manager bakes that mode's price
+        // into the plain `hrid:0` key of the map it ships (priceMapFor), so the
+        // worker reading `hrid:0_ask` first meant a character on bid pricing had
+        // every craft-cost fallback quoted on the ask side.
+        vi.resetModules();
+        const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
+        const source = await captureWorkerScript(() =>
+            calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
+        );
+        const calculateProductionCost = new Function('self', `${source}\n; return calculateProductionCost;`)({
+            postMessage: () => {},
+            onmessage: null,
+        });
+
+        // Bid-mode map: base key carries the mode price, `_ask` is the ask side
+        const bidMap = { '/items/log:0': 6, '/items/log:0_ask': 10, '/items/log:0_bid': 6 };
+        const recipes = {
+            '/items/plank': { inputItems: [{ itemHrid: '/items/log', count: 2 }], upgradeItemHrid: null },
+            '/items/board': {
+                inputItems: [{ itemHrid: '/items/log', count: 1 }],
+                upgradeItemHrid: '/items/plank',
+            },
+        };
+
+        // 2 logs x 6 (the mode price) x 0.9 = 10.8 — reading ask would give 18
+        expect(calculateProductionCost('/items/plank', bidMap, recipes)).toBeCloseTo(10.8, 9);
+        // The upgrade item takes the same key: 1 x 6 x 0.9 + 10.8 = 16.2
+        expect(calculateProductionCost('/items/board', bidMap, recipes)).toBeCloseTo(16.2, 9);
+
+        // With the mode price absent, main falls through to the craft-cost
+        // recursion rather than quietly substituting ask — so must the worker.
+        const askOnlyMap = { '/items/log:0_ask': 10, '/items/log:0_bid': 6 };
+        const withLogRecipe = {
+            ...recipes,
+            '/items/log': { inputItems: [{ itemHrid: '/items/seed', count: 1 }], upgradeItemHrid: null },
+            '/items/seed': { inputItems: [], upgradeItemHrid: null },
+        };
+        // log prices through its own recipe (0 inputs priced) => 0, so plank is 0
+        expect(calculateProductionCost('/items/plank', askOnlyMap, withLogRecipe)).toBe(0);
+    });
+
     test('the pruned closure prices every hrid the worker can reach', async () => {
         // Differential proof that pruning is invisible: the real manager runs
         // end-to-end through a fake Worker (so the batch carries only the
