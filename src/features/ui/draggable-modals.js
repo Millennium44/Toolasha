@@ -26,6 +26,41 @@ import config from '../../core/config.js';
 const STORAGE_KEY = 'modalPositions3';
 const STORE_NAME = 'settings';
 
+/**
+ * Capture a pointer on the element that started tracking it.
+ *
+ * Without this, a drag ended by releasing the mouse button outside the
+ * browser window's content area never reaches any DOM listener — the OS
+ * keeps the event, no `pointerup` fires anywhere, and `dragging` never
+ * clears. Guarded because a synthetic event in a test, or a pointer type
+ * that does not support capture, should not be able to throw out of a
+ * pointerdown handler. Mirrors `floating-panel.js`'s helper of the same name.
+ * @param {HTMLElement} el - The element that owns this pointer stream
+ * @param {PointerEvent} event - The pointerdown that started it
+ */
+function captureFrom(el, event) {
+    try {
+        el.setPointerCapture?.(event.pointerId);
+    } catch {
+        // A pointer id the browser already dropped, or a target that cannot
+        // capture — either way the drag still works via the document
+        // listeners, just without the outside-the-window guarantee.
+    }
+}
+
+/**
+ * Let go of a capture taken by {@link captureFrom}.
+ * @param {HTMLElement} el - The element
+ * @param {PointerEvent} event - The pointerup or pointercancel ending it
+ */
+function releaseCapture(el, event) {
+    try {
+        el.releasePointerCapture?.(event.pointerId);
+    } catch {
+        // Already released, or never captured — nothing to undo
+    }
+}
+
 class DraggableModals {
     constructor() {
         this.offsets = {}; // title → { dx, dy }
@@ -149,6 +184,12 @@ class DraggableModals {
             document.addEventListener('pointermove', onPointerMove);
             document.addEventListener('pointerup', onPointerUp);
             document.addEventListener('pointercancel', onPointerUp);
+            // Captured on the bar so the browser still delivers the matching
+            // pointerup here even if the button is released outside the
+            // browser window entirely — without capture that release reaches
+            // no DOM listener at all, `dragging` never clears, and the modal
+            // keeps following every later pointermove.
+            captureFrom(bar, e);
         };
 
         const onPointerMove = (e) => {
@@ -159,7 +200,7 @@ class DraggableModals {
             this._applyTransform(modalBox, dx, dy);
         };
 
-        const onPointerUp = () => {
+        const onPointerUp = (e) => {
             if (!dragging) return;
             dragging = false;
             bar.style.cursor = 'grab';
@@ -167,6 +208,7 @@ class DraggableModals {
             document.removeEventListener('pointermove', onPointerMove);
             document.removeEventListener('pointerup', onPointerUp);
             document.removeEventListener('pointercancel', onPointerUp);
+            releaseCapture(bar, e);
 
             const t = new DOMMatrix(window.getComputedStyle(modalBox).transform);
             const dx = isNaN(t.m41) ? 0 : t.m41;
