@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Traced timers get real names on both engines
+
+The stall ledger's timer names were parsed from Chrome-shaped stacks by position; on Firefox (and through proxies) the wrong frame was picked and every interval collapsed into one line. Frames are skipped by name now, the caller's function name is part of the label (`interval:_startRefreshing@253591`), and both stack formats parse.
+
 ### The networth worker handoff stops cloning the world
 
 The last named stall: every chunk of every worker batch carried the entire action map and price map once per item — the structured clone of all that, several times per recalculation, was the remaining main-thread block. The batch message now carries a pruned recipe index and price map covering exactly what the batch's fallback chains can reach, shared once per chunk, and small batches are no longer split across the whole pool. The worker's valuation logic is unchanged and now pinned by behavior tests (priced stacks, production-cost fallback through the recipe index, enhanced items, honest zeros). A full recalculation now runs with no measurable stall.

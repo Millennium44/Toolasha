@@ -370,19 +370,32 @@ const performanceMonitor = new PerformanceMonitor();
 /**
  * Name the code that asked for a timer, from the stack.
  *
- * In the bundled script every frame shares one filename, so the line number is
- * what identifies the caller — stable within a build, which is the lifetime of
- * a stutter hunt. Falls back to 'unknown' where stacks are cut short.
+ * Both stack formats are parsed: Chrome's (`Error` line, then `at name (url:line:col)`)
+ * and Firefox's (`name@url:line:col` from the first line). Frames are skipped
+ * by NAME, not by position — a fixed skip count picked the wrong frame on
+ * Firefox and collapsed every interval into one call site (seen on the 3.29.0
+ * trace). Production keeps function names, so the caller's name is part of the
+ * label; line numbers only mean anything within one exact build.
  *
- * @returns {string} e.g. `Toolasha-dev.user.js:52344`
+ * @returns {string} e.g. `_startRefreshing@53201`, or `unknown`
  */
+const TIMER_TRACE_INTERNALS = new Set(['timerCallSite', 'traced', 'tracedTimeout', 'installIntervalTracing']);
+
 function timerCallSite() {
     const stack = new Error().stack || '';
-    const lines = stack.split('\n');
-    // Skip the Error line, this helper, and the setInterval wrapper itself
-    for (let i = 3; i < lines.length; i++) {
-        const match = /([^/\\\s(]+:\d+):\d+\)?$/.exec(lines[i].trim());
-        if (match) return match[1];
+    for (const raw of stack.split('\n')) {
+        const line = raw.trim();
+        if (!line || line === 'Error') continue;
+        // Chrome: "at name (url:line:col)" or "at url:line:col" — Firefox: "name@url:line:col"
+        const chrome = /^at (?:(\S+) \()?.*?(\d+):\d+\)?$/.exec(line);
+        const firefox = /^([^@\s]*)@.*?(\d+):\d+$/.exec(line);
+        const match = chrome || firefox;
+        if (!match) continue;
+        // "Proxy.traced" / "Object.installIntervalTracing" — the qualifier is
+        // the call shape, not the function; strip it before the internals check
+        const name = (match[1] || '').split('.').pop() || '';
+        if (TIMER_TRACE_INTERNALS.has(name)) continue;
+        return `${name || 'anon'}@${match[2]}`;
     }
     return 'unknown';
 }
