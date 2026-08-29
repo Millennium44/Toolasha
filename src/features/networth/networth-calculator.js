@@ -576,22 +576,42 @@ export function calculateGuildShrinesCost(characterGuildBuffMap, pricingMode = '
  * Flattening the whole cache is O(prices) on the main thread, and one
  * recalculation used to do it twice — once for the equipped batch and once for
  * the inventory batch, most of a 100ms synchronous block each. The map only
- * depends on the cache and the pricing mode, so it is memoised on the cache
- * object itself and the build loop hands the browser a frame on a clock, the
- * same way the valuation loop does.
+ * depends on the cache, the pricing mode and the value source, so it is
+ * memoised on the cache object itself and the build loop hands the browser a
+ * frame on a clock, the same way the valuation loop does.
+ *
+ * The base key carries a **reconciled** price — what `getMarketPrice` would
+ * return on this thread, via `resolveNetworthPrices`: the official value when
+ * the value source says so, and otherwise the order book banded and, on a side
+ * the book leaves empty, filled from the official value. The cache itself is
+ * only clamped (`marketAPI.getPrice` bands what it hands out), so shipping its
+ * raw sides left the worker valuing an illiquid item at its craft cost while
+ * the main thread valued the identical item at the game's own figure. Full
+ * reconciliation inside the worker is not worth its weight; doing it once here,
+ * where the flatten already runs, costs one resolve per cached entry.
+ *
+ * `_ask` and `_bid` stay raw on purpose. They feed the worker's enhancement-cost
+ * path, whose main-thread counterpart (`calculateEnhancementPath`) reads the
+ * clamped order book through `getItemPrices` and never reconciles — so
+ * reconciling them here would trade one divergence for another.
  */
 const priceMapMemo = new WeakMap();
 
 async function priceMapFor(priceCache, pricingMode) {
     if (!priceCache) return {};
+    const valueSource = config.getSettingValue('networth_valueSource') || 'orderBook';
     const memo = priceMapMemo.get(priceCache);
-    if (memo && memo.pricingMode === pricingMode) return memo.priceMap;
+    if (memo && memo.pricingMode === pricingMode && memo.valueSource === valueSource) return memo.priceMap;
 
     const priceMap = {};
     let sliceStart = performance.now();
     for (const [key, prices] of priceCache.entries()) {
+        // "hrid:level" — an hrid carries no colon, so the last one splits it
+        const split = key.lastIndexOf(':');
+        const resolved = resolveNetworthPrices(key.slice(0, split), Number(key.slice(split + 1)) || 0, priceCache);
+
         if (typeof prices === 'number') {
-            priceMap[key] = prices;
+            priceMap[key] = typeof resolved === 'number' ? resolved : prices;
         } else if (prices && typeof prices === 'object') {
             // Store ask and bid WITHOUT coalescing null to 0 (preserve null for "no data" vs "0 price")
             priceMap[key + '_ask'] = prices.ask;
@@ -600,7 +620,7 @@ async function priceMapFor(priceCache, pricingMode) {
             // Leave it unset when the mode price is missing so the worker falls
             // back to enhancement-cost calculation like calculateItemValue does,
             // instead of silently substituting ask.
-            const modePrice = prices[pricingMode];
+            const modePrice = typeof resolved === 'number' ? resolved : resolved?.[pricingMode];
             if (modePrice && modePrice > 0) {
                 priceMap[key] = modePrice;
             }
@@ -612,7 +632,7 @@ async function priceMapFor(priceCache, pricingMode) {
             sliceStart = performance.now();
         }
     }
-    priceMapMemo.set(priceCache, { pricingMode, priceMap });
+    priceMapMemo.set(priceCache, { pricingMode, valueSource, priceMap });
     return priceMap;
 }
 

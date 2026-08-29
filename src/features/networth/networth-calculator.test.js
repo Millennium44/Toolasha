@@ -1,9 +1,10 @@
 /**
  * Networth Calculator — per-item valuation rules and the house/ability
- * category totals. `calculateNetworth` itself (the full character sweep with
- * exclusions and worker batching) is not exercised here; these tests drive
- * `calculateItemValue`, `calculateAllHousesCost` and `calculateAllAbilitiesCost`
- * directly against a mocked game and market.
+ * category totals. Most tests drive `calculateItemValue`,
+ * `calculateAllHousesCost` and `calculateAllAbilitiesCost` directly against a
+ * mocked game and market; the last two blocks drive the full `calculateNetworth`
+ * sweep, for the two things only the sweep decides — which prices reach the
+ * worker, and which items get priced at all.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -19,6 +20,8 @@ const mocks = vi.hoisted(() => ({
     shopCosts: {},
     unpricedAbilities: new Set(),
     marketValues: null, // { marketValuesVersion, marketItemValues } for getMarketItemValues()
+    combinedData: null, // what calculateNetworth sweeps: characterItems, itemDetailMap, ...
+    batchPrices: {}, // "hrid:level" -> {ask, bid}, for getPricesBatch
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -30,11 +33,30 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => mocks.initData,
+        getCombinedData: () => mocks.combinedData,
         getItemDetails: (hrid) => mocks.itemDetails[hrid] ?? null,
         getMarketItemValues: () => mocks.marketValues,
+        characterGuildBuffMap: null,
     },
 }));
-vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: (hrid) => mocks.itemPrices[hrid] ?? null } }));
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        getPrice: (hrid) => mocks.itemPrices[hrid] ?? null,
+        isLoaded: () => true,
+        fetch: async () => ({}),
+        marketData: {},
+        getPricesBatch: (items) => {
+            const cache = new Map();
+            for (const { itemHrid, enhancementLevel = 0 } of items) {
+                const key = `${itemHrid}:${enhancementLevel}`;
+                if (cache.has(key)) continue;
+                const prices = mocks.batchPrices[key] ?? (enhancementLevel === 0 ? mocks.itemPrices[itemHrid] : null);
+                if (prices) cache.set(key, prices);
+            }
+            return cache;
+        },
+    },
+}));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     // Null total is "the book has no listing", which the caller must not read as free
     explainAbilityCost: (hrid, level) =>
@@ -89,7 +111,9 @@ vi.mock('../../utils/guild-credit-pricing.js', () => ({
     }),
 }));
 
+const { calculateItemValueBatch: workerBatch } = await import('../../utils/networth-worker-manager.js');
 const {
+    calculateNetworth,
     calculateItemValue,
     calculateCraftingCost,
     calculateAllHousesCost,
@@ -110,6 +134,9 @@ beforeEach(() => {
     mocks.shopCosts = {};
     mocks.unpricedAbilities = new Set();
     mocks.marketValues = null;
+    mocks.combinedData = null;
+    mocks.batchPrices = {};
+    workerBatch.mockReset();
     _resetMarketValues();
 });
 
@@ -572,5 +599,102 @@ describe('craft-cost parity between the main thread and the worker', () => {
         const workerProductionCost = await loadWorkerProductionCost();
         const { priceMap, recipes } = shippedContext();
         expect(workerProductionCost('/items/plank', priceMap, recipes)).toBeCloseTo(fromMain, 9);
+    });
+});
+
+/**
+ * What the worker is actually handed. The worker cannot afford to reconcile
+ * prices itself — that is the main thread's `resolveNetworthPrices`, official
+ * value map and all — so the manager has to hand it prices that are already
+ * reconciled, or the two threads price the same illiquid item differently.
+ * These drive the real `calculateNetworth` and read the price map off the
+ * (mocked) worker call.
+ */
+describe('the price map the worker batch is handed', () => {
+    /** Run a full sweep over one inventory item and return the shipped price map. */
+    async function shippedPriceMap(item) {
+        mocks.combinedData = {
+            characterItems: [{ ...item, itemLocationHrid: '/item_locations/inventory' }],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.itemDetails,
+        };
+        workerBatch.mockResolvedValue([0]);
+        await calculateNetworth();
+        expect(workerBatch).toHaveBeenCalled();
+        return workerBatch.mock.calls[0][1];
+    }
+
+    beforeEach(() => {
+        // Always a worker item, so the batch is always built
+        mocks.settings.networth_highEnhancementUseCost = true;
+        mocks.settings.networth_highEnhancementMinLevel = 13;
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.itemDetails['/items/iron_sword'] = { itemLevel: 10, name: 'Iron Sword' };
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            actionDetailMap: {
+                '/actions/craft_sword': {
+                    outputItems: [{ itemHrid: '/items/iron_sword', count: 1 }],
+                    inputItems: [{ itemHrid: '/items/iron_bar', count: 2 }],
+                },
+            },
+        };
+    });
+
+    test('a side the order book leaves empty is filled from the official value, as it is on this thread', async () => {
+        mocks.settings.networth_valueSource = 'orderBook';
+        // Nobody is selling iron bar; the game still publishes a value for it
+        mocks.itemPrices['/items/iron_bar'] = { ask: null, bid: 100 };
+        mocks.itemPrices['/items/iron_sword'] = { ask: 3000, bid: 2900 };
+        mocks.marketValues = {
+            marketValuesVersion: 1,
+            marketItemValues: { '/items/iron_bar': { 0: 500 } },
+        };
+
+        // The main thread already prices the bar at the value, so the craft cost
+        // it derives is 2 x 500 x 0.9 = 900
+        expect(calculateCraftingCost('/items/iron_sword')).toBeCloseTo(900, 9);
+
+        const priceMap = await shippedPriceMap({ itemHrid: '/items/iron_sword', enhancementLevel: 14, count: 1 });
+        // Raw ask stayed raw — the worker's enhancement path mirrors the main
+        // thread's, which reads the clamped order book and never reconciles
+        expect(priceMap['/items/iron_bar:0_ask']).toBe(null);
+        expect(priceMap['/items/iron_bar:0_bid']).toBe(100);
+        // ...but the base key, which is what the craft-cost fallback reads, is
+        // the reconciled figure and not "no price at all"
+        expect(priceMap['/items/iron_bar:0']).toBe(500);
+    });
+
+    test("value source 'officialValue' reaches the worker too", async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.itemPrices['/items/iron_bar'] = { ask: 40, bid: 30 };
+        mocks.itemPrices['/items/iron_sword'] = { ask: 3000, bid: 2900 };
+        mocks.marketValues = {
+            marketValuesVersion: 1,
+            marketItemValues: { '/items/iron_bar': { 0: 500 } },
+        };
+
+        const priceMap = await shippedPriceMap({ itemHrid: '/items/iron_sword', enhancementLevel: 14, count: 1 });
+        // The setting says ignore the book, and the worker now hears that
+        expect(priceMap['/items/iron_bar:0']).toBe(500);
+    });
+
+    test('a stale order-book price ships banded', async () => {
+        mocks.settings.networth_valueSource = 'orderBook';
+        // Ask parked five times the value: no order could reach it. marketAPI
+        // already bands what it caches, so this is belt and braces — but it is
+        // the band the main thread applies, and the worker must see the same one.
+        mocks.itemPrices['/items/iron_bar'] = { ask: 5000, bid: 900 };
+        mocks.itemPrices['/items/iron_sword'] = { ask: 3000, bid: 2900 };
+        mocks.marketValues = {
+            marketValuesVersion: 1,
+            marketItemValues: { '/items/iron_bar': { 0: 1000 } },
+        };
+
+        const priceMap = await shippedPriceMap({ itemHrid: '/items/iron_sword', enhancementLevel: 14, count: 1 });
+        expect(priceMap['/items/iron_bar:0']).toBe(1105);
     });
 });
