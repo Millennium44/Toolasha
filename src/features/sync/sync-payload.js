@@ -146,6 +146,13 @@ export async function buildPayloadJSON(scope = 'settings') {
  * whose local value cannot be read is left alone too: guessing at a merge base
  * we could not read is the blind overwrite this is meant to avoid.
  *
+ * The caller must have quiesced writers first. `storage.tryGet` reads
+ * IndexedDB, and `storage.set` debounces for three seconds — so a base read
+ * while writes are still queued omits everything recorded in that window,
+ * `importEverything` flushes the queue on its way in, and the union computed
+ * from the stale base is then written straight back over the entry that just
+ * landed. See {@link applyPayload}.
+ *
  * @param {Object} payload - Parsed payload; its store values are mutated in place
  * @returns {Promise<Array<{store: string, key: string, label: string}>>} What was combined
  */
@@ -210,6 +217,17 @@ export async function applyPayload(json) {
             if (LOCAL_ONLY_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) delete settingsStore[key];
         }
     }
+
+    // Land the debounce queue BEFORE reading merge bases, not on the way into
+    // `importEverything`. A history writes through `storage.set`, which holds
+    // the value for three seconds; `mergeLocalHistories` reads through
+    // `storage.tryGet`, which goes to IndexedDB and cannot see it. Flushing
+    // afterwards — which is what `importEverything` does — makes the queued
+    // value land and then be overwritten by a union computed without it, so a
+    // pull arriving in the seconds after a kill, a fill or an XP sample threw
+    // exactly those entries away. Flushing here makes the base current; the
+    // flush inside `importEverything` then finds nothing left to do.
+    await storage.beginRestore?.();
 
     const merged = await mergeLocalHistories(payload);
 

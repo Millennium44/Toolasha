@@ -13,11 +13,24 @@ vi.mock('../../core/storage.js', () => ({
                 ? { found: true, value: store[key] }
                 : { found: false, value: null };
         },
+        // The real one flushes every debounced write before a restore
+        // overwrites what it was going to land on. Reads (`tryGet`) go straight
+        // to IndexedDB and never see a queued write, so *when* this runs decides
+        // whether a merge base includes the last few seconds of recording.
+        beginRestore: async () => {
+            flushLog.push('beginRestore');
+            for (const [name, entries] of Object.entries(storeState.pending || {})) {
+                storeState.stores[name] = { ...(storeState.stores[name] || {}), ...entries };
+            }
+            storeState.pending = {};
+        },
     },
 }));
 
 const importedPayloads = vi.hoisted(() => []);
 const importOutcome = vi.hoisted(() => ({ failed: [], complete: true }));
+/** What `beginRestore()` landed, in call order, so a test can see when it ran */
+const flushLog = vi.hoisted(() => []);
 // A real (not stubbed) filter, so the sync-payload tests below prove the
 // wiring actually calls it rather than asserting a mock echoed its input back
 const EXCLUDED_STORE_KEY_PREFIXES = vi.hoisted(() => ({
@@ -25,6 +38,12 @@ const EXCLUDED_STORE_KEY_PREFIXES = vi.hoisted(() => ({
 }));
 vi.mock('../../utils/full-backup.js', () => ({
     importEverything: async (payload) => {
+        // The real `importEverything` quiesces live writers first
+        flushLog.push('importEverything.beginRestore');
+        for (const [name, entries] of Object.entries(storeState.pending || {})) {
+            storeState.stores[name] = { ...(storeState.stores[name] || {}), ...entries };
+        }
+        storeState.pending = {};
         importedPayloads.push(payload);
         return {
             restored: { settings: Object.keys(payload.stores?.settings || {}).length },
@@ -59,6 +78,8 @@ beforeEach(() => {
     importOutcome.failed = [];
     importOutcome.complete = true;
     storeState.unreadable = false;
+    storeState.pending = {};
+    flushLog.length = 0;
     storeState.stores = {
         settings: {
             script_settingsMap_abc: { sync_token: { value: 'ghp_secret' }, chatCommands: { isTrue: true } },
@@ -211,6 +232,30 @@ describe('applyPayload merges additive records', () => {
         expect(importedPayloads[0].stores.dungeonRuns.run_char).toEqual(['local', 'remote']);
         expect(result.merged).toEqual([{ store: 'dungeonRuns', key: 'run_char', label: 'fake' }]);
         off();
+    });
+
+    test('a write still sitting in the debounce queue is part of the merge base', async () => {
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...new Set([...local, ...incoming])],
+            label: 'fake',
+        });
+        // What IndexedDB holds, and what this session recorded seconds ago and
+        // has not flushed yet — `storage.set` debounces for three seconds
+        storeState.stores.dungeonRuns = { run_char: ['old'] };
+        storeState.pending = { dungeonRuns: { run_char: ['old', 'just-recorded'] } };
+
+        try {
+            await applyPayload(payloadWith('dungeonRuns', 'run_char', ['remote']));
+
+            // The queue is flushed before the import writes, so a merge base read
+            // before that flush is stale — and the import then puts the stale union
+            // straight back on top of the entry that just landed
+            expect(importedPayloads[0].stores.dungeonRuns.run_char).toEqual(['old', 'just-recorded', 'remote']);
+        } finally {
+            off();
+        }
     });
 
     test('a key this device has never stored comes down whole', async () => {
