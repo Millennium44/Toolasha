@@ -548,6 +548,12 @@ class CombatDropLuck {
     _onCombatEnded(message) {
         const lootMap = message?.unit?.totalLootMap;
         if (!lootMap || !this.context) return;
+        // Another player's sheet (their profile's Battle Info, which a trial
+        // capture opens dozens of times) rides the same message carrying THEIR
+        // loot totals. Modelling the viewer's zone against somebody else's
+        // takings is 60-100ms of work per open for a percentile about nobody.
+        const owner = message.unit.character?.id;
+        if (owner != null && String(owner) !== String(dataManager.getCurrentCharacterId())) return;
 
         this._findPanel(0, (panel) => {
             if (panel.querySelector(`#${DISPLAY_ID}`)) return;

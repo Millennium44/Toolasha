@@ -4,6 +4,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
@@ -22,13 +23,26 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
  * there, and then spent ten retries hunting a battle panel that was not being
  * drawn — three console lines per click, none of them a real problem.
  *
+ * There is a third shape wearing the same message: another player's sheet,
+ * opened from their profile (a guild trial capture does this dozens of times in
+ * a row). It carries *their* session totals, so the totals check alone reads it
+ * as a summary — and the revenue block lands inside their profile popup with
+ * figures that belong to nobody. A summary is only a summary when the unit is
+ * the character being played, so a sheet that names somebody else is refused
+ * here; one that names nobody (the game's own summary payloads carry no
+ * character at all) keeps passing.
+ *
  * @param {Object} message - A `battle_unit_fetched` payload
+ * @param {string|number|null} [selfId] - The current character's id, when known
  * @returns {boolean} True when the payload carries session totals
  */
-export function isSessionSummary(message) {
+export function isSessionSummary(message, selfId = null) {
     const unit = message?.unit;
     if (!unit) return false;
-    return Boolean(unit.totalLootMap || unit.totalSkillExperienceMap);
+    if (!unit.totalLootMap && !unit.totalSkillExperienceMap) return false;
+    const owner = unit.character?.id;
+    if (owner != null && selfId != null && String(owner) !== String(selfId)) return false;
+    return true;
 }
 
 /**
@@ -81,7 +95,7 @@ class CombatSummary {
         // A unit sheet (clicking a monster or yourself mid-fight) rides the same
         // message and is not a summary — drop it silently, before the market
         // fetch, the missing-map warnings and the battle-panel hunt.
-        if (!isSessionSummary(message)) {
+        if (!isSessionSummary(message, dataManager.getCurrentCharacterId())) {
             return;
         }
 

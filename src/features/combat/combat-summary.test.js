@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     marketLoaded: true,
     prices: {},
     wsHandlers: {},
+    characterId: 'me-1',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -38,6 +39,11 @@ vi.mock('../../core/websocket.js', () => ({
         off: (event, handler) => {
             if (game.wsHandlers[event] === handler) delete game.wsHandlers[event];
         },
+    },
+}));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => game.characterId,
     },
 }));
 
@@ -223,6 +229,36 @@ describe('combat summary', () => {
         expect(error).not.toHaveBeenCalled();
         warn.mockRestore();
         error.mockRestore();
+    });
+
+    test("another player's sheet with their session totals is not a summary", async () => {
+        // A trial capture opens dozens of other players' Battle Infos; each
+        // carries THAT player's totals and must not draw a revenue block
+        buildBattlePanel('Combat Duration: 1h 0m 0s | Battles: 2 | Deaths: 0');
+
+        await game.wsHandlers.battle_unit_fetched({
+            unit: {
+                character: { id: 'someone-else' },
+                totalLootMap: { '/items/coin': { itemHrid: '/items/coin', count: 100 } },
+                totalSkillExperienceMap: { '/skills/attack': 50 },
+            },
+        });
+
+        expect(text('mwi-combat-revenue')).toBeNull();
+    });
+
+    test("the player's own sheet, named as theirs, still summarises", async () => {
+        buildBattlePanel('Combat Duration: 1h 0m 0s | Battles: 2 | Deaths: 0');
+
+        await game.wsHandlers.battle_unit_fetched({
+            unit: {
+                character: { id: 'me-1' },
+                totalLootMap: { '/items/coin': { itemHrid: '/items/coin', count: 100 } },
+                totalSkillExperienceMap: { '/skills/attack': 50 },
+            },
+        });
+
+        expect(text('mwi-combat-revenue')).toContain('Total revenue');
     });
 
     test('a unit sheet with no battle panel on screen never starts the panel hunt', async () => {

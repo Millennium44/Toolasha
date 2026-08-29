@@ -384,3 +384,28 @@ describe('an analysis in flight when the character switches', () => {
         expect(combatDropLuck.lastResult).toBeNull();
     });
 });
+
+describe("another player's sheet arriving as battle_unit_fetched", () => {
+    test('is refused before any panel hunt or modelling starts', () => {
+        combatDropLuck.context = { actionHrid: '/actions/combat/somewhere' };
+        combatDropLuck.isInitialized = true;
+        const hunt = vi.spyOn(combatDropLuck, '_findPanel').mockImplementation(() => {});
+
+        // A trial capture opens other players' Battle Infos in a row; each
+        // carries THAT player's loot totals under their own character id
+        combatDropLuck._onCombatEnded({
+            unit: { character: { id: 'someone-else' }, totalLootMap: { '/items/coin': 500 } },
+        });
+        expect(hunt).not.toHaveBeenCalled();
+
+        // The player's own summary, named as theirs, still gets the treatment
+        combatDropLuck._onCombatEnded({
+            unit: { character: { id: game.characterId }, totalLootMap: { '/items/coin': 500 } },
+        });
+        expect(hunt).toHaveBeenCalledTimes(1);
+
+        hunt.mockRestore();
+        combatDropLuck.context = null;
+        combatDropLuck.isInitialized = false;
+    });
+});
