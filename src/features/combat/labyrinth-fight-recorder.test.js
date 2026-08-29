@@ -149,6 +149,16 @@ describe('labyrinth fight recorder', () => {
         expect(c.playerDotTicks).toBeNull();
     });
 
+    test('DoT damage is kept beside the ticks, and null on recordings without it', () => {
+        recorder.noteAttempt(attempt({ playerHits: 40, playerDotTicks: 10, playerDotDamage: 800 }));
+        recorder.noteAttempt(attempt({ playerHits: 40, playerDotTicks: 0, playerDotDamage: 0 })); // a real zero
+        recorder.noteAttempt(attempt({ playerHits: 40 })); // recorded before the split
+        const [a, b, c] = recorder.recordedAttempts();
+        expect(a.playerDotDamage).toBe(800);
+        expect(b.playerDotDamage).toBe(0);
+        expect(c.playerDotDamage).toBeNull();
+    });
+
     test('the buffer is bounded to the newest 500', () => {
         for (let i = 0; i < 550; i++) recorder.noteAttempt(attempt());
         expect(recorder.recordingStatus().attempts).toBe(500);

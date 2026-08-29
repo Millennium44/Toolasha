@@ -200,6 +200,11 @@ function persist() {
  *   the monster — health it lost with no swing behind it. Counted apart from
  *   `playerHits` because a tick rings no attack counter, and kept so the replay
  *   can compare the swing/tick mix against the sim's
+ * @param {number} [attempt.playerDotDamage] - The part of `monsterDamage` those
+ *   ticks dealt. `monsterDamage` is the whole of what the monster lost, so
+ *   damage-per-hit divided by `playerHits` would count tick damage in the
+ *   numerator and no tick in the denominator; this is what the replay subtracts
+ *   to make both sides measure swings
  * @param {number} [attempt.battleStartedAt] - When the fight opened (ms epoch)
  * @param {number} [attempt.firstUpdateAt] - First battle_updated processed
  * @param {number} [attempt.lastTickAt] - Last battle_updated processed
@@ -280,6 +285,11 @@ export function noteAttempt(attempt) {
         // Null on recordings from before the hit mix was tracked, so a fight
         // that predates the counter is not read as one that never ticked
         playerDotTicks: Number.isFinite(playerDotTicks) && playerDotTicks >= 0 ? playerDotTicks : null,
+        // Null the same way, and read the same way: a fight that predates the
+        // subtotal cannot have its tick damage subtracted, so the replay keeps
+        // the mixed damage-per-hit for it and labels it, rather than treating
+        // the absent field as a fight that bled for nothing
+        playerDotDamage: nonNegOrNull(attempt.playerDotDamage),
         fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
         // The clear chance the sim was claiming when the fight was recorded —
         // the prediction at entry, not one recomputed later by a newer engine.

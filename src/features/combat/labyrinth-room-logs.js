@@ -55,21 +55,32 @@ export { ROOM_TRAVEL_SECONDS };
  * decide whether a soft-hit gap is the monster's mitigation or just a mix the
  * sim gets wrong.
  *
- * @param {Object} tally - From `foldEvents`, player index → `{hits, misses, crits, dotTicks, ...}`
- * @returns {{playerHits: number, playerMisses: number, playerCrits: number, playerDotTicks: number}}
+ * Their DAMAGE comes along beside their count, and it is what makes
+ * damage-per-hit an honest comparison rather than a mixed one. `foldEvents`
+ * folds `dotDamage` inside `damage` deliberately, so every total that existed
+ * before it stayed right — but the fight's damage total is then the whole of
+ * what the monster lost while the hit count is swings alone, and dividing one
+ * by the other counts damage-over-time in the numerator and not in the
+ * denominator. Recording the subtotal lets the replay take it back out.
+ *
+ * @param {Object} tally - From `foldEvents`, player index → `{hits, misses, crits, dotTicks, dotDamage, ...}`
+ * @returns {{playerHits: number, playerMisses: number, playerCrits: number,
+ *   playerDotTicks: number, playerDotDamage: number}}
  */
 function tallyHitsMisses(tally) {
     let playerHits = 0;
     let playerMisses = 0;
     let playerCrits = 0;
     let playerDotTicks = 0;
+    let playerDotDamage = 0;
     for (const entry of Object.values(tally || {})) {
         playerHits += Number(entry?.hits) || 0;
         playerMisses += Number(entry?.misses) || 0;
         playerCrits += Number(entry?.crits) || 0;
         playerDotTicks += Number(entry?.dotTicks) || 0;
+        playerDotDamage += Number(entry?.dotDamage) || 0;
     }
-    return { playerHits, playerMisses, playerCrits, playerDotTicks };
+    return { playerHits, playerMisses, playerCrits, playerDotTicks, playerDotDamage };
 }
 
 /**
@@ -2175,10 +2186,11 @@ class LabyrinthRoomLogs {
      * The sim's damage split by what dealt it, under a group's metric rows.
      *
      * The rates above say the sim's damage-per-hit is off; this says what the
-     * sim thinks it is made of. A damage-over-time tick counts as a landed hit
-     * on both sides of the comparison and lands for a fraction of a swing, so
-     * its SHARE of the landed hits is what decides whether a soft-hit gap is
-     * the monster's mitigation or a mix the sim gets wrong.
+     * sim thinks it is made of. The rates themselves count swings alone on both
+     * sides, so a damage-over-time tick never enters them — but it is still real
+     * damage the swing that applied it set up, and its SHARE of what the sim
+     * dealt is what decides whether a soft-hit gap is the monster's mitigation
+     * or a mix the sim gets wrong.
      *
      * @param {Object} tally - `group.simTally` from the replay comparison
      * @returns {HTMLElement|null}
