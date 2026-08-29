@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Two preset tiles get the width their content needs
+
+Reviewed every shipped overlay preset against live data. The Labyrinth preset's Session tile and the Skilling preset's Total Profit tile were drawing at one column and truncating; both now take a full line (Treasure widens with Session to keep the labyrinth lines even).
+
 ### Battle chips survive queue changes again — safely this time
 
 The battle counter and boss countdown recover from an in-place header rewrite via a slow poll (one element read every 1.5 seconds, only while they have something to show) instead of the mutation watcher that fed back on the ticking combat header and froze tabs. Queuing an action mid-combat now costs the chips at most a moment.

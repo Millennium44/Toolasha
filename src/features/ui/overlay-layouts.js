@@ -320,7 +320,7 @@ export const PRESET_LAYOUTS = {
             'consumables',
             'houses',
         ],
-        span: { consumables: 2, houses: 2 },
+        span: { totalProfit: 2, consumables: 2, houses: 2 },
     },
     Labyrinth: {
         activity: ACTIVITY.LABYRINTH,
@@ -338,7 +338,7 @@ export const PRESET_LAYOUTS = {
             'replayCheck',
             'consumables',
         ],
-        span: { combatRevenue: 2, replayCheck: 2, consumables: 2 },
+        span: { treasure: 2, combatSession: 2, combatRevenue: 2, replayCheck: 2, consumables: 2 },
     },
     Market: {
         activity: ACTIVITY.MARKET,
