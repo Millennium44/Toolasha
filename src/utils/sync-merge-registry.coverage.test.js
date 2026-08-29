@@ -171,13 +171,21 @@ const corpus = [
     { store: 'rerollSpending', key: `taskCompletions_${CHAR}`, label: 'TaskCompletionTracker legacy key' },
 
     // alchemy/transmute-history-tracker.js — chunked, daily buckets
-    { store: 'alchemyHistory', key: `transmuteSessionsRec_${CHAR}_2026-01-15`, label: 'TransmuteHistoryTracker records' },
+    {
+        store: 'alchemyHistory',
+        key: `transmuteSessionsRec_${CHAR}_2026-01-15`,
+        label: 'TransmuteHistoryTracker records',
+    },
     { store: 'alchemyHistory', key: `transmuteSessions_${CHAR}`, label: 'TransmuteHistoryTracker legacy key' },
     // NO_CHARACTER's pre-login sessions live at the bare legacy key
     { store: 'alchemyHistory', key: 'transmuteSessions', label: 'TransmuteHistoryTracker legacy key' },
 
     // alchemy/decompose-history-tracker.js — chunked, daily buckets
-    { store: 'alchemyHistory', key: `decomposeSessionsRec_${CHAR}_2026-01-15`, label: 'DecomposeHistoryTracker records' },
+    {
+        store: 'alchemyHistory',
+        key: `decomposeSessionsRec_${CHAR}_2026-01-15`,
+        label: 'DecomposeHistoryTracker records',
+    },
     { store: 'alchemyHistory', key: `decomposeSessions_${CHAR}`, label: 'DecomposeHistoryTracker legacy key' },
 
     // alchemy/coinify-history-tracker.js — chunked, daily buckets
