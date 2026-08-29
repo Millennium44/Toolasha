@@ -76,6 +76,7 @@ function manaCostOf(abilityHrid) {
 
 let onNewBattle = null;
 let onAbility = null;
+let onCharacterSwitching = null;
 
 export default {
     name: 'Mana Tracker',
@@ -93,15 +94,25 @@ export default {
             if (typeof abilityHrid !== 'string') return;
             recordCast(tally, abilityHrid, manaCostOf(abilityHrid));
         };
+        // The tally is kept across a settings toggle on purpose — see the
+        // module note — but a character switch is a different character's run
+        // and not the same one continuing, the same distinction
+        // rotation-tracker.js draws on the same event for the same reason.
+        // Without this, mana spent by whoever was played before the switch
+        // stayed in the total and was shown as this character's.
+        onCharacterSwitching = () => resetManaTally();
 
         webSocketHook.on('new_battle', onNewBattle);
         webSocketHook.on('battle_consumable_ability_updated', onAbility);
+        dataManager.on?.('character_switching', onCharacterSwitching);
     },
     cleanup: () => {
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onAbility) webSocketHook.off('battle_consumable_ability_updated', onAbility);
+        if (onCharacterSwitching) dataManager.off?.('character_switching', onCharacterSwitching);
         onNewBattle = null;
         onAbility = null;
+        onCharacterSwitching = null;
     },
 };
 

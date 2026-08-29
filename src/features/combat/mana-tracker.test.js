@@ -4,6 +4,7 @@ const game = vi.hoisted(() => ({
     manaTracker: true,
     abilityDetailMap: {},
     handlers: {},
+    dataManagerHandlers: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -13,8 +14,12 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ abilityDetailMap: game.abilityDetailMap }),
         getCurrentCharacterId: () => 'char1',
-        on: () => {},
-        off: () => {},
+        on: (event, handler) => {
+            game.dataManagerHandlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (game.dataManagerHandlers[event] === handler) delete game.dataManagerHandlers[event];
+        },
     },
 }));
 vi.mock('../../core/websocket.js', () => ({
@@ -36,6 +41,7 @@ describe('mana tracker wiring', () => {
         game.manaTracker = true;
         game.abilityDetailMap = {};
         game.handlers = {};
+        game.dataManagerHandlers = {};
         resetManaTally();
         manaTracker.cleanup();
     });
@@ -93,6 +99,23 @@ describe('mana tracker wiring', () => {
 
         expect(game.handlers['new_battle']).toBeUndefined();
         expect(game.handlers['battle_consumable_ability_updated']).toBeUndefined();
+    });
+
+    test('a character switch starts the count over, rather than blending the next character into it', () => {
+        // rotation-tracker.js resets its own running state on the same event
+        // for the same reason: a mid-run tally is only meaningful for the
+        // character it was measured on, and carrying it across a switch mislabels
+        // the arriving character's mana spend as including the departing one's.
+        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        manaTracker.initialize();
+        game.handlers['new_battle']();
+        game.handlers['battle_consumable_ability_updated']({ ability: '/abilities/fireball' });
+        expect(manaSpend().mana).toBe(15);
+
+        game.dataManagerHandlers['character_switching']?.();
+
+        expect(manaSpend().fights).toBe(0);
+        expect(manaSpend().mana).toBe(0);
     });
 
     test('resetManaTally starts the count over', () => {
