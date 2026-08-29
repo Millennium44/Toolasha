@@ -859,9 +859,12 @@ function describeFailure(label, error) {
  * the stores it replaced against pre-restore writes (see
  * `storage.finishRestore`), and the settings store is always one of them. This
  * bookkeeping is written *after* the apply and is not pre-restore state — it is
- * the record that the apply happened — so it goes down the bulk path, which the
- * latch does not cover. Written through `set` it would be silently refused, and
- * a pull that cannot record its own stamp re-applies the same payload for ever.
+ * the record that the apply happened — so it goes down the bulk path and says
+ * so explicitly with `bypassRestoreLatch`. Written through `set` it would be
+ * silently refused, and a pull that cannot record its own stamp re-applies the
+ * same payload for ever. The flag is deliberate rather than inherited: the bulk
+ * path is latched like every other write now, because the recorders that hold a
+ * store in memory flush through it too.
  *
  * One transaction for the lot is also simply what these four keys want.
  *
@@ -869,7 +872,7 @@ function describeFailure(label, error) {
  * @returns {Promise<void>}
  */
 async function rememberLocal(entries) {
-    const written = await storage.putAll(STORE, entries);
+    const written = await storage.putAll(STORE, entries, { bypassRestoreLatch: true });
     const expected = Object.keys(entries).length;
     if (written !== expected) {
         console.error(`[Sync] Only ${written}/${expected} sync bookkeeping keys were written`);

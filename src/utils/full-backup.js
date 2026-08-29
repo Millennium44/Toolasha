@@ -159,7 +159,10 @@ export async function importEverything(payload, options = {}) {
 
         const entries = payloadStores[storeName] || {};
         const want = Object.keys(entries).length;
-        const count = await storage.putAll(storeName, entries);
+        // The restore is the one writer the latch is not protecting against —
+        // it is what the latch is protecting. A second pull in the same session
+        // would otherwise be refused by the first one's latch.
+        const count = await storage.putAll(storeName, entries, { bypassRestoreLatch: true });
         restored[storeName] = count;
         expected[storeName] = want;
 

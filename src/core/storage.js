@@ -1081,11 +1081,27 @@ class Storage {
      * so writing hundreds of keys serially through it would mean hundreds of pending
      * timers (or hundreds of sequential `immediate` writes). This does it in one
      * readwrite transaction instead — use it for bulk operations like restore/import.
+     *
+     * Latched by `finishRestore` like `set` and `delete`, and for the same
+     * reason: the recorders that keep a store's contents in memory —
+     * `chunked-history`, `trade-ledger-store`, `networth-history` — all flush
+     * through here, so a blanket exemption let exactly the writer the latch
+     * names put its pre-restore array back on top of the restore. The restore
+     * itself and the sync bookkeeping that records it are the two writers that
+     * genuinely are not pre-restore state, and they say so with
+     * `bypassRestoreLatch`.
      * @param {string} storeName - Object store name
      * @param {Record<string, *>} entries - Map of key → value to write
+     * @param {{bypassRestoreLatch?: boolean}} [options] - `bypassRestoreLatch` for the
+     *   restore itself and its bookkeeping, which are what the latch is protecting
      * @returns {Promise<number>} Number of entries successfully written
      */
-    async putAll(storeName, entries) {
+    async putAll(storeName, entries, options = {}) {
+        if (!options.bypassRestoreLatch && this._restorePendingStores.has(storeName)) {
+            // One line per store, not per key: a recorder flushing a year of
+            // chunks would otherwise fill the console with the same sentence
+            if (this._refuseDuringRestore('(bulk write)', storeName, 'save')) return 0;
+        }
         const written = await this._putAllWritten(storeName, entries);
         return written.length;
     }

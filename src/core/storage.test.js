@@ -1118,13 +1118,30 @@ describe('Storage restore quiescing', () => {
         expect(storage.restorePendingStores()).toEqual(['settings']);
     });
 
-    test('the bulk path is exempt, so the restore itself and its bookkeeping can write', async () => {
+    test('the restore itself and its bookkeeping can still write, when they say so', async () => {
         const { db, dataByStore } = createFakeDb(['settings']);
         storage.db = db;
         storage.finishRestore(['settings']);
 
-        expect(await storage.putAll('settings', { toolasha_sync_lastSyncedAt: 'T' })).toBe(1);
+        expect(
+            await storage.putAll('settings', { toolasha_sync_lastSyncedAt: 'T' }, { bypassRestoreLatch: true })
+        ).toBe(1);
         expect(dataByStore.get('settings').get('toolasha_sync_lastSyncedAt')).toBe('T');
+    });
+
+    test('a recorder flushing through the bulk path is refused like every other writer', async () => {
+        // `chunked-history`, `trade-ledger-store` and `networth-history` all
+        // write their records with `putAll` — the one path the latch used to
+        // wave through. They are precisely the "recorder holding the store's
+        // contents in memory" the latch exists to stop: their next flush after
+        // a pull is the pre-pull array going back on top of the merged one.
+        const { db, dataByStore } = createFakeDb(['networthHistory']);
+        storage.db = db;
+        storage.finishRestore(['networthHistory']);
+
+        expect(await storage.putAll('networthHistory', { 'networthSeries_char_2026-08': [1, 2] })).toBe(0);
+        expect(dataByStore.get('networthHistory').has('networthSeries_char_2026-08')).toBe(false);
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('changes made before reloading'));
     });
 });
 
