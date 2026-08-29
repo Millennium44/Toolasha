@@ -488,6 +488,113 @@ describe('attributeGoldSources', () => {
         expect(result.totals.sources.alchemy).toBe(0);
     });
 
+    describe('sessions are spread over the days they ran', () => {
+        // Six hours of the run on the 19th and eighteen on the 20th, measured
+        // from local midnight so the split is the same wherever the test runs
+        const d20Start = dayStart(localDayId(D20));
+        const spanStart = d20Start - 6 * 3600_000;
+        const spanEnd = d20Start + 18 * 3600_000;
+        const perDay = (result, key) => Object.fromEntries(result.days.map((row) => [row.day, row.sources[key]]));
+
+        /** An alchemy run netting 800 out - 400 in = 400 */
+        const alchemyRun = (extra) => ({
+            startTime: spanStart,
+            inputItemHrid: '/items/milk',
+            totalAttempts: 10,
+            results: { '/items/cheese': { count: 8 } },
+            ...extra,
+        });
+
+        test('an alchemy run that crossed midnight splits by the time it spent each side', () => {
+            const result = attributeGoldSources({
+                ...base,
+                alchemySessions: [alchemyRun({ lastActivityTime: spanEnd })],
+            });
+
+            expect(perDay(result, 'alchemy')).toEqual({ '2026-08-19': 100, '2026-08-20': 300 });
+            expect(result.totals.sources.alchemy).toBe(400);
+        });
+
+        test('an alchemy session with no recorded end still books to its start day, whole', () => {
+            const result = attributeGoldSources({ ...base, alchemySessions: [alchemyRun()] });
+
+            expect(perDay(result, 'alchemy')).toEqual({ '2026-08-19': 400, '2026-08-20': 0 });
+        });
+
+        test('an enhancement run spreads over its span, by its last attempt', () => {
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    {
+                        startTime: spanStart,
+                        lastUpdateTime: spanEnd,
+                        itemHrid: '/items/sword',
+                        startLevel: 0,
+                        currentLevel: 5,
+                        totalCost: 1000,
+                    },
+                ],
+            });
+
+            // 9000 - 1000 - 1000 = 7000, quartered onto the 19th
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 1750, '2026-08-20': 5250 });
+        });
+
+        test('a legacy enhancement session without either stamp books to its start day, whole', () => {
+            const result = attributeGoldSources({
+                ...base,
+                enhancementSessions: [
+                    { startTime: spanStart, itemHrid: '/items/sword', startLevel: 0, currentLevel: 5, totalCost: 1000 },
+                ],
+            });
+
+            expect(perDay(result, 'enhancement')).toEqual({ '2026-08-19': 7000, '2026-08-20': 0 });
+        });
+
+        test('a run that began before the window still pays the days of it that are inside', () => {
+            const result = attributeGoldSources({
+                ...base,
+                // Two days before the window opens, still going on the 20th
+                alchemySessions: [alchemyRun({ startTime: d20Start - 2 * DAY, lastActivityTime: d20Start + 2 * DAY })],
+            });
+
+            // Four days of run, so a quarter each; the two in the window are paid
+            expect(result.totals.sources.alchemy).toBe(200);
+        });
+
+        test('an unpriceable run is counted once when any of its days is in the window', () => {
+            const result = attributeGoldSources({
+                ...base,
+                alchemySessions: [
+                    alchemyRun({
+                        // Begins before the window and runs into it
+                        startTime: d20Start - 2 * DAY,
+                        lastActivityTime: spanEnd,
+                        inputItemHrid: '/items/unknown_input',
+                    }),
+                ],
+            });
+
+            expect(result.unpricedAlchemySessions).toBe(1);
+        });
+
+        test('a run that ended before the window opened is not counted at all', () => {
+            const result = attributeGoldSources({
+                ...base,
+                alchemySessions: [
+                    alchemyRun({
+                        startTime: d20Start - 5 * DAY,
+                        lastActivityTime: d20Start - 4 * DAY,
+                        inputItemHrid: '/items/unknown_input',
+                    }),
+                ],
+            });
+
+            expect(result.unpricedAlchemySessions).toBe(0);
+            expect(result.totals.sources.alchemy).toBe(0);
+        });
+    });
+
     test('coverage reports when each recording starts', () => {
         const result = attributeGoldSources({
             ...base,

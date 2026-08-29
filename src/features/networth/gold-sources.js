@@ -275,6 +275,25 @@ function num(value) {
 }
 
 /**
+ * When an alchemy or enhancement session was last seen running.
+ *
+ * The alchemy trackers keep `lastActivityTime`; the enhancement recorder has
+ * always kept `lastUpdateTime` (its last attempt) and `endTime` (set when the
+ * target is reached), so it needs nothing new. The latest of whichever exist
+ * is the far end of the span. A session stored before any of them existed has
+ * none, and gets its start instant back — a zero-length span, which is its
+ * start day whole.
+ *
+ * @param {Object} session - A stored alchemy or enhancement session
+ * @param {number} start - The session's start, epoch ms
+ * @returns {number} The span end, never earlier than `start`
+ */
+function sessionSpanEnd(session, start) {
+    const end = Math.max(num(session?.lastActivityTime), num(session?.lastUpdateTime), num(session?.endTime));
+    return end > start ? end : start;
+}
+
+/**
  * A blank per-source tally.
  * @returns {Object} Every source key at zero
  */
@@ -977,28 +996,39 @@ export function attributeGoldSources(input) {
         unpricedChests += day.unpricedChests;
     }
 
+    // Alchemy and enhancement runs are spread over the days they ran, for the
+    // same reason the combat runs below are: an AFK grind is one session that
+    // lasts as long as the queue does, and booking its whole net to the day it
+    // began put a multi-day run entirely outside every window that was asking
+    // about it. Which day each attempt really landed on is unknowable from a
+    // session total, so the uniform-by-time share is the honest estimate, and
+    // it is exact for the common one-day session. A session recorded before
+    // the trackers kept an end has no span at all, and `daySharesOfSpan` gives
+    // it its start day whole — which is what it always got.
     let unpricedAlchemySessions = 0;
     for (const session of alchemySessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
+        const shares = daySharesOfSpan(t, sessionSpanEnd(session, t));
         const net = alchemySessionNet(session, price, basisPrice);
         if (net === null) {
-            if (inWindow.has(localDayId(t))) unpricedAlchemySessions += 1;
+            if (shares.some(({ day }) => inWindow.has(day))) unpricedAlchemySessions += 1;
             continue;
         }
-        add(localDayId(t), 'alchemy', net);
+        for (const { day, share } of shares) add(day, 'alchemy', net * share);
     }
 
     let unpricedEnhancementSessions = 0;
     for (const session of enhancementSessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
+        const shares = daySharesOfSpan(t, sessionSpanEnd(session, t));
         const net = enhancementSessionNet(session, price, basisPrice);
         if (net === null) {
-            if (inWindow.has(localDayId(t))) unpricedEnhancementSessions += 1;
+            if (shares.some(({ day }) => inWindow.has(day))) unpricedEnhancementSessions += 1;
             continue;
         }
-        add(localDayId(t), 'enhancement', net);
+        for (const { day, share } of shares) add(day, 'enhancement', net * share);
     }
 
     const market = marketplaceByDay(tradeFills, marketTax);
