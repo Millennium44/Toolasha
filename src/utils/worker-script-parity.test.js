@@ -67,7 +67,9 @@ describe('generated worker sources', () => {
 
     test('the networth worker parses and pulls in no CDN library', async () => {
         const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
-        const source = await captureWorkerScript(() => calculateItemValueBatch([], {}, {}, {}));
+        const source = await captureWorkerScript(() =>
+            calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
+        );
 
         expect(source).not.toContain("importScripts('http");
 
@@ -75,5 +77,57 @@ describe('generated worker sources', () => {
         const math = new Function('self', `${source}\n; return math;`)({ postMessage: () => {}, onmessage: null });
         const identity = math.identity(3);
         expect(math.inv(identity).get([2, 2])).toBe(1);
+    });
+
+    test('the networth worker values a batch from chunk-level shared context', async () => {
+        // The 2026-08-29 protocol change: priceMap and the recipe index ride
+        // the message once per chunk instead of once per item, and production
+        // cost reads recipes[hrid] instead of scanning every action. These are
+        // the fallback chains the pruning must not have changed.
+        vi.resetModules(); // the manager memoises its pool, and a memoised pool builds no Blob
+        const { calculateItemValueBatch } = await import('./networth-worker-manager.js');
+        const source = await captureWorkerScript(() =>
+            calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
+        );
+
+        const messages = [];
+        const self = { postMessage: (message) => messages.push(message), onmessage: null };
+        new Function('self', source)(self);
+
+        const shared = {
+            priceMap: {
+                '/items/iron_sword:0': 100,
+                '/items/iron_sword:3': 900,
+                '/items/log:0_ask': 10,
+                '/items/log:0': 10,
+            },
+            recipes: {
+                '/items/plank': { inputItems: [{ itemHrid: '/items/log', count: 2 }], upgradeItemHrid: null },
+            },
+            useHighEnhancementCost: false,
+            minLevel: 13,
+            enhancementParams: {},
+        };
+        const items = [
+            // Priced plain stack: unit price times count
+            { itemIndex: 0, item: { itemHrid: '/items/iron_sword', enhancementLevel: 0, count: 5 }, itemDetails: {} },
+            // Unpriced but craftable: production cost through the recipe index,
+            // with the Artisan Tea 0.9 on inputs - 2 logs x 10 x 0.9 = 18 each
+            { itemIndex: 1, item: { itemHrid: '/items/plank', enhancementLevel: 0, count: 2 }, itemDetails: {} },
+            // Enhanced with a market price at its level: that price wins
+            { itemIndex: 2, item: { itemHrid: '/items/iron_sword', enhancementLevel: 3, count: 1 }, itemDetails: {} },
+            // Neither priced nor craftable: honestly zero
+            { itemIndex: 3, item: { itemHrid: '/items/mystery', enhancementLevel: 0, count: 7 }, itemDetails: {} },
+        ];
+
+        self.onmessage({ data: { taskId: 1, data: { action: 'calculateBatch', params: { items, ...shared } } } });
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0].error).toBeUndefined();
+        const byIndex = new Map(messages[0].result.map((entry) => [entry.itemIndex, entry.value]));
+        expect(byIndex.get(0)).toBe(500);
+        expect(byIndex.get(1)).toBe(36);
+        expect(byIndex.get(2)).toBe(900);
+        expect(byIndex.get(3)).toBe(0);
     });
 });

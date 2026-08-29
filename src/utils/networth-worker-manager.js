@@ -37,21 +37,13 @@ const buildEnhancementMarkov = ${buildEnhancementMarkov.toString()};
  * Calculate production cost from crafting/upgrading recipe
  * @param {string} itemHrid - Item HRID
  * @param {Object} priceMap - Price map
- * @param {Object} actionDetailMap - Action detail map from game data
+ * @param {Object} recipes - Action detail map from game data
  * @returns {number} Production cost
  */
-function calculateProductionCost(itemHrid, priceMap, actionDetailMap) {
-    // Find the action that produces this item
-    let action = null;
-    for (const actionHrid in actionDetailMap) {
-        const actionData = actionDetailMap[actionHrid];
-        if (actionData.outputItems && actionData.outputItems.length > 0) {
-            if (actionData.outputItems[0].itemHrid === itemHrid) {
-                action = actionData;
-                break;
-            }
-        }
-    }
+function calculateProductionCost(itemHrid, priceMap, recipes) {
+    // The recipe index is built on the main thread from the same
+    // first-output-wins rule the scan this replaces used
+    const action = recipes[itemHrid] || null;
 
     if (!action) {
         return 0;
@@ -69,7 +61,7 @@ function calculateProductionCost(itemHrid, priceMap, actionDetailMap) {
 
             // Recursively calculate production cost if no market price (matches main thread)
             if (inputPrice === 0) {
-                inputPrice = calculateProductionCost(input.itemHrid, priceMap, actionDetailMap);
+                inputPrice = calculateProductionCost(input.itemHrid, priceMap, recipes);
             }
 
             totalPrice += inputPrice * input.count;
@@ -88,7 +80,7 @@ function calculateProductionCost(itemHrid, priceMap, actionDetailMap) {
 
         // Recursively calculate production cost if no market price (matches main thread)
         if (upgradePrice === 0) {
-            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, actionDetailMap);
+            upgradePrice = calculateProductionCost(action.upgradeItemHrid, priceMap, recipes);
         }
 
         totalPrice += upgradePrice;
@@ -103,7 +95,7 @@ function calculateProductionCost(itemHrid, priceMap, actionDetailMap) {
  * @returns {number} Total cost
  */
 function calculateEnhancementCost(params) {
-    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, actionDetailMap } = params;
+    const { itemHrid, targetLevel, enhancementParams, itemDetails, priceMap, recipes } = params;
 
     if (!itemDetails.enhancementCosts || targetLevel < 1 || targetLevel > 20) {
         return null;
@@ -112,7 +104,7 @@ function calculateEnhancementCost(params) {
     const itemLevel = itemDetails.itemLevel || 1;
 
     // Get base item cost using realistic pricing (matches main thread logic)
-    const basePrice = getRealisticPrice(itemHrid, null, priceMap, actionDetailMap);
+    const basePrice = getRealisticPrice(itemHrid, null, priceMap, recipes);
 
     // Build cost array for each level by testing all protection strategies
     const targetCosts = new Array(targetLevel + 1);
@@ -175,7 +167,7 @@ function calculateEnhancementCost(params) {
             priceMap,
             itemDetails,
             itemHrid,
-            actionDetailMap
+            recipes
         );
         if (noProtResult < minCost) {
             minCost = noProtResult;
@@ -193,7 +185,7 @@ function calculateEnhancementCost(params) {
                 priceMap,
                 itemDetails,
                 itemHrid,
-                actionDetailMap
+                recipes
             );
             if (protResult < minCost) {
                 minCost = protResult;
@@ -206,7 +198,7 @@ function calculateEnhancementCost(params) {
     // Apply Philosopher's Mirror optimization
     let mirrorPrice = priceMap['/items/philosophers_mirror:0'] || 0;
     if (mirrorPrice === 0) {
-        mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, actionDetailMap);
+        mirrorPrice = calculateProductionCost('/items/philosophers_mirror', priceMap, recipes);
     }
 
     if (mirrorPrice > 0) {
@@ -236,7 +228,7 @@ function calculateStrategyRealCost(
     priceMap,
     itemDetails,
     itemHrid,
-    actionDetailMap
+    recipes
 ) {
     const { enhancingLevel, toolBonus, blessedTea = false, guzzlingBonus = 1.0, blessedTeaBonus = DEFAULT_BLESSED_TEA_CHANCE } = enhancementParams;
 
@@ -283,10 +275,10 @@ function calculateStrategyRealCost(
     // Get protection item price using realistic pricing (like main thread)
     let protectionPrice = 0;
     if (protections > 0) {
-        protectionPrice = getRealisticPrice(itemHrid, baseItemPrice, priceMap, actionDetailMap);
+        protectionPrice = getRealisticPrice(itemHrid, baseItemPrice, priceMap, recipes);
 
         // Check mirror of protection
-        const mirrorPrice = getRealisticPrice('/items/mirror_of_protection', null, priceMap, actionDetailMap);
+        const mirrorPrice = getRealisticPrice('/items/mirror_of_protection', null, priceMap, recipes);
         if (mirrorPrice > 0 && mirrorPrice < protectionPrice) {
             protectionPrice = mirrorPrice;
         }
@@ -294,7 +286,7 @@ function calculateStrategyRealCost(
         // Check specific protection items
         if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
             for (const protHrid of itemDetails.protectionItemHrids) {
-                const protPrice = getRealisticPrice(protHrid, null, priceMap, actionDetailMap);
+                const protPrice = getRealisticPrice(protHrid, null, priceMap, recipes);
                 if (protPrice > 0 && protPrice < protectionPrice) {
                     protectionPrice = protPrice;
                 }
@@ -312,7 +304,7 @@ function calculateStrategyRealCost(
  * Get realistic price for an item (matches main thread logic)
  * Handles inflation detection and fallbacks
  */
-function getRealisticPrice(itemHrid, knownBasePrice, priceMap, actionDetailMap) {
+function getRealisticPrice(itemHrid, knownBasePrice, priceMap, recipes) {
     let ask = priceMap[itemHrid + ':0_ask'];
     if (ask === undefined) ask = priceMap[itemHrid + ':0'];
     if (ask === null || ask === undefined) ask = 0;
@@ -321,7 +313,7 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, actionDetailMap) 
     if (bid === null || bid === undefined) bid = 0;
 
     // Calculate production cost as fallback
-    const productionCost = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+    const productionCost = calculateProductionCost(itemHrid, priceMap, recipes);
 
     // If both ask and bid exist
     if (ask > 0 && bid > 0) {
@@ -358,7 +350,7 @@ function getRealisticPrice(itemHrid, knownBasePrice, priceMap, actionDetailMap) 
  * @returns {Object} {itemIndex, value}
  */
 function calculateItemValue(data) {
-    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, actionDetailMap } = data;
+    const { itemIndex, item, priceMap, useHighEnhancementCost, minLevel, enhancementParams, itemDetails, recipes } = data;
     const { itemHrid, enhancementLevel = 0, count = 1 } = item;
 
     let itemValue = 0;
@@ -374,7 +366,7 @@ function calculateItemValue(data) {
                 enhancementParams,
                 itemDetails,
                 priceMap,
-                actionDetailMap
+                recipes
             });
 
             if (cost !== null && cost > 0) {
@@ -383,7 +375,7 @@ function calculateItemValue(data) {
                 // Fallback to base item price or production cost
                 let basePrice = priceMap[itemHrid + ':0'] || 0;
                 if (basePrice === 0) {
-                    basePrice = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+                    basePrice = calculateProductionCost(itemHrid, priceMap, recipes);
                 }
                 itemValue = basePrice;
             }
@@ -401,7 +393,7 @@ function calculateItemValue(data) {
                     enhancementParams,
                     itemDetails,
                     priceMap,
-                    actionDetailMap
+                    recipes
                 });
 
                 if (cost !== null && cost > 0) {
@@ -409,7 +401,7 @@ function calculateItemValue(data) {
                 } else {
                     let basePrice = priceMap[itemHrid + ':0'] || 0;
                     if (basePrice === 0) {
-                        basePrice = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+                        basePrice = calculateProductionCost(itemHrid, priceMap, recipes);
                     }
                     itemValue = basePrice;
                 }
@@ -419,7 +411,7 @@ function calculateItemValue(data) {
         // Unenhanced items: use market price or production cost
         itemValue = priceMap[itemHrid + ':0'] || 0;
         if (itemValue === 0) {
-            itemValue = calculateProductionCost(itemHrid, priceMap, actionDetailMap);
+            itemValue = calculateProductionCost(itemHrid, priceMap, recipes);
         }
     }
 
@@ -431,11 +423,12 @@ function calculateItemValue(data) {
  * @param {Array} items - Array of item data objects
  * @returns {Array} Array of {itemIndex, value} results
  */
-function calculateItemValueBatch(items) {
+function calculateItemValueBatch(items, shared) {
     const results = [];
 
     for (const itemData of items) {
-        const result = calculateItemValue(itemData);
+        // The heavy shared pieces ride the message once, not once per item
+        const result = calculateItemValue(Object.assign({}, itemData, shared));
         results.push(result);
     }
 
@@ -448,7 +441,14 @@ self.onmessage = function (e) {
         const { action, params } = data;
 
         if (action === 'calculateBatch') {
-            const results = calculateItemValueBatch(params.items);
+            const shared = {
+                priceMap: params.priceMap,
+                recipes: params.recipes,
+                useHighEnhancementCost: params.useHighEnhancementCost,
+                minLevel: params.minLevel,
+                enhancementParams: params.enhancementParams
+            };
+            const results = calculateItemValueBatch(params.items, shared);
             self.postMessage({ taskId, result: results });
         } else if (action === 'clearCache') {
             valuationCache.clear();
@@ -494,17 +494,69 @@ async function getWorkerPool() {
  * @param {Object} gameData - Game data with item details
  * @returns {Promise<Array>} Array of values in same order as input
  */
+/**
+ * Recipe index (item hrid → its producing action), built once per game data.
+ *
+ * The worker used to receive the whole actionDetailMap and scan it per lookup;
+ * structured-cloning that map into every chunk of every batch was most of the
+ * networth recalc's remaining main-thread stall (2026-08-29). The index keeps
+ * the scan's exact rule — first output wins — and lets each batch carry only
+ * the recipes its items can actually reach.
+ */
+const recipeIndexMemo = new WeakMap();
+
+function recipeIndexFor(actionDetailMap) {
+    let index = recipeIndexMemo.get(actionDetailMap);
+    if (index) return index;
+    index = new Map();
+    for (const actionHrid in actionDetailMap) {
+        const action = actionDetailMap[actionHrid];
+        if (!action.outputItems || action.outputItems.length === 0) continue;
+        const outputHrid = action.outputItems[0].itemHrid;
+        if (!index.has(outputHrid)) {
+            index.set(outputHrid, {
+                inputItems: action.inputItems || null,
+                upgradeItemHrid: action.upgradeItemHrid || null,
+                outputItems: action.outputItems,
+            });
+        }
+    }
+    recipeIndexMemo.set(actionDetailMap, index);
+    return index;
+}
+
 export async function calculateItemValueBatch(items, priceMap, configOptions, gameData) {
     const pool = await getWorkerPool();
 
-    // Prepare data for workers - need to include item details, material details, and actionDetailMap
+    const recipeIndex = recipeIndexFor(gameData.actionDetailMap || {});
+
+    // Every hrid the worker's fallback chains can reach from this batch: the
+    // items themselves, their enhancement materials and protection items, the
+    // two special mirrors, and the transitive production closure of all of it
+    const needed = new Set();
+    const addWithProduction = (hrid) => {
+        if (!hrid || needed.has(hrid)) return;
+        needed.add(hrid);
+        const recipe = recipeIndex.get(hrid);
+        if (!recipe) return;
+        if (recipe.inputItems) {
+            for (const input of recipe.inputItems) addWithProduction(input.itemHrid);
+        }
+        if (recipe.upgradeItemHrid) addWithProduction(recipe.upgradeItemHrid);
+    };
+    addWithProduction('/items/philosophers_mirror');
+    addWithProduction('/items/mirror_of_protection');
+
+    // Prepare data for workers - need to include item details and material details
     const itemsWithDetails = items.map((item, index) => {
         const itemDetails = gameData.itemDetailMap[item.itemHrid];
+        addWithProduction(item.itemHrid);
 
         // Include material item details for sellPrice fallback
         const allItemDetails = {};
         if (itemDetails && itemDetails.enhancementCosts) {
             for (const material of itemDetails.enhancementCosts) {
+                addWithProduction(material.itemHrid);
                 const materialDetail = gameData.itemDetailMap[material.itemHrid];
                 if (materialDetail) {
                     allItemDetails[material.itemHrid] = {
@@ -514,21 +566,48 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
                 }
             }
         }
+        if (itemDetails && itemDetails.protectionItemHrids) {
+            for (const protHrid of itemDetails.protectionItemHrids) addWithProduction(protHrid);
+        }
 
         return {
             itemIndex: index,
             item,
-            priceMap,
-            useHighEnhancementCost: configOptions.useHighEnhancementCost,
-            minLevel: configOptions.minLevel,
-            enhancementParams: configOptions.enhancementParams,
             itemDetails: itemDetails ? { ...itemDetails, allItemDetails } : {},
-            actionDetailMap: gameData.actionDetailMap,
         };
     });
 
-    // Split items into chunks for parallel processing
-    const chunkSize = Math.ceil(itemsWithDetails.length / pool.getStats().poolSize);
+    // Only the reachable slice of each shared structure crosses the thread
+    // boundary. Keys are copied only where they exist, because the worker's
+    // enhancement-material path tests presence, not value.
+    const recipes = {};
+    const prunedPriceMap = {};
+    for (const hrid of needed) {
+        const recipe = recipeIndex.get(hrid);
+        if (recipe) recipes[hrid] = recipe;
+        for (const suffix of [':0', ':0_ask', ':0_bid']) {
+            const key = hrid + suffix;
+            if (key in priceMap) prunedPriceMap[key] = priceMap[key];
+        }
+    }
+    for (const item of items) {
+        const levelKey = `${item.itemHrid}:${item.enhancementLevel || 0}`;
+        if (levelKey in priceMap) prunedPriceMap[levelKey] = priceMap[levelKey];
+    }
+
+    const shared = {
+        priceMap: prunedPriceMap,
+        recipes,
+        useHighEnhancementCost: configOptions.useHighEnhancementCost,
+        minLevel: configOptions.minLevel,
+        enhancementParams: configOptions.enhancementParams,
+    };
+
+    // Split items into chunks for parallel processing. The floor matters: a
+    // twenty-item batch split across the whole pool cloned the shared context
+    // once per worker for two items each — parallelism only pays once a chunk
+    // carries enough work to outweigh its own serialisation.
+    const chunkSize = Math.max(Math.ceil(itemsWithDetails.length / pool.getStats().poolSize), 16);
     const chunks = [];
 
     for (let i = 0; i < itemsWithDetails.length; i += chunkSize) {
@@ -538,7 +617,7 @@ export async function calculateItemValueBatch(items, priceMap, configOptions, ga
     // Process chunks in parallel
     const tasks = chunks.map((chunk) => ({
         action: 'calculateBatch',
-        params: { items: chunk },
+        params: { items: chunk, ...shared },
     }));
 
     const results = await pool.executeAll(tasks);
