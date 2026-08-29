@@ -723,6 +723,12 @@ class GuildTrialDamage {
         this.tier = null;
         /** The boss's own bar, to the unit, and when it was read */
         this.pool = null;
+        /**
+         * Slot index → `{current, max}`, the wave's monsters as the stream last
+         * stated them. A tick names one monster of four, so the pool is this
+         * map summed rather than the tick summed — see {@link _readPool}.
+         */
+        this.poolSlots = {};
         /** Index → `{name, source}`, from `guild-trial-units.js` */
         this.unitNames = {};
         /**
@@ -984,10 +990,21 @@ class GuildTrialDamage {
         let waveHitpoints = 0;
         let waveCount = 0;
         let representative = null;
-        for (const monster of Array.isArray(monsters) ? monsters : []) {
+        for (const [index, monster] of (Array.isArray(monsters) ? monsters : []).entries()) {
             const name = String(monster?.name || '');
             const encounter = encounterOfMonster(monster?.hrid || name);
             if (!encounter) continue;
+
+            // The wave states its own bars before a single tick arrives, so the
+            // pool is whole from the wave's first tick rather than growing over
+            // the first second as the stream names one slot at a time — the
+            // window in which the panel's sampler would otherwise read the
+            // filling-in as a boss cleared. See `_readPool`.
+            const currentHp = Number(monster?.currentHitpoints);
+            const maxHp = Number(monster?.maxHitpoints);
+            if (Number.isFinite(currentHp) && Number.isFinite(maxHp) && maxHp > 0) {
+                this.poolSlots[index] = { current: currentHp, max: maxHp };
+            }
 
             if (!this.encounter) {
                 this.encounter = encounter;
@@ -1507,6 +1524,10 @@ class GuildTrialDamage {
         this.support.lastHP = {};
         this.support.lastMP = {};
         this.playersHP = {};
+        // The pool is the wave's monsters summed, and the wave that just ended
+        // is not this one: a dead wave's bars left in the sum would price the
+        // new wave at its predecessor's health plus whatever has arrived so far
+        this.poolSlots = {};
     }
 
     /**
@@ -1629,26 +1650,53 @@ class GuildTrialDamage {
      * scraping off the DOM: the same number, per tick rather than per redraw, and
      * available when the card is not on screen.
      *
+     * ## The stream is a delta stream, so a tick is not a wave
+     *
+     * The pool is summed across every monster of the *wave*, not the first: a
+     * wave can field several enemies (two Trial Badgers, or Swarm's four) and
+     * they are one HP pool to clear. Taking the first bar priced a two-enemy
+     * wave at half its health, and the Swarm panel at a quarter.
+     *
+     * But summing the monsters *this tick* carried was the same mistake wearing
+     * a different hat, and it is what produced "Party DPS 85.9K" beside a
+     * per-player split adding to 43.0K. An hour of Trial Swarm on the wire:
+     * 42,844 of 58,139 ticks carry exactly **one** monster, 7,895 carry none,
+     * and only 4,237 carry all four. So the published pool was whatever subset
+     * had arrived — 200K/200K one tick, 650K/650K the next — and the trials
+     * panel samples that every five seconds and hands it to `combatDamageRate`,
+     * which reads any change of maximum (or any rise in current) as a boss
+     * cleared and adds the whole previous remaining pool as damage dealt. Over
+     * that hour it fired 112 times where the trial had 20 waves, and reported
+     * 129.5M damage against the 54.0M the game itself credited.
+     *
+     * The fix is to hold each slot's last known bar for the wave and sum
+     * *those*. Replayed over the same trace that reads 53,967,980 against the
+     * game's own 53,978,400 — 0.02% — with exactly 20 boundaries. The slots are
+     * dropped at every wave boundary by {@link _resetWaveBaselines}, so a wave
+     * whose first ticks name one monster prices only what it has seen rather
+     * than carrying a dead wave's bars into a live one.
+     *
      * @param {Object} mMap - The tick's monsters
      * @param {number|null} tier - The tier the payload states
      * @param {number} at - Now
      */
     _readPool(mMap, tier, at) {
-        // Summed across every monster in the tick, not the first: a wave can field
-        // several enemies (two Trial Badgers, or Swarm's four monsters) and they
-        // are one HP pool to clear. Taking the first bar priced a two-enemy wave
-        // at half its health, and the Swarm panel at a quarter. Dead monsters
-        // report cHP 0, so they drain the summed current correctly.
-        let current = 0;
-        let max = 0;
-        let seen = false;
-        for (const unit of Object.values(mMap || {})) {
+        for (const [index, unit] of Object.entries(mMap || {})) {
             const unitCurrent = Number(unit?.cHP);
             const unitMax = Number(unit?.mHP);
             if (!Number.isFinite(unitCurrent) || !Number.isFinite(unitMax) || unitMax <= 0) continue;
+            // Dead monsters report cHP 0, so they drain the summed current
+            // correctly and must stay in the sum rather than being forgotten
+            this.poolSlots[index] = { current: unitCurrent, max: unitMax };
+        }
+
+        let current = 0;
+        let max = 0;
+        let seen = false;
+        for (const slot of Object.values(this.poolSlots)) {
             seen = true;
-            current += unitCurrent;
-            max += unitMax;
+            current += slot.current;
+            max += slot.max;
         }
         if (!seen) return;
 

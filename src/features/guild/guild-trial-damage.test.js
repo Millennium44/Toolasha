@@ -811,6 +811,54 @@ describe('the spectated trial fight', () => {
         expect(pool.max).toBe(1_181_280);
     });
 
+    test('a tick carrying one monster of the wave does not re-price the pool as that monster', () => {
+        // The stream is a *delta* stream: in an hour of Trial Swarm, 42,844 of
+        // 58,139 ticks carried exactly one of the four monsters and only 4,237
+        // carried all of them. Summing "every monster in this tick" therefore
+        // published a pool of whatever subset happened to arrive — a four-monster
+        // wave reading as one monster's bar — and the panel's five-second sampler
+        // then read every one of those jumps as a boss cleared. See `_readPool`.
+        const wave = {
+            battleId: 9,
+            tier: 1,
+            pMap: {},
+            mMap: {
+                0: { cHP: 300_000, mHP: 300_000 },
+                1: { cHP: 200_000, mHP: 200_000 },
+                2: { cHP: 100_000, mHP: 100_000 },
+                3: { cHP: 50_000, mHP: 50_000 },
+            },
+        };
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](wave);
+        // …and then a tick about slot 1 alone, which is what the stream mostly sends
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ ...wave, mMap: { 1: { cHP: 190_000, mHP: 200_000 } } });
+
+        const { pool } = guildTrialDamage.breakdown();
+        expect(pool.max).toBe(650_000);
+        expect(pool.current).toBe(640_000);
+    });
+
+    test('a wave’s monsters are forgotten when the next wave starts', () => {
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 9,
+            tier: 1,
+            pMap: {},
+            mMap: { 0: { cHP: 300_000, mHP: 300_000 }, 1: { cHP: 200_000, mHP: 200_000 } },
+        });
+        // The next tier is a fresh wave; its first tick names one slot, and the
+        // last wave's other slot must not still be in the sum
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 9,
+            tier: 2,
+            pMap: {},
+            mMap: { 0: { cHP: 330_000, mHP: 330_000 } },
+        });
+
+        const { pool } = guildTrialDamage.breakdown();
+        expect(pool.max).toBe(330_000);
+        expect(pool.current).toBe(330_000);
+    });
+
     test('the tier is taken from the payload, not reasoned about', () => {
         replay();
         expect(guildTrialDamage.breakdown().tier).toBe(2);
