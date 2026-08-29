@@ -1085,3 +1085,36 @@ describe('the room log survives a failed read and a second tab', () => {
         expect(labyrinthRoomLogs.sessions[0]).toBe(mine);
     });
 });
+
+describe('teardown is awaitable, so the switch waits for the log to land', () => {
+    const LOG_KEY = 'labyrinthRoomLogs_char1';
+    const stored = () => storageMock.storeFor('settings').get(LOG_KEY)?.sessions;
+
+    beforeEach(() => {
+        storageMock.reset();
+        labyrinthRoomLogs.record.reset();
+        labyrinthRoomLogs.sessions = [];
+    });
+
+    afterEach(() => {
+        labyrinthRoomLogs.record.reset();
+        labyrinthRoomLogs.sessions = [];
+        storageMock.reset();
+    });
+
+    test('disable() does not resolve until the finalized session is written', async () => {
+        // `disable()` finalizes the room in progress and persists it, but the
+        // write goes through the record's save chain, so it lands a microtask
+        // or two later. The registry's `disableAllFeatures()` only waits for a
+        // teardown that hands back a promise; without one, a character switch
+        // moves `currentCharacterId` while this save is still queued and
+        // `characterKey()` files this character's labyrinth rooms under the
+        // arriving character's key — rooms they never ran.
+        labyrinthRoomLogs.sessions = [];
+        labyrinthRoomLogs.activeSession = room({ startedAt: 1, endedAt: 0, cleared: true, mode: 'combat' });
+
+        await labyrinthRoomLogs.disable();
+
+        expect(stored()?.map((s) => s.startedAt)).toEqual([1]);
+    });
+});

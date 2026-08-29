@@ -1860,7 +1860,7 @@ class EstimatedListingAge {
     /**
      * Disable the estimated listing age feature
      */
-    disable() {
+    async disable() {
         try {
             if (this.unregisterWebSocket) {
                 this.unregisterWebSocket();
@@ -1885,8 +1885,18 @@ class EstimatedListingAge {
                 window.removeEventListener('pagehide', this._pageHideHandler);
                 this._pageHideHandler = null;
             }
-            // A save still waiting on its debounce goes out now
-            this.flushPendingSave();
+            // A save still waiting on its debounce goes out now — and is
+            // waited for, which is the whole point of flushing it here.
+            //
+            // `saveHistoricalData` is a read-merge-write: it reads
+            // `this.knownListings` again after its probe resumes, so without
+            // this await the `finally` below emptied the log first and the
+            // flush wrote `[]` over it. On a character switch the same await
+            // decides *whose* key it lands under, because the probe and the
+            // write both evaluate `characterKey()` when they run — and the
+            // registry can only hold the switch back for a teardown that hands
+            // it a promise.
+            await this.flushPendingSave();
 
             this.clearDisplays();
 

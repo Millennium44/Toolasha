@@ -396,7 +396,7 @@ class LabyrinthRoomLogs {
         });
     }
 
-    disable() {
+    async disable() {
         if (this.progressHandler) {
             webSocketHook.off('labyrinth_room_progress', this.progressHandler);
             this.progressHandler = null;
@@ -439,6 +439,18 @@ class LabyrinthRoomLogs {
         this.panel = null;
         this.labContext = null;
         this.roomData = null;
+        // Let the room this teardown just finalized actually land before the
+        // record is dropped.
+        //
+        // `resolveFight` and `finalizeActiveSession` above persist through the
+        // record's save chain, which runs a microtask later — after the
+        // `reset()` below had already emptied memory, so the last room of the
+        // session was written as an empty record rather than saved. And the
+        // save evaluates `characterKey()` when it *runs*, so on a character
+        // switch it has to land before `currentCharacterId` moves; awaiting it
+        // here is what lets the registry's teardown, and through it
+        // data-manager's awaited `character_switching`, wait for it.
+        await this.record.flushed();
         // The log belongs to the character that walked those rooms. Dropped so
         // that a re-initialize — which is how a character switch arrives here —
         // reads the arriving character's log rather than persisting this one's

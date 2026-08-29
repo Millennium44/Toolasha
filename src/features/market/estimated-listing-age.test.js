@@ -1041,7 +1041,7 @@ describe('disable drops what is keyed to the character', () => {
         estimatedListingAge._cacheOrderBook('/items/a', { itemHrid: '/items/a', orderBooks: [] });
         const anchorsBefore = estimatedListingAge.anchors.length;
 
-        estimatedListingAge.disable();
+        await estimatedListingAge.disable();
 
         expect(estimatedListingAge.knownListings).toEqual([]);
         expect(estimatedListingAge.orderBooksCache).toEqual({});
@@ -1059,7 +1059,7 @@ describe('disable drops what is keyed to the character', () => {
         ]);
         await estimatedListingAge.saveHistoricalData();
 
-        estimatedListingAge.disable();
+        await estimatedListingAge.disable();
 
         dataManagerMock.characterId = 'charB';
         await estimatedListingAge.loadHistoricalData();
@@ -1416,5 +1416,36 @@ describe('getCurrentItemHrid — TERTIARY fallback via a Cancel row', () => {
         renderCancelRow({ quantity: 5, price: 100 });
 
         expect(estimatedListingAge.getCurrentItemHrid()).toBeNull();
+    });
+});
+
+describe('teardown is awaitable, so the switch waits for the listing log to land', () => {
+    test('disable() does not resolve until the debounced save has been written', async () => {
+        // `disable()` flushes the save a debounce is still holding, and then
+        // its `finally` empties `knownListings` — the per-character memory that
+        // must not survive into the next character. But the flush is a
+        // read-merge-write that resumes after an await, so unless disable()
+        // waits for it the clear wins the race and the log is written empty.
+        // On a character switch the same await is what decides *whose* key it
+        // is written under: `saveHistoricalData` evaluates `characterKey()`
+        // when it runs, and the registry can only hold the switch back if this
+        // teardown hands it a promise to wait on.
+        const KEY = LOG_KEY;
+        storageMock.storeFor('marketListings').delete(KEY);
+        estimatedListingAge.knownListings = [
+            { id: 7, itemHrid: '/items/a', status: 'listed', firstSeen: 1_000, lastSeen: Date.now() },
+        ];
+        estimatedListingAge.isInitialized = true;
+        // A save waiting on its debounce, exactly as a recorded listing leaves it
+        estimatedListingAge._scheduleSave();
+
+        await estimatedListingAge.disable();
+
+        expect(
+            storageMock
+                .storeFor('marketListings')
+                .get(KEY)
+                ?.map((l) => l.id)
+        ).toEqual([7]);
     });
 });
