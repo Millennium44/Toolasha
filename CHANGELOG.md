@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The overlay tick got its memos, and the trace stops blaming us for the game's timers
+
+Fourteen overlay rows now summarise their inputs and skip their whole render when nothing moved — Equipment Watch (the measured 85% of one tick), the combat-stats rows, net worth, watchlist, houses, build score, charms, treasure, and task tokens; the consumables row also stops re-forecasting every party member's slots each second. Time-varying tiles (clocks, countdowns) and rows whose read has a sampling side effect are deliberately left live. Separately, the timer tracer now labels a page-owned timer "(page)" — the biggest stall in the trial trace was the game's own 80–105ms interval wearing one of our labels.
+
 ### Opening another player's Battle Info is cheap again
 
 The game reuses one message for your end-of-session summary and for another player's sheet — and a sheet carries their totals, so the revenue block and the drop-luck model (60–100 ms per open) both ran on every profile a trial capture opened, injecting nonsense figures into the other player's popup along the way. A sheet naming a different character is now refused outright.
