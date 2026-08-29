@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Artisan Tea stops being recommended for gathering
+
+Artisan is production-only — the maintainer confirmed the game never lets it buff a gathering action — but the tea optimizer offered it for milking, foraging and woodcutting and scored combos on its Action Level bonus as though it applied. Gathering candidate lists drop it now, which also zeroes the phantom bonus in those calculations. Alongside, the gathering profit calculator's bonus-revenue contract (base rate, efficiency applied by the display) is pinned by test so the double-count mistake it invites cannot land silently.
+
 ### Round 15: the equipped-copy rule reaches equipment savings, and the optimizer confesses its guesses
 
 The audit fleet's third find of the equipped-copy bug family: the equipment savings panel treated a worn piece with no count field as unowned, pricing the run from a lower bag duplicate instead of the cape on your back. And the skilling optimizer's Equipment Progression table now carries the "leans on an unpriced material" warning the tea stats already had — an item can no longer top a slot on a free-material guess with nothing on screen saying so. The tasks and notifications families both passed their audits clean.

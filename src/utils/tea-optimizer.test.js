@@ -53,6 +53,19 @@ beforeEach(() => {
 });
 
 describe('getRelevantTeas', () => {
+    test('artisan tea is production-only — never offered for a gathering skill', () => {
+        // Confirmed by the maintainer 2026-08-29: the game does not let Artisan
+        // buff gathering actions, so recommending it there scored combos on a
+        // bonus that would never apply
+        for (const skill of ['milking', 'foraging', 'woodcutting']) {
+            for (const goal of ['xp', 'gold']) {
+                expect(getRelevantTeas(skill, goal).generalTeas).not.toContain('/items/artisan_tea');
+            }
+        }
+        expect(getRelevantTeas('cooking', 'gold').generalTeas).toContain('/items/artisan_tea');
+        expect(getRelevantTeas('cheesesmithing', 'xp').generalTeas).toContain('/items/artisan_tea');
+    });
+
     test('returns empty arrays without game data', () => {
         state.gameData = null;
         expect(getRelevantTeas('milking', 'xp')).toEqual({ skillTeas: [], generalTeas: [] });
@@ -63,7 +76,7 @@ describe('getRelevantTeas', () => {
         expect(skillTeas).toEqual(['/items/milking_tea', '/items/super_milking_tea', '/items/ultra_milking_tea']);
         expect(generalTeas).toContain('/items/gathering_tea');
         expect(generalTeas).toContain('/items/processing_tea');
-        expect(generalTeas).toContain('/items/artisan_tea'); // non-alchemy always includes artisan
+        expect(generalTeas).not.toContain('/items/artisan_tea'); // production-only, and milking gathers
         expect(generalTeas).not.toContain('/items/catalytic_tea'); // alchemy-only
     });
 

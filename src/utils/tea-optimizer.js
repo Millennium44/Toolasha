@@ -54,8 +54,10 @@ export function getRelevantTeas(skillName, goal) {
     // Universal efficiency tea
     generalTeas.add('/items/efficiency_tea');
 
-    // Artisan tea - action level helps everyone, artisan buff helps production gold (not alchemy)
-    if (skill !== 'alchemy') {
+    // Artisan tea is production-only (confirmed by the maintainer 2026-08-29):
+    // the game does not let it buff gathering actions, so offering it there
+    // recommended a tea whose bonuses would never apply
+    if (skill !== 'alchemy' && !isGathering) {
         generalTeas.add('/items/artisan_tea');
     }
 
