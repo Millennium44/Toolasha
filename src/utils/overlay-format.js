@@ -370,8 +370,30 @@ function recordDraw(container) {
     container._overlayDrawKids = container.childElementCount;
 }
 
+/**
+ * The sprite-sheet URLs a draw's icons resolve against, for the signature.
+ *
+ * What an icon segment draws depends on state outside the segments: before the
+ * game has drawn from a sheet, `spriteIcon` puts down a spacer, and the sheet
+ * turning up a second later changes nothing in the segments — so an identical
+ * signature would keep the spacer on screen for as long as the figure beside it
+ * held still. Naming the URLs makes the sheet's arrival a changed draw.
+ *
+ * @param {Segment[][]} lines - The draw's lines
+ * @returns {string[]} One URL (or '') per icon segment, in order
+ */
+function iconSheets(lines) {
+    const sheets = [];
+    for (const segments of lines) {
+        for (const segment of segments || []) {
+            if (segment?.icon) sheets.push(spriteUrl(segment.sheet || 'items'));
+        }
+    }
+    return sheets;
+}
+
 export function row(container, segments, { center = false } = {}) {
-    if (unchangedDraw(container, 'row', [segments, center])) return;
+    if (unchangedDraw(container, 'row', [segments, center, iconSheets([segments])])) return;
     container.replaceChildren();
 
     // The line goes in a box of its own height, and that box sits at the top of
@@ -417,7 +439,7 @@ export function row(container, segments, { center = false } = {}) {
  * @param {boolean} [options.align] - Share columns between the lines
  */
 export function rows(container, lines, { align = false } = {}) {
-    if (unchangedDraw(container, 'rows', [lines, align])) return;
+    if (unchangedDraw(container, 'rows', [lines, align, iconSheets(lines)])) return;
     container.replaceChildren();
 
     const drawn = lines.filter((segments) => segments?.length);

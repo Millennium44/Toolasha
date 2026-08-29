@@ -303,6 +303,25 @@ describe('the identical-draw fast path', () => {
         expect(container.textContent).toBe('DPS');
     });
 
+    test('an icon drawn as a spacer is redrawn once its sheet turns up', () => {
+        // What an icon draws depends on state outside the segments: before the
+        // game has drawn from the sheet, the icon is a spacer — and the sheet
+        // arriving changes nothing in the segments, so an identical signature
+        // would keep the spacer on screen for as long as the figure held still
+        document.body.innerHTML = '';
+        const container = document.createElement('div');
+        const draw = () => rows(container, [[{ text: 'boss' }], [{ icon: 'zombie', sheet: 'combat_monsters' }]]);
+
+        draw();
+        expect(container.querySelector('svg')).toBeNull();
+
+        document.body.innerHTML =
+            '<svg><use href="/static/media/combat_monsters_sprite.abc123.svg#zombie"></use></svg>';
+        draw();
+
+        expect(container.querySelector('svg use')).toBeTruthy();
+    });
+
     test('rows() diffs too, and switching shape redraws', () => {
         const container = document.createElement('div');
         rows(container, [[{ text: 'a' }], [{ text: 'b' }]]);
