@@ -23,6 +23,7 @@ const scoring = vi.hoisted(() => ({
     calls: [],
     teaResults: { xp: { teas: ['xp-tea'] }, gold: { teas: ['gold-tea'] } },
     teaCalls: [],
+    goldHasMissingPrices: false,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -45,6 +46,7 @@ vi.mock('../../utils/tea-optimizer.js', () => ({
     },
     getSkillActionsForDisplay: () => [],
     calculateSkillPerformance: () => ({}),
+    skillGoldHasUnpricedMaterials: () => scoring.goldHasMissingPrices,
 }));
 
 const {
@@ -124,6 +126,7 @@ beforeEach(() => {
     scoring.calls = [];
     scoring.teaResults = { xp: { teas: ['xp-tea'] }, gold: { teas: ['gold-tea'] } };
     scoring.teaCalls = [];
+    scoring.goldHasMissingPrices = false;
 });
 
 describe('getPlayerSkillLevel', () => {
@@ -373,6 +376,29 @@ describe('optimizeSkill', () => {
 
         expect(result.xpTeaResult).toBeNull();
         expect(result.goldTeaResult).toBeNull();
+    });
+
+    test('a gold-goal skill forwards whether the equipment ranking leans on an unpriced material', () => {
+        // Gathering skills rank equipment by gold, so a material the ranking could not price
+        // (treated as free rather than excluded — see actionHasUnpricedMaterials in
+        // tea-optimizer.js) can make an item look like the winner when its true value is
+        // unknown. The equipment-optimizer surface had no such signal at all before this,
+        // unlike the tea-optimizer's own Gold/hr stat.
+        scoring.goldHasMissingPrices = true;
+
+        const result = optimizeSkill('Milking', 60);
+
+        expect(result.goal).toBe('gold');
+        expect(result.goldHasMissingPrices).toBe(true);
+    });
+
+    test('an xp-goal skill does not claim an unpriced-material warning it never checked', () => {
+        scoring.goldHasMissingPrices = true; // would only matter for a gold-ranked skill
+
+        const result = optimizeSkill('Cheesesmithing', 60);
+
+        expect(result.goal).toBe('xp');
+        expect(result.goldHasMissingPrices).toBe(false);
     });
 
     test('candidates are gated on the requested level, not the character sheet', () => {

@@ -671,6 +671,39 @@ function findProcessingConversion(itemHrid, gameData) {
  * @param {Object} gameData - Full game data (for resolving processing conversions)
  * @returns {boolean}
  */
+/**
+ * Whether ranking a gathering/production skill's equipment by gold has to lean on an item
+ * with no price data.
+ *
+ * The skilling optimizer's per-slot equipment progression (skilling-optimizer-engine.js)
+ * scores gathering skills by gold via `scoreEquipmentSetup`, which — like the tile calculators
+ * it wraps — treats an unpriced material as worth 0 rather than excluding the action. That is
+ * the same blind spot {@link actionHasUnpricedMaterials} exists to flag for the tea optimizer's
+ * own Gold/hr figure, but the equipment ranking had no equivalent signal: a slot's "best" item
+ * could win purely because the market has no listing for something it consumes or drops, and
+ * the progression table gave no indication the number was a guess.
+ *
+ * Checked independent of any specific equipment, same as `actionHasUnpricedMaterials` itself —
+ * whether an action's gold score depends on an unpriced item does not change with what is worn.
+ *
+ * @param {string} skillName - Skill name
+ * @param {number} playerLevel - Player's skill level (or a hypothetical one, for planning ahead)
+ * @param {Set<string>|null} [selectedActionHrids] - Actions to check, or null for all available
+ * @returns {boolean} Whether any available action's gold score rests on an unpriced material
+ */
+export function skillGoldHasUnpricedMaterials(skillName, playerLevel, selectedActionHrids = null) {
+    const normalizedSkill = skillName.toLowerCase();
+    const isGathering = GATHERING_SKILLS.includes(normalizedSkill);
+    const isProduction = PRODUCTION_SKILLS.includes(normalizedSkill);
+    if (!isGathering && !isProduction) return false;
+
+    const gameData = dataManager.getInitClientData();
+    if (!gameData?.actionDetailMap) return false;
+
+    const { available: actions } = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
+    return actions.some((action) => actionHasUnpricedMaterials(action, isGathering, gameData));
+}
+
 export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData) {
     const isPriced = (itemHrid, side) => {
         if (itemHrid === '/items/coin') return true;

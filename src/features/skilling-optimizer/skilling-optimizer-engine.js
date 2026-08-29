@@ -11,6 +11,7 @@ import {
     findOptimalTeas,
     getSkillActionsForDisplay,
     calculateSkillPerformance,
+    skillGoldHasUnpricedMaterials,
 } from '../../utils/tea-optimizer.js';
 
 export { getSkillActionsForDisplay, calculateSkillPerformance, findOptimalTeas };
@@ -468,6 +469,13 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         selectedActionHrids
     );
 
+    // The equipment progression ranks gathering skills by gold, and — like the tile
+    // calculators it wraps — that ranking treats an unpriced material as worth 0 rather
+    // than excluding the action. A production skill ranks by XP instead, so an unpriced
+    // material cannot change which item wins and there is nothing to warn about.
+    const goldHasMissingPrices =
+        goal === 'gold' ? skillGoldHasUnpricedMaterials(skillName, playerLevel, selectedActionHrids) : false;
+
     return {
         skill: skillName,
         playerLevel,
@@ -475,6 +483,7 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         xpBaseline,
         goldBaseline,
         slots,
+        goldHasMissingPrices,
         xpTeaResult: xpTeaResult?.error ? null : xpTeaResult,
         goldTeaResult: goldTeaResult?.error ? null : goldTeaResult,
     };

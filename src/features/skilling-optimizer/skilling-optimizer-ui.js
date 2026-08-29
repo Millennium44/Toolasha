@@ -1095,6 +1095,13 @@ class SkillingSimulatorUI {
         }
 
         container.appendChild(this._makeSectionHeader('Equipment Progression'));
+        if (result.goal === 'gold' && result.goldHasMissingPrices) {
+            const warning = document.createElement('div');
+            warning.style.cssText = 'font-size: 11px; color: #eab308; margin-bottom: 8px;';
+            warning.title = UNPRICED_WARNING_TITLE;
+            warning.textContent = '⚠ This ranking leans on an unpriced material — gold figures treat it as free';
+            container.appendChild(warning);
+        }
         for (const [locationHrid, slotData] of slotEntries) {
             const loadoutEntry = loadoutItemMap?.get(locationHrid) ?? null;
 
