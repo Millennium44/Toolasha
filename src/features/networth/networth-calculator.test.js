@@ -492,9 +492,7 @@ describe('craft-cost parity between the main thread and the worker', () => {
         // else; here the real one is wanted, for the source it generates.
         const manager = await vi.importActual('../../utils/networth-worker-manager.js');
         // No real Worker here, so pool creation throws once the Blob exists
-        await manager
-            .calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} })
-            .catch(() => {});
+        await manager.calculateItemValueBatch([], {}, {}, { itemDetailMap: {}, actionDetailMap: {} }).catch(() => {});
         vi.unstubAllGlobals();
         expect(captured).toBeTruthy();
         workerProductionCostMemo = new Function('self', `${captured}\n; return calculateProductionCost;`)({
@@ -696,5 +694,122 @@ describe('the price map the worker batch is handed', () => {
 
         const priceMap = await shippedPriceMap({ itemHrid: '/items/iron_sword', enhancementLevel: 14, count: 1 });
         expect(priceMap['/items/iron_bar:0']).toBe(1105);
+    });
+});
+
+/**
+ * Which items get a live price at all. The batch fetch feeds both threads, but
+ * only the worker reaches for enhancement materials and protection items — so
+ * anything the sweep forgets to collect is silently absent from the worker's
+ * price map, where it reads as "no market data" and drops to sellPrice or
+ * production cost.
+ */
+describe('what the sweep collects prices for', () => {
+    beforeEach(() => {
+        mocks.settings.networth_highEnhancementUseCost = true;
+        mocks.settings.networth_highEnhancementMinLevel = 13;
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.initData = { houseRoomDetailMap: {}, actionDetailMap: {} };
+        mocks.itemDetails['/items/iron_sword'] = {
+            itemLevel: 10,
+            name: 'Iron Sword',
+            enhancementCosts: [{ itemHrid: '/items/enhance_stone', count: 1 }],
+            protectionItemHrids: ['/items/prot_orb'],
+        };
+        for (const hrid of [
+            '/items/iron_sword',
+            '/items/enhance_stone',
+            '/items/prot_orb',
+            '/items/philosophers_mirror',
+            '/items/mirror_of_protection',
+        ]) {
+            mocks.itemPrices[hrid] = { ask: 100, bid: 90 };
+        }
+    });
+
+    test('an enhanced item brings its materials, its protection items and both mirrors', async () => {
+        mocks.combinedData = {
+            characterItems: [
+                {
+                    itemHrid: '/items/iron_sword',
+                    enhancementLevel: 14,
+                    count: 1,
+                    itemLocationHrid: '/item_locations/inventory',
+                },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.itemDetails,
+        };
+        workerBatch.mockResolvedValue([0]);
+        await calculateNetworth();
+
+        const priceMap = workerBatch.mock.calls[0][1];
+        // Without these the worker priced the stone off sellPrice and the orb
+        // off production cost, while the main thread quoted the market
+        expect(priceMap['/items/enhance_stone:0']).toBe(100);
+        expect(priceMap['/items/prot_orb:0']).toBe(100);
+        expect(priceMap['/items/philosophers_mirror:0']).toBe(100);
+        expect(priceMap['/items/mirror_of_protection:0']).toBe(100);
+    });
+
+    test('a listing of an enhanced item brings them too', async () => {
+        mocks.combinedData = {
+            characterItems: [
+                {
+                    itemHrid: '/items/iron_sword',
+                    enhancementLevel: 14,
+                    count: 1,
+                    itemLocationHrid: '/item_locations/inventory',
+                },
+            ],
+            myMarketListings: [
+                {
+                    itemHrid: '/items/iron_sword',
+                    enhancementLevel: 14,
+                    isSell: true,
+                    orderQuantity: 1,
+                    filledQuantity: 0,
+                    unclaimedCoinCount: 0,
+                },
+            ],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.itemDetails,
+        };
+        workerBatch.mockResolvedValue([0]);
+        await calculateNetworth();
+
+        const priceMap = workerBatch.mock.calls[0][1];
+        expect(priceMap['/items/enhance_stone:0']).toBe(100);
+        expect(priceMap['/items/prot_orb:0']).toBe(100);
+    });
+
+    test('a character with nothing enhanced does not pay for the mirrors', async () => {
+        mocks.combinedData = {
+            characterItems: [
+                {
+                    itemHrid: '/items/iron_sword',
+                    enhancementLevel: 0,
+                    count: 1,
+                    itemLocationHrid: '/item_locations/inventory',
+                },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.itemDetails,
+        };
+        workerBatch.mockResolvedValue([]);
+        const result = await calculateNetworth();
+
+        // Nothing needed a worker, so nothing was batched — and the sweep did
+        // not go looking for enhancement inputs it has no use for
+        expect(workerBatch).not.toHaveBeenCalled();
+        expect(result.totalNetworth).toBe(100);
     });
 });

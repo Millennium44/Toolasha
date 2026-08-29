@@ -827,16 +827,42 @@ export async function calculateNetworth() {
         }
     };
 
+    // What an enhanced item's valuation reaches for beyond its own recipe: the
+    // materials each attempt burns, and whatever can protect it. The worker
+    // prices all of these out of this same cache (see the closure walk in
+    // networth-worker-manager.js), and none of them were ever collected — so
+    // they crossed the thread boundary unpriced and the worker fell back to
+    // sellPrice or production cost for materials the main thread was quoting at
+    // the live market.
+    let hasEnhancedItem = false;
+    const addEnhancementInputs = (itemHrid) => {
+        hasEnhancedItem = true;
+        const details = gameData.itemDetailMap?.[itemHrid];
+        if (!details) return;
+        for (const material of details.enhancementCosts || []) addItemWithUpgrades(material.itemHrid);
+        for (const protHrid of details.protectionItemHrids || []) addItemWithUpgrades(protHrid);
+    };
+
     // Collect all items that need pricing
     for (const item of characterItems) {
         itemsToPrice.push({ itemHrid: item.itemHrid, enhancementLevel: item.enhancementLevel || 0 });
         addItemWithUpgrades(item.itemHrid); // Add upgrade chain
+        if ((item.enhancementLevel || 0) >= 1) addEnhancementInputs(item.itemHrid);
     }
 
     // Collect market listings items
     for (const listing of marketListings) {
         itemsToPrice.push({ itemHrid: listing.itemHrid, enhancementLevel: listing.enhancementLevel || 0 });
         addItemWithUpgrades(listing.itemHrid); // Add upgrade chain
+        if ((listing.enhancementLevel || 0) >= 1) addEnhancementInputs(listing.itemHrid);
+    }
+
+    // The two mirrors are reachable from every enhancement path — the
+    // Philosopher's Mirror shortcut and the universal protection item — so they
+    // are collected once for the character rather than once per item
+    if (hasEnhancedItem) {
+        addItemWithUpgrades('/items/philosophers_mirror');
+        addItemWithUpgrades('/items/mirror_of_protection');
     }
 
     // Add all collected base items at enhancement level 0
