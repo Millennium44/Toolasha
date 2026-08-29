@@ -268,6 +268,20 @@ describe('the panel renders', () => {
         watchlistPanel.show();
         expect(document.querySelectorAll('#toolasha-watchlist-panel')).toHaveLength(1);
     });
+
+    test('unchanged inputs leave the DOM nodes alone', () => {
+        watchItem('/items/cheese');
+        watchlistPanel.show();
+
+        watchlistPanel._render();
+        const before = watchlistPanel.bodyEl.firstElementChild;
+        expect(before).not.toBeNull();
+
+        // Same rows, same prices: the scratch build serialises identically and
+        // the live body is kept rather than swapped — node identity proves it
+        watchlistPanel._render();
+        expect(watchlistPanel.bodyEl.firstElementChild).toBe(before);
+    });
 });
 
 describe('ticking a zone', () => {

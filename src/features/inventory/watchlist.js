@@ -424,6 +424,9 @@ class WatchlistPanel {
         this._render();
         this.refreshId = setInterval(() => {
             if (document.hidden) return;
+            // Nobody can see a folded panel's body; expanding is picked up by
+            // the next tick, as on the other floating panels
+            if (this.minimizeCtl?.collapsed) return;
             this._render();
         }, REFRESH_MS);
     }
@@ -546,7 +549,15 @@ class WatchlistPanel {
         this.headerTotal.textContent = `${formatKMB(totals.ask)} ask · ${formatKMB(totals.bid)} bid`;
         this._paintToggles();
 
-        this.bodyEl.replaceChildren();
+        // Drawn into a detached scratch box and swapped in only when the markup
+        // actually changed — the combat-panels.js `_render` idiom. Counts and
+        // prices hold still between inventory and market refreshes, so most
+        // five-second ticks were a full teardown and re-layout for identical
+        // pixels. The set checkboxes set their state via `.checked`, which is
+        // on neither side of the compare: identical markup keeps the live DOM
+        // (and its on-screen state), and a real swap rebuilds them from the
+        // same stored state the builder reads.
+        const scratch = document.createElement('div');
         for (const build of [
             () => this._sets('zones', 'Zones', combatZones(dataManager.getInitClientData?.()?.actionDetailMap)),
             () => this._sets('chests', 'Chests', openableItems(dataManager.getInitClientData?.())),
@@ -554,13 +565,16 @@ class WatchlistPanel {
         ]) {
             // One section that cannot be drawn must not take the others with it
             try {
-                this.bodyEl.appendChild(build());
+                scratch.appendChild(build());
             } catch (error) {
                 console.error('[Watchlist] A section could not be drawn:', error);
                 const failed = this._note(`This section could not be drawn: ${error.message}`);
                 failed.style.color = ROW_COLORS.bad;
-                this.bodyEl.appendChild(failed);
+                scratch.appendChild(failed);
             }
+        }
+        if (scratch.innerHTML !== this.bodyEl.innerHTML) {
+            this.bodyEl.replaceChildren(...scratch.childNodes);
         }
     }
 
