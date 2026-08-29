@@ -422,6 +422,12 @@ class OverlayPanel {
         this.drawReason = '';
         /** Whether the redraw about to happen is one nobody asked for */
         this.drawAutomatic = false;
+        /** True while a draw is in progress, so its own side effects cannot start another */
+        this.redrawing = false;
+        /** Whether a resize redraw is already booked for the next frame */
+        this.resizePending = false;
+        /** Whether a dock re-fit is already booked for the next frame */
+        this.dockPending = false;
         this.canvasEl = null;
         this.pickerEl = null;
         /** The header band, which the popover is never allowed to cover */
@@ -705,23 +711,49 @@ class OverlayPanel {
         // DOM has no reason to implement an API that measures nothing
         if (typeof ResizeObserver !== 'function' || !this.panel) return;
 
-        this.panelObserver = new ResizeObserver(() => {
-            // Any change of width, not only one that moves the column count.
-            // Guarding on the count alone meant a panel that grew and shrank
-            // again could keep tile styling worked out for the wider state, and
-            // the redraw loop the guard existed for — the draw writing the
-            // canvas's own width, which the observer then saw — cannot happen
-            // any more, because nothing writes the canvas a width.
-            const width = this.scrollEl?.offsetWidth || 0;
-            if (width === this.lastWidth) return;
+        this.panelObserver = new ResizeObserver(() => this._onPanelResized());
+        this.panelObserver.observe(this.panel);
+        this._watchDock();
+    }
+
+    /**
+     * The panel changed size: redraw for the width it now has.
+     *
+     * Three things stand between this and the loop it caused. It **ignores
+     * anything that happens while it is drawing**, because a redraw that
+     * changes a size the observer is watching would otherwise call this again
+     * from inside itself. It compares against the width it last *drew for*
+     * rather than the width it last *saw*, with a pixel of deadband, so a
+     * measurement flickering between two values settles instead of alternating
+     * forever — which is exactly what a comparison against the last observation
+     * cannot do. And it coalesces to one redraw a frame, so a burst of
+     * observations during a drag-resize is one draw rather than thirty.
+     *
+     * The version this replaces had none of the three: it compared each
+     * observation to the previous one and redrew whenever they differed, which
+     * turns any two-value oscillation into an unbounded storm of full rebuilds.
+     */
+    _onPanelResized() {
+        if (this.redrawing || this.resizePending) return;
+
+        this.resizePending = true;
+        const run = () => {
+            this.resizePending = false;
+            if (!this.panel || !this.scrollEl) return;
+
+            const width = this.scrollEl.offsetWidth || 0;
+            // A pixel of deadband: sub-pixel layout and zoom both produce widths
+            // that differ by a fraction and mean the same thing
+            if (Math.abs(width - this.lastWidth) < 1) return;
             this.lastWidth = width;
 
             this._applyColumns();
             this._renderBody('the panel being resized');
             this._placePicker();
-        });
-        this.panelObserver.observe(this.panel);
-        this._watchDock();
+        };
+
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else run();
     }
 
     /**
@@ -735,9 +767,34 @@ class OverlayPanel {
     _watchDock() {
         if (typeof ResizeObserver !== 'function') return;
         this.dockObserver?.disconnect();
-        this.dockObserver = new ResizeObserver(() => this._fitDock());
+        this.dockObserver = new ResizeObserver(() => this._onDockResized());
+        // The host only. This used to watch the canvas as well, which is the
+        // same feedback shape the panel observer had and worse: `_fitDock` sets
+        // the panel's height, the panel's height sets the scroller's, the
+        // scroller's sets how much of the canvas is laid out — and the canvas
+        // reports a new size, which re-fits the dock. The canvas is *inside* the
+        // thing being sized; it cannot also be the thing that sizes it.
         if (this.dockHost) this.dockObserver.observe(this.dockHost);
-        if (this.canvasEl) this.dockObserver.observe(this.canvasEl);
+    }
+
+    /**
+     * The column changed size: fit the panel into what it now has.
+     *
+     * Coalesced and re-entry-guarded for the reason `_onPanelResized` is, and
+     * additionally silent when the height it would write is the height already
+     * there — `_fitDock` writes `panel.style.height`, and the panel is inside
+     * the host this is observing.
+     */
+    _onDockResized() {
+        if (this.redrawing || this.dockPending) return;
+
+        this.dockPending = true;
+        const run = () => {
+            this.dockPending = false;
+            this._fitDock();
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else run();
     }
 
     /** The window changed shape: fit to it, then redraw for what is left */
@@ -815,6 +872,10 @@ class OverlayPanel {
             // Clamped so the first open on a phone is not wider than the screen
             width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
             height: `min(${DEFAULT_PANEL.height}px, 80vh)`,
+            // Explicit, so no amount of content can widen it and set the
+            // observer watching it going
+            boxSizing: 'border-box',
+            minWidth: '0',
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.55)',
         });
 
@@ -868,7 +929,15 @@ class OverlayPanel {
         Object.assign(this.panel.style, {
             position: 'relative',
             zIndex: 'auto',
-            width: 'auto',
+            // Pinned to the column rather than left to work itself out. The dock
+            // host is a flex column, and `width: auto` on a flex item is a width
+            // its *contents* get a say in — which is the one thing the panel's
+            // width must never be, because a redraw changes the contents and the
+            // observer watching the panel would see the width move under it.
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: '0',
+            boxSizing: 'border-box',
             height: `${this._dockHeight()}px`,
             minHeight: '0',
             marginTop: '4px',
@@ -931,7 +1000,11 @@ class OverlayPanel {
      * @returns {number} Pixels, or the default before anything has been drawn
      */
     _contentHeight() {
-        const content = Number.parseFloat(this.canvasEl?.style.height);
+        // Measured, because nothing writes the canvas a height any more — the
+        // grid works one out. Read straight, `style.height` has been an empty
+        // string since the grid rework, so this returned the default every time
+        // and a docked panel never fitted its tiles at all.
+        const content = this.canvasEl?.scrollHeight || 0;
         if (!Number.isFinite(content) || content <= 0) return DOCK_HEIGHT.default;
 
         // Header, grab bar and borders: everything of the panel that is not the
@@ -2464,7 +2537,15 @@ class OverlayPanel {
             this.drawReason = reason;
             this.drawAutomatic = true;
         }
-        this._drawBody();
+        // Anything a draw disturbs — a tile's height, the canvas's extent, the
+        // panel's own box — must not be able to ask for another draw from
+        // inside this one. Every observer on the panel checks this flag.
+        this.redrawing = true;
+        try {
+            this._drawBody();
+        } finally {
+            this.redrawing = false;
+        }
     }
 
     /**

@@ -640,3 +640,130 @@ describe('the brake on a runaway redraw', () => {
         vi.restoreAllMocks();
     });
 });
+
+describe('a resize that the redraw itself causes', () => {
+    /**
+     * Rows whose render inserts content of a height that changes every time —
+     * the closest a test DOM gets to the live case, where a real renderer
+     * changing a tile's contents changes the panel's measured size.
+     * @param {number} count - How many
+     * @returns {Array<Object>} Row definitions
+     */
+    function restless(count) {
+        return Array.from({ length: count }, (_, index) => {
+            const row = { ...speaking(`r${index}`), lines: 1 };
+            row.render = (element) => {
+                element.replaceChildren();
+                row.lines = row.lines === 1 ? 3 : 1;
+                for (let line = 0; line < row.lines; line += 1) {
+                    const div = document.createElement('div');
+                    div.textContent = `r${index} line ${line}`;
+                    element.appendChild(div);
+                }
+            };
+            return row;
+        });
+    }
+
+    /**
+     * A scroller whose width follows its own content, which is the shape that
+     * made the live panel unrecoverable: draw changes content, content changes
+     * width, width asks for a draw.
+     * @param {number[]} widths - The widths it reports, in turn
+     */
+    function widthCycles(widths) {
+        let at = 0;
+        Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', {
+            configurable: true,
+            get: () => widths[at++ % widths.length],
+        });
+    }
+
+    beforeEach(() => {
+        registry.rows = restless(8);
+        overlayPanel.settings.visible = Object.fromEntries(registry.rows.map((row) => [row.key, true]));
+        overlayPanel.settings.order = registry.rows.map((row) => row.key);
+        overlayPanel.show();
+        overlayPanel.drawPausedUntil = 0;
+        overlayPanel.drawsInWindow = 0;
+        // Showing the panel books a frame of its own; this suite is about what
+        // happens to the bookings after that
+        overlayPanel.resizePending = false;
+        overlayPanel.dockPending = false;
+    });
+
+    test('a redraw cannot ask for another from inside itself', () => {
+        // Every observer on the panel checks this, which is what stops a draw
+        // that disturbs a watched box from calling the watcher back
+        const draws = vi.spyOn(overlayPanel, '_drawBody');
+        overlayPanel.redrawing = true;
+
+        overlayPanel._onPanelResized();
+        overlayPanel._onDockResized();
+
+        expect(draws).not.toHaveBeenCalled();
+        expect(overlayPanel.resizePending).toBe(false);
+        overlayPanel.redrawing = false;
+        draws.mockRestore();
+    });
+
+    test('a width flickering between two values settles instead of alternating', () => {
+        // The loop as it actually was: compared against the width it last *saw*,
+        // an A/B/A/B measurement differs every time and redraws forever.
+        // Compared against the width it last *drew for*, it stops.
+        widthCycles([500, 501, 500, 501, 500, 501]);
+        overlayPanel.lastWidth = 500;
+
+        const draws = vi.spyOn(overlayPanel, '_drawBody');
+        for (let event = 0; event < 6; event += 1) overlayPanel._onPanelResized();
+
+        // Coalesced to one booking a frame, and the deadband swallows the rest
+        expect(draws.mock.calls.length).toBeLessThanOrEqual(1);
+        draws.mockRestore();
+    });
+
+    test('a burst of observations is one redraw, not one each', () => {
+        widthCycles([900, 900, 900, 900, 900]);
+        overlayPanel.lastWidth = 500;
+
+        // Five observations, one frame booked between them
+        let booked = 0;
+        const frames = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => {
+            booked += 1;
+            return 0;
+        });
+        for (let event = 0; event < 5; event += 1) overlayPanel._onPanelResized();
+
+        expect(booked).toBe(1);
+        frames.mockRestore();
+    });
+
+    test('a real redraw that changes every tile does not book another', () => {
+        // Rows whose content changes on every render, which is what the live
+        // panel had and the null-rendering fixtures did not
+        let booked = 0;
+        const frames = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => {
+            booked += 1;
+            return 0;
+        });
+
+        overlayPanel._renderBody();
+
+        // The draw is over, so nothing it disturbed was able to book a frame
+        // from inside it, and the brake was never approached
+        expect(booked).toBe(0);
+        expect(overlayPanel.drawPausedUntil).toBe(0);
+        frames.mockRestore();
+    });
+
+    test('and the dock no longer watches a box that lives inside what it sizes', () => {
+        // `_fitDock` sets the panel's height; the canvas is inside the panel.
+        // Observing both is a loop with no exit.
+        expect(overlayPanel.dockObserver).toBeTruthy();
+        const watched = [];
+        overlayPanel.dockObserver.observe = (element) => watched.push(element);
+        overlayPanel._watchDock();
+
+        expect(watched).not.toContain(overlayPanel.canvasEl);
+    });
+});

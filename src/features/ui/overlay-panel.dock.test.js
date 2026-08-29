@@ -198,8 +198,10 @@ describe('docked into the character column', () => {
         overlayPanel.settings.dockHeightPx = null;
         overlayPanel.show();
 
-        // happy-dom measures nothing, so the canvas is the only real figure here
-        overlayPanel.canvasEl.style.height = '640px';
+        // happy-dom measures nothing, so the canvas is the only real figure
+        // here. Measured rather than read off a style: nothing writes the canvas
+        // a height since the grid rework, because the grid works one out.
+        Object.defineProperty(overlayPanel.canvasEl, 'scrollHeight', { value: 640, configurable: true });
         overlayPanel._fitDock();
 
         expect(Number.parseInt(overlayPanel.panel.style.height, 10)).toBeGreaterThanOrEqual(640);
