@@ -262,6 +262,18 @@ describe('sorting chat into events', () => {
         message('[08/04 10:00:00 AM]', 'nice run everyone');
         expect(annotations.extractChatEvents()).toEqual([]);
     });
+
+    test('a player quoting "Key counts:" does not forge a run boundary', () => {
+        // A player typing the system phrase carries a name element the real
+        // system line never does — that, not the words, is what tells them apart.
+        message('[08/04 10:00:05 AM]', 'Key counts: [Alice - 12]', { username: 'Bob' });
+        expect(annotations.extractChatEvents()).toEqual([]);
+    });
+
+    test('a player quoting "Battle started:" does not forge a session boundary', () => {
+        message('[08/04 10:00:00 AM]', 'Battle started: Chimerical Den', { username: 'Bob' });
+        expect(annotations.extractChatEvents()).toEqual([]);
+    });
 });
 
 describe('clickable names on a key counts line', () => {

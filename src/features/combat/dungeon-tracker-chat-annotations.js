@@ -612,7 +612,24 @@ class DungeonTrackerChatAnnotations {
         for (const node of nodes) {
             if (node.dataset.processed === '1') continue;
 
+            // FILTER: skip player messages. A system line carries only a
+            // timestamp; a player's carries the sender's name element too, so a
+            // player typing "Key counts: [...]" or "Battle started: ..." would
+            // otherwise forge a run/session boundary. The game renamed
+            // ChatMessage_username to ChatMessage_name (with a CharacterName_*
+            // element inside) — match all spellings so the filter survives
+            // either direction, mirroring dungeon-tracker.js's own guard.
+            const hasUsername =
+                node.querySelector(
+                    '[class*="ChatMessage_username"], [class*="ChatMessage_name"], [class*="CharacterName_"]'
+                ) !== null;
+            if (hasUsername) continue;
+
             const text = node.textContent.trim();
+
+            // FALLBACK: text starting with non-timestamp text followed by a
+            // colon also reads as a player line, even without a name element.
+            if (/^[^[]+:/.test(text)) continue;
 
             // Check message relevance FIRST before parsing timestamp
             // Battle started message
