@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reports say which build they came from
+
+The startup trace and health report printed only the release number, which a dev build shares with GreasyFork — a paste from a tab could not say which build it was actually running. The dev bundle now stamps its build time on the namespace and every report prints it: `3.28.0 (dev build 2026-08-29T03:03:23Z)`.
+
 ### The overlay stops repainting tiles that have nothing new to say
 
 The once-a-second refresh rebuilt every visible tile's DOM even when it read exactly the same — and the style and layout work that followed is what made the game's own progress bars stutter once a second. The shared tile renderers now recognise an identical draw from its data and leave the nodes alone; a tile whose value changed, or that draws its own extras, still gets the full rebuild.

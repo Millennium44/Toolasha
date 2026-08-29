@@ -17,7 +17,7 @@ import storage from '../../core/storage.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatReport, reportData } from '../../utils/performance-report.js';
 import { showToast } from '../../utils/toast.js';
-import { performanceMonitor, toolashaRoot } from '../../utils/bundle-bridge.js';
+import { performanceMonitor, toolashaRoot, scriptBuildLabel } from '../../utils/bundle-bridge.js';
 
 const PANEL_ID = 'toolasha-health-status';
 
@@ -147,7 +147,7 @@ export function buildDiagnosticReport(failures = []) {
     const lines = [];
     lines.push('Toolasha health report');
     lines.push('='.repeat(60));
-    lines.push(`script: ${root?.version || 'unknown'}`);
+    lines.push(`script: ${scriptBuildLabel() || 'unknown'}`);
     lines.push(`fork: ${root?.fork || 'unknown'}`);
     lines.push(`agent: ${agent}`);
     lines.push(`takenAt: ${new Date().toISOString()}`);
@@ -175,7 +175,7 @@ export function buildDiagnosticReport(failures = []) {
                 spans: monitor.spans,
                 stats: monitor.getAllStats(),
                 environment: {
-                    script: root?.version || 'unknown',
+                    script: scriptBuildLabel() || 'unknown',
                     fork: root?.fork || 'unknown',
                     agent,
                 },
@@ -197,7 +197,7 @@ export function diagnosticData(failures = []) {
     const root = toolashaRoot();
     const monitor = getPerformanceMonitor();
     return {
-        script: root?.version || 'unknown',
+        script: scriptBuildLabel() || 'unknown',
         fork: root?.fork || 'unknown',
         agent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
         takenAt: new Date().toISOString(),

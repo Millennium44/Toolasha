@@ -512,7 +512,13 @@ const devConfig = {
         name: 'Toolasha',
         // A minified dev build gets the header from terser's preamble instead
         ...(process.env.MINIFY ? {} : { banner: devHeader }),
-        outro: `console.log('[Toolasha] dev build ${buildStamp}');`,
+        // The stamp lives on the namespace as well as in the console line: the
+        // startup trace and health report print it, so a paste from a tab says
+        // which dev build it was running instead of just the release number the
+        // dev bundle shares with GreasyFork.
+        outro:
+            `console.log('[Toolasha] dev build ${buildStamp}');` +
+            `if (typeof window !== 'undefined' && window.Toolasha) window.Toolasha.buildStamp = '${buildStamp}';`,
     },
     plugins: [
         cssRawPlugin(),

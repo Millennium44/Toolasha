@@ -30,6 +30,23 @@ export function toolashaRoot() {
     return globalThis.window?.Toolasha || null;
 }
 
+/**
+ * The running script's version, with the dev build stamp when there is one.
+ *
+ * The dev bundle shares its version number with the release it was cut from,
+ * so a report saying "3.28.0" cannot tell a dev-loader tab from a GreasyFork
+ * install — during the 2026-08-28 freeze hunt that ambiguity cost hours. The
+ * dev build's outro stamps the namespace, and this reads it back.
+ *
+ * @returns {string|null} e.g. `3.28.0 (dev build 2026-08-29T03:15:01Z)`, the bare
+ *   version, or null off-page like every other accessor here
+ */
+export function scriptBuildLabel() {
+    const root = toolashaRoot();
+    if (!root?.version) return null;
+    return root.buildStamp ? `${root.version} (dev build ${root.buildStamp})` : root.version;
+}
+
 // ---------------------------------------------------------------------------
 // Core (loads first; reached from later bundles whose own copy is uninstalled)
 // ---------------------------------------------------------------------------
