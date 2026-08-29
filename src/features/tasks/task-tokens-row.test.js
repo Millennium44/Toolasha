@@ -329,3 +329,58 @@ describe('a token valuation that is only a floor', () => {
         expect(draw().textContent).not.toContain('≥');
     });
 });
+
+/**
+ * The tile's `version()`.
+ *
+ * `calculateTaskTokenValue` walks the Task Shop for the best line to value a
+ * token by, and the overlay had it doing that once a second for a board that
+ * changes when a task is claimed.
+ */
+describe('the Task Tokens tile summarises its own inputs', () => {
+    const version = () => game.rows.taskTokens.version();
+
+    beforeEach(() => {
+        game.rates = null;
+        game.quests = [
+            {
+                category: '/quest_category/random_task',
+                status: '/quest_status/in_progress',
+                itemRewardsJSON: JSON.stringify([{ itemHrid: '/items/task_token', count: 5 }]),
+            },
+        ];
+    });
+
+    test('an empty board is one settled version', () => {
+        game.quests = [];
+        expect(version()).toBe('blank');
+        expect(version()).toBe(version());
+    });
+
+    test('it holds still while the board does', () => {
+        expect(version()).toBe(version());
+    });
+
+    test('another task on the board moves it', () => {
+        const before = version();
+        game.quests = [...game.quests, { ...game.quests[0] }];
+        expect(version()).not.toBe(before);
+    });
+
+    test('so do the tokens the same tasks are worth', () => {
+        const before = version();
+        game.quests = [
+            {
+                ...game.quests[0],
+                itemRewardsJSON: JSON.stringify([{ itemHrid: '/items/task_token', count: 9 }]),
+            },
+        ];
+        expect(version()).not.toBe(before);
+    });
+
+    test('and the measured rate the tile draws as a line of its own', () => {
+        const before = version();
+        game.rates = { session: { tokensPerHour: 10 }, week: { tokensPerHour: 12 } };
+        expect(version()).not.toBe(before);
+    });
+});

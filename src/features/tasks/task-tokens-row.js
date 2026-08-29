@@ -26,8 +26,9 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import marketAPI from '../../api/marketplace.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
+import { rows, blank, spriteUrl, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { calculateTaskTokenValue, formatTokenFigure, valueTaskRewards } from './task-profit-calculator.js';
 import taskCompletionTracker from './task-completion-tracker.js';
@@ -159,12 +160,55 @@ async function toggleStatistics() {
     }
 }
 
+/**
+ * How many price feeds have landed.
+ *
+ * A token is valued off the Task Shop's own lines, which are priced through the
+ * market — so a new feed can change every figure on the tile without a task
+ * being claimed.
+ */
+let priceFeed = 0;
+
+marketAPI.on(() => {
+    priceFeed++;
+});
+
 registerRow({
     key: 'taskTokens',
     name: 'Task Tokens',
     empty: 'No tasks on the board',
     defaultVisible: false,
     defaultSize: { width: 200, height: 44 },
+    /**
+     * What the tile would price, without pricing it.
+     *
+     * `calculateTaskTokenValue` walks the Task Shop looking for the best line to
+     * value a token by, and the overlay had it doing that once a second for a
+     * board that changes when a task is claimed. So: the board itself, the
+     * measured rates as the tile words them, the price feed the shop is read
+     * through, and the sprite sheet the token icon comes off.
+     *
+     * The minute bucket is the deliberate backstop. The valuation also depends
+     * on the expected-value calculator having finished loading, and the measured
+     * rates are per-hour figures over a rolling window that drifts with the
+     * clock rather than with any event. A minute bounds both on a tile whose
+     * fastest-moving figure is a token count.
+     */
+    version: () => {
+        const { tasks, tokens } = boardTokens();
+        if (!tasks) return 'blank';
+
+        const rates = measuredRates();
+        return [
+            tasks,
+            tokens,
+            rates?.week?.tokensPerHour ?? '',
+            rates?.session?.tokensPerHour ?? '',
+            priceFeed,
+            Math.floor(Date.now() / 60_000),
+            spriteUrl('items'),
+        ].join('|');
+    },
     render: (container) => {
         const { tasks, tokens } = boardTokens();
         if (!tasks) return blank(container);
