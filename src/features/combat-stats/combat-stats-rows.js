@@ -28,6 +28,7 @@ import {
     drawLine,
     itemIcon,
     linkToMarketplace,
+    spriteUrl,
     ROW_COLORS,
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
@@ -51,6 +52,17 @@ const CACHE_MS = 4000;
 let cached = null;
 let cachedAt = 0;
 
+/**
+ * The consumable forecast's own cache, on the same four-second rhythm.
+ *
+ * `consumablePlayers` prices and forecasts every slot of every party member, and
+ * the Consumables tile called it once a second. Cached here rather than inside
+ * the helper's callers so the tile's `version()` can read the forecast it is
+ * about to draw without paying for it twice.
+ */
+let consumableCache = null;
+let consumableCachedAt = 0;
+
 // This cache sits in front of `combatStatsDataCollector`, which clears its own
 // `latestCombatData` synchronously on `character_switching` — but that does
 // nothing for the copy already sitting here. Left alone, `partyStats()` kept
@@ -63,6 +75,8 @@ let cachedAt = 0;
 dataManager.on('character_switching', () => {
     cached = null;
     cachedAt = 0;
+    consumableCache = null;
+    consumableCachedAt = 0;
 });
 
 /**
@@ -113,6 +127,20 @@ function currentStats() {
 }
 
 /**
+ * What a run has actually banked, after what it burned to get there.
+ *
+ * Both cost figures are `{ask, bid}` rather than numbers; subtracting the
+ * objects gave NaN. Pulled out of the Total Profit render so its `version` can
+ * quote the same figure rather than a second copy of the arithmetic.
+ *
+ * @param {Object} stats - From `calculatePlayerStats`
+ * @returns {number} Coins
+ */
+function bankedTotal(stats) {
+    return stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+}
+
+/**
  * Whether a dungeon run has yet to pay anything out.
  *
  * Keys are charged when a chest drops and the revenue arrives the same way, so
@@ -128,30 +156,81 @@ export function warmingUp(stats) {
     return Boolean(stats?.isDungeonRun) && !(stats?.keyBreakdown || []).length;
 }
 
+/**
+ * Everything the Combat Revenue tile draws, in one pass.
+ *
+ * Shared by the row's `render` and its `version` so the two cannot disagree
+ * about what is on the tile: the version is a transcript of this, and anything
+ * the render reads that is not in here would be an input the memo misses.
+ *
+ * @returns {{view: Object, warming: boolean, luckNotes: string[]}|null} Null when
+ *   there is nothing to draw
+ */
+function revenuePayload() {
+    const stats = currentStats();
+    if (!stats) return null;
+
+    // Income, what it cost to earn it, and what is left — the third number is
+    // the only one worth acting on, and it is the one an income figure alone
+    // quietly overstates.
+    //
+    // Which income and which cost is the panel's decision, not the tile's:
+    // somebody reading Patient there is not thinking in bid revenue, and a
+    // tile that disagrees with the panel behind it is a tile nobody trusts.
+    // The panel lives in the UI bundle, so it is reached through the global.
+    //
+    // Read every tick rather than memoised alongside the stats: the pricing
+    // mode, the costs switch and the MooPass switch are all panel buttons that
+    // can move without the run's figures moving at all, and a memo keyed on the
+    // figures would leave the tile showing the reading you just switched away
+    // from.
+    const view = combatProfitView()?.(stats) || {
+        revenue: stats.dailyIncome.bid,
+        cost: stats.dailyConsumableCosts + stats.dailyKeyCosts,
+        tax: 0,
+        profit: stats.dailyProfit.bid,
+        title: 'Lazy Profit',
+    };
+
+    return {
+        view,
+        // A dungeon that has not paid out yet is dimmed rather than damned:
+        // the burn is real, the verdict is not in until a chest drops
+        warming: warmingUp(stats),
+        // An adjusted chest EV inside the revenue is marked, never silent
+        luckNotes: (stats.chestLuckAdjustments || []).map(describeLuckAdjustment),
+    };
+}
+
 registerRow({
     key: 'combatRevenue',
     empty: 'No loot tracked yet',
     name: 'Combat Revenue',
     defaultSize: { width: 280, height: 40 },
-    render: (container) => {
-        const stats = currentStats();
-        if (!stats) return blank(container);
+    // The four figures as they are drawn — rounded, because that is the
+    // precision the tile shows and a memo finer than the display redraws for
+    // changes nobody can see — plus the reading's name, the warming flag and the
+    // luck notes, which are the rest of what `render` puts on the tile.
+    version: () => {
+        const payload = revenuePayload();
+        if (!payload) return 'blank';
 
-        // Income, what it cost to earn it, and what is left — the third number is
-        // the only one worth acting on, and it is the one an income figure alone
-        // quietly overstates.
-        //
-        // Which income and which cost is the panel's decision, not the tile's:
-        // somebody reading Patient there is not thinking in bid revenue, and a
-        // tile that disagrees with the panel behind it is a tile nobody trusts.
-        // The panel lives in the UI bundle, so it is reached through the global.
-        const view = combatProfitView()?.(stats) || {
-            revenue: stats.dailyIncome.bid,
-            cost: stats.dailyConsumableCosts + stats.dailyKeyCosts,
-            tax: 0,
-            profit: stats.dailyProfit.bid,
-            title: 'Lazy Profit',
-        };
+        const { view, warming, luckNotes } = payload;
+        return [
+            Math.round(view.revenue),
+            Math.round(view.tax),
+            Math.round(view.cost),
+            Math.round(view.profit),
+            view.title,
+            warming ? 1 : 0,
+            luckNotes.join('~'),
+        ].join('|');
+    },
+    render: (container) => {
+        const payload = revenuePayload();
+        if (!payload) return blank(container);
+
+        const { view, warming, luckNotes } = payload;
 
         // One decimal and a plain hyphen, as MCS draws it. Three numbers and two
         // operators on one tile is already tight, and the second decimal buys
@@ -173,9 +252,6 @@ registerRow({
                 { text: formatLargeNumber(Math.round(view.cost), 1), color: ROW_COLORS.bad }
             );
         }
-        // A dungeon that has not paid out yet is dimmed rather than damned:
-        // the burn is real, the verdict is not in until a chest drops
-        const warming = warmingUp(stats);
         segments.push(
             { text: '=', color: ROW_COLORS.dim },
             {
@@ -187,8 +263,6 @@ registerRow({
         if (warming) segments.push({ text: '· no chest yet', color: ROW_COLORS.dim });
 
         row(container, segments);
-        // An adjusted chest EV inside the revenue is marked, never silent
-        const luckNotes = (stats.chestLuckAdjustments || []).map(describeLuckAdjustment);
         container.title =
             (warming
                 ? 'Warming up — no chest has dropped yet. Keys are charged when chests drop and the revenue ' +
@@ -206,6 +280,13 @@ registerRow({
     empty: 'No experience yet',
     name: 'Experience/hr',
     defaultSize: { width: 180, height: 30 },
+    // The whole tile is one rounded figure and a fixed title, so the rounded
+    // figure is the whole input. It only moves when the collector's cache is
+    // rebuilt, which `currentStats` is what asks for.
+    version: () => {
+        const stats = currentStats();
+        return stats?.expPerHour ? String(Math.round(stats.expPerHour)) : 'blank';
+    },
     render: (container) => {
         const stats = currentStats();
         if (!stats?.expPerHour) return blank(container);
@@ -228,6 +309,14 @@ registerRow({
     empty: 'No combat yet',
     name: 'Deaths/hr',
     defaultSize: { width: 130, height: 30 },
+    // The figure as drawn, and separately whether it is above zero: a rate of
+    // 0.04 draws as "0.0" but is coloured as a death, so the two are not the
+    // same input and keying on the text alone would freeze the colour.
+    version: () => {
+        const stats = currentStats();
+        if (!stats) return 'blank';
+        return `${stats.deathsPerHour.toFixed(1)}|${stats.deathsPerHour > 0 ? 1 : 0}`;
+    },
     render: (container) => {
         const stats = currentStats();
         if (!stats) return blank(container);
@@ -294,6 +383,26 @@ registerRow({
     // Taller by default than it was: a party of five needs five lines, and a
     // tile sized for one clips the rest
     defaultSize: { width: 240, height: 78 },
+    // A line per party member, each of which is a name, a banked figure and a
+    // per-day figure — all three rounded the way the tile rounds them — plus the
+    // luck notes that make up the tooltip. Nothing else reaches the tile.
+    version: () => {
+        const party = partyStats();
+        if (!party.length) return 'blank';
+
+        const lines = party.map((stats) =>
+            [
+                stats.name || 'You',
+                stats.isCurrentPlayer ? 1 : 0,
+                Math.round(bankedTotal(stats)),
+                Math.round(stats.dailyProfit.bid),
+            ].join('~')
+        );
+        const luckNotes = [
+            ...new Set(party.flatMap((stats) => (stats.chestLuckAdjustments || []).map(describeLuckAdjustment))),
+        ];
+        return `${lines.join('|')}#${luckNotes.join('~')}`;
+    },
     render: (container) => {
         const party = partyStats();
         if (!party.length) return blank(container);
@@ -304,9 +413,7 @@ registerRow({
         rows(
             container,
             party.map((stats) => {
-                // Both cost figures are {ask, bid} rather than numbers;
-                // subtracting the objects gave NaN
-                const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+                const banked = bankedTotal(stats);
 
                 return [
                     {
@@ -356,16 +463,35 @@ registerRow({
     name: 'Consumables',
     // Four lines now the cost label has one of its own, as CRack has it
     defaultSize: { width: 240, height: 76 },
-    render: (container) => {
-        const players = consumablePlayers();
-        const { you, party, partyName } = partyOutlook(players);
-        if (!you && !party) return blank(container);
+    // Every figure and colour the tile carries, in the precision it carries
+    // them: the two countdowns as they are worded, the colour each is given —
+    // which is a comparison against the Consumables panel's target, so a change
+    // to that target has to move the version and does — the limiting item, and
+    // the two cost figures rounded as drawn. The sprite sheet is in there too,
+    // because an icon drawn before the game has loaded the sheet is a spacer
+    // that has to be replaced when the sheet turns up.
+    version: () => {
+        const payload = consumablesPayload();
+        if (!payload) return 'blank';
 
-        // Costed through the same forecast the panel uses, so the tile can show
-        // both sides of the book the way the panel does and the two are read off
-        // one calculation rather than two that happen to agree
-        const mine = players.find((player) => player.isCurrent)?.forecasts || [];
-        const sides = costPerDaySides(mine);
+        const { you, party, partyName, limiting, sides } = payload;
+        return [
+            you ? `${shortDuration(you.secondsLeft)}@${runOutColor(you)}` : '--',
+            party ? `${shortDuration(party.secondsLeft)}@${runOutColor(party)}` : '--',
+            partyName || '',
+            limiting.itemHrid,
+            limiting.held,
+            runOutColor(limiting),
+            Math.round(sides.ask),
+            Math.round(sides.bid),
+            spriteUrl('items'),
+        ].join('|');
+    },
+    render: (container) => {
+        const payload = consumablesPayload();
+        if (!payload) return blank(container);
+
+        const { you, party, partyName, limiting, sides } = payload;
 
         container.replaceChildren();
         Object.assign(container.style, {
@@ -396,7 +522,6 @@ registerRow({
         // worse answer than "3,170" to the only question being asked, which is
         // whether to top up now. Clicking any of the three opens the
         // marketplace, which is where you go next when the answer is "soon".
-        const limiting = you || party;
         const second = document.createElement('div');
         Object.assign(second.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
 
@@ -465,9 +590,11 @@ registerRow({
     empty: 'Not in combat',
     name: 'Combat Status',
     defaultSize: { width: 160, height: 30 },
+    // The action currently running is the tile's only input, and the hrid is all
+    // of it: the three words and three colours below are a pure function of it.
+    version: () => currentAction()?.actionHrid || 'idle',
     render: (container) => {
-        const actions = dataManager.getCurrentActions?.() || [];
-        const current = actions.find((action) => !action.isDone);
+        const current = currentAction();
 
         let text = 'Idle';
         let color = ROW_COLORS.bad;
@@ -484,6 +611,14 @@ registerRow({
         row(container, [{ text, color, bold: true }]);
     },
 });
+
+/**
+ * Whatever the character is doing right now.
+ * @returns {Object|null} The queue's first unfinished action, or null when idle
+ */
+function currentAction() {
+    return (dataManager.getCurrentActions?.() || []).find((action) => !action.isDone) || null;
+}
 
 /**
  * How long the current run has been going.
@@ -532,6 +667,39 @@ function clock(seconds) {
  * @returns {Array<{name: string, isCurrent: boolean, forecasts: Array<Object>}>}
  */
 function consumablePlayers() {
+    const now = Date.now();
+    if (consumableCache && now - consumableCachedAt < CACHE_MS) return consumableCache;
+
+    consumableCache = forecastPlayers();
+    consumableCachedAt = now;
+    return consumableCache;
+}
+
+/**
+ * What the Consumables tile draws, assembled once and read by both `version`
+ * and `render` so neither can be looking at a different forecast than the other.
+ *
+ * @returns {{you: Object|null, party: Object|null, partyName: string,
+ *   limiting: Object, sides: {ask: number, bid: number}}|null} Null when there
+ *   is nothing slotted to forecast
+ */
+function consumablesPayload() {
+    const players = consumablePlayers();
+    const { you, party, partyName } = partyOutlook(players);
+    if (!you && !party) return null;
+
+    // Costed through the same forecast the panel uses, so the tile can show
+    // both sides of the book the way the panel does and the two are read off
+    // one calculation rather than two that happen to agree
+    const mine = players.find((player) => player.isCurrent)?.forecasts || [];
+    return { you, party, partyName, limiting: you || party, sides: costPerDaySides(mine) };
+}
+
+/**
+ * The forecast itself, uncached.
+ * @returns {Array<{name: string, isCurrent: boolean, forecasts: Array<Object>}>}
+ */
+function forecastPlayers() {
     const data = combatStatsDataCollector.getLatestData();
     if (!data?.players?.length) return [];
 
