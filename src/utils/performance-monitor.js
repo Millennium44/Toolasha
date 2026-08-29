@@ -15,6 +15,11 @@ const WINDOW_MS = 5000;
  */
 const MAX_ENTRIES_PER_METRIC = 1000;
 
+/** @returns {number} The monotonic clock, safe where `performance` is absent */
+function monotonicNow() {
+    return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
 /**
  * When the script started, as the clock the rest of the timings are quoted
  * against. `performance.now()` is already relative to page navigation, but the
@@ -54,7 +59,9 @@ class PerformanceMonitor {
             this.measurements.set(name, []);
         }
         const entries = this.measurements.get(name);
-        entries.push({ time: Date.now(), duration: durationMs });
+        // `time` (wall clock) drives the rolling window; `perfTime` (monotonic)
+        // is what stall attribution aligns on — see _suspectsFor
+        entries.push({ time: Date.now(), perfTime: monotonicNow(), duration: durationMs });
         if (entries.length > MAX_ENTRIES_PER_METRIC) {
             // Prefer dropping what the window no longer covers; fall back to
             // dropping the oldest so the array is bounded even inside a window
@@ -304,26 +311,29 @@ class PerformanceMonitor {
     /**
      * The instrumented work that overlapped a stall.
      *
-     * Measurements are stamped with `Date.now()` when they *finish*; a longtask
-     * entry carries `performance.now()` times. Aligned onto one clock, anything
-     * timed that ended between the stall starting and shortly after it ended is
-     * a suspect — "shortly after" because the observer and the recorder both
-     * run a beat behind the work itself.
+     * Measurements are stamped with the monotonic clock when they *finish*,
+     * and a longtask entry carries `performance.now()` times — the same clock,
+     * so no wall-clock alignment is involved. (An earlier version aligned via
+     * `Date.now() - performance.now()`, which misattributed whenever NTP
+     * stepped `Date.now()` between the work and the read.) Anything timed that
+     * ended between the stall starting and shortly after it ended is a suspect
+     * — "shortly after" because the observer and the recorder both run a beat
+     * behind the work itself. Work that *started* before the window but ended
+     * inside it is a suspect too: the end stamp is what lands in the window.
      *
      * @param {PerformanceEntry} entry - The longtask
      * @returns {Array<{name: string, ms: number}>} Largest first, at most five
      */
     _suspectsFor(entry) {
-        const clockSkew = Date.now() - performance.now();
-        const windowStart = entry.startTime + clockSkew - 50;
-        const windowEnd = entry.startTime + entry.duration + clockSkew + 100;
+        const windowStart = entry.startTime - 50;
+        const windowEnd = entry.startTime + entry.duration + 100;
 
         const suspects = [];
         for (const [name, entries] of this.measurements) {
             for (let i = entries.length - 1; i >= 0; i--) {
                 const m = entries[i];
-                if (m.time < windowStart) break;
-                if (m.time <= windowEnd && m.duration >= 5) {
+                if (m.perfTime < windowStart) break;
+                if (m.perfTime <= windowEnd && m.duration >= 5) {
                     suspects.push({ name, ms: Math.round(m.duration) });
                 }
             }
@@ -344,7 +354,7 @@ class PerformanceMonitor {
     noteEvent(name) {
         if (!this.enabled) return;
         this.events = this.events || [];
-        this.events.push({ name, time: Date.now() });
+        this.events.push({ name, time: Date.now(), perfTime: monotonicNow() });
         if (this.events.length > 300) this.events.shift();
     }
 
@@ -355,14 +365,13 @@ class PerformanceMonitor {
      */
     _eventsFor(entry) {
         if (!this.events?.length) return [];
-        const clockSkew = Date.now() - performance.now();
-        const windowStart = entry.startTime + clockSkew - 300;
-        const windowEnd = entry.startTime + entry.duration + clockSkew;
+        const windowStart = entry.startTime - 300;
+        const windowEnd = entry.startTime + entry.duration;
         const names = [];
         for (let i = this.events.length - 1; i >= 0; i--) {
             const event = this.events[i];
-            if (event.time < windowStart) break;
-            if (event.time <= windowEnd) names.unshift(event.name);
+            if (event.perfTime < windowStart) break;
+            if (event.perfTime <= windowEnd) names.unshift(event.name);
         }
         return names.slice(-5);
     }

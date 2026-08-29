@@ -503,3 +503,94 @@ describe('timerCallSite parsing (synthetic stacks)', () => {
         expect(site.length).toBeGreaterThan(0);
     });
 });
+
+describe('stall attribution on the monotonic clock', () => {
+    beforeEach(() => {
+        performanceMonitor.reset();
+        performanceMonitor.enabled = true;
+        performanceMonitor._tabVisible = true;
+        performanceMonitor.events = [];
+    });
+
+    test('a wall-clock (NTP) jump between the work and the read does not lose the suspect', () => {
+        performanceMonitor.record('networth:recalculate', 171);
+
+        // NTP steps Date.now() forward a minute; performance.now() is unmoved
+        const jumped = Date.now() + 60_000;
+        const spy = vi.spyOn(Date, 'now').mockReturnValue(jumped);
+        try {
+            const now = performance.now();
+            const suspects = performanceMonitor._suspectsFor({ startTime: now - 200, duration: 200 });
+            expect(suspects.map((s) => s.name)).toEqual(['networth:recalculate']);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    test('a backwards wall-clock jump does not blame stale work', () => {
+        performanceMonitor.record('networth:recalculate', 171);
+        const spy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() - 60_000);
+        try {
+            const suspects = performanceMonitor._suspectsFor({
+                startTime: performance.now() + 5000,
+                duration: 100,
+            });
+            expect(suspects).toEqual([]);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    test('work that started before the stall window but finished inside it is a suspect', () => {
+        // End stamp lands inside the stall even though the work began long before it
+        performanceMonitor.measurements.set('init:slowFeature', [
+            { time: Date.now(), perfTime: 1010, duration: 500 }, // ran 510..1010
+        ]);
+        const suspects = performanceMonitor._suspectsFor({ startTime: 1000, duration: 100 });
+        expect(suspects).toEqual([{ name: 'init:slowFeature', ms: 500 }]);
+    });
+
+    test('suspect window edges: the -50 lead and +100 tail are inclusive, beyond them is out', () => {
+        performanceMonitor.measurements.set('dom:edge', [
+            { time: Date.now(), perfTime: 949, duration: 10 }, // just before the lead
+            { time: Date.now(), perfTime: 950, duration: 20 }, // exactly on the lead
+            { time: Date.now(), perfTime: 1200, duration: 30 }, // exactly on the tail
+            { time: Date.now(), perfTime: 1201, duration: 40 }, // just past the tail
+        ]);
+        const suspects = performanceMonitor._suspectsFor({ startTime: 1000, duration: 100 });
+        expect(suspects.map((s) => s.ms).sort((a, b) => a - b)).toEqual([20, 30]);
+    });
+
+    test('noteEvent attribution survives a wall-clock jump and respects the window edges', () => {
+        performanceMonitor.events = [
+            { name: 'ws:too_early', time: 0, perfTime: 699 }, // just before the 300ms lead
+            { name: 'ws:on_the_lead', time: 0, perfTime: 700 }, // exactly on it
+            { name: 'ws:during', time: 0, perfTime: 1050 },
+            { name: 'ws:at_stall_end', time: 0, perfTime: 1100 }, // inclusive end
+            { name: 'ws:after', time: 0, perfTime: 1101 },
+        ];
+        const spy = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 60_000);
+        try {
+            const names = performanceMonitor._eventsFor({ startTime: 1000, duration: 100 });
+            expect(names).toEqual(['ws:on_the_lead', 'ws:during', 'ws:at_stall_end']);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    test('_eventsFor keeps only the five most recent names inside the window', () => {
+        performanceMonitor.events = Array.from({ length: 8 }, (_, i) => ({
+            name: `ws:e${i}`,
+            time: 0,
+            perfTime: 1000 + i,
+        }));
+        const names = performanceMonitor._eventsFor({ startTime: 1000, duration: 100 });
+        expect(names).toEqual(['ws:e3', 'ws:e4', 'ws:e5', 'ws:e6', 'ws:e7']);
+    });
+
+    test('noteEvent ring stays bounded at 300', () => {
+        for (let i = 0; i < 400; i++) performanceMonitor.noteEvent(`ws:n${i}`);
+        expect(performanceMonitor.events.length).toBe(300);
+        expect(performanceMonitor.events[0].name).toBe('ws:n100');
+    });
+});
