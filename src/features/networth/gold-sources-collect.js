@@ -27,6 +27,8 @@ import networthHistory from './networth-history.js';
 import productionIncomeRecorder from './production-income-recorder.js';
 import chestOpeningRecorder from './chest-opening-recorder.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { calculateCraftingCost } from './networth-calculator.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 /** The three alchemy trackers, and the tag the attribution reads them under */
@@ -59,6 +61,47 @@ export function createPricer() {
         }
         cache.set(key, price);
         return price;
+    };
+}
+
+/**
+ * The deeper pricer for cost-basis lookups, memoised like `createPricer`.
+ *
+ * Market price first; failing that, an openable's expected value (the chest
+ * you consumed was worth what it was expected to pay out); failing that, the
+ * material cost of crafting one (the transmuted cape with no market of its own
+ * still cost its materials). Still null when none of the three can say — that
+ * session or opening stays in the residual, footnoted.
+ *
+ * @param {Function} price - The plain pricer to try first
+ * @returns {Function} `(itemHrid, enhancementLevel) => number|null`
+ */
+export function createBasisPricer(price = createPricer()) {
+    const cache = new Map();
+    return (itemHrid, enhancementLevel = 0) => {
+        const direct = price(itemHrid, enhancementLevel);
+        if (Number.isFinite(direct)) return direct;
+        if (!itemHrid) return null;
+
+        const key = `${itemHrid}:${enhancementLevel || 0}`;
+        if (cache.has(key)) return cache.get(key);
+
+        let fallback = null;
+        try {
+            const details = dataManager.getItemDetails?.(itemHrid);
+            if (details?.isOpenable && expectedValueCalculator.isInitialized) {
+                const ev = expectedValueCalculator.calculateExpectedValue(itemHrid);
+                if (ev?.expectedValue > 0) fallback = ev.expectedValue;
+            }
+            if (fallback === null) {
+                const crafting = calculateCraftingCost(itemHrid);
+                if (crafting > 0) fallback = crafting;
+            }
+        } catch {
+            fallback = null;
+        }
+        cache.set(key, fallback);
+        return fallback;
     };
 }
 
@@ -169,6 +212,7 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         // panel can say how far the combat fallback actually reaches back
         sessionCap: MAX_SESSIONS,
         price,
+        basisPrice: createBasisPricer(price),
         marketTax: MARKET_TAX,
     };
 }

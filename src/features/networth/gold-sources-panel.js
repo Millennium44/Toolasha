@@ -640,7 +640,8 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
         warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
         warning.textContent =
             `${unpricedAlchemy} alchemy session${unpricedAlchemy === 1 ? '' : 's'} could not be valued — the ` +
-            'input consumed has no market price — so they are in the residual rather than the alchemy row.';
+            'input consumed has no market price and no material cost to fall back to — so they are in the ' +
+            'residual rather than the alchemy row.';
         body.appendChild(warning);
     }
 
@@ -703,7 +704,7 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
         const pieces = [];
         if (unpricedChests > 0) {
             pieces.push(
-                `${plural(unpricedChests, 'chest')} had no market price of their own, so what they paid ` +
+                `${plural(unpricedChests, 'chest')} had no market price, expected value, or material cost of their own, so what they paid ` +
                     'could not be netted against what they were worth and the whole opening was left out'
             );
         }

@@ -388,7 +388,7 @@ export function combatSessionLootValue(session, price) {
  * @returns {number|null} Coins, which may be negative, or null when the input
  *   consumed could not be priced
  */
-export function alchemySessionNet(session, price) {
+export function alchemySessionNet(session, price, basisPrice = price) {
     if (!session) return 0;
 
     let outputs = num(session.totalCoinsEarned);
@@ -400,7 +400,10 @@ export function alchemySessionNet(session, price) {
     }
 
     const attempts = num(session.totalAttempts);
-    const inputUnit = price(session.inputItemHrid, num(session.enhancementLevel));
+    // The input consumed is a cost basis, so it gets the deeper fallback: a
+    // transmuted cape with no market of its own still has a material cost,
+    // and pricing it there beats sending the whole session to the residual
+    const inputUnit = basisPrice(session.inputItemHrid, num(session.enhancementLevel));
     if (attempts > 0 && !Number.isFinite(inputUnit)) return null;
     const inputs = attempts * num(inputUnit);
 
@@ -732,7 +735,7 @@ export function marketMovement(snapshots) {
  * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
  * @returns {{value: number, unpricedItems: number, unpricedChests: number}} The day
  */
-export function chestOpeningDayValue(row, price) {
+export function chestOpeningDayValue(row, price, basisPrice = price) {
     let value = 0;
     let unpricedItems = 0;
     let unpricedChests = 0;
@@ -741,7 +744,11 @@ export function chestOpeningDayValue(row, price) {
         const count = num(entry?.count);
         if (count <= 0) continue;
 
-        const chestPrice = price(chestHrid, 0);
+        // The chest is the cost basis of its own opening, so the deeper
+        // fallback applies: a labyrinth box with no market price still has an
+        // expected value, and netting the contents against that is the
+        // "expected vs real return" the row is for
+        const chestPrice = basisPrice(chestHrid, 0);
         if (!Number.isFinite(chestPrice)) {
             unpricedChests += count;
             continue;
@@ -869,6 +876,11 @@ export function attributeGoldSources(input) {
         detailSnapshots = [],
         sessionCap = DEFAULT_SESSION_CAP,
         price = () => null,
+        // Cost-basis lookups fall further than income ones: an alchemy input
+        // or an opened chest with no market price can still have a material
+        // cost or an expected value, and "what did this consume" is exactly
+        // the question those answer. Defaults to the plain pricer.
+        basisPrice = price,
         marketTax = 0.05,
     } = input || {};
 
@@ -937,7 +949,7 @@ export function attributeGoldSources(input) {
     let unpricedChests = 0;
     for (const row of chestDays || []) {
         if (!row?.d) continue;
-        const day = chestOpeningDayValue(row, price);
+        const day = chestOpeningDayValue(row, price, basisPrice);
         add(row.d, 'chests', day.value);
         if (!inWindow.has(row.d)) continue;
         unpricedChestItems += day.unpricedItems;
@@ -948,7 +960,7 @@ export function attributeGoldSources(input) {
     for (const session of alchemySessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
-        const net = alchemySessionNet(session, price);
+        const net = alchemySessionNet(session, price, basisPrice);
         if (net === null) {
             if (inWindow.has(localDayId(t))) unpricedAlchemySessions += 1;
             continue;

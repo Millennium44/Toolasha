@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The gold panel's cost bases fall back before giving up
+
+Two of "Where the gold came from"'s exclusions get the deeper fallback the net worth engine already uses. An alchemy input with no market price is valued at its material cost, and an opened chest with no market price is netted against its expected value — so a transmuted cape or a labyrinth box no longer sends its whole session to the residual. Only when market price, expected value, and material cost all fail does an entry stay footnoted in the residual.
+
 ### Pick your own column count
 
 The overlay's layout controls gain a Columns stepper. The automatic law stays the default — the panel's width decides, and a layout's own count can raise it — but stepping − or + now pins an exact count that holds at any width, with an Auto button to hand it back. Applying a preset or importing a layout unpins.

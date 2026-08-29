@@ -966,3 +966,37 @@ describe('chest openings', () => {
         expect(result.coverage.chests).toBe(dayStart(localDayId(D18)));
     });
 });
+
+describe('the deeper cost-basis fallback', () => {
+    test('an alchemy input with no market price is valued at its material cost', () => {
+        const session = {
+            startTime: 1000,
+            totalAttempts: 10,
+            totalCoinsEarned: 5_000_000,
+            inputItemHrid: '/items/culinary_cape',
+            enhancementLevel: 0,
+            results: {},
+        };
+        const price = () => null;
+        const basis = (hrid) => (hrid === '/items/culinary_cape' ? 300_000 : null);
+
+        // Without the basis it is unvaluable and lands in the residual
+        expect(alchemySessionNet(session, price)).toBeNull();
+        // With it: 5M earned minus 10 capes at their 300K material cost
+        expect(alchemySessionNet(session, price, basis)).toBe(2_000_000);
+    });
+
+    test('a chest with no market price is netted against its expected value', () => {
+        const row = {
+            d: '2026-08-28',
+            openings: { '/items/purdoras_box_combat': { count: 3, gained: { '/items/coin': 900_000 } } },
+        };
+        const price = (hrid) => (hrid === '/items/coin' ? 1 : null);
+        const basis = (hrid) => (hrid === '/items/purdoras_box_combat' ? 220_000 : price(hrid, 0));
+
+        expect(chestOpeningDayValue(row, price).unpricedChests).toBe(3);
+        const day = chestOpeningDayValue(row, price, basis);
+        expect(day.unpricedChests).toBe(0);
+        expect(day.value).toBe(900_000 - 3 * 220_000);
+    });
+});

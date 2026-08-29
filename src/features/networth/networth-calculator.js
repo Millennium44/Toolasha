@@ -348,7 +348,7 @@ function getActionIndexes() {
  * @param {string} itemHrid - Item HRID
  * @returns {number} Total material cost or 0 if not craftable
  */
-function calculateCraftingCost(itemHrid) {
+export function calculateCraftingCost(itemHrid) {
     // The producing action comes from the once-built index rather than a scan
     // of every action in the game — see getActionIndexes
     const found = getActionIndexes()?.byAnyOutput.get(itemHrid);
