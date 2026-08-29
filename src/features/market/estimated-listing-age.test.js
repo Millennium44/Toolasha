@@ -684,7 +684,10 @@ describe('a sync pull combines the anchor pool rather than replacing it', () => 
         const registration = mergeForKey('marketListings', 'marketListingAnchors');
         const merged = registration.merge(
             [{ id: 1, timestamp: 1 }, null, { id: 'x', timestamp: 2 }],
-            [{ id: 2, timestamp: NaN }, { id: 3, timestamp: 3 }]
+            [
+                { id: 2, timestamp: NaN },
+                { id: 3, timestamp: 3 },
+            ]
         );
         expect(merged).toEqual([
             { id: 1, timestamp: 1 },

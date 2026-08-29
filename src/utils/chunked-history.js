@@ -197,6 +197,16 @@ class ChunkedHistory {
      * The matcher is the record prefix, which covers every character and every
      * chunk of this history in one registration. The merge is pure: it reads
      * nothing and writes nothing, which is what the registry requires.
+     *
+     * **The legacy key needs the same cover.** The record prefix deliberately
+     * cannot match it — `lootLogRec_` against `lootLog_<id>`, `prodIncomeRec_`
+     * against `prodIncome_<id>` — which is what keeps a character id from being
+     * read as a chunk id, and is also why nothing claimed the legacy key at all.
+     * A store whose split could not be written stays in `_legacy` mode and keeps
+     * the whole array there (see `save()`), so on that device a pull replaced
+     * the entire history with the remote's copy. The split fails on a full disk,
+     * which is exactly when losing entries is least affordable. Same union, one
+     * more registration.
      * @private
      */
     _registerSyncMerge() {
@@ -205,16 +215,59 @@ class ChunkedHistory {
         if (registeredPrefixes.has(scope)) return;
         registeredPrefixes.add(scope);
 
+        /**
+         * The union, when both sides are arrays. Either side being something
+         * else is a key that is not this history's after all, and the safe
+         * reading of that is the whole-key write it would have had.
+         * @param {*} local - This device's value
+         * @param {*} incoming - The value coming down
+         * @returns {*} Merged
+         */
+        const merge = (local, incoming) => {
+            if (!Array.isArray(local)) return incoming;
+            if (!Array.isArray(incoming)) return local;
+            return this._union(local, incoming);
+        };
+
         registerSyncMerge({
             store: this.storeName,
             prefix: `${this.prefix}_`,
             label: `${this.label} records`,
-            merge: (local, incoming) => {
-                if (!Array.isArray(local)) return incoming;
-                if (!Array.isArray(incoming)) return local;
-                return this._union(local, incoming);
-            },
+            merge,
         });
+
+        const legacyBase = this._legacyBase();
+        if (legacyBase) {
+            registerSyncMerge({
+                store: this.storeName,
+                base: legacyBase,
+                label: `${this.label} legacy key`,
+                merge,
+            });
+        }
+    }
+
+    /**
+     * The unscoped stem of the legacy key, for the registration above.
+     *
+     * Every caller's `legacyKey` is `${base}_${charId}` — or, where a store
+     * predates character scoping, the bare `base` for the id `'default'`. That
+     * is precisely the shape `scopedKeyMatcher` covers, so the stem is all the
+     * registry needs. It is derived rather than declared so a call site cannot
+     * quietly opt out of sync cover by forgetting to pass it.
+     * @returns {string|null} The stem, or null when `legacyKey` is not that shape
+     * @private
+     */
+    _legacyBase() {
+        if (typeof this.legacyKey !== 'function') return null;
+        try {
+            const probe = this.legacyKey('');
+            if (typeof probe !== 'string' || !probe.endsWith('_')) return null;
+            return probe.slice(0, -1) || null;
+        } catch (error) {
+            console.error(`[${this.label}] Could not derive the legacy key stem for sync:`, error);
+            return null;
+        }
     }
 
     /**

@@ -590,6 +590,31 @@ describe('the sync merge every chunked history registers', () => {
         expect(merge([at(2026, 6)], [at(2026, 6), at(2026, 7)]).map((p) => p.v)).toEqual(['2026-6-1', '2026-7-1']);
     });
 
+    test('the legacy single key is claimed too, so a stalled split is not a hole in the cover', async () => {
+        const { mergeForKey, clearSyncMerges } = await import('./sync-merge-registry.js');
+        clearSyncMerges();
+        createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'legacyCoverRec',
+            legacyKey: (charId) => `legacyCover_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            label: 'LegacyCoverTest',
+        });
+
+        // A device whose split could not be written keeps writing the whole
+        // array to the legacy key — `_legacy` mode. Unclaimed, that key came
+        // down whole and took every entry only this device had with it, which
+        // is the one moment (a full disk) it can least afford to happen
+        const registration = mergeForKey('testStore', 'legacyCover_c1');
+        expect(registration).toBeTruthy();
+        expect(registration.merge([at(2026, 6)], [at(2026, 7)]).map((p) => p.v)).toEqual(['2026-6-1', '2026-7-1']);
+
+        // ...and the record keys still belong to the record registration, not
+        // to this one — the two must not both claim a key
+        expect(mergeForKey('testStore', 'legacyCoverRec_c1_2026-06')).toBeTruthy();
+    });
+
     test('a caller-named identity beats deep equality, for entries that are rewritten in place', async () => {
         const { mergeForKey, clearSyncMerges } = await import('./sync-merge-registry.js');
         clearSyncMerges();
