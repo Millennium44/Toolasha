@@ -38,6 +38,7 @@ class NetworthFeature {
         this.priceUpdateDebounceTimer = null;
         this.itemsUpdateDebounceTimer = null;
         this.lastRecalcAt = 0;
+        this.recalcSeq = 0;
     }
 
     /**
@@ -198,9 +199,21 @@ class NetworthFeature {
         // Into the rolling stats, so the stall ledger can name it — this is
         // the very call the 2026-08-29 stutter hunt spent hours attributing
         const recalcStartedAt = performanceMonitor.enabled ? performance.now() : 0;
+        // Recalculations overlap: the cooldown path, a manual refresh and the
+        // price-update debounce all call in here, and each run yields to the
+        // browser throughout. Completion order does not follow start order —
+        // the worker-failure fallback revalues a run's whole worker group
+        // sequentially, so an older run can finish after a newer one and
+        // overwrite fresher prices everywhere currentData is read (header,
+        // inventory panel, overlay row, history snapshots) until the next
+        // trigger, which on an idle account may not come. Last-started wins.
+        const runId = ++this.recalcSeq;
         try {
             // Calculate networth
             const networthData = await calculateNetworth();
+            if (runId !== this.recalcSeq) {
+                return;
+            }
             this.currentData = networthData;
 
             // Update displays — measured apart from the calculation: the DOM
