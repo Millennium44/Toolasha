@@ -220,6 +220,9 @@ function generateCostsByLevelTable(
             protectFrom: effectiveProtect,
             blessedTea: params.teas.blessed,
             guzzlingBonus: params.guzzlingBonus,
+            // The real double-jump chance, read from item data by getEnhancingParams. Leaving
+            // it out silently pinned the chain to the 1% stand-in the calculator defaults to.
+            blessedTeaBonus: params.blessedTeaBonus,
         });
 
         // Calculate material cost breakdown
@@ -666,6 +669,8 @@ export function protectSweepHTML({
                 itemLevel: itemDetails.itemLevel || 1,
                 blessedTea: Boolean(params.teas?.blessed),
                 guzzlingBonus: params.guzzlingBonus,
+                // Same live double-jump chance the costs table runs on
+                blessedTeaBonus: params.blessedTeaBonus,
             },
             targetLevel,
             materialCostPerAttempt,

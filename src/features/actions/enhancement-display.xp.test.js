@@ -139,3 +139,20 @@ describe('the costs-by-level XP column', () => {
         expect(required).toEqual(unrequired);
     });
 });
+
+describe('the costs-by-level chain', () => {
+    test("runs on the live Blessed Tea double-jump chance, not the 1% stand-in", async () => {
+        // Blessed Tea's real flatBoost is read from item data by getEnhancingParams; a run that
+        // skips a level ten times as often is a materially cheaper and faster run, and the panel
+        // has to quote the chance the character actually has.
+        state.teas = { blessed: true };
+
+        state.blessedTeaBonus = 0.01;
+        const stingy = await xpColumn('/items/cheese_sword');
+
+        state.blessedTeaBonus = 0.1;
+        const generous = await xpColumn('/items/cheese_sword');
+
+        expect(stingy).not.toEqual(generous);
+    });
+});
