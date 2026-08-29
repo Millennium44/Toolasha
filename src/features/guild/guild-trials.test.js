@@ -214,6 +214,9 @@ const {
     blockNearAnchor,
     breakdownFor,
     fightSidecarColumn,
+    fightSidecarPlacement,
+    fightSidecarStyle,
+    gridColumnCount,
     guildTrials,
     lastTrialPlayerRows,
     mergeWaveTiles,
@@ -965,22 +968,74 @@ describe('placeTrialBlock', () => {
     }
 
     test('a live fight puts the block beside the last boss, in the boss grid', () => {
-        // A wave of four bosses folds into one tile anchored on the *first* of
-        // them, so the block must be appended past all four rather than inserted
+        // A wave of two bosses folds into one tile anchored on the *first* of
+        // them, so the block must be appended past both rather than inserted
         // after the anchor — and stay on the bosses' row rather than wrapping.
-        const { root, grid, cards } = fightLayout(4);
+        const { root, grid, cards } = fightLayout(2);
         const block = newBlock();
 
         expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-sidecar');
         expect(grid.lastElementChild).toBe(block);
-        expect(block.previousElementSibling).toBe(cards[3]);
+        expect(block.previousElementSibling).toBe(cards[1]);
         expect(block.style.gridRow).toBe('1');
-        // Explicitly the column after the four auto-placed bosses — never left
+        // Explicitly the column after the two auto-placed bosses — never left
         // to auto-placement, which fills the first free cell instead
-        expect(block.style.gridColumn).toBe('5');
+        expect(block.style.gridColumn).toBe('3');
         // Not gathered into a mirrored row, and the payout block is left where it was
         expect(grid.querySelector('.mwi-trial-box-row')).toBeNull();
         expect(grid.firstElementChild).toBe(document.getElementById('payout'));
+    });
+
+    test('a wave that fills the grid puts the block under it rather than past its last column', () => {
+        // Trial Swarm's four monsters fill the game's four columns, and asking
+        // for a fifth is 176 × 4 + 220 wide — the fight grew a horizontal
+        // scrollbar and pushed itself out of view.
+        const { root, grid, cards } = fightLayout(4);
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, cards[0], block, 'Trial Swarm')).toBe('fight-sidecar');
+        // Still after the last boss in the DOM, so the anchoring check holds
+        expect(grid.lastElementChild).toBe(block);
+        expect(block.style.gridRow).toBe('2');
+        expect(block.style.gridColumn).toBe('1 / -1');
+    });
+
+    test('the sidecar’s sizing follows its placement', () => {
+        const beside = fightSidecarStyle(fightSidecarPlacement(fightLayout(1).grid));
+        expect(beside).toContain('grid-row:1');
+        expect(beside).toContain('width:220px');
+        expect(beside).not.toContain('display:grid');
+
+        // Under the wave it may have the whole width, so its rows take columns
+        // of their own rather than making one long thin box
+        const under = fightSidecarStyle(fightSidecarPlacement(fightLayout(4).grid));
+        expect(under).toContain('grid-row:2');
+        expect(under).toContain('grid-column:1 / -1');
+        expect(under).toContain('max-width:100%');
+        expect(under).toContain('minmax(190px, 1fr)');
+        expect(under).not.toContain('width:220px');
+    });
+
+    test('a grid whose columns cannot be read keeps the sidecar beside the wave', () => {
+        // Failing closed: no template is not "the wave fills it", and moving the
+        // readout under a fight it fits beside would be a regression for every
+        // layout this rule cannot measure
+        const { grid } = fightLayout(4);
+        grid.style.gridTemplateColumns = '';
+
+        expect(fightSidecarPlacement(grid)).toEqual({ row: 1, column: '5', wrapped: false });
+        expect(gridColumnCount('')).toBe(0);
+        expect(gridColumnCount('none')).toBe(0);
+        expect(gridColumnCount('176px 176px 176px 176px')).toBe(4);
+        expect(gridColumnCount('repeat(4, 176px)')).toBe(4);
+        expect(gridColumnCount('repeat(2, 100px 20px)')).toBe(4);
+    });
+
+    test('one to four monsters each get a placement that fits the grid', () => {
+        for (const monsters of [1, 2, 3]) {
+            expect(fightSidecarPlacement(fightLayout(monsters).grid).wrapped).toBe(false);
+        }
+        expect(fightSidecarPlacement(fightLayout(4).grid).wrapped).toBe(true);
     });
 
     test('a wave of explicitly-centred bosses puts the sidecar to their right, never their left', () => {

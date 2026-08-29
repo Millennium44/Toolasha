@@ -2000,6 +2000,81 @@ export function fightSidecarColumn(grid) {
     return Math.max(autoPlaced, lastExplicit) + 1;
 }
 
+/**
+ * How many columns the fight grid actually has.
+ *
+ * The used value a browser reports is a track list ("176px 176px 176px 176px");
+ * an engine that hands back the authored `repeat()` is parsed rather than
+ * miscounted as one column. A grid with no template at all answers 0, which
+ * reads as "unknown" to every caller and leaves the old behaviour in place.
+ *
+ * @param {string} template - A `grid-template-columns` value
+ * @returns {number} Track count, or 0 when it cannot be read
+ */
+export function gridColumnCount(template) {
+    const text = String(template || '').trim();
+    if (!text || text === 'none') return 0;
+    const repeated = text.match(/^repeat\(\s*(\d+)\s*,([^)]*)\)$/);
+    if (repeated) {
+        const tracks = repeated[2].trim().split(/\s+/).filter(Boolean).length || 1;
+        return Number(repeated[1]) * tracks;
+    }
+    return text.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Where the sidecar goes in the fight grid — beside the wave, or under it.
+ *
+ * A single boss leaves three of the game's four columns free and the readout
+ * belongs beside it, which is what the sidecar has always done. Trial Swarm
+ * fields four monsters and fills all four columns, so the same rule asked the
+ * grid for a fifth: 176 × 4 + 220, past the width of the panel, and the whole
+ * fight grew a horizontal scrollbar with the fight itself pushed out of view.
+ *
+ * So a wave that fills the grid puts the readout on the row *beneath* it,
+ * spanning every column — the row auto-placement would have used anyway, but
+ * stated, because the explicit row is what stops it landing in the first free
+ * cell of the bosses' own row. Full width is then a long thin box rather than a
+ * tall thin one, so the caller lays its rows out in columns of their own.
+ *
+ * @param {Element} grid - The `BattlePanel_combatUnitGrid` element
+ * @returns {{row: number, column: string, wrapped: boolean}} Where to put the block
+ */
+export function fightSidecarPlacement(grid) {
+    const column = fightSidecarColumn(grid);
+    const computed = grid && typeof getComputedStyle === 'function' ? getComputedStyle(grid) : null;
+    const columns = gridColumnCount(grid?.style?.gridTemplateColumns || computed?.gridTemplateColumns || '');
+    // `1 / -1` spans to the end of the *explicit* grid, which is exactly the
+    // track list counted above — the wave's own columns and no implicit sixth
+    if (columns > 0 && column > columns) return { row: 2, column: '1 / -1', wrapped: true };
+    return { row: 1, column: String(column), wrapped: false };
+}
+
+/**
+ * The sidecar's own sizing, for the placement it got.
+ *
+ * Beside the wave it is a boss card's width: wide enough that a label and a
+ * figure fit on one line, capped so it cannot stretch the panel. Under the wave
+ * it may have the whole width, and a full-width column of one-line rows is a
+ * long thin box for no reason — so the rows are laid out in as many columns of
+ * their own as fit, which keeps the readout about as tall as it was beside the
+ * bosses. `auto-fit`/`minmax` rather than a column count: the fight grid is
+ * whatever width the panel is, and a number picked here would be wrong at some
+ * of them.
+ *
+ * @param {{row: number, column: string, wrapped: boolean}} placement - From
+ *   {@link fightSidecarPlacement}
+ * @returns {string} Style declarations
+ */
+export function fightSidecarStyle(placement) {
+    const cell = `grid-row:${placement.row}; grid-column:${placement.column}; clear:none; align-self:start;`;
+    if (!placement.wrapped) return `${cell} width:220px; min-width:180px; max-width:220px;`;
+    return (
+        `${cell} width:auto; min-width:0; max-width:100%; justify-self:stretch;` +
+        'display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); column-gap:16px;'
+    );
+}
+
 export function placeTrialBlock(root, card, block, name = '') {
     // Belt and braces over the anchor filter in `readTrialTiles`. The reported
     // failure drew this whole block inside the boss's stat popup, which is
@@ -2019,8 +2094,9 @@ export function placeTrialBlock(root, card, block, name = '') {
     // for a wave of explicitly-centred cards is the column to their left.
     const fightGrid = fightMonsterGrid(card);
     if (fightGrid && root?.contains?.(fightGrid)) {
-        block.style.gridRow = '1';
-        block.style.gridColumn = String(fightSidecarColumn(fightGrid));
+        const placement = fightSidecarPlacement(fightGrid);
+        block.style.gridRow = String(placement.row);
+        block.style.gridColumn = placement.column;
         fightGrid.appendChild(block);
         return 'fight-sidecar';
     }
@@ -3062,8 +3138,7 @@ class GuildTrials {
                     style:
                         'position:static; display:block; box-sizing:border-box;' +
                         (fightGrid
-                            ? `grid-row:1; grid-column:${fightSidecarColumn(fightGrid)}; ` +
-                              'clear:none; width:220px; min-width:180px; max-width:220px; align-self:start;'
+                            ? fightSidecarStyle(fightSidecarPlacement(fightGrid))
                             : inSkillingRow
                               ? 'flex:0 1 300px; min-width:170px; max-width:300px; align-self:center; clear:none;'
                               : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
