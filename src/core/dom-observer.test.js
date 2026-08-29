@@ -348,6 +348,40 @@ describe('dispatch', () => {
         expect(seen).toEqual(['Foo_item__1', 'Foo_item__2']);
         vi.useRealTimers();
     });
+
+    // A handler that unregisters during a dispatch used to shorten the array the
+    // dispatch loop was walking by index, so the handler that had shifted into the
+    // vacated slot was stepped straight over — a one-shot handler (register, fire
+    // once, unregister itself) silently cost its neighbour that insertion.
+    test('a handler that unregisters itself mid-dispatch does not skip the next handler', () => {
+        const second = vi.fn();
+        let unregisterFirst;
+        unregisterFirst = domObserver.register('first', () => unregisterFirst());
+        domObserver.register('second', second);
+
+        domObserver.dispatch(document.createElement('div'), {});
+
+        expect(second).toHaveBeenCalledTimes(1);
+        expect(domObserver.handlers.map((h) => h.name)).toEqual(['second']);
+    });
+
+    test('a class handler unregistered mid-dispatch by an earlier one is not called', () => {
+        const order = [];
+        let unregisterB;
+        domObserver.onClass('A', 'Watched_x', () => {
+            order.push('A');
+            unregisterB();
+        });
+        unregisterB = domObserver.onClass('B', 'Watched_x', () => order.push('B'));
+        domObserver.onClass('C', 'Watched_x', () => order.push('C'));
+
+        const el = document.createElement('div');
+        el.className = 'Watched_x__1';
+        domObserver.dispatch(el, {});
+
+        expect(order).toEqual(['A', 'C']);
+        expect(domObserver.handlers.map((h) => h.name)).toEqual(['A', 'C']);
+    });
 });
 
 describe('per-className handler cache', () => {

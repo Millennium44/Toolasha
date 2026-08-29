@@ -31,6 +31,15 @@ class DOMObserver {
         // className string -> the class handlers it satisfies, in registration
         // order. Rebuilt lazily and invalidated with `_combinedSelector`.
         this._handlersByClassName = new Map();
+        // How many `dispatch` calls are on the stack. While that is non-zero an
+        // unregister marks its handler dead instead of splicing it out — see
+        // `_add`. Splicing under the dispatch loop shifted the handler behind it
+        // into the vacated index and the loop stepped straight over it, so a
+        // one-shot handler (fire once, unregister itself) silently cost its
+        // neighbour that insertion. A depth counter rather than a boolean because
+        // a handler is free to dispatch again from inside its own callback.
+        this._dispatchDepth = 0;
+        this._hasDeadHandlers = false;
     }
 
     /**
@@ -129,6 +138,25 @@ class DOMObserver {
      * @param {MutationRecord} mutation - The record it arrived in
      */
     dispatch(node, mutation) {
+        this._dispatchDepth += 1;
+        try {
+            this._dispatch(node, mutation);
+        } finally {
+            this._dispatchDepth -= 1;
+            if (this._dispatchDepth === 0 && this._hasDeadHandlers) {
+                this.handlers = this.handlers.filter((handler) => !handler.dead);
+                this._hasDeadHandlers = false;
+            }
+        }
+    }
+
+    /**
+     * The dispatch body, run with removals deferred. See `dispatch`.
+     * @param {Element} node - The added element
+     * @param {MutationRecord} mutation - The record it arrived in
+     * @private
+     */
+    _dispatch(node, mutation) {
         const className = typeof node.className === 'string' ? node.className : '';
 
         // The combined subtree query, run at most once per node and only if a
@@ -179,6 +207,9 @@ class DOMObserver {
         // everybody before descendant-matches for anybody reordered them by
         // where the class sits rather than by who asked first.
         for (const handler of this.handlers) {
+            // Unregistered while this dispatch was running — its removal from the
+            // array is deferred to the end of the dispatch, so skip it here.
+            if (handler.dead) continue;
             if (!handler.classes) {
                 this._run(handler, handler.callback, node, mutation);
                 continue;
@@ -229,7 +260,9 @@ class DOMObserver {
 
         const result = [];
         for (const handler of this.handlers) {
-            if (!handler.classes) continue;
+            // `dead` is a handler unregistered during a dispatch still in flight;
+            // excluding it here keeps the cache correct for after the sweep too
+            if (!handler.classes || handler.dead) continue;
             if (classMatches(handler.classes, className)) result.push(handler);
         }
 
@@ -270,6 +303,7 @@ class DOMObserver {
         if (this._combinedSelector !== undefined) return this._combinedSelector;
         const classes = new Set();
         for (const handler of this.handlers) {
+            if (handler.dead) continue;
             for (const cls of handler.classes || []) {
                 // A class token never carries a quote or backslash; one that did
                 // would break the selector, so it is left to the direct match only
@@ -392,19 +426,28 @@ class DOMObserver {
         // Return unregister function
         return () => {
             const index = this.handlers.indexOf(handler);
-            if (index > -1) {
-                this.handlers.splice(index, 1);
-                this._combinedSelector = undefined;
-                this._handlersByClassName.clear();
+            if (index === -1 || handler.dead) return;
 
-                // Clean up any pending debounced callbacks
-                if (this.debounceTimers.has(handler)) {
-                    clearTimeout(this.debounceTimers.get(handler));
-                    this.debounceTimers.delete(handler);
-                }
-                this.debouncedLatest.delete(handler);
-                this.debounceMaxStart.delete(handler);
+            if (this._dispatchDepth > 0) {
+                // Mid-dispatch: mark rather than splice, so the loop's index does
+                // not shift under it. `dispatch` sweeps the dead ones when the
+                // outermost call unwinds. Everything else below is unaffected —
+                // the handler is dead from this moment either way.
+                handler.dead = true;
+                this._hasDeadHandlers = true;
+            } else {
+                this.handlers.splice(index, 1);
             }
+            this._combinedSelector = undefined;
+            this._handlersByClassName.clear();
+
+            // Clean up any pending debounced callbacks
+            if (this.debounceTimers.has(handler)) {
+                clearTimeout(this.debounceTimers.get(handler));
+                this.debounceTimers.delete(handler);
+            }
+            this.debouncedLatest.delete(handler);
+            this.debounceMaxStart.delete(handler);
         };
     }
 
@@ -452,11 +495,12 @@ class DOMObserver {
      * Get stats about registered handlers
      */
     getStats() {
+        const live = this._hasDeadHandlers ? this.handlers.filter((h) => !h.dead) : this.handlers;
         return {
             isObserving: this.isObserving,
-            handlerCount: this.handlers.length,
+            handlerCount: live.length,
             readyHandlerCount: this.readyHandlers.length,
-            handlers: this.handlers.map((h) => ({
+            handlers: live.map((h) => ({
                 name: h.name,
                 debounced: h.debounce || false,
             })),
