@@ -2907,9 +2907,14 @@ export default class CustomTabsUI {
             if (!loadoutLevels) continue;
 
             // Find highest enhancement level of this item in current inventory (computed once per base)
+            // Equipped copies don't reliably carry a count field the way stacked
+            // inventory items do — requiring count > 0 dropped them, so enhancing
+            // the worn copy synced bindings (and the snapshot's stored level) to a
+            // lower duplicate in the bag instead. Skip only an explicit zero (a
+            // consumed stack), matching highestOwnedEnhancements in loadout-snapshot.
             let highestOwned = -1;
             for (const item of inventory) {
-                if (item.itemHrid === baseHrid && item.count > 0) {
+                if (item.itemHrid === baseHrid && item.count !== 0) {
                     const level = item.enhancementLevel || 0;
                     if (level > highestOwned) highestOwned = level;
                 }
