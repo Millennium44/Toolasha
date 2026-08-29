@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Round 13: the rest of the fleet lands
+
+Twenty more commits from the audit round, integrated and re-verified:
+
+- **Overlay**: a pinned column count now survives save, export and reapply (the field never round-tripped, so the pin's own honour-the-arriving-pin branch was dead code); undoing a layout switch restores the column count and its pin alongside the spans; and icon tiles redraw when their sprite sheet arrives instead of keeping a blank spacer forever under the identical-draw fast path.
+- **Networth**: a differential fixture proves the pruned worker closure prices every hrid the worker can reach; and a superseded recalculation can no longer overwrite a newer one's numbers when their completions invert.
+- **Loadouts**: the custom-tabs binding sync no longer overlooks the equipped copy (it required a count field equipped items don't carry, then wrote the lower duplicate's level back into the snapshot); the networth exclusion popup prices excluded loadouts at the level they actually wear.
+- **Performance**: the consumables panel and watchlist skip their swap when a redraw changes nothing, the watchlist leaves a folded panel alone, the action countdown skips its 100ms tick in a hidden tab, and the reroll spend badge stops rewriting an unchanged label on every combat tick.
+- **pformance tracing hardened**: timeout tracing installs even when a page restored a saved setTimeout; wrapper names survive minification (so prod traces don't collapse into one mangled call site); the call-site parser handles async/new/anonymous frames on both engines; per-metric history is bounded between reads; and stall attribution aligns on the monotonic clock, immune to NTP steps.
+
 ### Round 13: the gold panel's cost bases, corrected and extended
 
 The audit fleet caught a regression in the day-old basis fallback: a decomposed +8 item with no market price was being charged its +0 material cost, understating the input side. An enhanced lookup with no market price honestly refuses now. And enhancement sessions gain the fallback where it is provable — an unpriced base item is valued at its cost basis, matching how net worth itself values it; unpriced high levels still sit in the residual, footnoted.
