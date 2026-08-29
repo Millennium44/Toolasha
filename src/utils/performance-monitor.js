@@ -416,7 +416,7 @@ export function installIntervalTracing(target = globalThis) {
     // traced. A single early return here silently left setTimeout bare.
     const original = target.setInterval;
     if (typeof original === 'function' && !original.__toolashaTraced) {
-        const traced = function (handler, delay, ...args) {
+        const traced = function traced(handler, delay, ...args) {
             if (typeof handler !== 'function') return original.call(this, handler, delay, ...args);
             const name = `interval:${timerCallSite()}`;
             const wrapped = function (...tickArgs) {
@@ -439,7 +439,7 @@ export function installIntervalTracing(target = globalThis) {
     // so the zero-delay yields sprinkled through chunked work stay invisible.
     const originalTimeout = target.setTimeout;
     if (typeof originalTimeout === 'function' && !originalTimeout.__toolashaTraced) {
-        const tracedTimeout = function (handler, delay, ...args) {
+        const tracedTimeout = function tracedTimeout(handler, delay, ...args) {
             if (typeof handler !== 'function') return originalTimeout.call(this, handler, delay, ...args);
             const name = `timeout:${timerCallSite()}`;
             const wrapped = function (...tickArgs) {

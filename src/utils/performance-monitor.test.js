@@ -316,6 +316,19 @@ describe('interval tracing wrapper semantics (against a fake target)', () => {
         expect(target.setTimeout).toBe(tracedTimeout);
     });
 
+    test('wrapper functions carry their names in source, so keep_fnames preserves them in prod stacks', () => {
+        // timerCallSite skips wrapper frames by NAME. In the dev build an
+        // anonymous `const traced = function (…)` gets its name inferred from
+        // the variable, but terser mangles variables and keep_fnames only
+        // protects functions that are named in source — an anonymous wrapper
+        // ships with a mangled stack name, the skip misses, and every timer
+        // collapses into one call site. Assert the names are in the source.
+        const target = makeTarget();
+        installIntervalTracing(target);
+        expect(target.setInterval.toString()).toMatch(/^function traced\(/);
+        expect(target.setTimeout.toString()).toMatch(/^function tracedTimeout\(/);
+    });
+
     test('a restored setTimeout is re-netted on reinstall even though setInterval is still traced', () => {
         const target = makeTarget();
         const bareTimeout = target.setTimeout;
