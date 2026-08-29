@@ -157,7 +157,11 @@ export async function importEverything(payload, options = {}) {
             continue;
         }
 
-        const entries = payloadStores[storeName] || {};
+        // Excluded on export (below) and just as much on import: an old build's
+        // payload, or one from before a key was added to the exclusion list,
+        // can still carry one of these, and writing it here would plant it on
+        // this device exactly as if it had been recorded locally.
+        const entries = stripExcludedKeys(storeName, payloadStores[storeName] || {});
         const want = Object.keys(entries).length;
         // The restore is the one writer the latch is not protecting against —
         // it is what the latch is protecting. A second pull in the same session

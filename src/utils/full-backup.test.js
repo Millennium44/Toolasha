@@ -226,15 +226,45 @@ describe('trial trace exclusion end to end', () => {
         expect(Object.keys(payload.stores.guildHistory)).toEqual(['guildTrials_MilkMaxxing']);
     });
 
-    test('an old backup that does carry a trace still restores it — only new exports exclude it', async () => {
+    test('an old backup that does carry a trace never plants it locally — import excludes it too', async () => {
         const payload = {
             formatVersion: 1,
-            stores: { guildHistory: { trialTraceManifest_603281: { chunks: [0] } } },
+            stores: {
+                guildHistory: {
+                    trialTraceManifest_603281: { chunks: [0] },
+                    guildTrials_MilkMaxxing: { real: 'data' },
+                },
+            },
+        };
+        db.set('guildHistory', new Map());
+        const result = await importEverything(payload);
+        // Only the real record landed — the diagnostic trace, however it got
+        // into the payload, is excluded on the way in exactly as it is on the
+        // way out
+        expect(result.restored.guildHistory).toBe(1);
+        expect(db.get('guildHistory').get('trialTraceManifest_603281')).toBeUndefined();
+        expect(db.get('guildHistory').get('guildTrials_MilkMaxxing')).toEqual({ real: 'data' });
+    });
+
+    test('expected count is the post-exclusion count, not the raw payload size', async () => {
+        // A shortfall is judged against what should land, and an excluded key
+        // was never going to — counting it against `want` would make a clean
+        // restore look like a failure
+        const payload = {
+            formatVersion: 1,
+            stores: {
+                guildHistory: {
+                    trialTraceManifest_603281: { chunks: [0] },
+                    trialTraceChunk_0_603281: { data: 'x' },
+                    guildTrials_MilkMaxxing: { real: 'data' },
+                },
+            },
         };
         db.set('guildHistory', new Map());
         const result = await importEverything(payload);
         expect(result.restored.guildHistory).toBe(1);
-        expect(db.get('guildHistory').get('trialTraceManifest_603281')).toEqual({ chunks: [0] });
+        expect(result.expected.guildHistory).toBe(1);
+        expect(result.failed).toEqual([]);
     });
 });
 
