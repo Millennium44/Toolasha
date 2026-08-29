@@ -283,23 +283,41 @@ class PerformanceMonitor {
     startStallWatch() {
         if (this.stallObserver || typeof PerformanceObserver === 'undefined') return;
         this.stalls = this.stalls || [];
+        this.worstStallMs = this.worstStallMs || 0;
         try {
             this.stallObserver = new PerformanceObserver((list) => {
-                for (const entry of list.getEntries()) {
-                    this.stalls.push({
-                        time: Date.now(),
-                        sinceBoot: Math.round(entry.startTime),
-                        duration: Math.round(entry.duration),
-                        suspects: this._suspectsFor(entry),
-                        recentEvents: this._eventsFor(entry),
-                    });
-                    if (this.stalls.length > 200) this.stalls.shift();
-                }
+                for (const entry of list.getEntries()) this._recordStall(entry);
             });
             this.stallObserver.observe({ entryTypes: ['longtask'] });
         } catch {
             this.stallObserver = null;
         }
+    }
+
+    /**
+     * Record one observed stall: into the display ring, and into the
+     * session-lifetime max.
+     *
+     * The ring above is capped so the array cannot grow without bound over a
+     * long session, and that is right for "recent stalls to show" — but it
+     * silently drops the oldest ones, so a single very slow stall early in a
+     * long session can fall out of the ring while a report is still asked for
+     * "the worst". `worstStallMs` survives the ring: a running max, never
+     * trimmed, so the worst line cannot understate the session.
+     *
+     * @param {PerformanceEntry} entry - The longtask
+     */
+    _recordStall(entry) {
+        const duration = Math.round(entry.duration);
+        this.stalls.push({
+            time: Date.now(),
+            sinceBoot: Math.round(entry.startTime),
+            duration,
+            suspects: this._suspectsFor(entry),
+            recentEvents: this._eventsFor(entry),
+        });
+        if (duration > this.worstStallMs) this.worstStallMs = duration;
+        if (this.stalls.length > 200) this.stalls.shift();
     }
 
     /** Stop recording stalls; what was recorded stays readable. */
@@ -385,6 +403,15 @@ class PerformanceMonitor {
     }
 
     /**
+     * The longest stall this session has seen, even one the ring above has
+     * since dropped. Use this for "worst", not `Math.max` over `getStalls()`.
+     * @returns {number} Milliseconds, 0 if none recorded yet
+     */
+    getWorstStallMs() {
+        return this.worstStallMs || 0;
+    }
+
+    /**
      * Clear all measurements
      */
     reset() {
@@ -392,6 +419,7 @@ class PerformanceMonitor {
         this.snapshots.clear();
         this.spans.clear();
         this.stalls = [];
+        this.worstStallMs = 0;
         // Marks are the startup trace and cannot be taken again without a
         // reload, so resetting the rolling stats leaves them alone
     }

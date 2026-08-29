@@ -224,6 +224,36 @@ describe('stall attribution', () => {
     test('getStalls() is empty and safe before the watch ever starts', () => {
         expect(performanceMonitor.getStalls()).toEqual([]);
     });
+
+    test('getWorstStallMs() is 0 before anything is recorded', () => {
+        expect(performanceMonitor.getWorstStallMs()).toBe(0);
+    });
+
+    test('the session-lifetime worst survives the display ring dropping the stall that set it', () => {
+        performanceMonitor.stalls = [];
+        performanceMonitor.worstStallMs = 0;
+
+        // One very slow stall, then enough small ones to push it out of the
+        // 200-entry ring `getStalls()` shows.
+        performanceMonitor._recordStall({ startTime: 0, duration: 5000 });
+        for (let i = 0; i < 200; i++) {
+            performanceMonitor._recordStall({ startTime: i + 1, duration: 60 });
+        }
+
+        expect(performanceMonitor.getStalls()).toHaveLength(200);
+        expect(performanceMonitor.getStalls().some((stall) => stall.duration === 5000)).toBe(false);
+        expect(performanceMonitor.getWorstStallMs()).toBe(5000);
+    });
+
+    test('reset() clears the session-lifetime worst along with the ring', () => {
+        performanceMonitor._recordStall({ startTime: 0, duration: 999 });
+        expect(performanceMonitor.getWorstStallMs()).toBe(999);
+
+        performanceMonitor.reset();
+
+        expect(performanceMonitor.getWorstStallMs()).toBe(0);
+        expect(performanceMonitor.getStalls()).toEqual([]);
+    });
 });
 
 describe('interval tracing', () => {

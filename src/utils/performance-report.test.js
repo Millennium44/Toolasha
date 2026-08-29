@@ -222,4 +222,26 @@ describe('the stall ledger in the report', () => {
     test('no stalls, no section', () => {
         expect(formatReport({})).not.toContain('Main-thread stalls');
     });
+
+    test('a session-lifetime worst that exceeds what is still in the window is called out', () => {
+        // The ring behind `stalls` is capped at 200, so a slow stall from
+        // early in a long session can have been dropped by the time a report
+        // is asked for — the windowed max alone would then understate it.
+        const text = formatReport({
+            stalls: [{ time: 1, sinceBoot: 12000, duration: 182, suspects: [] }],
+            worstStallMs: 5000,
+        });
+
+        expect(text).toContain('worst 182ms shown, 5000ms this session');
+    });
+
+    test('a session-lifetime worst no larger than the window changes nothing', () => {
+        const text = formatReport({
+            stalls: [{ time: 1, sinceBoot: 12000, duration: 182, suspects: [] }],
+            worstStallMs: 182,
+        });
+
+        expect(text).toContain('Main-thread stalls since measuring began (1, worst 182ms)');
+        expect(text).not.toContain('this session');
+    });
 });

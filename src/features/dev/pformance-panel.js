@@ -439,6 +439,7 @@ class PFormancePanel {
             spans: pm.spans,
             stats: pm.getAllStats(),
             stalls: pm.getStalls?.() || [],
+            worstStallMs: pm.getWorstStallMs?.() || 0,
             environment: {
                 script: scriptBuildLabel() || 'unknown',
                 cores: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 'unknown',

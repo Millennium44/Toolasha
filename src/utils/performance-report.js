@@ -136,6 +136,7 @@ export function formatReport({
     spans = new Map(),
     stats = new Map(),
     stalls = [],
+    worstStallMs = 0,
     environment = {},
 } = {}) {
     const lines = [];
@@ -211,8 +212,16 @@ export function formatReport({
     // The stalls are what a hitching progress bar feels like, and the suspects
     // beside each one are what the hunt used to start by guessing at
     if (stalls.length) {
-        const worst = Math.max(...stalls.map((stall) => stall.duration));
-        lines.push(`Main-thread stalls since measuring began (${stalls.length}, worst ${ms(worst)})`);
+        const windowedWorst = Math.max(...stalls.map((stall) => stall.duration));
+        // The ring the panel keeps stalls in is capped, so its "worst" only
+        // covers what is still in the window — a session-lifetime max is
+        // tracked separately precisely so a long session's single bad stall
+        // cannot silently roll off before anyone reads the report.
+        const worstLine =
+            worstStallMs > windowedWorst
+                ? `worst ${ms(windowedWorst)} shown, ${ms(worstStallMs)} this session`
+                : `worst ${ms(windowedWorst)}`;
+        lines.push(`Main-thread stalls since measuring began (${stalls.length}, ${worstLine})`);
         lines.push('-'.repeat(60));
         for (const stall of stalls.slice(-15)) {
             const who = stall.suspects?.length
@@ -241,11 +250,13 @@ export function reportData({
     spans = new Map(),
     stats = new Map(),
     stalls = [],
+    worstStallMs = 0,
     environment = {},
 } = {}) {
     return {
         environment,
         stalls,
+        worstStallMs,
         marks: [...marks].sort((a, b) => a.at - b.at),
         features: initTimeline(snapshots),
         spans: Object.fromEntries([...spans].map(([name, parts]) => [name, parts])),
