@@ -26,7 +26,12 @@ function getPerformanceMonitor() {
  */
 function setMonitorEnabled(enabled) {
     const monitor = getPerformanceMonitor();
-    if (monitor) monitor.enabled = enabled;
+    if (!monitor) return;
+    monitor.enabled = enabled;
+    // The stall ledger follows the rolling stats: what a player feels as a
+    // hitch is recorded, attributed, and printed with the trace
+    if (enabled) monitor.startStallWatch?.();
+    else monitor.stopStallWatch?.();
 }
 
 const COLORS = {
@@ -401,6 +406,7 @@ class PFormancePanel {
             snapshots: pm.getSnapshots(),
             spans: pm.spans,
             stats: pm.getAllStats(),
+            stalls: pm.getStalls?.() || [],
             environment: {
                 script: scriptBuildLabel() || 'unknown',
                 cores: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 'unknown',

@@ -204,3 +204,22 @@ describe('the machine-readable copy', () => {
         expect(JSON.parse(JSON.stringify(data)).spans['init:x'][0].part).toBe('a');
     });
 });
+
+describe('the stall ledger in the report', () => {
+    test('stalls print with their suspects, largest evidence first', () => {
+        const text = formatReport({
+            stalls: [
+                { time: 1, sinceBoot: 12000, duration: 182, suspects: [{ name: 'networth:recalculate', ms: 171 }] },
+                { time: 2, sinceBoot: 15500, duration: 60, suspects: [] },
+            ],
+        });
+
+        expect(text).toContain('Main-thread stalls since measuring began (2, worst 182ms)');
+        expect(text).toContain('networth:recalculate 171ms');
+        expect(text).toContain('nothing instrumented overlapped it');
+    });
+
+    test('no stalls, no section', () => {
+        expect(formatReport({})).not.toContain('Main-thread stalls');
+    });
+});

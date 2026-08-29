@@ -195,6 +195,9 @@ class NetworthFeature {
             return;
         }
 
+        // Into the rolling stats, so the stall ledger can name it — this is
+        // the very call the 2026-08-29 stutter hunt spent hours attributing
+        const recalcStartedAt = performanceMonitor.enabled ? performance.now() : 0;
         try {
             // Calculate networth
             const networthData = await calculateNetworth();
@@ -213,6 +216,10 @@ class NetworthFeature {
             networthExclusionPopup.refresh(networthData);
         } catch (error) {
             console.error('[Networth] Error calculating networth:', error);
+        } finally {
+            if (recalcStartedAt) {
+                performanceMonitor.record('networth:recalculate', performance.now() - recalcStartedAt);
+            }
         }
     }
 

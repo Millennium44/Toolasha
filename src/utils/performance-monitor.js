@@ -237,12 +237,92 @@ class PerformanceMonitor {
     }
 
     /**
+     * Start recording main-thread stalls, with attribution.
+     *
+     * A stall — a "longtask", any main-thread block over 50ms — is what a
+     * player actually feels: the progress bars hitch. Every hunt so far has
+     * started by hand-rolling exactly this observer in the console, then
+     * guessing at attribution; the 2026-08-29 networth stutter took hours that
+     * way. Recorded here instead, each stall is stamped with the instrumented
+     * work (`record()` calls — dom handlers, event fan-outs, anything timed)
+     * that finished inside or just after it, which is usually the culprit's
+     * name.
+     *
+     * Runs while the pformance panel has measuring on, like the rolling stats.
+     */
+    startStallWatch() {
+        if (this.stallObserver || typeof PerformanceObserver === 'undefined') return;
+        this.stalls = this.stalls || [];
+        try {
+            this.stallObserver = new PerformanceObserver((list) => {
+                for (const entry of list.getEntries()) {
+                    this.stalls.push({
+                        time: Date.now(),
+                        sinceBoot: Math.round(entry.startTime),
+                        duration: Math.round(entry.duration),
+                        suspects: this._suspectsFor(entry),
+                    });
+                    if (this.stalls.length > 200) this.stalls.shift();
+                }
+            });
+            this.stallObserver.observe({ entryTypes: ['longtask'] });
+        } catch {
+            this.stallObserver = null;
+        }
+    }
+
+    /** Stop recording stalls; what was recorded stays readable. */
+    stopStallWatch() {
+        this.stallObserver?.disconnect();
+        this.stallObserver = null;
+    }
+
+    /**
+     * The instrumented work that overlapped a stall.
+     *
+     * Measurements are stamped with `Date.now()` when they *finish*; a longtask
+     * entry carries `performance.now()` times. Aligned onto one clock, anything
+     * timed that ended between the stall starting and shortly after it ended is
+     * a suspect — "shortly after" because the observer and the recorder both
+     * run a beat behind the work itself.
+     *
+     * @param {PerformanceEntry} entry - The longtask
+     * @returns {Array<{name: string, ms: number}>} Largest first, at most five
+     */
+    _suspectsFor(entry) {
+        const clockSkew = Date.now() - performance.now();
+        const windowStart = entry.startTime + clockSkew - 50;
+        const windowEnd = entry.startTime + entry.duration + clockSkew + 100;
+
+        const suspects = [];
+        for (const [name, entries] of this.measurements) {
+            for (let i = entries.length - 1; i >= 0; i--) {
+                const m = entries[i];
+                if (m.time < windowStart) break;
+                if (m.time <= windowEnd && m.duration >= 5) {
+                    suspects.push({ name, ms: Math.round(m.duration) });
+                }
+            }
+        }
+        return suspects.sort((a, b) => b.ms - a.ms).slice(0, 5);
+    }
+
+    /**
+     * The recorded stalls, oldest first.
+     * @returns {Array<{time: number, sinceBoot: number, duration: number, suspects: Array}>}
+     */
+    getStalls() {
+        return [...(this.stalls || [])];
+    }
+
+    /**
      * Clear all measurements
      */
     reset() {
         this.measurements.clear();
         this.snapshots.clear();
         this.spans.clear();
+        this.stalls = [];
         // Marks are the startup trace and cannot be taken again without a
         // reload, so resetting the rolling stats leaves them alone
     }

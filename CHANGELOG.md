@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The pformance panel records stalls and names their suspects
+
+Every stutter hunt so far began by hand-building a longtask observer in the console and guessing at attribution. While the pformance panel has measuring on, main-thread stalls (blocks over 50ms) are now recorded automatically, each stamped with whatever instrumented work finished inside it — and the startup trace grows a "Main-thread stalls" section listing them. Data-manager event fan-outs (`event:<type>`) and the networth recalculation now feed those rolling stats, so the usual suspects come pre-named.
+
 ### The networth engine stops stalling the game every few seconds
 
 The real cause of the stuttering progress bars, found by phase-timing the calculation: every completed action re-ran the full networth valuation ~500ms later, a synchronous block of 150-300ms. Three fixes: item→crafting-action lookups come from a once-built index instead of scanning every action per item; the valuation and price-map loops hand the browser a frame every ~12ms instead of running to completion; and inventory-driven recalculations respect a 15s cooldown (a 30s ceiling guarantees freshness under continuous load, and market-price updates still refresh as before). Per-phase timings from the last run stay readable at `Toolasha.Market.networthCalculator.lastCalcPhases`.

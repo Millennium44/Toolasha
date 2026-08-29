@@ -135,6 +135,7 @@ export function formatReport({
     snapshots = new Map(),
     spans = new Map(),
     stats = new Map(),
+    stalls = [],
     environment = {},
 } = {}) {
     const lines = [];
@@ -207,6 +208,22 @@ export function formatReport({
         lines.push('');
     }
 
+    // The stalls are what a hitching progress bar feels like, and the suspects
+    // beside each one are what the hunt used to start by guessing at
+    if (stalls.length) {
+        const worst = Math.max(...stalls.map((stall) => stall.duration));
+        lines.push(`Main-thread stalls since measuring began (${stalls.length}, worst ${ms(worst)})`);
+        lines.push('-'.repeat(60));
+        for (const stall of stalls.slice(-15)) {
+            const who = stall.suspects?.length
+                ? stall.suspects.map((suspect) => `${suspect.name} ${suspect.ms}ms`).join(', ')
+                : 'nothing instrumented overlapped it';
+            lines.push(`${ms(stall.duration).padStart(9)}  at ${ms(stall.sinceBoot).padStart(8)}  ${who}`);
+        }
+        if (stalls.length > 15) lines.push(`           ...and ${stalls.length - 15} earlier`);
+        lines.push('');
+    }
+
     return lines.join('\n');
 }
 
@@ -221,10 +238,12 @@ export function reportData({
     snapshots = new Map(),
     spans = new Map(),
     stats = new Map(),
+    stalls = [],
     environment = {},
 } = {}) {
     return {
         environment,
+        stalls,
         marks: [...marks].sort((a, b) => a.at - b.at),
         features: initTimeline(snapshots),
         spans: Object.fromEntries([...spans].map(([name, parts]) => [name, parts])),

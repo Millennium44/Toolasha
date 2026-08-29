@@ -7,6 +7,7 @@
  */
 
 import webSocketHook from './websocket.js';
+import performanceMonitor from '../utils/performance-monitor.js';
 import connectionState from './connection-state.js';
 import storage from './storage.js';
 import {
@@ -2003,6 +2004,10 @@ class DataManager {
                 const live = this.eventListeners.get(event);
                 if (!live || live.length === 0) return;
                 const stillRegistered = new Set(live);
+                // Timed as one batch: the whole loop is one macrotask, and one
+                // macrotask is what a stall is made of — so this is the number
+                // the stall ledger's attribution wants (see startStallWatch)
+                const startedAt = performanceMonitor.enabled ? performance.now() : 0;
                 for (const listener of listeners) {
                     if (!stillRegistered.has(listener)) continue;
                     try {
@@ -2011,6 +2016,7 @@ class DataManager {
                         console.error(`[Data Manager] Error in ${event} listener:`, error);
                     }
                 }
+                if (startedAt) performanceMonitor.record(`event:${event}`, performance.now() - startedAt);
             }, 0);
         }
     }

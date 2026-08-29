@@ -148,3 +148,32 @@ describe('PerformanceMonitor', () => {
         expect(performanceMonitor.getSpans('c')).toEqual([]);
     });
 });
+
+describe('stall attribution', () => {
+    beforeEach(() => {
+        performanceMonitor.reset();
+        performanceMonitor.enabled = true;
+        performanceMonitor._tabVisible = true;
+    });
+
+    test('work recorded inside the stall window is named as a suspect, biggest first', () => {
+        performanceMonitor.record('event:items_updated', 12);
+        performanceMonitor.record('networth:recalculate', 171);
+        performanceMonitor.record('dom:Tiny', 1); // under the 5ms floor
+
+        const now = performance.now();
+        const suspects = performanceMonitor._suspectsFor({ startTime: now - 200, duration: 200 });
+
+        expect(suspects.map((s) => s.name)).toEqual(['networth:recalculate', 'event:items_updated']);
+    });
+
+    test('work recorded long before the stall is not blamed for it', () => {
+        performanceMonitor.record('networth:recalculate', 171);
+        const suspects = performanceMonitor._suspectsFor({ startTime: performance.now() + 5000, duration: 100 });
+        expect(suspects).toEqual([]);
+    });
+
+    test('getStalls() is empty and safe before the watch ever starts', () => {
+        expect(performanceMonitor.getStalls()).toEqual([]);
+    });
+});
