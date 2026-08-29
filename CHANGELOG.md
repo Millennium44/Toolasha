@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Three more switch-and-teardown races closed
+
+A shrine plan edited in the last few hundred milliseconds before a character switch is now written instead of silently dropped (the reset used to beat the debounced save every time). Labyrinth room logs no longer leak the XP-grace timer past disable — the final room is reported during teardown rather than firing four seconds later into a torn-down module, possibly under the wrong character. And turning Iron Cow mode off during a character switch now deletes the snapshot it actually restored, not the arriving character's.
+
 ### Character switches wait for the departing character's writes
 
 The switch handler fired feature teardowns and moved the character pointer on without waiting, so any teardown that crossed an await could persist the old character's state under the arriving character's key. The switch now awaits its own teardown before the pointer moves (and skips the superseded re-init a rapid burst would have queued behind it). Two teardowns that were losing an internal race with their own cleanup — the labyrinth room log for the room you were in when you switched, and estimated listing ages — now finish their flush before wiping memory. And storage's straggler-retry pass no longer writes a snapshotted value back over a newer write or resurrects a deleted key.
