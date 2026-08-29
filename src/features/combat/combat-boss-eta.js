@@ -26,9 +26,15 @@ import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { battlesToBoss, addBattleGap, averageBattleMs, formatBossEta, bossEtaTooltip } from '../../utils/boss-eta.js';
 
 const ETA_ID = 'mwi-boss-eta';
+
+// Same in-place-re-render recovery as the battle counter, and for the same
+// reason a poll rather than a mutation watcher: the watcher variant fed back
+// on the game's ticking header and froze the tab (the 854c04f8 revert).
+const REINJECT_POLL_MS = 1500;
 const ACTION_NAME_SELECTOR = '[class*="Header_actionName"]';
 const CURRENT_ACTION_SELECTOR = '[class*="Header_currentAction"]';
 // The battle counter's own span — read only as a fallback when a new_battle
@@ -45,6 +51,7 @@ class CombatBossEta {
         this.unregisterObserver = null;
 
         this._resetTracking();
+        this.timers = createTimerRegistry();
     }
 
     _resetTracking() {
@@ -74,6 +81,15 @@ class CombatBossEta {
 
         this.unregisterObserver = domObserver.onClass('CombatBossEta', 'Header_actionName', () =>
             this._injectOrUpdate()
+        );
+
+        // See REINJECT_POLL_MS above.
+        this.timers.registerInterval(
+            setInterval(() => {
+                if (this.battleNumber > 0 || document.getElementById(ETA_ID)) {
+                    this._injectOrUpdate();
+                }
+            }, REINJECT_POLL_MS)
         );
 
         this.initialized = true;
@@ -204,6 +220,7 @@ class CombatBossEta {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
             }
+            this.timers.clearAll();
             this._reset();
         } catch (error) {
             console.error('[Combat Boss ETA] Disable failed part-way:', error);

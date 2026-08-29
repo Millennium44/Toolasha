@@ -238,3 +238,51 @@ describe('combat battle counter', () => {
         expect(counterText()).toBe('· Battle #7');
     });
 });
+
+describe('the re-inject poll', () => {
+    test('an in-place header rewrite gets the chip back within one poll tick', () => {
+        combatBattleCounter.disable();
+        vi.useFakeTimers();
+        combatBattleCounter.initialize();
+        game.wsHandlers['new_battle']({ battleId: 42 });
+        expect(document.getElementById('mwi-battle-counter')?.textContent).toContain('#42');
+
+        // React rewrites the row's children in place: no element replaced, so
+        // the class observer never fires — only the poll can notice
+        document.querySelector('[class*="Header_actionName"]').textContent = 'Golem Cave (T2)';
+        expect(document.getElementById('mwi-battle-counter')).toBeNull();
+
+        vi.advanceTimersByTime(1600);
+        expect(document.getElementById('mwi-battle-counter')?.textContent).toContain('#42');
+        vi.useRealTimers();
+    });
+
+    test('combat ending stays ended through the poll', () => {
+        combatBattleCounter.disable();
+        vi.useFakeTimers();
+        combatBattleCounter.initialize();
+        game.wsHandlers['new_battle']({ battleId: 42 });
+        game.actions = [];
+        game.dmHandlers['actions_updated']({
+            endCharacterActions: [{ isDone: true, actionHrid: '/actions/combat/some_zone' }],
+        });
+        expect(document.getElementById('mwi-battle-counter')).toBeNull();
+
+        vi.advanceTimersByTime(5000);
+        expect(document.getElementById('mwi-battle-counter')).toBeNull();
+        vi.useRealTimers();
+    });
+
+    test('disable() stops the poll', () => {
+        combatBattleCounter.disable();
+        vi.useFakeTimers();
+        combatBattleCounter.initialize();
+        game.wsHandlers['new_battle']({ battleId: 42 });
+        combatBattleCounter.disable();
+        document.querySelector('[class*="Header_actionName"]').textContent = 'Golem Cave (T2)';
+
+        vi.advanceTimersByTime(5000);
+        expect(document.getElementById('mwi-battle-counter')).toBeNull();
+        vi.useRealTimers();
+    });
+});

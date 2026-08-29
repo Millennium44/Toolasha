@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Battle chips survive queue changes again — safely this time
+
+The battle counter and boss countdown recover from an in-place header rewrite via a slow poll (one element read every 1.5 seconds, only while they have something to show) instead of the mutation watcher that fed back on the ticking combat header and froze tabs. Queuing an action mid-combat now costs the chips at most a moment.
+
 ### Reverted: the combat-chip header watcher froze tabs
 
 The fix that re-injected the battle counter and boss countdown after an in-place header rewrite watched the combat header with a mutation observer — which, on the game's constantly-ticking header, fed back into itself and could hard-freeze the tab within half a minute of combat. Reverted (bisected and confirmed against live combat); the chips still work and still re-inject on each new battle, so the only regression is the original small gap after queuing an action mid-combat. A safe re-implementation will follow. Also, tiles may now span up to five columns instead of four, which reads imported freeform layouts at a finer, truer grain.

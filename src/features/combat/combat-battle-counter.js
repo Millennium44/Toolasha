@@ -21,8 +21,17 @@ import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 const COUNTER_ID = 'mwi-battle-counter';
+
+// How often the poll below checks that the chip is still in the header. A
+// React re-render can rewrite the header's children in place, detaching the
+// chip without inserting any node the class observer would see. A mutation
+// watcher here once fed back on the game's own ticking header and froze the
+// tab (see the 854c04f8 revert), so recovery is a slow poll instead: reading
+// one element by id is microseconds and cannot feed back into anything.
+const REINJECT_POLL_MS = 1500;
 const ACTION_NAME_SELECTOR = '[class*="Header_actionName"]';
 const CURRENT_ACTION_SELECTOR = '[class*="Header_currentAction"]';
 
@@ -36,6 +45,7 @@ class CombatBattleCounter {
         this.currentWave = 0;
         this.isDungeon = false;
         this.labyrinthAttempt = 0;
+        this.timers = createTimerRegistry();
     }
 
     initialize() {
@@ -53,6 +63,16 @@ class CombatBattleCounter {
 
         this.unregisterObserver = domObserver.onClass('CombatBattleCounter', 'Header_actionName', () =>
             this._injectOrUpdate()
+        );
+
+        // See REINJECT_POLL_MS: the in-place-re-render recovery. Only does
+        // work when there is a chip to maintain or state that wants one.
+        this.timers.registerInterval(
+            setInterval(() => {
+                if (this.battleId > 0 || this.labyrinthAttempt > 0 || document.getElementById(COUNTER_ID)) {
+                    this._injectOrUpdate();
+                }
+            }, REINJECT_POLL_MS)
         );
 
         this.initialized = true;
@@ -212,6 +232,7 @@ class CombatBattleCounter {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
             }
+            this.timers.clearAll();
             document.getElementById(COUNTER_ID)?.remove();
             this.battleId = 0;
             this.currentWave = 0;
