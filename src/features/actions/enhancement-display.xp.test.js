@@ -154,7 +154,7 @@ describe('the costs-by-level XP column', () => {
 });
 
 describe('the costs-by-level chain', () => {
-    test("runs on the live Blessed Tea double-jump chance, not the 1% stand-in", async () => {
+    test('runs on the live Blessed Tea double-jump chance, not the 1% stand-in', async () => {
         // Blessed Tea's real flatBoost is read from item data by getEnhancingParams; a run that
         // skips a level ten times as often is a materially cheaper and faster run, and the panel
         // has to quote the chance the character actually has.

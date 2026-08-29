@@ -174,7 +174,7 @@ describe('generated worker sources', () => {
         expect(calculateProductionCost('/items/plank', askOnlyMap, withLogRecipe)).toBe(0);
     });
 
-    test("the networth worker mirrors from +2, like the path the tooltip quotes", async () => {
+    test('the networth worker mirrors from +2, like the path the tooltip quotes', async () => {
         // A Philosopher's Mirror combines a +(n-1) and a +(n-2) into a +n, and
         // +2 is reachable that way from a +1 and a plain +0 — which is why
         // calculateEnhancementPath's mirror pass runs from level 2. The worker
