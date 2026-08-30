@@ -1628,19 +1628,17 @@ class LootLogStats {
     }
 
     /**
-     * Delete a single historical entry by characterActionId
+     * Delete a single historical entry by characterActionId.
+     *
+     * Delegates to `lootLogHistory.deleteEntry`, which queues the delete on the
+     * same chain as `mergeAndSave` — this used to read and save directly, which
+     * raced a merge arriving from a `loot_log_updated` message in flight at the
+     * same time and could have the merge's stale read put the just-deleted
+     * entry straight back.
      * @param {number} characterActionId
      */
     async deleteHistoricalEntry(characterActionId) {
-        // `_getKey` never existed on LootLogHistory — it exposes `_charId`,
-        // `_load` and `_save`. Clicking a historical entry's delete button hit
-        // this and threw before removing anything, from either storage or the
-        // panel it was clicked in.
-        const charId = lootLogHistory._charId();
-        if (!charId) return;
-        const entries = await lootLogHistory._load(charId);
-        const filtered = entries.filter((e) => e.characterActionId !== characterActionId);
-        await lootLogHistory._save(filtered, undefined, charId);
+        await lootLogHistory.deleteEntry(characterActionId);
     }
 
     /**

@@ -194,6 +194,53 @@ class LootLogHistory {
     }
 
     /**
+     * Remove one stored entry by characterActionId — queued on the same chain
+     * as `mergeAndSave`.
+     *
+     * This used to be a direct `_load`/`_save` from the caller, outside the
+     * chain: a delete landing while a `loot_log_updated` merge was mid-flight
+     * raced it exactly the way two merges used to race each other (see
+     * `mergeAndSave`'s note). The merge's `existing` is read before the
+     * delete, so its `merged` array still had the deleted entry — and
+     * whichever `_save` ran last, usually the merge's since it goes on to
+     * touch other chunks, put the entry straight back.
+     * @param {number} characterActionId - Which entry to remove
+     * @returns {Promise<void>} Resolves when this delete has been queued for writing
+     */
+    async deleteEntry(characterActionId) {
+        const run = () => this._deleteEntry(characterActionId);
+        this._chain = this._chain.then(run, run);
+        return this._chain;
+    }
+
+    /**
+     * @param {number} characterActionId - Which entry to remove
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _deleteEntry(characterActionId) {
+        try {
+            const charId = this._charId();
+            if (!charId) return;
+
+            const existing = await this._load(charId);
+            // See `_merge`'s note on the same check: a switch landing inside the
+            // read must not have this delete's save land under the character
+            // that switched away.
+            if (this._charId() !== charId) return;
+
+            const filtered = existing.filter((e) => e.characterActionId !== characterActionId);
+            if (filtered.length === existing.length) return;
+
+            this._save(filtered, undefined, charId);
+        } catch (error) {
+            // Never rejected, for the same reason `_mergeAndSave` never is: the
+            // chain is what the next queued write extends.
+            console.error('[LootLogHistory] Deleting an entry failed:', error);
+        }
+    }
+
+    /**
      * Get entries that are in storage but not in the current game-provided set.
      * @param {Set<number>} currentIds - characterActionIds from the current loot_log_updated
      * @returns {Promise<Array>}

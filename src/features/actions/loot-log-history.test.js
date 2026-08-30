@@ -334,3 +334,51 @@ describe('a character switch landing mid-merge', () => {
         expect(storageMock.store.get('lootLogRec_char-1_2026-08-01T13')).toHaveLength(1);
     });
 });
+
+describe('a delete racing a merge', () => {
+    test('a delete queued while a merge is mid-flight is not undone by the merge finishing after it', async () => {
+        // Two entries already on record.
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T10:00:00Z'), entry(2, '2026-08-01T11:00:00Z')]);
+
+        // A merge begins for a third, unrelated entry: it reads `existing`
+        // (entries 1 and 2) first...
+        const originalLoad = lootLogHistory._load.bind(lootLogHistory);
+        let deletion;
+        vi.spyOn(lootLogHistory, '_load').mockImplementationOnce(async (charId) => {
+            const existing = await originalLoad(charId);
+
+            // ...and before the merge saves, the user deletes entry 1. If this
+            // went straight to `_load`/`_save` (as it used to) it would race the
+            // merge exactly like this; going through `deleteEntry` instead
+            // queues it on the same chain, so it actually runs after the merge
+            // finishes rather than interleaved with it.
+            deletion = lootLogHistory.deleteEntry(1);
+
+            return existing;
+        });
+
+        await lootLogHistory.mergeAndSave([entry(3, '2026-08-01T12:00:00Z')]);
+        await deletion;
+        lootLogHistory._load.mockRestore();
+
+        const stored = await lootLogHistory.getHistoricalEntries(new Set());
+        expect(stored.map((e) => e.characterActionId).sort()).toEqual([2, 3]);
+    });
+
+    test('deleteEntry does nothing before a character is known', async () => {
+        character.id = null;
+
+        await lootLogHistory.deleteEntry(1);
+
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('deleteEntry does nothing when the id is not stored', async () => {
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T10:00:00Z')]);
+        storageMock.set.mockClear();
+
+        await lootLogHistory.deleteEntry(999);
+
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+});

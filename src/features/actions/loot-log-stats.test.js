@@ -45,6 +45,7 @@ vi.mock('./loot-log-history.js', () => ({
     default: {
         mergeAndSave: vi.fn(),
         getHistoricalEntries: vi.fn(),
+        deleteEntry: vi.fn(async () => undefined),
         _charId: vi.fn(() => 'char-1'),
         _load: vi.fn(async () => []),
         _save: vi.fn(),
@@ -396,30 +397,14 @@ describe('LootLogStats.deleteHistoricalEntry', () => {
         stats = new LootLogStats();
     });
 
-    test('deletes a historical entry by characterActionId', async () => {
-        lootLogHistory._load.mockResolvedValue([
-            { characterActionId: 1, startTime: '2026-08-01T00:00:00Z' },
-            { characterActionId: 2, startTime: '2026-08-02T00:00:00Z' },
-        ]);
-
-        // This used to call the nonexistent lootLogHistory._getKey() and throw,
-        // leaving the entry in storage and on screen
+    test('delegates to lootLogHistory.deleteEntry, which queues on the merge chain', async () => {
+        // Deleting used to read and save directly here, off the chain
+        // `mergeAndSave` uses to serialize against itself — a merge arriving
+        // from a `loot_log_updated` message in flight at the same time could
+        // have its stale read put the just-deleted entry straight back.
+        // Delegating means the delete is subject to the same serialization.
         await expect(stats.deleteHistoricalEntry(2)).resolves.toBeUndefined();
 
-        expect(lootLogHistory._load).toHaveBeenCalledWith('char-1');
-        expect(lootLogHistory._save).toHaveBeenCalledWith(
-            [{ characterActionId: 1, startTime: '2026-08-01T00:00:00Z' }],
-            undefined,
-            'char-1'
-        );
-    });
-
-    test('does nothing before a character is known', async () => {
-        lootLogHistory._charId.mockReturnValue(null);
-
-        await stats.deleteHistoricalEntry(1);
-
-        expect(lootLogHistory._load).not.toHaveBeenCalled();
-        expect(lootLogHistory._save).not.toHaveBeenCalled();
+        expect(lootLogHistory.deleteEntry).toHaveBeenCalledWith(2);
     });
 });
