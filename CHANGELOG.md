@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Consumables and the tea optimizer answer with honest numbers
+
+Seven fixes from one audit: an unpriced consumable was billed at a fabricated 500 coins per unit through every combat cost surface (it now reads unpriced); alchemy gear asked to rank on gold was scored on XP and labelled gold, and calculateSkillPerformance had no alchemy path at all (XP always read zero, catalytic tea ignored); an unpriced tea was charged as free with no missing-price flag; gold tea combos ranked by summed score while the UI displays the average, so a worse combo could headline as optimal; and the panel's idle-pin and stored-readings reloads got the double-switch generation guard their sibling already had.
+
 ### Iron Bell Farming stops writing across a character switch
 
 The panel's slow costing pass could resume after a switch and file the departing character's freshly-priced loop into the arriving character's snapshot — memory and storage both — and a stage tick landing in the one-read gap had the same key drift. Both now capture the character before their awaits and stand down if it moved, the pattern their siblings already carry.
