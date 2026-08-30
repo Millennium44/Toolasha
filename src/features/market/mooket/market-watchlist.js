@@ -91,21 +91,46 @@ export function normaliseTarget(raw) {
  * read identically everywhere downstream — including in the alert, where the
  * absence of a target is what makes a pin silent.
  *
+ * The target's life is recorded alongside it when the caller supplies a clock
+ * and the price at that moment: set-at with the price then, and cleared-unreached
+ * when a target is dropped without ever having fired. Both are additive — a
+ * caller that passes no context stores nothing, and every pin written before this
+ * existed reads back unchanged.
+ *
  * @param {Array<Object>} watchlist - Current entries
  * @param {string} key - itemHrid:enhancementLevel
  * @param {Object|null} target - `{side, price}`, or null to clear
+ * @param {Object} [context] - `{at, price}` — when this happened and the reading then
  * @returns {Array<Object>} A new list
  */
-export function setWatchedTarget(watchlist, key, target) {
+export function setWatchedTarget(watchlist, key, target, { at = null, price = null } = {}) {
     const wanted = normaliseTarget(target);
 
     return (watchlist || []).map((entry) => {
         if (entry?.key !== key) return entry;
+        const had = normaliseTarget(entry.target);
+
         if (!wanted) {
             const { target: _cleared, ...rest } = entry;
-            return rest;
+            // A target that is being cleared having never fired is the one
+            // outcome nothing else records — the pin simply stops having a
+            // target, and "I gave up on that price" is exactly as informative
+            // about the price as "it came to me" is
+            if (!had || !at) return rest;
+            return noteTargetEvent(rest, {
+                kind: 'cleared',
+                at,
+                side: had.side,
+                price: sidePrice(price, had.side),
+                unreached: !targetReachedSinceSet(entry),
+            });
         }
-        return { ...entry, target: wanted };
+
+        const next = { ...entry, target: wanted };
+        // Re-setting the identical target is not a new intention and does not
+        // start a new life; changing either half is
+        if (!at || (had && had.side === wanted.side && had.price === wanted.price)) return next;
+        return noteTargetEvent(next, { kind: 'set', at, side: wanted.side, price: sidePrice(price, wanted.side) });
     });
 }
 
@@ -329,4 +354,303 @@ export function normaliseWatchlist(stored) {
         return Object.entries(stored).map(([key, value]) => ({ key, ...value }));
     }
     return [];
+}
+
+/**
+ * How many events one pin's target history keeps.
+ *
+ * A ring, oldest dropped, and small on purpose. The value of this record is
+ * entirely in the last handful of targets — "the last few times I named a
+ * price, was naming it a good idea" — and a pin somebody retargets weekly for a
+ * year must not quietly grow into a kilobyte of watchlist that has to be read,
+ * written and synced on every edit. Twelve events is three or four complete
+ * target lives, which is as far back as an aftermath reading is worth pooling
+ * anyway: a price target set eight months ago was set about a different market.
+ */
+export const TARGET_LIFE_MAX = 12;
+
+/** The three things that can happen to a target, in the order they can happen */
+export const TARGET_EVENTS = ['set', 'reached', 'cleared'];
+
+/**
+ * The price a reading carries on one side.
+ * @param {Object|null} price - A reading carrying `ask` and `bid`
+ * @param {'ask'|'bid'} side - Which side
+ * @returns {number|null} The price, or null when that side was empty
+ */
+function sidePrice(price, side) {
+    const value = side === 'bid' ? price?.bid : price?.ask;
+    return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * The median of a list of numbers.
+ *
+ * Local rather than imported from `market-history-data.js`, which pulls the
+ * history API client in with it — this module is pure state-in/state-out and is
+ * imported by the notification path, which must not acquire a transitive
+ * dependency on a third-party HTTP client to compare two numbers.
+ *
+ * @param {number[]} values - At least one
+ * @returns {number}
+ */
+function medianOf(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/**
+ * Add one event to a pin's target history.
+ *
+ * Additive in the storage sense: an entry that has never had an event has no
+ * `life` field at all, so every pin stored before this existed reads back
+ * exactly as it did, and a pin that has one carries a plain array of small
+ * objects that older code ignores.
+ *
+ * The price is recorded as "the price then" on whichever side the target
+ * watches, because that is the only side the target was ever a claim about. A
+ * side the market was not quoting stores null rather than zero — the same
+ * distinction `targetMet` draws — so an aftermath reading can tell "the book was
+ * empty" from "it was free".
+ *
+ * @param {Object} entry - A watchlist entry
+ * @param {Object} event - `{kind, at, price, side}`; `kind` must be in {@link TARGET_EVENTS}
+ * @param {number} [max] - Ring size, injectable for tests
+ * @returns {Object} A new entry, unchanged when the event is unusable
+ */
+export function noteTargetEvent(entry, event, max = TARGET_LIFE_MAX) {
+    if (!entry) return entry;
+    const kind = event?.kind;
+    if (!TARGET_EVENTS.includes(kind)) return entry;
+
+    const at = Number(event?.at);
+    if (!Number.isFinite(at) || at <= 0) return entry;
+
+    const price = Number(event?.price);
+    const record = { kind, at, price: Number.isFinite(price) && price > 0 ? price : null };
+    if (event?.side === 'ask' || event?.side === 'bid') record.side = event.side;
+    // Only ever set on a clear, and only when true: a cleared target that had
+    // fired is already described by the `reached` event sitting before it, and
+    // storing `unreached: false` beside it would be the same fact twice
+    if (kind === 'cleared' && event?.unreached === true) record.unreached = true;
+
+    const life = [...(Array.isArray(entry.life) ? entry.life : []), record];
+    const bound = Math.max(1, Math.floor(max) || 1);
+    return { ...entry, life: life.length > bound ? life.slice(life.length - bound) : life };
+}
+
+/**
+ * Whether the newest target on a pin has been reached since it was set.
+ *
+ * Read backwards from the end of the ring: the first `set` found ends the
+ * search, and a `reached` seen before it belongs to the target now in force.
+ * A ring that has dropped its oldest events therefore answers "not reached"
+ * where it cannot tell, which is the safe direction — it under-claims rather
+ * than crediting the current target with a reach that belonged to an older one.
+ *
+ * @param {Object|null} entry - A watchlist entry
+ * @returns {boolean}
+ */
+export function targetReachedSinceSet(entry) {
+    const life = Array.isArray(entry?.life) ? entry.life : [];
+    for (let i = life.length - 1; i >= 0; i--) {
+        if (life[i]?.kind === 'set') return false;
+        if (life[i]?.kind === 'reached') return true;
+    }
+    return false;
+}
+
+/**
+ * Record that a pin's target was reached, at a dated price.
+ *
+ * Only ever called from the alert path, which fires on a pooled sighting
+ * carrying the time it was actually seen. The panel's own chip also knows when
+ * a target is met, against its cached price — and that reading is deliberately
+ * not recorded, because a chip is allowed to be approximate about *when* and an
+ * aftermath measured from an approximate moment is not a measurement.
+ *
+ * @param {Array<Object>} watchlist - Current entries
+ * @param {string} key - itemHrid:enhancementLevel
+ * @param {Object} sighting - `{at, price}` — the sighting that reached it
+ * @returns {Array<Object>} A new list, unchanged when there is nothing to record
+ */
+export function noteTargetReached(watchlist, key, { at, price } = {}) {
+    const list = watchlist || [];
+    const entry = list.find((watched) => watched?.key === key);
+    const target = normaliseTarget(entry?.target);
+    if (!entry || !target) return list;
+    // One reach per arming. The armed bit upstream already guarantees this, but
+    // the ring is storage: a duplicate event would double-count in the pool
+    if (targetReachedSinceSet(entry)) return list;
+
+    const noted = noteTargetEvent(entry, {
+        kind: 'reached',
+        at,
+        side: target.side,
+        price: sidePrice(price, target.side),
+    });
+    if (noted === entry) return list;
+    return list.map((watched) => (watched === entry ? noted : watched));
+}
+
+/**
+ * How long after a reach an aftermath reading is taken.
+ *
+ * A day and three days: the first asks "did it keep going for the rest of the
+ * session", the second "was that actually the bottom of the move". Longer
+ * windows stop being about the target at all.
+ */
+export const AFTERMATH_HOURS = [24, 72];
+
+/**
+ * How far from the nominal moment a sighting may sit and still be read as that
+ * moment's price.
+ *
+ * The pooled dataset updates on the community's trading rather than on a clock,
+ * so demanding a sighting at exactly +24h would answer "no data" for everything.
+ * Six hours either side is close enough that the reading is still about that
+ * point in the move, and narrow enough that a week-old quote cannot stand in for
+ * it — the same judgement {@link MAX_MOVE_SPAN_MS} makes about a move's span.
+ */
+export const AFTERMATH_TOLERANCE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * History rows as timestamped sightings, in milliseconds.
+ *
+ * Rows carry seconds (or a date string); everything here compares against event
+ * timestamps, which are milliseconds. A row whose side was empty carries null
+ * rather than zero, for the reason `freshestSighting` gives.
+ *
+ * @param {Array<Object>|null} rows - Rows from the history API
+ * @returns {Array<{time: number, ask: number|null, bid: number|null}>} Oldest first
+ */
+export function sightingsFromRows(rows) {
+    if (!Array.isArray(rows)) return [];
+    const out = [];
+    for (const row of rows) {
+        const raw = typeof row?.time === 'number' ? row.time : new Date(row?.time).getTime() / 1000;
+        if (!Number.isFinite(raw) || raw <= 0) continue;
+        out.push({
+            time: raw * 1000,
+            ask: row?.a > 0 ? row.a : null,
+            bid: row?.b > 0 ? row.b : null,
+        });
+    }
+    return out.sort((a, b) => a.time - b.time);
+}
+
+/**
+ * The price on one side a given number of hours after a moment, or nothing.
+ *
+ * "Nothing" is the important half. The pooled dataset has gaps — an item nobody
+ * traded for two days simply has no sighting in that stretch — and the obvious
+ * thing to do about a gap is to draw a line between the readings either side of
+ * it and read off the middle. That would be inventing a price and presenting it
+ * as an observation, in a feature whose entire claim is "here is what actually
+ * happened next". So a gap returns null and the caller says "no follow-up
+ * reading".
+ *
+ * @param {Array<Object>} sightings - From {@link sightingsFromRows}
+ * @param {number} fromMs - The moment to measure from
+ * @param {number} hours - How far after
+ * @param {'ask'|'bid'} side - Which side to read
+ * @param {number} [toleranceMs] - How far off the nominal moment is acceptable
+ * @returns {{price: number, at: number, offsetMs: number}|null} Null for a gap
+ */
+export function aftermathReading(sightings, fromMs, hours, side, toleranceMs = AFTERMATH_TOLERANCE_MS) {
+    const target = Number(fromMs) + hours * 60 * 60 * 1000;
+    if (!Number.isFinite(target)) return null;
+
+    let best = null;
+    for (const sighting of sightings || []) {
+        const price = side === 'bid' ? sighting?.bid : sighting?.ask;
+        if (!Number.isFinite(price) || !(price > 0)) continue;
+        const offset = Math.abs(sighting.time - target);
+        if (offset > toleranceMs) continue;
+        if (!best || offset < best.offsetMs) best = { price, at: sighting.time, offsetMs: offset };
+    }
+    return best;
+}
+
+/**
+ * What happened after each of a pin's target reaches — "when it fired, was that
+ * the bottom?"
+ *
+ * Every reach in the ring is measured against the price recorded at the moment
+ * it fired, and the moves are pooled as a median rather than a mean, because one
+ * reach that happened to precede a crash would otherwise be the whole answer
+ * over three reaches.
+ *
+ * The sign is left as a raw move rather than being turned into "good" or "bad":
+ * whether a price falling further after a buy target fired is bad news depends
+ * on whether you bought, and this does not know that.
+ *
+ * @param {Object|null} entry - A watchlist entry carrying a `life` ring
+ * @param {Array<Object>} sightings - From {@link sightingsFromRows}
+ * @param {Object} [options] - Overrides
+ * @param {Array<number>} [options.hours] - Which windows to read
+ * @param {number} [options.toleranceMs] - Passed to {@link aftermathReading}
+ * @returns {{reaches: number, windows: Array<{hours: number, readings: number,
+ *   gaps: number, medianPercent: number|null}>}} `reaches` is 0 when the pin has
+ *   never fired, which is the caller's cue to draw nothing at all
+ */
+export function targetAftermath(
+    entry,
+    sightings,
+    { hours = AFTERMATH_HOURS, toleranceMs = AFTERMATH_TOLERANCE_MS } = {}
+) {
+    const life = Array.isArray(entry?.life) ? entry.life : [];
+    const reaches = life.filter((event) => event?.kind === 'reached' && event.price > 0);
+
+    const windows = hours.map((window) => {
+        const moves = [];
+        let gaps = 0;
+        for (const reach of reaches) {
+            const side = reach.side === 'bid' ? 'bid' : 'ask';
+            const later = aftermathReading(sightings, reach.at, window, side, toleranceMs);
+            if (!later) {
+                gaps += 1;
+                continue;
+            }
+            moves.push(((later.price - reach.price) / reach.price) * 100);
+        }
+        return {
+            hours: window,
+            readings: moves.length,
+            gaps,
+            medianPercent: moves.length ? medianOf(moves) : null,
+        };
+    });
+
+    return { reaches: reaches.length, windows };
+}
+
+/**
+ * The aftermath as the line the history panel draws, or nothing.
+ *
+ * A window whose reaches all fall in sighting gaps says so in words rather than
+ * being dropped: "no follow-up reading" is a fact about the pooled data that the
+ * reader should see, and an omitted window would read as a window nobody thought
+ * to measure.
+ *
+ * @param {Object} aftermath - From {@link targetAftermath}
+ * @returns {string} Empty when the pin has never fired
+ */
+export function describeAftermath(aftermath) {
+    if (!aftermath?.reaches) return '';
+
+    const parts = [];
+    for (const window of aftermath.windows) {
+        if (window.medianPercent === null) {
+            parts.push(`${window.hours}h no follow-up reading`);
+            continue;
+        }
+        const signed = `${window.medianPercent >= 0 ? '+' : '−'}${Math.abs(window.medianPercent).toFixed(1)}%`;
+        const missing = window.gaps ? `, ${window.gaps} with no follow-up reading` : '';
+        parts.push(`${window.hours}h ${signed} (n=${window.readings}${missing})`);
+    }
+
+    const fired = `fired ${aftermath.reaches} time${aftermath.reaches === 1 ? '' : 's'}`;
+    return `After the target ${fired}: ${parts.join(' · ')}`;
 }

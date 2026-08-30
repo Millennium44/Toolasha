@@ -49,7 +49,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import marketHistoryAPI from '../market/mooket/market-history-api.js';
 import { freshestSighting } from '../market/mooket/market-history-data.js';
-import { watchedPriceTargets } from '../market/mooket/index.js';
+import { watchedPriceTargets, noteWatchedTargetReached } from '../market/mooket/index.js';
 import { targetMet, describeTarget } from '../market/mooket/market-watchlist.js';
 import notificationService from './notification-service.js';
 import { priceTargetReached } from './notification-predicates.js';
@@ -280,6 +280,14 @@ class PriceTargetAlerts {
         });
         state.armed = armed;
         if (!fire) return;
+
+        // The pin's own record of the target's life. Written here rather than
+        // where the chip lights up, because this is the only place that knows
+        // the reach happened at a *dated* moment — the aftermath is measured
+        // forward from it, and a moment that is only approximately known makes
+        // the reading only approximately about anything. Storage only; nothing
+        // about the notification depends on it landing.
+        noteWatchedTargetReached(pin.key, { at: observation.timestamp, price: observation });
 
         notificationService.notify(
             `${EVENT_KEY_PREFIX}:${pin.key}:${signature}:${state.generation}`,

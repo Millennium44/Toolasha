@@ -28,6 +28,8 @@ const game = vi.hoisted(() => ({
     fetched: [],
     dmHandlers: {},
     notified: [],
+    /** Reaches handed to the watchlist for the aftermath record */
+    reaches: [],
     fired: true,
 }));
 
@@ -64,6 +66,13 @@ vi.mock('../market/mooket/market-history-data.js', () => ({
 }));
 vi.mock('../market/mooket/index.js', () => ({
     watchedPriceTargets: () => game.pins.map((pin) => ({ ...pin })),
+    // Storage only — the alert records the reach on the pin so the history
+    // panel can measure what happened after it. Captured, not asserted on,
+    // except where a test is about the record itself.
+    noteWatchedTargetReached: (key, sighting) => {
+        game.reaches.push({ key, sighting });
+        return true;
+    },
 }));
 vi.mock('./notification-service.js', () => ({
     default: {
@@ -103,6 +112,7 @@ beforeEach(() => {
     game.fetched = [];
     game.dmHandlers = {};
     game.notified = [];
+    game.reaches = [];
     game.fired = true;
     priceTargetAlerts.disable();
 });
@@ -135,6 +145,24 @@ describe('crossing', () => {
         expect(game.notified[0].message).toContain('Cheese Sword hit your target (under 4.2M ask)');
         expect(game.notified[0].options.subject).toBe('Cheese Sword');
         expect(game.notified[0].options.title).toBe('Price target reached');
+    });
+
+    test('the reach is recorded on the pin, dated by the sighting rather than by now', async () => {
+        game.pins = [pin({ price: 4_200_000 })];
+        await sight({ ask: 4_100_000, ageMs: 5 * 60_000 });
+
+        expect(game.reaches).toHaveLength(1);
+        expect(game.reaches[0].key).toBe('/items/cheese_sword:0');
+        // The sighting's own time, five minutes back — the aftermath is measured
+        // forward from the reach, so the moment has to be the real one
+        expect(game.reaches[0].sighting.at).toBe(NOW - 5 * 60_000);
+        expect(game.reaches[0].sighting.price.ask).toBe(4_100_000);
+    });
+
+    test('a target that never crosses records nothing', async () => {
+        game.pins = [pin({ price: 4_200_000 })];
+        await sight({ ask: 4_500_000 });
+        expect(game.reaches).toHaveLength(0);
     });
 
     test('a bid target fires when the bid comes up to it', async () => {

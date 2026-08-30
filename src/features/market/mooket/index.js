@@ -50,6 +50,10 @@ import {
     normaliseTarget,
     describeTarget,
     targetMet,
+    noteTargetReached,
+    sightingsFromRows,
+    targetAftermath,
+    describeAftermath,
 } from './market-watchlist.js';
 import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 import { attachMinimize } from '../../../utils/panel-minimize.js';
@@ -125,6 +129,8 @@ class MarketHistoryPanel {
         this.panel = null;
         this.chart = null;
         this.canvas = null;
+        /** The strip under the chart that says what happened after a target fired */
+        this.aftermathEl = null;
         this.chipRow = null;
         this.overlay = null;
         this.pinButton = null;
@@ -350,6 +356,15 @@ class MarketHistoryPanel {
         this.canvas.style.cssText = 'flex:1; min-height:0; display:block; padding:2px;';
         panel.appendChild(this.canvas);
 
+        // What happened after this item's target fired, when it has fired. Its
+        // own strip under the chart rather than a chip tooltip: the reading is
+        // computed from the same history rows the chart was just drawn from, so
+        // this is the one place in the script where it costs nothing.
+        this.aftermathEl = document.createElement('div');
+        this.aftermathEl.style.cssText =
+            'padding:1px 6px 3px; font-size:11px; color:#9aa4c0; display:none; cursor:help;';
+        panel.appendChild(this.aftermathEl);
+
         this.makeDraggable(panel);
         document.body.appendChild(panel);
         this.panel = panel;
@@ -357,7 +372,7 @@ class MarketHistoryPanel {
         this.minimizeCtl = attachMinimize({
             panel,
             header: toolbar,
-            body: [this.chipRow, this.canvas],
+            body: [this.chipRow, this.canvas, this.aftermathEl],
             panelKey: PANEL_ID,
             beforeEl: this.closeButton,
             accent: '#e7e7e7',
@@ -816,7 +831,13 @@ class MarketHistoryPanel {
             // clear one either; only an empty box means "stop watching this".
             const price = raw === '' ? null : Number(raw.replace(/[,\s]/g, ''));
             const next = raw === '' || Number.isFinite(price) ? { side, price } : entry.target;
-            this.watchlist = setWatchedTarget(this.watchlist, entry.key, next);
+            // The reading at the moment the target was named is what an
+            // aftermath is measured against later, so it is recorded with it
+            const [hrid, level] = String(entry.key).split(':');
+            this.watchlist = setWatchedTarget(this.watchlist, entry.key, next, {
+                at: Date.now(),
+                price: marketPriceStore.get(hrid, Number(level) || 0),
+            });
             close();
             this.savePrefs();
         };
@@ -930,6 +951,44 @@ class MarketHistoryPanel {
         // The item may have changed while the request was in flight
         if (this.shown !== key) return;
         this.drawChart(buildHistorySeries(rows, this.prefs.days));
+        this.drawAftermath(priceKey(itemHrid, level), rows);
+    }
+
+    /**
+     * "When it fired, was that the bottom?" — for the item now charted.
+     *
+     * Computed here, on the open, from the rows the chart was just built from,
+     * rather than on a timer. There is no live question to answer: the aftermath
+     * of a reach that happened yesterday does not change between one second and
+     * the next, and a timer would spend third-party requests re-deriving a figure
+     * nobody is looking at.
+     *
+     * Silent unless this pin has actually fired. A pin with a target that has
+     * never been reached has no aftermath — not an aftermath of zero — and a pin
+     * with no target at all has nothing to have an aftermath of.
+     *
+     * @param {string} key - The charted item's pin key
+     * @param {Array<Object>|null} rows - The history rows just fetched
+     */
+    drawAftermath(key, rows) {
+        if (!this.aftermathEl) return;
+        try {
+            const entry = (this.watchlist || []).find((watched) => watched?.key === key);
+            const aftermath = targetAftermath(entry, sightingsFromRows(rows));
+            const text = describeAftermath(aftermath);
+
+            this.aftermathEl.textContent = text;
+            this.aftermathEl.style.display = text ? 'block' : 'none';
+            this.aftermathEl.title = text
+                ? 'The pooled price 24 and 72 hours after each time this pin’s target was reached, measured ' +
+                  'against the price at the moment it fired and pooled as a median.\n' +
+                  'A reach with no sighting near the window says “no follow-up reading” rather than having a ' +
+                  'price guessed for it from the readings either side.'
+                : '';
+        } catch (error) {
+            console.error('[MarketHistory] Building the price-target aftermath failed:', error);
+            this.aftermathEl.style.display = 'none';
+        }
     }
 
     /** @param {Array<Object>} series - Result of buildHistorySeries */
@@ -1184,6 +1243,41 @@ export function watchedPriceTargets() {
             target: normaliseTarget(entry.target),
         };
     });
+}
+
+/**
+ * Record that a pin's target was reached, and persist it.
+ *
+ * Called by the price-target alert, which is the one place in the script that
+ * knows a target fired against a *dated* pooled sighting. The panel's own chips
+ * also light up when a target is met, against the panel's cached price — and
+ * that reading is deliberately not recorded, because the aftermath is measured
+ * forward from the moment of the reach and a moment that is only approximately
+ * known produces a reading that is only approximately about anything.
+ *
+ * Exported as a function over the singleton for the same reason
+ * `watchedPriceTargets` is: the list is replaced wholesale on every edit and on
+ * every character switch, so a captured reference would write into a list
+ * nobody is looking at.
+ *
+ * @param {string} key - itemHrid:enhancementLevel
+ * @param {Object} sighting - `{at, price}` — when the target was seen reached, and the reading
+ * @returns {boolean} Whether anything was recorded
+ */
+export function noteWatchedTargetReached(key, sighting) {
+    try {
+        const before = marketHistoryPanel.watchlist || [];
+        const after = noteTargetReached(before, key, sighting);
+        if (after === before) return false;
+
+        marketHistoryPanel.watchlist = after;
+        marketHistoryPanel.savePrefs();
+        marketHistoryPanel.renderChips();
+        return true;
+    } catch (error) {
+        console.error('[MarketHistory] Recording a reached price target failed:', error);
+        return false;
+    }
 }
 
 export default marketHistoryPanel;
