@@ -16,6 +16,7 @@ import {
     summarizeCalibration,
     dailySeries,
     xpGoldSplit,
+    cohortSplit,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
@@ -264,5 +265,76 @@ describe('xpGoldSplit', () => {
     test('nothing at all is a refusal, not a crash', () => {
         expect(xpGoldSplit([]).verdict).toBe('insufficient');
         expect(xpGoldSplit(null).verdict).toBe('insufficient');
+    });
+});
+
+describe('cohortSplit', () => {
+    /**
+     * Pairs in one gear cohort.
+     * @param {number} count - How many
+     * @param {number} deviation - Percent each came out at
+     * @param {boolean|null} fingerprintMatch - Gear flag
+     * @returns {Array<Object>}
+     */
+    const cohortPairs = (count, deviation, fingerprintMatch) =>
+        Array.from({ length: count }, () => ({
+            actionType: 'combat',
+            predicted: 1000,
+            actual: 1000 * (1 + deviation / 100),
+            fingerprintMatch,
+        }));
+
+    test('refuses when either cohort is thin, however far apart the medians look', () => {
+        const split = cohortSplit([...cohortPairs(20, -2, true), ...cohortPairs(3, -31, false)]);
+        expect(split.verdict).toBe('insufficient');
+        expect(split.text).toContain('Too few');
+        expect(split.detail).toContain('different-gear cohort');
+    });
+
+    test('matched clean and mismatched off says the gear explains the pooled gap', () => {
+        const split = cohortSplit([...cohortPairs(6, -2, true), ...cohortPairs(6, -31, false)]);
+        expect(split.verdict).toBe('mismatch_explains');
+        expect(split.figures).toContain('matched -2.0% (6)');
+        expect(split.figures).toContain('mismatched -31.0% (6)');
+        expect(split.text).toContain('the gear it never saw');
+    });
+
+    test('both cohorts off alike clears the gear of the charge', () => {
+        const split = cohortSplit([...cohortPairs(6, -28, true), ...cohortPairs(6, -31, false)]);
+        expect(split.verdict).toBe('sim_off');
+    });
+
+    test('the matched cohort missing alone indicts the forecast', () => {
+        const split = cohortSplit([...cohortPairs(6, -31, true), ...cohortPairs(6, -2, false)]);
+        expect(split.verdict).toBe('matched_off');
+    });
+
+    test('both cohorts inside the band is no finding at all', () => {
+        const split = cohortSplit([...cohortPairs(6, -2, true), ...cohortPairs(6, 3, false)]);
+        expect(split.verdict).toBe('both_clean');
+    });
+
+    test('both off and far apart is two findings, not one', () => {
+        const split = cohortSplit([...cohortPairs(6, -20, true), ...cohortPairs(6, 40, false)]);
+        expect(split.verdict).toBe('split');
+    });
+
+    test('an undetermined gear match is its own bucket, never folded into either side', () => {
+        const split = cohortSplit([
+            ...cohortPairs(6, -2, true),
+            ...cohortPairs(6, -31, false),
+            ...cohortPairs(9, -70, null),
+            ...cohortPairs(2, -70, undefined),
+        ]);
+        expect(split.matched.rated).toBe(6);
+        expect(split.mismatched.rated).toBe(6);
+        expect(split.unsigned.rated).toBe(11);
+        expect(split.matched.medianDeviation).toBeCloseTo(-2);
+        expect(split.verdict).toBe('mismatch_explains');
+    });
+
+    test('nothing at all is a refusal, not a crash', () => {
+        expect(cohortSplit([]).verdict).toBe('insufficient');
+        expect(cohortSplit(null).verdict).toBe('insufficient');
     });
 });

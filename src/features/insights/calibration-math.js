@@ -278,6 +278,111 @@ export function xpGoldSplit(records, options = {}) {
 }
 
 /**
+ * The median split by whether the pair's gear matched the forecast's.
+ *
+ * The combat card already counts how many pairs were played in gear the sim
+ * never saw — and then pools them into one median anyway, which is the whole
+ * problem. A sim that is right about the loadout it simulated and measured
+ * against a different one reads exactly like a sim that is wrong. Splitting the
+ * median by that flag is what tells those apart, and the split only speaks when
+ * both cohorts are large enough to.
+ *
+ * `null` gear-match is its own bucket rather than being folded into either.
+ * "We could not tell whether the gear matched" is not "the gear differed", and
+ * a pair recorded before the flag existed must not be made to testify.
+ *
+ * @param {Array<Object>} records - Combat pairs carrying `fingerprintMatch`
+ * @param {Object} [options] - Rules
+ * @param {number} [options.minSamples] - Pairs needed *per cohort* before the split is called
+ * @param {number} [options.gapPercent] - How large a median gap has to be to count as off
+ * @returns {{matched: Object, mismatched: Object, unsigned: Object, verdict: string,
+ *   figures: string, text: string, detail: string}}
+ */
+export function cohortSplit(records, options = {}) {
+    const { minSamples = DEFAULT_MIN_SAMPLES, gapPercent = DEFAULT_GAP_PERCENT } = options;
+
+    /**
+     * One cohort's median, over the pairs that have a deviation at all.
+     * @param {Array<Object>} group - Records in the cohort
+     * @returns {{rated: number, medianDeviation: number|null}}
+     */
+    const cohort = (group) => {
+        const deviations = group.map((r) => deviationPercent(r.predicted, r.actual)).filter((d) => d !== null);
+        return { rated: deviations.length, medianDeviation: median(deviations) };
+    };
+
+    const usable = (records || []).filter((r) => r);
+    const matched = cohort(usable.filter((r) => r.fingerprintMatch === true));
+    const mismatched = cohort(usable.filter((r) => r.fingerprintMatch === false));
+    const unsigned = cohort(usable.filter((r) => r.fingerprintMatch !== true && r.fingerprintMatch !== false));
+
+    const figures = `matched ${pct(matched.medianDeviation)} (${matched.rated}) · mismatched ${pct(mismatched.medianDeviation)} (${mismatched.rated})`;
+    const result = { matched, mismatched, unsigned, figures };
+
+    if (matched.rated < minSamples || mismatched.rated < minSamples) {
+        const thin =
+            matched.rated < minSamples && mismatched.rated < minSamples
+                ? 'neither cohort'
+                : matched.rated < minSamples
+                  ? 'the matched-gear cohort'
+                  : 'the different-gear cohort';
+        return {
+            ...result,
+            verdict: 'insufficient',
+            text: 'Too few per cohort to call',
+            detail: `${figures}. ${minSamples} pairs are needed on each side and ${thin} has that many, so the pooled median stands unexplained rather than being split on a handful of runs.`,
+        };
+    }
+
+    const matchedOff = Math.abs(matched.medianDeviation) >= gapPercent;
+    const mismatchedOff = Math.abs(mismatched.medianDeviation) >= gapPercent;
+    const separation = Math.abs(matched.medianDeviation - mismatched.medianDeviation);
+
+    if (!matchedOff && mismatchedOff) {
+        return {
+            ...result,
+            verdict: 'mismatch_explains',
+            text: 'the sim is right — the gap is the gear it never saw',
+            detail: 'Pairs played in the loadout the sim simulated land inside the band; the ones played in different gear are what drag the pooled median. Re-run the sim on your current gear before reading anything into the pooled figure.',
+        };
+    }
+
+    if (matchedOff && !mismatchedOff) {
+        return {
+            ...result,
+            verdict: 'matched_off',
+            text: 'the sim misses on the gear it simulated',
+            detail: 'The cohort the sim actually simulated is the one that misses, while the different-gear pairs land inside the band. The gear mismatch is not the explanation — the forecast is.',
+        };
+    }
+
+    if (matchedOff && mismatchedOff && separation < gapPercent) {
+        return {
+            ...result,
+            verdict: 'sim_off',
+            text: 'both cohorts miss alike — not the gear',
+            detail: `Matched and mismatched pairs are off by within ${gapPercent}% of each other, so the gear the pairs were played in does not sort them. Whatever is wrong is wrong for both.`,
+        };
+    }
+
+    if (!matchedOff && !mismatchedOff) {
+        return {
+            ...result,
+            verdict: 'both_clean',
+            text: 'neither cohort is off',
+            detail: 'Both sides land inside the band, so there is no pooled gap for the gear flag to explain.',
+        };
+    }
+
+    return {
+        ...result,
+        verdict: 'split',
+        text: 'the cohorts disagree, and not about the gear',
+        detail: `Both cohorts are off by ${gapPercent}% or more but ${separation.toFixed(1)} points apart, and not in a way that names one cause. Two findings, not one.`,
+    };
+}
+
+/**
  * The same comparison a day at a time, so a gap that opened recently can be told
  * from one that has always been there.
  *

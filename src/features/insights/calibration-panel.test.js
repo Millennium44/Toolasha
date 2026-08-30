@@ -235,4 +235,35 @@ describe('the combat card’s verdicts', () => {
         expect(text()).toContain('5 without XP');
         expect(text()).toContain('Too few XP pairs to call');
     });
+
+    test('the gear split is drawn beside the caveats, not instead of them', () => {
+        store.records = [
+            ...Array.from({ length: 7 }, (_, i) => combat(i, { goldDeviation: -2, fingerprintMatch: true })),
+            ...Array.from({ length: 7 }, (_, i) => combat(i + 7, { goldDeviation: -31, fingerprintMatch: false })),
+        ];
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        // The existing caveat lines survive
+        expect(text()).toContain('Forecast: all-zones sim');
+        expect(text()).toContain('7 of 14 in different gear');
+        // And the split says what the pooled median could not
+        expect(text()).toContain('matched -2.0% (7)');
+        expect(text()).toContain('mismatched -31.0% (7)');
+        expect(text()).toContain('the gear it never saw');
+    });
+
+    test('a thin cohort refuses rather than issuing a split verdict', () => {
+        store.records = [
+            ...Array.from({ length: 10 }, (_, i) => combat(i, { goldDeviation: -2, fingerprintMatch: true })),
+            ...Array.from({ length: 2 }, (_, i) => combat(i + 10, { goldDeviation: -31, fingerprintMatch: false })),
+        ];
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Too few per cohort to call');
+        expect(text()).not.toContain('the gear it never saw');
+    });
 });

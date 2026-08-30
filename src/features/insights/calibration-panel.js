@@ -30,6 +30,7 @@ import {
     deviationPercent,
     median,
     xpGoldSplit,
+    cohortSplit,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
@@ -208,6 +209,43 @@ function drawCombatXpSplit(card, combatRecords) {
 }
 
 /**
+ * The combat median split by whether the gear matched the forecast's.
+ *
+ * The caveat line above says how many pairs were played in gear the sim never
+ * saw. Saying so and then pooling them anyway leaves the reader with a number
+ * they have been told not to trust and no way to correct it; the split is the
+ * correction, and it refuses rather than guessing when either side is thin.
+ *
+ * @param {HTMLElement} card - The combat group's card
+ * @param {Array<Object>} combatRecords - Every combat pair
+ */
+function drawCombatCohorts(card, combatRecords) {
+    if (!combatRecords.length) return;
+
+    const split = cohortSplit(combatRecords);
+    const decided = split.verdict !== 'insufficient';
+
+    card.appendChild(
+        panelLine(
+            'Gear cohorts',
+            `${split.figures}${split.unsigned.rated ? ` · ${split.unsigned.rated} unsigned` : ''}`,
+            decided ? ROW_COLORS.gold : ROW_COLORS.dim,
+            'The same median, split by whether the pair was played in the gear the sim simulated. ' +
+                'Pairs whose gear match could not be determined are their own "unsigned" bucket, ' +
+                'never folded into either side.'
+        )
+    );
+    card.appendChild(
+        panelLine(
+            'Cohort verdict',
+            split.text,
+            decided && split.verdict !== 'both_clean' ? ROW_COLORS.bad : ROW_COLORS.dim,
+            split.detail
+        )
+    );
+}
+
+/**
  * One skill's verdict.
  * @param {HTMLElement} body - Where it goes
  * @param {Object} group - A group from `summarizeCalibration`
@@ -243,6 +281,7 @@ function drawGroup(body, group, all) {
         const combatRecords = (all || []).filter((record) => record.actionType === 'combat');
         drawCombatXpSplit(card, combatRecords);
         drawCombatCaveats(card, combatRecords);
+        drawCombatCohorts(card, combatRecords);
     }
 }
 
