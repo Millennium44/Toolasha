@@ -1815,14 +1815,35 @@ let fetchHandler = null;
 /** The `new_battle` handler — the fight-start buff snapshot the offense fold deltas against. */
 let battleHandler = null;
 
+/**
+ * Whether a fetched player unit (`isPlayer: true`) is the character being
+ * played, not a party member or someone else's profile sheet opened mid-fight
+ * — both ride the exact same `battle_unit_fetched` message and both set
+ * `isPlayer: true`, `combatDetails`, the lot. combat-summary and
+ * combat-drop-luck hit this same confusion this week (6e2a4da8) on the totals
+ * shape of the message; this is the stats shape of it. Same fix: key off
+ * `character.id` against the current character, the way `noteBattleStart`
+ * already does for `new_battle`'s player list. A payload naming nobody (an
+ * older/trimmed shape) is left passing rather than dropped.
+ * @param {Object} unit - A unit with `isPlayer: true`
+ * @returns {boolean}
+ */
+function isOwnPlayerUnit(unit) {
+    const owner = unit?.character?.id;
+    if (owner == null) return true;
+    return String(owner) === String(dataManager.getCurrentCharacterId());
+}
+
 function handleFetched(data) {
     try {
         const unit = data?.unit;
         if (!unit) return;
         // Clicking yourself fires this too — keep the live stats for the "Check my
-        // build" button, but don't open the panel on it.
+        // build" button, but don't open the panel on it. A party member's or
+        // another player's own sheet fires the identical shape and must not
+        // overwrite the remembered build with someone else's stats.
         if (unit.isPlayer) {
-            panel.noteChar(unit);
+            if (isOwnPlayerUnit(unit)) panel.noteChar(unit);
             return;
         }
         if (!unit.hrid) return;

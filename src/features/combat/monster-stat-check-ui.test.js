@@ -63,7 +63,18 @@ vi.mock('../guild/guild-trial-damage.js', () => ({
         },
     },
 }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+/** Handlers registered via `webSocketHook.on`, so a test can fire one directly. */
+const wsHandlers = vi.hoisted(() => ({}));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (event, fn) => {
+            wsHandlers[event] = fn;
+        },
+        off: (event) => {
+            delete wsHandlers[event];
+        },
+    },
+}));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async () => stored.value,
@@ -123,7 +134,7 @@ vi.mock('./labyrinth-tick-capture.js', () => ({
     startCapture: (ctx) => tickCapture.started.push(ctx),
 }));
 
-const { panel } = await import('./monster-stat-check-ui.js');
+const { panel, default: monsterStatCheck } = await import('./monster-stat-check-ui.js');
 
 /** A recorded snapshot of one monster/level in one buff state */
 function snap(buffs, hp = 100) {
@@ -297,6 +308,48 @@ describe('the fight-start buff snapshot', () => {
         panel.fightStartBuffMap = { '/b/old': {} };
         panel.noteBattleStart({ players: [{ character: { id: 'me-id' }, name: 'Benny' }] });
         expect(panel.fightStartBuffMap).toBeNull();
+    });
+});
+
+describe('battle_unit_fetched classification', () => {
+    // `battle_unit_fetched` fires with `isPlayer: true` both when you click
+    // yourself AND when you click a party member or someone else's profile
+    // (combat-summary and combat-drop-luck hit the same confusion this week:
+    // 6e2a4da8). The player-build check must key off which character it is,
+    // not just that it is a player, or "Check my build" silently compares the
+    // sim's build of you against whoever's sheet was clicked last.
+    beforeEach(() => {
+        monsterStatCheck.initialize();
+        panel.lastPlayerUnit = null;
+    });
+
+    test('a party member’s own sheet (isPlayer, a different character id) is not remembered as yours', () => {
+        wsHandlers['battle_unit_fetched']({
+            unit: {
+                isPlayer: true,
+                character: { id: 'friend-id', name: 'Friend' },
+                combatDetails: { maxHitpoints: 999999 },
+            },
+        });
+        expect(panel.lastPlayerUnit).toBeNull();
+    });
+
+    test('your own sheet (isPlayer, matching character id) is still remembered for the build check', () => {
+        wsHandlers['battle_unit_fetched']({
+            unit: {
+                isPlayer: true,
+                character: { id: 'me-id', name: 'Benny' },
+                combatDetails: { maxHitpoints: 1000 },
+            },
+        });
+        expect(panel.lastPlayerUnit?.character?.id).toBe('me-id');
+    });
+
+    test('an older/trimmed self-click payload with no character field still passes', () => {
+        wsHandlers['battle_unit_fetched']({
+            unit: { isPlayer: true, combatDetails: { maxHitpoints: 1000 } },
+        });
+        expect(panel.lastPlayerUnit).not.toBeNull();
     });
 });
 
