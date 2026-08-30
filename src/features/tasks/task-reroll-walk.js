@@ -44,6 +44,15 @@
  * side and the cheaper one picked — and the label says which and why, because a
  * walk quietly spending cowbells is a walk you find out about later.
  *
+ * ## What it has spent
+ *
+ * The walk keeps a running total of the coins and cowbells it has paid, priced
+ * from the chooser button each payment actually pressed, and says it on the
+ * label and in the finished summary. It is a readout and nothing more: no
+ * budget, no governor, no second stopping rule — that decision is settled
+ * above and stays settled. The total exists because the alternative was
+ * reconstructing it from your coin balance afterwards.
+ *
  * Before every click the board is re-read and compared against what was
  * planned. If the card in that slot is not the card the label is about — the
  * game re-ordered the board, a task completed, a reroll landed differently than
@@ -288,7 +297,14 @@ class TaskRerollWalk {
         this.step = null;
         this.message = '';
         this.index = 0;
-        this.tally = { kept: 0, rerolled: 0, trashed: 0 };
+        /**
+         * What the walk did and what it cost. The counts were always here; the
+         * two spend totals are what the player was otherwise left to reconstruct
+         * from their coin balance afterwards.
+         */
+        this.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
+        /** The last finished walk's summary, kept after its widget goes away */
+        this.summary = '';
         this.coinThreshold = DEFAULT_COIN_THRESHOLD;
         this.cowbellThreshold = DEFAULT_COWBELL_THRESHOLD;
         /** The shield popup's cap-block switch — the thresholds mean nothing without it */
@@ -689,8 +705,13 @@ class TaskRerollWalk {
                 }
                 this.paidFor = null;
 
+                // The cost travels with the step, because this is the moment it
+                // is known: an open chooser prices itself, so `choice.cost` here
+                // is the number on the very button the press is about to click,
+                // not the ladder's guess at it
                 return this._step('pay', card, slot, `Reroll #${slot} — ${verdict.reason}`, option.button, {
                     currency: choice.currency,
+                    cost: choice.cost,
                 });
             }
             if (!this._rerollButton(card)) {
@@ -768,7 +789,9 @@ class TaskRerollWalk {
         this.paidWaits = 0;
         this.readPresses = 0;
         this.walkBegun = false;
-        this.tally = { kept: 0, rerolled: 0, trashed: 0 };
+        this.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
+        // A new walk is what finally replaces the last one's summary
+        this.summary = '';
         this.message = '';
         this.hidden = false;
         this.timerRegistry.clearAll();
@@ -823,6 +846,7 @@ class TaskRerollWalk {
             this._replanSoon(UI_SETTLE_MS);
         } else {
             this.state = this.message ? 'stopped' : 'done';
+            this.summary = this._summaryText();
         }
         this._render();
     }
@@ -926,6 +950,14 @@ class TaskRerollWalk {
 
         if (planned.kind === 'pay') {
             this.tally.rerolled += 1;
+            // Billed as the click leaves, from the price the chooser quoted for
+            // the button just pressed. A free reroll carries no cost and adds
+            // nothing to either total.
+            const cost = Number(planned.cost);
+            if (Number.isFinite(cost) && cost > 0) {
+                if (planned.currency === 'coin') this.tally.goldSpent += cost;
+                else if (planned.currency === 'cowbell') this.tally.cowbellsSpent += cost;
+            }
             // What the card looked like as the coin left, so the next plan can
             // tell "the reroll has not come back" from "the reroll came back"
             this.paidFor = { card: planned.card, ...this._rerollFingerprint(planned.card) };
@@ -974,6 +1006,9 @@ class TaskRerollWalk {
         this.state = 'stopped';
         this.message = message;
         this.step = null;
+        // A walk that stopped early still spent whatever it spent, and that
+        // account outlives the widget the same way a finished one's does
+        this.summary = this._summaryText();
         this._render();
         return false;
     }
@@ -981,16 +1016,50 @@ class TaskRerollWalk {
     // ----------------------------------------------------------------- widget
 
     /**
+     * What the walk has spent so far, in the currencies it actually spent.
+     *
+     * A readout, not a rule: nothing here stops or slows the walk, and the
+     * module's one stopping rule is still the shield popup's. It exists because
+     * the alternative was reading it off your coin balance afterwards.
+     *
+     * @returns {string} `120K🪙 + 3🔔`, or empty when nothing has been paid
+     */
+    spendLabel() {
+        const parts = [];
+        if (this.tally.goldSpent > 0) parts.push(coinLabel(this.tally.goldSpent));
+        if (this.tally.cowbellsSpent > 0) parts.push(cowbellLabel(this.tally.cowbellsSpent));
+        return parts.join(' + ');
+    }
+
+    /**
+     * What one finished walk did, and what it cost.
+     * @returns {string}
+     * @private
+     */
+    _summaryText() {
+        const { kept, rerolled, trashed } = this.tally;
+        const spent = this.spendLabel();
+        return `${kept} kept, ${rerolled} rerolled, ${trashed} trashed` + (spent ? ` · spent ${spent}` : '');
+    }
+
+    /**
      * What the widget's main button says right now.
      * @returns {string}
      */
     chipLabel() {
-        if (this.state === 'ready' && this.step) return `▶ ${this.step.label}`;
-        if (this.state === 'waiting') return '⏳ Waiting for the game…';
-        if (this.state === 'stopped') return `⚠ ${this.message}`;
-        if (this.state === 'idle') return '▶ Reroll walk';
-        const { kept, rerolled, trashed } = this.tally;
-        return `✓ Done — ${kept} kept, ${rerolled} rerolled, ${trashed} trashed`;
+        const spent = this.spendLabel();
+        // The running total rides along with the next action, so a walk that has
+        // been paying for a while says so before the next payment, not after
+        const running = spent ? ` · spent ${spent}` : '';
+        if (this.state === 'ready' && this.step) return `▶ ${this.step.label}${running}`;
+        if (this.state === 'waiting') return `⏳ Waiting for the game…${running}`;
+        if (this.state === 'stopped') return `⚠ ${this.message}${running}`;
+        // Idle carries the last walk's summary while there is one: the ✕ takes
+        // the widget away, and taking the readout with it meant the one press
+        // that ends a walk is also the press that destroys its only account of
+        // what it spent
+        if (this.state === 'idle') return this.summary ? `▶ Reroll walk — last: ${this.summary}` : '▶ Reroll walk';
+        return `✓ Done — ${this._summaryText()}`;
     }
 
     /**
@@ -1002,6 +1071,9 @@ class TaskRerollWalk {
         if (!document.querySelector(GAME.TASK_LIST)) {
             this.widget?.remove();
             this.widget = null;
+            // The board is gone: the last walk's readout has nowhere to be read
+            // and no longer describes what is on screen
+            this.summary = '';
             return;
         }
         this._render();
@@ -1154,6 +1226,7 @@ class TaskRerollWalk {
         this.step = null;
         this.index = 0;
         this.hidden = false;
+        this.summary = '';
         this.isInitialized = false;
     }
 

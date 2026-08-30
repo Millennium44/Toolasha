@@ -255,6 +255,9 @@ beforeEach(() => {
     walk.coinThreshold = 320000;
     walk.cowbellThreshold = 32;
     walk.capProtectionEnabled = true;
+    // The walk is a singleton, and the spend readout now outlives one walk
+    walk.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
+    walk.summary = '';
     document.body.replaceChildren();
 });
 
@@ -824,6 +827,118 @@ describe('the walk stops rather than clicking the wrong thing', () => {
 
         expect(document.getElementById('mwi-task-reroll-walk-chip')).toBe(null);
         expect(clicks).toEqual([]);
+    });
+});
+
+describe('what the walk spent', () => {
+    /**
+     * Pay once on a one-card board and let the reroll land as a protected task,
+     * so the walk finishes with exactly one payment behind it.
+     * @param {Array<string>} buttons - The chooser's buttons
+     */
+    async function payOnce(buttons) {
+        walk.protectedHrids = new Set([KEEPER]);
+        const list = board([{ name: 'Milking - Cow', buttons, quest: quest(MILKING) }]);
+
+        await walk.start();
+        walk.advance();
+
+        // The reroll lands, and what arrived is a task the player keeps
+        list.children[0].querySelector('[class*="RandomTask_name"]').textContent = 'Brewing - Coffee';
+        const questFiber = document.getElementById('root')._reactRootContainer.current.child;
+        questFiber.memoizedProps.characterQuest = quest(KEEPER, 1, 0);
+        vi.advanceTimersByTime(3000);
+
+        // The game leaves the chooser open after a reroll; closing it on a card
+        // being skipped is the walk's own last press
+        walk.advance();
+        setButtons(list, 1, AT_REST);
+        vi.advanceTimersByTime(200);
+    }
+
+    test('a coin payment is billed at the price the chooser quoted, and rides the label', async () => {
+        const list = board([
+            { name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) },
+            { name: 'Cooking - Stew', buttons: AT_REST, quest: quest('/actions/cooking/stew') },
+        ]);
+
+        await walk.start();
+        walk.advance();
+
+        expect(walk.tally.goldSpent).toBe(10000);
+        expect(walk.tally.cowbellsSpent).toBe(0);
+        expect(chipText()).toContain('spent 10.0K🪙');
+        expect(list).toBeTruthy();
+    });
+
+    test('cowbells are counted in cowbells, not folded into the coin total', async () => {
+        settings.values.tasks_rerollWalkCurrency = 'cowbell';
+        board([{ name: 'Milking - Cow', buttons: ['Back', '10,000', '2'], quest: quest(MILKING) }]);
+
+        await walk.start();
+        walk.advance();
+
+        expect(walk.tally.goldSpent).toBe(0);
+        expect(walk.tally.cowbellsSpent).toBe(2);
+        expect(chipText()).toContain('spent 2🔔');
+    });
+
+    test('a free reroll costs nothing and is reported as costing nothing', async () => {
+        await payOnce(CHOOSER);
+
+        expect(walk.tally.rerolled).toBe(1);
+        expect(walk.tally.goldSpent).toBe(0);
+        expect(chipText()).toBe('✓ Done — 1 kept, 1 rerolled, 0 trashed');
+    });
+
+    test('the Done summary says what the walk spent as well as what it did', async () => {
+        await payOnce(['Back', '10,000']);
+
+        expect(chipText()).toBe('✓ Done — 1 kept, 1 rerolled, 0 trashed · spent 10.0K🪙');
+    });
+
+    test('hiding the widget no longer destroys the summary of the walk that just ended', async () => {
+        await payOnce(['Back', '10,000']);
+        const done = chipText();
+
+        document.querySelector('.mwi-task-reroll-walk-stop').click();
+        expect(document.getElementById('mwi-task-reroll-walk-chip')).toBe(null);
+        walk.toggleWidget();
+
+        expect(chipText()).toBe('▶ Reroll walk — last: 1 kept, 1 rerolled, 0 trashed · spent 10.0K🪙');
+        expect(done).toContain('spent 10.0K🪙');
+    });
+
+    test('the next walk replaces the last one, and leaving the board clears it', async () => {
+        await payOnce(['Back', '10,000']);
+        walk.stop();
+        walk.toggleWidget();
+        expect(chipText()).toContain('last:');
+
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+        expect(chipText()).not.toContain('last:');
+        expect(walk.tally.goldSpent).toBe(0);
+
+        // And the board going away takes the readout with it
+        walk.stop();
+        document.body.replaceChildren();
+        walk._syncWidget();
+        expect(walk.summary).toBe('');
+    });
+
+    test('a walk that stopped early still accounts for what it spent', async () => {
+        const list = board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
+
+        await walk.start();
+        walk.advance();
+        // The board moves under the plan: the card is gone
+        list.replaceChildren();
+        vi.advanceTimersByTime(3000);
+        walk.advance();
+
+        expect(chipText()).toContain('spent 10.0K🪙');
+        expect(walk.summary).toContain('spent 10.0K🪙');
     });
 });
 
