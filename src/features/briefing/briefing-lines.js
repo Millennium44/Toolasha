@@ -28,12 +28,20 @@
  * exactly what the account view does when it replays a snapshot taken at a
  * character switch. So a deadline line additionally carries `horizon`:
  *
- *     horizon: { at: <epoch ms>, text: 'Ale runs dry', lapses: true }
+ *     horizon: { at: <epoch ms>, text: 'Ale runs dry', past: 'Ale ran dry', lapses: true }
  *
  * `at` is the instant the line's claim comes due, stated absolutely so it
  * survives being read at a different `now`. `text` is the same claim worded for
  * an absolute time rather than a countdown, so a reader that cannot trust its
  * countdown can say "Ale runs dry at 14:20" without unpicking `value`.
+ *
+ * `past` is `text` again for a reader standing on the far side of `at`. A reader
+ * that knows the instant has been and gone — the away diff, which compares a
+ * snapshot against the live game and can therefore *confirm* it — wants "Ale ran
+ * dry at 14:20" rather than a present tense the clock has already falsified.
+ * Wording it here rather than in the reader is the same argument that put `text`
+ * here: the subject knows how its own claim is said, and a reader that
+ * conjugated English would get "Task board fills" wrong.
  *
  * `lapses` says what the instant passing means. A countdown to something that
  * then stops being worth saying — a queue that has since ended, a drink that has
@@ -124,6 +132,7 @@ function queueLine(facts, now) {
         horizon: {
             at: now + queue.seconds * 1000,
             text: queue.infinite ? 'Endless action starts' : 'Queue ends',
+            past: queue.infinite ? 'Endless action started' : 'Queue ended',
             lapses: true,
         },
     };
@@ -159,7 +168,14 @@ function taskSlotLine(facts, now) {
     if (forecast.isFull) {
         // A full board does not empty itself, so this claim never lapses — the
         // waste instant only turns "about to waste" into "wasting"
-        const waste = { at: now + forecast.msUntilWaste, text: 'Full — tasks are being wasted', lapses: false };
+        const waste = {
+            at: now + forecast.msUntilWaste,
+            text: 'Full — tasks are being wasted',
+            // Already the wording of something under way, so the far side of the
+            // instant needs no other sentence
+            past: 'Full — tasks are being wasted',
+            lapses: false,
+        };
         if (!(forecast.msUntilWaste > 0)) {
             return {
                 key: 'taskSlots',
@@ -190,7 +206,12 @@ function taskSlotLine(facts, now) {
         // Once it has filled, "fills in 40m" is not a smaller number, it is the
         // wrong sentence — the full-board line is the one that replaces it, and
         // only a fresher snapshot can say so
-        horizon: { at: now + Math.max(0, forecast.msUntilFull), text: 'Task board fills', lapses: true },
+        horizon: {
+            at: now + Math.max(0, forecast.msUntilFull),
+            text: 'Task board fills',
+            past: 'Task board filled',
+            lapses: true,
+        },
     };
 }
 
@@ -233,7 +254,12 @@ function buffLine(facts, now) {
         value: `${soonest.name} in ${shortDuration(soonest.msLeft / 1000)}${more}`,
         tone: 'gold',
         target: null,
-        horizon: { at: now + soonest.msLeft, text: `${soonest.name} ends`, lapses: true },
+        horizon: {
+            at: now + soonest.msLeft,
+            text: `${soonest.name} ends`,
+            past: `${soonest.name} ended`,
+            lapses: true,
+        },
     };
 }
 
@@ -274,7 +300,12 @@ function consumableLine(facts, now) {
         // The forecast is a burn rate against a stock, and the burn only
         // continues while the character is fighting — past the instant it
         // projected, the projection has nothing left to say
-        horizon: { at: now + soonest.secondsLeft * 1000, text: `${name} runs dry`, lapses: true },
+        horizon: {
+            at: now + soonest.secondsLeft * 1000,
+            text: `${name} runs dry`,
+            past: `${name} ran dry`,
+            lapses: true,
+        },
     };
 }
 
@@ -432,7 +463,7 @@ const BUILDERS = [
  * @param {Object} [facts] - Everything `session-briefing.js` managed to read
  * @param {number} [now] - Clock, injectable for tests
  * @returns {Array<{key: string, label: string, value: string, tone: string, target: string|null,
- *   horizon?: {at: number, text: string, lapses: boolean}}>}
+ *   horizon?: {at: number, text: string, past: string, lapses: boolean}}>}
  *   One line per subject with something to say, in reading order
  */
 export function buildBriefingLines(facts = {}, now = Date.now()) {

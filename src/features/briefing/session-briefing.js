@@ -38,10 +38,12 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
+import { formatRelativeTime } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { navigateToAction } from '../../utils/item-navigation.js';
 import { buildBriefingLines } from './briefing-lines.js';
+import { computeAwayDiff, markAwayDiffSeen } from './away-diff.js';
 import { queueTimeLeft } from '../queue-monitor/queue-time-row.js';
 import queueSnapshot from '../queue-monitor/queue-snapshot.js';
 import { forecastTaskSlots, countActiveTasks } from '../tasks/task-slot-forecast.js';
@@ -84,6 +86,21 @@ const dismissed = new Set();
  * @type {{filled: number}|null}
  */
 let listingDelta = null;
+
+/**
+ * What changed about this character since it was last switched away from.
+ *
+ * Computed once, on arrival, and then held for the same reason `listingDelta`
+ * is: a diff recomputed every fifteen seconds against a moving `now` would go on
+ * shifting its own wording ("ran dry at 14:20" is stable, but the transitions
+ * around it are not), and a card whose sentences change while you read them is
+ * not a card about the past.
+ *
+ * Null means one of three silences — no snapshot, already read, or nothing
+ * differed — and the card draws in none of them. See `away-diff.js`.
+ * @type {{at: number, lines: Array<Object>}|null}
+ */
+let awayDiff = null;
 
 /**
  * The current character, or null before the game has said.
@@ -467,13 +484,88 @@ function drawLine(card, line) {
 }
 
 /**
+ * Stop showing the away diff, and remember that it was read.
+ *
+ * Dismissal is per snapshot rather than per session: the mark records the
+ * instant the diff was computed from, so this card stays gone until the next
+ * switch away writes a newer one. `away-diff.js` says why that is a mark rather
+ * than a delete.
+ *
+ * @returns {void}
+ */
+function dismissAwayDiff() {
+    const diff = awayDiff;
+    awayDiff = null;
+    if (!diff) return;
+    // Fire and forget: the card is already gone from this page's state, and the
+    // mark only has to have landed before the next arrival
+    markAwayDiffSeen(currentCharacterId(), diff.at);
+}
+
+/**
+ * The "since you were away" card, above the briefing it gives context to.
+ *
+ * Above rather than beside: it is read once and closed, and the briefing under
+ * it is the thing that stays. Its own ✕ dismisses it without taking the briefing
+ * with it.
+ *
+ * @param {HTMLElement} body - The panel's body
+ * @returns {void}
+ */
+function drawAwayDiff(body) {
+    const diff = awayDiff;
+    if (!diff || diff.lines.length === 0) return;
+
+    const card = panelCard(body, '', ROW_COLORS.gold);
+
+    const header = document.createElement('div');
+    Object.assign(header.style, { display: 'flex', gap: '8px', alignItems: 'baseline', marginBottom: '3px' });
+
+    const heading = document.createElement('span');
+    const age = formatRelativeTime(Math.max(0, Date.now() - diff.at));
+    heading.textContent = `Since you were away (${age})`;
+    Object.assign(heading.style, { color: ROW_COLORS.gold, fontWeight: 'bold', flex: '1' });
+
+    const close = document.createElement('button');
+    close.textContent = '✕';
+    close.title = 'I have read this';
+    Object.assign(close.style, {
+        background: 'none',
+        border: 'none',
+        color: 'rgba(232, 236, 245, 0.6)',
+        cursor: 'pointer',
+        fontSize: '12px',
+        padding: '0 2px',
+    });
+    close.addEventListener('click', (event) => {
+        event.stopPropagation();
+        dismissAwayDiff();
+        briefingPanel.render();
+    });
+
+    header.append(heading, close);
+    card.appendChild(header);
+
+    for (const line of diff.lines) {
+        const row = drawLine(card, line);
+        // Two instants cannot see a round trip, and the card must not be read as
+        // if they could
+        row.title = `Net change since ${new Date(diff.at).toLocaleString()}. Anything that happened and reversed in between is not shown.`;
+    }
+}
+
+/**
  * Fill the panel body.
  * @param {HTMLElement} body - The panel's body
  */
 function draw(body) {
+    drawAwayDiff(body);
+
     const lines = buildBriefingLines(collectFacts());
     if (lines.length === 0) {
-        body.appendChild(panelNote('Nothing needs you right now.'));
+        // Only when there is nothing above it either: "nothing needs you" under
+        // a list of things that changed reads as a contradiction
+        if (!awayDiff) body.appendChild(panelNote('Nothing needs you right now.'));
         return;
     }
 
@@ -497,6 +589,9 @@ const shellHide = briefingPanel.hide;
 briefingPanel.hide = (options) => {
     const characterId = currentCharacterId();
     if (characterId) dismissed.add(characterId);
+    // Closing the whole card is also having read the away diff on top of it —
+    // otherwise it would come back on the next thing that opens this panel
+    dismissAwayDiff();
     return shellHide(options);
 };
 
@@ -544,7 +639,10 @@ export function maybeShowBriefing() {
 
     const characterId = currentCharacterId();
     if (characterId && dismissed.has(characterId)) return false;
-    if (briefingCount() === 0) return false;
+    // A diff worth showing is reason enough on its own: "nothing needs you now,
+    // but the ale ran dry at 14:20" is exactly the arrival this feature exists
+    // for, and the live briefing has no line for it
+    if (briefingCount() === 0 && !awayDiff) return false;
 
     briefingPanel.show({ remember: false });
     return true;
@@ -559,13 +657,23 @@ export function maybeShowBriefing() {
 export function _resetBriefingState() {
     dismissed.clear();
     listingDelta = null;
+    awayDiff = null;
 }
 
 export default {
     name: 'Session Briefing',
     initialize: async () => {
         if (!config.getSetting(MASTER_SETTING, true)) return;
-        await loadListingDelta(currentCharacterId());
+        const characterId = currentCharacterId();
+        await loadListingDelta(characterId);
+        // After the listing delta, because `collectFacts()` reads it — and this
+        // whole initialize is itself the arrival hook: feature-registry runs it
+        // on `character_switched` once the switch has settled, which is the only
+        // moment at which the arriving character's live facts are readable
+        awayDiff = await computeAwayDiff(
+            characterId,
+            attempt('the live facts', () => collectFacts())
+        );
         maybeShowBriefing();
     },
     cleanup: () => {
@@ -573,6 +681,12 @@ export default {
         // character switch is not somebody dismissing anything, and the next
         // character is owed its own briefing
         shellHide({ remember: false });
+        // Dropped rather than dismissed: the departing character's diff belongs
+        // to the departing character, and marking it read here would silence a
+        // card nobody saw. The mark it would have written is not needed either —
+        // the snapshot this switch is about to write supersedes the one the diff
+        // was computed from
+        awayDiff = null;
         // The overlay panel re-initializes and redraws well before this
         // feature's own initialize() reaches loadListingDelta() — it is far
         // earlier in the registry and not `concurrent`, so it is fully

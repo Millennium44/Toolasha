@@ -518,3 +518,99 @@ describe('what the market did while away', () => {
         });
     });
 });
+
+/**
+ * The "since you were away" card.
+ *
+ * A DOM test rather than another arithmetic one, because what `away-diff.js`
+ * cannot check for itself is the wiring: that the diff is computed at the one
+ * moment the arriving character's facts are readable, that the card opens the
+ * panel even when the live briefing has nothing to say, and that closing it
+ * closes only it.
+ */
+describe('the away card', () => {
+    const HOUR = 3_600_000;
+
+    /** Store a snapshot for the current character, taken `hoursAgo` hours ago. */
+    function storeSnapshot(facts, hoursAgo = 3) {
+        game.stored.set(`briefingSnapshot_${game.characterId}`, {
+            characterId: game.characterId,
+            characterName: 'Char',
+            at: Date.now() - hoursAgo * HOUR,
+            facts,
+        });
+    }
+
+    /** The card's own dismiss button, if the card is drawn. */
+    function awayClose() {
+        return [...(briefingPanel.panel?.querySelectorAll('button') || [])].find(
+            (button) => button.title === 'I have read this'
+        );
+    }
+
+    test('a deadline that lapsed while you were away is stated against the instant it named', async () => {
+        // An hour of ale three hours ago, and the live game agrees there is a
+        // keg to talk about
+        storeSnapshot({ consumable: { name: 'Ale', secondsLeft: 3600 } });
+        game.consumable = { name: 'Ale', secondsLeft: 0 };
+
+        await feature.initialize();
+
+        expect(text()).toContain('Since you were away');
+        expect(text()).toMatch(/Ale ran dry at /);
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('the card is reason enough to open the panel on its own', async () => {
+        // Nothing live needs this character at all — the only news is the past
+        storeSnapshot({ tasksReady: 1 });
+        game.characterInfo = { unreadTaskCount: 0 };
+
+        await feature.initialize();
+
+        expect(briefingPanel.panel).toBeTruthy();
+        expect(text()).toContain('1 task claimed');
+        // And the "all clear" note must not sit under a list of changes
+        expect(text()).not.toContain('Nothing needs you right now');
+    });
+
+    test('no snapshot is silence — it never says nothing happened', async () => {
+        game.characterInfo = { unreadTaskCount: 2 };
+        await feature.initialize();
+
+        expect(text()).toContain('2 waiting');
+        expect(text()).not.toContain('Since you were away');
+    });
+
+    test('closing the card closes only the card, and it stays closed', async () => {
+        storeSnapshot({ tasksReady: 1 });
+        game.characterInfo = { unreadTaskCount: 4 };
+
+        await feature.initialize();
+        expect(text()).toContain('Since you were away');
+
+        awayClose().click();
+
+        // The briefing under it is untouched
+        expect(text()).not.toContain('Since you were away');
+        expect(text()).toContain('4 waiting');
+        // And the read-mark is the snapshot's own instant, so the same snapshot
+        // never produces the card again
+        expect(game.stored.get(`briefingAwayDiffSeen_${game.characterId}`)).toBe(
+            game.stored.get(`briefingSnapshot_${game.characterId}`).at
+        );
+
+        await feature.initialize();
+        expect(text()).not.toContain('Since you were away');
+    });
+
+    test('closing the whole panel counts as having read the card', async () => {
+        storeSnapshot({ tasksReady: 1 });
+        game.characterInfo = { unreadTaskCount: 4 };
+
+        await feature.initialize();
+        briefingPanel.hide({ remember: false });
+
+        expect(game.stored.has(`briefingAwayDiffSeen_${game.characterId}`)).toBe(true);
+    });
+});

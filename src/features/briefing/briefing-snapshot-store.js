@@ -50,6 +50,27 @@ export function snapshotKey(characterId) {
 }
 
 /**
+ * One character's snapshot, or nothing.
+ *
+ * The account panel reads every snapshot at once from a key list it already
+ * has; the away diff wants exactly one, for the character that just arrived,
+ * and enumerating the store to find it would be a key scan for a single get.
+ *
+ * @param {string|null} characterId - Whose
+ * @returns {Promise<Object|null>} The snapshot, or null when there is none
+ */
+export async function readSnapshot(characterId) {
+    if (!characterId) return null;
+    try {
+        const snapshot = await storage.get(snapshotKey(characterId), SNAPSHOT_STORE, null);
+        return snapshot && Number.isFinite(snapshot.at) ? snapshot : null;
+    } catch (error) {
+        console.error(`[BriefingSnapshot] Could not read the snapshot for ${characterId}:`, error);
+        return null;
+    }
+}
+
+/**
  * The snapshots among a batch of `settings` keys.
  *
  * Handed the key list the account read already has, so enumerating the

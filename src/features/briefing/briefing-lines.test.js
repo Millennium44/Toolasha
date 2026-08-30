@@ -225,25 +225,33 @@ describe('horizons', () => {
         expect(line({ queue: { queued: 1, seconds: 600 } }, 'queue').horizon).toEqual({
             at: NOW + 600_000,
             text: 'Queue ends',
+            past: 'Queue ended',
             lapses: true,
         });
 
         expect(line({ consumable: { name: 'Ale', secondsLeft: 7200 } }, 'consumable').horizon).toEqual({
             at: NOW + 7_200_000,
             text: 'Ale runs dry',
+            past: 'Ale ran dry',
             lapses: true,
         });
 
         expect(line({ buffs: [{ name: 'Gathering', expiresAt: NOW + 900_000 }] }, 'buffs').horizon).toEqual({
             at: NOW + 900_000,
             text: 'Gathering ends',
+            past: 'Gathering ended',
             lapses: true,
         });
     });
 
     test('a filling task board lapses at the moment it fills, because the sentence changes', () => {
         const entry = line({ taskSlots: { ok: true, isFull: false, msUntilFull: 40 * 60_000 } }, 'taskSlots');
-        expect(entry.horizon).toEqual({ at: NOW + 40 * 60_000, text: 'Task board fills', lapses: true });
+        expect(entry.horizon).toEqual({
+            at: NOW + 40 * 60_000,
+            text: 'Task board fills',
+            past: 'Task board filled',
+            lapses: true,
+        });
     });
 
     test('a full task board does not lapse — the waste instant only makes it worse', () => {
@@ -252,6 +260,9 @@ describe('horizons', () => {
         expect(entry.horizon).toEqual({
             at: NOW + 20 * 60_000,
             text: 'Full — tasks are being wasted',
+            // Already the wording of something under way; there is no other
+            // sentence for the far side of the instant
+            past: 'Full — tasks are being wasted',
             lapses: false,
         });
     });
