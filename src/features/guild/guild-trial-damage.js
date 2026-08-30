@@ -1194,11 +1194,17 @@ class GuildTrialDamage {
      * held, not only the last one measured. Per metric: median, worst and a
      * player count; never the per-player table.
      *
-     * @returns {Object} `{[encounter]: {at, players, matched, unmatched, measuredOnly, metrics}}`
+     * The caller passes the trace's status rather than this module reading it,
+     * because the archiving call site is the only place that knows the moment
+     * being described — "the trace as it was when this cycle was put away".
+     *
+     * @param {Object} [options] - Overrides
+     * @param {Object|null} [options.trace] - `guildTrialTrace.status()` at archive time
+     * @returns {Object} `{[encounter]: {at, players, matched, unmatched, measuredOnly, metrics, quality}}`
      */
-    accuracySummary() {
+    accuracySummary({ trace = null } = {}) {
         try {
-            return compactAccuracySummary(this.storedStats);
+            return compactAccuracySummary(this.storedStats, { trace });
         } catch (error) {
             console.error('[GuildTrialDamage] Summarizing trial accuracy failed:', error);
             return {};

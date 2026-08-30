@@ -248,6 +248,7 @@ describe('compactAccuracySummary', () => {
         });
         expect(Object.keys(compact)).toEqual(['elite']);
         expect(compact.elite).toEqual({
+            quality: { traced: false },
             at: 5,
             players: 2,
             matched: 1,
@@ -267,6 +268,141 @@ describe('compactAccuracySummary', () => {
             elite: { at: 1, reported: { A: { damage: 100 } }, measured: { A: { damage: 100 } } },
         });
         expect(compact.elite.metrics.healing.median).toBeNull();
+    });
+});
+
+describe('the archived trace quality', () => {
+    /** A trace status as `guildTrialTrace.status()` returns one */
+    const status = (extra = {}) => ({
+        running: true,
+        traceId: 'trace-1',
+        eventCount: 400,
+        gapsOver5s: 2,
+        maxGapMs: 41_000,
+        startedMidFight: false,
+        resumedAcrossReloads: false,
+        ...extra,
+    });
+
+    /** One week of pairs, the smallest that summarizes */
+    const trials = { elite: { at: 5, reported: { A: { damage: 100 } }, measured: { A: { damage: 120 } } } };
+
+    test('stamps the trace’s condition on every encounter when a trace was running', () => {
+        const compact = compactAccuracySummary(trials, {
+            trace: status({ resumedAcrossReloads: true, startedMidFight: true }),
+        });
+        expect(compact.elite.quality).toEqual({
+            traced: true,
+            gapsOver5s: 2,
+            maxGapMs: 41_000,
+            startedMidFight: true,
+            resumedAcrossReloads: true,
+        });
+        // The accuracy figures are untouched by the addition
+        expect(compact.elite.metrics.damage.median).toBe(20);
+    });
+
+    test('an untraced week says only that, never a clean-looking zero', () => {
+        for (const trace of [null, undefined, {}, { traceId: null, gapsOver5s: 0 }]) {
+            const compact = compactAccuracySummary(trials, { trace });
+            expect(compact.elite.quality).toEqual({ traced: false });
+        }
+    });
+
+    test('keeps "we could not tell" apart from "it started cleanly"', () => {
+        const unknown = compactAccuracySummary(trials, { trace: status({ startedMidFight: null }) });
+        expect(unknown.elite.quality.startedMidFight).toBeNull();
+        const clean = compactAccuracySummary(trials, { trace: status() });
+        expect(clean.elite.quality.startedMidFight).toBe(false);
+    });
+
+    test('a gap that was never measured is null, not zero', () => {
+        const compact = compactAccuracySummary(trials, { trace: status({ maxGapMs: null }) });
+        expect(compact.elite.quality.maxGapMs).toBeNull();
+        expect(compact.elite.quality.traced).toBe(true);
+    });
+
+    test('the trend folds a cycle to its worst reading and counts the traced trials', () => {
+        const entry = {
+            weekStart: 1,
+            accuracy: {
+                one: {
+                    metrics: { damage: { median: 2, worst: 9, players: 5 } },
+                    quality: {
+                        traced: true,
+                        gapsOver5s: 1,
+                        maxGapMs: 8000,
+                        startedMidFight: false,
+                        resumedAcrossReloads: false,
+                    },
+                },
+                two: {
+                    metrics: { damage: { median: 6, worst: 9, players: 5 } },
+                    quality: {
+                        traced: true,
+                        gapsOver5s: 4,
+                        maxGapMs: 60_000,
+                        startedMidFight: true,
+                        resumedAcrossReloads: true,
+                    },
+                },
+                three: { metrics: { damage: { median: 6, worst: 9, players: 5 } } },
+            },
+        };
+        const [folded] = archivedAccuracyTrend([entry]);
+        expect(folded.quality).toEqual({
+            traced: true,
+            tracedTrials: 2,
+            gapsOver5s: 4,
+            maxGapMs: 60_000,
+            startedMidFight: true,
+            resumedAcrossReloads: true,
+        });
+        // The trial with no quality key still counts towards the accuracy fold
+        expect(folded.trials).toBe(3);
+    });
+
+    test('an unknown start beats a clean one in the fold', () => {
+        const quality = (startedMidFight) => ({
+            traced: true,
+            gapsOver5s: 0,
+            maxGapMs: 0,
+            startedMidFight,
+            resumedAcrossReloads: false,
+        });
+        const [folded] = archivedAccuracyTrend([
+            { weekStart: 1, accuracy: { one: { quality: quality(false) }, two: { quality: quality(null) } } },
+        ]);
+        expect(folded.quality.startedMidFight).toBeNull();
+    });
+
+    test('an archive written before the fields existed reads exactly as it did', () => {
+        const [folded] = archivedAccuracyTrend([
+            {
+                weekStart: 1,
+                accuracy: { one: { metrics: { damage: { median: 3, worst: 9, players: 5 } }, unmatched: 2 } },
+            },
+        ]);
+        expect(folded.hasAccuracy).toBe(true);
+        expect(folded.trials).toBe(1);
+        expect(folded.unmatched).toBe(2);
+        expect(folded.metrics.damage.median).toBe(3);
+        // No quality was recorded, and none is invented
+        expect(folded.quality).toEqual({
+            traced: false,
+            tracedTrials: 0,
+            gapsOver5s: null,
+            maxGapMs: null,
+            startedMidFight: null,
+            resumedAcrossReloads: false,
+        });
+    });
+
+    test('a cycle with no accuracy at all still carries the untraced shape', () => {
+        const [folded] = archivedAccuracyTrend([{ weekStart: 1, tiles: {} }]);
+        expect(folded.hasAccuracy).toBe(false);
+        expect(folded.quality.traced).toBe(false);
+        expect(folded.quality.tracedTrials).toBe(0);
     });
 });
 

@@ -3403,7 +3403,7 @@ class GuildTrials {
         });
         if (provenance === 'foreign') {
             this.record = archiveCycle(this.record, FOREIGN_CYCLE_REASON, now, {
-                accuracy: guildTrialDamage.accuracySummary?.() || null,
+                accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
             });
             this.blockHtml.clear();
             return;
@@ -3425,7 +3425,7 @@ class GuildTrials {
             // moment the ladder rolls, so the archive is the last chance to
             // keep this cycle's attribution accuracy
             this.record = archiveCycle(this.record, 'a new cycle is scheduled', now, {
-                accuracy: guildTrialDamage.accuracySummary?.() || null,
+                accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
             });
             this.blockHtml.clear();
             guildTrialDamage.reset?.();

@@ -260,6 +260,42 @@ export function summarizeWeekAccuracy(trials, { threshold = OUTLIER_THRESHOLD_PC
 }
 
 /**
+ * How good the trace behind a week's measurement was, small enough to archive.
+ *
+ * The accuracy figures say how far the attribution landed from the game's own
+ * totals. They do not say whether the measurement had a fair chance: a trace
+ * with a forty-second hole in it, or one that began halfway through a fight,
+ * produces a perfectly confident-looking delta that is really a statement about
+ * what the stream missed. Those two facts have to be archived together or the
+ * pairing can never be made — the trace itself is thrown away long before a
+ * month-old cycle is read back.
+ *
+ * A trace that was not running is `{traced: false}` and nothing else. Writing
+ * `gapsOver5s: 0` for a week nobody recorded would be a claim of a clean trace
+ * where there was no trace at all, and the whole point of the field is to tell
+ * those apart.
+ *
+ * @param {Object|null} status - From `guildTrialTrace.status()`
+ * @returns {{traced: boolean, gapsOver5s?: number, maxGapMs?: number|null,
+ *   startedMidFight?: boolean|null, resumedAcrossReloads?: boolean}}
+ */
+export function traceQuality(status) {
+    if (!status || !status.traceId) return { traced: false };
+    return {
+        traced: true,
+        gapsOver5s: Number(status.gapsOver5s) || 0,
+        maxGapMs: Number.isFinite(status.maxGapMs) ? status.maxGapMs : null,
+        // Tri-state on purpose: an empty trace has not started anywhere, and
+        // "we could not tell" is not "it started cleanly"
+        startedMidFight:
+            status.startedMidFight === null || status.startedMidFight === undefined
+                ? null
+                : Boolean(status.startedMidFight),
+        resumedAcrossReloads: Boolean(status.resumedAcrossReloads),
+    };
+}
+
+/**
  * The compact form that goes into the archive.
  *
  * Per metric: the median and worst deltas and how many players stood behind
@@ -269,12 +305,20 @@ export function summarizeWeekAccuracy(trials, { threshold = OUTLIER_THRESHOLD_PC
  * for a detail nobody reads a month later. The medians are what a trend line
  * needs.
  *
+ * `quality` is the trace's condition at the moment of archiving, stamped on
+ * every encounter in the cycle because the trace is one recording spanning all
+ * of them. It is recorded now and read later: the card that pairs a wide
+ * accuracy delta against a gappy trace cannot be built from cycles that never
+ * carried the fields, so the recording has to start before the reading exists.
+ *
  * @param {Object|null} trials - The week's stored pairs, by encounter
  * @param {Object} [options] - Overrides
  * @param {number} [options.threshold] - Percent past which a player is listed
- * @returns {Object} `{[encounter]: {at, players, matched, unmatched, measuredOnly, metrics}}`
+ * @param {Object|null} [options.trace] - `guildTrialTrace.status()` at archive time
+ * @returns {Object} `{[encounter]: {at, players, matched, unmatched, measuredOnly, metrics, quality}}`
  */
-export function compactAccuracySummary(trials, { threshold = OUTLIER_THRESHOLD_PCT } = {}) {
+export function compactAccuracySummary(trials, { threshold = OUTLIER_THRESHOLD_PCT, trace = null } = {}) {
+    const quality = traceQuality(trace);
     const out = {};
     for (const entry of summarizeWeekAccuracy(trials, { threshold })) {
         const { accuracy } = entry;
@@ -294,9 +338,74 @@ export function compactAccuracySummary(trials, { threshold = OUTLIER_THRESHOLD_P
             unmatched: accuracy.unmatched,
             measuredOnly: accuracy.measuredOnly,
             metrics,
+            // The same object per encounter: one trace covers the whole cycle,
+            // and copying it beside each trial is what lets a single trial be
+            // read back on its own later
+            quality: { ...quality },
         };
     }
     return out;
+}
+
+/**
+ * A cycle's trace quality, folded from the trials that carry it.
+ *
+ * One trace covers a cycle, so in practice every trial in an entry carries the
+ * same object — but an entry can be a merge of records from two devices, or a
+ * cycle half of which was archived before the fields existed, so the fold takes
+ * the worst reading rather than assuming they agree. Worst is the honest
+ * direction: a cycle where any trial was recorded across a reload was recorded
+ * across a reload.
+ *
+ * `tracedTrials` is counted separately from `traced` so a cycle where the trace
+ * was switched on halfway is not read as one that was traced throughout.
+ *
+ * A cycle whose trials predate the field comes back `{traced: false,
+ * tracedTrials: 0}` — the same shape a genuinely untraced cycle gets, because
+ * that is exactly what can be said about it.
+ *
+ * @param {Array<Object>} trials - An archive entry's trials
+ * @returns {{traced: boolean, tracedTrials: number, gapsOver5s: number|null, maxGapMs: number|null,
+ *   startedMidFight: boolean|null, resumedAcrossReloads: boolean}}
+ */
+function foldTraceQuality(trials) {
+    const traced = trials.map((trial) => trial.quality).filter((quality) => quality && quality.traced === true);
+    if (!traced.length) {
+        return {
+            traced: false,
+            tracedTrials: 0,
+            gapsOver5s: null,
+            maxGapMs: null,
+            startedMidFight: null,
+            resumedAcrossReloads: false,
+        };
+    }
+
+    /**
+     * The largest finite reading of one field, or null when none is finite.
+     * @param {string} key - Which field
+     * @returns {number|null}
+     */
+    const worst = (key) => {
+        const values = traced.map((quality) => quality[key]).filter(Number.isFinite);
+        return values.length ? Math.max(...values) : null;
+    };
+
+    const midFight = traced.map((quality) => quality.startedMidFight);
+    return {
+        traced: true,
+        tracedTrials: traced.length,
+        gapsOver5s: worst('gapsOver5s'),
+        maxGapMs: worst('maxGapMs'),
+        // True beats unknown beats false: one trial known to have started mid
+        // fight is a fact about the cycle, and unknown must not read as clean
+        startedMidFight: midFight.some((value) => value === true)
+            ? true
+            : midFight.every((value) => value === false)
+              ? false
+              : null,
+        resumedAcrossReloads: traced.some((quality) => quality.resumedAcrossReloads === true),
+    };
 }
 
 /**
@@ -327,7 +436,11 @@ export function archivedAccuracyTrend(history) {
             (trial) => trial && typeof trial === 'object'
         );
         if (!trials.length) {
-            return { ...base, hasAccuracy: false, trials: 0, unmatched: 0, metrics: {} };
+            // `quality` in its untraced shape rather than absent: a reader that
+            // has to check `hasAccuracy` and then check whether the key exists
+            // will eventually forget the second check, and a missing object
+            // reads as clean
+            return { ...base, hasAccuracy: false, trials: 0, unmatched: 0, metrics: {}, quality: foldTraceQuality([]) };
         }
 
         const metrics = {};
@@ -351,6 +464,7 @@ export function archivedAccuracyTrend(history) {
             trials: trials.length,
             unmatched: trials.reduce((total, trial) => total + (Number(trial.unmatched) || 0), 0),
             metrics,
+            quality: foldTraceQuality(trials),
         };
     });
 }
