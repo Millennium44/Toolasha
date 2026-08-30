@@ -34,8 +34,19 @@ const world = vi.hoisted(() => ({
     baseHp: 0,
 }));
 
+// Real subscribe/unsubscribe bookkeeping, unlike a no-op `vi.fn()`, so a test
+// can prove a disable+initialize cycle does not accumulate listeners.
+const settingListeners = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, onSettingChange: () => {} },
+    default: {
+        getSetting: () => true,
+        onSettingChange: (key, callback) => {
+            (settingListeners[key] ??= []).push(callback);
+            return () => {
+                settingListeners[key] = (settingListeners[key] || []).filter((cb) => cb !== callback);
+            };
+        },
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -308,6 +319,24 @@ describe('the fight-start buff snapshot', () => {
         panel.fightStartBuffMap = { '/b/old': {} };
         panel.noteBattleStart({ players: [{ character: { id: 'me-id' }, name: 'Benny' }] });
         expect(panel.fightStartBuffMap).toBeNull();
+    });
+});
+
+describe('disable unregisters the setting-change listener it registered', () => {
+    test('a disable+initialize cycle does not accumulate listeners', () => {
+        for (const key of Object.keys(settingListeners)) delete settingListeners[key];
+
+        // Every character switch runs disable() then initialize() again
+        // (feature-registry.js). If the unregister function onSettingChange
+        // hands back is discarded, each cycle leaves one more copy of the
+        // same callback on config's per-key list.
+        monsterStatCheck.initialize();
+        for (let i = 0; i < 3; i++) {
+            monsterStatCheck.disable();
+            monsterStatCheck.initialize();
+        }
+
+        expect(settingListeners.labyrinthMonsterStatCheck).toHaveLength(1);
     });
 });
 

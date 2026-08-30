@@ -1815,6 +1815,9 @@ let fetchHandler = null;
 /** The `new_battle` handler — the fight-start buff snapshot the offense fold deltas against. */
 let battleHandler = null;
 
+/** The unregister function `onSettingChange` handed back, undone in `disable()`. */
+let unregisterSettingChange = null;
+
 /**
  * Whether a fetched player unit (`isPlayer: true`) is the character being
  * played, not a party member or someone else's profile sheet opened mid-fight
@@ -1874,12 +1877,16 @@ function initialize() {
 
     // Turning the setting off mid-session should take the panel away without a
     // refresh. Turning it on relies on the registry initialising the feature.
-    config.onSettingChange(SETTING_KEY, (enabled) => {
+    unregisterSettingChange = config.onSettingChange(SETTING_KEY, (enabled) => {
         if (!enabled) disable();
     });
 }
 
 function disable() {
+    if (unregisterSettingChange) {
+        unregisterSettingChange();
+        unregisterSettingChange = null;
+    }
     if (fetchHandler) {
         webSocketHook.off('battle_unit_fetched', fetchHandler);
         fetchHandler = null;
