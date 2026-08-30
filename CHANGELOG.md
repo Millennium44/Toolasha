@@ -1734,6 +1734,58 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.32.0](https://github.com/Millennium44/Toolasha/compare/v3.31.0...v3.32.0) (2026-08-29)
+
+### Features
+
+- a page-owned timer is labelled (page) in the pformance trace ([69f325f](https://github.com/Millennium44/Toolasha/commit/69f325fc69dbec9810600aa32c62395ffa5957b7))
+- count damage-over-time ticks apart from landed swings ([287b855](https://github.com/Millennium44/Toolasha/commit/287b85572379a0558143f1cc9b9b5d42c5183c44))
+- pformance panel gets an Overlay Rows section ([ff04958](https://github.com/Millennium44/Toolasha/commit/ff049587b1e9082a359fabba452719479d4e18df))
+- record the damage-over-time share of a fight's damage ([fa05805](https://github.com/Millennium44/Toolasha/commit/fa058055d5c7b7b611ff45bb5625e70a7f7eeccf))
+- surface the sim's per-source damage tally in the labyrinth replay ([8545702](https://github.com/Millennium44/Toolasha/commit/85457027b05cc2bc189459b26495a68bf021e3ba))
+- time each overlay row's render under its own pformance metric ([0cfdbde](https://github.com/Millennium44/Toolasha/commit/0cfdbde77121be7acdada2e104d28ae7204a1dd6))
+
+### Bug Fixes
+
+- a lab upgrade priced below zero keeps its cost and tops the value ranking ([3b15a2e](https://github.com/Millennium44/Toolasha/commit/3b15a2e1bafb04a0733c6f9552bc5a0ee3384c82))
+- another player's Battle Info no longer reads as your session summary ([6e2a4da](https://github.com/Millennium44/Toolasha/commit/6e2a4da83d9bf089c6c7d90c498539871bf5bfe7))
+- build score can repopulate with the departed character's score ([3ed3421](https://github.com/Millennium44/Toolasha/commit/3ed3421b8ff18d3e338ca1857dadacfbfdc025e5))
+- charm table price sort ranks an unpriced tier as the cheapest ([0b0ecfe](https://github.com/Millennium44/Toolasha/commit/0b0ecfed6a163382a40e3cb7d0e79158f8787a56))
+- combat drop luck analysis in flight survives disable() ([6262439](https://github.com/Millennium44/Toolasha/commit/62624392dba9065dfb36b2a272aa9d6a712f3326))
+- houses row race lets a stale character overwrite the untracked set ([d7e6f46](https://github.com/Millennium44/Toolasha/commit/d7e6f46a70bc9f43c6ab34ab17a447f2d70de3f9))
+- lab replay hit rate and damage per hit divide by swings on both sides ([eab96c1](https://github.com/Millennium44/Toolasha/commit/eab96c15f60e65def586f5026000b10dba30d6a4))
+- lab replay stops calling a wide crit band a match ([14bc611](https://github.com/Millennium44/Toolasha/commit/14bc611bee598d6dcaf5eb9733731660f880cbfe))
+- mana tally survives a character switch and blends into the next character's ([1097b34](https://github.com/Millennium44/Toolasha/commit/1097b34573186136271a4877cc88d3f0373d730c))
+- prediction calibration can leak a run across a character switch ([9c23dcc](https://github.com/Millennium44/Toolasha/commit/9c23dccd23657bf69af85f8534818fcc06a365cc))
+- price a trial's pool from the whole wave, not the tick that arrived ([0b87f63](https://github.com/Millennium44/Toolasha/commit/0b87f6361e9eaf531ec952396116da1999fcbc1e))
+- put the trial readout under a wave that fills the fight grid ([43b9597](https://github.com/Millennium44/Toolasha/commit/43b9597d71562423c3a9e2db1bf23f9536f1c759))
+- sim-accuracy check running across a character switch writes to the wrong character ([bc0e15c](https://github.com/Millennium44/Toolasha/commit/bc0e15c829e3cafeea9fe83c0319708de324a1c4))
+- watchlist held count reads an equipped tracked item as zero ([8cca8d2](https://github.com/Millennium44/Toolasha/commit/8cca8d2f05fb75eb1450a3f401b917a245936ba2))
+- xp tracker can drop a character's XP history on a fast switch ([b01bd6b](https://github.com/Millennium44/Toolasha/commit/b01bd6b01b8df9b37e3e6686fa0b9f958c344bfa))
+
+### Performance Improvements
+
+- Charm Value and Treasure stop repricing themselves every second ([e6aee51](https://github.com/Millennium44/Toolasha/commit/e6aee5136426d476ce7d0a6c08999c01b387c44c))
+- combat-stats rows summarise their inputs so the tick can skip them ([73c74b2](https://github.com/Millennium44/Toolasha/commit/73c74b2f13384de99e34633bb4fd43927655d29d))
+- Equipment Watch says when its figures can have moved ([dec9b9a](https://github.com/Millennium44/Toolasha/commit/dec9b9ada985be110f0c9ca75b372e00a5494ab8))
+- sweep the fight view once a second, not once a trial tick ([2460321](https://github.com/Millennium44/Toolasha/commit/246032176da8debc8d3d183f544e56c3bb617278))
+- Task Tokens stops walking the Task Shop every second ([ef48cb6](https://github.com/Millennium44/Toolasha/commit/ef48cb6e3315cedaebf639dd723e8488b23fbc87))
+- the net worth tiles report the figure they draw ([21cdab1](https://github.com/Millennium44/Toolasha/commit/21cdab1d8d85a3e647417e1e95a1e89d79446b65))
+- Watchlist, Houses and Build Score say when their figures can move ([1aae6b0](https://github.com/Millennium44/Toolasha/commit/1aae6b014c9bad12e22a333085d9d30369d7cdee))
+
+### Documentation
+
+- changelog for the battle-info and switch-race fixes ([63b60d1](https://github.com/Millennium44/Toolasha/commit/63b60d1e2767ccd8d5ec943259b51ad9b19fcb00))
+- changelog for the combat audit fixes ([b5db5e3](https://github.com/Millennium44/Toolasha/commit/b5db5e3b0b88a16e1a3bf6dae99fd811c5e93e4a))
+- changelog for the insights audit fixes ([ac0bc33](https://github.com/Millennium44/Toolasha/commit/ac0bc33fb340104e1ea8031151c43a0b9f2872e1))
+- changelog for the inventory audit fixes ([3b944e4](https://github.com/Millennium44/Toolasha/commit/3b944e43b0b8c613474de4a3231a918741557d6c))
+- changelog for the lab replay diagnosis fix ([769334c](https://github.com/Millennium44/Toolasha/commit/769334c8db96df6b4d8e65fa2f0f37ada9b5bbbe))
+- changelog for the like-for-like hit metrics ([70cae10](https://github.com/Millennium44/Toolasha/commit/70cae10ac7da5487a0a9924d94a3b26b334773b9))
+- changelog for the row memos and page-timer labels ([50b23c8](https://github.com/Millennium44/Toolasha/commit/50b23c83a7551d1de97ef381f8252ec599d0077b))
+- changelog for the sim damage tally ([702cfa5](https://github.com/Millennium44/Toolasha/commit/702cfa5df29703086d5591e7af4c7a0372831092))
+- changelog for the trial pool fix and layout wrap ([2b3d30c](https://github.com/Millennium44/Toolasha/commit/2b3d30cfa85d529c2ef11f36cc84ed11636aa5e8))
+- say which side of a trial's DPS disagreement to believe ([c863ae6](https://github.com/Millennium44/Toolasha/commit/c863ae63fadd1e9e37f065cd605d56eeb055579d))
+
 ## [3.31.0](https://github.com/Millennium44/Toolasha/compare/v3.30.0...v3.31.0) (2026-08-29)
 
 ### Features
