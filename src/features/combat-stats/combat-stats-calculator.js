@@ -271,9 +271,15 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
             continue;
         }
 
+        // No market entry at all is not the same as an ask of 0 — the former is
+        // "nobody has ever listed this," the latter is a real, if worthless,
+        // price. Billing the unpriced case at a fabricated 500 coins/unit
+        // silently corrupted the run's cost total and the forecast's per-item
+        // cost with a number nothing backs; null lets both correctly report
+        // the item as unpriced instead.
         const prices = marketAPI.getPrice(consumable.itemHrid);
-        const itemPrice = prices ? prices.ask : 500;
-        const itemCost = itemPrice * consumed;
+        const itemPrice = Number(prices?.ask) > 0 ? Number(prices.ask) : null;
+        const itemCost = itemPrice === null ? 0 : itemPrice * consumed;
 
         totalCost += itemCost;
 
@@ -417,6 +423,9 @@ export function calculatePlayerStats(playerData, durationSeconds = null) {
     const consumableBreakdown = consumableData.breakdown;
 
     // Calculate daily consumable costs using pre-calculated per-day rates (MCS-style)
+    // An unpriced item's pricePerItem is null now rather than a fabricated
+    // number (see calculateConsumableCosts) — treated as costing nothing here
+    // rather than turning the whole daily total into NaN
     const dailyConsumableCosts = consumableBreakdown.reduce(
         (sum, item) => sum + (item.consumedPerDay || 0) * item.pricePerItem,
         0

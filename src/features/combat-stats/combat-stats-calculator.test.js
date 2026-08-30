@@ -63,8 +63,14 @@ vi.mock('../../core/config.js', () => ({
 globalThis.window = globalThis.window || {};
 globalThis.window.Toolasha = { Market: { treasureTracker: { measuredReturn: () => luck.measured } } };
 
-const { calculateKeyCosts, calculatePlayerStats, calculateIncome, calculateIncomeBreakdown, describeLuckAdjustment } =
-    await import('./combat-stats-calculator.js');
+const {
+    calculateKeyCosts,
+    calculatePlayerStats,
+    calculateIncome,
+    calculateIncomeBreakdown,
+    describeLuckAdjustment,
+    calculateConsumableCosts,
+} = await import('./combat-stats-calculator.js');
 const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
 
 const CHIMERICAL_CHEST = '/items/chimerical_chest';
@@ -184,6 +190,40 @@ describe('calculateKeyCosts', () => {
     });
 });
 
+describe('calculateConsumableCosts', () => {
+    beforeEach(() => {
+        market.prices = {};
+    });
+
+    test('an item the market has never priced is not billed as if it cost 500 coins', () => {
+        // marketAPI.getPrice returns null (mocked above, matching the real
+        // module's contract) for an item nobody has ever listed — not the same
+        // thing as an item that is listed with a genuine ask of 0. Billing it at
+        // a fabricated 500 coins/unit is exactly the "unknown treated as a real
+        // price" bug: the forecast and buy-recommendation math downstream both
+        // read pricePerItem as "a real, known price" the moment it is not null.
+        const result = calculateConsumableCosts(
+            [{ itemHrid: '/items/unpriced_food', consumed: 10, consumedPerDay: 240 }],
+            3600
+        );
+
+        expect(result.breakdown[0].pricePerItem).toBeNull();
+        expect(result.total).toBe(0);
+    });
+
+    test('an item the market does price is billed at its real ask', () => {
+        market.prices['/items/priced_food'] = { ask: 120, bid: 100 };
+
+        const result = calculateConsumableCosts(
+            [{ itemHrid: '/items/priced_food', consumed: 10, consumedPerDay: 240 }],
+            3600
+        );
+
+        expect(result.breakdown[0].pricePerItem).toBe(120);
+        expect(result.total).toBe(1200);
+    });
+});
+
 describe('calculatePlayerStats', () => {
     test('carries the key pricing mode out with the profit figures', () => {
         keys.mode = 'bid';
@@ -196,6 +236,31 @@ describe('calculatePlayerStats', () => {
         expect(stats.keyPricingMode).toBe('bid');
         expect(stats.keyBreakdown.find((row) => row.itemHrid === CHEST_KEY).keyCost.cheaper).toBe('craft');
         expect(stats.dailyProfit.ask).toBe(-25000 * 24);
+    });
+
+    test('an unpriced consumable costs nothing in the daily total rather than poisoning it', () => {
+        // pricePerItem is null for an unpriced item now (see calculateConsumableCosts
+        // above). null coerces to 0 in the multiplication, so this is a belt-and-braces
+        // check on dailyConsumableCosts rather than a second bug: it pins that a
+        // null price contributes nothing to the sum, and that a priced item alongside
+        // it is still charged correctly.
+        market.prices['/items/priced_food'] = { ask: 100, bid: 90 };
+
+        const stats = calculatePlayerStats(
+            {
+                name: 'You',
+                loot: {},
+                deathCount: 0,
+                consumables: [
+                    { itemHrid: '/items/unpriced_food', consumed: 10, consumedPerDay: 240 },
+                    { itemHrid: '/items/priced_food', consumed: 5, consumedPerDay: 120 },
+                ],
+            },
+            3600
+        );
+
+        expect(Number.isNaN(stats.dailyConsumableCosts)).toBe(false);
+        expect(stats.dailyConsumableCosts).toBe(120 * 100);
     });
 });
 
