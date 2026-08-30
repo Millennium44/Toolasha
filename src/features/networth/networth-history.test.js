@@ -24,8 +24,12 @@ const storageMock = vi.hoisted(() => ({
     isQuotaExceeded: vi.fn(() => false),
 }));
 
+const dataManagerMock = vi.hoisted(() => ({ currentCharacterId: 'char-1' }));
+
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'char-1' } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => dataManagerMock.currentCharacterId },
+}));
 vi.mock('../../core/connection-state.js', () => ({ default: { isConnected: () => true } }));
 
 const { default: networthHistory, pruneHistory, seriesStore } = await import('./networth-history.js');
@@ -41,6 +45,7 @@ beforeEach(() => {
     networthHistory.history = [];
     networthHistory.detailHistory = [];
     networthHistory.characterId = 'char-1';
+    dataManagerMock.currentCharacterId = 'char-1';
     for (const fn of Object.values(storageMock)) fn.mockClear?.();
     storageMock.get.mockImplementation(async (key, store, fallback) => fallback);
     storageMock.getAllKeys.mockImplementation(async () => []);
@@ -317,5 +322,55 @@ describe('standing down when storage is full', () => {
         expect(storageMock.set).not.toHaveBeenCalled();
         expect(networthHistory.history).toEqual([]);
         expect(networthHistory.detailHistory).toEqual([]);
+    });
+});
+
+describe('a character switch mid-initialize', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    test('a stale resume does not bleed the departing character into the arriving character', async () => {
+        // Character A's chunked-history read is held open — this is the await
+        // `initialize()` is sitting behind when the switch happens.
+        dataManagerMock.currentCharacterId = 'char-A';
+        let resolveA;
+        const pendingA = new Promise((resolve) => {
+            resolveA = resolve;
+        });
+        vi.spyOn(seriesStore, 'load').mockImplementation((charId) =>
+            charId === 'char-A' ? pendingA : Promise.resolve([])
+        );
+        const saveSpy = vi.spyOn(seriesStore, 'save').mockImplementation(() => {});
+
+        const feature = { currentData: fakeNetworthData() };
+        const staleInit = networthHistory.initialize(feature);
+
+        // The switch away from A: `character_switching`'s synchronous disable(),
+        // exactly as feature-registry.js runs it before the arriving character's
+        // own initialize() starts.
+        networthHistory.disable();
+
+        // Character B logs in and finishes its own initialize() first — this is
+        // the realistic ordering, since B's read is not stuck behind anything.
+        dataManagerMock.currentCharacterId = 'char-B';
+        await networthHistory.initialize(feature);
+        expect(networthHistory.characterId).toBe('char-B');
+        saveSpy.mockClear();
+
+        // A's read finally lands, carrying A's data — a total no snapshot of
+        // B's ever produced.
+        resolveA([{ t: 1, total: 999999 }]);
+        await staleInit;
+
+        // The stale continuation must not have touched state that is now B's:
+        // neither the in-memory series nor anything written under B's key may
+        // carry A's total.
+        expect(networthHistory.characterId).toBe('char-B');
+        expect(networthHistory.history.some((row) => row.total === 999999)).toBe(false);
+        for (const [charId, rows] of saveSpy.mock.calls) {
+            if (charId !== 'char-B') continue;
+            expect(rows.some((row) => row.total === 999999)).toBe(false);
+        }
     });
 });

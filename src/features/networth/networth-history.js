@@ -110,6 +110,16 @@ class NetworthHistory {
         this.characterId = null;
         this.timerRegistry = createTimerRegistry();
         this.networthFeature = null;
+        /**
+         * Bumped whenever the character changes. `initialize()` crosses several
+         * awaits — a chunked-history load, the detail snapshots' IndexedDB round
+         * trips, the first hourly snapshot — and a character switch that lands
+         * mid-flight must not let that stale continuation resume: without this,
+         * it would overwrite `this.history` with the departing character's rows
+         * and then save them under whichever character is current by the time it
+         * wakes up, which can be someone else entirely.
+         */
+        this._generation = 0;
     }
 
     /**
@@ -138,22 +148,31 @@ class NetworthHistory {
             return;
         }
 
+        const generation = this._generation;
+
         // Load existing history from storage, thinning anything past retention.
         // Done on load rather than only on write so a history that grew under an
         // older build is brought back inside budget without waiting an hour.
         // Thinning drops points out of the oldest months entirely, and the save
         // that follows deletes those months' records.
         const loaded = await seriesStore.load(this.characterId);
+        // A switch landed while the read was in flight: these rows are the
+        // departing character's, and `disable()` has already reset the fields
+        // this would otherwise refill under whoever is current now
+        if (this._generation !== generation) return;
         this.history = pruneHistory(loaded);
         if (this.history.length !== loaded.length) {
             seriesStore.save(this.characterId, this.history);
         }
 
         // Load existing detail history from storage
-        this.detailHistory = await this._loadDetailHistory();
+        const detailHistory = await this._loadDetailHistory();
+        if (this._generation !== generation) return;
+        this.detailHistory = detailHistory;
 
         // Take an immediate first snapshot
         await this.takeSnapshot();
+        if (this._generation !== generation) return;
 
         // Start hourly interval
         const intervalId = setInterval(() => this.takeSnapshot(), SNAPSHOT_INTERVAL);
@@ -436,6 +455,10 @@ class NetworthHistory {
      */
     disable() {
         this.timerRegistry.clearAll();
+        // Anything still resuming from an old `initialize()` — a load, a detail
+        // read, a first snapshot — belongs to the character being left and must
+        // not touch what follows
+        this._generation += 1;
         // The records in memory belong to the character being left; serving them
         // to the next one would be wrong, and writing them back under its keys
         // would be worse
