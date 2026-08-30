@@ -259,6 +259,14 @@ export function verdictForCard({ completed, isProtected, choice, trashAtLimit })
 /** How many short waits a chooser may stay unpressable before the walk gives up on it */
 const PENDING_RETRY_LIMIT = 12;
 
+/**
+ * How many short waits a paid reroll may go unanswered before the walk stops.
+ *
+ * Longer than {@link PENDING_RETRY_LIMIT} and past {@link SERVER_SETTLE_MS},
+ * because this one is waiting on the server rather than on a React re-render.
+ */
+const PAID_WAIT_LIMIT = 25;
+
 class TaskRerollWalk {
     constructor() {
         this.isInitialized = false;
@@ -270,6 +278,9 @@ class TaskRerollWalk {
         /** Set by a plan that found the chooser drawn but unpressable; cleared each plan */
         this.pending = false;
         this.pendingRetries = 0;
+        /** The card a `pay` press was just made on, and how it looked at the time */
+        this.paidFor = null;
+        this.paidWaits = 0;
         /** Read presses made on the unread-tasks notice this walk */
         this.readPresses = 0;
         /** Whether any card press has been made — after that, Read is never offered */
@@ -615,6 +626,29 @@ class TaskRerollWalk {
                     return null;
                 }
                 this.pendingRetries = 0;
+
+                // A payment was made on this card and the card has not moved
+                // since: same task, same reroll counts. A reroll that had landed
+                // would have changed one of them, so this is the previous
+                // payment still in flight and the chooser is showing its
+                // *pre-payment* prices. Offering the Pay button again here
+                // charges a second reroll while quoting the first one's price,
+                // and what the game actually takes is the doubled one — which
+                // may be over the threshold the player set. Wait for the answer
+                // instead. Reachable well inside SERVER_SETTLE_MS because any
+                // `quests_updated` cuts that wait to UI_SETTLE_MS, and a combat
+                // kill ticking a task's progress sends one.
+                if (this._rerollStillInFlight(card)) {
+                    if (this.paidWaits < PAID_WAIT_LIMIT) {
+                        this.paidWaits += 1;
+                        this.pending = true;
+                        return null;
+                    }
+                    this.message = `Slot ${slot}'s reroll has not come back — walk stopped.`;
+                    return null;
+                }
+                this.paidFor = null;
+
                 return this._step('pay', card, slot, `Reroll #${slot} — ${verdict.reason}`, option.button, {
                     currency: choice.currency,
                 });
@@ -647,6 +681,39 @@ class TaskRerollWalk {
         return { kind, card, slot, label, button, signature: cardTaskKey(card), ...extra };
     }
 
+    /**
+     * What a card looks like, for the purpose of noticing that a reroll landed.
+     *
+     * A reroll changes the task, and the server's answer raises that currency's
+     * count, so either moving is proof the payment was answered.
+     *
+     * @param {HTMLElement} card - A task card
+     * @returns {{signature: string, coin: number, cowbell: number}}
+     * @private
+     */
+    _rerollFingerprint(card) {
+        const quest = questForTaskCard(card);
+        return {
+            signature: cardTaskKey(card),
+            coin: Number(quest?.coinRerollCount) || 0,
+            cowbell: Number(quest?.cowbellRerollCount) || 0,
+        };
+    }
+
+    /**
+     * Is the payment already made on this card still unanswered?
+     *
+     * @param {HTMLElement} card - The card the plan is about to offer a payment on
+     * @returns {boolean}
+     * @private
+     */
+    _rerollStillInFlight(card) {
+        const paid = this.paidFor;
+        if (!paid || paid.card !== card) return false;
+        const now = this._rerollFingerprint(card);
+        return now.signature === paid.signature && now.coin === paid.coin && now.cowbell === paid.cowbell;
+    }
+
     // --------------------------------------------------------------- the walk
 
     /** Start a walk at the top of the board. */
@@ -654,6 +721,8 @@ class TaskRerollWalk {
         this.index = 0;
         this.pendingRetries = 0;
         this.pending = false;
+        this.paidFor = null;
+        this.paidWaits = 0;
         this.readPresses = 0;
         this.walkBegun = false;
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
@@ -680,6 +749,9 @@ class TaskRerollWalk {
         this.state = 'idle';
         this.step = null;
         this.hidden = true;
+        // Nothing is in flight once the walk has stopped waiting for it
+        this.paidFor = null;
+        this.paidWaits = 0;
         this.timerRegistry.clearAll();
         this._removeWidget();
     }
@@ -807,7 +879,13 @@ class TaskRerollWalk {
         clickThroughReact(button, { reactFirst: true });
         this.walkBegun = true;
 
-        if (planned.kind === 'pay') this.tally.rerolled += 1;
+        if (planned.kind === 'pay') {
+            this.tally.rerolled += 1;
+            // What the card looked like as the coin left, so the next plan can
+            // tell "the reroll has not come back" from "the reroll came back"
+            this.paidFor = { card: planned.card, ...this._rerollFingerprint(planned.card) };
+            this.paidWaits = 0;
+        }
         if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;
 
         // A press the server has to answer for waits for its answer; a press

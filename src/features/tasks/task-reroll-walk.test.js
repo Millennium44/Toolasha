@@ -621,6 +621,51 @@ describe('one press, one game click', () => {
         expect(clicks).toHaveLength(2);
     });
 
+    test('a reroll the game has not answered is never offered for payment a second time', () => {
+        // The board looking exactly as it did before the payment is the one
+        // thing that proves the reroll has NOT landed yet: a reroll changes the
+        // task. Offering the same card's Pay button again on that evidence
+        // charges a second reroll while quoting the first one's price — and the
+        // price the player is actually charged is the doubled one, which here is
+        // over the threshold they set.
+        //
+        // This is reachable well inside the server settle window, because any
+        // `quests_updated` at all (a combat kill ticking a task's progress will
+        // do) cuts the wait to UI_SETTLE_MS.
+        walk.coinThreshold = 20000; // the 10K reroll is allowed; the 20K it becomes is not
+        board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
+
+        walk.start();
+        expect(chipText()).toContain('Reroll #1 — 10.0K🪙');
+
+        walk.advance();
+        expect(clicks).toEqual(['Milking - Cow:10,000']);
+
+        // The game has not answered: same task, same chooser, same reroll count
+        vi.advanceTimersByTime(10000);
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual(['Milking - Cow:10,000']);
+        expect(chipText()).toContain('walk stopped');
+    });
+
+    test('once the reroll does land the walk carries on from the task that arrived', () => {
+        const list = board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
+
+        walk.start();
+        walk.advance();
+        expect(clicks).toEqual(['Milking - Cow:10,000']);
+
+        // The reroll lands: a new task, and the game has taken its coin
+        list.children[0].querySelector('[class*="RandomTask_name"]').textContent = 'Cooking - Stew';
+        const questFiber = document.getElementById('root')._reactRootContainer.current.child;
+        questFiber.memoizedProps.characterQuest = quest('/actions/cooking/stew', 1, 0);
+        vi.advanceTimersByTime(3000);
+
+        expect(chipText()).toContain('Reroll #1 — 10.0K🪙');
+        expect(walk.state).toBe('ready');
+    });
+
     test('trashing takes two presses too, and the second is the confirm', () => {
         walk.coinThreshold = 10000;
         walk.cowbellThreshold = 1;
