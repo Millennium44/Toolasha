@@ -73,7 +73,18 @@ export function mergeGoalLists(local, incoming) {
         const keepMine = held && Number.isFinite(mine) && (!Number.isFinite(theirs) || mine > theirs);
         byId.set(goal.id, keepMine ? held : goal);
     }
-    return [...byId.values()].slice(0, MAX_GOALS);
+    // Sorted before the cap, and by the stamp rather than by which side the
+    // goal arrived on. The union's natural order is "everything local had,
+    // then everything only incoming had", so cutting its tail cut exactly the
+    // goals the pull brought — and both sides are already capped by
+    // `saveGoals`, which makes "local is full" the ordinary case. A device at
+    // the cap therefore discarded the whole of the other device's list, and
+    // the two merge directions kept different sets.
+    //
+    // A goal written before `createdAt` existed sorts as the oldest there is,
+    // which is what it is.
+    const stamp = (goal) => (Number.isFinite(Number(goal?.createdAt)) ? Number(goal.createdAt) : 0);
+    return [...byId.values()].sort((a, b) => stamp(a) - stamp(b)).slice(0, MAX_GOALS);
 }
 
 /*

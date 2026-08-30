@@ -311,6 +311,29 @@ describe('merging two devices goal lists', () => {
         expect(merged.slice(0, 30).map((entry) => entry.id)).toEqual(local.map((entry) => entry.id));
     });
 
+    test('the cap keeps the oldest goals whichever device is holding the list', () => {
+        // The cap was applied to the union in local-then-incoming order, so the
+        // tail it cut was exactly the goals only the other device had — however
+        // old they were. A device already at the cap therefore discarded every
+        // goal the pull brought, and merging the same two lists the other way
+        // round kept a different set. Both sides are capped at MAX_GOALS by
+        // `saveGoals`, so "local is full" is the ordinary case, not an edge one.
+        const full = Array.from({ length: 40 }, (_, index) => goal(`recent-${index}`, 2000 + index));
+        const ancient = [goal('ancient', 1)];
+
+        expect(mergeGoalLists(full, ancient).map((entry) => entry.id)).toContain('ancient');
+        expect(mergeGoalLists(ancient, full).map((entry) => entry.id)).toContain('ancient');
+
+        // And the two directions agree on which forty survive
+        const forwards = mergeGoalLists(full, ancient)
+            .map((entry) => entry.id)
+            .sort();
+        const backwards = mergeGoalLists(ancient, full)
+            .map((entry) => entry.id)
+            .sort();
+        expect(forwards).toEqual(backwards);
+    });
+
     test('a goal deleted on one device comes back — no tombstones, documented', () => {
         expect(mergeGoalLists([], [goal('a', 1)]).map((entry) => entry.id)).toEqual(['a']);
         expect(mergeGoalLists([goal('a', 1)], []).map((entry) => entry.id)).toEqual(['a']);
