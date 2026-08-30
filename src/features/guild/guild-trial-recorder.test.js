@@ -82,6 +82,8 @@ const {
     SNAPSHOT_MS,
     thinBreakdown,
     trialSessionStorageKey,
+    trialExportIsEmpty,
+    downloadTrialExport,
 } = await import('./guild-trial-recorder.js');
 
 const now = Date.parse('2026-08-05T15:00:00Z');
@@ -679,5 +681,67 @@ describe('the export bundle', () => {
 
         const bundle = await buildTrialExport({});
         expect(bundle.session).toMatchObject({ startedAt: 1, endedAt: 2 });
+    });
+});
+
+/**
+ * `buildTrialExport` never refuses — an empty week comes back as a well-formed
+ * bundle with a fresh record and no session, which is right for the file and
+ * useless to a caller that wants to say whether there was anything.
+ */
+describe('trialExportIsEmpty', () => {
+    test('a bundle with a session is not empty, whatever the record says', () => {
+        expect(trialExportIsEmpty({ session: { startedAt: 1 }, record: { tiles: {}, history: [] } })).toBe(false);
+    });
+
+    test('a ladder with samples is not empty', () => {
+        expect(trialExportIsEmpty({ session: null, record: { tiles: { 3: {} }, history: [] } })).toBe(false);
+    });
+
+    test('a finished trial in the history is not empty', () => {
+        expect(trialExportIsEmpty({ session: null, record: { tiles: {}, history: [{ endedAt: 1 }] } })).toBe(false);
+    });
+
+    test('a fresh week with none of the three is empty', () => {
+        expect(trialExportIsEmpty({ session: null, record: { weekStart: 0, tiles: {}, history: [] } })).toBe(true);
+    });
+
+    test('a bundle whose record could not be read is empty rather than assumed', () => {
+        expect(trialExportIsEmpty({ session: null, record: null })).toBe(true);
+        expect(trialExportIsEmpty(undefined)).toBe(true);
+    });
+});
+
+describe('downloadTrialExport', () => {
+    test('it answers with the name it saved under, which the caller cannot recompute', () => {
+        const created = [];
+        const originalCreate = URL.createObjectURL;
+        const originalRevoke = URL.revokeObjectURL;
+        URL.createObjectURL = () => 'blob:trial';
+        URL.revokeObjectURL = (url) => created.push(url);
+        try {
+            const filename = downloadTrialExport({ format: 'toolasha-guild-trial' });
+            // The timestamp is taken inside; a second `new Date()` outside would differ
+            expect(filename).toMatch(/^toolasha-trial-.+\.json$/);
+            expect(created).toEqual(['blob:trial']);
+        } finally {
+            URL.createObjectURL = originalCreate;
+            URL.revokeObjectURL = originalRevoke;
+        }
+    });
+
+    test('a download that cannot be built answers null rather than a bare false', () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const originalCreate = URL.createObjectURL;
+        URL.createObjectURL = () => {
+            throw new Error('no blob urls here');
+        };
+        try {
+            expect(downloadTrialExport({})).toBe(null);
+            expect(logged).toHaveBeenCalled();
+        } finally {
+            URL.createObjectURL = originalCreate;
+            logged.mockRestore();
+        }
     });
 });

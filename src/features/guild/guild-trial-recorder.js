@@ -623,23 +623,52 @@ export async function buildTrialExport({ guildName = null } = {}) {
 }
 
 /**
- * Download a bundle as a file.
+ * Whether a bundle has nothing in it worth keeping.
+ *
+ * `buildTrialExport` never refuses: it always returns a well-formed bundle, and
+ * a week with nothing in it comes back as a fresh empty record and a null
+ * session rather than as an error. That is right for the file — a reader can
+ * tell "we recorded nothing" from a bundle and cannot tell it from a missing
+ * one — but it means a caller wanting to *say* whether there was anything has
+ * to look. Three sources, because a week can have any one of them without the
+ * others: a recorder session, the ladder's per-tile samples, and the finished
+ * trials in its history.
+ *
  * @param {Object} bundle - From {@link buildTrialExport}
- * @returns {boolean} True when the download was started
+ * @returns {boolean} Whether nothing at all was recorded this week
+ */
+export function trialExportIsEmpty(bundle) {
+    if (bundle?.session) return false;
+    const record = bundle?.record;
+    if (!record) return true;
+    if (Object.keys(record.tiles || {}).length) return false;
+    return !(record.history || []).length;
+}
+
+/**
+ * Download a bundle as a file.
+ *
+ * Returns the name it was saved under rather than a bare `true`, because a
+ * caller that wants to tell the player where the file went cannot recompute it:
+ * the timestamp is taken here, and a second `new Date()` outside would differ.
+ *
+ * @param {Object} bundle - From {@link buildTrialExport}
+ * @returns {string|null} The filename the download was started under, or null when it failed
  */
 export function downloadTrialExport(bundle) {
     try {
         const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
+        const filename = `toolasha-trial-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
         link.href = url;
-        link.download = `toolasha-trial-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        link.download = filename;
         link.click();
         URL.revokeObjectURL(url);
-        return true;
+        return filename;
     } catch (error) {
         console.error('[GuildTrialRecorder] Trial export download failed (data still returned):', error);
-        return false;
+        return null;
     }
 }
 

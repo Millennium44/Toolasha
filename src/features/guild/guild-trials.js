@@ -139,7 +139,11 @@ import guildTrialDamage, { attributionCoverage, encounterOf, encounterOfMonster 
 import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
-import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
+import guildTrialRecorder, {
+    buildTrialExport,
+    downloadTrialExport,
+    trialExportIsEmpty,
+} from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
 import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -2325,6 +2329,43 @@ class GuildTrials {
             name: 'Trial Damage',
             hint: 'Damage and healing per player, ranked',
             run: () => guildTrialScoreboard.toggle(),
+        });
+
+        // Both of these are buttons under the trial cards on the In Progress
+        // tab, which is to say: reachable only while the thing they are about
+        // is on screen. Starting a capture is the one you most want *before*
+        // you have gone looking.
+        registerCommand({
+            name: 'Start trial capture',
+            hint: 'Record this trial, as the Record button does',
+            kind: 'verb',
+            run: () => {
+                // `start` is idempotent, so asking twice is harmless — but
+                // "already recording" and "capture started" are different
+                // answers and the second would be a lie. 'button' is
+                // load-bearing: it marks the session manual, so only the player
+                // stops it, which is what pressing a thing to start it means
+                if (guildTrialRecorder.recording) return 'already recording';
+                guildTrialRecorder.start('button');
+                return guildTrialRecorder.recording ? 'capture started' : 'could not start a capture';
+            },
+        });
+
+        registerCommand({
+            name: 'Export trial JSON',
+            hint: "This week's trial record, as a file",
+            kind: 'verb',
+            run: async () => {
+                const bundle = await buildTrialExport({ guildName: this.guildName });
+                // The builder never refuses — an empty week is a well-formed
+                // bundle — so handing the player a file full of nulls and
+                // calling it a success would be the wrong answer twice over
+                if (trialExportIsEmpty(bundle)) return 'nothing recorded this week';
+
+                const filename = downloadTrialExport(bundle);
+                if (!filename) throw new Error('the download could not be started');
+                return filename;
+            },
         });
 
         // Whatever a previous life left behind is not this one's. The merge
@@ -4581,6 +4622,8 @@ class GuildTrials {
 
     cleanup() {
         unregisterCommand('Trial Damage');
+        unregisterCommand('Start trial capture');
+        unregisterCommand('Export trial JSON');
         for (const unregister of this.unregister) unregister();
         this.unregister = [];
         this.timers.clearAll();

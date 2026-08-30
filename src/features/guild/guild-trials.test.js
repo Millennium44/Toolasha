@@ -162,8 +162,16 @@ vi.mock('./guild-trial-recorder.js', () => ({
         },
         loadSession: async () => game.recorder.session ?? null,
     },
-    buildTrialExport: async () => ({ exportedAt: 'now', bundle: true }),
-    downloadTrialExport: (bundle) => game.recorder.downloads.push(bundle),
+    buildTrialExport: async () => game.recorder.bundle ?? { exportedAt: 'now', bundle: true },
+    downloadTrialExport: (bundle) => {
+        game.recorder.downloads.push(bundle);
+        // Undefined unless a test says otherwise, so the default is "it worked".
+        // Strictly undefined, because null is the real failure signal
+        return game.recorder.downloadName === undefined
+            ? 'toolasha-trial-2026-08-30T00-00-00-000Z.json'
+            : game.recorder.downloadName;
+    },
+    trialExportIsEmpty: (bundle) => !bundle?.session && !Object.keys(bundle?.record?.tiles || {}).length,
 }));
 vi.mock('../notifications/guild-trial-alerts.js', () => ({
     default: {
@@ -237,6 +245,7 @@ const {
     withScrollKept,
 } = await import('./guild-trials.js');
 const trialsFeature = (await import('./guild-trials.js')).default;
+const { registeredCommands, resetCommands } = await import('../../utils/command-registry.js');
 // Real, not mocked: the Abilities button feeds it, and the guard under test is
 // about what the button must NOT feed it after the fight is torn down
 const guildTrialAbilities = (await import('./guild-trial-abilities.js')).default;
@@ -5486,5 +5495,89 @@ describe('the Trace button', () => {
         expect(html).toContain('data-action="trace"');
         expect(html).toContain('gzipped NDJSON');
         expect(html).not.toContain('stored chunk');
+    });
+});
+
+/**
+ * Both trial verbs stand in for buttons that live under the trial cards on the
+ * In Progress tab — which is to say, reachable only once you have already found
+ * the thing they are about. Starting a capture is the one you most want before
+ * you have gone looking.
+ */
+describe('the trial palette verbs', () => {
+    /**
+     * @param {string} name - As registered
+     * @returns {Object|undefined} The verb, as the palette would see it
+     */
+    const verb = (name) => registeredCommands().find((entry) => entry.name === name);
+
+    beforeEach(async () => {
+        resetCommands();
+        game.recorder = {
+            recording: false,
+            activity: [],
+            lifecycle: [],
+            downloads: [],
+            startedBy: null,
+            endedBy: null,
+        };
+        trialsFeature.cleanup();
+        await trialsFeature.initialize();
+    });
+
+    afterEach(() => {
+        trialsFeature.cleanup();
+        resetCommands();
+    });
+
+    test('both are offered, as verbs', () => {
+        expect(verb('Start trial capture')?.kind).toBe('verb');
+        expect(verb('Export trial JSON')?.kind).toBe('verb');
+    });
+
+    test('switching the feature off takes both out of the palette', () => {
+        trialsFeature.cleanup();
+        expect(verb('Start trial capture')).toBeUndefined();
+        expect(verb('Export trial JSON')).toBeUndefined();
+    });
+
+    test('starting a capture starts it, and marks the session manual', async () => {
+        expect(await verb('Start trial capture').run()).toBe('capture started');
+        expect(game.recorder.recording).toBe(true);
+        // 'button' is what tells the recorder only the player stops this one
+        expect(game.recorder.startedBy).toBe('button');
+    });
+
+    test('a capture already running is said so, not silently restarted', async () => {
+        game.recorder.recording = true;
+        game.recorder.startedBy = 'auto';
+
+        expect(await verb('Start trial capture').run()).toBe('already recording');
+        // Untouched: a restart would have thrown away what was already recorded
+        expect(game.recorder.startedBy).toBe('auto');
+    });
+
+    test('exporting answers with the filename it saved under', async () => {
+        game.recorder.bundle = { record: { tiles: { 1: {} }, history: [] } };
+        game.recorder.downloadName = 'toolasha-trial-2026-08-30T12-00-00-000Z.json';
+
+        expect(await verb('Export trial JSON').run()).toBe('toolasha-trial-2026-08-30T12-00-00-000Z.json');
+        expect(game.recorder.downloads).toHaveLength(1);
+    });
+
+    test('an empty week is said, not handed over as a file full of nulls', async () => {
+        game.recorder.bundle = { record: { tiles: {}, history: [] }, session: null };
+
+        expect(await verb('Export trial JSON').run()).toBe('nothing recorded this week');
+        expect(game.recorder.downloads).toEqual([]);
+        // Still listed while it has nothing to export
+        expect(verb('Export trial JSON')).toBeDefined();
+    });
+
+    test('a download that will not start is a failure, not a quiet success', async () => {
+        game.recorder.bundle = { record: { tiles: { 1: {} }, history: [] } };
+        game.recorder.downloadName = null;
+
+        await expect(verb('Export trial JSON').run()).rejects.toThrow('the download could not be started');
     });
 });
