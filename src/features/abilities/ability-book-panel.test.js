@@ -415,4 +415,66 @@ describe('switching character', () => {
         // before the switch
         expect(targetInput('/abilities/poke').value).toBe('3');
     });
+
+    test('a departed character does not leave a rate for the one that switched in', () => {
+        // Main's Poke sits at 1,000 experience. abilityPlans() samples it once
+        // on the way past, exactly as the networth row does every tick whether
+        // or not the panel is open.
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        abilityPlans();
+
+        // `character_switching` fires first, while `characterData` still
+        // belongs to the departing character — the real sequence, and the
+        // reason the history is cleared on this event rather than on
+        // `character_switched`.
+        dataManager.emit('character_switching', {});
+
+        // An ironcow — same abilityHrid, a run that has already put far more
+        // experience into Poke than main ever has — switches in.
+        game.character = {
+            combatUnit: { combatAbilities: [{ abilityHrid: '/abilities/poke', level: 40 }] },
+            characterAbilities: [{ abilityHrid: '/abilities/poke', level: 40, experience: 500_000 }],
+        };
+        dataManager.emit('character_switched', {});
+
+        // Thirty seconds later, the row samples again. Nothing about this
+        // reading looks like a reset — the experience went up, not down — so
+        // the history's own guard against a different character never fires,
+        // and the two readings get read as one character gaining 499,000
+        // experience in thirty seconds.
+        vi.setSystemTime(30_000);
+        const plan = abilityPlans().find((entry) => entry.name === 'Poke');
+
+        // A fresh character with one true reading has no rate to report, the
+        // same as any other ability nobody has measured yet.
+        expect(plan.experiencePerHour).toBeNull();
+
+        vi.useRealTimers();
+    });
+
+    test('the history is clear before the arriving character’s data lands, not after', () => {
+        // `character_switched` is deferred (see data-manager.js): the game's
+        // own emit sequence has `characterData` already updated to the
+        // arriving character by the time it fires. A row sampling in that gap
+        // — after `character_switching`, before `character_switched` — must
+        // already see a clean history, or the same spurious rate reappears
+        // one tick earlier than the first test here catches.
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+        abilityPlans();
+
+        dataManager.emit('character_switching', {});
+        game.character = {
+            combatUnit: { combatAbilities: [{ abilityHrid: '/abilities/poke', level: 40 }] },
+            characterAbilities: [{ abilityHrid: '/abilities/poke', level: 40, experience: 500_000 }],
+        };
+        // `character_switched` deliberately not emitted yet — this is the gap
+
+        vi.setSystemTime(30_000);
+        const plan = abilityPlans().find((entry) => entry.name === 'Poke');
+        expect(plan.experiencePerHour).toBeNull();
+
+        vi.useRealTimers();
+    });
 });

@@ -762,6 +762,27 @@ export const abilityBookPanel = new AbilityBookPanel();
 // target here is still "valid" (target > new character's current level) until
 // it happens not to be. The Combat Level panel resets its own per-character
 // state the same way on the same event; this brings the ability panel in line.
+// The same abilityHrid means the same key in `abilityHistory`, so an ironcow
+// with more Puncture experience than main switching in reads as main gaining
+// that whole gap between two samples — a rate in the tens of millions per
+// hour that only self-heals once the departed character's reading falls out
+// of the ten-minute window. The guard inside `skill-history.js` only catches
+// experience going backwards (a lower-progress character switching in); it
+// was never going to catch this direction.
+//
+// Cleared on `character_switching` rather than `character_switched`:
+// `character_switched` is deliberately deferred (see data-manager.js), so
+// `dataManager.characterData` is already the *arriving* character's by the
+// time it fires. `abilityPlans()` is sampled by the networth row on its own
+// timer independently of the panel, and a tick landing in that gap would read
+// the new character's abilities against the old character's still-uncleared
+// history — the exact bug this is fixing, just arriving a tick earlier.
+// `character_switching` runs synchronously while `characterData` still
+// belongs to the departing character, closing the gap entirely — the same
+// fix the Combat Level panel already applies to its own history for the same
+// reason.
+dataManager.on('character_switching', () => abilityHistory.clear());
+
 dataManager.on('character_switched', () => {
     resetAbilityTargets();
     if (abilityBookPanel.panel) abilityBookPanel._render();
