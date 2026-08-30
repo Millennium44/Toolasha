@@ -1838,6 +1838,100 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.32.1](https://github.com/Millennium44/Toolasha/compare/v3.32.0...v3.32.1) (2026-08-30)
+
+### Bug Fixes
+
+- a free or credit-funded lab upgrade sorts by what it saves, not last ([08fcc7c](https://github.com/Millennium44/Toolasha/commit/08fcc7c6d0febb2553227c8504f757ab9eb9978a))
+- a two-hander swap names the weapon it displaces ([2c909ed](https://github.com/Millennium44/Toolasha/commit/2c909ed58d9bc5f4d61d8edcff5b65802dcd2f27))
+- All Zones and Seek price the run for the wrong party member ([75fcb65](https://github.com/Millennium44/Toolasha/commit/75fcb6528e7ebbc8b2bdade1eac46785086ff846))
+- chest EV breakdown counts zero-count drops as unpriced ([9088499](https://github.com/Millennium44/Toolasha/commit/90884995fa0da8fca589c2bc94b6e619fcdf560d))
+- clear ability experience history on character switch ([dccffab](https://github.com/Millennium44/Toolasha/commit/dccffab8e968ce2a8dfac4348a398f4fbc66166e))
+- collection popover navigation buttons keep the previous item's hrid on a reused popper ([a470864](https://github.com/Millennium44/Toolasha/commit/a47086476ac3a9d23702f7ac68c34d50b7a7456a))
+- combat stats UI stops leaking a setting-change listener ([8f3ef27](https://github.com/Millennium44/Toolasha/commit/8f3ef2705c60150df854bd66e739ce5964933bb3))
+- combat text stops leaking a setting-change listener per lifecycle ([a411013](https://github.com/Millennium44/Toolasha/commit/a4110138291122210c184dcd2eadd92843d2e108))
+- csv-export escapes text cells starting with + or - ([2722229](https://github.com/Millennium44/Toolasha/commit/2722229366e640e03c2af441fa5d95abee05b3d2))
+- custom tabs keep the departed character's loadout-binding cache ([12fa62e](https://github.com/Millennium44/Toolasha/commit/12fa62e1e19d45f980c6aca7f3fc503f045777e4))
+- do not drop a settings write made during the settings reload ([06e37bf](https://github.com/Millennium44/Toolasha/commit/06e37bfee873a02c06afe26118faea67815067a3))
+- dungeon token tooltip guard is keyed on the element, not the item ([6f72205](https://github.com/Millennium44/Toolasha/commit/6f72205758fcaa159b518c6412f9a81123214e2a))
+- enhanced items vanish from the tab that assigned their base item ([973a415](https://github.com/Millennium44/Toolasha/commit/973a415553045795dde9d82848df1f0a1e4564cb))
+- escape character names in the adoption-consent dialog ([6ebfc4f](https://github.com/Millennium44/Toolasha/commit/6ebfc4fd22fc95233aff172459ffff8a6503116e))
+- escape counted names in guild trial scoreboard's own-row note ([6c7e0e5](https://github.com/Millennium44/Toolasha/commit/6c7e0e50fe479f0dc5a608ad3384e632e6666fed))
+- formatters display -0 for small negatives that round to zero ([c32d671](https://github.com/Millennium44/Toolasha/commit/c32d671bb12afde27487fdd7bfffb8f5c98a8c80))
+- gathering stats stops leaking two setting-change listeners ([a033878](https://github.com/Millennium44/Toolasha/commit/a033878df643fe65ca88f045c1698bb76a27cb6f))
+- give a character switch's failed feature inits the same recovery boot gets ([ef25208](https://github.com/Millennium44/Toolasha/commit/ef252088c20149b41cff747509f8143df0ef5abe))
+- guard checkFeatureHealth's enabled check against a throwing customCheck ([9422f56](https://github.com/Millennium44/Toolasha/commit/9422f56a4a95b3123801e7f59d98423194483714))
+- guard connection-state close/error against stale departing sockets ([b600cfe](https://github.com/Millennium44/Toolasha/commit/b600cfe23d4ac8540018d2bc53c5a363735bea6f))
+- guard retryFailedFeatures against a character switch starting mid-retry ([7b96c0b](https://github.com/Millennium44/Toolasha/commit/7b96c0b51e4db4879eed6a7694254af4d29450f4))
+- guild credit value guards Missing Mats poll against a character switch ([66e803f](https://github.com/Millennium44/Toolasha/commit/66e803f3e630083fd90cfd0ea9d93c5f5f349de0))
+- guild credit value tears down its buy-modal autofill watcher on cleanup ([db2ba02](https://github.com/Millennium44/Toolasha/commit/db2ba02ca70d23a2326f343152f84ffdb2519360))
+- guild member skills forgets which guild it belongs to on character switch ([093d798](https://github.com/Millennium44/Toolasha/commit/093d79837ad78c08e7e59ce0dd4f11bbc5724240))
+- guild member skills prunes a renamed member's dead capture entry ([1c885a3](https://github.com/Millennium44/Toolasha/commit/1c885a3f074c9a6364c1d690a25ecf17d8806899))
+- guild shrine upgrade button no longer stacks a click handler per re-render ([8cbf103](https://github.com/Millennium44/Toolasha/commit/8cbf103b38c178179e48f47f1938a4b5139b5536))
+- guild trial ledger view refreshes on a character switch ([2dc97d8](https://github.com/Millennium44/Toolasha/commit/2dc97d83a11b17169bcc86e9a42328c426dd325e))
+- guild trial scoreboard lets go of its trial context on close ([b447255](https://github.com/Millennium44/Toolasha/commit/b447255a8604cd675414a8c29d55fe21af765dae))
+- inventory count display stops leaking a setting-change listener ([b5fc3bf](https://github.com/Millennium44/Toolasha/commit/b5fc3bf9bcde863ea25b19313e3282dc55688d42))
+- keep personal trade history off for a character who disabled it ([2f743b9](https://github.com/Millennium44/Toolasha/commit/2f743b98fd6416f2ac726f3b65c563eb34f1a9a0))
+- keep the trade ledger off for a character who disabled it ([3e057a4](https://github.com/Millennium44/Toolasha/commit/3e057a4f84f6754012b44639bb00b992b30cc48a))
+- labyrinth best-level tracker misses same-update first-try wins ([b7820e4](https://github.com/Millennium44/Toolasha/commit/b7820e42da956a596b6e88942686a11a395a4d04))
+- live countdown re-registers every listener on a redundant enable signal ([b4a8dd1](https://github.com/Millennium44/Toolasha/commit/b4a8dd1f7b4efc39e59f34909ecc72b978bafe92))
+- loadout enhancement display stops leaking a setting-change listener ([196cfd0](https://github.com/Millennium44/Toolasha/commit/196cfd0aa7b3429820a568bc914d4dd84a4f20fc))
+- max produceable stops leaking three setting-change listeners ([30c51ab](https://github.com/Millennium44/Toolasha/commit/30c51ab9975b335d98e910b63b1f1c14874c688d))
+- monster stat check no longer treats another player's sheet as yours ([3b6200d](https://github.com/Millennium44/Toolasha/commit/3b6200d10d05a850fa18cea32a0fed8b90aa58d3))
+- monster stat check stops leaking a setting-change listener ([7ae1cc3](https://github.com/Millennium44/Toolasha/commit/7ae1cc3103f6bbef3628820e6b529226c146bbf2))
+- networth history bleeds a departing character into the arriving one on a fast switch ([bb0d0f7](https://github.com/Millennium44/Toolasha/commit/bb0d0f7aaa67b4a9521c732b0bb4acb2c0617676))
+- Philosopher's accessories are offered wherever the slot is worn ([d525915](https://github.com/Millennium44/Toolasha/commit/d52591526a2c42d52184bc4ceb119dd808701f68))
+- queue tooltip time guard is keyed on the element, not the queue state ([bac8199](https://github.com/Millennium44/Toolasha/commit/bac81999dc8e2193c6a40ef3baf59eaaef61afa3))
+- re-initializing the same character no longer doubles every feature ([ab09148](https://github.com/Millennium44/Toolasha/commit/ab09148f8a00f9a68c248e985b1d71ecf1a6e423))
+- reroll walk never pays twice for one unanswered reroll ([1230aa7](https://github.com/Millennium44/Toolasha/commit/1230aa7f4a341de1b3bbfe9c97ed03e960d4e732))
+- reroll walk pays the currency the chooser will actually take ([fef50d3](https://github.com/Millennium44/Toolasha/commit/fef50d3af1658175b04a790753e13d9b9a5067e3))
+- reroll walk re-sorts the board after reading new tasks ([dc3595c](https://github.com/Millennium44/Toolasha/commit/dc3595c8e70602a17c61cd5e0c097d30275864da))
+- scroll simulator UI stops leaking a setting-change listener ([9f34257](https://github.com/Millennium44/Toolasha/commit/9f342574c9f97b2e6eeddfda7f0252f6d936af0a))
+- scroll-sim DOM observer and sort-mode listeners unregister on teardown ([6655673](https://github.com/Millennium44/Toolasha/commit/6655673e0051f5fb4bb45154065c243abd1f90d2))
+- task completion tracker can save one character's completions under another's key ([401edf4](https://github.com/Millennium44/Toolasha/commit/401edf4974f08b0cc2df14ba7f91a12371650ae8))
+- the accuracy cohort judges a clear's fold once, in lockstep with attempts ([c7d86b2](https://github.com/Millennium44/Toolasha/commit/c7d86b23c78e3fd9f9e2b48c2f32ac68133ff086))
+- the budget plan prints a credit-funded pick as money back ([cab2862](https://github.com/Millennium44/Toolasha/commit/cab28625e1d014579a557bd8260b0c03ecae61f5))
+- the custom-tabs editor survives the feature's own teardown ([9d6dc6f](https://github.com/Millennium44/Toolasha/commit/9d6dc6fdde543fa8882a9f5303ecdef3e5d13ddd))
+- trade history display stops leaking a setting-change listener ([d6d54b3](https://github.com/Millennium44/Toolasha/commit/d6d54b396952b511b94a85bf3dc7c92c1c044116))
+- watchlist stops leaking two setting-change listeners per lifecycle ([7419d32](https://github.com/Millennium44/Toolasha/commit/7419d3272e14361997d8ebcb850fba891f2bad12))
+- zone map indices renumber correctly when a re-render mixes labelled and fresh tabs ([cced506](https://github.com/Millennium44/Toolasha/commit/cced506c561f51fa46e304d12ee82ce1ada5c5da))
+
+### Performance Improvements
+
+- run collection-filters' legacy-key rename in parallel, not serial ([c20e1a0](https://github.com/Millennium44/Toolasha/commit/c20e1a0216284f3d04f076d9b6a228b7c3ae262b))
+
+### Documentation
+
+- changelog for the ability-history switch fix ([fc7f622](https://github.com/Millennium44/Toolasha/commit/fc7f6229ddd2563a4a0c17786b0be28a5f5eb100))
+- changelog for the adoption-dialog escaping ([bfbca81](https://github.com/Millennium44/Toolasha/commit/bfbca8185706e7df50a12088824eff0382020ba1))
+- changelog for the advisor cost-sign census ([b977563](https://github.com/Millennium44/Toolasha/commit/b977563fd16988cff73e2e822774fef8bf869fd8))
+- changelog for the best-level tracker fix ([9dafdea](https://github.com/Millennium44/Toolasha/commit/9dafdea7f60543d274de1ec8241b745bdb4f6a42))
+- changelog for the blaze verification ([da8c763](https://github.com/Millennium44/Toolasha/commit/da8c7631992ce1388d13f75006c8e3b50dc514e2))
+- changelog for the chest EV breakdown fix ([b165a23](https://github.com/Millennium44/Toolasha/commit/b165a23fdfb7b880097b8508f31eceab338bcd97))
+- changelog for the connection-state socket guard ([990a971](https://github.com/Millennium44/Toolasha/commit/990a9713348d05b23356ebe03cc79ef25d23e7eb))
+- changelog for the custom-tabs fixes ([97fbb77](https://github.com/Millennium44/Toolasha/commit/97fbb77b25c893a58fe31cf0ade09ed4609f5fae))
+- changelog for the double-init fix ([d416cb7](https://github.com/Millennium44/Toolasha/commit/d416cb7b18dd06ed3d99c6009ae4506e1aeb4f50))
+- changelog for the guild audit fixes ([4be2996](https://github.com/Millennium44/Toolasha/commit/4be29967169ac3718c8e6a5568212963a6c00eda))
+- changelog for the guild leftovers ([a342a03](https://github.com/Millennium44/Toolasha/commit/a342a03379b38744a26b89f5d46ee98bfc028613))
+- changelog for the monster-stat and zone-index fixes ([559ef5b](https://github.com/Millennium44/Toolasha/commit/559ef5be5924abba18634f7ac15ac0f00625d0d3))
+- changelog for the queue-tooltip and countdown fixes ([6c9b4a3](https://github.com/Millennium44/Toolasha/commit/6c9b4a3eddc2a8aa62cf128a4335a0847ce06554))
+- changelog for the reroll-walk and recorder fixes ([5b71d7b](https://github.com/Millennium44/Toolasha/commit/5b71d7b23c8087b44456da34c8d7a831894e7671))
+- changelog for the sim UI measured-player fix ([ddf975b](https://github.com/Millennium44/Toolasha/commit/ddf975b51e7778048abc062cc107ea2a6a27eecd))
+- changelog for the tooltip audit fixes ([e6c13a4](https://github.com/Millennium44/Toolasha/commit/e6c13a49792a1c683cb6136eb52da6af23944ac8))
+- changelog for the UI misc audit ([4099097](https://github.com/Millennium44/Toolasha/commit/4099097c5c8e1f111e6ce5b54e95ec4abe27a3d4))
+- changelog for the utils audit fixes ([a1dfae9](https://github.com/Millennium44/Toolasha/commit/a1dfae937919327e2ea40c85747153148e77ee3c))
+- record why clearing the drink-slots map on update is safe ([a547763](https://github.com/Millennium44/Toolasha/commit/a547763db62af1c1c285dd43c513cdb7869c00a8))
+
+### Tests
+
+- a registry with one throwing customCheck still health-checks the rest. ([9422f56](https://github.com/Millennium44/Toolasha/commit/9422f56a4a95b3123801e7f59d98423194483714))
+- pin blaze as an ability-cast proc, not an on-hit one ([88f541f](https://github.com/Millennium44/Toolasha/commit/88f541ff582d29a2e6449ecca7cb613ef58838e3))
+- with the switching flag up, no failed feature is retried. ([7b96c0b](https://github.com/Millennium44/Toolasha/commit/7b96c0b51e4db4879eed6a7694254af4d29450f4))
+
+### Miscellaneous Chores
+
+- delete the dead profile-cache duplicate of profile-manager ([5d9e7e2](https://github.com/Millennium44/Toolasha/commit/5d9e7e2d10d396f3a06aa0cae3ecd9d518a708d8))
+
 ## [3.32.0](https://github.com/Millennium44/Toolasha/compare/v3.31.0...v3.32.0) (2026-08-29)
 
 ### Features
