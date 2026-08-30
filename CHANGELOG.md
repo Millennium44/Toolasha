@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combined party sessions time each player by their own runs
+
+Merging archived combat sessions into one Party Loot view had two compounding timing bugs: every player was divided by the whole group's summed duration even for runs they weren't in, and the combined snapshot then fell into the live-run dating rule — measuring from the oldest merged run's start and counting every idle hour in between (a one-day-apart 600s+300s pair timed as 2.49 million seconds). Each player is now timed by the sessions they were actually in.
+
 ### One enhancement cost model
 
 The protect-from sweep existed four times with three pricing rules; it is now one engine (from your current level, cross-fill pricing with a production fallback), with each surface keeping its own parameter source behind the chips that already name it. Characterizing the four first paid off in surprises: the advisor's delta-from-1 convention was mathematically identical to from-current except under Blessed Tea (where it under-quoted by ~1% — advisor blessed runs are now dearer and correct); the real money was the savings card quoting a vendor price where the cross-fill rule quotes the bid (a ninth of the honest bill on a one-sided book); and the tooltip still carried the advisor's old bug of billing unpriceable protection at zero, letting a protected plan win by construction — protected rows now vanish when protection can't be priced. Load-bearing differences survive as named parameters (the savings card still refuses to buy a copy of untradable gear; the tooltip alone folds in the base item), the trainee-charm shop price lives in exactly one place, and a parity harness pins all four call sites against the one engine.
