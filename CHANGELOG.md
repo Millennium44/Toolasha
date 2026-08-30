@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Monster stat check keeps your sheet yours, and zone indices count right
+
+Clicking another player's Battle Info overwrote the stat check's remembered player sheet — the next "Check my build" compared the sim's build of you against their live stats and reported the gap as a modelling bug; a sheet naming a different character is now ignored, the same rule the other two sheet consumers learned this week. And zone map indices could hand a freshly re-rendered tab an earlier number than its real position, because already-labelled tabs weren't advancing the counter.
+
 ### The reroll walk sorts, pays once, and keeps walking
 
 The reported no-sort-after-read had three stacked causes: the walk's React-first click never dispatches the DOM event the sorter's listener waits for, its compensating sort asked the wrong setting (sort-on-open instead of sort-after-read), and the sort it did request was dropped because a walk's resting state — a chooser left open — reads as "mid-flow". The walk now forces its own sort after a read lands. Also found in the same pass: the walk could pay twice for one unanswered reroll (the chooser still shows pre-payment prices in that window, so the label under-quoted the doubled charge) — payments are now fingerprinted and re-offers wait for the board to actually change; and a greyed-out coin option no longer reads as "unquoted", which had the walk picking an unaffordable coin reroll over a payable cowbell and giving up.
