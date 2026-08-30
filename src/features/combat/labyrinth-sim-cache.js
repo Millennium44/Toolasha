@@ -974,6 +974,72 @@ export const simCacheMethods = {
     },
 
     /**
+     * Which rooms hold a sim computed under gear that is no longer worn.
+     *
+     * The same question `_markGearChanged` asks per tile, asked over the whole
+     * cache instead — and with the same three abstentions, because they are the
+     * reason that mark is trustworthy: snapshots that have not landed yet make
+     * every entry look stale, an entry with no stored fingerprint is unknown
+     * rather than different, and no current fingerprint is nothing to compare
+     * against. All three answer "none", not "all".
+     *
+     * Counted in rooms rather than entries because that is the unit a player
+     * thinks in and the unit the palette reports. One room can hold several
+     * entries — a precision run and a decision-bar run, different crates,
+     * different upgrades — and "12 stale rooms queued" for what is four rooms
+     * on the floor would be a number that matches nothing on screen. The first
+     * two colon-separated fields of a cache key are the monster and the room
+     * level, and hrids carry `/` rather than `:`, so the room identity splits
+     * off cleanly.
+     *
+     * @returns {string[]} `monsterHrid:roomLevel` per stale room, no duplicates
+     */
+    staleCombatCacheRooms() {
+        const ready = loadoutSnapshot.snapshotsReady === true;
+        if (!ready) return [];
+
+        let current = null;
+        try {
+            current = this._snapshotContentFingerprint();
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Reading the current gear fingerprint failed:', error);
+            return [];
+        }
+
+        const rooms = new Set();
+        for (const [cacheKey, meta] of this._combatCacheMeta) {
+            if (!gearChangedSince(meta?.snapshotFingerprint, current, ready)) continue;
+            const [monsterHrid, roomLevel] = String(cacheKey).split(':');
+            rooms.add(`${monsterHrid}:${roomLevel}`);
+        }
+        return [...rooms];
+    },
+
+    /**
+     * Re-sim the rooms whose cached results were computed under other gear —
+     * and only if there are any.
+     *
+     * The count is taken before anything is dropped, because dropping is what
+     * destroys the evidence: `recomputeCombatSims` empties both layers wholesale
+     * (the cache key does not encode gear, so a partial drop would leave the
+     * *un*stale entries to be reused under a fingerprint baseline that has since
+     * moved), and after it there is nothing left to count.
+     *
+     * Nothing stale means nothing happens. A caller with a report to make wants
+     * to say so rather than spend a minute of simulation proving the cache was
+     * already right.
+     *
+     * @param {boolean} [uncapped] - Sim without the trial cap, as the button's toggle does
+     * @returns {Promise<number>} How many rooms were queued; `0` when none were stale
+     */
+    async recomputeStaleCombatSims(uncapped = false) {
+        const stale = this.staleCombatCacheRooms();
+        if (!stale.length) return 0;
+        await this.recomputeCombatSims(uncapped);
+        return stale.length;
+    },
+
+    /**
      * Run combat sim for a monster room and return clear stats
      */
     async computeCombatClear(monsterHrid, roomLevel, options = {}) {

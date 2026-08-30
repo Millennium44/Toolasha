@@ -75,6 +75,7 @@ const {
     GEAR_CHANGED_DETAIL,
 } = await import('./labyrinth-sim-cache.js');
 const { buildAccuracyExport } = await import('./labyrinth-accuracy-export.js');
+const { default: loadoutSnapshot } = await import('./loadout-snapshot.js');
 
 afterEach(() => {
     settings.map.clear();
@@ -497,5 +498,96 @@ describe('a sim with no game data does not reach the worker', () => {
         expect(simRuns.list).toHaveLength(0);
         // Nothing cached, so the room is re-tried once the data lands
         expect(ctx.combatCache.size).toBe(0);
+    });
+});
+
+/**
+ * The palette's "Recompute lab sims" needs a count before it recomputes,
+ * because recomputing is what destroys the evidence — and it needs that count
+ * in rooms, which is the unit on screen.
+ */
+describe('stale rooms', () => {
+    /**
+     * The mixin's `this`, with a cache already holding entries stamped with the
+     * fingerprints the test names.
+     * @param {Object<string, string>} stamped - cacheKey → the fingerprint it was computed under
+     * @param {string} current - The fingerprint of the gear worn now
+     * @returns {Object} A context
+     */
+    const context = (stamped, current = 'now') => {
+        const ctx = {
+            ...simCacheMethods,
+            combatCache: new Map(),
+            _combatCacheMeta: new Map(),
+            _snapshotContentFingerprint: () => current,
+            recomputeCombatSims: vi.fn(async () => {}),
+        };
+        for (const [key, snapshotFingerprint] of Object.entries(stamped)) {
+            ctx.combatCache.set(key, { clearChance: 0.5 });
+            ctx._combatCacheMeta.set(key, { computedAt: 1, snapshotFingerprint, scriptVersion: '1' });
+        }
+        return ctx;
+    };
+
+    const wasReady = loadoutSnapshot.snapshotsReady;
+    afterEach(() => {
+        loadoutSnapshot.snapshotsReady = wasReady;
+    });
+
+    test('entries stamped with the gear worn now are not stale', () => {
+        loadoutSnapshot.snapshotsReady = true;
+        const ctx = context({ '/monsters/imp:200:0:precision::': 'now' });
+        expect(ctx.staleCombatCacheRooms()).toEqual([]);
+    });
+
+    test('an entry stamped with other gear is one stale room', () => {
+        loadoutSnapshot.snapshotsReady = true;
+        const ctx = context({ '/monsters/imp:200:0:precision::': 'before' });
+        expect(ctx.staleCombatCacheRooms()).toEqual(['/monsters/imp:200']);
+    });
+
+    test('several entries for one room count once — the player sees rooms, not cache keys', () => {
+        loadoutSnapshot.snapshotsReady = true;
+        const ctx = context({
+            '/monsters/imp:200:0:precision::': 'before',
+            '/monsters/imp:200:0:dec50::': 'before',
+            '/monsters/imp:200:1:precision::': 'before',
+            '/monsters/rat:180:0:precision::': 'before',
+        });
+        // Three of the four keys are the same monster at the same room level
+        expect(ctx.staleCombatCacheRooms().sort()).toEqual(['/monsters/imp:200', '/monsters/rat:180']);
+    });
+
+    test('nothing is stale until the snapshots have landed', () => {
+        // Before they land the fingerprint is taken over an empty snapshot set
+        // and matches nothing, so every room on the floor would read as stale
+        loadoutSnapshot.snapshotsReady = false;
+        const ctx = context({ '/monsters/imp:200:0:precision::': 'before' });
+        expect(ctx.staleCombatCacheRooms()).toEqual([]);
+    });
+
+    test('an entry that predates the fingerprint is unknown, not different', () => {
+        loadoutSnapshot.snapshotsReady = true;
+        const ctx = context({ '/monsters/imp:200:0:precision::': undefined });
+        expect(ctx.staleCombatCacheRooms()).toEqual([]);
+    });
+
+    test('recomputing stale sims runs the button’s path and answers with the count', async () => {
+        loadoutSnapshot.snapshotsReady = true;
+        const ctx = context({
+            '/monsters/imp:200:0:precision::': 'before',
+            '/monsters/rat:180:0:precision::': 'before',
+        });
+
+        expect(await ctx.recomputeStaleCombatSims(false)).toBe(2);
+        expect(ctx.recomputeCombatSims).toHaveBeenCalledWith(false);
+    });
+
+    test('nothing stale recomputes nothing — the cache was already right', async () => {
+        loadoutSnapshot.snapshotsReady = true;
+        const ctx = context({ '/monsters/imp:200:0:precision::': 'now' });
+
+        expect(await ctx.recomputeStaleCombatSims(false)).toBe(0);
+        expect(ctx.recomputeCombatSims).not.toHaveBeenCalled();
     });
 });

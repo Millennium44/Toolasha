@@ -26,6 +26,7 @@ import { hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, itemSpriteUrl } from '../../utils/overlay-format.js';
 import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import { estimateLiveClearChance, FIGHT_TIMEOUT_SECONDS, MIN_ELAPSED_SECONDS } from './labyrinth-live-combat.js';
@@ -241,6 +242,21 @@ class LabyrinthClearRate {
             fingerprint: () => this._snapshotContentFingerprint(),
         });
 
+        // The Recompute button is inside the Room Logs panel, behind the
+        // Labyrinth tab, on a tab strip the button itself injects — so the one
+        // action a player wants after changing gear is four clicks and a piece
+        // of knowledge deep. This is the same call the button makes.
+        registerCommand({
+            name: 'Recompute lab sims',
+            hint: 'Re-sim rooms whose results were computed under other gear',
+            kind: 'verb',
+            run: async () => {
+                const queued = await this.recomputeStaleCombatSims(false);
+                if (!queued) return 'nothing stale';
+                return `${queued} stale room${queued === 1 ? '' : 's'} queued`;
+            },
+        });
+
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
             this.injectOverlays()
         );
@@ -437,6 +453,8 @@ class LabyrinthClearRate {
                 this.pruneTileTimer = null;
             }
             this.calculatedTileKeys?.clear();
+
+            unregisterCommand('Recompute lab sims');
 
             this.unregisterHandlers.forEach((fn) => fn());
             this.unregisterHandlers = [];

@@ -146,6 +146,7 @@ vi.mock('../../core/storage.js', () => ({
 const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
 const { default: configMock } = await import('../../core/config.js');
 const { COMBAT_CACHE_STORAGE_VERSION } = await import('./labyrinth-sim-cache.js');
+const { registeredCommands, resetCommands } = await import('../../utils/command-registry.js');
 
 describe('normalizeChance', () => {
     test('passes through ratios and converts percent-form values', () => {
@@ -3618,5 +3619,71 @@ describe('the stale-gear marker on a cached room tile', () => {
         expect(el.textContent).toBe('gear changed since this was computed');
         expect(el.textContent).not.toMatch(/abilit|buff|level|build/i);
         expect(el.firstChild.title).toContain('abilities and buffs are not');
+    });
+});
+
+/**
+ * The Recompute button is behind the Labyrinth tab, inside the Room Logs panel,
+ * on a tab strip that panel injects. Registering it as a palette verb is the
+ * whole point; a verb left registered after the feature is switched off would
+ * be a list entry that quietly does nothing, which is what registration exists
+ * to prevent.
+ */
+describe('the recompute verb', () => {
+    afterEach(() => {
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+        labyrinthClearRate.isInitialized = false;
+        resetCommands();
+    });
+
+    /** @returns {Object|undefined} The verb, as the palette would see it */
+    const verb = () => registeredCommands().find((entry) => entry.name === 'Recompute lab sims');
+
+    test('initialising offers it, and it is a verb rather than a panel', () => {
+        resetCommands();
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+
+        expect(verb()).toBeDefined();
+        expect(verb().kind).toBe('verb');
+    });
+
+    test('switching the feature off takes it out of the palette', () => {
+        resetCommands();
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+
+        expect(verb()).toBeUndefined();
+    });
+
+    test('it reports the room count, pluralised', async () => {
+        resetCommands();
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+
+        const spy = vi.spyOn(labyrinthClearRate, 'recomputeStaleCombatSims');
+
+        spy.mockResolvedValue(3);
+        expect(await verb().run()).toBe('3 stale rooms queued');
+
+        spy.mockResolvedValue(1);
+        expect(await verb().run()).toBe('1 stale room queued');
+        spy.mockRestore();
+    });
+
+    test('with nothing to do it says so rather than vanishing', async () => {
+        resetCommands();
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+
+        const spy = vi.spyOn(labyrinthClearRate, 'recomputeStaleCombatSims').mockResolvedValue(0);
+        expect(await verb().run()).toBe('nothing stale');
+        // Still listed: an entry you can only find on the days it would have
+        // worked is one you cannot learn
+        expect(verb()).toBeDefined();
+        spy.mockRestore();
     });
 });
