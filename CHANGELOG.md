@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tooltips on reused poppers stop showing the previous item's extras
+
+The game reuses tooltip elements, and two injectors guarded re-entry per element rather than per item: dungeon token tooltips kept the first item's shop table under whatever came next, and collection popovers kept the previous item's View Action / Item Dictionary buttons — clicking them navigated to the wrong item. Both now key their guard on the item and clear stale injections, the same pattern the price tooltip already follows.
+
 ### Blaze verified: a cast proc, not an on-hit one
 
 Chasing the suspected auto-attack blaze gap against the real upstream simulator source showed there is no gap — blaze, bloom, and ripple roll once per ability cast in both engines, and every other per-hit effect asymmetry between the auto and ability paths is structural or deliberately upstream-matching (full census in the commit). The finding is pinned with tests and documented at the auto-attack path so nobody re-suspects it without a recorded fight as evidence.
