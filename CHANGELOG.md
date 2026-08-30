@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial ledger stops calling the other boss fight's members absent
+
+Attendance divided the whole guild by the fights this client happened to watch, so everyone in a simultaneous trial read 0% with a red no-show. The column is now "Took part", built from evidence that actually exists: sign-ups (which auto-place a member into their trial's fight, so they are the guild-wide participation record) settle everybody; a watched fight without one proves only presence, so an unnamed member reads unknown, never absent. Percentages only draw over trials that member was observable in — otherwise the count form — and archived cycles honestly read "seen in the ones it saw".
+
 ### An item modal is not a guild member
 
 The loadout popup scrape reads any modal shaped "Name — Lv.N over stat rows" — which an item detail modal also is, so a refined cape landed in the trial roster as a player. Item names (with their ★ and +N dressing stripped) are now refused the way monster names already were, and the existing purge sweeps any impostor already stored.
