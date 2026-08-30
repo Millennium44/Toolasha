@@ -143,7 +143,7 @@ import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './gui
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
 import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
-import guildTrialTrace from './guild-trial-trace.js';
+import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
 import { forecastTrial } from './guild-trial-forecast.js';
@@ -4106,6 +4106,13 @@ class GuildTrials {
             `style="flex:1 1 auto; cursor:pointer; padding:3px 8px; border-radius:4px; font-size:11px;` +
             `border:1px solid ${color}66; background:transparent; color:${color};">${label}</button>`;
 
+        // How good the recording is, not just that there is one. Only the
+        // quality fields ride in the title, never the event count: this markup
+        // is compared against the last pass to decide whether the block needs
+        // rebuilding, and a figure that moves on every tick would rebuild it on
+        // every tick. Gaps and reload stitches change rarely enough to be free.
+        const traceQuality = describeTraceStatus(guildTrialTrace.status?.());
+
         return (
             '<div data-mwi-controls="1" style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">' +
             button(
@@ -4123,7 +4130,8 @@ class GuildTrials {
                       'trace',
                       '⤓ Trace',
                       ACCENT,
-                      'Download the raw trial combat stream captured this session as gzipped NDJSON. Large.'
+                      'Download the raw trial combat stream captured this session as gzipped NDJSON. Large.' +
+                          (traceQuality ? `\n\n${traceQuality}` : '')
                   )
                 : '') +
             button('scoreboard', 'Per-player', ACCENT, 'Damage and healing per player, ranked.') +

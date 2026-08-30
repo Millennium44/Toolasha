@@ -536,10 +536,36 @@ class GuildTrialTrace {
     }
 
     /**
-     * How much has been traced, for a button to read. Counts persisted chunks
-     * plus the unflushed pending lines.
+     * Whether the trace caught the fight already running.
+     *
+     * The tier-opening message is the only boundary marker on the stream, so a
+     * trace that does not begin with one started mid-fight. Null until anything
+     * at all has been seen — an empty trace has not started anywhere.
+     *
+     * One derivation shared by the export header and {@link status}, so the file
+     * and the button can never disagree about it.
+     *
+     * @returns {boolean|null}
+     */
+    _startedMidFight() {
+        return this.firstEventType ? this.firstEventType !== BOUNDARY_MESSAGE : null;
+    }
+
+    /**
+     * How much has been traced, and how well. Counts persisted chunks plus the
+     * unflushed pending lines.
+     *
+     * The quality fields are the same five the export header carries, and they
+     * are here for the same reason they are there: a count of events says how
+     * *much* was captured and nothing about whether it can be trusted. A trace
+     * with a forty-second hole in it, or one that began halfway through a fight,
+     * has an event count that looks perfectly healthy. Somebody deciding whether
+     * to keep a recording should be able to see that before they close the tab,
+     * not after they open the file.
+     *
      * @returns {{running: boolean, eventCount: number, heldCount: number, duplicatesDiscarded: number,
-     *   eventsDropped: number, traceId: string|null, startedAt: number|null}}
+     *   eventsDropped: number, traceId: string|null, startedAt: number|null, maxGapMs: number|null,
+     *   gapsOver5s: number, startedMidFight: boolean|null, resumedAcrossReloads: boolean, chunkCount: number}}
      */
     status() {
         return {
@@ -551,6 +577,11 @@ class GuildTrialTrace {
             eventsDropped: this.eventsDropped,
             traceId: this.traceId,
             startedAt: this.startedAt || null,
+            maxGapMs: this.maxGapMs,
+            gapsOver5s: this.gapsOver5s,
+            startedMidFight: this._startedMidFight(),
+            resumedAcrossReloads: this.resumed,
+            chunkCount: this.chunks.length,
         };
     }
 
@@ -619,7 +650,7 @@ class GuildTrialTrace {
             gapsOver5s: this.gapsOver5s,
             // The tier-opening message is the only boundary marker; a trace that
             // does not begin with one caught the fight already running
-            startedMidFight: this.firstEventType ? this.firstEventType !== BOUNDARY_MESSAGE : null,
+            startedMidFight: this._startedMidFight(),
             resumedAcrossReloads: this.resumed,
             chunkCount: this.chunks.length,
         };
@@ -682,6 +713,84 @@ class GuildTrialTrace {
             return false;
         }
     }
+}
+
+/**
+ * A gap, in the coarsest unit that still says how bad it was.
+ *
+ * Whole seconds up to ninety, whole minutes past that. A hole in the feed is
+ * measured to nothing like that precision — it is bounded by two arrival times
+ * and everything between them is unknown — so "40s" is the honest shape and
+ * "40.317s" would be a claim about the missing part.
+ *
+ * @param {number} ms - Milliseconds
+ * @returns {string} e.g. `40s`, `4m`
+ */
+export function formatGap(ms) {
+    const seconds = Math.round(ms / 1000);
+    if (seconds < 90) return `${seconds}s`;
+    return `${Math.round(seconds / 60)}m`;
+}
+
+/**
+ * What a trace's status reads as, for the button that offers to download it.
+ *
+ * Every line is one of the quality fields, worded as the consequence rather
+ * than as the field: a reader deciding whether this recording is worth keeping
+ * cares that the opening of the tier is missing, not that `startedMidFight` is
+ * true. Silent about a field with nothing to report — a trace with no gaps says
+ * nothing about gaps rather than "0 gaps", because a clean recording should read
+ * as short.
+ *
+ * Pure, so the wording can be tested without a DOM or a stream.
+ *
+ * @param {Object|null} status - From {@link GuildTrialTrace#status}
+ * @returns {string} Lines, newline-separated; empty when nothing has been traced
+ */
+export function describeTraceStatus(status) {
+    if (!status?.traceId) return '';
+
+    const lines = [];
+    const chunks = status.chunkCount === 1 ? '1 stored chunk' : `${status.chunkCount || 0} stored chunks`;
+    lines.push(`${status.running ? 'Recording' : 'Held, not recording'} — ${chunks}.`);
+
+    if (status.gapsOver5s > 0) {
+        const gaps = status.gapsOver5s === 1 ? '1 gap over 5s' : `${status.gapsOver5s} gaps over 5s`;
+        const longest = Number.isFinite(status.maxGapMs) ? `, longest ${formatGap(status.maxGapMs)}` : '';
+        lines.push(`${gaps}${longest} — the stream went quiet there and the events are simply absent.`);
+    }
+    if (status.startedMidFight === true) {
+        lines.push('Started mid-fight, so the opening of the tier is not in the file.');
+    }
+    if (status.resumedAcrossReloads) {
+        lines.push('Stitched back together across a page reload.');
+    }
+
+    return lines.join('\n');
+}
+
+/**
+ * The scoreboard's one-line warning about a hole in the recording, or nothing.
+ *
+ * Deliberately *not* about attribution coverage, which the damage module
+ * accounts for separately and by a different measure: coverage is about which
+ * ticks could be split out across players, and this is about ticks that never
+ * arrived at all. Conflating them would let a fully-covered attribution look
+ * unaffected by a forty-second hole in the feed it was computed from.
+ *
+ * Only while a trace is actually running. A trace held from an earlier session,
+ * or the feature switched off, describes a recording the numbers on screen were
+ * not computed from, and warning about it would be warning about nothing.
+ *
+ * @param {Object|null} status - From {@link GuildTrialTrace#status}
+ * @returns {string} The line, or '' when there is nothing to warn about
+ */
+export function traceGapWarning(status) {
+    if (!status?.running) return '';
+    if (!(status.gapsOver5s > 0)) return '';
+    if (!Number.isFinite(status.maxGapMs)) return '';
+
+    return `recording gap ${formatGap(status.maxGapMs)} — attribution may undercount`;
 }
 
 const guildTrialTrace = new GuildTrialTrace();

@@ -41,6 +41,7 @@ const game = vi.hoisted(() => ({
     skilling: {},
     skillingEnded: {},
     skillingResets: 0,
+    traceStatus: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -199,6 +200,12 @@ vi.mock('./guild-trial-scoreboard.js', () => ({
         noteForecast: vi.fn(),
         noteContext: (context) => (game.scoreboardContext = context),
     },
+}));
+// Real wording, driven status: `describeTraceStatus` is what the Trace button's
+// tooltip carries, and the singleton behind it otherwise reads a live stream
+vi.mock('./guild-trial-trace.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    default: { status: () => game.traceStatus, initialize: () => {}, cleanup: () => {}, exportTrace: async () => {} },
 }));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
@@ -5435,5 +5442,49 @@ describe('the guild message says a trial is running', () => {
             deadlineMs: 1000,
         });
         expect(tight).toContain('does not clear in time');
+    });
+});
+
+describe('the Trace button', () => {
+    beforeEach(() => {
+        game.settings.guildTrialDiagnosticTrace = true;
+        game.traceStatus = null;
+    });
+    afterEach(() => {
+        delete game.settings.guildTrialDiagnosticTrace;
+        game.traceStatus = null;
+    });
+
+    test('is absent while the trace setting is off', () => {
+        game.settings.guildTrialDiagnosticTrace = false;
+        expect(guildTrials._controlsHTML()).not.toContain('data-action="trace"');
+    });
+
+    test('carries how good the recording is, not just what it downloads', () => {
+        game.traceStatus = {
+            running: true,
+            traceId: 't1',
+            chunkCount: 2,
+            gapsOver5s: 3,
+            maxGapMs: 40_000,
+            startedMidFight: true,
+            resumedAcrossReloads: true,
+        };
+        const html = guildTrials._controlsHTML();
+
+        expect(html).toContain('data-action="trace"');
+        expect(html).toContain('Recording — 2 stored chunks.');
+        expect(html).toContain('3 gaps over 5s, longest 40s');
+        expect(html).toContain('the opening of the tier is not in the file');
+        expect(html).toContain('across a page reload');
+    });
+
+    test('says only what it downloads while nothing has been traced', () => {
+        game.traceStatus = { running: false, traceId: null, chunkCount: 0, gapsOver5s: 0, maxGapMs: null };
+        const html = guildTrials._controlsHTML();
+
+        expect(html).toContain('data-action="trace"');
+        expect(html).toContain('gzipped NDJSON');
+        expect(html).not.toContain('stored chunk');
     });
 });

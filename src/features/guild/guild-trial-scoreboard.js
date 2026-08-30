@@ -51,6 +51,10 @@ import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
+// The diagnostic trace, for one line about holes in the recording. Safe to
+// import here where the trials feature is not: the trace imports neither this
+// panel nor that feature, so nothing points back.
+import guildTrialTrace, { traceGapWarning } from './guild-trial-trace.js';
 import { buildGuildReport } from './guild-trial-report.js';
 import { boardHeadHTML, boardRowHTML, boardTabsHTML, rankRows, escapeText } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
@@ -823,6 +827,18 @@ class GuildTrialScoreboard {
               'usual cause). Trust the shares less than the total, and the game’s post-trial stats over both.</div>'
             : '';
 
+        // A hole in the diagnostic recording, when one is being made. This is
+        // about the trace and only the trace: the coverage note above accounts
+        // for ticks that arrived but could not be split across players, while
+        // this is about ticks that never arrived. A fully-covered attribution
+        // computed over a feed with a forty-second hole in it is still short by
+        // forty seconds, and only this line says so.
+        const traceGap = traceGapWarning(guildTrialTrace.status?.());
+        const traceNote = traceGap
+            ? `<div style="color:${WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+              `${escapeText(traceGap)}</div>`
+            : '';
+
         const unestimated =
             estimated && estimate.unestimated.length
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">No build captured, so not ` +
@@ -959,7 +975,19 @@ class GuildTrialScoreboard {
             `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN}; font-size:11px;">` +
             'End &amp; start new</button></div>';
 
-        return head + tabs + disclaimer + takenNote + ceilingNote + list + footnote + manaLine + expected + buttons;
+        return (
+            head +
+            tabs +
+            disclaimer +
+            takenNote +
+            ceilingNote +
+            traceNote +
+            list +
+            footnote +
+            manaLine +
+            expected +
+            buttons
+        );
     }
 
     /**

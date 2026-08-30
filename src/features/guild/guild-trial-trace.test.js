@@ -71,7 +71,15 @@ vi.mock('../sync/sync-compress.js', () => ({
     gunzipToText: async (text) => text,
 }));
 
-import trace, { GuildTrialTrace, MAX_EVENTS, MAX_STORED_BYTES, TRACE_MESSAGES } from './guild-trial-trace.js';
+import trace, {
+    GuildTrialTrace,
+    MAX_EVENTS,
+    MAX_STORED_BYTES,
+    TRACE_MESSAGES,
+    describeTraceStatus,
+    traceGapWarning,
+    formatGap,
+} from './guild-trial-trace.js';
 
 function emit(type, payload) {
     for (const fn of bus.get(type) || []) fn(payload);
@@ -752,5 +760,142 @@ describe('NDJSON export', () => {
     test('an empty trace has nothing to export', async () => {
         armDownload();
         await expect(trace.exportTrace()).resolves.toBe(false);
+    });
+});
+
+describe('the status a button reads', () => {
+    test('carries the quality fields, not just the event counts', async () => {
+        vi.useFakeTimers();
+        try {
+            emit('guild_battle_updated', tick);
+            vi.advanceTimersByTime(40_000); // the fight view was closed for a while
+            emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 90 } } });
+
+            const status = trace.status();
+            expect(status.maxGapMs).toBe(40_000);
+            expect(status.gapsOver5s).toBe(1);
+            // Opened on a tick rather than on the tier boundary
+            expect(status.startedMidFight).toBe(true);
+            expect(status.resumedAcrossReloads).toBe(false);
+            expect(status.chunkCount).toEqual(expect.any(Number));
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the quality fields agree with the ones the export header carries', async () => {
+        vi.useFakeTimers();
+        try {
+            emit('guild_battle_updated', tick);
+            vi.advanceTimersByTime(7000);
+            emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 90 } } });
+            vi.useRealTimers();
+
+            const status = trace.status();
+            const metadata = await tracedMetadata();
+            for (const field of ['maxGapMs', 'gapsOver5s', 'startedMidFight', 'resumedAcrossReloads', 'chunkCount']) {
+                expect(status[field]).toEqual(metadata[field]);
+            }
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('an untouched trace reports no quality to speak of', () => {
+        const status = trace.status();
+        expect(status.maxGapMs).toBeNull();
+        expect(status.gapsOver5s).toBe(0);
+        // Nothing has been seen, so it has not started anywhere
+        expect(status.startedMidFight).toBeNull();
+    });
+});
+
+describe('formatGap', () => {
+    test('whole seconds below ninety', () => {
+        expect(formatGap(40_000)).toBe('40s');
+        expect(formatGap(5400)).toBe('5s');
+    });
+
+    test('whole minutes above', () => {
+        expect(formatGap(4 * 60_000)).toBe('4m');
+        expect(formatGap(90_000)).toBe('2m');
+    });
+});
+
+describe('describeTraceStatus', () => {
+    const status = (overrides) => ({
+        running: true,
+        traceId: 't1',
+        chunkCount: 3,
+        maxGapMs: null,
+        gapsOver5s: 0,
+        startedMidFight: false,
+        resumedAcrossReloads: false,
+        ...overrides,
+    });
+
+    test('nothing traced reads as nothing at all', () => {
+        expect(describeTraceStatus(null)).toBe('');
+        expect(describeTraceStatus(status({ traceId: null }))).toBe('');
+    });
+
+    test('a clean recording reads short', () => {
+        // A trace with no gaps says nothing about gaps rather than "0 gaps"
+        expect(describeTraceStatus(status())).toBe('Recording — 3 stored chunks.');
+    });
+
+    test('a held trace says it is not recording', () => {
+        expect(describeTraceStatus(status({ running: false }))).toContain('Held, not recording');
+    });
+
+    test('one chunk is not "1 chunks"', () => {
+        expect(describeTraceStatus(status({ chunkCount: 1 }))).toContain('1 stored chunk.');
+    });
+
+    test('gaps are reported with the longest of them', () => {
+        const text = describeTraceStatus(status({ gapsOver5s: 2, maxGapMs: 40_000 }));
+        expect(text).toContain('2 gaps over 5s, longest 40s');
+        expect(text).toContain('the events are simply absent');
+    });
+
+    test('one gap is not "1 gaps"', () => {
+        expect(describeTraceStatus(status({ gapsOver5s: 1, maxGapMs: 6000 }))).toContain('1 gap over 5s');
+    });
+
+    test('starting mid-fight is worded as the consequence', () => {
+        expect(describeTraceStatus(status({ startedMidFight: true }))).toContain(
+            'the opening of the tier is not in the file'
+        );
+        // Unknown is not "no": an empty trace has not started anywhere
+        expect(describeTraceStatus(status({ startedMidFight: null }))).not.toContain('mid-fight');
+    });
+
+    test('a reload stitch is said', () => {
+        expect(describeTraceStatus(status({ resumedAcrossReloads: true }))).toContain('across a page reload');
+    });
+});
+
+describe('traceGapWarning', () => {
+    const status = (overrides) => ({ running: true, gapsOver5s: 1, maxGapMs: 40_000, ...overrides });
+
+    test('warns while a capture is running and a gap has happened', () => {
+        expect(traceGapWarning(status())).toBe('recording gap 40s — attribution may undercount');
+    });
+
+    test('silent when no capture is running', () => {
+        // A trace held from an earlier session describes a recording the numbers
+        // on screen were not computed from
+        expect(traceGapWarning(status({ running: false }))).toBe('');
+        expect(traceGapWarning(null)).toBe('');
+        expect(traceGapWarning(undefined)).toBe('');
+    });
+
+    test('silent when the recording has no gaps', () => {
+        expect(traceGapWarning(status({ gapsOver5s: 0 }))).toBe('');
+        expect(traceGapWarning(status({ gapsOver5s: 0, maxGapMs: 300 }))).toBe('');
+    });
+
+    test('silent when there is no gap figure to quote', () => {
+        expect(traceGapWarning(status({ maxGapMs: null }))).toBe('');
     });
 });

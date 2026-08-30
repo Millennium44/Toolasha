@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ breakdown: null, loadouts: {}, seen: [], restarts: 0 }));
+const game = vi.hoisted(() => ({ breakdown: null, loadouts: {}, seen: [], restarts: 0, traceStatus: null }));
 
 // The pure parts of the damage module are the real ones — `estimateDamageSplit`
 // is what the Damage tab now draws, and a stub of it would be testing the stub
@@ -31,6 +31,13 @@ vi.mock('./guild-trial-recorder.js', () => ({
             game.restarts += 1;
         },
     },
+}));
+// The trace's own wording is the real thing — `traceGapWarning` is what the
+// panel draws, and a stub of it would be testing the stub. Only the singleton's
+// status is driven, since it otherwise reads a live websocket stream.
+vi.mock('./guild-trial-trace.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    default: { status: () => game.traceStatus },
 }));
 vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: vi.fn(),
@@ -86,6 +93,7 @@ beforeEach(() => {
     game.loadouts = {};
     game.seen = [];
     game.restarts = 0;
+    game.traceStatus = null;
     document.body.innerHTML = '';
 });
 
@@ -661,5 +669,57 @@ describe('the class chip on a board row', () => {
         // anyway — a board row is an HTML string, and nothing off the wire may
         // reach it through a field that is supposed to be a fixed word
         expect(classTagHTML({ short: '<img onerror=x>' })).toBe('');
+    });
+});
+
+describe('the trace recording warning', () => {
+    /** @returns {string} The panel's text */
+    const text = () => document.querySelector(`.${PANEL_CLASS}`)?.textContent || '';
+
+    const tracing = (overrides) => ({ running: true, gapsOver5s: 1, maxGapMs: 40_000, ...overrides });
+
+    test('one line when a capture is running and the feed went quiet', () => {
+        game.breakdown = breakdown({ source: 'spectated', participants: 2 });
+        game.traceStatus = tracing();
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('recording gap 40s — attribution may undercount');
+    });
+
+    test('nothing while the trace feature is off', () => {
+        game.breakdown = breakdown({ source: 'spectated', participants: 2 });
+        game.traceStatus = null;
+        guildTrialScoreboard.open();
+
+        expect(text()).not.toContain('recording gap');
+    });
+
+    test('nothing for a trace held but no longer running', () => {
+        // The held trace describes a recording these numbers did not come from
+        game.breakdown = breakdown({ source: 'spectated', participants: 2 });
+        game.traceStatus = tracing({ running: false });
+        guildTrialScoreboard.open();
+
+        expect(text()).not.toContain('recording gap');
+    });
+
+    test('nothing while the recording is clean', () => {
+        game.breakdown = breakdown({ source: 'spectated', participants: 2 });
+        game.traceStatus = tracing({ gapsOver5s: 0, maxGapMs: 900 });
+        guildTrialScoreboard.open();
+
+        expect(text()).not.toContain('recording gap');
+    });
+
+    test('is about the trace, not the damage module’s coverage accounting', () => {
+        // A fully covered attribution is still short by whatever the feed
+        // missed, and the two must not be read as one claim
+        game.breakdown = breakdown({ source: 'spectated', participants: 2 });
+        game.traceStatus = tracing();
+        guildTrialScoreboard.open();
+
+        const shown = text();
+        expect(shown).toContain('recording gap');
+        expect(shown).not.toContain('of 2 players');
     });
 });
