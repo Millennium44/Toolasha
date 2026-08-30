@@ -90,6 +90,17 @@ function sampleAccount() {
 
 const text = () => accountPanel.panel?.textContent || '';
 
+/**
+ * The rows of the "Needs attention" card, in the order they are drawn.
+ * @returns {Array<string>} Each row's text
+ */
+function attentionRows() {
+    const card = [...(accountPanel.panel?.querySelectorAll('div') || [])].find(
+        (node) => node.firstElementChild?.textContent === 'Needs attention'
+    );
+    return [...(card?.children || [])].map((node) => node.textContent);
+}
+
 beforeEach(() => {
     store.data = {};
     state.account = sampleAccount();
@@ -213,6 +224,65 @@ describe('the "Needs attention" section', () => {
 
         expect(text()).toContain('No briefing recorded yet for Fresh.');
         expect(text()).not.toContain('Nothing needs Fresh');
+    });
+
+    test('the header names who to look at next, and what is worst about them', () => {
+        // Alt has a full board that is already wasting; Main only has tasks
+        // waiting, which is a reading
+        state.account.briefings.b.facts = {
+            taskSlots: { ok: true, isFull: true, msUntilWaste: 30 * 60_000, msUntilFull: 0 },
+        };
+        state.liveFacts = { tasksReady: 1 };
+
+        accountPanel.show({ remember: false });
+
+        expect(text()).toContain('Next: Alt — Task board: Full — tasks are being wasted');
+    });
+
+    test('the character you are already on is never the one you are sent to', () => {
+        state.account.briefings.b.facts = {};
+        state.liveFacts = { tasksReady: 3 };
+
+        accountPanel.show({ remember: false });
+
+        expect(text()).not.toContain('Next:');
+    });
+
+    test('the blocks are ordered worst first, not in character order', () => {
+        // Main (first in every other list) has the milder problem
+        state.account.briefings.b.facts = {
+            taskSlots: { ok: true, isFull: true, msUntilWaste: 30 * 60_000, msUntilFull: 0 },
+        };
+        state.liveFacts = { tasksReady: 1 };
+
+        accountPanel.show({ remember: false });
+
+        // Read off the section's own rows rather than the panel's whole text —
+        // every character is named in the networth card above it too
+        const rows = attentionRows();
+        const alt = rows.findIndex((line) => line.startsWith('Alt'));
+        const main = rows.findIndex((line) => line.startsWith('Main (here)'));
+        expect(alt).toBeGreaterThanOrEqual(0);
+        expect(alt).toBeLessThan(main);
+    });
+
+    test('a never-recorded character is not ranked among the rest, however bad they are', () => {
+        state.account.characters.push({
+            id: 'c',
+            name: 'Fresh',
+            named: true,
+            networth: null,
+            networthAt: null,
+            lastSeen: null,
+            points: 0,
+            queue: { state: 'unknown', remainingSeconds: null, stale: false, ageMs: null },
+            isCurrent: false,
+        });
+
+        accountPanel.show({ remember: false });
+
+        expect(text()).toContain('No briefing recorded yet for Fresh.');
+        expect(text()).not.toContain('Next: Fresh');
     });
 
     test('the section says outright that it only learns anything when you switch here', () => {

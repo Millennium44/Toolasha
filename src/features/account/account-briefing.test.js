@@ -18,6 +18,11 @@ import {
     briefingFromLiveFacts,
     briefingFromSnapshot,
     snapshotSubjects,
+    ATTENTION_SEVERITY,
+    lineSeverity,
+    nextAttentionText,
+    rankAttention,
+    worstLine,
 } from './account-briefing.js';
 
 const NOW = 1_700_000_000_000;
@@ -244,5 +249,148 @@ describe('accountBriefings', () => {
 
     test('no characters is no rows', () => {
         expect(accountBriefings({ characters: null, snapshots: null })).toEqual([]);
+    });
+});
+
+/**
+ * Who to look at next.
+ *
+ * The section's whole job is an order, and an order is a claim: putting a
+ * character above another says it is worse off. So the assertions are about the
+ * three things that make that claim honest — that the order follows one stated
+ * list rather than an accident of arithmetic, that the tie-break is the age of
+ * the information, and that a character nobody has ever recorded is never
+ * anywhere in the order at all.
+ */
+
+/** A line of a given severity, built the way the engine builds one. */
+const wasting = () => ({
+    key: 'taskSlots',
+    label: 'Task board',
+    value: 'Full — tasks are being wasted',
+    tone: 'bad',
+    horizon: {
+        at: NOW - HOUR,
+        text: 'Full — tasks are being wasted',
+        past: 'Full — tasks are being wasted',
+        lapses: false,
+    },
+});
+const lapsed = () => ({ key: 'consumable', label: 'First to run dry', value: 'Ale has run out', tone: 'bad' });
+const soon = () => ({
+    key: 'consumable',
+    label: 'First to run dry',
+    value: 'Ale runs dry at 14:20',
+    tone: 'bad',
+    horizon: { at: NOW + HOUR, text: 'Ale runs dry', past: 'Ale ran dry', lapses: true },
+});
+const readingLine = () => ({ key: 'tasksReady', label: 'Tasks to claim', value: '3 waiting', tone: 'gold' });
+
+/** An entry as `accountBriefings` returns one. */
+const entry = (id, lines, extra = {}) => ({
+    id,
+    name: id,
+    isCurrent: false,
+    at: NOW - HOUR,
+    known: true,
+    lines,
+    ...extra,
+});
+
+describe('lineSeverity', () => {
+    test('every rank is reachable, and each line is exactly one of them', () => {
+        expect(lineSeverity(wasting(), NOW)).toBe('wasting');
+        expect(lineSeverity(lapsed(), NOW)).toBe('lapsed-deadline');
+        expect(lineSeverity(soon(), NOW)).toBe('deadline-soon');
+        expect(lineSeverity(readingLine(), NOW)).toBe('reading');
+        expect(new Set(ATTENTION_SEVERITY).size).toBe(ATTENTION_SEVERITY.length);
+    });
+
+    test('the ranking reads the horizon and the tone, never the wording', () => {
+        // The same sentence, once with a matured non-lapsing horizon and once
+        // without one: only the horizon may decide, or a rename would demote it
+        const reworded = { ...wasting(), value: 'anything at all' };
+        expect(lineSeverity(reworded, NOW)).toBe('wasting');
+        expect(lineSeverity({ ...reworded, horizon: undefined }, NOW)).toBe('lapsed-deadline');
+    });
+});
+
+describe('worstLine', () => {
+    test('the worst line wins however the engine ordered them', () => {
+        expect(worstLine([readingLine(), wasting(), soon()], NOW).severity).toBe('wasting');
+    });
+
+    test('a tie inside one character goes to the engine’s own reading order', () => {
+        const first = { ...readingLine(), value: 'first' };
+        const second = { ...readingLine(), value: 'second' };
+        expect(worstLine([first, second], NOW).line.value).toBe('first');
+    });
+
+    test('no lines is no worst line', () => {
+        expect(worstLine([], NOW)).toBeNull();
+    });
+});
+
+describe('rankAttention', () => {
+    test('characters are ordered by their worst line, worst first', () => {
+        const ranked = rankAttention(
+            [entry('mild', [readingLine()]), entry('worst', [wasting()]), entry('middling', [lapsed()])],
+            NOW
+        );
+        expect(ranked.busy.map((row) => row.id)).toEqual(['worst', 'middling', 'mild']);
+    });
+
+    test('a tie goes to the older snapshot — the one you know least about', () => {
+        const ranked = rankAttention(
+            [
+                entry('fresh', [readingLine()], { at: NOW - HOUR }),
+                entry('stale', [readingLine()], { at: NOW - 20 * HOUR }),
+            ],
+            NOW
+        );
+        expect(ranked.busy.map((row) => row.id)).toEqual(['stale', 'fresh']);
+    });
+
+    test('the character you are on sorts last among its ties, being read live', () => {
+        const ranked = rankAttention(
+            [
+                entry('here', [readingLine()], { isCurrent: true, at: NOW }),
+                entry('alt', [readingLine()], { at: NOW - HOUR }),
+            ],
+            NOW
+        );
+        expect(ranked.busy.map((row) => row.id)).toEqual(['alt', 'here']);
+    });
+
+    test('a never-recorded character is grouped apart and never ordered among the rest', () => {
+        const never = entry('never', [], { known: false, at: null });
+        const ranked = rankAttention([never, entry('busy', [wasting()]), entry('quiet', [])], NOW);
+
+        expect(ranked.unknown.map((row) => row.id)).toEqual(['never']);
+        expect(ranked.busy.map((row) => row.id)).toEqual(['busy']);
+        expect(ranked.quiet.map((row) => row.id)).toEqual(['quiet']);
+        // The three groups are disjoint, so nothing is silently counted as fine
+        expect(ranked.busy.concat(ranked.quiet, ranked.unknown)).toHaveLength(3);
+    });
+
+    test('nothing at all is three empty groups and nobody to go to', () => {
+        expect(rankAttention([], NOW)).toEqual({ busy: [], quiet: [], unknown: [], next: null });
+    });
+});
+
+describe('nextAttentionText', () => {
+    test('names the worst character you are not already on, and why', () => {
+        const ranked = rankAttention(
+            [entry('here', [wasting()], { isCurrent: true, at: NOW }), entry('Alt', [lapsed()])],
+            NOW
+        );
+        expect(ranked.next.id).toBe('Alt');
+        expect(nextAttentionText(ranked.next)).toBe('Next: Alt — First to run dry: Ale has run out');
+    });
+
+    test('the character you are on is never the one you are told to go to', () => {
+        const ranked = rankAttention([entry('here', [wasting()], { isCurrent: true, at: NOW })], NOW);
+        expect(ranked.next).toBeNull();
+        expect(nextAttentionText(ranked.next)).toBeNull();
     });
 });

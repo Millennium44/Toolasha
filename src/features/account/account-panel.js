@@ -17,7 +17,7 @@ import { formatRelativeTime, networthFormatter } from '../../utils/formatters.js
 import { row, blank, ROW_COLORS, shortDuration } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
-import { accountBriefings } from './account-briefing.js';
+import { accountBriefings, nextAttentionText, rankAttention } from './account-briefing.js';
 import { accountReadFailure, cachedAccount, refreshAccount, windowChange } from './account-data.js';
 
 const ACCENT = '#c9a0ff';
@@ -264,6 +264,10 @@ function drawAttentionFor(card, entry, at) {
  * A character nobody has a snapshot for gets a row of its own saying exactly
  * that, because "we have never looked" is not "nothing is wrong".
  *
+ * The blocks are ordered worst first, and the header names the one character
+ * worth going to. Both come from `account-briefing.js`'s severity list; nothing
+ * here decides how bad anything is.
+ *
  * @param {HTMLElement} body - Where it goes
  * @param {Object} data - The account
  */
@@ -277,9 +281,16 @@ function drawNeedsAttention(body, data) {
 
     const card = panelCard(body, 'Needs attention', ACCENT);
 
-    const busy = entries.filter((entry) => entry.lines.length > 0);
-    const quiet = entries.filter((entry) => entry.known && entry.lines.length === 0);
-    const unknown = entries.filter((entry) => !entry.known);
+    const { busy, quiet, unknown, next } = rankAttention(entries, data.at);
+
+    const header = nextAttentionText(next);
+    if (header) {
+        const nextLine = document.createElement('div');
+        nextLine.textContent = header;
+        nextLine.title = 'The worst line on any character you are not already logged into.';
+        Object.assign(nextLine.style, { color: ROW_COLORS.gold, fontWeight: 'bold', marginBottom: '3px' });
+        card.appendChild(nextLine);
+    }
 
     for (const entry of busy) drawAttentionFor(card, entry, data.at);
 

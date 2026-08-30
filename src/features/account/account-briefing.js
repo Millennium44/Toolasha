@@ -148,6 +148,135 @@ export function briefingFromLiveFacts(facts, now = Date.now()) {
 }
 
 /**
+ * How bad a line is, worst first.
+ *
+ * One explicit list, in one place, and the whole of the ranking. Deliberately
+ * not a weighted score: a score is unarguable in the wrong way — nobody can look
+ * at 0.62 and say whether it is right, two subjects that should never tie can
+ * tie by arithmetic accident, and the day somebody wants a full task board to
+ * outrank a dry keg the fix is a magic number rather than moving a string up
+ * this list. Four names in an order is a thing a maintainer can disagree with.
+ *
+ * What each one means:
+ *
+ * - `wasting` — a deadline that came due and did *not* take its claim with it
+ *   (`lapses: false`). The thing it warned about is happening now and is still
+ *   getting worse: a full task board past its first wasted task.
+ * - `lapsed-deadline` — the engine's own already-happened wording, which it
+ *   reaches for when a countdown has nothing left to count: "Ale has run out",
+ *   "Full — tasks are being wasted", entries "capped". A bad-toned line with no
+ *   deadline left in it. The loss has happened; unlike `wasting` there is no
+ *   claim that it is still deepening.
+ * - `deadline-soon` — a horizon still ahead. Something is coming due and there
+ *   is time to get there.
+ * - `reading` — a state with no clock in it at all: tasks waiting, listings
+ *   undercut, a run half-finished.
+ */
+export const ATTENTION_SEVERITY = ['wasting', 'lapsed-deadline', 'deadline-soon', 'reading'];
+
+/**
+ * Which of {@link ATTENTION_SEVERITY} a line is.
+ *
+ * Reads the line's horizon and the engine's own tone, and never its text: the
+ * wording is the engine's to change, and a ranker that matched on "wasted" would
+ * be a rename away from silently demoting the worst line on the panel.
+ *
+ * @param {Object} line - From `ageBriefingLines` or `briefingFromLiveFacts`
+ * @param {number} [now] - Clock, injectable for tests
+ * @returns {string} One of {@link ATTENTION_SEVERITY}
+ */
+export function lineSeverity(line, now = Date.now()) {
+    const horizon = line?.horizon;
+    const dated = horizon && Number.isFinite(horizon.at);
+
+    if (dated && horizon.lapses === false && horizon.at <= now) return 'wasting';
+    if (dated && horizon.at > now) return 'deadline-soon';
+    // A lapsing horizon that has passed does not reach a reader — `ageBriefingLines`
+    // drops it — so what is left here is the line the engine built already worded
+    // in the past, and it is bad-toned precisely because it has already cost
+    // something
+    if (line?.tone === 'bad') return 'lapsed-deadline';
+    return 'reading';
+}
+
+/**
+ * The worst line among a character's, and how bad it is.
+ *
+ * Ties inside one character go to whichever the engine put first, because the
+ * engine's order is its own reading order and there is nothing better to break
+ * a tie with.
+ *
+ * @param {Array<Object>} lines - One character's lines
+ * @param {number} [now] - Clock, injectable for tests
+ * @returns {{line: Object, severity: string, rank: number}|null} Null when there are no lines
+ */
+export function worstLine(lines, now = Date.now()) {
+    let worst = null;
+    for (const line of lines || []) {
+        const severity = lineSeverity(line, now);
+        const rank = ATTENTION_SEVERITY.indexOf(severity);
+        if (!worst || rank < worst.rank) worst = { line, severity, rank };
+    }
+    return worst;
+}
+
+/**
+ * The "Next:" line: who to look at, and why.
+ *
+ * The current character is excluded on purpose — you are already there, and
+ * being told to go where you are standing is the fastest way to stop reading a
+ * header.
+ *
+ * @param {Object|null} entry - A ranked entry, from {@link rankAttention}
+ * @returns {string|null} The header text, or null when there is nobody to name
+ */
+export function nextAttentionText(entry) {
+    if (!entry?.worst) return null;
+    return `Next: ${entry.name} — ${entry.worst.line.label}: ${entry.worst.line.value}`;
+}
+
+/**
+ * The section's three groups, and who to look at next.
+ *
+ * The three-state honesty of `accountBriefings` is carried through unchanged:
+ * `busy` has something to say, `quiet` has been looked at and had nothing, and
+ * `unknown` has never been looked at. `unknown` is never sorted among the
+ * others, because a character with no record is not a character with no
+ * problems, and putting it anywhere in a list ordered by severity would be
+ * claiming a severity for it.
+ *
+ * Busy characters are ordered by their worst line's severity, and ties by the
+ * older snapshot first: between two characters equally badly off, the one whose
+ * information is older is the one you know least about and have been ignoring
+ * longest.
+ *
+ * @param {Array<Object>} entries - From {@link accountBriefings}
+ * @param {number} [now] - Clock, injectable for tests
+ * @returns {{busy: Array<Object>, quiet: Array<Object>, unknown: Array<Object>, next: Object|null}} The section
+ */
+export function rankAttention(entries, now = Date.now()) {
+    const all = entries || [];
+
+    const busy = all
+        .filter((entry) => entry?.lines?.length > 0)
+        .map((entry) => ({ ...entry, worst: worstLine(entry.lines, now) }))
+        .sort((a, b) => {
+            if (a.worst.rank !== b.worst.rank) return a.worst.rank - b.worst.rank;
+            // A live entry's `at` is `now`, so the character you are logged into
+            // sorts last among its ties — which is right: it is the one you are
+            // looking at
+            return (a.at ?? Infinity) - (b.at ?? Infinity);
+        });
+
+    return {
+        busy,
+        quiet: all.filter((entry) => entry?.known && entry.lines.length === 0),
+        unknown: all.filter((entry) => entry && !entry.known),
+        next: busy.find((entry) => !entry.isCurrent) || null,
+    };
+}
+
+/**
  * One entry per character, in the order the account panel already sorts them.
  *
  * Three outcomes, and they are three different things: a character with lines,
