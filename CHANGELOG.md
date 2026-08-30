@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Account panel says what needs you, per character
+
+Switching away snapshots the departing character's briefing facts (tasks, consumables, undercut listings, enhancement, guild, labyrinth — queue was already covered), and a "Needs attention" card runs the briefing engine over every stored snapshot: deadline lines carry their own horizon and expire when it passes (a "dry in 3h" snapshot from five hours ago is gone; a task board that filled becomes "tasks are being wasted", not a smaller countdown), surviving deadlines restate as clock times, timeless lines age-stamp and dim past a day, quiet characters collapse to one line, and never-recorded is stated as such rather than shown as fine. Playing elsewhere doesn't update these, and the card says so. Found in passing: the live briefing has been printing "Labyrinth entries: true available" — a boolean fed where a count belonged — fixed with a regression test.
+
 ### Every panel reachable from the palette, labyrinth trends, and honest cache staleness
 
 The command palette's hand-maintained list became a registry features push into as they initialize — a switched-off feature never registers, ten previously unreachable panels (dungeon tracker, monster stat check, scroll simulator, XP/hr, risk of ruin, consumables, queue monitor, ability book, market history, trade ledger) gained entries, and the list is alphabetical so it reads the same on every install. The consumables panel's supply section now shows burn per run for all three labyrinth consumables and a torches-per-floor trend over the full 30-run ledger (trusted starts only). And lab sim room tiles whose gear changed since their cached result say exactly that — "gear changed since this was computed", claiming only what the fingerprint covers — instead of a bare age, with nothing marked while loadout snapshots are still loading.
