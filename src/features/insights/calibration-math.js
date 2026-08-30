@@ -463,6 +463,230 @@ export function actionSplit(records, options = {}) {
 }
 
 /**
+ * A version string as something that can be ordered.
+ *
+ * The stamps are the userscript's `@version`, which is semver-ish but not
+ * guaranteed: a build run outside the sandbox stamps `null`, and a hand-edited
+ * header can stamp anything. Only dot-separated digits are ordered; everything
+ * else — null, empty, `dev`, a date — is unorderable and belongs in the one
+ * bucket that makes no claim about where it sits in the sequence.
+ *
+ * @param {string|null} version - A `v` stamp
+ * @returns {number[]|null} Numeric parts, or null when it cannot be ordered
+ */
+function parseVersion(version) {
+    if (typeof version !== 'string') return null;
+    const trimmed = version.trim();
+    if (!/^\d+(\.\d+)*$/.test(trimmed)) return null;
+    return trimmed.split('.').map(Number);
+}
+
+/**
+ * Which of two parsed versions came first.
+ * @param {number[]} a - Parsed parts
+ * @param {number[]} b - Parsed parts
+ * @returns {number} Negative when `a` is older
+ */
+function compareParsed(a, b) {
+    const length = Math.max(a.length, b.length);
+    for (let index = 0; index < length; index += 1) {
+        const left = a[index] ?? 0;
+        const right = b[index] ?? 0;
+        if (left !== right) return left - right;
+    }
+    return 0;
+}
+
+/** The bucket every unorderable stamp shares */
+export const OLDER_COHORT = 'older';
+
+/**
+ * The median deviation per script version, oldest release first.
+ *
+ * Every pair has carried the version that forecast it since the stamp was
+ * added, and the panel does nothing with it but count the odd ones out as a
+ * caveat. That caveat is the interesting measurement wearing a warning's
+ * clothes: if a release changed a calculator, the cohort written after it is
+ * the direct answer to "did that change help", and pooling the cohorts is
+ * exactly what hides it.
+ *
+ * Three things this deliberately does not do:
+ *
+ * - It does not pool thin cohorts into their neighbours. A version that saw
+ *   four runs saw four runs; borrowing the next version's pairs to reach the
+ *   bar would be reporting a figure about a build that was not measured.
+ * - It does not order the unstampable. A pair with no version, or one whose
+ *   stamp is not dot-separated digits, goes in `older` — a bucket that sits
+ *   first because that is where legacy pairs are, and that says so rather than
+ *   pretending to a position in the sequence.
+ * - It does not claim a release caused anything. A version boundary is a
+ *   calendar boundary: the market, the player's gear and the player's zone all
+ *   moved across it too. Every sentence below says a move happened **at** a
+ *   boundary, never because of one.
+ *
+ * The ledger keeps a fixed number of pairs, so an old cohort shrinks as new
+ * pairs are written and eventually vanishes entirely. `rated` is therefore
+ * "pairs still held", not "pairs ever recorded", and the caller is expected to
+ * print it beside every figure.
+ *
+ * @param {Array<Object>} records - Records for ONE group, carrying `v`
+ * @param {Object} [options] - Rules
+ * @param {number} [options.minSamples] - Pairs needed *per cohort* before its figure is shown
+ * @param {number} [options.gapPercent] - How large a median gap has to be to count as a move
+ * @returns {{cohorts: Array<Object>, decided: number, thin: number, movement: Object}}
+ *   Cohorts oldest first
+ */
+export function versionSplit(records, options = {}) {
+    const { minSamples = DEFAULT_MIN_SAMPLES, gapPercent = DEFAULT_GAP_PERCENT } = options;
+
+    const byVersion = new Map();
+    for (const record of records || []) {
+        if (!record) continue;
+        const parsed = parseVersion(record.v);
+        const key = parsed === null ? OLDER_COHORT : record.v.trim();
+        if (!byVersion.has(key)) byVersion.set(key, { parsed, group: [] });
+        byVersion.get(key).group.push(record);
+    }
+
+    const cohorts = [...byVersion.entries()]
+        .sort(([, a], [, b]) => {
+            // The unorderable bucket leads: it is where the pairs written before
+            // stamping existed live, and they are the oldest pairs there are
+            if (a.parsed === null) return b.parsed === null ? 0 : -1;
+            if (b.parsed === null) return 1;
+            return compareParsed(a.parsed, b.parsed);
+        })
+        .map(([version, { group }]) => {
+            const deviations = group.map((r) => deviationPercent(r.predicted, r.actual)).filter((d) => d !== null);
+            const rated = deviations.length;
+            const decided = rated >= minSamples;
+            // Bid-priced against the same forecast, over the pairs that carry a
+            // bid figure — a different sample from the ask one, and counted
+            // separately so the two are never silently compared across
+            // different sets of runs
+            const bidDeviations = group
+                .map((r) => deviationPercent(r.predicted, r.actualBid))
+                .filter((d) => d !== null);
+            const bidRated = bidDeviations.length;
+            return {
+                version,
+                unordered: version === OLDER_COHORT,
+                samples: group.length,
+                rated,
+                decided,
+                // Withheld rather than greyed out below the bar: a number on
+                // screen is read as a finding whatever colour it is drawn in
+                medianDeviation: decided ? median(deviations) : null,
+                bidRated,
+                bidDeviation: bidRated >= minSamples ? median(bidDeviations) : null,
+                text: decided ? pct(median(deviations)) : 'too few to call',
+                lastAt: group.reduce((latest, r) => (r.t > latest ? r.t : latest), 0),
+            };
+        });
+
+    return {
+        cohorts,
+        decided: cohorts.filter((cohort) => cohort.decided).length,
+        thin: cohorts.filter((cohort) => !cohort.decided).length,
+        movement: cohortMovement(cohorts, { gapPercent }),
+    };
+}
+
+/**
+ * What moved between the oldest and newest cohorts that can speak — and whether
+ * the market or the forecast's selling assumption is the thing that moved.
+ *
+ * Each cohort holds the same runs priced twice: `actual` at the ask, which is
+ * what a listing eventually fetches, and `actualBid` at the bid, which is what
+ * it fetches this second. Every deviation on the panel is the ask figure, so a
+ * shift in it has two very different causes that look identical pooled:
+ *
+ * - **Both series move together.** Bid and ask deviations shifted by about the
+ *   same amount, so the loot is simply worth a different number of coins than
+ *   it was. The market moved under the forecast; the forecast's assumptions did
+ *   not.
+ * - **Only the ask series moves.** The bid-priced measurement of the same runs
+ *   stayed put while the ask-priced one drifted, which is the spread opening or
+ *   closing — the forecast's assumption that you sell into the ask is what
+ *   changed value, not the goods.
+ *
+ * Only decidable when the two end cohorts both clear the bar on *both* series.
+ * A bid figure missing from either end is a pair recorded before `actualBid`
+ * existed, and it is refused rather than read as an unchanged spread.
+ *
+ * @param {Array<Object>} cohorts - From {@link versionSplit}, oldest first
+ * @param {Object} [options] - Rules
+ * @param {number} [options.gapPercent] - How large a shift has to be to count as a move
+ * @returns {{decidable: boolean, verdict: string, text: string, from: string|null, to: string|null,
+ *   askMove: number|null, bidMove: number|null}}
+ */
+function cohortMovement(cohorts, { gapPercent = DEFAULT_GAP_PERCENT } = {}) {
+    const speaking = cohorts.filter(
+        (cohort) => cohort.decided && cohort.medianDeviation !== null && cohort.bidDeviation !== null
+    );
+    const undecidable = {
+        decidable: false,
+        verdict: 'insufficient',
+        from: null,
+        to: null,
+        askMove: null,
+        bidMove: null,
+    };
+
+    if (speaking.length < 2) {
+        return {
+            ...undecidable,
+            text:
+                'Not enough cohorts carry both an ask- and a bid-priced median to say what moved' +
+                (cohorts.length > 1 ? ' between them' : ''),
+        };
+    }
+
+    const from = speaking[0];
+    const to = speaking[speaking.length - 1];
+    const askMove = to.medianDeviation - from.medianDeviation;
+    const bidMove = to.bidDeviation - from.bidDeviation;
+    // "at", never "because of": the boundary is a date, and the market, the
+    // gear and the zone crossed it alongside the release
+    const boundary = `at ${from.version} → ${to.version}`;
+    const figures = `ask ${pct(askMove)}, bid ${pct(bidMove)} ${boundary}`;
+    const askMoved = Math.abs(askMove) >= gapPercent;
+    const bidMoved = Math.abs(bidMove) >= gapPercent;
+    const together = Math.abs(askMove - bidMove) < gapPercent;
+    const base = { decidable: true, from: from.version, to: to.version, askMove, bidMove };
+
+    if (!askMoved && !bidMoved) {
+        return { ...base, verdict: 'steady', text: `Neither series moved ${boundary} (${figures})` };
+    }
+    if (askMoved && bidMoved && together) {
+        return {
+            ...base,
+            verdict: 'market_moved',
+            text: `Both series moved together ${boundary} — the market moved, not the selling assumption (${figures})`,
+        };
+    }
+    if (askMoved && !bidMoved) {
+        return {
+            ...base,
+            verdict: 'ask_assumption',
+            text: `Only the ask-priced series moved ${boundary} — the forecast's selling assumption drifted (${figures})`,
+        };
+    }
+    if (bidMoved && !askMoved) {
+        return {
+            ...base,
+            verdict: 'bid_only',
+            text: `Only the bid-priced series moved ${boundary} — the spread closed on the ask figure (${figures})`,
+        };
+    }
+    return {
+        ...base,
+        verdict: 'mixed',
+        text: `Both series moved ${boundary}, but by different amounts — no single cause (${figures})`,
+    };
+}
+
+/**
  * How much of a group's measured profit was only ever available at the ask.
  *
  * Every pair records the same run priced twice: `actual` values the loot at the

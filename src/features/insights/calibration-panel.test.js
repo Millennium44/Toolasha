@@ -226,6 +226,61 @@ describe('the per-action fold', () => {
     });
 });
 
+describe('the per-version fold', () => {
+    /**
+     * A pair stamped with a script version, priced at both ask and bid.
+     * @param {string|null} version - The `v` stamp
+     * @param {number} index - Makes the pair unique
+     * @param {number} actual - Ask-priced result
+     * @param {number} actualBid - Bid-priced result
+     * @returns {Object}
+     */
+    const stamped = (version, index, actual, actualBid) => ({
+        ...pair('milking', 1_000_000, actual, index + 1),
+        id: `${version}-${index}`,
+        actionHrid: '/actions/milking/cow',
+        v: version,
+        actualBid,
+    });
+
+    /**
+     * The clickable heading, whichever way it is pointing.
+     * @returns {HTMLElement|undefined}
+     */
+    const heading = () =>
+        [...(calibrationPanel.panel?.querySelectorAll('div') || [])].find((el) =>
+            /^[▸▾] Per script version/.test(el.textContent)
+        );
+
+    test('shows the cohort medians oldest first, with the pairs each still holds', () => {
+        store.records = [
+            ...Array.from({ length: 6 }, (_, i) => stamped('3.32', i, 1_000_000, 980_000)),
+            ...Array.from({ length: 6 }, (_, i) => stamped('3.33', 10 + i, 700_000, 690_000)),
+        ];
+
+        calibrationPanel.show({ remember: false });
+        expect(text()).toContain('▸ Per script version (2)');
+        expect(text()).not.toContain('3.32 (6)');
+
+        heading().click();
+        expect(text()).not.toContain('could not be drawn');
+        // Oldest first, and each figure carries the count still in the ledger
+        expect(text().indexOf('3.32 (6)')).toBeLessThan(text().indexOf('3.33 (6)'));
+        expect(text()).toContain('-30.0%');
+        // Both series fell together, so the market moved — and it is stated as
+        // happening AT the boundary, never because of the release
+        expect(text()).toContain('the market moved');
+        expect(text()).toContain('at 3.32 → 3.33');
+        expect(text()).not.toMatch(/because of 3\.33/);
+    });
+
+    test('stays out of the way when there is only one cohort to show', () => {
+        store.records = Array.from({ length: 6 }, (_, i) => stamped('3.33', i, 900_000, 890_000));
+        calibrationPanel.show({ remember: false });
+        expect(text()).not.toContain('Per script version');
+    });
+});
+
 describe('the ask/bid spread line', () => {
     test('names what share of the forecast needs a buyer to turn up', () => {
         store.records = Array.from({ length: 6 }, (_, i) => ({

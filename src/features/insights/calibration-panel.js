@@ -37,6 +37,8 @@ import {
     cohortSplit,
     actionSplit,
     bidSpread,
+    versionSplit,
+    OLDER_COHORT,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
@@ -50,6 +52,14 @@ const ACCENT = '#7fd4c1';
  * after it was set, which reads as the panel refusing to open.
  */
 const expandedGroups = new Set();
+
+/**
+ * Which skill groups are showing their per-script-version breakdown.
+ *
+ * Its own set rather than a flag on `expandedGroups`: the two folds answer
+ * different questions and a reader opening one has not asked for the other.
+ */
+const expandedVersions = new Set();
 
 /**
  * A skill name as a heading.
@@ -413,6 +423,97 @@ function drawActionSplit(card, group, groupRecords) {
 }
 
 /**
+ * A cohort's heading, e.g. `3.32` or the legacy bucket's own name.
+ * @param {Object} cohort - A cohort from `versionSplit`
+ * @returns {string}
+ */
+function cohortLabel(cohort) {
+    return cohort.version === OLDER_COHORT ? 'older / unstamped' : cohort.version;
+}
+
+/**
+ * One skill's median, a script version at a time, oldest release first.
+ *
+ * Every pair records the version that forecast it, and until now the panel only
+ * counted the odd ones out as a caveat — "12 from older script versions" — which
+ * is the measurement stated as a disclaimer. Broken out, the same field answers
+ * the question a release note cannot: the cohort recorded after a calculator
+ * change is the direct reading of whether that change helped.
+ *
+ * Folded away by default, like the per-action breakdown: most readers have one
+ * cohort and the fold would just repeat the group line.
+ *
+ * Two honesty rules are drawn, not merely intended. Each cohort prints how many
+ * pairs it *still* holds, because the ledger rolls the oldest out as new pairs
+ * arrive and a cohort silently shrinking towards nothing must not read as a
+ * stable measurement. And nothing here says a release caused a move: a version
+ * boundary is a calendar boundary, and the market crossed it too.
+ *
+ * @param {HTMLElement} card - The group's card
+ * @param {Object} group - The group summary
+ * @param {Array<Object>} groupRecords - That group's records
+ */
+function drawVersionSplit(card, group, groupRecords) {
+    const split = versionSplit(groupRecords);
+    // One cohort is not a comparison — it is the group median with a version
+    // written next to it, and drawing it would invite reading a trend into it
+    if (split.cohorts.length < 2) return;
+
+    const open = expandedVersions.has(group.actionType);
+    card.appendChild(
+        foldHeading(
+            `Per script version (${split.cohorts.length})` + (split.thin ? ` · ${split.thin} too thin` : ''),
+            open,
+            () => {
+                if (open) expandedVersions.delete(group.actionType);
+                else expandedVersions.add(group.actionType);
+                calibrationPanel.render();
+            },
+            'The same median, split by the script version that made the forecast, oldest first. ' +
+                'A version boundary is also a calendar boundary — the market and your gear crossed it ' +
+                'too — so read a change as happening AT a release, never because of one.'
+        )
+    );
+    if (!open) return;
+
+    for (const cohort of split.cohorts) {
+        const gap = cohort.medianDeviation === null ? null : signedPercent(cohort.medianDeviation, DEFAULT_GAP_PERCENT);
+        const remaining =
+            `The ${cohortLabel(cohort)} cohort has ${cohort.rated} pair${cohort.rated === 1 ? '' : 's'} left ` +
+            'in the ledger — it keeps a fixed number of pairs, so old cohorts shrink as new runs are ' +
+            'recorded and eventually roll out entirely.';
+        card.appendChild(
+            panelLine(
+                `  ${cohortLabel(cohort)} (${cohort.rated})`,
+                gap ? gap.text : cohort.text,
+                gap ? gap.color : ROW_COLORS.dim,
+                cohort.decided
+                    ? remaining
+                    : `${cohort.rated} pairs is too few for this version to be judged on its own, so no ` +
+                          `figure is shown for it. ${remaining}` +
+                          (cohort.unordered
+                              ? ' Versions that are not dot-separated digits, and pairs recorded before ' +
+                                'stamping existed, share this bucket rather than claiming a place in the sequence.'
+                              : '')
+            )
+        );
+    }
+
+    card.appendChild(
+        panelLine(
+            'Ask vs bid across cohorts',
+            split.movement.text,
+            split.movement.decidable && split.movement.verdict !== 'steady' ? ROW_COLORS.gold : ROW_COLORS.dim,
+            'The same runs priced twice, compared between the oldest and newest cohorts that can speak. ' +
+                'Both series shifting together is the market being worth different coins; only the ' +
+                'ask-priced one shifting is the spread moving, which is the forecast’s assumption that ' +
+                'you sell into the ask changing value rather than the goods. This says what moved at a ' +
+                'boundary, not what caused it.'
+        )
+    );
+}
+
+/**
  * How much of the group's measured profit is only there at the ask.
  *
  * Every figure on this panel is ask-priced, and a skill whose output is thinly
@@ -474,6 +575,7 @@ function drawGroup(body, group, all) {
     const groupRecords = (all || []).filter((record) => (record.actionType || 'unknown') === group.actionType);
     drawBidSpread(card, groupRecords);
     drawActionSplit(card, group, groupRecords);
+    drawVersionSplit(card, group, groupRecords);
 
     if (group.actionType === 'combat') {
         drawCombatXpSplit(card, groupRecords);

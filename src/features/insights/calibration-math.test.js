@@ -19,6 +19,8 @@ import {
     cohortSplit,
     actionSplit,
     bidSpread,
+    versionSplit,
+    OLDER_COHORT,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
@@ -498,5 +500,115 @@ describe('bidSpread', () => {
     test('nothing at all is a refusal, not a crash', () => {
         expect(bidSpread([]).verdict).toBe('insufficient');
         expect(bidSpread(null).verdict).toBe('insufficient');
+    });
+});
+
+describe('versionSplit', () => {
+    /**
+     * `count` pairs stamped with one version, each off by `deviation` percent at
+     * the ask and `bidDeviation` at the bid.
+     * @param {string|null} version - The `v` stamp
+     * @param {number} count - How many pairs
+     * @param {number} deviation - Ask-priced deviation, percent
+     * @param {number|null} [bidDeviation] - Bid-priced deviation, or null for no bid figure
+     * @returns {Array<Object>}
+     */
+    const cohort = (version, count, deviation, bidDeviation = null) =>
+        Array.from({ length: count }, (_, index) => ({
+            v: version,
+            predicted: 1_000_000,
+            actual: 1_000_000 * (1 + deviation / 100),
+            actualBid: bidDeviation === null ? undefined : 1_000_000 * (1 + bidDeviation / 100),
+            t: index + 1,
+        }));
+
+    test('folds the median per version and orders releases oldest first', () => {
+        const split = versionSplit([...cohort('3.33', 5, 4), ...cohort('3.4', 5, -30), ...cohort('3.32', 5, -20)]);
+        expect(split.cohorts.map((c) => c.version)).toEqual(['3.4', '3.32', '3.33']);
+        expect(split.cohorts.map((c) => c.medianDeviation)).toEqual([-30, -20, 4]);
+        expect(split.decided).toBe(3);
+        expect(split.thin).toBe(0);
+    });
+
+    test('orders by numeric part, not string — 3.10 is newer than 3.9', () => {
+        const split = versionSplit([...cohort('3.10', 5, 1), ...cohort('3.9', 5, 2)]);
+        expect(split.cohorts.map((c) => c.version)).toEqual(['3.9', '3.10']);
+    });
+
+    test('a version that saw too few runs is refused rather than pooled into its neighbour', () => {
+        const split = versionSplit([...cohort('3.32', 8, -20), ...cohort('3.33', 4, 40)]);
+        const thin = split.cohorts.find((c) => c.version === '3.33');
+        expect(thin.decided).toBe(false);
+        expect(thin.medianDeviation).toBeNull();
+        expect(thin.text).toBe('too few to call');
+        expect(thin.rated).toBe(4);
+        expect(split.thin).toBe(1);
+        // The full cohort keeps its own figure — the thin one never joins it
+        expect(split.cohorts.find((c) => c.version === '3.32').medianDeviation).toBe(-20);
+    });
+
+    test('unstampable versions share one bucket that leads and claims no position', () => {
+        const split = versionSplit([
+            ...cohort('3.33', 5, 10),
+            ...cohort(null, 3, -50),
+            ...cohort('dev', 2, -50),
+            ...cohort('3.32', 5, -10),
+        ]);
+        expect(split.cohorts[0].version).toBe(OLDER_COHORT);
+        expect(split.cohorts[0].unordered).toBe(true);
+        expect(split.cohorts[0].rated).toBe(5);
+        expect(split.cohorts.map((c) => c.version)).toEqual([OLDER_COHORT, '3.32', '3.33']);
+    });
+
+    test('reports pairs still held, which is what rolls out of the ledger', () => {
+        const split = versionSplit([...cohort('3.32', 40, -20), ...cohort('3.33', 6, -2)]);
+        expect(split.cohorts[0].rated).toBe(40);
+        expect(split.cohorts[0].samples).toBe(40);
+    });
+
+    describe('the ask/bid sharpener', () => {
+        test('both series moving together is the market, not the selling assumption', () => {
+            const split = versionSplit([...cohort('3.32', 6, 0, -2), ...cohort('3.33', 6, -30, -33)]);
+            expect(split.movement.verdict).toBe('market_moved');
+            expect(split.movement.askMove).toBeCloseTo(-30);
+            expect(split.movement.bidMove).toBeCloseTo(-31);
+            expect(split.movement.text).toContain('the market moved');
+        });
+
+        test('only the ask series moving is the selling assumption drifting', () => {
+            const split = versionSplit([...cohort('3.32', 6, 0, -2), ...cohort('3.33', 6, -30, -4)]);
+            expect(split.movement.verdict).toBe('ask_assumption');
+            expect(split.movement.text).toContain('selling assumption drifted');
+        });
+
+        test('says a move happened AT a boundary, never because of the release', () => {
+            const split = versionSplit([...cohort('3.32', 6, 0, 0), ...cohort('3.33', 6, -30, -30)]);
+            expect(split.movement.text).toContain('at 3.32 → 3.33');
+            expect(split.movement.text).not.toMatch(/because|caused|due to/i);
+        });
+
+        test('neither series moving says so rather than inventing a cause', () => {
+            const split = versionSplit([...cohort('3.32', 6, -10, -12), ...cohort('3.33', 6, -12, -13)]);
+            expect(split.movement.verdict).toBe('steady');
+        });
+
+        test('refuses when a cohort carries no bid-priced median', () => {
+            const split = versionSplit([...cohort('3.32', 6, 0), ...cohort('3.33', 6, -30, -30)]);
+            expect(split.movement.decidable).toBe(false);
+            expect(split.movement.verdict).toBe('insufficient');
+            expect(split.movement.askMove).toBeNull();
+        });
+
+        test('refuses on a single speaking cohort', () => {
+            const split = versionSplit([...cohort('3.32', 6, -10, -10), ...cohort('3.33', 2, -30, -30)]);
+            expect(split.movement.decidable).toBe(false);
+        });
+    });
+
+    test('nothing at all is an empty split, not a crash', () => {
+        expect(versionSplit([]).cohorts).toEqual([]);
+        expect(versionSplit(null).cohorts).toEqual([]);
+        expect(versionSplit([null]).cohorts).toEqual([]);
+        expect(versionSplit([]).movement.decidable).toBe(false);
     });
 });
