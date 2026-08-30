@@ -81,9 +81,12 @@ const {
     completionLine,
     staleSessionNote,
     classTagText,
+    openTrialUnitFor,
+    isAwaitingCapture,
     auraGapText,
+    CHIP_LIMIT,
 } = await import('./guild-trial-abilities-ui.js');
-const { resetPlanUi } = await import('./guild-trial-abilities-ui.js');
+const { resetPlanUi, resetChipUi } = await import('./guild-trial-abilities-ui.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
@@ -158,6 +161,7 @@ describe('trial abilities panel', () => {
         capture.players = {};
         resetTrialUnitRequests();
         resetPlanUi();
+        resetChipUi();
     });
 
     afterEach(() => {
@@ -466,6 +470,177 @@ describe('trial abilities panel', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    /** Every outstanding-player chip the header is drawing, in order */
+    const chips = () => [...guildTrialAbilitiesPanel.panel.querySelectorAll('[data-trial-chip]')];
+
+    /** The chip bearing this name */
+    const chip = (name) => chips().find((el) => el.dataset.trialChip === name.toLowerCase());
+
+    test('every outstanding player gets a chip, and a captured one loses it', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob', 'Cara']);
+        guildTrialAbilities.recordCapture(snapshot('Bob', 2, []));
+
+        openTrialAbilitiesPanel();
+        expect(chips().map((el) => el.textContent)).toEqual(['Ann', 'Cara']);
+        expect(chip('Ann').title).toContain("Open Ann's Battle Info");
+        expect(text()).toContain('2 players still need Battle Info');
+
+        land(snapshot('Ann', 1, []));
+        expect(chips().map((el) => el.textContent)).toEqual(['Cara']);
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a chip asks for its own player and for nobody else', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob', 'Cara']);
+        const { clicks } = fightView(['Ann', 'Bob', 'Cara']);
+
+        guildTrialAbilitiesPanel.show();
+        // The third chip, which the fixed order would have reached last
+        chip('Cara').click();
+        expect(clicks).toEqual(['Cara']);
+
+        chip('Bob').click();
+        expect(clicks).toEqual(['Cara', 'Bob']);
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a chip whose request is in flight is inert until the window lapses', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob']);
+        const { clicks } = fightView(['Ann', 'Bob']);
+
+        guildTrialAbilitiesPanel.show();
+        chip('Ann').click();
+        expect(clicks).toEqual(['Ann']);
+        expect(isAwaitingCapture('Ann', Date.now())).toBe(true);
+
+        // Drawn as pending, and pressing it again inside the window asks nothing
+        expect(chip('Ann').getAttribute('aria-disabled')).toBe('true');
+        expect(chip('Ann').title).toContain('waiting for the sheet');
+        chip('Ann').click();
+        chip('Ann').click();
+        expect(clicks).toEqual(['Ann']);
+
+        // The window lapsing offers the same player again — never a skip
+        vi.setSystemTime(NOW + REQUEST_TIMEOUT_MS);
+        guildTrialAbilitiesPanel.render();
+        expect(chip('Ann').getAttribute('aria-disabled')).toBe('false');
+        chip('Ann').click();
+        expect(clicks).toEqual(['Ann', 'Ann']);
+    });
+
+    test('the targeted opener honours the shared request window and never opens a stand-in', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob']);
+        const { clicks } = fightView(['Ann', 'Bob']);
+
+        expect(openTrialUnitFor('Bob', NOW)).toEqual({ opened: 'Bob', how: 'unit' });
+        expect(openTrialUnitFor('Bob', NOW + 1000)).toEqual({ opened: null, how: 'awaiting' });
+        expect(openTrialUnitFor('Bob', NOW + REQUEST_TIMEOUT_MS)).toEqual({ opened: 'Bob', how: 'unit' });
+        // Not outstanding, not on screen, not named: nothing is opened in their
+        // place — a chip must never fetch somebody else's sheet
+        guildTrialAbilities.recordCapture(snapshot('Ann', 1, []));
+        expect(openTrialUnitFor('Ann', NOW)).toEqual({ opened: null, how: 'no-unit' });
+        expect(openTrialUnitFor('Nobody', NOW)).toEqual({ opened: null, how: 'no-unit' });
+        expect(openTrialUnitFor('', NOW)).toEqual({ opened: null, how: 'no-unit' });
+        expect(clicks).toEqual(['Bob', 'Bob']);
+    });
+
+    test('a chip press moves focus to the next askable player, and a capture keeps it there', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob', 'Cara']);
+        fightView(['Ann', 'Bob', 'Cara']);
+
+        guildTrialAbilitiesPanel.show();
+        chip('Ann').click();
+        // Ann is in flight and inert; the press-press-press rhythm needs the
+        // focus already on the next player
+        expect(document.activeElement).toBe(chip('Bob'));
+
+        chip('Bob').click();
+        expect(document.activeElement).toBe(chip('Cara'));
+
+        // The sheet lands and the whole block is rebuilt: focus comes back by
+        // name, not by element identity
+        land(snapshot('Bob', 2, []));
+        expect(chips().map((el) => el.textContent)).toEqual(['Ann', 'Cara']);
+        expect(document.activeElement).toBe(chip('Cara'));
+    });
+
+    test('focus lands where a captured chip stood when its name is gone', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob', 'Cara']);
+        fightView(['Ann', 'Bob', 'Cara']);
+
+        guildTrialAbilitiesPanel.show();
+        chip('Cara').focus();
+        expect(document.activeElement).toBe(chip('Cara'));
+
+        // Cara answered: her chip is gone, and focus takes the place it held
+        // (the row's end) rather than jumping back to the start
+        land(snapshot('Cara', 3, []));
+        expect(chips().map((el) => el.textContent)).toEqual(['Ann', 'Bob']);
+        expect(document.activeElement).toBe(chip('Bob'));
+    });
+
+    test('the chips take no focus from a reader who never touched them', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob']);
+
+        guildTrialAbilitiesPanel.show();
+        expect(chips()).toHaveLength(2);
+        expect(document.activeElement).not.toBe(chip('Ann'));
+
+        land(snapshot('Ann', 1, []));
+        expect(document.activeElement).not.toBe(chip('Bob'));
+    });
+
+    test('a player name is drawn as text, never as markup', async () => {
+        await feature.initialize('Cats');
+        const nasty = '<img src=x onerror=alert(1)>';
+        guildTrialAbilities.setRoster([nasty, 'Ann & Bob']);
+
+        openTrialAbilitiesPanel();
+        const drawn = chips().map((el) => el.textContent);
+        expect(drawn).toContain(nasty);
+        // Written, not parsed: no element came out of the name, and the
+        // ampersand is still an ampersand rather than an entity
+        expect(chip(nasty).querySelectorAll('*')).toHaveLength(0);
+        expect(chip(nasty).innerHTML).not.toContain('<img');
+        expect(drawn).toContain('Ann & Bob');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a big roster shows the front of the queue and folds the rest behind "+N more"', async () => {
+        await feature.initialize('Cats');
+        const roster = Array.from({ length: 50 }, (_, index) => `P${String(index).padStart(2, '0')}`);
+        guildTrialAbilities.setRoster(roster);
+
+        openTrialAbilitiesPanel();
+        expect(chips()).toHaveLength(CHIP_LIMIT);
+        const more = button(`+${50 - CHIP_LIMIT} more`);
+        expect(more).toBeTruthy();
+
+        more.click();
+        expect(chips()).toHaveLength(50);
+        expect(button(`+${50 - CHIP_LIMIT} more`)).toBeUndefined();
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('the chip press goes through the wired control, once per press', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob']);
+        const captureFor = vi.fn();
+        setControls({ captureFor });
+
+        guildTrialAbilitiesPanel.show();
+        chip('Bob').click();
+        expect(captureFor).toHaveBeenCalledTimes(1);
+        expect(captureFor).toHaveBeenCalledWith('Bob');
+    });
+
     test('recapture throws the session away from the panel', async () => {
         await feature.initialize('Cats');
         guildTrialAbilities.setRoster(['Alice']);
@@ -645,6 +820,7 @@ describe('class tags on the players card', () => {
         capture.players = {};
         resetTrialUnitRequests();
         resetPlanUi();
+        resetChipUi();
     });
 
     afterEach(() => {

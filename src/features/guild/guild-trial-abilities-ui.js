@@ -270,24 +270,84 @@ export function retryTrialUnit(name = null, now = Date.now()) {
 }
 
 /**
+ * Whether a capture request for this player is still in flight.
+ *
+ * The same window {@link openNextTrialUnit} debounces on, asked as a question
+ * so the chips can draw it: a player asked less than
+ * {@link REQUEST_TIMEOUT_MS} ago is awaiting an answer, and asking again
+ * inside that window would only queue a second popup for the same sheet.
+ *
+ * @param {string} name - Player name
+ * @param {number} [now] - Clock
+ * @returns {boolean} True while the request window stands
+ */
+export function isAwaitingCapture(name, now = Date.now()) {
+    const key = String(name || '')
+        .trim()
+        .toLowerCase();
+    if (!key) return false;
+    return now - (Number(trialUnitRequests[key]) || 0) < REQUEST_TIMEOUT_MS;
+}
+
+/**
+ * Click one *named* outstanding participant's unit box — the chip's gesture.
+ *
+ * {@link openNextTrialUnit} aimed: the same session-gated outstanding list,
+ * the same finder, the same ledger and the same window. One press is one
+ * request and nothing here loops or schedules — the only difference is that
+ * the player is chosen by the reader rather than by the ordering.
+ *
+ * Unlike the cycler there is no fallback to the roster opener when the finder
+ * sees nothing: that opener picks its *own* next player, which is precisely
+ * what a targeted request must not do. Better to answer `no-unit` than to
+ * open somebody else's sheet under a chip bearing this name.
+ *
+ * Unlike {@link retryTrialUnit} the window is honoured, not ignored: a chip is
+ * pressed in a rhythm, and the retry button is still there for the deliberate
+ * re-ask.
+ *
+ * @param {string} name - Who to ask for
+ * @param {number} [now] - Clock
+ * @returns {{opened: string|null, how: 'unit'|'awaiting'|'no-unit'}} What happened
+ */
+export function openTrialUnitFor(name, now = Date.now()) {
+    const wanted = String(name || '')
+        .trim()
+        .toLowerCase();
+    if (!wanted) return { opened: null, how: 'no-unit' };
+    const state = guildTrialAbilities.state();
+    const row = (state.outstanding || []).find((entry) => String(entry?.name || '').toLowerCase() === wanted);
+    if (!row) return { opened: null, how: 'no-unit' };
+    if (isAwaitingCapture(wanted, now)) return { opened: null, how: 'awaiting' };
+    const unit = findBattleUnits([row]).find((entry) => entry.name.toLowerCase() === wanted);
+    if (!unit) return { opened: null, how: 'no-unit' };
+    trialUnitRequests[wanted] = now;
+    clickThroughReact(unit.el, { reactFirst: true });
+    return { opened: unit.name, how: 'unit' };
+}
+
+/**
  * The controls, replaceable by the orchestrator.
  *
  * Defaults use the trial's own cycler above: one click opens one outstanding
  * participant's Battle Info, which is what makes the game send the sheet.
  * "Retry" is the same gesture aimed at a named player, window ignored.
+ * `captureFor` is the chip's: the cycler aimed, window respected.
  */
 const controls = {
     openNext: () => openNextTrialUnit(),
     retryCurrent: (name) => retryTrialUnit(name),
+    captureFor: (name) => openTrialUnitFor(name),
 };
 
 /**
  * Let the orchestrator wire its own control actions.
- * @param {{openNext?: Function, retryCurrent?: Function}} overrides - Replacements
+ * @param {{openNext?: Function, retryCurrent?: Function, captureFor?: Function}} overrides - Replacements
  */
 export function setControls(overrides = {}) {
     if (typeof overrides.openNext === 'function') controls.openNext = overrides.openNext;
     if (typeof overrides.retryCurrent === 'function') controls.retryCurrent = overrides.retryCurrent;
+    if (typeof overrides.captureFor === 'function') controls.captureFor = overrides.captureFor;
 }
 
 /**
@@ -298,6 +358,179 @@ export function setControls(overrides = {}) {
  */
 function abilityName(hrid, abilityDetailMap) {
     return abilityDetailMap?.[hrid]?.name || String(hrid).split('/').pop().replace(/_/g, ' ');
+}
+
+/**
+ * How many chips draw before the rest fold behind a "+N more".
+ *
+ * A trial runs up to about fifty participants. Fifty compact chips is roughly
+ * five rows, which is a header that has eaten the panel, so the row shows the
+ * front of the queue — the ones the next presses are for — and says how many
+ * it is not showing. Pressing "+N more" opens the whole roster and the choice
+ * survives the redraws (it is a reading choice, not session state).
+ */
+export const CHIP_LIMIT = 24;
+
+/** Whether the chip row is showing everyone */
+let chipsExpanded = false;
+
+/**
+ * Where keyboard focus belongs after the next draw: `{name, index}`.
+ *
+ * By name first, because the block is rebuilt from scratch on every capture
+ * and element identity does not survive that. The index is the fallback for
+ * the case the name is gone — the player was captured — so focus lands where
+ * that chip used to be rather than at the start of the row.
+ */
+let pendingChipFocus = null;
+
+/** Forget the chip row's fold and focus intent — for tests and a fresh panel */
+export function resetChipUi() {
+    chipsExpanded = false;
+    pendingChipFocus = null;
+}
+
+/**
+ * The chip to focus after acting on the one at `index`.
+ *
+ * The next one that can actually be pressed, wrapping around, so the loop is
+ * press-press-press: the chip just asked for is in flight and inert, and
+ * focus should already be on the next player rather than on a dead control.
+ *
+ * @param {string[]} names - The chips drawn, in order
+ * @param {number} index - Which was just acted on
+ * @param {number} now - Clock
+ * @returns {number} Index to focus
+ */
+function nextChipIndex(names, index, now) {
+    for (let step = 1; step <= names.length; step++) {
+        const at = (index + step) % names.length;
+        if (!isAwaitingCapture(names[at], now)) return at;
+    }
+    return index;
+}
+
+/**
+ * Put focus back on the chip the reader was on.
+ *
+ * @param {HTMLElement} row - The chip row just drawn
+ */
+function restoreChipFocus(row) {
+    if (!pendingChipFocus) return;
+    const chips = [...row.querySelectorAll('[data-trial-chip]')];
+    if (!chips.length) return;
+    const wanted = String(pendingChipFocus.name || '')
+        .trim()
+        .toLowerCase();
+    const byName = chips.find((chip) => chip.dataset.trialChip === wanted);
+    // No chip by that name means the player was captured — the whole point of
+    // the press — so focus falls to whoever took their place in the row
+    const index = Math.min(Math.max(Number(pendingChipFocus.index) || 0, 0), chips.length - 1);
+    (byName || chips[index]).focus();
+}
+
+/**
+ * One outstanding player, as a chip that asks for their Battle Info.
+ *
+ * The name is written with `textContent` and never parsed as markup — player
+ * names are player-controlled text, and this file builds every node rather
+ * than assembling HTML precisely so that a name can never be anything but a
+ * name. (`escapeText` is for the surfaces that do build markup strings; here
+ * escaping it would only make `A&B` read as `A&amp;B`.)
+ *
+ * A chip whose request is in flight is drawn dim, marked `aria-disabled` and
+ * does nothing when pressed. It is deliberately not `disabled`: a disabled
+ * button cannot hold focus, and focus landing on it is how the row keeps its
+ * place while a sheet is on its way.
+ *
+ * @param {string} name - The player
+ * @param {number} index - Position in the drawn row
+ * @param {string[]} names - Every chip drawn, for the focus hop
+ * @param {number} now - Clock
+ * @returns {HTMLElement} The chip
+ */
+function playerChip(name, index, names, now) {
+    const awaiting = isAwaitingCapture(name, now);
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = name;
+    chip.dataset.trialChip = name.toLowerCase();
+    chip.setAttribute('aria-disabled', awaiting ? 'true' : 'false');
+    chip.title = awaiting
+        ? `${name}: Battle Info already asked for — waiting for the sheet. Askable again once the request times out.`
+        : `Open ${name}'s Battle Info — one request per press, nothing automatic.`;
+    chip.style.cssText =
+        `background: rgba(255,255,255,${awaiting ? '0.03' : '0.08'}); ` +
+        `border: 1px solid ${awaiting ? 'rgba(255,255,255,0.12)' : `${ACCENT}66`}; ` +
+        `color: ${awaiting ? 'rgba(232,236,245,0.45)' : '#e8ecf5'}; ` +
+        'border-radius: 9px; padding: 1px 7px; font-size: 11px; line-height: 16px; ' +
+        `max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; ` +
+        `cursor: ${awaiting ? 'default' : 'pointer'};`;
+
+    chip.addEventListener('focus', () => {
+        pendingChipFocus = { name, index };
+    });
+    chip.addEventListener('blur', (event) => {
+        // Focus moving to something that is not a chip is the reader leaving
+        // the row; a chip vanishing under a redraw is not (no relatedTarget),
+        // and that case must keep the intent so the row can restore it
+        const to = event.relatedTarget;
+        if (to && !to.dataset?.trialChip) pendingChipFocus = null;
+    });
+    chip.addEventListener('click', () => {
+        const at = Date.now();
+        // The in-flight window is enforced here as well as in the action: a
+        // chip pressed inside it is inert, never a second request
+        if (isAwaitingCapture(name, at)) return;
+        controls.captureFor(name);
+        const target = nextChipIndex(names, index, Date.now());
+        pendingChipFocus = { name: names[target], index: target };
+        guildTrialAbilitiesPanel.render();
+    });
+    return chip;
+}
+
+/**
+ * The outstanding players as a row of chips, each one their own capture press.
+ *
+ * Drawn in the header because that is where the count is: "19 players still
+ * need Battle Info" and then, immediately, which nineteen — and pressing one
+ * asks for that player instead of whoever the fixed order would have reached.
+ *
+ * @param {HTMLElement} card - The header card
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @param {number} [now] - Clock
+ * @returns {HTMLElement|null} The row, or null when nobody is outstanding
+ */
+function drawOutstandingChips(card, state, now = Date.now()) {
+    const names = (state.outstanding || []).map((entry) => String(entry?.name || '').trim()).filter(Boolean);
+    if (!names.length) return null;
+
+    const row = document.createElement('div');
+    Object.assign(row.style, {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '4px',
+        margin: '4px 0 2px',
+        paddingLeft: '2px',
+    });
+
+    const shown = chipsExpanded ? names : names.slice(0, CHIP_LIMIT);
+    shown.forEach((name, index) => row.appendChild(playerChip(name, index, shown, now)));
+
+    const hidden = names.length - shown.length;
+    if (hidden > 0) {
+        const more = controlButton(`+${hidden} more`, 'Show every outstanding player as a chip.', () => {
+            chipsExpanded = true;
+            guildTrialAbilitiesPanel.render();
+        });
+        more.style.cssText += 'padding: 1px 7px; font-size: 11px; border-radius: 9px;';
+        row.appendChild(more);
+    }
+
+    card.appendChild(row);
+    restoreChipFocus(row);
+    return row;
 }
 
 /**
@@ -335,6 +568,9 @@ function drawHeader(body, state) {
             ROW_COLORS.bad
         )
     );
+    // Who they are, immediately under the count, each one their own press
+    drawOutstandingChips(card, state);
+    card.appendChild(panelNote('Press a name to ask for that player’s Battle Info — one request per press.'));
     card.appendChild(panelNote(`Aura coverage is read against the ${state.capturedCount} captured so far.`));
 }
 
