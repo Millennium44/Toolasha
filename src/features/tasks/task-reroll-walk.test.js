@@ -189,6 +189,11 @@ const quest = (actionHrid, coinSpent = 0, cowbellSpent = 0) => ({
     cowbellRerollCount: cowbellSpent,
 });
 
+/** Let the walk's own awaits settle — storage is mocked, so these are microtasks */
+const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
 /** What the widget currently offers */
 const chipText = () => document.querySelector('.mwi-task-reroll-walk-advance')?.textContent || '';
 
@@ -376,74 +381,91 @@ describe('which reroll option gets pressed', () => {
 });
 
 describe('planning a walk down the board', () => {
-    test('it opens on the first card that needs something, priced', () => {
+    test('it opens on the first card that needs something, priced', async () => {
         walk.protectedHrids = new Set([KEEPER]);
         board([
             { name: 'Brewing - Coffee', buttons: AT_REST, quest: quest(KEEPER) },
             { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
         ]);
 
-        walk.start();
+        await walk.start();
 
         // First reroll: 10K coins against one cowbell worth ~8K
         expect(chipText()).toContain('Reroll #2 — 1🔔');
         expect(clicks).toEqual([]);
     });
 
-    test('coins are chosen, and named, when the cowbell is the dearer of the two', () => {
+    test('coins are chosen, and named, when the cowbell is the dearer of the two', async () => {
         market.cowbellValue = 30000;
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
 
-        walk.start();
+        await walk.start();
 
         expect(chipText()).toContain('Reroll #1 — 10.0K🪙');
         expect(chipText()).toContain('cheaper than 1🔔');
     });
 
-    test('a board of nothing but protected tasks finishes without a click', () => {
+    test('a board of nothing but protected tasks finishes without a click', async () => {
         walk.protectedHrids = new Set([KEEPER]);
         board([
             { name: 'Brewing - Coffee', buttons: AT_REST, quest: quest(KEEPER) },
             { name: 'Brewing - Coffee', buttons: AT_REST, quest: quest(KEEPER) },
         ]);
 
-        walk.start();
+        await walk.start();
 
         expect(chipText()).toBe('✓ Done — 2 kept, 0 rerolled, 0 trashed');
         expect(clicks).toEqual([]);
     });
 
-    test('a task both of whose rerolls are blocked is offered for discard', () => {
-        walk.coinThreshold = 40000;
-        walk.cowbellThreshold = 4;
+    test('a threshold edited in the shield popup is in force for the very first plan', async () => {
+        // The walk reads the thresholds at start-up and again when a walk
+        // starts, to catch an edit made in the shield popup since. Planning
+        // before that read has come back plans against the old numbers, and the
+        // first card — the one the player is looking at while they change the
+        // setting — is exactly the one that gets it wrong.
+        stored.values.taskCapCoinThreshold_7 = 40000;
+        stored.values.taskCapCowbellThreshold_7 = 4;
+        walk.coinThreshold = 320000;
+        walk.cowbellThreshold = 32;
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 2, 2) }]);
 
-        walk.start();
+        await walk.start();
 
         expect(chipText()).toBe('▶ Trash #1 (both reroll options blocked)');
     });
 
-    test('with discard-at-limit off a blocked task is passed over instead', () => {
-        settings.values.tasks_rerollWalkTrashAtLimit = false;
-        walk.coinThreshold = 40000;
-        walk.cowbellThreshold = 4;
+    test('a task both of whose rerolls are blocked is offered for discard', async () => {
+        stored.values.taskCapCoinThreshold_7 = 40000;
+        stored.values.taskCapCowbellThreshold_7 = 4;
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 2, 2) }]);
 
-        walk.start();
+        await walk.start();
+
+        expect(chipText()).toBe('▶ Trash #1 (both reroll options blocked)');
+    });
+
+    test('with discard-at-limit off a blocked task is passed over instead', async () => {
+        settings.values.tasks_rerollWalkTrashAtLimit = false;
+        stored.values.taskCapCoinThreshold_7 = 40000;
+        stored.values.taskCapCowbellThreshold_7 = 4;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 2, 2) }]);
+
+        await walk.start();
 
         expect(chipText()).toContain('1 kept');
     });
 
-    test('a task blocked in one currency still rerolls with the other', () => {
-        walk.cowbellThreshold = 1;
+    test('a task blocked in one currency still rerolls with the other', async () => {
+        stored.values.taskCapCowbellThreshold_7 = 1;
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
 
-        walk.start();
+        await walk.start();
 
         expect(chipText()).toContain('Reroll #1 — 10.0K🪙 (cowbells blocked)');
     });
 
-    test('a chooser refusing one currency pays the other rather than giving up on the card', () => {
+    test('a chooser refusing one currency pays the other rather than giving up on the card', async () => {
         // While the chooser is open its own buttons are the only prices that can
         // actually be paid. Falling back to the game's price ladder for a
         // currency the chooser is *refusing* — the player cannot afford it, so
@@ -455,28 +477,28 @@ describe('planning a walk down the board', () => {
         const list = board([{ name: 'Milking - Cow', buttons: ['Back', '10,000', '2'], quest: quest(MILKING) }]);
         [...list.querySelectorAll('button')].find((b) => b.textContent === '10,000').disabled = true;
 
-        walk.start();
+        await walk.start();
         vi.advanceTimersByTime(5000);
 
         expect(chipText()).toContain('Reroll #1 — 2🔔');
         expect(clicks).toEqual([]);
     });
 
-    test('an empty board says so rather than offering a press', () => {
+    test('an empty board says so rather than offering a press', async () => {
         board([]);
 
-        walk.start();
+        await walk.start();
 
         expect(chipText()).toContain('No tasks on the board');
     });
 });
 
 describe('the unread notice is read first', () => {
-    test('unread tasks are read before anything is rerolled, one press each', () => {
+    test('unread tasks are read before anything is rerolled, one press each', async () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const notice = unreadNotice(list);
 
-        walk.start();
+        await walk.start();
         expect(chipText()).toBe('▶ Read unread tasks');
         expect(clicks).toEqual([]);
 
@@ -494,11 +516,11 @@ describe('the unread notice is read first', () => {
         expect(clicks).toEqual(['Notice:Read', 'Milking - Cow:Reroll']);
     });
 
-    test('a board that is nothing but the notice still starts, reads, and finishes', () => {
+    test('a board that is nothing but the notice still starts, reads, and finishes', async () => {
         const list = board([]);
         const notice = unreadNotice(list);
 
-        walk.start();
+        await walk.start();
         expect(chipText()).toBe('▶ Read unread tasks');
 
         walk.advance();
@@ -508,13 +530,13 @@ describe('the unread notice is read first', () => {
         expect(chipText()).toContain('✓ Done');
     });
 
-    test('reading respects the auto-sort setting: sort runs after the press, before the next plan', () => {
+    test('reading respects the auto-sort setting: sort runs after the press, before the next plan', async () => {
         settings.values.taskSorter_autoSort = true;
         sorter.sortTasks.mockClear();
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const notice = unreadNotice(list);
 
-        walk.start();
+        await walk.start();
         walk.advance();
         expect(sorter.sortTasks).not.toHaveBeenCalled(); // not before the board settles
 
@@ -524,14 +546,14 @@ describe('the unread notice is read first', () => {
         expect(chipText()).toContain('Reroll #1');
     });
 
-    test('with both sort settings off, reading never sorts', () => {
+    test('with both sort settings off, reading never sorts', async () => {
         settings.values.taskSorter_autoSort = false;
         settings.values.taskSorter_sortAfterRead = false;
         sorter.sortTasks.mockClear();
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const notice = unreadNotice(list);
 
-        walk.start();
+        await walk.start();
         walk.advance();
         notice.remove();
         vi.advanceTimersByTime(3000);
@@ -539,7 +561,7 @@ describe('the unread notice is read first', () => {
         expect(sorter.sortTasks).not.toHaveBeenCalled();
     });
 
-    test('sort-after-read is honoured, being the setting written for exactly this moment', () => {
+    test('sort-after-read is honoured, being the setting written for exactly this moment', async () => {
         // The walk's Read press goes through the React handler, so the sorter's
         // own document-level Read delegate never sees a click and never fires.
         // The walk's compensating sort is the only thing left — and it was
@@ -552,7 +574,7 @@ describe('the unread notice is read first', () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const notice = unreadNotice(list);
 
-        walk.start();
+        await walk.start();
         walk.advance();
         notice.remove();
         vi.advanceTimersByTime(3000);
@@ -560,7 +582,7 @@ describe('the unread notice is read first', () => {
         expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
     });
 
-    test('the post-read sort is forced, so a chooser left open elsewhere cannot swallow it', () => {
+    test('the post-read sort is forced, so a chooser left open elsewhere cannot swallow it', async () => {
         // An unforced sortTasks() returns without touching the board whenever
         // any card is mid-flow (task-sorter.js `boardHasConfirmingCard`), and a
         // reroll chooser left open is the walk's ordinary resting state: the
@@ -575,7 +597,7 @@ describe('the unread notice is read first', () => {
         ]);
         const notice = unreadNotice(list);
 
-        walk.start();
+        await walk.start();
         walk.advance();
         notice.remove();
         vi.advanceTimersByTime(3000);
@@ -583,12 +605,12 @@ describe('the unread notice is read first', () => {
         expect(sorter.sortTasks).toHaveBeenCalledWith(true);
     });
 
-    test('a notice a press did not clear is offered again, a bounded few times', () => {
+    test('a notice a press did not clear is offered again, a bounded few times', async () => {
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const list = document.querySelector('[class*="TasksPanel_taskList"]');
         unreadNotice(list);
 
-        walk.start();
+        await walk.start();
 
         // The notice stays: the click did not reach the game. Three presses, then on.
         for (let press = 1; press <= 3; press++) {
@@ -600,11 +622,11 @@ describe('the unread notice is read first', () => {
         expect(chipText()).toContain('Reroll #1');
     });
 
-    test('a notice already read elsewhere is walked past without a click', () => {
+    test('a notice already read elsewhere is walked past without a click', async () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const notice = unreadNotice(list);
 
-        walk.start();
+        await walk.start();
         expect(chipText()).toBe('▶ Read unread tasks');
 
         // Someone pressed the game's own Read before the walk's press
@@ -616,9 +638,9 @@ describe('the unread notice is read first', () => {
 });
 
 describe('one press, one game click', () => {
-    test('opening the chooser is its own press, and paying is the next', () => {
+    test('opening the chooser is its own press, and paying is the next', async () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
-        walk.start();
+        await walk.start();
         expect(chipText()).toContain('open the menu');
 
         walk.advance();
@@ -640,7 +662,7 @@ describe('one press, one game click', () => {
         expect(clicks).toHaveLength(2);
     });
 
-    test('a reroll the game has not answered is never offered for payment a second time', () => {
+    test('a reroll the game has not answered is never offered for payment a second time', async () => {
         // The board looking exactly as it did before the payment is the one
         // thing that proves the reroll has NOT landed yet: a reroll changes the
         // task. Offering the same card's Pay button again on that evidence
@@ -651,10 +673,10 @@ describe('one press, one game click', () => {
         // This is reachable well inside the server settle window, because any
         // `quests_updated` at all (a combat kill ticking a task's progress will
         // do) cuts the wait to UI_SETTLE_MS.
-        walk.coinThreshold = 20000; // the 10K reroll is allowed; the 20K it becomes is not
+        stored.values.taskCapCoinThreshold_7 = 20000; // the 10K reroll is allowed; the 20K it becomes is not
         board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
 
-        walk.start();
+        await walk.start();
         expect(chipText()).toContain('Reroll #1 — 10.0K🪙');
 
         walk.advance();
@@ -668,10 +690,10 @@ describe('one press, one game click', () => {
         expect(chipText()).toContain('walk stopped');
     });
 
-    test('once the reroll does land the walk carries on from the task that arrived', () => {
+    test('once the reroll does land the walk carries on from the task that arrived', async () => {
         const list = board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
 
-        walk.start();
+        await walk.start();
         walk.advance();
         expect(clicks).toEqual(['Milking - Cow:10,000']);
 
@@ -685,11 +707,11 @@ describe('one press, one game click', () => {
         expect(walk.state).toBe('ready');
     });
 
-    test('trashing takes two presses too, and the second is the confirm', () => {
-        walk.coinThreshold = 10000;
-        walk.cowbellThreshold = 1;
+    test('trashing takes two presses too, and the second is the confirm', async () => {
+        stored.values.taskCapCoinThreshold_7 = 10000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
-        walk.start();
+        await walk.start();
 
         walk.advance();
         expect(clicks).toEqual(['Milking - Cow:trash']);
@@ -702,11 +724,11 @@ describe('one press, one game click', () => {
         expect(clicks).toEqual(['Milking - Cow:trash', 'Milking - Cow:Confirm Discard']);
     });
 
-    test('a chooser left open on a card being passed over is closed, one press', () => {
+    test('a chooser left open on a card being passed over is closed, one press', async () => {
         walk.protectedHrids = new Set([KEEPER]);
         board([{ name: 'Brewing - Coffee', buttons: CHOOSER, quest: quest(KEEPER) }]);
 
-        walk.start();
+        await walk.start();
         expect(chipText()).toBe('▶ Close the menu on #1');
 
         walk.advance();
@@ -720,12 +742,12 @@ describe('one press, one game click', () => {
         expect(clicks).toEqual([]);
     });
 
-    test('the walk re-evaluates the task the reroll actually landed on', () => {
+    test('the walk re-evaluates the task the reroll actually landed on', async () => {
         // The point of doing this one press at a time: what arrives may be
         // something the player is keeping, and the walk has to notice
         walk.protectedHrids = new Set([KEEPER]);
         const list = board([{ name: 'Milking - Cow', buttons: CHOOSER, quest: quest(MILKING) }]);
-        walk.start();
+        await walk.start();
         walk.advance();
         expect(clicks).toHaveLength(1);
 
@@ -740,12 +762,12 @@ describe('one press, one game click', () => {
 });
 
 describe('the walk stops rather than clicking the wrong thing', () => {
-    test('a card that is no longer in its slot stops it', () => {
+    test('a card that is no longer in its slot stops it', async () => {
         const list = board([
             { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
             { name: 'Cooking - Stew', buttons: AT_REST, quest: quest('/actions/cooking/stew') },
         ]);
-        walk.start();
+        await walk.start();
 
         // The board is re-ordered under the plan — the sorter, a completed task
         list.prepend(list.children[1]);
@@ -755,9 +777,9 @@ describe('the walk stops rather than clicking the wrong thing', () => {
         expect(chipText()).toContain('walk stopped');
     });
 
-    test('a task that changed under the plan stops it', () => {
+    test('a task that changed under the plan stops it', async () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
-        walk.start();
+        await walk.start();
 
         list.children[0].querySelector('[class*="RandomTask_name"]').textContent = 'Cooking - Stew';
 
@@ -766,9 +788,9 @@ describe('the walk stops rather than clicking the wrong thing', () => {
         expect(chipText()).toContain('The task in slot 1 changed');
     });
 
-    test('a button that has gone stops it', () => {
+    test('a button that has gone stops it', async () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
-        walk.start();
+        await walk.start();
 
         list.children[0].querySelector('[class*="RandomTask_action"]').replaceChildren();
 
@@ -776,9 +798,9 @@ describe('the walk stops rather than clicking the wrong thing', () => {
         expect(clicks).toEqual([]);
     });
 
-    test('the close button leaves the board exactly as it is', () => {
+    test('the close button leaves the board exactly as it is', async () => {
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
-        walk.start();
+        await walk.start();
 
         document.querySelector('.mwi-task-reroll-walk-stop').click();
 
@@ -797,11 +819,14 @@ describe('the floating walk widget', () => {
         expect(clicks).toEqual([]);
     });
 
-    test('the main button becomes the next action once a walk is running', () => {
+    test('the main button becomes the next action once a walk is running', async () => {
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         walk._render();
 
         document.querySelector('.mwi-task-reroll-walk-advance').click();
+        // A click handler cannot await the thresholds read; the label arrives
+        // with the first plan, a few microtasks later
+        await flush();
 
         expect(chipText()).toContain('Reroll #1 —');
         // Starting a walk is not a game action; the first press only plans

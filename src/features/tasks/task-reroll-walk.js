@@ -732,8 +732,11 @@ class TaskRerollWalk {
 
     // --------------------------------------------------------------- the walk
 
-    /** Start a walk at the top of the board. */
-    start() {
+    /**
+     * Start a walk at the top of the board.
+     * @returns {Promise<void>} Resolved once the first press is planned
+     */
+    async start() {
         this.index = 0;
         this.pendingRetries = 0;
         this.pending = false;
@@ -745,10 +748,12 @@ class TaskRerollWalk {
         this.message = '';
         this.hidden = false;
         this.timerRegistry.clearAll();
-        // Fire and forget: the thresholds were read at start-up, and this only
-        // catches an edit made in the shield popup since. It writes two numbers
-        // and clicks nothing.
-        this._loadThresholds();
+        // Awaited, because the plan below is what obeys these numbers. Read
+        // fire-and-forget they landed *after* the first plan was drawn, so a
+        // threshold edited in the shield popup seconds earlier — the case this
+        // re-read exists for — missed the very card the player was looking at
+        // while they edited it.
+        await this._loadThresholds();
 
         if (!this._cards().length && !this._readButton()) {
             this.state = 'stopped';
@@ -1020,7 +1025,10 @@ class TaskRerollWalk {
             return;
         }
         if (this.state === 'waiting') return;
-        this.start();
+        // A click handler cannot await; the walk's own state is what the press
+        // after this one reads, and a failed read leaves the thresholds as they
+        // were rather than stopping the walk
+        this.start().catch((error) => console.error('[TaskRerollWalk] Starting the walk failed:', error));
     }
 
     /**
