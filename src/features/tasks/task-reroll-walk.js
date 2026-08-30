@@ -750,16 +750,36 @@ class TaskRerollWalk {
             this.readPresses += 1;
             this.state = 'waiting';
             this._render();
-            // Reading reveals tasks appended unsorted; a player running
-            // auto-sort expects them ordered, and the walk plans against
-            // whatever order it finds — so sort first, then replan against
-            // the settled board. No sort without the setting, as everywhere.
+            // Reading reveals tasks appended unsorted; a player who asked for a
+            // sorted board expects them ordered, and the walk plans against
+            // whatever order it finds — so sort first, then replan against the
+            // settled board.
+            //
+            // This is the *only* sort that happens here. The sorter's own
+            // sort-after-read is a delegated document click listener, and the
+            // press above went through the game's React handler
+            // (`clickThroughReact(…, { reactFirst: true })`), which dispatches
+            // no DOM event at all — so that listener never fires for a walk.
+            //
+            // Hence both settings: `taskSorter_sortAfterRead` is the one written
+            // for this exact moment, and asking only `taskSorter_autoSort` (the
+            // *panel opening* setting) left anyone with sort-after-read on and
+            // auto-sort off with a board that never re-sorted.
+            //
+            // And forced, for the same reason the Sort Tasks button forces. An
+            // unforced pass returns without touching the board while any card is
+            // mid-flow, and a reroll chooser left open is the walk's ordinary
+            // resting state — the game keeps the chooser open after a reroll and
+            // the walk only presses Back on cards it skips. Nothing is pulled out
+            // from under a click by it: the walk owns the pressing here, it re-reads
+            // the board in the `_replan()` on the next line, and `advance()` proves
+            // the slot and the task again before any click.
             this.timerRegistry.clearAll();
             this.timerRegistry.registerTimeout(
                 setTimeout(() => {
-                    if (config.getSetting('taskSorter_autoSort')) {
+                    if (config.getSetting('taskSorter_sortAfterRead') || config.getSetting('taskSorter_autoSort')) {
                         try {
-                            taskSorter.sortTasks();
+                            taskSorter.sortTasks(true);
                         } catch (error) {
                             console.error('[TaskRerollWalk] Post-read sort failed:', error);
                         }

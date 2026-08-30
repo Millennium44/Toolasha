@@ -505,8 +505,9 @@ describe('the unread notice is read first', () => {
         expect(chipText()).toContain('Reroll #1');
     });
 
-    test('with auto-sort off, reading never sorts', () => {
+    test('with both sort settings off, reading never sorts', () => {
         settings.values.taskSorter_autoSort = false;
+        settings.values.taskSorter_sortAfterRead = false;
         sorter.sortTasks.mockClear();
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const notice = unreadNotice(list);
@@ -517,6 +518,50 @@ describe('the unread notice is read first', () => {
         vi.advanceTimersByTime(3000);
 
         expect(sorter.sortTasks).not.toHaveBeenCalled();
+    });
+
+    test('sort-after-read is honoured, being the setting written for exactly this moment', () => {
+        // The walk's Read press goes through the React handler, so the sorter's
+        // own document-level Read delegate never sees a click and never fires.
+        // The walk's compensating sort is the only thing left — and it was
+        // asking taskSorter_autoSort, which is the *panel opening* setting.
+        // A player with "Sort tasks after reading new ones" on and auto-sort off
+        // got no sort at all.
+        settings.values.taskSorter_autoSort = false;
+        settings.values.taskSorter_sortAfterRead = true;
+        sorter.sortTasks.mockClear();
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const notice = unreadNotice(list);
+
+        walk.start();
+        walk.advance();
+        notice.remove();
+        vi.advanceTimersByTime(3000);
+
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+    });
+
+    test('the post-read sort is forced, so a chooser left open elsewhere cannot swallow it', () => {
+        // An unforced sortTasks() returns without touching the board whenever
+        // any card is mid-flow (task-sorter.js `boardHasConfirmingCard`), and a
+        // reroll chooser left open is the walk's ordinary resting state: the
+        // game keeps the chooser open after a reroll, and the walk only presses
+        // Back on cards it is skipping. So the sort the walk asked for after
+        // reading was silently dropped on exactly the boards the walk produces.
+        settings.values.taskSorter_autoSort = true;
+        sorter.sortTasks.mockClear();
+        const list = board([
+            { name: 'Milking - Cow', buttons: CHOOSER, quest: quest(MILKING) },
+            { name: 'Cooking - Stew', buttons: AT_REST, quest: quest('/actions/cooking/stew') },
+        ]);
+        const notice = unreadNotice(list);
+
+        walk.start();
+        walk.advance();
+        notice.remove();
+        vi.advanceTimersByTime(3000);
+
+        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
     });
 
     test('a notice a press did not clear is offered again, a bounded few times', () => {
