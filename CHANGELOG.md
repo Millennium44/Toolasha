@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Seventeen listener leaks closed
+
+A census found fifteen features re-registering setting-change listeners on every character switch while discarding the unregister function — the same shape whose worst case resurrected a torn-down feature last week. All fifteen now capture and call their unregisters in teardown (watchlist, loadout enhancement display, monster stat check, scroll simulator, max produceable, gathering stats, inventory count, combat stats, action filter, trade history display), and two similar leaks found in passing are closed too: the scroll simulator's DOM observer, and the sort-mode listener, whose API now hands back an unregister at all.
+
 ### The Philosopher's Necklace shows up in the upgrade table
 
 It was generated and then silently filtered out of every fight: the all-style necklace tie-broke to "melee" in the role classifier while a speed necklace read "defensive", and the substitution filter refused the swap everywhere (the ring and earrings, styleless on both sides, sailed through — which is why they appeared and the necklace didn't). Two fixes: an item raising every style at once now classifies as styleless, and — per the maintainer's ruling that Philosopher's accessories are strict supersets — the philo path skips the substitution heuristics entirely and is offered wherever the slot is worn.

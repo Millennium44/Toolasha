@@ -47,7 +47,7 @@ vi.mock('../../api/marketplace.js', () => ({
 
 vi.mock('./action-panel-sort.js', () => ({
     default: {
-        onSortModeChange: vi.fn(),
+        onSortModeChange: vi.fn(() => () => {}),
         getSortMode: () => 'default',
         setSortMode: vi.fn(),
         sortPanelsByProfit: vi.fn(),

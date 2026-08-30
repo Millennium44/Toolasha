@@ -365,9 +365,11 @@ function injectButton(navButtons) {
 
 /** The unregister function `onSettingChange` handed back, undone in `disable()`. */
 let unregisterSettingChange = null;
+/** Same for the DOM observer — discarding it stacked one handler per switch. */
+let unregisterObserver = null;
 
 function initialize() {
-    domObserver.onClass('ScrollSimulatorUI', 'LoadoutsPanel_buttonsContainer', (node) => {
+    unregisterObserver = domObserver.onClass('ScrollSimulatorUI', 'LoadoutsPanel_buttonsContainer', (node) => {
         const panel = node.closest('[class*="LoadoutsPanel_selectedLoadout"]') || node.parentElement;
         const navButtons = panel?.querySelector('[class*="LoadoutsPanel_navButtons"]');
         if (navButtons) injectButton(navButtons);
@@ -392,6 +394,10 @@ function disable() {
     if (unregisterSettingChange) {
         unregisterSettingChange();
         unregisterSettingChange = null;
+    }
+    if (unregisterObserver) {
+        unregisterObserver();
+        unregisterObserver = null;
     }
     document.getElementById(BUTTON_ID)?.remove();
     popup.close();

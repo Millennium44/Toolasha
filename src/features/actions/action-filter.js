@@ -78,9 +78,11 @@ class ActionFilter {
             })
         );
 
-        actionPanelSort.onSortModeChange(() => {
-            if (this._updateSortBtn) this._updateSortBtn();
-        });
+        this.unregisterHandlers.push(
+            actionPanelSort.onSortModeChange(() => {
+                if (this._updateSortBtn) this._updateSortBtn();
+            })
+        );
 
         this.initialized = true;
     }

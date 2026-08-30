@@ -189,12 +189,24 @@ class ActionPanelSort {
         return this.sortMode;
     }
 
+    /**
+     * Listen for sort-mode changes.
+     * @param {Function} callback - Called with the new mode
+     * @returns {Function} Unregister — without one, a caller that re-registers
+     *   per character switch (action-filter does) stacked a listener per cycle
+     */
     onSortModeChange(callback) {
         this.sortModeListeners.push(callback);
+        return () => {
+            const index = this.sortModeListeners.indexOf(callback);
+            if (index !== -1) this.sortModeListeners.splice(index, 1);
+        };
     }
 
     _notifySortModeListeners() {
-        for (const cb of this.sortModeListeners) cb(this.sortMode);
+        // A copy, so a listener unregistering during dispatch cannot shift the
+        // loop's footing
+        for (const cb of [...this.sortModeListeners]) cb(this.sortMode);
     }
 
     /**
