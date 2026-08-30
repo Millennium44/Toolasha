@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The guild audit's three flagged edges, closed
+
+The Missing Mats marketplace poll no longer builds tabs from the departed character's list when a switch lands inside its two-second window; the trial scoreboard escapes counted names like every other name it draws; and a member's stale name-keyed skill capture is pruned after an in-game rename (their stable character id proves the old entry is theirs).
+
 ### Combat text stops resurrecting itself, and collection filters load faster
 
 Combat text leaked one setting-change listener per character switch — and a setting change after teardown made those stale listeners resubscribe the whole feature with no matching init. The two listeners are now unregistered first in cleanup. Collection filters' legacy-key migration also ran up to twenty storage round-trips one after another before every load; the five keys migrate in parallel now, which should trim the 416ms init a startup trace flagged.
