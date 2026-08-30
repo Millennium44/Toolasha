@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The reroll walk sorts, pays once, and keeps walking
+
+The reported no-sort-after-read had three stacked causes: the walk's React-first click never dispatches the DOM event the sorter's listener waits for, its compensating sort asked the wrong setting (sort-on-open instead of sort-after-read), and the sort it did request was dropped because a walk's resting state — a chooser left open — reads as "mid-flow". The walk now forces its own sort after a read lands. Also found in the same pass: the walk could pay twice for one unanswered reroll (the chooser still shows pre-payment prices in that window, so the label under-quoted the doubled charge) — payments are now fingerprinted and re-offers wait for the board to actually change; and a greyed-out coin option no longer reads as "unquoted", which had the walk picking an unaffordable coin reroll over a payable cowbell and giving up.
+
+### Two recorders stop crossing characters on a fast switch
+
+Networth history's resume could overwrite the arriving character's series with the departing character's rows and save it under their key; the task completion tracker had the same gap in both its load and its claim-beat-the-read fallback, which could graft one character's completion into the other's stored record. Both now carry the generation guard their sibling recorders already had.
+
 ### Dead duplicate removed
 
 profile-cache.js was a byte-for-byte copy of core's profile-manager with zero importers; deleted so the two copies can't drift.
