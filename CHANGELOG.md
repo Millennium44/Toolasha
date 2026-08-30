@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat text stops resurrecting itself, and collection filters load faster
+
+Combat text leaked one setting-change listener per character switch — and a setting change after teardown made those stale listeners resubscribe the whole feature with no matching init. The two listeners are now unregistered first in cleanup. Collection filters' legacy-key migration also ran up to twenty storage round-trips one after another before every load; the five keys migrate in parallel now, which should trim the 416ms init a startup trace flagged.
+
 ### Chest EV stops flagging an exact figure as a floor
 
 A drop-table entry with zero min and max counts can never contribute to a chest's expected value, and two of the three EV paths already skipped it — but the per-drop breakdown counted it as an unpriced drop when its item had no market price, so the UI showed "≥ X (1 drop unpriced)" on containers whose total was actually exact. The breakdown now applies the same guard.
