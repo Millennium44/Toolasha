@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### CSV exports close two formula doors, and formatters stop printing "-0"
+
+Exported text cells beginning with + or - are now escaped like the other formula-starting characters spreadsheets evaluate (signed numbers are untouched). And a small negative that rounds to zero no longer displays as "-0" — six formatters decided the sign before rounding the magnitude.
+
 ### Tooltips on reused poppers stop showing the previous item's extras
 
 The game reuses tooltip elements, and two injectors guarded re-entry per element rather than per item: dungeon token tooltips kept the first item's shop table under whatever came next, and collection popovers kept the previous item's View Action / Item Dictionary buttons — clicking them navigated to the wrong item. Both now key their guard on the item and clear stale injections, the same pattern the price tooltip already follows.
