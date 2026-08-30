@@ -19,6 +19,10 @@ const mocks = vi.hoisted(() => ({
     sessions: [],
 }));
 
+// Real subscribe/unsubscribe bookkeeping, unlike a no-op stub, so a test can
+// prove a cleanup+initialize cycle does not accumulate listeners.
+const settingListeners = vi.hoisted(() => ({}));
+
 vi.mock('../../core/config.js', () => ({
     default: {
         COLOR_TEXT_PRIMARY: '#eee',
@@ -27,7 +31,12 @@ vi.mock('../../core/config.js', () => ({
         getSetting: () => true,
         getSettingValue: (_key, fallback) => fallback ?? null,
         getPricingModeLabel: () => 'Hybrid',
-        onSettingChange: () => {},
+        onSettingChange: (key, callback) => {
+            (settingListeners[key] ??= []).push(callback);
+            return () => {
+                settingListeners[key] = (settingListeners[key] || []).filter((cb) => cb !== callback);
+            };
+        },
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -299,5 +308,26 @@ describe('the Copy button on the popup', () => {
 
         expect(popup()).toBeTruthy();
         expect(copyButton()).toBeUndefined();
+    });
+});
+
+describe('cleanup unregisters the setting-change listener it registered', () => {
+    afterEach(() => {
+        combatStatsUI.cleanup();
+        for (const key of Object.keys(settingListeners)) delete settingListeners[key];
+    });
+
+    test('a character-switch cycle does not accumulate listeners', () => {
+        // Every character switch runs cleanup() then initialize() again
+        // (feature-registry.js). If the unregister function onSettingChange
+        // hands back is discarded, each cycle leaves one more copy of the
+        // same callback on config's per-key list.
+        combatStatsUI.initialize();
+        for (let i = 0; i < 3; i++) {
+            combatStatsUI.cleanup();
+            combatStatsUI.initialize();
+        }
+
+        expect(settingListeners.combatStats).toHaveLength(1);
     });
 });

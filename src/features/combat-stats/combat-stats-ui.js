@@ -98,6 +98,8 @@ class CombatStatsUI {
         this.isInitialized = false;
         this.observer = null;
         this.popup = null;
+        /** Unregister function `onSettingChange` handed back, undone in `cleanup()`. */
+        this.unregisterSettingChange = null;
         /**
          * Which run the popup is showing: 'live', or an archived session's key.
          * On the instance rather than the popup so reopening the popup shows
@@ -122,7 +124,7 @@ class CombatStatsUI {
         this.isInitialized = true;
 
         // Setup setting listener
-        config.onSettingChange('combatStats', (enabled) => {
+        this.unregisterSettingChange = config.onSettingChange('combatStats', (enabled) => {
             if (enabled) {
                 this.injectButton();
             } else {
@@ -1585,6 +1587,10 @@ class CombatStatsUI {
      * Cleanup
      */
     cleanup() {
+        if (this.unregisterSettingChange) {
+            this.unregisterSettingChange();
+            this.unregisterSettingChange = null;
+        }
         if (this.observer) {
             this.observer.disconnect();
             this.observer = null;
