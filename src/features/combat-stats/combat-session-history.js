@@ -199,6 +199,13 @@ export async function clearSessions() {
  * The players are keyed by name rather than by position: across sessions a
  * position means nothing at all, and the same character appears in several.
  *
+ * Each player also carries their own `durationSeconds` — the sum of only the
+ * sessions *they* appear in, not the group total. A roster is not the same
+ * five names across every combined run: somebody who sat out half of them had
+ * loot arrive over half the clock, and dividing their total by the full span
+ * (the group's `durationSeconds`, still returned for whatever reads it that
+ * way) understates their rate, worse the more sessions pile up around them.
+ *
  * @param {Array<Object>} sessions - Snapshots
  * @returns {Object|null} One snapshot shaped like the others, or null for none
  */
@@ -210,17 +217,19 @@ export function combineSessions(sessions) {
     let durationSeconds = 0;
 
     for (const session of usable) {
-        durationSeconds += session.durationSeconds || 0;
+        const sessionDuration = session.durationSeconds || 0;
+        durationSeconds += sessionDuration;
 
         for (const player of session.players) {
             const name = player?.name;
             if (!name) continue;
 
             if (!byName.has(name)) {
-                byName.set(name, { ...player, loot: {}, experience: {}, deathCount: 0 });
+                byName.set(name, { ...player, loot: {}, experience: {}, deathCount: 0, durationSeconds: 0 });
             }
             const combined = byName.get(name);
             combined.deathCount += player.deathCount || 0;
+            combined.durationSeconds += sessionDuration;
 
             // Keyed by item rather than by the game's slot key: two sessions
             // number their slots independently, so merging on the raw key would

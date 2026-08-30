@@ -20,13 +20,16 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => game.data },
 }));
 vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
-    calculatePlayerStats: (player) => ({
+    calculatePlayerStats: (player, duration) => ({
         name: player.name,
         income: { bid: player.income ?? 0, ask: player.income ?? 0 },
         consumableCosts: { bid: 1000, ask: 1000 },
         keyCosts: { bid: 500, ask: 500 },
         dailyProfit: { bid: (player.income ?? 0) * 10, ask: 0 },
         lootList: player.lootList || [],
+        // Not part of the real return shape — carried only so a test can see
+        // what duration the panel actually asked for
+        _duration: duration,
     }),
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
@@ -45,11 +48,15 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () =>
 // factory while the graph is still being built
 vi.mock('../combat-stats/combat-session-history.js', () => ({
     loadSessions: async () => game.sessions,
-    combineSessions: (list) => (list.length ? { ...list[0], combined: true, sessionCount: list.length } : null),
+    // `game.combinedResult` lets one test hand back a specific combined
+    // snapshot (an old `combatStartTime`, per-player `durationSeconds`) to
+    // check what the panel does with it, without exercising the real merge
+    combineSessions: (list) =>
+        game.combinedResult ?? (list.length ? { ...list[0], combined: true, sessionCount: list.length } : null),
     describeSession: (session) => `run ${session.key}`,
 }));
 
-const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS, buildSummaryText } =
+const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS, buildSummaryText, _partyRuns } =
     await import('./party-loot-panel.js');
 
 const CHEST = { itemHrid: '/items/enchanted_chest', itemName: 'Enchanted Chest', count: 2, totalValue: 7_400_000 };
@@ -57,6 +64,7 @@ const ODDITY = { itemHrid: '/items/nothing', itemName: 'Unpriced Thing', count: 
 
 beforeEach(() => {
     game.sessions = [];
+    game.combinedResult = undefined;
     game.data = {
         combatStartTime: '2026-08-03T01:00:00Z',
         players: [
@@ -198,6 +206,34 @@ describe('the top bar', () => {
         game.sessions = [archived('a|1', '2026-08-02T22:00:00Z'), archived('b|2', '2026-08-02T20:00:00Z')];
         await settle();
         expect(values()).toContain('combined');
+    });
+
+    test('a combined view times each player by their own sessions, not the wall-clock span of every run', async () => {
+        // Two archived runs a day apart. B only fought in the second one.
+        // combineSessions correctly hands back each player's own summed
+        // duration (600s for A across both runs, 300s for B in just the one)
+        // — the bug was the panel discarding that and re-timing everyone off
+        // "now minus the oldest run's combatStartTime" instead, which for an
+        // archive spanning a day is a wildly different, wildly wrong number.
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z'), archived('b|2', '2026-08-01T22:00:00Z')];
+        game.combinedResult = {
+            combined: true,
+            sessionCount: 2,
+            combatStartTime: '2026-08-01T22:00:00Z', // the older of the two runs
+            durationSeconds: 900,
+            players: [
+                { name: 'A', isCurrentPlayer: true, income: 100, lootList: [], durationSeconds: 600 },
+                { name: 'B', isCurrentPlayer: false, income: 50, lootList: [], durationSeconds: 300 },
+            ],
+        };
+        partyLootPanel.show();
+        await settle();
+
+        choose('combined');
+
+        const [a, b] = _partyRuns();
+        expect(a._duration).toBe(600);
+        expect(b._duration).toBe(300);
     });
 
     test('choosing an archived run shows that run rather than the live one', async () => {

@@ -195,6 +195,25 @@ function partyRuns() {
     const players = data?.players || [];
     if (!players.length) return [];
 
+    // A combined snapshot is not one run — its `combatStartTime` is whichever
+    // session in the lot happened to be the oldest, kept only so a picker
+    // label has something to show. Treating that as a live run's start (the
+    // branch below) timed every player off "now minus the oldest session's
+    // start", which is the wall-clock gap across however many days the
+    // archive spans — including every hour nobody was playing — rather than
+    // the play time actually measured. `combineSessions` already worked out
+    // the one duration that is honest here: each player's own, summed only
+    // over the sessions *they* appeared in, since a roster is not the same
+    // names in every combined run.
+    if (data.combined) {
+        return players
+            .map((player) => ({
+                ...calculatePlayerStats(player, player.durationSeconds || 0),
+                isCurrentPlayer: player.isCurrentPlayer,
+            }))
+            .sort((a, b) => Number(Boolean(b.isCurrentPlayer)) - Number(Boolean(a.isCurrentPlayer)));
+    }
+
     // The same dating rule the overlay rows use: a live run times itself from
     // the server's start time, so the daily rates agree with the tile that
     // opened this rather than being a second answer
@@ -207,6 +226,11 @@ function partyRuns() {
     return players
         .map((player) => ({ ...calculatePlayerStats(player, duration), isCurrentPlayer: player.isCurrentPlayer }))
         .sort((a, b) => Number(Boolean(b.isCurrentPlayer)) - Number(Boolean(a.isCurrentPlayer)));
+}
+
+/** Test-only: the same board the panel draws, without going through the DOM. */
+export function _partyRuns() {
+    return partyRuns();
 }
 
 /**

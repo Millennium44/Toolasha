@@ -183,6 +183,27 @@ describe('several runs as one', () => {
         expect(combineSessions([{ players: [] }])).toBeNull();
         expect(combineSessions(null)).toBeNull();
     });
+
+    test('a player in only some of the combined sessions is timed by those sessions, not the whole span', () => {
+        // A blended rate divides loot by a clock, and the clock has to be the
+        // one that was actually running while that player's loot came in. B
+        // sat out the second session entirely — charging B's daily rate against
+        // both sessions' combined 1200s (instead of the 600s B was actually
+        // there for) understates it by half, and the effect only gets worse as
+        // more sessions pile up around a player who missed most of them.
+        const combined = combineSessions([
+            session('2026-08-03T01:00:00Z', ['A', 'B']),
+            session('2026-08-03T02:00:00Z', ['A']),
+        ]);
+
+        const a = combined.players.find((player) => player.name === 'A');
+        const b = combined.players.find((player) => player.name === 'B');
+        expect(a.durationSeconds).toBe(1200);
+        expect(b.durationSeconds).toBe(600);
+        // The group total is still the sum of every session, for whatever
+        // still reads it that way
+        expect(combined.durationSeconds).toBe(1200);
+    });
 });
 
 describe('describing one in a picker', () => {
