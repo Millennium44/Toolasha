@@ -524,6 +524,106 @@ export function summarizePool(attempts) {
 }
 
 /**
+ * The median of a list of fractions, kept fractional.
+ *
+ * The level median above rounds its even case, which is right for a room level
+ * and destructive for a 0…1 share — every even-count median would collapse to 0
+ * or 1.
+ *
+ * @param {Array<number>} values - At least one number
+ * @returns {number} The median
+ */
+function medianFraction(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * How much of the monster was still standing when one losing fight ended, as a
+ * fraction of its maximum — or null when that attempt cannot say.
+ *
+ * Two record shapes carry it and they are not the same. The room log's own
+ * attempts come from `classifyFight`, which already stores `monsterHpLeft` as a
+ * clamped fraction. The recorder's attempts store the endpoints instead —
+ * `monsterHpEnd` against `monsterMaxHp` — and normalising them here is what
+ * makes a 40K remainder on a 50K monster comparable with a 4K one on a 5K
+ * monster. Whichever a record has is used; a record with neither is excluded.
+ *
+ * A remainder of exactly zero is read as absent rather than as a reading. A
+ * monster at zero HP is a clear, so it cannot be the ending of a loss — and the
+ * recorder coerces an unmeasured `monsterHpEnd` to 0, which would otherwise
+ * enter the median as the most flattering number there is.
+ *
+ * @param {Object} attempt - One recorded attempt
+ * @returns {number|null} Fraction of the monster's maximum still standing
+ */
+function lossRemainderFraction(attempt) {
+    const stored = Number(attempt?.monsterHpLeft);
+    if (Number.isFinite(stored) && stored > 0) return Math.min(1, stored);
+
+    const max = Number(attempt?.monsterMaxHp);
+    const end = Number(attempt?.monsterHpEnd);
+    if (!(max > 0) || !Number.isFinite(end) || end <= 0) return null;
+    return Math.min(1, end / max);
+}
+
+/**
+ * The distance the losses lost by: the median share of the monster left
+ * standing when a fight in this pool ended badly.
+ *
+ * The pool already says how often you win. It has never said by how much you
+ * lose, and the two questions have different answers: losing with the monster
+ * at 3% every time means one more tier flips the room, and losing at 60% means
+ * the room is not close and no amount of retrying will make it close.
+ *
+ * Only complete attempts count. A fight resolved `stale` or by a room switch
+ * was measured up to wherever the reading stopped, so its remainder is the
+ * monster's HP at an arbitrary moment rather than at the end of a fight, and
+ * averaging those in would quietly make every pool look closer than it is.
+ * Records missing the HP fields are excluded the same way, and `n` is the count
+ * that survived both filters rather than the number of losses.
+ *
+ * Below `minLosses` there is no text at all. A median of two remainders is a
+ * number, not a reading, and the pool card would present it exactly as it
+ * presents one drawn from forty.
+ *
+ * @param {Array<Object>} attempts - Attempts for one pool group
+ * @param {number} [minLosses=MIN_LAB_FIGHTS] - Fewest usable losses worth a median
+ * @returns {{losses: number, n: number, excluded: number, median: number|null, text: string|null}}
+ */
+export function nearMissRemainder(attempts, minLosses = MIN_LAB_FIGHTS) {
+    const fractions = [];
+    let losses = 0;
+
+    for (const attempt of attempts || []) {
+        if (!attempt) continue;
+        // A loss is a known bad ending. `cleared` and an unknown outcome are
+        // both excluded: one is a win, the other is not a measured ending.
+        if (attempt.cleared === true) continue;
+        if (attempt.outcome !== 'death' && attempt.outcome !== 'timeout') continue;
+        losses += 1;
+        if (attempt.complete !== true) continue;
+        const fraction = lossRemainderFraction(attempt);
+        if (fraction === null) continue;
+        fractions.push(fraction);
+    }
+
+    const n = fractions.length;
+    const result = { losses, n, excluded: losses - n, median: null, text: null };
+    if (n < minLosses) return result;
+
+    result.median = medianFraction(fractions);
+    // Tenths near the bottom, where the difference between 3% and 8% is the
+    // difference between one tier and three; whole percents further out, where
+    // it is noise
+    const pct = result.median * 100;
+    const shown = pct >= 9.95 ? String(Math.round(pct)) : pct.toFixed(1);
+    result.text = `losses end with the monster at ${shown}% median (n=${n})`;
+    return result;
+}
+
+/**
  * How much of the pool was measured whole, and what ended the rest.
  *
  * Every recorded fight already carries `complete` — opened at its own

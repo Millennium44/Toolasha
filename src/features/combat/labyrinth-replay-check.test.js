@@ -15,6 +15,7 @@ import {
     binomialMarginPct,
     summarizePool,
     poolHygiene,
+    nearMissRemainder,
     simDamageTally,
 } from './labyrinth-replay-check.js';
 
@@ -1025,5 +1026,126 @@ describe('poolHygiene', () => {
         expect(hygiene.total).toBe(1);
         expect(hygiene.completeFraction).toBe(0);
         expect(hygiene.text).toContain('0 of 1 complete');
+    });
+});
+
+describe('nearMissRemainder', () => {
+    /** A complete loss ending with `end` of the monster's 1000 HP still standing */
+    const loss = (end, overrides = {}) => attempt({ complete: true, monsterHpEnd: end, ...overrides });
+
+    test('the median is normalised against the monster maximum each record carries', () => {
+        // Same 40% remainder on two very differently sized monsters
+        const near = nearMissRemainder([
+            ...Array.from({ length: 3 }, () => loss(400)),
+            ...Array.from({ length: 2 }, () => loss(4, { monsterMaxHp: 10 })),
+        ]);
+        expect(near.n).toBe(5);
+        expect(near.median).toBeCloseTo(0.4, 5);
+        expect(near.text).toBe('losses end with the monster at 40% median (n=5)');
+    });
+
+    test("a record carrying classifyFight's own fraction is used as it stands", () => {
+        const near = nearMissRemainder(
+            Array.from({ length: 5 }, () => ({
+                outcome: 'timeout',
+                cleared: false,
+                complete: true,
+                monsterHpLeft: 0.08,
+            }))
+        );
+        expect(near.n).toBe(5);
+        expect(near.median).toBeCloseTo(0.08, 5);
+        expect(near.text).toContain('8.0% median');
+    });
+
+    test('an even count averages the two middles rather than rounding them away', () => {
+        const near = nearMissRemainder([loss(100), loss(200), loss(300), loss(400), loss(500), loss(600)], 6);
+        expect(near.median).toBeCloseTo(0.35, 5);
+    });
+
+    test('wins are not losses, whichever way the record says so', () => {
+        const near = nearMissRemainder([
+            ...Array.from({ length: 5 }, () => loss(300)),
+            attempt({ complete: true, outcome: 'clear', cleared: true, monsterHpEnd: 0 }),
+            attempt({ complete: true, outcome: 'death', cleared: true, monsterHpEnd: 0 }),
+            attempt({ complete: true, outcome: 'unknown', monsterHpEnd: 900 }),
+        ]);
+        expect(near.losses).toBe(5);
+        expect(near.n).toBe(5);
+        expect(near.median).toBeCloseTo(0.3, 5);
+    });
+
+    test('an incomplete attempt is counted as a loss and excluded from the median', () => {
+        const near = nearMissRemainder([
+            ...Array.from({ length: 5 }, () => loss(300)),
+            ...Array.from({ length: 4 }, () => attempt({ complete: false, monsterHpEnd: 950 })),
+            attempt({ monsterHpEnd: 950 }), // recorded before the field existed
+        ]);
+        expect(near.losses).toBe(10);
+        expect(near.n).toBe(5);
+        expect(near.excluded).toBe(5);
+        expect(near.median).toBeCloseTo(0.3, 5);
+        expect(near.text).toContain('(n=5)');
+    });
+
+    test('a loss with no maximum to normalise against is excluded, and n says so', () => {
+        const near = nearMissRemainder([
+            ...Array.from({ length: 5 }, () => loss(300)),
+            loss(300, { monsterMaxHp: 0 }),
+            loss(300, { monsterMaxHp: null }),
+        ]);
+        expect(near.losses).toBe(7);
+        expect(near.n).toBe(5);
+        expect(near.excluded).toBe(2);
+    });
+
+    test('a zero remainder on a loss is an unmeasured endpoint, not a fight won by a hair', () => {
+        const near = nearMissRemainder([
+            ...Array.from({ length: 5 }, () => loss(300)),
+            ...Array.from({ length: 3 }, () => loss(0)),
+        ]);
+        expect(near.n).toBe(5);
+        expect(near.median).toBeCloseTo(0.3, 5);
+    });
+
+    test('a loss with neither endpoint nor fraction is excluded', () => {
+        const near = nearMissRemainder(
+            Array.from({ length: 6 }, () => ({ outcome: 'death', cleared: false, complete: true }))
+        );
+        expect(near.losses).toBe(6);
+        expect(near.n).toBe(0);
+        expect(near.median).toBeNull();
+        expect(near.text).toBeNull();
+    });
+
+    test('below the minimum there is no reading at all, only the counts', () => {
+        const near = nearMissRemainder(Array.from({ length: 4 }, () => loss(300)));
+        expect(near.losses).toBe(4);
+        expect(near.n).toBe(4);
+        expect(near.median).toBeNull();
+        expect(near.text).toBeNull();
+        // And the fifth usable loss is what unlocks it
+        expect(nearMissRemainder(Array.from({ length: 5 }, () => loss(300))).text).not.toBeNull();
+    });
+
+    test('an empty or holed pool divides by nothing', () => {
+        for (const empty of [[], null, undefined, [null, undefined]]) {
+            const near = nearMissRemainder(empty);
+            expect(near).toEqual({ losses: 0, n: 0, excluded: 0, median: null, text: null });
+        }
+    });
+
+    test('tenths near the bottom, whole percents further out', () => {
+        const near = (end) => nearMissRemainder(Array.from({ length: 5 }, () => loss(end))).text;
+        expect(near(30)).toContain('at 3.0% median');
+        expect(near(99)).toContain('at 9.9% median');
+        expect(near(100)).toContain('at 10% median');
+        expect(near(600)).toContain('at 60% median');
+    });
+
+    test('a remainder above the maximum is clamped rather than reported as over-full', () => {
+        const near = nearMissRemainder(Array.from({ length: 5 }, () => loss(1500)));
+        expect(near.median).toBe(1);
+        expect(near.text).toContain('at 100% median');
     });
 });
