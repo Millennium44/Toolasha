@@ -379,6 +379,46 @@ describe('the full-kit cohort', () => {
         expect(summary.cohort.sd).toBeCloseTo(Math.sqrt(4 * 0.25 * 0.75), 10);
     });
 
+    test('a clear arriving in a later update than its entry is judged once, not twice', () => {
+        // The entry raises the count in one floor update; the clear flips in the
+        // next with the count unchanged. That is the normal shape of a win, and
+        // the cohort used to judge it at both folds — a real record read
+        // "expected 3296 over 3927" against 2601 actual fights and called
+        // itself 109 sd below the sim.
+        const state = foldAll([grid([combat({ entryCount: 3 })]), grid([combat({ entryCount: 3, isCleared: true })])], {
+            predictedFor: () => 0.25,
+        });
+        expect(state.totals[MIMIC]).toMatchObject({ attempts: 3, clears: 1, fullKitJudged: 3, fullKitJudgedClears: 1 });
+        expect(state.totals[MIMIC].fullKitExpected).toBeCloseTo(3 * 0.25, 10);
+        expect(state.totals[MIMIC].fullKitVariance).toBeCloseTo(3 * 0.25 * 0.75, 10);
+    });
+
+    test('a stored bucket inflated by the old double-count is repaired on read', () => {
+        // Judged can never truly exceed the bucket's attempts; the overrun is
+        // the double-count, and expected/variance scale down with it
+        const rows = accuracyRows(
+            {
+                [MIMIC]: {
+                    monsterHrid: '/monsters/mimic',
+                    roomLevel: 252,
+                    attempts: 10,
+                    clears: 5,
+                    predicted: 0.5,
+                    fullKitJudged: 15,
+                    fullKitJudgedClears: 5,
+                    fullKitExpected: 7.5,
+                    fullKitVariance: 3.75,
+                },
+            },
+            { interval: wilsonInterval }
+        );
+        const summary = accuracySummary(rows, wilsonInterval);
+        expect(summary.cohort.judged).toBe(10);
+        expect(summary.cohort.judgedClears).toBe(5);
+        expect(summary.cohort.expected).toBeCloseTo(5, 10);
+        expect(summary.cohort.sd).toBeCloseTo(Math.sqrt(2.5), 10);
+    });
+
     test('the cohort counters subtract under a baseline like every other counter', () => {
         const before = foldAll([grid([combat({ entryCount: 2 })])], { predictedFor: () => 0.5 });
         const after = foldFloorOutcomes(before.totals, before.seen, readFloorRooms(grid([combat({ entryCount: 5 })])), {

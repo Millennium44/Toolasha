@@ -210,11 +210,27 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
         // never against one recomputed later by a newer engine. Buckets written
         // before these counters existed carry none and read as the legacy
         // cohort, which the headline excludes rather than deletes.
-        const counted = Math.max(newEntries, newClear);
+        //
+        // Judged moves in lockstep with `attempts` below — the SAME delta, not
+        // `max(newEntries, newClear)`. An entry and its clear usually arrive in
+        // separate floor updates, so the old max counted every such clear as a
+        // second judged attempt and banked a second expected clear for it;
+        // a real record read "expected 3296 over 3927" against 2601 actual
+        // fights and called itself 109 sd below the sim (2026-08-29).
+        const nextAttempts = Math.max(bucket.attempts + newEntries, clears);
+        const counted = nextAttempts - bucket.attempts;
+        const priorJudged = Number(bucket.fullKitJudged) || 0;
         const cohort = Number.isFinite(predicted)
             ? {
-                  fullKitJudged: (Number(bucket.fullKitJudged) || 0) + counted,
-                  fullKitJudgedClears: (Number(bucket.fullKitJudgedClears) || 0) + newClear,
+                  fullKitJudged: priorJudged + counted,
+                  // A clear whose attempt never entered the cohort (folded
+                  // before these counters, or without a prediction) does not
+                  // get its clear judged either — clears can never outnumber
+                  // the attempts they are judged against
+                  fullKitJudgedClears: Math.min(
+                      (Number(bucket.fullKitJudgedClears) || 0) + newClear,
+                      priorJudged + counted
+                  ),
                   fullKitExpected: (Number(bucket.fullKitExpected) || 0) + predicted * counted,
                   fullKitVariance: (Number(bucket.fullKitVariance) || 0) + predicted * (1 - predicted) * counted,
               }
@@ -227,7 +243,7 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
             // being entered, and a clear that outran its own attempt would give
             // a rate above 100%. The victory was an attempt whether or not the
             // entry count was ever seen to rise.
-            attempts: Math.max(bucket.attempts + newEntries, clears),
+            attempts: nextAttempts,
             clears,
             ...(Number.isFinite(predicted) ? { predicted } : {}),
             ...cohort,
@@ -488,6 +504,41 @@ export function compareToPrediction(clears, attempts, predicted, interval) {
  * @returns {Array<Object>} Rows, in the game's order when one is given and
  *   most-fought first otherwise
  */
+/**
+ * A bucket's full-kit cohort, with the double-count already on disk undone.
+ *
+ * Counters written before the lockstep fix judged most clears twice — once at
+ * the entry that raised the count, once at the clear that flipped in a later
+ * update — so a stored `fullKitJudged` can exceed the bucket's own attempts,
+ * and `fullKitExpected` carries an extra predicted clear for each. Judged can
+ * never truly exceed attempts, so the overrun IS the double-count: judged is
+ * clamped to attempts and expected/variance are scaled down with it. The scale
+ * assumes the doubled folds accrued at roughly the bucket's own rate — exact
+ * for a bucket whose prediction held still, approximate where it drifted, and
+ * either is far nearer the truth than a headline 109 sd below the sim
+ * (2026-08-29). New folds count in lockstep and pass through untouched.
+ *
+ * @param {Object} bucket - A stored outcome bucket
+ * @returns {{judged: number, clears: number, expected: number, variance: number}}
+ */
+function repairedCohort(bucket) {
+    const judged = Math.max(0, Number(bucket.fullKitJudged) || 0);
+    const clears = Math.max(0, Number(bucket.fullKitJudgedClears) || 0);
+    const expected = Math.max(0, Number(bucket.fullKitExpected) || 0);
+    const variance = Math.max(0, Number(bucket.fullKitVariance) || 0);
+    const attempts = Math.max(0, Number(bucket.attempts) || 0);
+    if (judged <= attempts || judged <= 0) {
+        return { judged, clears: Math.min(clears, judged), expected, variance };
+    }
+    const scale = attempts / judged;
+    return {
+        judged: attempts,
+        clears: Math.min(clears, attempts),
+        expected: expected * scale,
+        variance: variance * scale,
+    };
+}
+
 export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
     const rows = [];
     for (const bucket of Object.values(totals || {})) {
@@ -519,12 +570,7 @@ export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
             // The full-kit cohort's share of this bucket, with expected clears
             // summed at the prediction in effect when each fight was folded. A
             // bucket predating the counters reads all zeros — the legacy cohort.
-            cohort: {
-                judged: Math.max(0, Number(bucket.fullKitJudged) || 0),
-                clears: Math.max(0, Number(bucket.fullKitJudgedClears) || 0),
-                expected: Math.max(0, Number(bucket.fullKitExpected) || 0),
-                variance: Math.max(0, Number(bucket.fullKitVariance) || 0),
-            },
+            cohort: repairedCohort(bucket),
         });
     }
     // The game's order, and within a room type by level, so a subject's rooms

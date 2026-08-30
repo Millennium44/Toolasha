@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The accuracy headline stops judging every clear twice
+
+"Over the 3927 it had a rate for" against 2601 recorded fights: an entry and its clear usually arrive in separate floor updates, and the full-kit cohort judged both folds — banking a second expected clear for every win — which is how a healthy record read 109 sd below the sim. The cohort now moves in lockstep with the attempt count, and counters already inflated on disk are repaired on read (judged clamped to attempts, expectation scaled with it).
+
 ### Drink costs verified whole
 
 Chasing a drink-costs-missing report (which turned out to be about the upstream script): both profit calculators do subtract drink costs, and the one latent hazard found — the drink-slots map being cleared and refilled on every tea change — was measured safe on the test server: the game's update message always carries every action type. Documented at the handler.
