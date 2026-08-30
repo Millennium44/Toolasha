@@ -500,6 +500,22 @@ class TaskRerollWalk {
     _costsFor(quest, chooser) {
         const live = costsFromChooser(chooser);
         const ladder = nextRerollCosts(quest);
+
+        // An open chooser with something pressable in it is the whole truth
+        // about what this reroll can cost, so the ladder is not consulted at
+        // all. Merging the two priced a currency the chooser is *refusing* —
+        // the button is there and greyed out because the player cannot afford
+        // it — at the ladder's price; the plan would then pick that currency on
+        // price, `preferredRerollOption` would find nothing pressable to match
+        // it, and the walk would wait the chooser out and stop on a card it
+        // could have rerolled with the other currency.
+        if ((chooser || []).some((option) => option.available)) {
+            return { coin: live.coin, cowbell: live.cowbell, free: live.free };
+        }
+
+        // Nothing pressable: either the chooser is shut (the ladder is the only
+        // source there is) or the game has momentarily disabled every option
+        // while it answers the last payment, which the caller waits out.
         if (!ladder && !chooser.length) return null;
         return {
             coin: live.coin ?? ladder?.coin ?? null,

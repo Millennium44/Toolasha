@@ -443,6 +443,25 @@ describe('planning a walk down the board', () => {
         expect(chipText()).toContain('Reroll #1 — 10.0K🪙 (cowbells blocked)');
     });
 
+    test('a chooser refusing one currency pays the other rather than giving up on the card', () => {
+        // While the chooser is open its own buttons are the only prices that can
+        // actually be paid. Falling back to the game's price ladder for a
+        // currency the chooser is *refusing* — the player cannot afford it, so
+        // the game greys the button out — prices a button that does not exist to
+        // press: the plan names coins, `preferredRerollOption` finds no pressable
+        // coin option, and the walk waits it out and then stops on a board it
+        // could have kept walking with cowbells.
+        market.cowbellValue = 30000; // so coins would win on price alone
+        const list = board([{ name: 'Milking - Cow', buttons: ['Back', '10,000', '2'], quest: quest(MILKING) }]);
+        [...list.querySelectorAll('button')].find((b) => b.textContent === '10,000').disabled = true;
+
+        walk.start();
+        vi.advanceTimersByTime(5000);
+
+        expect(chipText()).toContain('Reroll #1 — 2🔔');
+        expect(clicks).toEqual([]);
+    });
+
     test('an empty board says so rather than offering a press', () => {
         board([]);
 
