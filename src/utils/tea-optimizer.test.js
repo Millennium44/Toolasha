@@ -63,6 +63,7 @@ const {
     actionHasUnpricedMaterials,
     scoreEquipmentSetup,
     calculateSkillPerformance,
+    findOptimalTeas,
 } = await import('./tea-optimizer.js');
 
 const knownItems = [
@@ -417,5 +418,76 @@ describe('an unpriced tea is flagged rather than charged as free', () => {
         const result = calculateSkillPerformance('cheesesmithing', new Map(), ['/items/unpriced_tea'], 10);
 
         expect(result.hasMissingPrices).toBe(false);
+    });
+});
+
+describe('findOptimalTeas — gold ranking picks the best average, not the best sum', () => {
+    // Every caller headlines avgScore, not totalScore (tea-recommendation.js,
+    // skilling-optimizer-ui.js), but "optimal" used to mean whichever combo
+    // scored the highest totalScore. For the gold goal the two are not
+    // proportional: avgScore's divisor is profitableCount, which differs
+    // combo to combo, so a combo that makes many actions barely profitable
+    // can out-sum (and so get picked as "optimal") a combo with a single,
+    // far more profitable action — and the UI then headlines *that worse
+    // combo's own* (much lower) avgScore as the best figure available, while
+    // a combo with a genuinely higher average sat un-picked in the same
+    // results list.
+    //
+    // "richer" is always profitable and unaffected by either tea (no
+    // inputs). Five "filler" actions are unprofitable at baseline and turn
+    // only barely profitable once artisan tea halves their input cost. The
+    // artisan-alone combo racks up a bigger sum (richer + five slim
+    // margins) than the efficiency-alone combo (richer alone, scaled up a
+    // little) — but its average is dragged down by the five slim fillers,
+    // well below efficiency-alone's clean, single-action average.
+    beforeEach(() => {
+        const itemDetailMap = {
+            '/items/efficiency_tea': {
+                consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.1 }] },
+            },
+            '/items/artisan_tea': {
+                consumableDetail: { buffs: [{ typeHrid: '/buff_types/artisan', flatBoost: 0.5 }] },
+            },
+            '/items/filler_input': {},
+            '/items/filler_output': {},
+            '/items/richer_output': {},
+        };
+        const actionDetailMap = {
+            '/actions/cheesesmithing/richer': {
+                type: '/action_types/cheesesmithing',
+                name: 'Richer',
+                levelRequirement: { level: 1 },
+                outputItems: [{ itemHrid: '/items/richer_output', count: 1 }],
+            },
+        };
+        // Five actions that only clear a profit once artisan tea's 50% input
+        // reduction applies: baseline profit is 450 - 800 = -350/action;
+        // with artisan it is 450 - 400 = 50/action, enough to survive the
+        // market tax on the full 450 of output revenue
+        for (let i = 0; i < 5; i++) {
+            actionDetailMap[`/actions/cheesesmithing/filler_${i}`] = {
+                type: '/action_types/cheesesmithing',
+                name: `Filler ${i}`,
+                levelRequirement: { level: 1 },
+                inputItems: [{ itemHrid: '/items/filler_input', count: 10 }],
+                outputItems: [{ itemHrid: '/items/filler_output', count: 1 }],
+            };
+        }
+        state.gameData.itemDetailMap = itemDetailMap;
+        state.gameData.actionDetailMap = actionDetailMap;
+        prices.byHrid = {
+            '/items/filler_input': 80,
+            '/items/filler_output': 450,
+            '/items/richer_output': 300,
+        };
+        state.skills = [{ skillHrid: '/skills/cheesesmithing', level: 1 }];
+    });
+
+    test('optimal is the combo with the best avgScore among everything evaluated', () => {
+        const result = findOptimalTeas('cheesesmithing', 'gold', null, null, null, null, new Map());
+
+        expect(result.error).toBeUndefined();
+        const bestAvg = Math.max(...result.allResults.map((r) => r.avgScore));
+        expect(result.optimal.avgScore).toBeCloseTo(bestAvg, 6);
     });
 });

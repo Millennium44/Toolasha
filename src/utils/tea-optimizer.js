@@ -1124,8 +1124,18 @@ export function findOptimalTeas(
         });
     }
 
-    // Sort by total score (descending)
-    results.sort((a, b) => b.totalScore - a.totalScore);
+    // Sort by average score (descending) — every caller headlines avgScore
+    // ("Gold/hr", "XP/hr": tea-recommendation.js, skilling-optimizer-ui.js),
+    // never totalScore, so that is what "optimal" has to mean. For XP this is
+    // the same order totalScore gives (avgDivisor is actions.length for every
+    // combo, a constant, so the two are proportional). For gold it is not:
+    // avgDivisor is profitableCount, which varies combo to combo — sorting by
+    // the sum instead of the average could pick a combo that makes more
+    // actions marginally profitable over one with a smaller, more profitable
+    // set, and then headline that worse combo's own (lower) avgScore as the
+    // best available, while a combo with a genuinely higher average sat
+    // un-picked in the same results list.
+    results.sort((a, b) => b.avgScore - a.avgScore);
 
     // Get tea names for display
     const getTeaName = (hrid) => gameData.itemDetailMap[hrid]?.name || hrid;
