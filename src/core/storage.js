@@ -30,7 +30,10 @@ const STORE_KEY_BUDGETS = {
     lootLogHistory: 500,
     guildHistory: 80,
     leaderboardHistory: 80,
-    xpHistory: 200,
+    // Per character: the XP tracker's one rolling week, plus two unbounded
+    // daily-checkpoint series (skills and abilities) at one record per calendar
+    // month each — twenty-four keys a year per character, kept forever
+    xpHistory: 800,
     // Three trackers (transmute, decompose, coinify), one record per day each
     // has sessions on, per character
     alchemyHistory: 1500,

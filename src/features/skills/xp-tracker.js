@@ -11,6 +11,7 @@ import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
+import { monthToDateFor } from './skill-checkpoints.js';
 
 const STORE_NAME = 'xpHistory';
 const WINDOW_10M = 10 * 60 * 1000;
@@ -47,6 +48,9 @@ SKILLS.forEach((s) => (SKILL_NAME_TO_ID[s.name.toLowerCase()] = s.id));
 // Also map hrid → skill for reverse lookups
 const SKILL_HRID_TO_ID = {};
 SKILLS.forEach((s) => (SKILL_HRID_TO_ID[s.hrid] = s.id));
+
+const SKILL_ID_TO_HRID = {};
+SKILLS.forEach((s) => (SKILL_ID_TO_HRID[s.id] = s.hrid));
 
 const COMBAT_SKILL_IDS = new Set(['stamina', 'intelligence', 'attack', 'melee', 'defense', 'ranged', 'magic']);
 
@@ -484,15 +488,79 @@ class XPTracker {
             'NavigationBar_navigationSkillTooltip',
             (tooltipEl) => {
                 this._addTimeTillLevelUp(tooltipEl);
+                this._addMonthGain(tooltipEl);
                 // Retry after a frame in case children weren't rendered yet
                 if (tooltipEl.childElementCount < 4) {
                     requestAnimationFrame(() => {
                         this._addTimeTillLevelUp(tooltipEl);
+                        this._addMonthGain(tooltipEl);
                     });
                 }
             }
         );
         this.unregisterObservers.push(unregister);
+    }
+
+    /**
+     * The skill a tooltip is describing, and its live experience.
+     *
+     * The tooltip carries the skill's *name*, so the hrid comes from the name
+     * map and the experience from `dataManager` rather than from parsing the
+     * formatted number out of the tooltip — a parse that would have to guess at
+     * the user's thousands separator to be wrong by a factor of a thousand.
+     *
+     * @param {HTMLElement} tooltipEl - The tooltip
+     * @returns {{skillId: string, hrid: string, experience: number}|null}
+     */
+    _tooltipSkill(tooltipEl) {
+        const divs = tooltipEl.querySelectorAll(':scope > div');
+        if (divs.length < 1) return null;
+
+        const skillId = SKILL_NAME_TO_ID[divs[0].textContent.trim().toLowerCase()];
+        if (!skillId) return null;
+
+        const hrid = SKILL_ID_TO_HRID[skillId];
+        const skill = (dataManager.getSkills?.() || []).find((entry) => entry?.skillHrid === hrid);
+        if (!skill || !Number.isFinite(skill.experience)) return null;
+
+        return { skillId, hrid, experience: skill.experience };
+    }
+
+    /**
+     * Inject "this month" experience into a skill tooltip.
+     *
+     * The first surface on the daily checkpoints, and a deliberately modest
+     * one: the tooltip is where someone is already asking about that one skill,
+     * so it costs no new panel and no new setting.
+     *
+     * The line always carries the day the measurement starts from, and says so
+     * in words when that is not the first of the month. A "this month" figure
+     * that silently covers eleven days is the exact misreading the checkpoints
+     * exist to prevent — it is why nothing is ever backfilled, and it would be
+     * pointless to refuse to fabricate history and then hide that it is short.
+     *
+     * @param {HTMLElement} tooltipEl - The tooltip
+     */
+    _addMonthGain(tooltipEl) {
+        tooltipEl.querySelector('.mwi-xp-month-gain')?.remove();
+
+        const skill = this._tooltipSkill(tooltipEl);
+        if (!skill) return;
+
+        const month = monthToDateFor(skill.hrid, skill.experience);
+        if (!month) return;
+
+        const div = document.createElement('div');
+        div.className = 'mwi-xp-month-gain';
+        div.style.cssText = `font-size: 12px; color: ${config.COLOR_XP_RATE}; margin-top: 4px;`;
+        div.innerHTML = `This month: <span style="font-weight:700">${formatKMB(month.gained)}</span> xp`;
+
+        const firstOfMonth = month.since.endsWith('-01');
+        div.title = firstOfMonth
+            ? `Measured from ${month.since}. Checkpoint history starts ${month.start}.`
+            : `Measured from ${month.since} — the first day recorded this month. Checkpoint history starts ${month.start}.`;
+
+        tooltipEl.appendChild(div);
     }
 
     /**
@@ -562,6 +630,7 @@ class XPTracker {
 
         document.querySelectorAll('.mwi-xp-rate').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-xp-time-left').forEach((el) => el.remove());
+        document.querySelectorAll('.mwi-xp-month-gain').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-remaining-xp[data-xp-tracker-owned]').forEach((el) => el.remove());
 
         this.initialized = false;

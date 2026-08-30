@@ -59,6 +59,7 @@ await import('../features/leaderboard/leaderboard-xp-tracker.js');
 await import('../features/ui/overlay-layouts.js');
 await import('../features/planner/goal-planner-store.js');
 await import('../features/skills/xp-tracker.js');
+await import('../features/skills/skill-checkpoints.js');
 await import('../features/actions/loot-log-history.js');
 await import('../features/networth/networth-history.js');
 await import('../features/networth/chest-opening-recorder.js');
@@ -90,6 +91,12 @@ const corpus = [
     // skills/xp-tracker.js
     { store: 'xpHistory', key: 'xpHistory', label: 'Skill XP history' },
     { store: 'xpHistory', key: `xpHistory_${CHAR}`, label: 'Skill XP history' },
+
+    // skills/skill-checkpoints.js — chunked, monthly buckets. The record
+    // prefix is spelled apart from the legacy stem (`skillCheckpointRec_`
+    // against `skillCheckpoints_`) so neither matcher can eat the other's keys
+    { store: 'xpHistory', key: `skillCheckpointRec_${CHAR}_2026-01`, label: 'SkillCheckpoints records' },
+    { store: 'xpHistory', key: `skillCheckpoints_${CHAR}`, label: 'SkillCheckpoints legacy key' },
 
     // leaderboard/leaderboard-xp-tracker.js
     { store: 'leaderboardHistory', key: 'playerXP', label: 'Leaderboard XP' },

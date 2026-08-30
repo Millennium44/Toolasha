@@ -181,6 +181,12 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/character-key.js')), 'Toolasha.Utils.characterKey'],
     [normalize(join(__dirname, 'src/utils/chest-import.js')), 'Toolasha.Utils.chestImport'],
     [normalize(join(__dirname, 'src/utils/chunked-history.js')), 'Toolasha.Utils.chunkedHistory'],
+    // The skill checkpoints (ui bundle) and the ability checkpoints (market
+    // bundle) both build one of these, and a `ChunkedHistory` registers its
+    // sync merges at construction into a registry that must be the one
+    // instance — a second copy of this module would register into whichever
+    // registry its own bundle happened to import.
+    [normalize(join(__dirname, 'src/utils/daily-checkpoints.js')), 'Toolasha.Utils.dailyCheckpoints'],
     [normalize(join(__dirname, 'src/utils/persisted-record.js')), 'Toolasha.Utils.persistedRecord'],
     // The sync feature (ui bundle) asks it; market/guild/combat register into
     // it. One instance, or a pull would find an empty registry

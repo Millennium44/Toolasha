@@ -60,6 +60,7 @@ import taskRerollWalk from '../features/tasks/task-reroll-walk.js';
 // Skills
 import remainingXP from '../features/skills/remaining-xp.js';
 import xpTracker from '../features/skills/xp-tracker.js';
+import skillCheckpoints from '../features/skills/skill-checkpoints.js';
 // Side-effect import: registers the Time to Level overlay row
 import '../features/skills/skill-ttl-row.js';
 // Side-effect import: registers the Skill Level overlay row
@@ -209,6 +210,7 @@ toolashaRoot.UI = {
     taskRerollWalk,
     remainingXP,
     xpTracker,
+    skillCheckpoints,
     lootLogStats,
     housePanelObserver,
     settingsUI,

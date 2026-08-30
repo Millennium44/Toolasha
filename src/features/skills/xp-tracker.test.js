@@ -52,7 +52,7 @@ const storageMock = vi.hoisted(() => {
     };
 });
 
-const game = vi.hoisted(() => ({ characterId: 'char1', handlers: {} }));
+const game = vi.hoisted(() => ({ characterId: 'char1', handlers: {}, skills: [], month: null }));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -61,6 +61,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterGameMode: () => 'standard',
         getCurrentCharacterName: () => 'Main',
+        getSkills: () => game.skills,
         on: (event, handler) => {
             game.handlers[event] = handler;
         },
@@ -70,6 +71,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+vi.mock('./skill-checkpoints.js', () => ({ monthToDateFor: () => game.month }));
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char1',
     requestAdoptionConsent: () => Promise.resolve(null),
@@ -98,6 +100,8 @@ beforeEach(() => {
     game.characterId = 'char1';
     xpTracker.history.reset();
     xpTracker.characterId = null;
+    game.skills = [{ skillHrid: '/skills/milking', experience: 12_000, level: 30 }];
+    game.month = null;
 });
 
 describe('the XP history survives', () => {
@@ -234,5 +238,71 @@ describe('inLastInterval', () => {
     test('an empty or missing series is empty, not a crash', () => {
         expect(inLastInterval([], HOUR)).toEqual([]);
         expect(inLastInterval(undefined, HOUR)).toEqual([]);
+    });
+});
+
+describe('the month line in a skill tooltip', () => {
+    /** The tooltip the game renders: name, level, progress, "XP to next level" */
+    const tooltip = (name) => {
+        const el = document.createElement('div');
+        for (const line of [name, 'Level 30', '12,000 / 20,000', 'XP to next level: 8,000']) {
+            const div = document.createElement('div');
+            div.textContent = line;
+            el.appendChild(div);
+        }
+        return el;
+    };
+
+    test('shows what the skill has gained this month, and where the measurement starts', () => {
+        game.month = { gained: 4200, since: '2026-03-01', start: '2026-02-11' };
+        const el = tooltip('Milking');
+
+        xpTracker._addMonthGain(el);
+
+        const line = el.querySelector('.mwi-xp-month-gain');
+        expect(line.textContent).toContain('This month');
+        expect(line.textContent).toContain('4.2K');
+        // The start date is the difference between "you gained little" and
+        // "nothing was recording", so it is never left off
+        expect(line.title).toContain('Checkpoint history starts 2026-02-11');
+    });
+
+    test('says so in words when the month is only partly recorded', () => {
+        game.month = { gained: 600, since: '2026-03-09', start: '2026-03-09' };
+        const el = tooltip('Milking');
+
+        xpTracker._addMonthGain(el);
+
+        expect(el.querySelector('.mwi-xp-month-gain').title).toContain(
+            'Measured from 2026-03-09 — the first day recorded this month'
+        );
+    });
+
+    test('nothing recorded yet shows no line at all rather than a zero', () => {
+        game.month = null;
+        const el = tooltip('Milking');
+
+        xpTracker._addMonthGain(el);
+
+        expect(el.querySelector('.mwi-xp-month-gain')).toBeNull();
+    });
+
+    test('a redraw of the same tooltip does not stack two lines', () => {
+        game.month = { gained: 4200, since: '2026-03-01', start: '2026-02-11' };
+        const el = tooltip('Milking');
+
+        xpTracker._addMonthGain(el);
+        xpTracker._addMonthGain(el);
+
+        expect(el.querySelectorAll('.mwi-xp-month-gain')).toHaveLength(1);
+    });
+
+    test('a tooltip for something that is not a tracked skill is left alone', () => {
+        game.month = { gained: 4200, since: '2026-03-01', start: '2026-02-11' };
+        const el = tooltip('Not A Skill');
+
+        xpTracker._addMonthGain(el);
+
+        expect(el.querySelector('.mwi-xp-month-gain')).toBeNull();
     });
 });
