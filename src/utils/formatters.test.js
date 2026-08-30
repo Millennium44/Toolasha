@@ -17,6 +17,7 @@ import {
     formatCurrency,
     formatCompactNumber,
     formatLargeNumber,
+    formatThreshold,
     isSameLocalDay,
     formatActivityStatusTime,
 } from './formatters.js';
@@ -57,6 +58,18 @@ describe('numberFormatter', () => {
     test('rounds to specified decimal places', () => {
         expect(numberFormatter(1234.999, 0)).toBe('1,235');
         expect(numberFormatter(1234.999, 1)).toBe('1,235'); // Intl.NumberFormat strips trailing zeros
+    });
+
+    test('a small negative that rounds to zero displays as 0, not -0', () => {
+        // Math.round(-0.4) is the negative zero float, and Intl.NumberFormat
+        // renders that as the string "-0" — a value that is actually zero then
+        // reads as negative to whoever is looking at it (a slightly-negative
+        // floating point remainder is exactly how "missing" or "profit"
+        // calculations land on zero in practice).
+        expect(numberFormatter(-0.4)).toBe('0');
+        // Consistent with numberFormatter(1234.999, 1) below: Intl.NumberFormat
+        // strips a trailing ".00" the same way it strips a trailing ".0"
+        expect(numberFormatter(-0.001, 2)).toBe('0');
     });
 });
 
@@ -161,6 +174,13 @@ describe('formatKMB', () => {
         expect(formatKMB(null)).toBe(null);
         expect(formatKMB(undefined)).toBe(null);
     });
+
+    test('a small negative that rounds to zero displays as 0, not -0', () => {
+        // The sign is decided from the raw number before absNum is rounded, so a
+        // fraction like -0.4 that floors/rounds away to nothing still carried its
+        // sign onto a "0" that is not actually negative.
+        expect(formatKMB(-0.4)).toBe('0');
+    });
 });
 
 describe('formatKMB3Digits', () => {
@@ -200,6 +220,10 @@ describe('formatKMB3Digits', () => {
     test('handles negative numbers', () => {
         expect(formatKMB3Digits(-1250)).toBe('-1.25K');
         expect(formatKMB3Digits(-1250000)).toBe('-1.25M');
+    });
+
+    test('a small negative that rounds to zero displays as 0, not -0', () => {
+        expect(formatKMB3Digits(-0.4)).toBe('0');
     });
 
     test('handles null and undefined', () => {
@@ -261,6 +285,10 @@ describe('coinFormatter', () => {
     test('handles negative numbers', () => {
         expect(coinFormatter(-1000)).toBe('-1,000');
         expect(coinFormatter(-10000)).toBe('-10K');
+    });
+
+    test('a small negative that rounds to zero displays as 0, not -0', () => {
+        expect(coinFormatter(-0.4)).toBe('0');
     });
 
     test('handles null and undefined', () => {
@@ -327,9 +355,24 @@ describe('networthFormatter', () => {
         expect(networthFormatter(-1234567)).toBe('-1.23M');
     });
 
+    test('a small negative that rounds to zero displays as 0, not -0', () => {
+        expect(networthFormatter(-0.4)).toBe('0');
+    });
+
     test('handles null and undefined', () => {
         expect(networthFormatter(null)).toBe(null);
         expect(networthFormatter(undefined)).toBe(null);
+    });
+});
+
+describe('formatThreshold', () => {
+    test('a small negative that rounds to zero displays as 0, not -0', () => {
+        expect(formatThreshold(-0.4)).toBe('0');
+    });
+
+    test('still signs a negative that actually is one', () => {
+        expect(formatThreshold(-5)).toBe('-5');
+        expect(formatThreshold(-12345)).toBe('-12.3K');
     });
 });
 
@@ -352,6 +395,14 @@ describe('formatPercentage', () => {
     test('handles null and undefined', () => {
         expect(formatPercentage(null)).toBe(null);
         expect(formatPercentage(undefined)).toBe(null);
+    });
+
+    test('a small negative that rounds to zero displays as 0.0%, not -0.0%', () => {
+        // minimumFractionDigits keeps the trailing zeros here (unlike the plain
+        // formatters above, whose Intl.NumberFormat call strips them), which is
+        // what makes the signed-zero artifact visible instead of disappearing
+        // along with the fraction.
+        expect(formatPercentage(-0.0001)).toBe('0.0%');
     });
 });
 

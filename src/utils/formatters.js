@@ -18,6 +18,24 @@ export function isAbbreviationEnabled() {
 }
 
 /**
+ * Prefix a formatted magnitude string with its sign, unless the magnitude
+ * itself is zero.
+ *
+ * Every formatter below decides its sign from the raw number up front, then
+ * separately rounds/floors `Math.abs(num)` for display. A small negative
+ * fraction — -0.4 gold, a networth delta of -0.001% — rounds or floors away
+ * to nothing, but the sign was already decided, so the result was a literal
+ * "-0": a value that is actually zero reading as negative to whoever sees it.
+ *
+ * @param {string} sign - `'-'` or `''`, as decided from the raw number
+ * @param {string} magnitude - The rounded/floored absolute value already formatted
+ * @returns {string} `magnitude`, signed only when it is not all zeros
+ */
+function signedMagnitude(sign, magnitude) {
+    return (/^0+(\.0+)?$/.test(magnitude) ? '' : sign) + magnitude;
+}
+
+/**
  * Format numbers with thousand separators
  * @param {number} num - The number to format
  * @param {number} digits - Number of decimal places (default: 0 for whole numbers)
@@ -34,7 +52,13 @@ export function numberFormatter(num, digits = 0) {
     }
 
     // Round to specified decimal places
-    const rounded = digits > 0 ? num.toFixed(digits) : Math.round(num);
+    let rounded = digits > 0 ? num.toFixed(digits) : Math.round(num);
+
+    // A value that only rounds to zero because it started slightly negative
+    // (Math.round(-0.4) is the float -0, "-0.00".toFixed(2) is the string
+    // "-0.00") is zero, not negative — Intl.NumberFormat renders the sign
+    // through unless it is stripped first.
+    if (Number(rounded) === 0) rounded = digits > 0 ? (0).toFixed(digits) : 0;
 
     // Format with thousand separators
     return new Intl.NumberFormat().format(rounded);
@@ -168,7 +192,7 @@ export function formatKMB(num, decimals = 1) {
     } else if (absNum >= 1e3) {
         return sign + (absNum / 1e3).toFixed(decimals) + 'K';
     } else {
-        return sign + absNum.toFixed(0);
+        return signedMagnitude(sign, absNum.toFixed(0));
     }
 }
 
@@ -215,7 +239,7 @@ export function formatKMB3Digits(num) {
     const sign = num < 0 ? '-' : '';
 
     if (absNum < 1e3) {
-        return sign + Math.floor(absNum).toString();
+        return signedMagnitude(sign, Math.floor(absNum).toString());
     }
 
     // The first tier `absNum` clears — always finds one, since absNum >= 1e3 here
@@ -277,7 +301,7 @@ export function coinFormatter(num) {
 
     // 0-999: raw number
     if (absNum < 1000) {
-        return sign + Math.floor(absNum).toString();
+        return signedMagnitude(sign, Math.floor(absNum).toString());
     }
     // 1,000-9,999: comma format
     if (absNum < 10000) {
@@ -359,7 +383,7 @@ export function networthFormatter(num) {
 
     // 0-999: raw number (no decimals needed)
     if (absNum < 1000) {
-        return sign + Math.floor(absNum).toString();
+        return signedMagnitude(sign, Math.floor(absNum).toString());
     }
     // 1,000-999,999: K with 2 decimals
     if (absNum < 1000000) {
@@ -396,7 +420,13 @@ export function formatPercentage(value, decimals = 1) {
         maximumFractionDigits: decimals,
     }).format(percentage);
 
-    return formatted + '%';
+    // A slightly negative value that rounds to zero at this precision (-0.01%
+    // at 1 decimal) is zero, not negative — Intl.NumberFormat still prints the
+    // sign of the unrounded input, so "-0.0%" survives unless it is checked
+    // for and stripped here.
+    const unsigned = /^-0+(\.0+)?$/.test(formatted) ? formatted.slice(1) : formatted;
+
+    return unsigned + '%';
 }
 
 /**
@@ -470,7 +500,7 @@ export function formatThreshold(num, decimals = 1) {
     const sign = num < 0 ? '-' : '';
 
     if (absNum < 10000) {
-        return sign + new Intl.NumberFormat().format(Math.round(absNum));
+        return signedMagnitude(sign, new Intl.NumberFormat().format(Math.round(absNum)));
     }
 
     return sign + _abbreviate(absNum, decimals);
