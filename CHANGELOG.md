@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dead duplicate removed
+
+profile-cache.js was a byte-for-byte copy of core's profile-manager with zero importers; deleted so the two copies can't drift.
+
 ### The adoption dialog escapes character names
 
 The account-wide legacy-data consent dialog interpolated character names into its markup unescaped — the same class of bug fixed on the trial scoreboard, but this dialog blocks every character on the account, so it gets the same escaping.
