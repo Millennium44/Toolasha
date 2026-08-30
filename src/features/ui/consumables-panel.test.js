@@ -697,4 +697,46 @@ describe('the idle plan pins across a character switch', () => {
         expect(store.data.consumablesIdleLoadout).toBeUndefined();
         expect(store.data.consumablesIdleZone).toBeUndefined();
     });
+
+    test('a departing character’s slow read does not land on top of a fast switch', async () => {
+        // Mirrors consumable-target.test.js's "a read started before a switch
+        // does not land on top of the switch": reloadIdlePins() has the same
+        // character-scoped-read-across-a-switch shape as loadTarget(), but no
+        // generation guard. Two switches close enough together let the older
+        // read's storage.get resolve after the newer character's own read has
+        // already landed, and — without the guard — silently overwrite the
+        // pins with the departed character's values.
+        store.data.consumablesIdleLoadout_char1 = 'Bruiser';
+        store.data.consumablesIdleLoadout_char2 = 'Tank';
+
+        const { default: mockedStorage } = await import('../../core/storage.js');
+        const realGet = mockedStorage.get;
+        let releaseDeparting;
+        const gate = new Promise((resolve) => {
+            releaseDeparting = resolve;
+        });
+        mockedStorage.get = async (key, name, fallback) => {
+            if (key === 'consumablesIdleLoadout_char1') await gate;
+            return realGet(key, name, fallback);
+        };
+
+        bus.characterId = 'char1';
+        const departingLoad = consumablesPanel.reloadIdlePins();
+
+        // Let char1's read reach (and block on) its own storage.get before
+        // switching characters out from under it — same technique as the
+        // consumable-target.js race test.
+        await settled();
+
+        bus.characterId = 'char2';
+        await consumablesPanel.reloadIdlePins();
+        expect(consumablesPanel._idleLoadoutName).toBe('Tank');
+
+        // Now let char1's stale read land. It must not stomp char2's pin.
+        releaseDeparting();
+        await departingLoad;
+        mockedStorage.get = realGet;
+
+        expect(consumablesPanel._idleLoadoutName).toBe('Tank');
+    });
 });

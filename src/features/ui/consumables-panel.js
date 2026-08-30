@@ -179,6 +179,18 @@ class ConsumablesPanel {
         /** One entry per section with a walkable shortfall, rebuilt every render */
         this._buyQueues = [];
         this._buySource = null;
+        /**
+         * Bumped on every `reloadIdlePins()` call. The pins are read with two
+         * awaited `readScoped` calls, and `character_switched` fires a fresh
+         * call on every switch with no way to cancel whichever call is already
+         * in flight — two switches close enough together interleave their
+         * awaits, and storage does not promise to resolve them in call order.
+         * Without this, an older call's answer can land after a newer one and
+         * overwrite the pins with the departed character's values, which the
+         * idle plan then silently plans against under the *arriving*
+         * character's name. Mirrors `consumable-target.js`'s `loadTarget`.
+         */
+        this._idlePinsGeneration = 0;
         // The same mechanism the missing-materials features use: park a quantity,
         // and the buy modal fills itself in when it appears
         this.autofill = createAutofillManager('Consumables');
@@ -309,9 +321,15 @@ class ConsumablesPanel {
      * leak arriving a little later.
      */
     async reloadIdlePins() {
+        const started = (this._idlePinsGeneration += 1);
         try {
-            this._idleLoadoutName = await readScoped('consumablesIdleLoadout', 'settings', null, DISCARD_LEGACY);
-            this._idleZoneKey = (await readScoped('consumablesIdleZone', 'settings', null, DISCARD_LEGACY)) || 'last';
+            const loadoutName = await readScoped('consumablesIdleLoadout', 'settings', null, DISCARD_LEGACY);
+            if (started !== this._idlePinsGeneration) return; // A newer switch already started its own read
+            const zoneKey = (await readScoped('consumablesIdleZone', 'settings', null, DISCARD_LEGACY)) || 'last';
+            if (started !== this._idlePinsGeneration) return; // Superseded between the two awaits
+
+            this._idleLoadoutName = loadoutName;
+            this._idleZoneKey = zoneKey;
             this._readinessMemo = null;
         } catch (error) {
             console.error('[Consumables] Reading the idle plan pins failed:', error);
