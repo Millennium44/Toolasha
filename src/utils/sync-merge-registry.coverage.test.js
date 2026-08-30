@@ -60,6 +60,7 @@ await import('../features/ui/overlay-layouts.js');
 await import('../features/planner/goal-planner-store.js');
 await import('../features/skills/xp-tracker.js');
 await import('../features/skills/skill-checkpoints.js');
+await import('../features/abilities/ability-checkpoints.js');
 await import('../features/actions/loot-log-history.js');
 await import('../features/networth/networth-history.js');
 await import('../features/networth/chest-opening-recorder.js');
@@ -97,6 +98,12 @@ const corpus = [
     // against `skillCheckpoints_`) so neither matcher can eat the other's keys
     { store: 'xpHistory', key: `skillCheckpointRec_${CHAR}_2026-01`, label: 'SkillCheckpoints records' },
     { store: 'xpHistory', key: `skillCheckpoints_${CHAR}`, label: 'SkillCheckpoints legacy key' },
+
+    // abilities/ability-checkpoints.js — chunked, monthly buckets. The series
+    // key inside an entry is `<characterId>|<abilityHrid>`; the record key is
+    // scoped to the character as well, so the two must agree to be read at all
+    { store: 'xpHistory', key: `abilityCheckpointRec_${CHAR}_2026-01`, label: 'AbilityCheckpoints records' },
+    { store: 'xpHistory', key: `abilityCheckpoints_${CHAR}`, label: 'AbilityCheckpoints legacy key' },
 
     // leaderboard/leaderboard-xp-tracker.js
     { store: 'leaderboardHistory', key: 'playerXP', label: 'Leaderboard XP' },

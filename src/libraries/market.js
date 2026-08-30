@@ -56,6 +56,7 @@ import * as networthCalculator from '../features/networth/networth-calculator.js
 // Side-effect import: registers the coins, listings, inventory and books overlay rows
 import '../features/networth/networth-rows.js';
 import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
+import abilityCheckpoints from '../features/abilities/ability-checkpoints.js';
 // Side-effect import: registers the Charm Value overlay row
 import '../features/inventory/charm-value-row.js';
 
@@ -136,6 +137,7 @@ toolashaRoot.Market = {
     tradeLedgerStore,
     tradeLedgerView,
     abilityBookPanel,
+    abilityCheckpoints,
     watchlist,
     watchlistPanel,
     autoAllButton,

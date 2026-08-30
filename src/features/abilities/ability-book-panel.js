@@ -41,6 +41,7 @@ import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS } from '../../ut
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { createSkillHistory } from '../../utils/skill-history.js';
+import { rateFor as checkpointRateFor, rateWindowLabel } from './ability-checkpoints.js';
 import { abilityPlan, cheapestNextLevel, aimedTotals, bookItemFor } from '../../utils/ability-books.js';
 import { registerCommand } from '../../utils/command-registry.js';
 
@@ -153,6 +154,24 @@ function abilityName(abilityHrid) {
 }
 
 /**
+ * How a row's rate must describe itself.
+ *
+ * A per-hour figure drawn from a fortnight of checkpoints is only honest with
+ * the window attached: three days of fighting spread over fourteen is a real
+ * measurement of a fortnight and a badly misleading one of an hour of fighting.
+ * The days-with-combat count travels with the number for that reason.
+ *
+ * @param {Object} plan - One ability's plan
+ * @returns {string} Tooltip text
+ */
+function rateTitle(plan) {
+    if (!plan.experiencePerHour) return 'No experience gained yet, so there is no rate to measure.';
+    if (!plan.rateWindow) return 'Measured over the last ten minutes of play.';
+    const { from, to } = plan.rateWindow;
+    return `Measured from daily checkpoints, ${rateWindowLabel(plan.rateWindow)} (${from} to ${to}). Idle days count as the zeroes they were.`;
+}
+
+/**
  * A plan for every ability the character has.
  *
  * Exported because the overlay row reads it while the panel is closed, and
@@ -191,10 +210,22 @@ export function abilityPlans(target = targetFor) {
             targetLevel: typeof target === 'function' ? target(ability.abilityHrid) : target,
         });
         if (plan) {
+            // A fortnight of daily checkpoints measures the thing this column
+            // claims — "when will this level" — and ten minutes of a fight does
+            // not. So the long window wins whenever there is one, and the
+            // ten-minute reading stays as the fallback it always was: an
+            // account whose checkpoints start today has nothing else, and had
+            // nothing else before this existed either.
+            const live = abilityHistory.rateFor(ability.abilityHrid);
+            const window = checkpointRateFor(ability.abilityHrid);
             plans.push({
                 ...plan,
                 name: abilityName(ability.abilityHrid),
-                experiencePerHour: abilityHistory.rateFor(ability.abilityHrid),
+                experiencePerHour: window ? window.experiencePerHour : live,
+                // Null means the figure beside it is the live ten-minute rate.
+                // Every surface that prints the rate has to say which it is —
+                // the two differ by whatever idleness the long window contains
+                rateWindow: window || null,
             });
         }
     }
@@ -614,11 +645,21 @@ class AbilityBookPanel {
         const rate = document.createElement('div');
         rate.textContent = plan.experiencePerHour ? `${formatKMB(plan.experiencePerHour)}/hr` : '—/hr';
         Object.assign(rate.style, { color: COLORS.textDim, fontSize: '10px' });
-        rate.title = plan.experiencePerHour
-            ? 'Measured over the last ten minutes of play.'
-            : 'No experience gained yet, so there is no rate to measure.';
+        rate.title = rateTitle(plan);
 
         cell.append(remaining, rate);
+
+        // On screen, not only in the tooltip: the window is what makes the
+        // figure above it readable, and a caption nobody hovers is a caption
+        // that does not exist
+        if (plan.rateWindow) {
+            const window = document.createElement('div');
+            window.textContent = `over ${plan.rateWindow.days}d, ${plan.rateWindow.daysWithGain} w/ combat`;
+            Object.assign(window.style, { color: COLORS.textDim, fontSize: '9px', opacity: '0.85' });
+            window.title = rateTitle(plan);
+            cell.append(window);
+        }
+
         return cell;
     }
 
@@ -636,7 +677,12 @@ class AbilityBookPanel {
             color: seconds === null ? COLORS.textDim : ROW_COLORS.accent,
             textAlign: 'center',
         });
-        cell.title = seconds === null ? 'Needs a measured experience rate for this ability.' : 'At the current rate.';
+        cell.title =
+            seconds === null
+                ? 'Needs a measured experience rate for this ability.'
+                : plan.rateWindow
+                  ? `At the rate ${rateWindowLabel(plan.rateWindow)}, idle days included.`
+                  : 'At the current rate.';
         return cell;
     }
 

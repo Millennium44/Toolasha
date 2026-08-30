@@ -18,6 +18,9 @@ const market = vi.hoisted(() => ({ filled: [], opened: [], initialized: 0 }));
 /** The data manager's event bus, reduced to the one event this file cares about */
 const bus = vi.hoisted(() => ({ handlers: {} }));
 
+/** What the daily checkpoints have to say about a rate, when anything */
+const longWindow = vi.hoisted(() => ({ rate: null }));
+
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({
         initialize: () => market.initialized++,
@@ -58,6 +61,10 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid) => market.opened.push(itemHrid),
+}));
+vi.mock('./ability-checkpoints.js', () => ({
+    rateFor: () => longWindow.rate,
+    rateWindowLabel: (rate) => `measured over ${rate.days} days, ${rate.daysWithGain} with combat`,
 }));
 
 const { abilityBookPanel, abilityPlans, resetAbilityTargets } = await import('./ability-book-panel.js');
@@ -102,6 +109,7 @@ beforeEach(() => {
     };
     market.filled = [];
     market.opened = [];
+    longWindow.rate = null;
 });
 
 afterEach(() => {
@@ -476,5 +484,51 @@ describe('switching character', () => {
         expect(plan.experiencePerHour).toBeNull();
 
         vi.useRealTimers();
+    });
+});
+
+describe('the rate the time column divides by', () => {
+    test('a long enough checkpoint window replaces the live ten-minute rate', () => {
+        longWindow.rate = {
+            experiencePerHour: 3200,
+            days: 14,
+            daysWithGain: 3,
+            gained: 1_075_200,
+            from: '2026-03-01',
+            to: '2026-03-15',
+        };
+
+        const plan = abilityPlans().find((entry) => entry.name === 'Poke');
+        expect(plan.experiencePerHour).toBe(3200);
+        expect(plan.rateWindow.days).toBe(14);
+    });
+
+    test('the window is on screen, not only in a tooltip', () => {
+        longWindow.rate = {
+            experiencePerHour: 3200,
+            days: 14,
+            daysWithGain: 3,
+            gained: 1_075_200,
+            from: '2026-03-01',
+            to: '2026-03-15',
+        };
+        abilityBookPanel.show();
+
+        // A bare per-hour figure from a fortnight, three days of which had any
+        // fighting, reads as a sustained rate and is not one
+        expect(text()).toContain('over 14d, 3 w/ combat');
+        expect(tooltips()).toContain('measured over 14 days, 3 with combat');
+    });
+
+    test('too little checkpoint history falls back to the live rate, as before', () => {
+        longWindow.rate = null;
+        abilityBookPanel.show();
+
+        // Nothing has been sampled twice in this test, so the live rate is
+        // unmeasurable — which is exactly the behaviour that predates the
+        // checkpoints and must survive them
+        expect(abilityPlans().every((plan) => plan.rateWindow === null)).toBe(true);
+        expect(text()).not.toContain('w/ combat');
+        expect(text()).not.toContain(FAILED);
     });
 });
