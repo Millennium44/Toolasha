@@ -2897,17 +2897,33 @@ class GuildCreditValue {
         const levelEl = modalEl.querySelector('[class*="GuildPanel_level"]');
         if (!levelEl) return;
 
-        upgradeBtn.addEventListener(
-            'click',
-            () => {
-                const observer = new MutationObserver(() => {
-                    observer.disconnect();
-                    this._renderShrine(modalEl);
-                });
-                observer.observe(levelEl, { subtree: true, childList: true, characterData: true });
-            },
-            { once: true }
-        );
+        // `upgradeBtn` is the game's own button and survives every re-render of
+        // this block while the modal stays open — a requirement-row mutation, an
+        // `items_updated` tick — so re-adding this listener on every
+        // `_renderShrine` call stacked one `{once: true}` handler per render onto
+        // the same node. A single click then fired all of them, each arming its
+        // own `MutationObserver` on the same level line and each calling
+        // `_renderShrine` once the level changed. The flag lives on the button
+        // itself, the same way `guild-xp-display.js` tags a table element with
+        // `_mwiTabObserver` to guard against a re-registration.
+        if (!upgradeBtn._mwiShrineClickArmed) {
+            upgradeBtn._mwiShrineClickArmed = true;
+            upgradeBtn.addEventListener(
+                'click',
+                () => {
+                    // Re-render on the next click cycles back through here and
+                    // arms it again — this only stands the render being drawn
+                    // now down from re-arming a second time before that click
+                    upgradeBtn._mwiShrineClickArmed = false;
+                    const observer = new MutationObserver(() => {
+                        observer.disconnect();
+                        this._renderShrine(modalEl);
+                    });
+                    observer.observe(levelEl, { subtree: true, childList: true, characterData: true });
+                },
+                { once: true }
+            );
+        }
     }
 
     _renderTrialTier(el) {

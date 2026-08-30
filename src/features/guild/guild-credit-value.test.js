@@ -2432,6 +2432,40 @@ describe('the shrine cost block keeps up with the modal', () => {
 
         expect(game.listeners.items_updated).toHaveLength(0);
     });
+
+    // `upgradeBtn` is the game's own button, not something this script
+    // replaces, and every `_renderShrine` call added a fresh `{once: true}`
+    // click listener onto it with nothing removing an earlier one. A modal
+    // that re-renders more than once before the player clicks Upgrade (an
+    // `items_updated` tick, a requirement-row restate) built up one listener
+    // per render, and a single click fired all of them at once.
+    test('a click on Upgrade after several re-renders arms the level watcher only once', async () => {
+        const modal = buildShrineModal(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+
+        // Two genuine re-renders while the modal stays open
+        restateCost(modal, 120_000);
+        fireItemsUpdated();
+        await settle();
+        restateCost(modal, 140_000);
+        fireItemsUpdated();
+        await settle();
+
+        const OriginalObserver = window.MutationObserver;
+        let created = 0;
+        window.MutationObserver = class extends OriginalObserver {
+            constructor(callback) {
+                super(callback);
+                created += 1;
+            }
+        };
+        try {
+            modal.querySelector('button').click();
+            expect(created).toBe(1);
+        } finally {
+            window.MutationObserver = OriginalObserver;
+        }
+    });
 });
 
 describe('the missing-mats autofill manager', () => {
