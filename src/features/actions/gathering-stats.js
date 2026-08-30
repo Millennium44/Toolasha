@@ -23,6 +23,8 @@ class GatheringStats {
         this.consumablesUpdatedHandler = null; // Handler for tea/drink changes
         this.characterSwitchingHandler = null; // Handler for character switch cleanup
         this.pricingModeHandler = null; // Handler for pricing mode changes
+        this.profitPerHourSettingHandler = null; // Handler for the profit/hr display toggle
+        this.expPerHourSettingHandler = null; // Handler for the exp/hr display toggle
         this.isInitialized = false;
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
         this.consumablesUpdatedDebounceTimer = null; // Debounce timer for consumables_updated events
@@ -80,8 +82,11 @@ class GatheringStats {
             this.updateAllStats();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        config.onSettingChange('actionPanel_showProfitPerHour_gathering', () => this.updateAllStats());
-        config.onSettingChange('actionPanel_showExpPerHour_gathering', () => this.updateAllStats());
+
+        this.profitPerHourSettingHandler = () => this.updateAllStats();
+        this.expPerHourSettingHandler = () => this.updateAllStats();
+        config.onSettingChange('actionPanel_showProfitPerHour_gathering', this.profitPerHourSettingHandler);
+        config.onSettingChange('actionPanel_showExpPerHour_gathering', this.expPerHourSettingHandler);
     }
 
     /**
@@ -669,6 +674,16 @@ class GatheringStats {
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
                 this.pricingModeHandler = null;
+            }
+
+            if (this.profitPerHourSettingHandler) {
+                config.offSettingChange('actionPanel_showProfitPerHour_gathering', this.profitPerHourSettingHandler);
+                this.profitPerHourSettingHandler = null;
+            }
+
+            if (this.expPerHourSettingHandler) {
+                config.offSettingChange('actionPanel_showExpPerHour_gathering', this.expPerHourSettingHandler);
+                this.expPerHourSettingHandler = null;
             }
 
             // Clear all DOM references
