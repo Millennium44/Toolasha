@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A stale socket's late close no longer disconnects the live one
+
+During a character switch the departing socket can fire a delayed close after the arriving socket is already live; connection state treated any close as "the connection is gone" and stayed wrongly disconnected until a real reconnect — which could leave market fetches serving stale cached prices indefinitely. Close and error are now ignored from any socket but the most recently opened one, the same ownership rule message dispatch already follows.
+
 ### The accuracy headline stops judging every clear twice
 
 "Over the 3927 it had a rate for" against 2601 recorded fights: an entry and its clear usually arrive in separate floor updates, and the full-kit cohort judged both folds — banking a second expected clear for every win — which is how a healthy record read 109 sd below the sim. The cohort now moves in lockstep with the attempt count, and counters already inflated on disk are repaired on read (judged clamped to attempts, expectation scaled with it).
