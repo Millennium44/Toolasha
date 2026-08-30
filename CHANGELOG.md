@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Two devices stop overwriting each other's capture work
+
+Seven more stores gained sync merges: guild member skills (fresher per member, rename-deduped by character id), guild loadout sightings (sheet and kit resolve separately, and a stat-only sighting can never demote an authoritative kit from either side), trial ability sessions and their roster, the trial plan (freshest whole plan — it is hand-authored prose, not a table to splice), overlay layouts, planner goals, and the watchlist. Two devices that each captured half a roster now union instead of the last pull winning. Deletes on these stores keep no tombstones, so an un-pin can resurrect cross-device — documented per store rather than hidden.
+
 ### The overlay remembers which layout it is showing, and the advisor's buttons stop dropping data
 
 The applied layout's name now survives a reload — the one-press Update button and the Showing line are there after F5, with the "(edited)" drift check still adjudicating honestly. And the upgrade advisor's handoffs carry what the row knew: Watch passes the enhancement level (a +5 no longer lands on the watchlist priced at +0), Save-for-this carries the row's own costed price with its source shown beside the panel's derivation when they differ, and savings targets are keyed by item and level so saving for +5 and +8 of one item keeps both (existing targets migrate in place).
