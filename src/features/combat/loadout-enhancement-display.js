@@ -114,6 +114,8 @@ let unregisterReady = null;
 let itemsUpdatedHandler = null;
 let characterInitializedHandler = null;
 let refreshTimer = null;
+/** The unregister function `onSettingChange` handed back, undone in `cleanup()`. */
+let unregisterSettingChange = null;
 
 /**
  * Debounced re-annotate, for events that can arrive in a burst (a stack of
@@ -174,7 +176,7 @@ function initialize() {
         annotateLoadout();
     });
 
-    config.onSettingChange('loadoutEnhancementDisplay', (enabled) => {
+    unregisterSettingChange = config.onSettingChange('loadoutEnhancementDisplay', (enabled) => {
         if (enabled) {
             annotateLoadout();
         } else {
@@ -184,6 +186,10 @@ function initialize() {
 }
 
 function cleanup() {
+    if (unregisterSettingChange) {
+        unregisterSettingChange();
+        unregisterSettingChange = null;
+    }
     if (unregisterHandler) {
         unregisterHandler();
         unregisterHandler = null;

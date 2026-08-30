@@ -20,11 +20,19 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const bus = vi.hoisted(() => ({ handlers: {} }));
 const state = vi.hoisted(() => ({ inventory: [] }));
+// Real subscribe/unsubscribe bookkeeping, unlike a no-op `vi.fn()`, so a test
+// can prove a cleanup+initialize cycle does not accumulate listeners.
+const settingListeners = vi.hoisted(() => ({}));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => key === 'loadoutEnhancementDisplay',
-        onSettingChange: () => {},
+        onSettingChange: (key, callback) => {
+            (settingListeners[key] ??= []).push(callback);
+            return () => {
+                settingListeners[key] = (settingListeners[key] || []).filter((cb) => cb !== callback);
+            };
+        },
         COLOR_ACCENT: '#22c55e',
     },
 }));
@@ -64,6 +72,7 @@ describe('loadout enhancement display — refresh without a DOM mutation', () =>
     beforeEach(async () => {
         vi.resetModules();
         bus.handlers = {};
+        for (const key of Object.keys(settingListeners)) delete settingListeners[key];
         document.body.innerHTML = '';
 
         state.inventory = [{ itemHrid: '/items/sword', count: 1, enhancementLevel: 3 }];
@@ -137,5 +146,18 @@ describe('loadout enhancement display — refresh without a DOM mutation', () =>
 
         // Highest owned level is now 0 — no badge should remain.
         expect(itemDiv.querySelector('.script_loadoutEnhLevel')).toBeNull();
+    });
+
+    test('a character-switch cycle does not accumulate setting-change listeners', () => {
+        // beforeEach already called initialize() once. Run several more
+        // cleanup+initialize cycles, the shape every character switch takes
+        // (feature-registry.js), and confirm the callback count stays at one
+        // instead of growing by one per cycle.
+        for (let i = 0; i < 3; i++) {
+            loadoutEnhancementDisplay.cleanup();
+            loadoutEnhancementDisplay.initialize();
+        }
+
+        expect(settingListeners.loadoutEnhancementDisplay).toHaveLength(1);
     });
 });
