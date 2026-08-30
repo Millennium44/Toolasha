@@ -59,6 +59,9 @@ class MaxProduceable {
         this.actionCompletedHandler = null;
         this.characterSwitchingHandler = null; // Handler for character switch cleanup
         this.pricingModeHandler = null; // Handler for pricing mode changes
+        this.maxProduceableSettingHandler = null; // Handler for the maxProduceable toggle
+        this.profitPerHourSettingHandler = null; // Handler for the profit/hr display toggle
+        this.expPerHourSettingHandler = null; // Handler for the exp/hr display toggle
         this.profitCalcTimeout = null; // Debounce timer for deferred profit calculations
         this.isInitialized = false;
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
@@ -108,9 +111,13 @@ class MaxProduceable {
             this.updateAllCounts();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        config.onSettingChange('actionPanel_maxProduceable', () => this.updateAllCounts());
-        config.onSettingChange('actionPanel_showProfitPerHour_production', () => this.updateAllCounts());
-        config.onSettingChange('actionPanel_showExpPerHour_production', () => this.updateAllCounts());
+
+        this.maxProduceableSettingHandler = () => this.updateAllCounts();
+        this.profitPerHourSettingHandler = () => this.updateAllCounts();
+        this.expPerHourSettingHandler = () => this.updateAllCounts();
+        config.onSettingChange('actionPanel_maxProduceable', this.maxProduceableSettingHandler);
+        config.onSettingChange('actionPanel_showProfitPerHour_production', this.profitPerHourSettingHandler);
+        config.onSettingChange('actionPanel_showExpPerHour_production', this.expPerHourSettingHandler);
     }
 
     /**
@@ -943,6 +950,21 @@ class MaxProduceable {
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
                 this.pricingModeHandler = null;
+            }
+
+            if (this.maxProduceableSettingHandler) {
+                config.offSettingChange('actionPanel_maxProduceable', this.maxProduceableSettingHandler);
+                this.maxProduceableSettingHandler = null;
+            }
+
+            if (this.profitPerHourSettingHandler) {
+                config.offSettingChange('actionPanel_showProfitPerHour_production', this.profitPerHourSettingHandler);
+                this.profitPerHourSettingHandler = null;
+            }
+
+            if (this.expPerHourSettingHandler) {
+                config.offSettingChange('actionPanel_showExpPerHour_production', this.expPerHourSettingHandler);
+                this.expPerHourSettingHandler = null;
             }
 
             // Clear all DOM references

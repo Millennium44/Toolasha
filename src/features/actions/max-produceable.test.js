@@ -45,6 +45,8 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({ itemDetailMap: game.itemDetailMap, actionDetailMap: game.actionDetailMap }),
         getEquipment: () => new Map(),
         getActionDrinkSlots: () => game.drinkSlots,
+        on: () => {},
+        off: () => {},
     },
 }));
 
@@ -52,10 +54,22 @@ vi.mock('../../core/dom-observer.js', () => ({
     default: { onClass: () => () => {} },
 }));
 
+// Real subscribe/unsubscribe bookkeeping, unlike a no-op stub, so a test can
+// prove a disable+initialize cycle does not accumulate listeners.
+const settingListeners = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settings.values[key] ?? true,
         getSettingValue: (_k, fallback) => fallback,
+        onSettingChange: (key, callback) => {
+            (settingListeners[key] ??= []).push(callback);
+            return () => {
+                settingListeners[key] = (settingListeners[key] || []).filter((cb) => cb !== callback);
+            };
+        },
+        offSettingChange: (key, callback) => {
+            settingListeners[key] = (settingListeners[key] || []).filter((cb) => cb !== callback);
+        },
         COLOR_BORDER: '#333',
         COLOR_PROFIT: '#0f0',
         COLOR_LOSS: '#f00',
@@ -70,6 +84,7 @@ vi.mock('../../api/marketplace.js', () => ({
 
 vi.mock('./action-panel-sort.js', () => ({
     default: {
+        initialize: async () => {},
         updateProfit: () => {},
         updateExpPerHour: () => {},
         isPinned: () => false,
@@ -80,6 +95,7 @@ vi.mock('./action-panel-sort.js', () => ({
             sortCalls.registerPanel += 1;
         },
         unregisterPanel: () => {},
+        clearAllPanels: () => {},
     },
 }));
 
@@ -288,5 +304,29 @@ describe('injectMaxProduceable — re-insertion guard', () => {
 
         expect(displays(el)).toHaveLength(1);
         expect(el.querySelectorAll('.mwi-action-pin')).toHaveLength(1);
+    });
+});
+
+describe('disable unregisters the setting-change listeners it registered', () => {
+    afterEach(() => {
+        maxProduceable.disable();
+        for (const key of Object.keys(settingListeners)) delete settingListeners[key];
+    });
+
+    test('a character-switch cycle does not accumulate listeners', async () => {
+        // Every character switch runs disable() then initialize() again
+        // (feature-registry.js). If the unregister function onSettingChange
+        // hands back is discarded, each cycle leaves one more copy of the
+        // same callback on config's per-key list.
+        await maxProduceable.initialize();
+        for (let i = 0; i < 3; i++) {
+            maxProduceable.disable();
+            await maxProduceable.initialize();
+        }
+
+        expect(settingListeners.profitCalc_pricingMode).toHaveLength(1);
+        expect(settingListeners.actionPanel_maxProduceable).toHaveLength(1);
+        expect(settingListeners.actionPanel_showProfitPerHour_production).toHaveLength(1);
+        expect(settingListeners.actionPanel_showExpPerHour_production).toHaveLength(1);
     });
 });
