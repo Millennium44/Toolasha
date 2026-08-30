@@ -48,6 +48,16 @@ describe('one cell at a time', () => {
         expect(csvCell('@SUM(A1)')).toBe("'@SUM(A1)");
     });
 
+    test('text starting with + or - is also a formula opener and gets defused', () => {
+        // Excel and Google Sheets treat +, -, and @ the same as = at the start of a
+        // cell — all four are documented CSV-injection vectors (OWASP). A text field
+        // is never a number just because it starts with a sign, so this has to be
+        // escaped the same way `=`/`@` are, above.
+        // The inner comma also triggers the normal CSV quoting, same as any other cell
+        expect(csvCell('+SUM(1,1)')).toBe('"\'+SUM(1,1)"');
+        expect(csvCell('-2+3+cmd|/C calc!A0')).toBe("'-2+3+cmd|/C calc!A0");
+    });
+
     test('but a signed number is a number, not a formula', () => {
         expect(csvCell(-5)).toBe('-5');
     });

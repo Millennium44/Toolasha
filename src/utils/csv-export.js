@@ -14,8 +14,15 @@
  * strings is a screenshot with extra steps.
  */
 
-/** Leading characters a spreadsheet will treat as the start of a formula */
-const FORMULA_START = /^[=@\t\r]/;
+/**
+ * Leading characters a spreadsheet will treat as the start of a formula.
+ * `=` and `@` are the obvious ones; Excel and Google Sheets both also evaluate
+ * a cell opening with `+` or `-` (OWASP's CSV injection guidance lists all
+ * four, plus tab/CR), since `-2+3+cmd|...` is exactly as executable as
+ * `=2+3+cmd|...`. A signed number never reaches this check — `csvCell` returns
+ * numbers through the `typeof value === 'number'` branch above it.
+ */
+const FORMULA_START = /^[=+\-@\t\r]/;
 
 /**
  * One cell, quoted only where it has to be.
