@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The queue tooltip tracks the queue, and the countdown stops doubling up
+
+The "+N Queued Actions" tooltip guarded re-injection per element like the two tooltip bugs fixed this week, so a reused popper kept showing the previous hover's times after the queue moved on — its guard is now keyed on the queue's actual state. And a redundant "enabled" settings notification made the live countdown force itself through its own idempotency guard, double-registering listeners the teardown could no longer fully remove.
+
 ### Ability rates stop spiking after a switch to a richer alt
 
 Ability experience history is keyed by ability, shared across every character, and was never cleared on a switch — its monotonic guard only resets when experience goes backwards, so switching to an alt with more banked experience in a shared ability read as the current character gaining the whole gap at once (tens of millions per hour). Cleared on character_switching now, before the pointer moves, matching the pattern its sibling row already documented.
