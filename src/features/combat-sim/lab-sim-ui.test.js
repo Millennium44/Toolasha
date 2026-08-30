@@ -2517,3 +2517,32 @@ describe('the budget plan when a pick pays for itself', () => {
         expect(plan.textContent).not.toContain('-17.7M');
     });
 });
+
+describe('the cost breakdown', () => {
+    test('a sweep-priced buy names whose enhancing stats it ran on', () => {
+        // Nothing is listed at that enhancement, so half the figure is a
+        // simulated path — and the same path costs different money on different
+        // benches. Same word the enhancement tooltip's chip uses.
+        const html = ui._renderCostBreakdown({
+            buys: [{ name: 'Fire Top', enhancementLevel: 7, price: 5_000_000 }],
+            credits: [],
+            gross: 5_000_000,
+            net: 5_000_000,
+            enhanceSource: { kind: 'pro', label: 'Pro', detail: 'Pro rates: enhancing 140' },
+        });
+
+        expect(html).toContain('Enhance rates: Pro');
+        expect(html).toContain('Pro rates: enhancing 140');
+    });
+
+    test('a market-quoted buy says nothing about benches', () => {
+        const html = ui._renderCostBreakdown({
+            buys: [{ name: 'Fire Top', enhancementLevel: 0, price: 5_000_000 }],
+            credits: [],
+            gross: 5_000_000,
+            net: 5_000_000,
+            enhanceSource: null,
+        });
+        expect(html).not.toContain('Enhance rates');
+    });
+});

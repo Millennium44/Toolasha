@@ -120,6 +120,8 @@ vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: 
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: vi.fn(),
     getAutoDetectedParams: vi.fn(),
+    // Read by `describeEnhancementSource`, which names whose bench a sweep ran on
+    describeParamsSource: vi.fn(() => null),
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: vi.fn(),
@@ -3655,6 +3657,74 @@ describe('explainUpgradeCost', () => {
         expect(detail.unpriced).toEqual(['Fire Top']);
         expect(detail.gross).toBe(null);
         expect(detail.net).toBe(null);
+    });
+
+    test('a figure with a sweep in it names whose enhancing stats it ran on', () => {
+        // A `sim` figure is half a simulated enhance path, and the same path
+        // costs different money on different benches. The row's detail is where
+        // that gets said — in the same word the enhancement tooltip's chip uses
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/enhance_mat' ? { ask: 100_000, bid: 90_000 } : null
+        );
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        calculateEnhancement.mockReturnValue({ attempts: 3, protectionCount: 0 });
+        getCheapestProtectionPrice.mockReturnValue({ price: 0 });
+        getEnhancingParams.mockReturnValue({
+            enhancingLevel: 100,
+            toolBonus: 0,
+            speedBonus: 0,
+            teas: {},
+            guzzlingBonus: 1,
+            paramsSource: 'auto',
+        });
+
+        const gameData = costGameData();
+        gameData.itemDetailMap['/items/fire_top'].itemLevel = 50;
+        gameData.itemDetailMap['/items/fire_top'].enhancementCosts = [{ itemHrid: '/items/enhance_mat', count: 1 }];
+
+        const detail = explainUpgradeCost(
+            { type: 'tier', slot: BODY, upgradeHrid: '/items/fire_top', upgradeLevel: 7, removedItems: [] },
+            gameData
+        );
+
+        expect(detail.source).toBe('sim');
+        expect(detail.enhanceSource).toMatchObject({ kind: 'yours', label: 'Yours' });
+    });
+
+    test('a figure the market quoted outright ran no sweep, and says nothing about benches', () => {
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getItemPrices.mockReturnValue({ ask: 5_000_000, bid: 4_000_000 });
+
+        const detail = explainUpgradeCost(
+            { type: 'tier', slot: BODY, upgradeHrid: '/items/fire_top', upgradeLevel: 7, removedItems: [] },
+            costGameData()
+        );
+
+        expect(detail.source).toBe('market');
+        expect(detail.enhanceSource).toBeNull();
+    });
+
+    test('an enhancement row falling back to the sweep names the bench too', () => {
+        // Both levels listed is a market delta and runs no sweep; anything else
+        // falls through to the enhance path, which is nothing but one
+        getItemPrices.mockReturnValue({ ask: 0, bid: 0 });
+        resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+        getEnhancingParams.mockReturnValue({ enhancingLevel: 100, teas: {}, paramsSource: 'auto' });
+
+        const detail = explainUpgradeCost(
+            {
+                type: 'enhancement',
+                slot: BODY,
+                currentHrid: '/items/fire_top',
+                currentLevel: 4,
+                upgradeLevel: 7,
+                removedItems: [],
+            },
+            costGameData()
+        );
+
+        expect(detail.source).toBe('sim');
+        expect(detail.enhanceSource?.label).toBe('Yours');
     });
 
     test('reports no credit when nothing is replaced', () => {

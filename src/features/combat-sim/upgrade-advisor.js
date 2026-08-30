@@ -27,6 +27,7 @@ import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
+import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
@@ -418,6 +419,26 @@ function isAbilityCompatible(abilityStyle, weaponStyle) {
  * @param {string} [options.slot] - Equipment slot HRID (forces auto-detect for back items)
  * @returns {number} Expected gold cost
  */
+/**
+ * Whose bench an enhancement sweep is quoting.
+ *
+ * Back items are non-tradeable — nobody else can be enhancing them for you — so
+ * they are always costed from the character's own detected stats. Everything
+ * else goes through `getEnhancingParams`, which is the simulator's settings and
+ * so may be somebody else's kit entirely.
+ *
+ * Named rather than inlined because the answer has to be reportable: a figure
+ * costed at a professional's bench and one costed at yours land in the same
+ * column, and {@link explainUpgradeCost} carries which it was so the row can
+ * say so in the same words the enhancement tooltip's chip uses.
+ *
+ * @param {string} [slot] - Equipment slot HRID
+ * @returns {Object} Enhancement parameters, tagged with `paramsSource`
+ */
+export function enhancementSweepParams(slot) {
+    return slot === '/equipment_types/back' ? getAutoDetectedParams() : getEnhancingParams();
+}
+
 function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, options = {}) {
     // Genuine no-op: nothing to enhance
     if (targetLevel <= startLevel) {
@@ -438,8 +459,7 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
         return null;
     }
 
-    // Back items are non-tradeable, always use player's actual enhancing stats
-    const enhancingParams = options.slot === '/equipment_types/back' ? getAutoDetectedParams() : getEnhancingParams();
+    const enhancingParams = enhancementSweepParams(options.slot);
     const itemLevel = itemDetails.itemLevel || 1;
 
     // Calculate per-attempt material cost (matches tooltip-enhancement pricing)
@@ -2860,7 +2880,8 @@ function weakestCostSource(sources) {
  * @param {number} enhancementLevel - Target enhancement level
  * @param {string} slot - Equipment slot HRID (for enhancement cost params)
  * @param {Object} gameData - Game data payload
- * @returns {{price: number|null, source: string|null}} Buy price in gold and its basis
+ * @returns {{price: number|null, source: string|null, enhanceSource: Object|undefined}} Buy price in
+ *   gold, its basis, and — when an enhancement sweep produced it — whose enhancing stats it ran on
  */
 function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
     // Tester shop first, when it is a price source: the shop copy at its
@@ -2891,7 +2912,11 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
             return { price: null, source: null };
         }
         const total = Math.max(0, basePrice) + Math.max(0, enhanceCost);
-        return total > 0 ? { price: total, source: 'sim' } : { price: null, source: null };
+        // The sweep is half this figure, so whose bench it ran on is part of
+        // what the row is quoting — see `enhancementSweepParams`
+        return total > 0
+            ? { price: total, source: 'sim', enhanceSource: describeEnhancementSource(enhancementSweepParams(slot)) }
+            : { price: null, source: null };
     }
 
     const direct = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
@@ -3026,7 +3051,7 @@ function explainAbilityCandidateCost(candidate, gameData) {
  * price instead of leaving the reader guessing.
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
- * @returns {Object} { buys, credits, gross, credit, net, unpriced, source }
+ * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
  */
 export function explainUpgradeCost(candidate, gameData) {
     if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData);
@@ -3064,17 +3089,23 @@ export function explainUpgradeCost(candidate, gameData) {
     const buys = [];
     if (candidate.addedSlots) {
         for (const [slot, item] of Object.entries(candidate.addedSlots)) {
-            const { price, source } = resolveUpgradeBuyPrice(item.hrid, item.enhancementLevel || 0, slot, gameData);
+            const { price, source, enhanceSource } = resolveUpgradeBuyPrice(
+                item.hrid,
+                item.enhancementLevel || 0,
+                slot,
+                gameData
+            );
             buys.push({
                 hrid: item.hrid,
                 name: nameOf(item.hrid),
                 enhancementLevel: item.enhancementLevel || 0,
                 price,
                 source,
+                enhanceSource,
             });
         }
     } else if (candidate.upgradeHrid) {
-        const { price, source } = resolveUpgradeBuyPrice(
+        const { price, source, enhanceSource } = resolveUpgradeBuyPrice(
             candidate.upgradeHrid,
             candidate.upgradeLevel || 0,
             candidate.slot,
@@ -3086,6 +3117,7 @@ export function explainUpgradeCost(candidate, gameData) {
             enhancementLevel: candidate.upgradeLevel || 0,
             price,
             source,
+            enhanceSource,
         });
     }
 
@@ -3107,10 +3139,16 @@ export function explainUpgradeCost(candidate, gameData) {
     // two levels of one item where both are listed, and the enhance path
     // otherwise. Nothing above sees that, so name it here
     let source = weakestCostSource(buys.map((buy) => buy.source));
+    // Whose enhancing stats a sweep behind this figure ran on. A total is as
+    // shaky as its shakiest part, so the first sweep found stands for the row
+    let enhanceSource = buys.find((buy) => buy.enhanceSource)?.enhanceSource || null;
     if (candidate.type === 'enhancement') {
         const upgraded = getItemPrices(candidate.currentHrid, candidate.upgradeLevel);
         const current = getItemPrices(candidate.currentHrid, candidate.currentLevel);
         source = upgraded?.ask > 0 && current?.bid > 0 ? 'market' : 'sim';
+        // A market delta between two listed levels runs no sweep at all; the
+        // fallback path in `calculateUpgradeCost` is nothing but one
+        enhanceSource = source === 'sim' ? describeEnhancementSource(enhancementSweepParams(candidate.slot)) : null;
     }
 
     return {
@@ -3118,6 +3156,7 @@ export function explainUpgradeCost(candidate, gameData) {
         credits,
         gross,
         credit,
+        enhanceSource,
         // Not floored at zero: see calculateUpgradeCost. A swap whose resale
         // beats its purchase hands gold back, and the breakdown says so
         net: gross === null ? null : gross - credit,

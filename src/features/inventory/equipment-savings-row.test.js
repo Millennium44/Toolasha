@@ -1074,6 +1074,28 @@ describe('targets nobody is selling at that level', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    test('the card names whose bench the run was costed at', () => {
+        // Four places sweep an enhancement path with four different parameter
+        // sources, and until now only the tooltip admitted which it used. Same
+        // word the tooltip's chip prints, so "Yours" means one thing everywhere
+        watchTarget('/items/sinister_cape', 7);
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Enhancement Cost (Yours)');
+    });
+
+    test('a card showing an advisor’s quote does not claim the quote came off this bench', () => {
+        // That figure was costed somewhere else; the advisor's own breakdown is
+        // where it names its bench
+        watchTarget('/items/sinister_cape', 7, { cost: 12_345_678, costSource: 'sim' });
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Enhancement Cost');
+        expect(text()).not.toContain('Enhancement Cost (');
+        // The derived figure beside it is this module's own, and says so
+        expect(text()).toContain('Priced here at (Yours):');
+    });
+
     test('it costs the run at your own bench, not the simulator settings', () => {
         // The simulator's manual defaults are a fully kitted enhancer. Costing
         // a cape at somebody else's bench quotes a run you cannot make.

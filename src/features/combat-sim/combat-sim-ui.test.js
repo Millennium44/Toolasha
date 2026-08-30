@@ -3698,3 +3698,40 @@ describe('remembered-run banner', () => {
         expect(html).toContain('&lt;img src=x&gt;');
     });
 });
+
+describe('the cost basis detail', () => {
+    test('a sweep-priced row names whose enhancing stats it ran on', () => {
+        // Not a new column: the missing half of the sentence the basis line
+        // already gives about "an expected cost over a random process"
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'sim',
+            costDetail: {
+                gross: 5_000_000,
+                credit: 0,
+                enhanceSource: { kind: 'pro', label: 'Pro', detail: 'Pro rates: enhancing 140' },
+            },
+            candidate: {},
+        });
+
+        expect(html).toContain('Enhance rates: Pro');
+        expect(html).toContain('Pro rates: enhancing 140');
+    });
+
+    test('the label stands alone when the source has no detail behind it', () => {
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'sim',
+            costDetail: { gross: 1, credit: 0, enhanceSource: { kind: 'yours', label: 'Yours', detail: null } },
+            candidate: {},
+        });
+        expect(html).toContain('Enhance rates: Yours.');
+    });
+
+    test('a row with no sweep behind it says nothing about benches', () => {
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'market',
+            costDetail: { gross: 5_000_000, credit: 0, enhanceSource: null },
+            candidate: {},
+        });
+        expect(html).not.toContain('Enhance rates');
+    });
+});

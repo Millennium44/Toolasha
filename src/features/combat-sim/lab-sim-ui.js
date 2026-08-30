@@ -4662,6 +4662,15 @@ class LabSimUI {
             parts.push(line(`Buy ${buy.name} +${buy.enhancementLevel} — ${price}`));
         }
 
+        // Nothing is listed at that enhancement, so half the figure above is a
+        // simulated enhance path — and the same path costs different money on
+        // different benches. Named in the words the enhancement tooltip's chip
+        // uses, so one source reads identically wherever it turns up.
+        if (detail.enhanceSource) {
+            const rates = detail.enhanceSource;
+            parts.push(line(`Enhance rates: ${rates.label}${rates.detail ? ` — ${rates.detail}` : ''}.`, '#888'));
+        }
+
         if (detail.unpriced?.length > 0) {
             // "The measured delta is still accurate" rather than naming win rate:
             // the same breakdown is drawn under a table ranked on clear rate, and

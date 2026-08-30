@@ -75,6 +75,7 @@ import {
     ROW_COLORS,
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { roomSkill } from '../../utils/room-skills.js';
@@ -1389,6 +1390,12 @@ function costOf(itemHrid, enhancementLevel) {
                 return {
                     cost: laddering ? ladder.cost : direct,
                     mode: laddering ? 'ladder' : 'direct',
+                    // Whose bench every enhancement figure on this card was run
+                    // on. `enhancementCost` always uses the character's own
+                    // detected stats, but saying so is the point: the tooltip,
+                    // the advisor and this card each pick their own params, and
+                    // until now only the tooltip admitted which.
+                    enhanceSource: describeEnhancementSource(enhancementConfig()?.getAutoDetectedParams?.()),
                     // Whichever one is not the basis is still worth a line, so
                     // the card always carries both
                     direct,
@@ -1553,6 +1560,7 @@ export function watchedTargets() {
             ladder,
             direct,
             mode,
+            enhanceSource,
         } = costOf(itemHrid, enhancementLevel);
 
         const worn = wornRivalOf(itemHrid);
@@ -1576,6 +1584,9 @@ export function watchedTargets() {
             ask,
             crafted,
             enhancing: Boolean(enhancing),
+            // Whose enhancing stats the derived figure was run on, for the card
+            // to name beside it — null on a target that runs no sweep
+            enhanceSource: enhanceSource || null,
             ownsBase: Boolean(holdsBase),
             fromLevel: fromLevel || 0,
             ladder: ladder || null,
@@ -2191,10 +2202,19 @@ function targetCard(target) {
                 )
             );
         }
+        // The caption names the model *and*, when the figure on this card is
+        // this module's own, whose enhancing stats it ran on — the same word
+        // the enhancement tooltip's chip prints, so "Yours" means the same
+        // thing on both. A card showing an advisor's quote says nothing here:
+        // that figure came off another bench, and the advisor's own breakdown
+        // is where it names it.
+        const derivedHere = target.quotedCost === null || target.quotedCost === undefined;
         card.appendChild(
             priceLine(
                 target.ownsBase ? 'Not sold at this level' : 'Buy a +0 and enhance it',
-                'Enhancement Cost',
+                derivedHere && target.enhanceSource
+                    ? `Enhancement Cost (${target.enhanceSource.label})`
+                    : 'Enhancement Cost',
                 'rgba(232, 236, 245, 0.55)'
             )
         );
@@ -2224,9 +2244,12 @@ function targetCard(target) {
         const from = target.quotedFrom ? `Upgrade advisor (${target.quotedFrom}):` : 'Upgrade advisor:';
         card.appendChild(priceLine(from, formatWithSeparator(Math.round(target.quotedCost)), ROW_COLORS.gold));
         if (target.derivedCost !== null && Math.round(target.derivedCost) !== Math.round(target.quotedCost)) {
+            // The two differing is information, and part of *why* they differ is
+            // which bench each ran on — so the derived figure names its own here
+            // exactly as the advisor's line above names the advisor
             card.appendChild(
                 priceLine(
-                    'Priced here at:',
+                    target.enhanceSource ? `Priced here at (${target.enhanceSource.label}):` : 'Priced here at:',
                     formatWithSeparator(Math.round(target.derivedCost)),
                     'rgba(232, 236, 245, 0.55)'
                 )

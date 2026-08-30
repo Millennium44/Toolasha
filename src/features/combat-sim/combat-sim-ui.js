@@ -7122,6 +7122,21 @@ class CombatSimUI {
 
         if (source) parts.push(`<span style="color:#aaa;">Cost basis: ${source.label} — ${source.title}</span>`);
 
+        // A `sim` figure is an enhancement path, and the same path costs
+        // different money on different benches: the player's own stats, the
+        // simulator's manual fields, or the shipped professional kit. Which one
+        // it was is not a new column — it is the missing half of the sentence
+        // "an expected cost over a random process" the basis line already
+        // gives. Same words the enhancement tooltip's chip uses, so a reader who
+        // has seen "Pro" there does not have to learn a second vocabulary here.
+        if (detail?.enhanceSource) {
+            const rates = detail.enhanceSource;
+            parts.push(
+                `<span style="color:#aaa;">Enhance rates: ${rates.label}` +
+                    `${rates.detail ? ` — ${rates.detail}` : ''}.</span>`
+            );
+        }
+
         if (detail && (detail.gross != null || detail.credit)) {
             const gross = detail.gross == null ? 'no price' : formatKMB(detail.gross);
             parts.push(
