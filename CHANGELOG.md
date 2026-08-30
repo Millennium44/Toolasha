@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### How close the losses were, and what the walk spent
+
+Each labyrinth pool card now says how near its losses came — "losses end with the monster at 8.0% median (n=14)" — from HP remainders recorded on every fight and never shown; only complete, measured losses count and nothing draws below five. The reroll walk shows a running spend on its chip and keeps the Done summary visible after the widget hides. Two walk bugs fixed in the same pass: thresholds were loaded fire-and-forget so an edit seconds before a walk could miss the first plan, and the walk enforced the price caps even with cap protection switched off (its gear drawer now says "off" instead of quoting numbers not in force).
+
 ### Two devices stop overwriting each other's capture work
 
 Seven more stores gained sync merges: guild member skills (fresher per member, rename-deduped by character id), guild loadout sightings (sheet and kit resolve separately, and a stat-only sighting can never demote an authoritative kit from either side), trial ability sessions and their roster, the trial plan (freshest whole plan — it is hand-authored prose, not a table to splice), overlay layouts, planner goals, and the watchlist. Two devices that each captured half a roster now union instead of the last pull winning. Deletes on these stores keep no tombstones, so an un-pin can resurrect cross-device — documented per store rather than hidden.
