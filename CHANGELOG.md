@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The adoption dialog escapes character names
+
+The account-wide legacy-data consent dialog interpolated character names into its markup unescaped — the same class of bug fixed on the trial scoreboard, but this dialog blocks every character on the account, so it gets the same escaping.
+
 ### All Zones and Seek price the run for you, not a teammate
 
 In a party where your character isn't the first slot, running Seek or All Zones right after opening the panel — or after viewing a teammate's tab on an earlier result — silently priced the whole run's drops and revenue for that teammate. Both paths now reset the measured player to the character being optimized, as single-zone Simulate already did.
