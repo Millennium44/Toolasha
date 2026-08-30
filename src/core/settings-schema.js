@@ -3398,6 +3398,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Fires the first time a target on the Equipment Savings list — a piece of gear, an ability level or a house room — costs less than what you can spend, using exactly the figures that panel draws (trade-in value of the piece you are replacing, market orders counted or not per your setting, crafts costed from their inputs). Prices come from the market data this script already holds, so the message carries the age of the figures behind the cost and says outright when they are older than the 15-minute cache window. Once per goal, re-arming when you spend back below the cost, when a price puts it out of reach again, or when you change the target. A goal you reached by levelling up or building rather than buying is skipped rather than announced.',
             },
+            notifications_priceTargetReached: {
+                id: 'notifications_priceTargetReached',
+                label: 'Notify when a watchlist price target is reached',
+                type: 'checkbox',
+                default: false,
+                help: 'Fires when a pinned item on the price history panel reaches the target you set on its chip — an ask target when somebody is selling at or under your price, a bid target when somebody is buying at or above it. Set one with the ◎ button on the chip; it opens seeded with the current price, so a click and Enter is enough. The evidence is the pooled price history dataset, which is the only source that dates a sighting honestly, so this needs "Price history panel (pooled data)" switched on — with it off there is nothing to compare against and the alert stays silent. A sighting older than 15 minutes fires nothing, and the message says how old the one it used actually was. Once per target, re-arming when a fresh sighting puts the price back on the other side of it or when you change the target.',
+            },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
                 label: 'Notify when another character has run out of queue',

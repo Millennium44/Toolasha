@@ -110,6 +110,20 @@ export function treasureTracker() {
 }
 
 /**
+ * The price history panel — the one copy holding this character's pins.
+ *
+ * Only the Market bundle's instance has `initialize()` called on it, so only
+ * that one has a watchlist; a bundle-local copy would be an empty panel that
+ * silently accepted pins nobody would ever see.
+ *
+ * @returns {Object|null} The panel, or null when the market bundle is absent
+ *   or the price history feature is off
+ */
+export function marketHistoryPanel() {
+    return toolashaRoot()?.Market?.marketHistoryPanel || null;
+}
+
+/**
  * The Risk of Ruin panel, for its last depth-cap context.
  *
  * Reached through the global rather than imported: the panel is a ui-bundle

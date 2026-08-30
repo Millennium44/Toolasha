@@ -16,6 +16,10 @@ const mocks = vi.hoisted(() => ({
     zones: [],
     saved: [],
     watched: [],
+    /** The price panel the bundle bridge answers with, null when the feature is off */
+    bridgePricePanel: null,
+    /** Pins the price panel was asked to seed, in order */
+    seededTargets: [],
     /** Ability level goals handed to Equipment Savings */
     abilityGoals: [],
     /** Marketplace navigations a row asked for */
@@ -166,6 +170,7 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     expectedValueCalculator: () => null,
     missingMaterialsButton: () => mocks.bridgeMissingMats,
     dungeonTrackerStorage: () => ({ getAllRuns: async () => mocks.dungeonRuns }),
+    marketHistoryPanel: () => mocks.bridgePricePanel,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -1612,6 +1617,13 @@ describe('upgrade row handoff', () => {
         mocks.watched.length = 0;
         mocks.abilityGoals.length = 0;
         mocks.marketOpened.length = 0;
+        mocks.seededTargets.length = 0;
+        mocks.bridgePricePanel = {
+            seedPriceTarget: (itemHrid, enhancementLevel, cost) => {
+                mocks.seededTargets.push({ itemHrid, enhancementLevel, cost });
+                return true;
+            },
+        };
         // Torn down before the log is cleared, so the teardown's own entries do
         // not land in the run the test is about
         cleanupUpgradeMarketAutofill();
@@ -1693,6 +1705,67 @@ describe('upgrade row handoff', () => {
         expect(mocks.watched).toEqual([{ itemHrid: '/items/cheese_sword', enhancementLevel: 5 }]);
         // The two handoffs on one row must agree about which item this is
         expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/cheese_sword', enhancementLevel: 5 }]);
+    });
+
+    test('Watch also pins the item on the price panel, targeted at the row’s own cost', () => {
+        // Watching an item you were just quoted a price for almost always means
+        // "tell me when it costs that"; retyping the figure would be the reader
+        // doing the handoff by hand
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 4_200_000,
+            candidate: { description: 'Something', upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.seededTargets).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4, cost: 4_200_000 }]);
+        // Strictly an addition: the inventory watchlist entry is made either way
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
+    });
+
+    test('an unpriced row seeds no target', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' })
+        );
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.seededTargets).toHaveLength(0);
+        expect(mocks.watched).toHaveLength(1);
+    });
+
+    test('Watch still works with the price panel off, which is its default state', () => {
+        mocks.bridgePricePanel = null;
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 4_200_000,
+            candidate: { description: 'Something', upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
+        expect(container.querySelector('[data-buy-action="watch"]').textContent).toBe('Watching ✓');
+    });
+
+    test('a failed pin never costs the watch that did work', () => {
+        mocks.bridgePricePanel = {
+            seedPriceTarget: () => {
+                throw new Error('storage is out');
+            },
+        };
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 4_200_000,
+            candidate: { description: 'Something', upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
+        expect(container.querySelector('[data-buy-action="watch"]').textContent).toBe('Watching ✓');
     });
 
     test('Save for this hands over the price the row was quoting, and whose it is', () => {

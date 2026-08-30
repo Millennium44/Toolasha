@@ -7,7 +7,12 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
-import { expectedValueCalculator, missingMaterialsButton, dungeonTrackerStorage } from '../../utils/bundle-bridge.js';
+import {
+    expectedValueCalculator,
+    missingMaterialsButton,
+    dungeonTrackerStorage,
+    marketHistoryPanel,
+} from '../../utils/bundle-bridge.js';
 import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
@@ -1185,8 +1190,13 @@ export function upgradeRowActionsHtml(result) {
             ? `Open this in the marketplace, with ${buy.quantity} ready in the buy box — what this upgrade needs`
             : 'Open this in the marketplace';
 
-    return `${save}<button type="button" ${attrs} data-buy-action="watch" title="Add to the watchlist"
-        style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"
+    // The costed price rides the Watch button as well as the Save one: watching
+    // an item you have just been quoted a price for almost always means "tell
+    // me when it costs that", and the price panel's pin can carry that as a
+    // target rather than making the reader retype a figure already on screen
+    const watchCost = buy.cost == null ? '' : String(buy.cost);
+    return `${save}<button type="button" ${attrs} data-buy-action="watch" data-buy-cost="${watchCost}"
+        title="Add to the watchlist" style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"
         title="${escapeAttribute(marketTitle)}" style="${ROW_ACTION_STYLE}">Market</button>`;
 }
 
@@ -1203,6 +1213,38 @@ function escapeAttribute(value) {
         .replace(/"/g, '&quot;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+}
+
+/**
+ * Also pin the item on the price panel, targeted at what the row costed it.
+ *
+ * Strictly an *addition* to what Watch already does — the inventory watchlist
+ * entry is made either way, and nothing here can prevent or alter it. The price
+ * panel keeps its own separate list of pins, and this is the second half of the
+ * same intention: the row quoted a figure, and a pin targeted at that figure is
+ * what turns "watch this" into "tell me when it gets there".
+ *
+ * Quiet whenever the price panel is not running — it is off by default, being
+ * the feature that talks to a third-party dataset — and quiet for a row that
+ * could not be priced, since a target of nothing is not a target. Reached
+ * through the bundle bridge because the panel lives in the Market bundle and
+ * only that copy holds the pins.
+ *
+ * @param {string} itemHrid - The item the row buys
+ * @param {number} enhancementLevel - At the level the row buys it
+ * @param {string|null} rawCost - The row's costed price, off the button
+ */
+function seedWatchlistPriceTarget(itemHrid, enhancementLevel, rawCost) {
+    const cost = rawCost === '' || rawCost == null ? null : Number(rawCost);
+    if (!Number.isFinite(cost) || !(cost > 0)) return;
+
+    try {
+        marketHistoryPanel()?.seedPriceTarget?.(itemHrid, enhancementLevel, cost);
+    } catch (error) {
+        // Never at the expense of the watch that did work: the inventory entry
+        // is already made, and a failed pin is not a failed handoff
+        console.error('[CombatSimUI] Seeding a price target failed:', error);
+    }
 }
 
 /**
@@ -1292,6 +1334,7 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     // on the same row: a "+5" watched as a +0 lands on the list
                     // priced at a fraction of what the row was quoting
                     watchItem(itemHrid, null, enhancementLevel);
+                    seedWatchlistPriceTarget(itemHrid, enhancementLevel, button.getAttribute('data-buy-cost'));
                     button.textContent = 'Watching ✓';
                 }
             } catch (error) {

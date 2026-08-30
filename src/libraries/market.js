@@ -82,6 +82,9 @@ import equipmentSavings, { equipmentSavingsPanel } from '../features/inventory/e
 // buffer on a global for exactly this case, so being reached from two bundles
 // costs nothing.
 import savingsGoalAlerts from '../features/notifications/savings-goal-alerts.js';
+// Likewise: the price-target alert reads the pins the price history panel above
+// keeps, and its evidence is that panel's own pooled dataset.
+import priceTargetAlerts from '../features/notifications/price-target-alerts.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -141,6 +144,7 @@ toolashaRoot.Market = {
     equipmentSavings,
     equipmentSavingsPanel,
     savingsGoalAlerts,
+    priceTargetAlerts,
     marketplaceShortcuts,
     sellQueue,
     gatheringProfit,

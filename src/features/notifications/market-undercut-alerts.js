@@ -43,6 +43,7 @@ import { freshestSighting } from '../market/mooket/market-history-data.js';
 import notificationService from './notification-service.js';
 import { listingBeaten } from './notification-predicates.js';
 import { formatKMB3Digits, formatRelativeTime } from '../../utils/formatters.js';
+import { runPool } from '../../utils/async-pool.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 /** Master switch; nothing below it is consulted while this is off */
@@ -56,23 +57,6 @@ const ACTIVE_STATUS = '/market_listing_status/active';
 
 /** Kept low so refreshing a long listing list does not burst the third-party server */
 const MOOKET_CONCURRENCY = 4;
-
-/**
- * Run an async worker over items with a bounded number in flight at once.
- * @param {Array<any>} items - Work items
- * @param {number} limit - Maximum concurrent workers
- * @param {(item: any) => Promise<void>} worker - Per-item work
- * @returns {Promise<void>}
- */
-async function runPool(items, limit, worker) {
-    const queue = [...items];
-    const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
-        while (queue.length) {
-            await worker(queue.shift());
-        }
-    });
-    await Promise.all(runners);
-}
 
 class MarketUndercutAlerts {
     constructor() {

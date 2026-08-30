@@ -1890,6 +1890,17 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_savingsGoalReached'),
         },
         {
+            key: 'priceTargetAlerts',
+            name: 'Price Target Alerts',
+            category: 'Notifications',
+            // In the Market bundle for the same reason as the savings-goal
+            // alert: it reads the price panel's pins and that panel's pooled
+            // dataset, both of which live there.
+            module: Market.priceTargetAlerts,
+            async: true,
+            customCheck: () => config.getSetting('notifications_priceTargetReached'),
+        },
+        {
             key: 'enhancementTargetAlerts',
             name: 'Enhancement Target Alerts',
             category: 'Notifications',

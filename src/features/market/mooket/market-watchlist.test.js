@@ -19,6 +19,10 @@ import {
     describeMove,
     formatMoveSpan,
     MAX_MOVE_SPAN_MS,
+    normaliseTarget,
+    setWatchedTarget,
+    targetMet,
+    describeTarget,
 } from './market-watchlist.js';
 
 const price = { ask: 120, bid: 100, at: 500 };
@@ -215,5 +219,118 @@ describe('describeMove', () => {
     test('the bound is injectable, so the chip can be retuned without a rewrite', () => {
         expect(describeMove(0.08, 2 * HOUR, HOUR)).toBeNull();
         expect(describeMove(0.08, 2 * HOUR, 3 * HOUR)).not.toBeNull();
+    });
+});
+
+describe('normaliseTarget', () => {
+    test('defaults to the ask side, which is the one a buyer is watching', () => {
+        expect(normaliseTarget({ price: 100 })).toEqual({ side: 'ask', price: 100 });
+    });
+
+    test('keeps a bid target', () => {
+        expect(normaliseTarget({ side: 'bid', price: 100 })).toEqual({ side: 'bid', price: 100 });
+    });
+
+    test('an unusable price is no target at all', () => {
+        // Zero would be reached by an empty book and a negative never; both
+        // would be a pin quietly carrying a rule nobody could have meant
+        expect(normaliseTarget({ price: 0 })).toBeNull();
+        expect(normaliseTarget({ price: -5 })).toBeNull();
+        expect(normaliseTarget({ price: 'soon' })).toBeNull();
+        expect(normaliseTarget(null)).toBeNull();
+    });
+
+    test('a numeric string is a price, since that is what an input hands back', () => {
+        expect(normaliseTarget({ price: '4200' })).toEqual({ side: 'ask', price: 4200 });
+    });
+
+    test('an unrecognised side is an ask rather than a third kind of target', () => {
+        expect(normaliseTarget({ side: 'middle', price: 10 }).side).toBe('ask');
+    });
+});
+
+describe('addWatched with a target', () => {
+    test('a seeded pin carries its target', () => {
+        const list = addWatched([], '/items/cheese:0', price, { side: 'ask', price: 90 });
+        expect(list[0].target).toEqual({ side: 'ask', price: 90 });
+    });
+
+    test('an unusable seed leaves the pin plain rather than half-targeted', () => {
+        const list = addWatched([], '/items/cheese:0', price, { price: null });
+        expect(list[0]).not.toHaveProperty('target');
+    });
+});
+
+describe('setWatchedTarget', () => {
+    const pinned = addWatched([], '/items/cheese:0', price);
+
+    test('sets a target on the named pin', () => {
+        expect(setWatchedTarget(pinned, '/items/cheese:0', { side: 'bid', price: 150 })[0].target).toEqual({
+            side: 'bid',
+            price: 150,
+        });
+    });
+
+    test('clearing removes the field, so a cleared pin reads like one never targeted', () => {
+        const targeted = setWatchedTarget(pinned, '/items/cheese:0', { price: 90 });
+        expect(setWatchedTarget(targeted, '/items/cheese:0', null)[0]).not.toHaveProperty('target');
+    });
+
+    test('an unusable price clears rather than storing something unreachable', () => {
+        const targeted = setWatchedTarget(pinned, '/items/cheese:0', { price: 90 });
+        expect(setWatchedTarget(targeted, '/items/cheese:0', { price: 0 })[0]).not.toHaveProperty('target');
+    });
+
+    test('leaves every other pin alone', () => {
+        const two = addWatched(pinned, '/items/milk:0', price);
+        const after = setWatchedTarget(two, '/items/cheese:0', { price: 90 });
+        expect(after[1]).toBe(two[1]);
+    });
+
+    test('a pin that is not there changes nothing', () => {
+        expect(setWatchedTarget(pinned, '/items/milk:0', { price: 90 })).toEqual(pinned);
+    });
+});
+
+describe('targetMet', () => {
+    test('an ask target is reached at or under the price named', () => {
+        const target = { side: 'ask', price: 100 };
+        expect(targetMet(target, { ask: 101 })).toBe(false);
+        expect(targetMet(target, { ask: 100 })).toBe(true);
+        expect(targetMet(target, { ask: 99 })).toBe(true);
+    });
+
+    test('a bid target is reached at or over the price named', () => {
+        const target = { side: 'bid', price: 100 };
+        expect(targetMet(target, { bid: 99 })).toBe(false);
+        expect(targetMet(target, { bid: 100 })).toBe(true);
+        expect(targetMet(target, { bid: 101 })).toBe(true);
+    });
+
+    test('each side looks only at its own quote', () => {
+        // A bid of 5 says nothing about whether the ask target was reached
+        expect(targetMet({ side: 'ask', price: 100 }, { bid: 5 })).toBeNull();
+    });
+
+    test('an unquoted side is unknown rather than unreached', () => {
+        // The distinction the alert leans on: null leaves the armed bit alone,
+        // false re-arms it, and an empty book must not do the latter
+        expect(targetMet({ side: 'ask', price: 100 }, { ask: -1 })).toBeNull();
+        expect(targetMet({ side: 'ask', price: 100 }, null)).toBeNull();
+    });
+
+    test('no target is no verdict', () => {
+        expect(targetMet(null, { ask: 1 })).toBeNull();
+    });
+});
+
+describe('describeTarget', () => {
+    test('says which way the comparison runs, in words', () => {
+        expect(describeTarget({ side: 'ask', price: 4_200_000 })).toBe('under 4.2M ask');
+        expect(describeTarget({ side: 'bid', price: 4_200_000 })).toBe('over 4.2M bid');
+    });
+
+    test('no target, nothing to say', () => {
+        expect(describeTarget(null)).toBe('');
     });
 });

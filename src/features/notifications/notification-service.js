@@ -137,6 +137,7 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_trialResults',
     'notifications_taskSlotsFull',
     'notifications_savingsGoalReached',
+    'notifications_priceTargetReached',
     'notifiEmptyAction',
 ];
 

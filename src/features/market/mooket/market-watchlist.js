@@ -14,7 +14,7 @@
  * Pure: state in, state out.
  */
 
-import { formatRelativeTime } from '../../../utils/formatters.js';
+import { formatKMB, formatRelativeTime } from '../../../utils/formatters.js';
 
 /**
  * A reading older than this is stale enough to flag visually, not just say so
@@ -45,12 +45,106 @@ export const MAX_WATCHED = 99;
  * @param {Object|null} price - The price now, if known
  * @returns {Array<Object>} A new list, unchanged when full or already present
  */
-export function addWatched(watchlist, key, price) {
+export function addWatched(watchlist, key, price, target = null) {
     const list = watchlist || [];
     if (list.some((entry) => entry.key === key)) return list;
     if (list.length >= MAX_WATCHED) return list;
 
-    return [...list, { key, ask: price?.ask ?? -1, bid: price?.bid ?? -1, at: price?.at ?? 0 }];
+    const entry = { key, ask: price?.ask ?? -1, bid: price?.bid ?? -1, at: price?.at ?? 0 };
+    const wanted = normaliseTarget(target);
+    if (wanted) entry.target = wanted;
+    return [...list, entry];
+}
+
+/**
+ * The two sides a target can watch, and what reaching one means.
+ *
+ * An `ask` target is a buyer's: it is reached when somebody is selling at or
+ * under the price you named. A `bid` target is a seller's, and is reached when
+ * somebody is buying at or above it. Both are "the market came to me", which is
+ * why one word for the side is enough to say which comparison applies.
+ */
+export const TARGET_SIDES = ['ask', 'bid'];
+
+/**
+ * A target, or nothing, from whatever was stored or typed.
+ *
+ * A price that is not a positive number is not a target: zero would be reached
+ * by an empty book and a negative one never at all, and both would be a pin
+ * quietly carrying a rule nobody could have meant. Rejecting them here is what
+ * lets every caller treat "has a target" as a single truthy check.
+ *
+ * @param {*} raw - A stored target, or a pair typed into the chip's editor
+ * @returns {{side: 'ask'|'bid', price: number}|null} The target, or null
+ */
+export function normaliseTarget(raw) {
+    const price = Number(raw?.price);
+    if (!Number.isFinite(price) || !(price > 0)) return null;
+    return { side: raw?.side === 'bid' ? 'bid' : 'ask', price };
+}
+
+/**
+ * Set, change or clear one pin's target.
+ *
+ * A null (or unusable) target removes the field rather than storing an empty
+ * one, so a pin that has never had a target and a pin whose target was cleared
+ * read identically everywhere downstream — including in the alert, where the
+ * absence of a target is what makes a pin silent.
+ *
+ * @param {Array<Object>} watchlist - Current entries
+ * @param {string} key - itemHrid:enhancementLevel
+ * @param {Object|null} target - `{side, price}`, or null to clear
+ * @returns {Array<Object>} A new list
+ */
+export function setWatchedTarget(watchlist, key, target) {
+    const wanted = normaliseTarget(target);
+
+    return (watchlist || []).map((entry) => {
+        if (entry?.key !== key) return entry;
+        if (!wanted) {
+            const { target: _cleared, ...rest } = entry;
+            return rest;
+        }
+        return { ...entry, target: wanted };
+    });
+}
+
+/**
+ * Whether a price has come to where a target asked it to.
+ *
+ * Three answers rather than two, and the third is the one that keeps the alert
+ * honest: a side the market is not quoting is *unknown*, not "not reached", and
+ * treating it as the latter would re-arm a target every time the book emptied.
+ * The same distinction `listingBeaten` draws about a missing best price.
+ *
+ * @param {Object|null} target - The pin's target
+ * @param {Object|null} price - A reading carrying `ask` and `bid`
+ * @returns {boolean|null} True when reached, false when not, null when unpriced
+ */
+export function targetMet(target, price) {
+    const wanted = normaliseTarget(target);
+    if (!wanted) return null;
+
+    const value = wanted.side === 'bid' ? price?.bid : price?.ask;
+    if (!Number.isFinite(value) || !(value > 0)) return null;
+
+    return wanted.side === 'bid' ? value >= wanted.price : value <= wanted.price;
+}
+
+/**
+ * A target in words, for a chip label or a tooltip line.
+ *
+ * "under" and "over" rather than the operators: the chip is read at a glance
+ * beside a price, and `≤ 4.2M ask` invites the reader to work out which way the
+ * comparison runs at exactly the moment they do not want to.
+ *
+ * @param {Object|null} target - The pin's target
+ * @returns {string} e.g. `under 4.2M ask`, empty when there is no target
+ */
+export function describeTarget(target) {
+    const wanted = normaliseTarget(target);
+    if (!wanted) return '';
+    return `${wanted.side === 'bid' ? 'over' : 'under'} ${formatKMB(wanted.price)} ${wanted.side}`;
 }
 
 /**

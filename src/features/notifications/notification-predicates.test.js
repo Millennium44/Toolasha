@@ -17,6 +17,7 @@ import {
     newDeaths,
     listingBeaten,
     goalAffordable,
+    priceTargetReached,
 } from './notification-predicates.js';
 
 describe('labyrinthRunState', () => {
@@ -301,5 +302,41 @@ describe('goalAffordable', () => {
         // not be read as "still saving" — an unpriced target is unknown
         expect(goalAffordable(goal({ costKnown: false, armed: false }))).toEqual({ fire: false, armed: false });
         expect(goalAffordable(goal({ costKnown: false, armed: true }))).toEqual({ fire: false, armed: true });
+    });
+});
+
+describe('priceTargetReached', () => {
+    const seen = (over = {}) => ({ armed: true, met: true, priceAgeMs: 60_000, maxPriceAgeMs: 900_000, ...over });
+
+    test('fires on the first fresh sighting that reaches the target', () => {
+        expect(priceTargetReached(seen())).toEqual({ fire: true, armed: false });
+    });
+
+    test('and not again while it stays reached', () => {
+        expect(priceTargetReached(seen({ armed: false }))).toEqual({ fire: false, armed: false });
+    });
+
+    test('the price back on the wrong side re-arms it', () => {
+        expect(priceTargetReached(seen({ met: false, armed: false }))).toEqual({ fire: false, armed: true });
+    });
+
+    test('an unquoted side leaves the bit exactly as it was', () => {
+        // Unknown is not unreached: re-arming on an empty book would announce
+        // the same crossing twice on the next quote that landed
+        expect(priceTargetReached(seen({ met: null, armed: false }))).toEqual({ fire: false, armed: false });
+        expect(priceTargetReached(seen({ met: undefined, armed: true }))).toEqual({ fire: false, armed: true });
+    });
+
+    test('a stale sighting proves nothing in either direction', () => {
+        expect(priceTargetReached(seen({ priceAgeMs: 900_001 }))).toEqual({ fire: false, armed: true });
+        expect(priceTargetReached(seen({ met: false, priceAgeMs: 900_001, armed: false }))).toEqual({
+            fire: false,
+            armed: false,
+        });
+    });
+
+    test('an undated sighting is no evidence at all', () => {
+        expect(priceTargetReached(seen({ priceAgeMs: null }))).toEqual({ fire: false, armed: true });
+        expect(priceTargetReached(seen({ maxPriceAgeMs: 0 }))).toEqual({ fire: false, armed: true });
     });
 });

@@ -57,6 +57,7 @@ export const CATEGORIES = {
 export const NOTICE_KINDS = [
     { prefix: 'market-undercut', category: 'market', noun: { one: 'undercut', many: 'undercuts' } },
     { prefix: 'market-listing-filled', category: 'market', noun: { one: 'filled listing', many: 'filled listings' } },
+    { prefix: 'price-target', category: 'market', noun: { one: 'price target', many: 'price targets' } },
     { prefix: 'community-buff-expiring', category: 'buffs', noun: { one: 'lapsing', many: 'lapsing' } },
     { prefix: 'combat-consumable-low', category: 'consumables', noun: { one: 'running dry', many: 'running dry' } },
     { prefix: 'consumable-low', category: 'consumables', noun: { one: 'running dry', many: 'running dry' } },

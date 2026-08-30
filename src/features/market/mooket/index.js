@@ -46,6 +46,10 @@ import {
     normaliseWatchlist,
     describeUpdateAge,
     isStalePrice,
+    setWatchedTarget,
+    normaliseTarget,
+    describeTarget,
+    targetMet,
 } from './market-watchlist.js';
 import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 import { attachMinimize } from '../../../utils/panel-minimize.js';
@@ -580,6 +584,12 @@ class MarketHistoryPanel {
             // item was pinned that `change` carries. Null whenever that step
             // cannot be dated, or spans too long to still describe one market.
             const move = describeMove(price?.rise, price?.riseSpanMs);
+            const target = normaliseTarget(entry.target);
+            // Against the panel's own cache, which is what the chip is drawing.
+            // The alert answers the same question against a dated pooled
+            // sighting instead: the chip is allowed to be approximate about
+            // *when*, a notification is not.
+            const met = target ? targetMet(target, price) : null;
 
             const chip = document.createElement('div');
             chip.style.cssText =
@@ -592,7 +602,8 @@ class MarketHistoryPanel {
                 `Bid ${change.bid === null ? '—' : formatWithSeparator(change.bid)}\n` +
                 `${describeUpdateAge(price?.at)}${stale ? ' — stale, treat with caution' : ''}\n` +
                 (move ? `Moved ${move.text} on the last reading\n` : '') +
-                'Click to chart it, right-click to unpin';
+                (target ? `Target: ${describeTarget(target)}${met ? ' — reached' : ''}\n` : '') +
+                'Click to chart it, right-click to unpin, ◎ to set a price target';
 
             const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             icon.setAttribute('width', '15');
@@ -636,6 +647,19 @@ class MarketHistoryPanel {
                 }
             }
 
+            // The target rides on the chip rather than only in the tooltip: a
+            // price you asked to be told about is a thing you have decided, and
+            // a decision that is invisible until you hover is one you forget
+            // you made. Green once reached, so the row answers "did any of them
+            // land" without a hover each.
+            if (target) {
+                const flag = document.createElement('span');
+                flag.textContent = mode === 'icon' || mode === 'iconChange' ? '◎' : `◎${formatKMB(target.price)}`;
+                flag.style.color = met ? '#67c23a' : '#8fa0c8';
+                flag.style.opacity = met ? '1' : '0.8';
+                chip.appendChild(flag);
+            }
+
             chip.addEventListener('click', () => {
                 navigateToMarketplace(itemHrid, Number(level));
                 this.showItem(itemHrid, Number(level));
@@ -675,6 +699,24 @@ class MarketHistoryPanel {
             }
             chip.appendChild(arrows);
 
+            // Set/change/clear the target. Offered on every display mode,
+            // including the icon-only ones: hiding the way to set a target
+            // behind a display setting would make the alert unreachable for
+            // anyone whose row is arranged tightly, which is most of them.
+            const edit = document.createElement('span');
+            edit.textContent = '◎';
+            edit.title = target
+                ? `Target ${describeTarget(target)} — click to change or clear it`
+                : 'Set a price target for this item';
+            edit.style.cssText = coarse
+                ? 'cursor:pointer; padding:2px 6px; font-size:14px; line-height:1; color:#8fa0c8;'
+                : 'cursor:pointer; padding:0 2px; font-size:10px; line-height:1; color:#8fa0c8;';
+            edit.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.editTarget(chip, entry, price);
+            });
+            chip.appendChild(edit);
+
             if (coarse) {
                 const remove = document.createElement('span');
                 remove.textContent = '×';
@@ -691,6 +733,140 @@ class MarketHistoryPanel {
 
             this.chipRow.appendChild(chip);
         }
+    }
+
+    /**
+     * The inline editor for one pin's price target.
+     *
+     * An input in the chip rather than `window.prompt`, which a userscript
+     * context blocks often enough to be unreliable — the same call the layout
+     * bar makes for the same reason. It opens seeded with the current price of
+     * the side being targeted, so naming a target you are happy with is a click
+     * and Enter; typing over the seed is the case where you want something else.
+     *
+     * The side toggle reseeds from that side, because "under 4.2M ask" and
+     * "over 4.2M bid" are different intentions and carrying an ask's number
+     * across to the bid would quietly arm the wrong one. An empty value clears
+     * the target; Escape leaves it exactly as it was.
+     *
+     * @param {HTMLElement} chip - The chip the editor belongs to
+     * @param {Object} entry - The watchlist entry being targeted
+     * @param {Object|null} priceNow - The panel's current reading for it
+     */
+    editTarget(chip, entry, priceNow) {
+        if (chip.querySelector('input')) return;
+
+        const existing = normaliseTarget(entry.target);
+        let side = existing?.side || 'ask';
+        const seedFor = (which) => {
+            if (existing && existing.side === which) return existing.price;
+            const value = which === 'bid' ? priceNow?.bid : priceNow?.ask;
+            return value > 0 ? Math.round(value) : '';
+        };
+
+        const editor = document.createElement('span');
+        editor.style.cssText = 'display:inline-flex; align-items:center; gap:2px;';
+
+        const sideButton = document.createElement('span');
+        sideButton.style.cssText = 'cursor:pointer; font-size:10px; color:#8fa0c8; padding:0 2px;';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.style.cssText =
+            'width:72px; font-size:10px; padding:0 3px; background:rgba(0,0,0,0.35); color:#e7e7e7; ' +
+            'border:1px solid #4a5a8a; border-radius:2px;';
+
+        const paint = () => {
+            sideButton.textContent = side === 'bid' ? 'over bid' : 'under ask';
+            sideButton.title = 'Swap the side this target watches';
+            input.value = String(seedFor(side));
+        };
+        paint();
+
+        let settled = false;
+        const close = () => {
+            settled = true;
+            editor.remove();
+            this.renderChips();
+        };
+        const commit = () => {
+            if (settled) return;
+            const raw = input.value.trim();
+            // An unreadable value is not a target and not an instruction to
+            // clear one either; only an empty box means "stop watching this".
+            const price = raw === '' ? null : Number(raw.replace(/[,\s]/g, ''));
+            const next = raw === '' || Number.isFinite(price) ? { side, price } : entry.target;
+            this.watchlist = setWatchedTarget(this.watchlist, entry.key, next);
+            close();
+            this.savePrefs();
+        };
+
+        sideButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            side = side === 'ask' ? 'bid' : 'ask';
+            paint();
+            input.focus();
+        });
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('keydown', (e) => {
+            // Kept off the game, which listens for keys on the document
+            e.stopPropagation();
+            if (e.key === 'Enter') commit();
+            else if (e.key === 'Escape') close();
+        });
+        input.addEventListener('blur', () => commit());
+
+        editor.appendChild(sideButton);
+        editor.appendChild(input);
+        chip.appendChild(editor);
+        input.focus();
+        input.select();
+    }
+
+    /**
+     * Pin an item and give it a target, for a caller that already costed it.
+     *
+     * The upgrade advisor's Watch button is the one that matters: the row it
+     * sits on has just quoted a price, and "watch this" almost always means
+     * "tell me when it costs that". Seeding the target from the row's own
+     * figure is what makes the two surfaces agree instead of leaving the reader
+     * to retype a number they were already looking at.
+     *
+     * A target the player set themselves is never overwritten — a seed is a
+     * default, not an instruction — and an unpriced row seeds nothing rather
+     * than a target of zero.
+     *
+     * @param {string} itemHrid - Item to pin
+     * @param {number} enhancementLevel - Its enhancement level
+     * @param {number|null} cost - What the caller costed it at
+     * @returns {boolean} Whether anything was pinned or targeted
+     */
+    seedPriceTarget(itemHrid, enhancementLevel = 0, cost = null) {
+        if (!this.isInitialized || !itemHrid) return false;
+
+        // A row that could not be priced has nothing to seed, and pinning it
+        // anyway would put an item on the panel that nobody asked to look at —
+        // the inventory watchlist is where an untargeted watch belongs
+        const target = normaliseTarget({ side: 'ask', price: cost });
+        if (!target) return false;
+
+        const key = priceKey(itemHrid, enhancementLevel);
+        const price = marketPriceStore.get(itemHrid, enhancementLevel);
+
+        const before = this.watchlist;
+        this.watchlist = addWatched(this.watchlist, key, price, target);
+
+        const existing = this.watchlist.find((watched) => watched.key === key);
+        if (target && existing && !existing.target) {
+            this.watchlist = setWatchedTarget(this.watchlist, key, target);
+        }
+        // Already pinned, already targeted: nothing to say and nothing to save
+        if (this.watchlist === before) return false;
+
+        this.renderChips();
+        this.savePrefs();
+        return true;
     }
 
     /** @param {number|null} change - Percentage move */
@@ -952,4 +1128,36 @@ class MarketHistoryPanel {
 }
 
 const marketHistoryPanel = new MarketHistoryPanel();
+
+/**
+ * Every pinned item, in the one shape the price-target alert cares about.
+ *
+ * Exported as a function over the singleton rather than as the list itself, so
+ * the alert reads what is pinned *now* — the list is replaced wholesale on
+ * every edit and on every character switch, and a captured reference would go
+ * on watching a list nobody is looking at.
+ *
+ * The pins live behind this panel's own switch, so a panel that never
+ * initialized has nothing pinned and the alert has nothing to say. That is the
+ * intended shape rather than a gap: the alert's evidence comes from the same
+ * pooled dataset the panel exists to read.
+ *
+ * @returns {Array<{key: string, itemHrid: string, enhancementLevel: number, name: string,
+ *   target: {side: 'ask'|'bid', price: number}|null}>}
+ */
+export function watchedPriceTargets() {
+    return (marketHistoryPanel.watchlist || []).map((entry) => {
+        const [itemHrid, level] = String(entry.key).split(':');
+        const enhancementLevel = Number(level) || 0;
+        const baseName = marketHistoryPanel.itemName(itemHrid);
+        return {
+            key: entry.key,
+            itemHrid,
+            enhancementLevel,
+            name: enhancementLevel > 0 ? `${baseName} +${enhancementLevel}` : baseName,
+            target: normaliseTarget(entry.target),
+        };
+    });
+}
+
 export default marketHistoryPanel;

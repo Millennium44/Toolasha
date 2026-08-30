@@ -209,6 +209,44 @@ export function goalAffordable({ armed, affordable, costKnown }) {
 }
 
 /**
+ * Whether a watchlist price target has just been reached.
+ *
+ * The same one-bit state machine as `listingBeaten`, and it borrows that
+ * predicate's evidence rule wholesale: a price is only allowed to prove
+ * anything while it is fresher than `maxPriceAgeMs`. Both directions are gated
+ * on that, not just the firing one — a sighting from this morning saying the
+ * ask is back above your target is no more evidence than one saying it is
+ * below, and re-arming on it would spend the next fresh sighting's news.
+ *
+ * `met` is three-valued because a side nobody is quoting is unknown rather than
+ * unreached; `targetMet` returns null for it, and null leaves the armed bit
+ * exactly as it was.
+ *
+ * The initial state is armed on purpose, as everywhere else here: a target
+ * already reached when it is first looked at is worth one message, and the
+ * service's cooldown is what keeps it at one.
+ *
+ * @param {Object} input - Current observation
+ * @param {boolean} input.armed - Whether a reached reading would count as news
+ * @param {boolean|null} input.met - `targetMet`'s verdict for this pin
+ * @param {number|null} input.priceAgeMs - How old the sighting behind `met` is
+ * @param {number} input.maxPriceAgeMs - How old it may be and still count as evidence
+ * @returns {{fire: boolean, armed: boolean}} Whether to say something, and the next state
+ */
+export function priceTargetReached({ armed, met, priceAgeMs, maxPriceAgeMs }) {
+    if (met === null || met === undefined) {
+        return { fire: false, armed };
+    }
+    if (!Number.isFinite(priceAgeMs) || !(maxPriceAgeMs > 0) || priceAgeMs > maxPriceAgeMs) {
+        return { fire: false, armed };
+    }
+    if (!met) {
+        return { fire: false, armed: true };
+    }
+    return { fire: armed === true, armed: false };
+}
+
+/**
  * How many deaths have happened since the last look.
  *
  * The server's `deathCount` is a running total for the combat session, so the
