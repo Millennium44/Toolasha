@@ -146,6 +146,7 @@ import guildMemberSkills from './guild-member-skills.js';
 import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
+import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
 import { forecastTrial } from './guild-trial-forecast.js';
 import { tierTimingAsForecast, tierTimingForecast } from './guild-trial-tier-timing.js';
 import { renderTierBadge } from './guild-trial-tier-badge.js';
@@ -4162,6 +4163,12 @@ class GuildTrials {
                 ACCENT,
                 'Open the guild roster — each member’s share of the week’s XP and who has gone quiet.'
             ) +
+            button(
+                'ledger',
+                'Ledger',
+                ACCENT,
+                'Attendance, contribution shares and attribution accuracy across the archived trial cycles.'
+            ) +
             '</div>'
         );
     }
@@ -4210,6 +4217,7 @@ class GuildTrials {
         });
         on('scoreboard', () => guildTrialScoreboard.toggle());
         on('roster', () => guildRosterPanel.toggle());
+        on('ledger', () => openTrialLedgerPanel());
     }
 
     /**

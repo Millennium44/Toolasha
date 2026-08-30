@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A Ledger button on the trial controls
+
+The trial payout row's controls (Record, Export, Per-player, Abilities, Roster) gain a Ledger button opening the attendance/contribution/accuracy view, which was only reachable through the palette and its overlay tile.
+
 ### Combined party sessions time each player by their own runs
 
 Merging archived combat sessions into one Party Loot view had two compounding timing bugs: every player was divided by the whole group's summed duration even for runs they weren't in, and the combined snapshot then fell into the live-run dating rule — measuring from the oldest merged run's start and counting every idle hour in between (a one-day-apart 600s+300s pair timed as 2.49 million seconds). Each player is now timed by the sessions they were actually in.
