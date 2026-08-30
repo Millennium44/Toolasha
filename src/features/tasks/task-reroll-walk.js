@@ -291,6 +291,8 @@ class TaskRerollWalk {
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
         this.coinThreshold = DEFAULT_COIN_THRESHOLD;
         this.cowbellThreshold = DEFAULT_COWBELL_THRESHOLD;
+        /** The shield popup's cap-block switch — the thresholds mean nothing without it */
+        this.capProtectionEnabled = false;
         this.widget = null;
         this.panelPosition = null;
         /** The ✕ puts the widget away until the header 🎲 asks for it back */
@@ -357,13 +359,19 @@ class TaskRerollWalk {
     }
 
     /**
-     * Read the shield popup's block thresholds — the same keys it writes, per
+     * Read the shield popup's cap block — the same keys it writes, per
      * character and through the same adopt-once migration, so the two features
      * cannot drift apart and an alt cannot inherit the main's thresholds.
+     *
+     * All three keys, switch included. The two numbers are the cap block's
+     * settings, not standing rules of their own: with the block switched off
+     * the popup itself lets every reroll through, and a walk that read only the
+     * numbers went on refusing them.
      * @private
      */
     async _loadThresholds() {
         try {
+            this.capProtectionEnabled = Boolean(await readScoped('taskCapProtection', 'settings', false));
             this.coinThreshold =
                 Number(await readScoped('taskCapCoinThreshold', 'settings', DEFAULT_COIN_THRESHOLD)) ||
                 DEFAULT_COIN_THRESHOLD;
@@ -373,6 +381,21 @@ class TaskRerollWalk {
         } catch (error) {
             console.error('[TaskRerollWalk] Failed to read the block-reroll thresholds:', error);
         }
+    }
+
+    /**
+     * The prices the plan blocks at right now.
+     *
+     * With the cap block switched off nothing is blocked on price — the walk
+     * still stops at the end of the board, and every reroll is still one press
+     * the player makes deliberately.
+     *
+     * @returns {{coinThreshold: number, cowbellThreshold: number}}
+     * @private
+     */
+    _blockThresholds() {
+        if (!this.capProtectionEnabled) return { coinThreshold: Infinity, cowbellThreshold: Infinity };
+        return { coinThreshold: this.coinThreshold, cowbellThreshold: this.cowbellThreshold };
     }
 
     /**
@@ -573,6 +596,7 @@ class TaskRerollWalk {
         const trashAtLimit = Boolean(config.getSetting('tasks_rerollWalkTrashAtLimit'));
         const preference = String(config.getSettingValue('tasks_rerollWalkCurrency', 'auto') || 'auto');
         const cowbellValue = this._cowbellValue();
+        const { coinThreshold, cowbellThreshold } = this._blockThresholds();
         const cards = this._cards();
 
         while (this.index < cards.length) {
@@ -586,8 +610,8 @@ class TaskRerollWalk {
             const choice = costs
                 ? chooseReroll({
                       ...costs,
-                      coinThreshold: this.coinThreshold,
-                      cowbellThreshold: this.cowbellThreshold,
+                      coinThreshold,
+                      cowbellThreshold,
                       cowbellValue,
                       preference,
                   })
@@ -1045,9 +1069,15 @@ class TaskRerollWalk {
             widgetNote('The walk rerolls a task until the shield popup would block the next reroll.'),
             widgetReadOnlyRow({
                 label: 'Block rerolls at',
-                value: `${coinLabel(this.coinThreshold)} / ${cowbellLabel(this.cowbellThreshold)}`,
+                value: this.capProtectionEnabled
+                    ? `${coinLabel(this.coinThreshold)} / ${cowbellLabel(this.cowbellThreshold)}`
+                    : 'off — nothing is blocked on price',
                 hint: 'Edited in the 🛡 task-protection popup, not here.',
-                title: 'A reroll costing this much or more is blocked, exactly as the shield popup blocks it.',
+                title: this.capProtectionEnabled
+                    ? 'A reroll costing this much or more is blocked, exactly as the shield popup blocks it.'
+                    : 'Cap protection is switched off in the shield popup, so the walk blocks nothing on ' +
+                      `price either. Its numbers, for when it is switched back on: ${coinLabel(this.coinThreshold)} / ` +
+                      `${cowbellLabel(this.cowbellThreshold)}.`,
             }),
             widgetSelectRow({
                 key: 'tasks_rerollWalkCurrency',

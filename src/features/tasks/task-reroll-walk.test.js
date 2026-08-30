@@ -240,7 +240,8 @@ beforeEach(() => {
         tasks_rerollWalkCurrency: 'auto',
         tasks_rerollWalkTrashAtLimit: true,
     };
-    stored.values = {};
+    // Cap protection on, which is what makes the thresholds below mean anything
+    stored.values = { taskCapProtection_7: true };
     consent.target = null;
     consent.requested = 0;
     market.cowbellValue = 8000;
@@ -253,6 +254,7 @@ beforeEach(() => {
     // The shield popup's defaults: nothing is blocked until the price ladder caps
     walk.coinThreshold = 320000;
     walk.cowbellThreshold = 32;
+    walk.capProtectionEnabled = true;
     document.body.replaceChildren();
 });
 
@@ -433,6 +435,22 @@ describe('planning a walk down the board', () => {
         await walk.start();
 
         expect(chipText()).toBe('▶ Trash #1 (both reroll options blocked)');
+    });
+
+    test('with cap protection switched off the walk stops obeying its numbers', async () => {
+        // The two thresholds belong to the shield popup's cap-protection block,
+        // and that block has an on/off switch of its own. A walk that reads the
+        // numbers but not the switch keeps refusing rerolls the popup itself
+        // would wave through the moment the feature is turned off.
+        stored.values.taskCapProtection_7 = false;
+        stored.values.taskCapCoinThreshold_7 = 40000;
+        stored.values.taskCapCowbellThreshold_7 = 4;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 2, 2) }]);
+
+        await walk.start();
+
+        expect(chipText()).toContain('Reroll #1');
+        expect(chipText()).not.toContain('blocked');
     });
 
     test('a task both of whose rerolls are blocked is offered for discard', async () => {
@@ -844,6 +862,19 @@ describe('the floating walk widget', () => {
         expect(document.getElementById('mwi-task-reroll-walk-chip')).not.toBe(null);
     });
 
+    test('the gear says so when cap protection is off, rather than quoting dead numbers', () => {
+        walk.capProtectionEnabled = false;
+        walk.coinThreshold = 80000;
+        walk.cowbellThreshold = 8;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        walk._render();
+
+        document.querySelector('.mwi-task-reroll-walk-chip-gear').click();
+        const drawer = document.querySelector('.mwi-task-reroll-walk-chip-settings');
+        expect(drawer.textContent).toContain('off — nothing is blocked on price');
+        expect(drawer.textContent).not.toContain('80.0K🪙 / 8🔔');
+    });
+
     test('the gear shows the thresholds it obeys and binds its own settings', () => {
         walk.coinThreshold = 80000;
         walk.cowbellThreshold = 8;
@@ -905,6 +936,23 @@ describe('the control only exists when it is turned on', () => {
 
         expect(walk.coinThreshold).toBe(40000);
         expect(walk.cowbellThreshold).toBe(4);
+        taskRerollWalkFeature.cleanup();
+    });
+
+    test('the cap switch comes from the same popup, and defaults to off', async () => {
+        delete stored.values.taskCapProtection_7;
+        walk.isInitialized = false;
+
+        await taskRerollWalkFeature.initialize();
+
+        expect(walk.capProtectionEnabled).toBe(false);
+        taskRerollWalkFeature.cleanup();
+
+        stored.values.taskCapProtection_7 = true;
+        walk.isInitialized = false;
+        await taskRerollWalkFeature.initialize();
+
+        expect(walk.capProtectionEnabled).toBe(true);
         taskRerollWalkFeature.cleanup();
     });
 
