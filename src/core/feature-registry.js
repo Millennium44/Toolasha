@@ -454,6 +454,12 @@ async function retryFailedFeatures(failedFeatures) {
     const stillFailed = [];
 
     for (const failed of failedFeatures) {
+        // A switch starting inside this retry's delay (retryFailedFeatures is
+        // always called from a setTimeout, so there is a window for one) must
+        // not initialize features into a character that is already on its way
+        // out — the same guard initializeFeatures applies.
+        if (dataManager.getIsCharacterSwitching()) break;
+
         const feature = getFeature(failed.key);
         if (!feature) continue;
 

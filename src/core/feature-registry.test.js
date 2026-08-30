@@ -408,6 +408,20 @@ describe('retryFailedFeatures', () => {
         const stillFailed = await featureRegistry.retryFailedFeatures([{ key: 'gone', name: 'Gone' }]);
         expect(stillFailed).toEqual([]);
     });
+
+    test('does not initialize features into a character switch that started mid-retry', async () => {
+        // retryFailedFeatures always runs off a setTimeout (the entrypoint's
+        // 1000ms retry delay), which is a window for a switch to start before
+        // it fires — the same race initializeFeatures already guards against.
+        state.isCharacterSwitching = true;
+        const initialize = vi.fn();
+        featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize }]);
+
+        const stillFailed = await featureRegistry.retryFailedFeatures([{ key: 'a', name: 'A' }]);
+
+        expect(initialize).not.toHaveBeenCalled();
+        expect(stillFailed).toEqual([]);
+    });
 });
 
 describe('replaceFeatures', () => {
