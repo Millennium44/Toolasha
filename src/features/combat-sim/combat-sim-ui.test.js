@@ -49,6 +49,12 @@ const mocks = vi.hoisted(() => ({
     monsters: null,
     /** Dungeon runs the bridge's run-history store answers with */
     dungeonRuns: [],
+    /** What SimEditor#getEditedDTOs() hands back; null unless a test opts in */
+    editedDTOs: null,
+    /** What SimEditor#getSelfHrid() hands back */
+    editorSelfHrid: null,
+    /** playerHrid each calculateSimRevenue() call was made with, in order */
+    revenueCalls: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -205,7 +211,10 @@ vi.mock('./combat-sim-adapter.js', () => ({
     getCommunityBuffs: () => ({}),
     calculateExpectedDrops: () => mocks.drops,
     calculateDungeonKeyCosts: () => [],
-    calculateSimRevenue: () => ({ netPerHour: 0, costPerHour: 0, revenuePerHour: 0 }),
+    calculateSimRevenue: (simResult, gameData, playerHrid) => {
+        mocks.revenueCalls.push(playerHrid);
+        return { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
+    },
     // Faithful to the real one: coin untaxed, cowbell 18%, everything else the
     // 5% patch-live market rate the suite runs under
     taxedDropValue: (hrid, v) =>
@@ -293,7 +302,10 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
 vi.mock('./sim-editor.js', () => ({
     SimEditor: class {
         getEditedDTOs() {
-            return null;
+            return mocks.editedDTOs;
+        }
+        getSelfHrid() {
+            return mocks.editorSelfHrid;
         }
         isInitialized() {
             return true;
@@ -1517,6 +1529,77 @@ describe('the all-zones table', () => {
             expect(mocks.playerDTOs[0].food[0].hrid).toBe('/items/cheese');
             expect((await loadAllZonesSnapshot()).maxTierFood).toBe(true);
             expect(ui._allZonesFoodSwaps).toHaveLength(1);
+        });
+    });
+
+    describe('which player All Zones and Seek measure', () => {
+        // The editor loads real DTOs on panel open, so `getEditedDTOs()` returns
+        // non-null on every ordinary visit to these tabs — the `else` branch that
+        // reads `buildAllPlayerDTOs()` (and sets `_activePlayerTab` from its
+        // `selfHrid`) almost never runs in practice.
+        beforeEach(() => {
+            mocks.revenueCalls = [];
+            mocks.gameData = { itemDetailMap: {} };
+            mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+            mocks.editedDTOs = {
+                player1: { hrid: 'player1', equipment: {}, food: [null, null, null] },
+                player2: { hrid: 'player2', equipment: {}, food: [null, null, null] },
+            };
+            // Self is the second party slot — a perfectly ordinary party where
+            // the character running the sim isn't the first slot in the map
+            mocks.editorSelfHrid = 'player2';
+            mocks.allZonesResult = [
+                {
+                    simulatedTime: 3600 * 1e9,
+                    encounters: 10,
+                    deaths: { player1: 0, player2: 0 },
+                    experienceGained: { player1: { defense: 100 }, player2: { defense: 100 } },
+                },
+            ];
+            ui.buildPanel();
+            ui._allZonesMode = 'group';
+            ui._updateAllZonesUI();
+            // Stale leftover from viewing a party member's tab on a previous
+            // single-zone result, still sitting there when All Zones/Seek run
+            ui._activePlayerTab = 'player1';
+        });
+
+        afterEach(() => {
+            ui.destroy();
+            mocks.editedDTOs = null;
+            mocks.editorSelfHrid = null;
+            mocks.revenueCalls = [];
+            mocks.gameData = { itemDetailMap: {} };
+            mocks.zones = [];
+            mocks.allZonesResult = [];
+        });
+
+        test('All Zones prices the run for the character being optimized, not a stale results tab', async () => {
+            await ui._onSimulateAllZones();
+
+            // Every revenue calculation in this run must be for the self player
+            // (player2) — none should have run against the stale 'player1' tab
+            expect(mocks.revenueCalls.length).toBeGreaterThan(0);
+            expect(mocks.revenueCalls.every((hrid) => hrid === 'player2')).toBe(true);
+        });
+
+        test('Seek prices the run for the character being optimized, not a stale results tab', async () => {
+            const input = ui.panel.querySelector('#mwi-csim-seek-input');
+            input.value = 'Cheese';
+            ui._seekItems = [{ itemHrid: '/items/cheese', name: 'Cheese' }];
+            ui._seekSelectedItem = { itemHrid: '/items/cheese', name: 'Cheese' };
+
+            const adapter = await import('./combat-sim-adapter.js');
+            const dropSpy = vi
+                .spyOn(adapter, 'getZonesThatDropItem')
+                .mockReturnValue([{ hrid: '/actions/combat/fly', name: 'Fly', difficultyTier: 0 }]);
+            mocks.drops = new Map([['/items/cheese', 5]]);
+
+            await ui._onSeek();
+            dropSpy.mockRestore();
+
+            expect(mocks.revenueCalls.length).toBeGreaterThan(0);
+            expect(mocks.revenueCalls.every((hrid) => hrid === 'player2')).toBe(true);
         });
     });
 });

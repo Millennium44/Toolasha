@@ -3581,6 +3581,12 @@ class CombatSimUI {
         const editedDTOs = this._editor?.getEditedDTOs();
         if (editedDTOs) {
             playerDTOs = Object.values(editedDTOs);
+            // Revenue/drops below are computed for whichever player
+            // `_activePlayerTab` names, and that field doubles as "which
+            // player's tab is open in a previous single-zone result" — left
+            // alone here, a party where self isn't player1 would price this
+            // run for whoever's tab a past result happened to leave selected.
+            this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
         } else {
             const result = await buildAllPlayerDTOs();
             playerDTOs = result.players;
@@ -4149,6 +4155,12 @@ class CombatSimUI {
         const editedDTOs = this._editor?.getEditedDTOs();
         if (editedDTOs) {
             playerDTOs = Object.values(editedDTOs);
+            // Revenue/drops below are computed for whichever player
+            // `_activePlayerTab` names, and that field doubles as "which
+            // player's tab is open in a previous single-zone result" — left
+            // alone here, a party where self isn't player1 would price this
+            // run for whoever's tab a past result happened to leave selected.
+            this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
         } else {
             const result = await buildAllPlayerDTOs();
             playerDTOs = result.players;
