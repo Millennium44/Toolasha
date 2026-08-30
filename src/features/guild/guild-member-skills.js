@@ -364,9 +364,24 @@ class GuildMemberSkills {
         this.initialized = false;
     }
 
-    /** Forget this guild's captures; used when the tab changes character */
+    /**
+     * Forget this guild's captures; used when the tab changes character.
+     *
+     * `guildName` is let go here too, not only in `setGuildName`. The switch
+     * message arrives before the arriving character's own data does, so for a
+     * window after this runs nothing yet knows which guild is arriving — and
+     * `guildName` still names the one just left. A profile opened in that
+     * window belongs to the *arriving* roster; leaving `guildName` pointed at
+     * the departed guild would file it under that guild's storage key, the
+     * same class of leak `guildLoadoutCapture.setGuildName(null)` guards
+     * against for its own record. `_recordForGuild()` reads `guildName` fresh
+     * on every access, so nulling it here routes anything captured before the
+     * real guild is known into the guild-less `memberSkills_default` bucket
+     * instead of either guild's own.
+     */
     forget() {
         this.record?.reset();
+        this.guildName = null;
         this.requests = {};
         this.unitRequests = {};
         this.dueBefore = 0;
@@ -387,8 +402,11 @@ class GuildMemberSkills {
      */
     async setGuildName(guildName) {
         if ((guildName || null) === this.guildName) return;
-        this.guildName = guildName || null;
+        // `forget()` also nulls `guildName` (see its own docstring), so the
+        // new name is set after it runs — setting it first would only have
+        // `forget()` immediately clobber it back to null.
         this.forget();
+        this.guildName = guildName || null;
         await this.load();
     }
 

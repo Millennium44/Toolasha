@@ -340,6 +340,30 @@ describe('per guild, and forgotten with the character', () => {
         guildMemberSkills.forget();
         expect(guildMemberSkills.all()).toEqual({});
     });
+
+    // guild-trials.js's character-switch handler calls `forget()` the moment the
+    // switch is noticed, but only calls `setGuildName(newGuild)` once the
+    // arriving character's own guild is known — a window the code documents as
+    // real ("the switch message arrives before the arriving character's own
+    // data does"). guild-loadout-capture.js protects this same window by having
+    // its character-switch path null `guildName` immediately. `forget()` must do
+    // the same, or a profile opened in that window — which belongs to the
+    // *arriving* guild's roster — gets written to the *departing* guild's still
+    // -named storage key.
+    test('forgetting also lets go of which guild the captures belong to', async () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(game.store[memberSkillsStorageKey('Milky Way')]).toBeTruthy();
+
+        guildMemberSkills.forget();
+
+        // A profile arriving before the arriving character's guild is known
+        // must not be filed under the guild that was just left.
+        game.wsHandlers.profile_shared(profile('Zed'));
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(Object.keys(game.store[memberSkillsStorageKey('Milky Way')])).not.toContain('zed');
+    });
 });
 
 describe('the stored captures survive a read that cannot be made', () => {
