@@ -87,6 +87,11 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/cleanup-registry.js')), 'Toolasha.Utils.cleanupRegistry'],
     [normalize(join(__dirname, 'src/utils/house-cost-calculator.js')), 'Toolasha.Utils.houseCostCalculator'],
     [normalize(join(__dirname, 'src/utils/enhancement-calculator.js')), 'Toolasha.Utils.enhancementCalculator'],
+    // The one enhancement pricing rule (materials, protection, base item, production
+    // cost). Reached from the enhancement feature (utils bundle), the sim's upgrade
+    // advisor (combat) and the inventory savings card (market); each used to carry its
+    // own drifted copy, which is what this shares away.
+    [normalize(join(__dirname, 'src/utils/enhancement-pricing.js')), 'Toolasha.Utils.enhancementPricing'],
     // Not under src/utils, but shared here so Settings' writes (ui bundle) and
     // price reads (market-data/profit-helpers, utils bundle) hit one cache
     [

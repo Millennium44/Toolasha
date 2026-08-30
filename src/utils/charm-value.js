@@ -25,6 +25,14 @@
  * `docs/THIRD-PARTY-LICENSES.md`. The code is Toolasha's own.
  */
 
+// What the game's vendor charges for a trainee charm — the floor every other tier's value
+// per coin is judged against. Defined once in `enhancement-pricing.js`, which needs the same
+// figure for the enhancement material rule, and re-exported here so this module's callers do
+// not have to know that. It used to be written out in three places with no single owner.
+import { TRAINEE_SHOP_PRICE } from './enhancement-pricing.js';
+
+export { TRAINEE_SHOP_PRICE };
+
 /** The experience bonus a charm of each tier grants before enhancement */
 export const CHARM_TIER_EXPERIENCE = {
     trainee: 1,
@@ -98,20 +106,6 @@ export function rankCharms(charms) {
         return b.experiencePerCoin - a.experiencePerCoin;
     });
 }
-
-/**
- * What the game's vendor charges for a trainee charm.
- *
- * Nobody lists trainee charms on the market — there is no profit in reselling
- * something the shop stocks at a fixed price — so the market has no ask for one
- * and a market-only reading of the family shows the bottom tier as unpriced.
- * It is not unpriced; it costs this, always, and that is the floor every other
- * tier's value per coin is judged against.
- *
- * The shop sells them unenhanced. A trainee charm at +5 is somebody's
- * enhancement work and is priced by the market like anything else.
- */
-export const TRAINEE_SHOP_PRICE = 250_000;
 
 /** Charm hrids are `/items/<tier>_<focus>_charm`, and both halves matter */
 const CHARM_HRID = /^\/items\/(trainee|basic|advanced|expert|master|grandmaster)_(.+)_charm$/;
