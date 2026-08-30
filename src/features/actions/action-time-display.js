@@ -308,8 +308,25 @@ class ActionTimeDisplay {
             const actionDivs = tooltipContent.querySelectorAll('[class*="QueuedActions_action__"]');
             if (actionDivs.length === 0) return;
 
-            // Prevent duplicate injection
-            if (tooltipContent.querySelector('.mwi-queue-action-time')) return;
+            // Content-keyed guard against duplicate/stale injection. tooltip-observer.js
+            // redelivers a popper as freshly "opened" once it has genuinely left and
+            // returned to the document — which is what happens when the game closes this
+            // tooltip and later reuses the same popper element for the next hover of the
+            // same "+N Queued Actions" badge. Between those two hovers the queue keeps
+            // moving (actions complete, get reordered, or are edited), so a guard that only
+            // checks "was anything injected before" — with no key describing which queue
+            // state that was for — would find the previous hover's leftover
+            // `.mwi-queue-action-time` markers and skip re-injection entirely, leaving the
+            // stale time/total on screen under the new queue state. Same guard shape fixed
+            // for tooltip-prices.js (6dc52988) and dungeon-token-tooltips.js (d3101317).
+            const contentKey = `${actionDivs.length}|${currentActions
+                .map((a) => `${a.id}:${a.currentCount}:${a.maxCount ?? ''}:${a.ordinal}`)
+                .join(',')}`;
+            if (tooltipContent.dataset.mwiQueueContentKey === contentKey) return;
+            tooltipContent.dataset.mwiQueueContentKey = contentKey;
+            tooltipContent
+                .querySelectorAll('.mwi-queue-action-time, .mwi-queue-tooltip-total')
+                .forEach((el) => el.remove());
 
             const inventoryLookup = this.buildInventoryLookup(dataManager.getInventory());
 
