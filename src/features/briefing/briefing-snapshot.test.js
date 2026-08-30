@@ -14,6 +14,7 @@ const stores = vi.hoisted(() => ({
     writes: [],
     data: new Map(),
     currentId: 'arriving',
+    currentName: 'Arriving',
     listeners: new Map(),
 }));
 
@@ -33,6 +34,7 @@ vi.mock('../../core/data-manager.js', () => ({
         // Deliberately the ARRIVING character: nothing in the writer may consult
         // this, and a test that let it agree with the event would not notice
         getCurrentCharacterId: () => stores.currentId,
+        getCurrentCharacterName: () => stores.currentName,
         get characterData() {
             return { characterInfo: stores.characterInfo };
         },
@@ -59,6 +61,7 @@ const {
     initializeBriefingSnapshots,
     _resetBriefingSnapshotListener,
     MAX_SNAPSHOT_CHARS,
+    snapshotNow,
 } = await import('./briefing-snapshot.js');
 
 const { readSnapshotsFromKeys, SNAPSHOT_FACT_KEYS } = await import('./briefing-snapshot-store.js');
@@ -80,6 +83,7 @@ beforeEach(() => {
     stores.data = new Map();
     stores.listeners = new Map();
     stores.currentId = 'arriving';
+    stores.currentName = 'Arriving';
     stores.characterInfo = null;
     stores.quests = [];
     stores.session = null;
@@ -238,5 +242,74 @@ describe('initializeBriefingSnapshots', () => {
         initializeBriefingSnapshots();
         expect(dataManager.on).toHaveBeenCalledTimes(1);
         expect(stores.listeners.get('character_switching')).toBe(recordSwitchSnapshot);
+    });
+});
+
+/**
+ * Until now a snapshot could only be written by leaving a character, which
+ * makes the feature impossible to check and useless as a mark taken before
+ * something you are about to change.
+ *
+ * The id rule inverts here, and that is the point: on `character_switching` the
+ * data-manager pointer is mid-move and reading it files the departing
+ * character's facts under the arriving character's key. On demand there is no
+ * switch in progress and the current character *is* the subject.
+ */
+describe('snapshotNow', () => {
+    test('it writes the character you are on, under that character’s key', async () => {
+        stores.currentId = 'here';
+        stores.currentName = 'Here';
+        stores.characterInfo = boardInfo();
+
+        expect(await snapshotNow()).toBe(true);
+        expect(stores.writes).toHaveLength(1);
+        expect(stores.writes[0].key).toBe('briefingSnapshot_here');
+        expect(stores.writes[0].value).toMatchObject({ characterId: 'here', characterName: 'Here' });
+    });
+
+    test('the record carries a real clock, which is what the readers require', async () => {
+        stores.currentId = 'here';
+        vi.setSystemTime(NOW);
+
+        await snapshotNow();
+        expect(stores.writes[0].value.at).toBe(NOW);
+        vi.useRealTimers();
+    });
+
+    test('an empty gather is still written — "nothing to report" is an answer', async () => {
+        stores.currentId = 'here';
+        stores.characterInfo = null;
+
+        expect(await snapshotNow()).toBe(true);
+        expect(stores.writes[0].value.facts).toEqual({});
+    });
+
+    test('no character is nothing to snapshot, and nothing is written', async () => {
+        stores.currentId = null;
+
+        expect(await snapshotNow()).toBe(false);
+        expect(stores.writes).toEqual([]);
+    });
+
+    test('a write that fails is reported as a failure, not swallowed as success', async () => {
+        stores.currentId = 'here';
+        const storage = (await import('../../core/storage.js')).default;
+        storage.set.mockRejectedValueOnce(new Error('the store would not open'));
+
+        expect(await snapshotNow()).toBe(false);
+    });
+
+    test('it files under the current character, where the switch path must not', async () => {
+        // Same module, opposite rule. `recordSwitchSnapshot` takes the id off
+        // the event because the pointer has already moved; this one has no
+        // event and no switch in progress, so the pointer is the subject
+        stores.currentId = 'arriving';
+        await snapshotNow();
+        await recordSwitchSnapshot({ oldId: 'leaving', oldName: 'Leaving' });
+
+        expect(stores.writes.map((write) => write.key)).toEqual([
+            'briefingSnapshot_arriving',
+            'briefingSnapshot_leaving',
+        ]);
     });
 });

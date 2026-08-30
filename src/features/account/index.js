@@ -16,8 +16,9 @@
  */
 
 import { accountPanel, registerAccountRow } from './account-panel.js';
-import { initializeBriefingSnapshots } from '../briefing/briefing-snapshot.js';
+import { initializeBriefingSnapshots, snapshotNow } from '../briefing/briefing-snapshot.js';
 import { clearAccountCache, rememberCurrentCharacter } from './account-data.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 export { accountPanel };
 
@@ -45,10 +46,25 @@ export default {
         // by whoever opens it. The first draw asks for it instead.
         clearAccountCache();
 
+        // Snapshots are otherwise written only by leaving, which makes the
+        // feature impossible to check and impossible to use as a mark before
+        // something you are about to change.
+        registerCommand({
+            name: 'Snapshot briefing now',
+            hint: "Record this character's briefing facts on demand",
+            kind: 'verb',
+            run: async () => {
+                const written = await snapshotNow();
+                if (!written) return 'no character to snapshot';
+                return 'snapshot written';
+            },
+        });
+
         registerAccountRow();
     },
 
     cleanup: () => {
+        unregisterCommand('Snapshot briefing now');
         accountPanel.hide({ remember: false });
         clearAccountCache();
     },

@@ -75,6 +75,7 @@ vi.mock('./notification-service.js', () => ({
 }));
 
 const { default: priceTargetAlerts, MASTER_SETTING } = await import('./price-target-alerts.js');
+const { registeredCommands, resetCommands } = await import('../../utils/command-registry.js');
 
 /** A pin as `watchedPriceTargets` returns it */
 function pin({ side = 'ask', price = 4_200_000, level = 0 } = {}) {
@@ -334,5 +335,68 @@ describe('disable', () => {
         const first = game.dmHandlers.character_initialized;
         await priceTargetAlerts.initialize();
         expect(game.dmHandlers.character_initialized).toBe(first);
+    });
+});
+
+/**
+ * The sweep runs every fifteen minutes, which is the right cadence for watching
+ * a price and the wrong one for somebody who has just named a target and wants
+ * to know where the price is now.
+ */
+describe('the refresh verb', () => {
+    /** @returns {Object|undefined} The verb, as the palette would see it */
+    const verb = () => registeredCommands().find((entry) => entry.name === 'Refresh watchlist prices');
+
+    beforeEach(async () => {
+        resetCommands();
+        await priceTargetAlerts.initialize();
+    });
+
+    test('initialising offers it as a verb; disabling withdraws it', async () => {
+        expect(verb()?.kind).toBe('verb');
+        priceTargetAlerts.disable();
+        expect(verb()).toBeUndefined();
+    });
+
+    test('it counts the pins it will actually look up', async () => {
+        game.pins = [pin(), pin({ level: 1 }), { ...pin({ level: 2 }), target: null }];
+        game.history['/items/cheese_sword:0'] = [{ ask: 1, bid: null, time: NOW }];
+        game.history['/items/cheese_sword:1'] = [{ ask: 1, bid: null, time: NOW }];
+
+        // The untargeted pin is never fetched, so counting it would over-report
+        expect(await verb().run()).toBe('2 pins refreshed');
+    });
+
+    test('one pin is one pin', async () => {
+        game.pins = [pin()];
+        game.history['/items/cheese_sword:0'] = [{ ask: 1, bid: null, time: NOW }];
+        expect(await verb().run()).toBe('1 pin refreshed');
+    });
+
+    test('an empty watchlist says so rather than reporting a sweep of nothing', async () => {
+        game.pins = [];
+        expect(await verb().run()).toBe('no pins with targets');
+        expect(game.fetched).toEqual([]);
+    });
+
+    test('a sweep already running is not doubled — the third-party limit is shared', async () => {
+        game.pins = [pin()];
+        priceTargetAlerts.refreshInFlight = true;
+        try {
+            expect(await verb().run()).toBe('already refreshing');
+            expect(game.fetched).toEqual([]);
+        } finally {
+            priceTargetAlerts.refreshInFlight = false;
+        }
+    });
+
+    test('without the pooled dataset it is not offered at all', () => {
+        // Genuine unavailability, not "nothing to do": there is no source, and
+        // the pins themselves live in that panel
+        game.settings[POOLED_HISTORY_SETTING] = false;
+        expect(verb()).toBeUndefined();
+
+        game.settings[POOLED_HISTORY_SETTING] = true;
+        expect(verb()).toBeDefined();
     });
 });

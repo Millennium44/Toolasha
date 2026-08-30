@@ -56,6 +56,7 @@ import { priceTargetReached } from './notification-predicates.js';
 import { formatKMB3Digits, formatRelativeTime } from '../../utils/formatters.js';
 import { runPool } from '../../utils/async-pool.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_priceTargetReached';
@@ -121,6 +122,30 @@ class PriceTargetAlerts {
             this.disable();
         };
         dataManager.on('character_switching', this.characterSwitchingHandler);
+
+        // The sweep is on a fifteen-minute cadence, which is the right cadence
+        // for watching and the wrong one for a player who has just set a target
+        // and wants to know where the price is now.
+        registerCommand({
+            name: 'Refresh watchlist prices',
+            hint: 'Re-read the pool for every pin with a target',
+            kind: 'verb',
+            // Not a "nothing to do" case: without the pooled dataset there is no
+            // source at all, and the pins themselves live in that panel
+            when: () => config.getSetting(POOLED_HISTORY_SETTING) === true,
+            run: async () => {
+                // The sweep skips its own overlapping ticks and says nothing
+                // about having done so, which would leave this reporting a
+                // refresh that never happened
+                if (this.refreshInFlight) return 'already refreshing';
+
+                const pins = this.targetedPins().length;
+                if (!pins) return 'no pins with targets';
+
+                await this.refreshObservations();
+                return `${pins} pin${pins === 1 ? '' : 's'} refreshed`;
+            },
+        });
 
         this.startRefresh();
         // Seed now rather than waiting a whole cache window, so a target already
@@ -296,6 +321,8 @@ class PriceTargetAlerts {
      * Cleanup
      */
     disable() {
+        unregisterCommand('Refresh watchlist prices');
+
         if (this.characterSwitchingHandler) {
             dataManager.off('character_switching', this.characterSwitchingHandler);
             this.characterSwitchingHandler = null;

@@ -238,6 +238,45 @@ export async function recordSwitchSnapshot(event) {
 }
 
 /**
+ * Record the character you are on right now.
+ *
+ * The snapshot exists so that coming back to a character tells you what you
+ * left it doing, and until now the only way to write one was to leave — which
+ * is fine for the reading and useless for checking that anything is being
+ * written at all, or for taking a mark before something you are about to change.
+ *
+ * The id is read from `dataManager` here, which is the one thing the module
+ * note above forbids on the switching path — and the distinction is the whole
+ * point. On `character_switching` the pointer is mid-move and reading it files
+ * the departing character's facts under the arriving character's key; that is
+ * the bug `core/character-switch-ordering.test.js` guards. On demand there is
+ * no switch in progress, the current id *is* the subject, and the event carries
+ * no id to use instead. It is captured into a local before the first `await`
+ * all the same, so a switch that begins while storage is writing cannot move
+ * the key out from under the record.
+ *
+ * Never call this from a `character_switching` handler.
+ *
+ * @returns {Promise<boolean>} Whether a record was written
+ */
+export async function snapshotNow() {
+    try {
+        const characterId = dataManager.getCurrentCharacterId?.();
+        const characterName = shortName(dataManager.getCurrentCharacterName?.());
+        if (!characterId) return false;
+
+        const at = Date.now();
+        const facts = gatherSnapshotFacts(characterId, at);
+
+        await storage.set(snapshotKey(characterId), { characterId, characterName, at, facts }, SNAPSHOT_STORE, true);
+        return true;
+    } catch (error) {
+        console.error('[BriefingSnapshot] Failed to record a snapshot on demand:', error);
+        return false;
+    }
+}
+
+/**
  * Start listening, once.
  *
  * Registered once and never removed, for the reason `queue-snapshot.js` gives:
