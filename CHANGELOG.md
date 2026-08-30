@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### All Zones and Seek price the run for you, not a teammate
+
+In a party where your character isn't the first slot, running Seek or All Zones right after opening the panel — or after viewing a teammate's tab on an earlier result — silently priced the whole run's drops and revenue for that teammate. Both paths now reset the measured player to the character being optimized, as single-zone Simulate already did.
+
 ### Best-level tracker counts same-update first-try wins
 
 A first-try labyrinth win whose entry and clear land in one server update was skipped by the best-level tracker — its entered-check only looked at the previous snapshot. It now accepts the current update's entry count as proof of entry, the same guard the outcome log already used.
