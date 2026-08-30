@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A reconnect no longer doubles every feature
+
+Re-entering the same character — a websocket reconnect, or character select and straight back — re-emitted the first-login initialization event, and the whole startup block ran again over a live script: every feature initialized twice, observers and listeners doubled, and the duplicates unreachable by any later teardown. Startup is one-shot now; switches were always safe and stay with the feature registry.
+
 ### The queue tooltip tracks the queue, and the countdown stops doubling up
 
 The "+N Queued Actions" tooltip guarded re-injection per element like the two tooltip bugs fixed this week, so a reused popper kept showing the previous hover's times after the queue moved on — its guard is now keyed on the queue's actual state. And a redundant "enabled" settings notification made the live countdown force itself through its own idempotency guard, double-registering listeners the teardown could no longer fully remove.
