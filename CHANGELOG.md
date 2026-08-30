@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The calibration panel decides, and the fight pool says how clean it is
+
+Combat calibration now splits XP from gold — two fields recorded on every pair and never read — and issues a verdict: "kill rate is right, the gap is drops or prices" vs "the sim mis-models the fight itself", refusing below five pairs. A gear-cohort split does the same for matched vs mismatched-gear runs ("the sim is right — the gap is the gear it never saw"), with unsigned pairs kept out of both sides. And the labyrinth pool header now says how much of the sample is real: "412 of 500 complete · 61 stale · 27 room-switch".
+
 ### Consumables and the tea optimizer answer with honest numbers
 
 Seven fixes from one audit: an unpriced consumable was billed at a fabricated 500 coins per unit through every combat cost surface (it now reads unpriced); alchemy gear asked to rank on gold was scored on XP and labelled gold, and calculateSkillPerformance had no alchemy path at all (XP always read zero, catalytic tea ignored); an unpriced tea was charged as free with no missing-price flag; gold tea combos ranked by summed score while the UI displays the average, so a worse combo could headline as optimal; and the panel's idle-pin and stored-readings reloads got the double-switch generation guard their sibling already had.
