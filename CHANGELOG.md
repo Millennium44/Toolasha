@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom tabs: bindings survive a switch, enhanced items stay in their tab, the editor closes with the feature
+
+Three real ones: the loadout-binding cache wasn't rebuilt on a character switch, so the arriving character's bound gear stopped following enhancements for the whole session (and could swap to the departed character's levels); a tab assigned a base item never showed its enhanced copies — the tile got withheld and fell into Unorganized, sometimes drawn twice with the tab's copy losing; and disabling the feature left an open tab editor alive as a ghost dialog whose edits were silently dropped.
+
 ### Monster stat check keeps your sheet yours, and zone indices count right
 
 Clicking another player's Battle Info overwrote the stat check's remembered player sheet — the next "Check my build" compared the sim's build of you against their live stats and reported the gap as a modelling bug; a sheet naming a different character is now ignored, the same rule the other two sheet consumers learned this week. And zone map indices could hand a freshly re-rendered tab an earlier number than its real position, because already-labelled tabs weren't advancing the counter.
