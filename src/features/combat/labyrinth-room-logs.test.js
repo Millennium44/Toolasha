@@ -1035,6 +1035,33 @@ describe('the pool tab browses what the recorder holds', () => {
         expect(text).toContain('complete 100%');
     });
 
+    test('four losses is under the gate, so no near-miss line is drawn at all', () => {
+        labyrinthRoomLogs.render(false);
+        expect(listText()).not.toContain('losses end with the monster');
+    });
+
+    test('the fifth loss earns the near-miss line, normalised against the monster maximum', () => {
+        labFightRecorder.noteAttempt({
+            monsterHrid: '/monsters/cyclops',
+            monsterName: 'Cyclops',
+            roomLevel: 200,
+            seconds: 50,
+            outcome: 'death',
+            cleared: false,
+            monsterMaxHp: 10_000,
+            monsterHpEnd: 6_000,
+            playerMaxHp: 500,
+            playerHpStart: 500,
+            playerHpEnd: 0,
+            complete: true,
+            fingerprint: 'fp-now',
+        });
+
+        labyrinthRoomLogs.render(false);
+        // 6000 of 10000 left, five times over
+        expect(listText()).toContain('losses end with the monster at 60% median (n=5)');
+    });
+
     test('the header says how much of the pool was measured whole, and what closed the rest', () => {
         labFightRecorder.noteAttempt({
             monsterHrid: '/monsters/cyclops',

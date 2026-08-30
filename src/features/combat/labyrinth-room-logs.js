@@ -26,7 +26,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
-import { summarizePool, poolHygiene } from './labyrinth-replay-check.js';
+import { summarizePool, poolHygiene, nearMissRemainder } from './labyrinth-replay-check.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
@@ -2061,6 +2061,23 @@ class LabyrinthRoomLogs {
         ].filter(Boolean);
         line2.textContent = bits.join(' · ');
         card.appendChild(line2);
+
+        // How close the losses came. The win rate above says how often the room
+        // goes your way; this says what the other fights were short by, which is
+        // the number that decides whether another tier of gear flips the room or
+        // whether it was never close. Absent below the gate rather than shown
+        // thin — a median of two remainders reads exactly like a median of forty.
+        const nearMiss = nearMissRemainder(group.attempts);
+        if (nearMiss.text) {
+            const line3 = document.createElement('div');
+            line3.style.cssText = 'color:rgba(207,224,255,0.65); font-size:10px;';
+            line3.textContent = nearMiss.text;
+            line3.title =
+                'Median monster HP still standing when a fight ended in a death or a timeout, as a share of ' +
+                'its maximum. Only fights measured whole count, and any loss missing the HP fields is left ' +
+                `out — n is what survived both, ${nearMiss.excluded} of ${nearMiss.losses} losses excluded.`;
+            card.appendChild(line3);
+        }
 
         const outcomes = Object.entries(group.outcomes)
             .map(([outcome, count]) => `${count} ${outcome}`)
