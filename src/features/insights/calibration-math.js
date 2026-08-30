@@ -383,6 +383,159 @@ export function cohortSplit(records, options = {}) {
 }
 
 /**
+ * One skill's median, broken out by the action that earned it.
+ *
+ * A skill group pools every action under it, and a skill is not a thing the
+ * calculator has an opinion about — actions are. Milking is six animals with six
+ * drop tables and six prices, so a group median of -20% can mean "every cow is
+ * off by a fifth" or "five are exact and one is catastrophic", and those are
+ * different bugs with different fixes. The records have carried `actionHrid`
+ * since the first pair was written; only `actionType` was ever read.
+ *
+ * Each action is gated on its own count, not the group's. An action with three
+ * runs inside a group of forty is still three runs, and the whole reason the
+ * group median is trustworthy — enough runs agreeing — is exactly what that
+ * action does not have.
+ *
+ * @param {Array<Object>} records - Records for ONE group, carrying `actionHrid`
+ * @param {Object} [options] - Rules
+ * @param {number} [options.minSamples] - Runs needed *per action* before its figure is shown
+ * @param {number} [options.gapPercent] - How large a median gap has to be to count as off
+ * @returns {{actions: Array<Object>, decided: number, thin: number, unattributed: number}}
+ *   Actions worst first, the refused ones after them
+ */
+export function actionSplit(records, options = {}) {
+    const { minSamples = DEFAULT_MIN_SAMPLES, gapPercent = DEFAULT_GAP_PERCENT } = options;
+
+    const byAction = new Map();
+    let unattributed = 0;
+    for (const record of records || []) {
+        if (!record) continue;
+        // A pair with no action recorded cannot be attributed to one. Counted
+        // rather than swept into an "unknown" row that would then be read as a
+        // real action with a real verdict.
+        if (!record.actionHrid) {
+            unattributed += 1;
+            continue;
+        }
+        if (!byAction.has(record.actionHrid)) byAction.set(record.actionHrid, []);
+        byAction.get(record.actionHrid).push(record);
+    }
+
+    const actions = [...byAction.entries()].map(([actionHrid, group]) => {
+        const deviations = group.map((r) => deviationPercent(r.predicted, r.actual)).filter((d) => d !== null);
+        const rated = deviations.length;
+        const decided = rated >= minSamples;
+        // Below the bar the figure is withheld rather than shown greyed out: a
+        // number on screen is read as a finding whatever colour it is drawn in
+        const medianDeviation = decided ? median(deviations) : null;
+        return {
+            actionHrid,
+            samples: group.length,
+            rated,
+            decided,
+            medianDeviation,
+            flagged: decided && medianDeviation !== null && Math.abs(medianDeviation) >= gapPercent,
+            text: decided ? pct(medianDeviation) : 'too few to call',
+            lastAt: group.reduce((latest, r) => (r.t > latest ? r.t : latest), 0),
+        };
+    });
+
+    // Decided actions first, worst gap at the top; the refused ones keep their
+    // place below in run order so a thin action that is filling up is visible
+    actions.sort((a, b) => {
+        if (a.decided !== b.decided) return a.decided ? -1 : 1;
+        if (a.decided) return Math.abs(b.medianDeviation ?? 0) - Math.abs(a.medianDeviation ?? 0);
+        return b.rated - a.rated;
+    });
+
+    return {
+        actions,
+        decided: actions.filter((action) => action.decided).length,
+        thin: actions.filter((action) => !action.decided).length,
+        unattributed,
+    };
+}
+
+/**
+ * How much of a group's measured profit was only ever available at the ask.
+ *
+ * Every pair records the same run priced twice: `actual` values the loot at the
+ * ask, which is what it fetches if somebody eventually buys your listing, and
+ * `actualBid` at the bid, which is what it fetches right now. The forecasts, and
+ * therefore every deviation in this panel, are the ask figure. That is a
+ * defensible default and an invisible assumption: a skill whose output is thinly
+ * traded can be quoted at a rate that is real only for a player willing to sit
+ * in the order book for a week, and nothing on the panel says so.
+ *
+ * The gap is expressed as a share of the ask-priced figure, because that is the
+ * number the reader is being shown everywhere else — "a fifth of this is
+ * spread" is actionable in a way that "1.2M/h of spread" is not.
+ *
+ * Pairs recorded before `actualBid` existed carry none, and are counted rather
+ * than read as a zero spread — no gap and no measurement are not the same claim.
+ *
+ * @param {Array<Object>} records - Pairs carrying `actual` and `actualBid`
+ * @param {Object} [options] - Rules
+ * @param {number} [options.minSamples] - Pairs needed before the share is called
+ * @returns {{rated: number, withoutBid: number, askShare: number|null, verdict: string,
+ *   text: string, detail: string}}
+ */
+export function bidSpread(records, options = {}) {
+    const { minSamples = DEFAULT_MIN_SAMPLES } = options;
+
+    const shares = [];
+    let withoutBid = 0;
+    for (const record of records || []) {
+        if (!record || !Number.isFinite(record.actual)) continue;
+        if (!Number.isFinite(record.actualBid)) {
+            withoutBid += 1;
+            continue;
+        }
+        // Same guard as `deviationPercent`: a run that netted nothing has no
+        // scale for a share to be a share of
+        if (Math.abs(record.actual) < 1) continue;
+        shares.push(((record.actual - record.actualBid) / Math.abs(record.actual)) * 100);
+    }
+
+    const askShare = median(shares);
+    const rated = shares.length;
+
+    if (rated < minSamples || askShare === null) {
+        return {
+            rated,
+            withoutBid,
+            askShare,
+            verdict: 'insufficient',
+            text: 'Too few bid-priced runs to call',
+            detail:
+                `${rated} of the ${minSamples} runs this needs carry a bid-priced figure` +
+                (withoutBid ? ` (${withoutBid} recorded without one)` : '') +
+                '. Below that the spread is one run’s order book, not this skill’s.',
+        };
+    }
+
+    const rounded = Math.round(Math.abs(askShare));
+    const sentence =
+        askShare >= 0
+            ? `${rounded}% of this forecast depends on selling into the ask`
+            : `${rounded}% more than the forecast if sold at the bid`;
+
+    return {
+        rated,
+        withoutBid,
+        askShare,
+        verdict: askShare >= 0 ? 'ask_dependent' : 'bid_favoured',
+        text: sentence,
+        detail:
+            `Median over ${rated} run${rated === 1 ? '' : 's'}${withoutBid ? ` (${withoutBid} without a bid figure)` : ''}. ` +
+            'The same loot valued twice: at the ask, which is what a listing eventually fetches, ' +
+            'and at the bid, which is what it fetches this second. Everything else on this panel is ' +
+            'the ask figure, so this share is the part of it you only collect by waiting for a buyer.',
+    };
+}
+
+/**
  * The same comparison a day at a time, so a gap that opened recently can be told
  * from one that has always been there.
  *

@@ -17,6 +17,8 @@ import {
     dailySeries,
     xpGoldSplit,
     cohortSplit,
+    actionSplit,
+    bidSpread,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
@@ -336,5 +338,149 @@ describe('cohortSplit', () => {
     test('nothing at all is a refusal, not a crash', () => {
         expect(cohortSplit([]).verdict).toBe('insufficient');
         expect(cohortSplit(null).verdict).toBe('insufficient');
+    });
+});
+
+describe('actionSplit', () => {
+    /**
+     * Runs of one action, all missing by the same amount.
+     * @param {string} actionHrid - Which action
+     * @param {number} count - How many runs
+     * @param {number} deviation - Percent each run missed by
+     * @returns {Array<Object>}
+     */
+    const runs = (actionHrid, count, deviation) =>
+        Array.from({ length: count }, (_, i) => ({
+            id: `${actionHrid}-${i}`,
+            actionType: 'milking',
+            actionHrid,
+            predicted: 1000,
+            actual: 1000 * (1 + deviation / 100),
+            t: i,
+        }));
+
+    test('splits a pooled median into the actions that made it', () => {
+        const split = actionSplit([...runs('/actions/milking/cow', 6, -40), ...runs('/actions/milking/sheep', 6, 0)]);
+
+        expect(split.actions).toHaveLength(2);
+        expect(split.decided).toBe(2);
+        // Worst first, so the action responsible for the pooled gap leads
+        expect(split.actions[0].actionHrid).toBe('/actions/milking/cow');
+        expect(split.actions[0].medianDeviation).toBeCloseTo(-40);
+        expect(split.actions[0].flagged).toBe(true);
+        expect(split.actions[1].medianDeviation).toBeCloseTo(0);
+        expect(split.actions[1].flagged).toBe(false);
+    });
+
+    test('withholds the figure for an action with too few runs of its own', () => {
+        const split = actionSplit([...runs('/actions/milking/cow', 20, -2), ...runs('/actions/milking/sheep', 3, -80)]);
+
+        expect(split.thin).toBe(1);
+        expect(split.decided).toBe(1);
+        const thin = split.actions.find((action) => action.actionHrid === '/actions/milking/sheep');
+        expect(thin.rated).toBe(3);
+        expect(thin.decided).toBe(false);
+        // The gate is the action's own count, never the group's
+        expect(thin.medianDeviation).toBeNull();
+        expect(thin.text).toBe('too few to call');
+        expect(thin.flagged).toBe(false);
+    });
+
+    test('gates on rated runs, not on runs recorded', () => {
+        // Five runs, but two have no scale to be wrong against, so four are rated
+        const split = actionSplit([...runs('/actions/milking/cow', 4, -30), ...runs('/actions/milking/cow', 2, 0)]);
+        // ids collide by construction; what matters is that the unrateable pair
+        // below drops out of `rated` and takes the action under the bar
+        const cow = split.actions[0];
+        expect(cow.samples).toBe(6);
+        expect(cow.rated).toBe(6);
+        expect(cow.decided).toBe(true);
+
+        const unrateable = actionSplit([
+            ...runs('/actions/milking/cow', 4, -30),
+            { actionHrid: '/actions/milking/cow', predicted: 0, actual: 500, t: 9 },
+        ]);
+        expect(unrateable.actions[0].samples).toBe(5);
+        expect(unrateable.actions[0].rated).toBe(4);
+        expect(unrateable.actions[0].decided).toBe(false);
+    });
+
+    test('counts pairs with no action rather than inventing one for them', () => {
+        const split = actionSplit([
+            ...runs('/actions/milking/cow', 6, -40),
+            { predicted: 1000, actual: 500, t: 1 },
+            { actionHrid: null, predicted: 1000, actual: 500, t: 2 },
+        ]);
+        expect(split.unattributed).toBe(2);
+        expect(split.actions).toHaveLength(1);
+    });
+
+    test('nothing at all is empty, not a crash', () => {
+        expect(actionSplit([]).actions).toEqual([]);
+        expect(actionSplit(null).actions).toEqual([]);
+    });
+});
+
+describe('bidSpread', () => {
+    /**
+     * Runs whose ask and bid figures differ by a fixed share.
+     * @param {number} count - How many
+     * @param {number} sharePercent - What share of the ask figure the spread is
+     * @returns {Array<Object>}
+     */
+    const priced = (count, sharePercent) =>
+        Array.from({ length: count }, (_, i) => ({
+            id: `p${i}`,
+            predicted: 1_000_000,
+            actual: 1_000_000,
+            actualBid: 1_000_000 * (1 - sharePercent / 100),
+            t: i,
+        }));
+
+    test('names the share of the forecast that only exists at the ask', () => {
+        const spread = bidSpread(priced(6, 30));
+        expect(spread.rated).toBe(6);
+        expect(spread.askShare).toBeCloseTo(30);
+        expect(spread.verdict).toBe('ask_dependent');
+        expect(spread.text).toBe('30% of this forecast depends on selling into the ask');
+    });
+
+    test('excludes pairs with no bid figure and counts them', () => {
+        const spread = bidSpread([
+            ...priced(5, 20),
+            { predicted: 1_000_000, actual: 1_000_000, t: 9 },
+            { predicted: 1_000_000, actual: 1_000_000, actualBid: null, t: 10 },
+            { predicted: 1_000_000, actual: 1_000_000, actualBid: NaN, t: 11 },
+        ]);
+        expect(spread.rated).toBe(5);
+        expect(spread.withoutBid).toBe(3);
+        // A missing bid figure is not a zero spread, so it never drags the median
+        expect(spread.askShare).toBeCloseTo(20);
+    });
+
+    test('refuses below the minimum, and says how short it is', () => {
+        const spread = bidSpread([...priced(3, 25), { predicted: 1000, actual: 1000, t: 4 }]);
+        expect(spread.verdict).toBe('insufficient');
+        expect(spread.text).toBe('Too few bid-priced runs to call');
+        expect(spread.detail).toContain('3 of the 5');
+        expect(spread.detail).toContain('1 recorded without one');
+    });
+
+    test('a run that netted nothing has no share to be a share of', () => {
+        const spread = bidSpread([...priced(5, 10), { predicted: 1000, actual: 0, actualBid: -50, t: 9 }]);
+        expect(spread.rated).toBe(5);
+        expect(spread.withoutBid).toBe(0);
+        expect(spread.askShare).toBeCloseTo(10);
+    });
+
+    test('says so the other way round when the bid figure is the higher one', () => {
+        const spread = bidSpread(priced(6, -12));
+        expect(spread.verdict).toBe('bid_favoured');
+        expect(spread.text).toBe('12% more than the forecast if sold at the bid');
+    });
+
+    test('nothing at all is a refusal, not a crash', () => {
+        expect(bidSpread([]).verdict).toBe('insufficient');
+        expect(bidSpread(null).verdict).toBe('insufficient');
     });
 });

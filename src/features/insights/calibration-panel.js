@@ -31,10 +31,21 @@ import {
     median,
     xpGoldSplit,
     cohortSplit,
+    actionSplit,
+    bidSpread,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
 const ACCENT = '#7fd4c1';
+
+/**
+ * Which skill groups are showing their per-action breakdown.
+ *
+ * Module scope rather than panel state because the body is rebuilt from scratch
+ * every refresh — a flag living in the DOM would be forgotten three seconds
+ * after it was set, which reads as the panel refusing to open.
+ */
+const expandedGroups = new Set();
 
 /**
  * A skill name as a heading.
@@ -246,6 +257,128 @@ function drawCombatCohorts(card, combatRecords) {
 }
 
 /**
+ * An action's own name, e.g. `/actions/milking/cow` → `Cow`.
+ * @param {string} actionHrid - Action HRID
+ * @returns {string}
+ */
+function actionLabel(actionHrid) {
+    return titleCase((actionHrid || '').split('/').pop());
+}
+
+/**
+ * A heading you can click to fold a section open or shut.
+ *
+ * The panel has no collapsible idiom of its own — `attachMinimize` folds a whole
+ * panel, not a section — so this is the plainest thing that works: a line that
+ * says which way it is pointing and redraws the body when clicked.
+ *
+ * @param {string} label - What is behind it
+ * @param {boolean} open - Whether it is showing
+ * @param {Function} onToggle - Called on click
+ * @param {string} [title] - Tooltip
+ * @returns {HTMLElement}
+ */
+function foldHeading(label, open, onToggle, title = '') {
+    const line = document.createElement('div');
+    line.textContent = `${open ? '▾' : '▸'} ${label}`;
+    Object.assign(line.style, {
+        cursor: 'pointer',
+        color: 'rgba(232, 236, 245, 0.72)',
+        marginTop: '3px',
+        userSelect: 'none',
+    });
+    if (title) line.title = title;
+    line.addEventListener('click', onToggle);
+    return line;
+}
+
+/**
+ * One skill's median, broken out by the action that earned it.
+ *
+ * Folded away by default: most groups are one or two actions and the breakdown
+ * would only repeat the group line, while a skill with a dozen actions would
+ * bury every other card under it.
+ *
+ * @param {HTMLElement} card - The group's card
+ * @param {Object} group - The group summary
+ * @param {Array<Object>} groupRecords - That group's records
+ */
+function drawActionSplit(card, group, groupRecords) {
+    const split = actionSplit(groupRecords);
+    if (!split.actions.length) return;
+
+    const open = expandedGroups.has(group.actionType);
+    card.appendChild(
+        foldHeading(
+            `Per action (${split.actions.length})` + (split.thin ? ` · ${split.thin} too thin` : ''),
+            open,
+            () => {
+                if (open) expandedGroups.delete(group.actionType);
+                else expandedGroups.add(group.actionType);
+                calibrationPanel.render();
+            },
+            'The same median, per action rather than pooled over the skill. A skill is not what the ' +
+                'calculator has an opinion about — actions are, and each one is gated on its own run count.'
+        )
+    );
+    if (!open) return;
+
+    for (const action of split.actions) {
+        const gap = action.medianDeviation === null ? null : signedPercent(action.medianDeviation, DEFAULT_GAP_PERCENT);
+        card.appendChild(
+            panelLine(
+                `  ${actionLabel(action.actionHrid)} (${action.rated})`,
+                gap ? gap.text : action.text,
+                gap ? gap.color : ROW_COLORS.dim,
+                action.decided
+                    ? `${action.rated} runs of this action, median deviation.`
+                    : `${action.rated} runs is too few for this action to be judged on its own, ` +
+                          'so no figure is shown for it. It still counts towards the skill median above.'
+            )
+        );
+    }
+
+    if (split.unattributed) {
+        card.appendChild(
+            panelLine(
+                '  no action recorded',
+                `${split.unattributed}`,
+                ROW_COLORS.dim,
+                'Pairs recorded without an action HRID. They cannot be attributed to any action, ' +
+                    'so they are counted here rather than pooled into one that would then be read as real.'
+            )
+        );
+    }
+}
+
+/**
+ * How much of the group's measured profit is only there at the ask.
+ *
+ * Every figure on this panel is ask-priced, and a skill whose output is thinly
+ * traded is being quoted a rate that is real only for somebody willing to wait
+ * in the order book. The pairs have carried the bid-priced figure since they
+ * were first written and nothing has ever read it.
+ *
+ * @param {HTMLElement} card - The group's card
+ * @param {Array<Object>} groupRecords - That group's records
+ */
+function drawBidSpread(card, groupRecords) {
+    const spread = bidSpread(groupRecords);
+    card.appendChild(
+        panelLine(
+            'Ask vs bid',
+            spread.text,
+            spread.verdict === 'insufficient'
+                ? ROW_COLORS.dim
+                : Math.abs(spread.askShare) >= DEFAULT_GAP_PERCENT
+                  ? ROW_COLORS.bad
+                  : ROW_COLORS.gold,
+            spread.detail
+        )
+    );
+}
+
+/**
  * One skill's verdict.
  * @param {HTMLElement} body - Where it goes
  * @param {Object} group - A group from `summarizeCalibration`
@@ -277,11 +410,14 @@ function drawGroup(body, group, all) {
         );
     }
 
+    const groupRecords = (all || []).filter((record) => (record.actionType || 'unknown') === group.actionType);
+    drawBidSpread(card, groupRecords);
+    drawActionSplit(card, group, groupRecords);
+
     if (group.actionType === 'combat') {
-        const combatRecords = (all || []).filter((record) => record.actionType === 'combat');
-        drawCombatXpSplit(card, combatRecords);
-        drawCombatCaveats(card, combatRecords);
-        drawCombatCohorts(card, combatRecords);
+        drawCombatXpSplit(card, groupRecords);
+        drawCombatCaveats(card, groupRecords);
+        drawCombatCohorts(card, groupRecords);
     }
 }
 

@@ -157,6 +157,90 @@ describe('the panel', () => {
     });
 });
 
+describe('the per-action fold', () => {
+    /**
+     * A run of one named action.
+     * @param {string} actionHrid - Which action
+     * @param {number} index - Makes the pair unique
+     * @param {number} actual - What it paid
+     * @returns {Object}
+     */
+    const run = (actionHrid, index, actual) => ({
+        ...pair('milking', 1_000_000, actual, index + 1),
+        id: `${actionHrid}-${index}`,
+        actionHrid,
+    });
+
+    /**
+     * The clickable heading, whichever way it is pointing.
+     * @returns {HTMLElement|undefined}
+     */
+    const heading = () =>
+        [...(calibrationPanel.panel?.querySelectorAll('div') || [])].find((el) =>
+            /^[▸▾] Per action/.test(el.textContent)
+        );
+
+    test('lists each action only once opened, and gates thin actions on their own count', () => {
+        store.records = [
+            ...Array.from({ length: 6 }, (_, i) => run('/actions/milking/cow', i, 500_000)),
+            ...Array.from({ length: 3 }, (_, i) => run('/actions/milking/sheep', 10 + i, 100_000)),
+        ];
+
+        calibrationPanel.show({ remember: false });
+        expect(text()).not.toContain('could not be drawn');
+
+        // Folded away by default — the breakdown is there, not in the way
+        expect(text()).toContain('▸ Per action (2)');
+        expect(text()).toContain('1 too thin');
+        expect(text()).not.toContain('Cow');
+
+        heading().click();
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('▾ Per action (2)');
+        expect(text()).toContain('Cow (6)');
+        expect(text()).toContain('-50.0%');
+        // Three runs of sheep inside a group of nine is still three runs
+        // The refusal stands where the figure would have been, not beside it
+        expect(text()).toContain('Sheep (3)too few to call');
+
+        heading().click();
+        expect(text()).toContain('▸ Per action (2)');
+        expect(text()).not.toContain('Cow (6)');
+    });
+});
+
+describe('the ask/bid spread line', () => {
+    test('names what share of the forecast needs a buyer to turn up', () => {
+        store.records = Array.from({ length: 6 }, (_, i) => ({
+            ...pair('milking', 1_000_000, 1_000_000, i + 1),
+            id: `bid-${i}`,
+            actionHrid: '/actions/milking/cow',
+            actualBid: 700_000,
+        }));
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Ask vs bid');
+        expect(text()).toContain('30% of this forecast depends on selling into the ask');
+    });
+
+    test('refuses rather than reading a missing bid figure as no spread', () => {
+        store.records = Array.from({ length: 6 }, (_, i) => ({
+            ...pair('milking', 1_000_000, 1_000_000, i + 1),
+            id: `nobid-${i}`,
+            actionHrid: '/actions/milking/cow',
+        }));
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Too few bid-priced runs to call');
+        expect(text()).not.toContain('0% of this forecast');
+    });
+});
+
 describe('the overlay tile', () => {
     test('is only put up when asked, and opens the panel', () => {
         expect(store.rows).toHaveLength(0);
