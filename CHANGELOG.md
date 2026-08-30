@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chest EV stops flagging an exact figure as a floor
+
+A drop-table entry with zero min and max counts can never contribute to a chest's expected value, and two of the three EV paths already skipped it — but the per-drop breakdown counted it as an unpriced drop when its item had no market price, so the UI showed "≥ X (1 drop unpriced)" on containers whose total was actually exact. The breakdown now applies the same guard.
+
 ### Five guild-feature leaks and cross-guild bleeds closed
 
 The shrine modal stops stacking a fresh Upgrade-button listener (each with its own observer) on every redraw; the trial ledger panel left open across a character switch now shows the arriving guild instead of the departed one indefinitely; the trial scoreboard clears its context on close instead of merging the new guild's damage with the old guild's trial name; a profile shared in the switch window can no longer be filed under the departed guild's member-skills key; and the credit-value feature finally releases its buy-modal watcher on disable like its siblings do.
