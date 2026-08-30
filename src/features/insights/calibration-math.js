@@ -142,6 +142,142 @@ export function summarizeCalibration(records, options = {}) {
 }
 
 /**
+ * A deviation as a reader sees it, for the sentences built below.
+ * @param {number|null} percent - A deviation
+ * @returns {string} e.g. `-31%`
+ */
+function pct(percent) {
+    return percent === null ? '—' : `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}%`;
+}
+
+/**
+ * XP against gold, on the pairs that carry both.
+ *
+ * A combat pair records two rates, not one: the coins the fight paid and the
+ * experience it gave. Only the coins were ever read, and that pooling loses the
+ * one distinction worth having. Experience per hour is very nearly the kill
+ * rate — the game pays it per kill, not per drop — so an XP rate that lands
+ * where the sim said while the gold rate does not means the sim is killing
+ * things at the right speed and the gap lives entirely in what those kills are
+ * worth: drop tables, or the prices the drops are valued at. Both rates off the
+ * same way is the other finding: the sim is wrong about the fight.
+ *
+ * Both medians are taken over the SAME pairs. A gold median pooled over every
+ * record and an XP median over the subset that carries XP are two different
+ * samples, and comparing them would let a difference in which runs were
+ * measured masquerade as a difference between XP and gold.
+ *
+ * @param {Array<Object>} records - `{predicted, actual, predictedXpPerHour, actualXpPerHour}` pairs
+ * @param {Object} [options] - Rules
+ * @param {number} [options.minSamples] - Pairs needed before the split is called
+ * @param {number} [options.gapPercent] - How large a median gap has to be to count as off
+ * @returns {{rated: number, withoutXp: number, xpDeviation: number|null, goldDeviation: number|null,
+ *   verdict: string, text: string, detail: string}}
+ */
+export function xpGoldSplit(records, options = {}) {
+    const { minSamples = DEFAULT_MIN_SAMPLES, gapPercent = DEFAULT_GAP_PERCENT } = options;
+
+    const usable = (records || []).filter((r) => r && Number.isFinite(r.predicted) && Number.isFinite(r.actual));
+    const paired = [];
+    let withoutXp = 0;
+    for (const record of usable) {
+        const xp = deviationPercent(record.predictedXpPerHour, record.actualXpPerHour);
+        // A record written before the XP fields existed, or one whose session
+        // reported no experience, is not a zero-XP run — it is a run that
+        // cannot answer this question, and it is counted rather than folded in
+        if (xp === null) {
+            withoutXp += 1;
+            continue;
+        }
+        const gold = deviationPercent(record.predicted, record.actual);
+        if (gold === null) continue;
+        paired.push({ xp, gold });
+    }
+
+    const xpDeviation = median(paired.map((p) => p.xp));
+    const goldDeviation = median(paired.map((p) => p.gold));
+    const rated = paired.length;
+    const numbers = `XP ${pct(xpDeviation)} against gold ${pct(goldDeviation)} over ${rated} paired run${rated === 1 ? '' : 's'}`;
+
+    if (rated < minSamples || xpDeviation === null || goldDeviation === null) {
+        return {
+            rated,
+            withoutXp,
+            xpDeviation,
+            goldDeviation,
+            verdict: 'insufficient',
+            text: 'Too few XP pairs to call',
+            detail:
+                `${rated} of the ${minSamples} paired runs this needs carry an XP rate` +
+                (withoutXp ? ` (${withoutXp} recorded without one)` : '') +
+                '. Below that a split is one run’s luck wearing a verdict’s clothes.',
+        };
+    }
+
+    const xpOff = Math.abs(xpDeviation) >= gapPercent;
+    const goldOff = Math.abs(goldDeviation) >= gapPercent;
+    const sameWay = Math.sign(xpDeviation) === Math.sign(goldDeviation);
+
+    if (!xpOff && goldOff) {
+        return {
+            rated,
+            withoutXp,
+            xpDeviation,
+            goldDeviation,
+            verdict: 'drops_or_prices',
+            text: 'Kill rate is right — the gap is drops or prices',
+            detail: `${numbers}. Experience is paid per kill, so an XP rate inside ${gapPercent}% says the sim kills at the speed it promised. What those kills are worth is where the coins went missing: the drop table, or the prices the drops are valued at.`,
+        };
+    }
+
+    if (xpOff && goldOff && sameWay) {
+        return {
+            rated,
+            withoutXp,
+            xpDeviation,
+            goldDeviation,
+            verdict: 'fight_model',
+            text: 'The sim mis-models the fight itself',
+            detail: `${numbers}. Both rates miss the same way, and XP does not depend on drops or prices — what is left is the fight: kill speed, and therefore the sim’s model of it.`,
+        };
+    }
+
+    if (xpOff && goldOff) {
+        return {
+            rated,
+            withoutXp,
+            xpDeviation,
+            goldDeviation,
+            verdict: 'opposed',
+            text: 'XP and gold miss opposite ways',
+            detail: `${numbers}. The kill rate is off in one direction and the coins in the other, so neither explains the other: two errors, not one.`,
+        };
+    }
+
+    if (xpOff) {
+        return {
+            rated,
+            withoutXp,
+            xpDeviation,
+            goldDeviation,
+            verdict: 'xp_only',
+            text: 'XP off, gold on target',
+            detail: `${numbers}. The kill rate misses while the coins land, which means the drop value is absorbing a fight the sim gets wrong rather than the fight being right.`,
+        };
+    }
+
+    return {
+        rated,
+        withoutXp,
+        xpDeviation,
+        goldDeviation,
+        verdict: 'aligned',
+        text: 'Both within noise',
+        detail: `${numbers}. Neither rate is off by ${gapPercent}% or more; there is nothing here to explain.`,
+    };
+}
+
+/**
  * The same comparison a day at a time, so a gap that opened recently can be told
  * from one that has always been there.
  *

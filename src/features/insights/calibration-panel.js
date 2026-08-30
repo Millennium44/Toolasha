@@ -29,6 +29,7 @@ import {
     dailySeries,
     deviationPercent,
     median,
+    xpGoldSplit,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
@@ -156,6 +157,57 @@ function drawCombatCaveats(card, combatRecords) {
 }
 
 /**
+ * The XP rate beside the gold rate, and what the two of them together decide.
+ *
+ * Every combat pair has recorded an experience rate alongside the coin rate
+ * since the pairing was written, and nothing has ever read it. It is the one
+ * field that separates "the sim is wrong about the fight" from "the sim is
+ * right about the fight and wrong about what it drops" — experience is paid per
+ * kill, so it moves with kill speed and not with drop tables or prices.
+ *
+ * @param {HTMLElement} card - The combat group's card
+ * @param {Array<Object>} combatRecords - Every combat pair
+ */
+function drawCombatXpSplit(card, combatRecords) {
+    if (!combatRecords.length) return;
+
+    const split = xpGoldSplit(combatRecords);
+    const xpGap = split.xpDeviation === null ? null : signedPercent(split.xpDeviation, DEFAULT_GAP_PERCENT);
+
+    card.appendChild(
+        panelLine(
+            `XP deviation (median of ${split.rated})`,
+            xpGap ? xpGap.text : '—',
+            xpGap ? xpGap.color : ROW_COLORS.dim,
+            'Experience per hour, predicted against actual, over the pairs that carry both rates. ' +
+                'Negative means the runs levelled slower than the sim said.'
+        )
+    );
+    card.appendChild(
+        panelLine(
+            'XP pairs',
+            `${split.rated} of ${combatRecords.length}${split.withoutXp ? ` · ${split.withoutXp} without XP` : ''}`,
+            ROW_COLORS.dim,
+            'Pairs recorded before the XP fields existed, or whose session reported no experience, ' +
+                'are excluded rather than counted as zero — and both medians above are taken over the ' +
+                'same pairs, so the comparison is like for like.'
+        )
+    );
+    card.appendChild(
+        panelLine(
+            'XP vs gold',
+            split.text,
+            split.verdict === 'insufficient'
+                ? ROW_COLORS.dim
+                : split.verdict === 'aligned'
+                  ? ROW_COLORS.good
+                  : ROW_COLORS.bad,
+            split.detail
+        )
+    );
+}
+
+/**
  * One skill's verdict.
  * @param {HTMLElement} body - Where it goes
  * @param {Object} group - A group from `summarizeCalibration`
@@ -188,10 +240,9 @@ function drawGroup(body, group, all) {
     }
 
     if (group.actionType === 'combat') {
-        drawCombatCaveats(
-            card,
-            (all || []).filter((record) => record.actionType === 'combat')
-        );
+        const combatRecords = (all || []).filter((record) => record.actionType === 'combat');
+        drawCombatXpSplit(card, combatRecords);
+        drawCombatCaveats(card, combatRecords);
     }
 }
 

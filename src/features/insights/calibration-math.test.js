@@ -15,6 +15,7 @@ import {
     mean,
     summarizeCalibration,
     dailySeries,
+    xpGoldSplit,
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
@@ -162,5 +163,106 @@ describe('dailySeries', () => {
         expect(series[0].day).toBe(localDay(evening));
         expect(series[0].day).toBe(localDay(morning));
         expect(series[0].samples).toBe(2);
+    });
+});
+
+describe('xpGoldSplit', () => {
+    /**
+     * A combat pair carrying both rates.
+     * @param {number} goldDeviation - Percent the gold rate came out at
+     * @param {number|null} xpDeviation - Percent the XP rate came out at, or null for a pair without XP
+     * @returns {Object}
+     */
+    const combatPair = (goldDeviation, xpDeviation) => ({
+        actionType: 'combat',
+        predicted: 1000,
+        actual: 1000 * (1 + goldDeviation / 100),
+        predictedXpPerHour: xpDeviation === null ? null : 500,
+        actualXpPerHour: xpDeviation === null ? null : 500 * (1 + xpDeviation / 100),
+        t: Date.now(),
+    });
+
+    /**
+     * The same pair repeated, which is what a median needs to be allowed to speak.
+     * @param {number} count - How many
+     * @param {number} goldDeviation - Gold deviation percent
+     * @param {number|null} xpDeviation - XP deviation percent
+     * @returns {Array<Object>}
+     */
+    const pairs = (count, goldDeviation, xpDeviation) =>
+        Array.from({ length: count }, () => combatPair(goldDeviation, xpDeviation));
+
+    test('refuses below the minimum rather than calling a split on a handful', () => {
+        const split = xpGoldSplit(pairs(4, -30, -1));
+        expect(split.verdict).toBe('insufficient');
+        expect(split.text).toContain('Too few');
+        expect(split.rated).toBe(4);
+    });
+
+    test('XP inside the band with gold outside it points at drops or prices', () => {
+        const split = xpGoldSplit(pairs(6, -30, -2));
+        expect(split.verdict).toBe('drops_or_prices');
+        expect(split.text).toContain('drops or prices');
+        expect(split.xpDeviation).toBeCloseTo(-2);
+        expect(split.goldDeviation).toBeCloseTo(-30);
+    });
+
+    test('both off the same way indicts the fight model, not the loot', () => {
+        const split = xpGoldSplit(pairs(6, -30, -28));
+        expect(split.verdict).toBe('fight_model');
+        expect(split.text).toContain('mis-models the fight');
+    });
+
+    test('both off in opposite directions refuses to name one cause', () => {
+        const split = xpGoldSplit(pairs(6, -30, 28));
+        expect(split.verdict).toBe('opposed');
+    });
+
+    test('XP off while gold lands is its own finding', () => {
+        const split = xpGoldSplit(pairs(6, 2, -30));
+        expect(split.verdict).toBe('xp_only');
+    });
+
+    test('neither off is said plainly rather than dressed as a finding', () => {
+        const split = xpGoldSplit(pairs(6, 3, -4));
+        expect(split.verdict).toBe('aligned');
+    });
+
+    test('pairs without an XP rate are excluded and counted, never read as zero XP', () => {
+        // Six good pairs at -2% XP, plus four legacy pairs with no XP fields. Folding the
+        // legacy ones in as zeros would drag the XP median down and manufacture a verdict.
+        const split = xpGoldSplit([...pairs(6, -30, -2), ...pairs(4, -30, null)]);
+        expect(split.rated).toBe(6);
+        expect(split.withoutXp).toBe(4);
+        expect(split.xpDeviation).toBeCloseTo(-2);
+        expect(split.verdict).toBe('drops_or_prices');
+    });
+
+    test('both medians come from the same pairs, so the comparison is like for like', () => {
+        // The pairs that carry XP are the ones the gold rate landed on; the ones without XP
+        // are catastrophic. Pooling gold over everything would report a gold gap that none
+        // of the XP-carrying runs had.
+        const split = xpGoldSplit([...pairs(6, -2, -2), ...pairs(20, -80, null)]);
+        expect(split.goldDeviation).toBeCloseTo(-2);
+        expect(split.verdict).toBe('aligned');
+    });
+
+    test('an XP prediction of zero has no scale to be wrong against', () => {
+        const split = xpGoldSplit(
+            Array.from({ length: 6 }, () => ({
+                predicted: 1000,
+                actual: 700,
+                predictedXpPerHour: 0,
+                actualXpPerHour: 400,
+            }))
+        );
+        expect(split.rated).toBe(0);
+        expect(split.withoutXp).toBe(6);
+        expect(split.verdict).toBe('insufficient');
+    });
+
+    test('nothing at all is a refusal, not a crash', () => {
+        expect(xpGoldSplit([]).verdict).toBe('insufficient');
+        expect(xpGoldSplit(null).verdict).toBe('insufficient');
     });
 });

@@ -183,3 +183,56 @@ describe('the overlay tile', () => {
         expect(container.textContent.trim()).toBe('');
     });
 });
+
+describe('the combat card’s verdicts', () => {
+    /**
+     * A combat pair, with the gear flag and both rates under the test's control.
+     * @param {number} index - Makes the id unique
+     * @param {Object} fields - `{goldDeviation, xpDeviation, fingerprintMatch}`
+     * @returns {Object}
+     */
+    const combat = (index, { goldDeviation, xpDeviation = null, fingerprintMatch = true }) => ({
+        ...pair('combat', 1_000_000, 1_000_000 * (1 + goldDeviation / 100), index + 1),
+        id: `combat-${index}`,
+        actionHrid: '/actions/combat/rat_cave',
+        difficultyTier: 1,
+        snapshotAgeMs: 2 * 24 * HOUR,
+        fingerprintMatch,
+        predictedXpPerHour: xpDeviation === null ? null : 500_000,
+        actualXpPerHour: xpDeviation === null ? null : 500_000 * (1 + xpDeviation / 100),
+    });
+
+    test('XP landing while gold does not sends the reader to drops and prices', () => {
+        store.records = Array.from({ length: 8 }, (_, i) => combat(i, { goldDeviation: -30, xpDeviation: -2 }));
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('XP deviation (median of 8)');
+        expect(text()).toContain('XP pairs');
+        expect(text()).toContain('8 of 8');
+        expect(text()).toContain('the gap is drops or prices');
+    });
+
+    test('both rates off the same way indicts the fight model instead', () => {
+        store.records = Array.from({ length: 8 }, (_, i) => combat(i, { goldDeviation: -30, xpDeviation: -27 }));
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('mis-models the fight itself');
+    });
+
+    test('pairs with no XP rate are counted aside, and too few is a refusal', () => {
+        store.records = [
+            ...Array.from({ length: 3 }, (_, i) => combat(i, { goldDeviation: -30, xpDeviation: -2 })),
+            ...Array.from({ length: 5 }, (_, i) => combat(i + 3, { goldDeviation: -30 })),
+        ];
+
+        calibrationPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('5 without XP');
+        expect(text()).toContain('Too few XP pairs to call');
+    });
+});
