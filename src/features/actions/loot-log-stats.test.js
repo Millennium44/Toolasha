@@ -458,4 +458,22 @@ describe('LootLogStats.renderHistoricalEntries pagination', () => {
 
         expect(container.querySelectorAll('.mwi-loot-log-history-entry')).toHaveLength(25);
     });
+
+    test('a fully expanded list does not grow a dead "Show more (0 remaining)"', async () => {
+        // The button's own click handler removes it once nothing is left, but
+        // the rebuild's gate asks whether there are more entries than one
+        // BATCH — not more than are currently rendered. So every rebuild after
+        // a full expansion put the button back, reading "(0 remaining)", and
+        // pressing it sliced an empty range and removed it again until the
+        // next loot_log_updated brought it back.
+        lootLogHistory.getHistoricalEntries.mockResolvedValue(makeEntries(25));
+
+        await stats.renderHistoricalEntries();
+        container.querySelector('.mwi-loot-log-history-more').click();
+        expect(container.querySelector('.mwi-loot-log-history-more')).toBe(null);
+
+        await stats.renderHistoricalEntries();
+
+        expect(container.querySelector('.mwi-loot-log-history-more')).toBe(null);
+    });
 });

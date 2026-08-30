@@ -1407,8 +1407,12 @@ class LootLogStats {
         }
         this.historicalRendered = batch.length;
 
-        // "Show more" button if needed
-        if (historicalEntries.length > this.historicalBatchSize) {
+        // "Show more" button if there is more to show — measured against what
+        // was just rendered, not against one batch. Once the rendered count
+        // persists across rebuilds, a fully expanded list still has more
+        // entries than a batch, and gating on the batch put the button back on
+        // every rebuild reading "Show more (0 remaining)".
+        if (historicalEntries.length > this.historicalRendered) {
             const showMoreBtn = document.createElement('button');
             showMoreBtn.className = 'mwi-loot-log-history-more';
             showMoreBtn.textContent = `Show more (${historicalEntries.length - this.historicalRendered} remaining)`;
