@@ -2440,3 +2440,80 @@ describe('the lab Gold/1% table when a swap costs nothing, or pays', () => {
         expect(goldRow('Cheap real upgrade')[4]).toBe('1,000,000');
     });
 });
+
+describe('the budget plan when a pick pays for itself', () => {
+    const fight = (i, winRate, applied = true) => ({
+        monsterHrid: `/monsters/m${i}`,
+        monsterName: `Monster ${i}`,
+        loadoutName: 'Loadout',
+        roomLevel: 100,
+        winRate,
+        winRateDelta: winRate - 0.5,
+        applied,
+        trials: 1000,
+    });
+    const analysis = () => ({
+        baseline: {
+            fights: [fight(0, 0.5), fight(1, 0.5)],
+            runClearChance: 0.25,
+            expectedAttempts: 4,
+        },
+        results: [
+            {
+                candidate: {
+                    type: 'cross_slot',
+                    slot: '/equipment_types/two_hand',
+                    description: 'Cursed Bow +7 → Sundering Crossbow +7',
+                },
+                costType: 'gold',
+                cost: -17_700_000,
+                fights: [fight(0, 0.8), fight(1, 0.8)],
+                appliedFights: 2,
+                expectedAttempts: 2.5,
+                attemptsDelta: -1.5,
+                attemptsDeltaNoise: 0.1,
+                significant: true,
+                avgWinDelta: 0.3,
+                attemptsSavedPerMillion: Infinity,
+                costDetail: null,
+            },
+        ],
+    });
+
+    let host;
+    let container;
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.buildPanel();
+        await settle();
+
+        host = document.createElement('div');
+        container = document.createElement('div');
+        host.appendChild(container);
+        document.body.appendChild(host);
+        ui._allFightsBudget = 500_000_000;
+        ui._allFightsBudgetText = '500m';
+    });
+
+    afterEach(() => {
+        ui._allFightsBudget = 0;
+        ui._allFightsBudgetText = '';
+        host.remove();
+        ui.destroy();
+    });
+
+    test('the shopping list says what the swap hands back, not a negative price', () => {
+        // formatKMB of a negative reads as a price of −17.7M in a column of
+        // prices; the table above the plan already says '+17.7M back'
+        ui._renderAllFightsResults(analysis(), container);
+
+        const plan = container.querySelector('#mwi-labsim-budget');
+        expect(plan.textContent).toContain('Cursed Bow +7');
+        expect(plan.textContent).toContain('+17.7M back');
+        expect(plan.textContent).not.toContain('-17.7M');
+    });
+});

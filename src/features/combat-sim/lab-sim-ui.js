@@ -3575,7 +3575,7 @@ class LabSimUI {
                                 <span style="color:#e0e0e0;">${pick.candidate.description}
                                     <span style="color:#666;">· ${rooms} room${rooms === 1 ? '' : 's'}</span>
                                     ${combatSimUI.upgradeRowActionsHtml(pick)}</span>
-                                <span style="white-space:nowrap; color:#aaa;">${money(pick.cost)}
+                                <span style="white-space:nowrap; color:#aaa;">${goldCostCell(pick.cost)}
                                     <span style="color:#4caf50;">−${(pick.marginalAttemptsSaved ?? -pick.attemptsDelta).toFixed(1)} attempts</span></span>
                             </div>`;
                     })
@@ -3584,7 +3584,15 @@ class LabSimUI {
                 body =
                     rows +
                     `<div style="margin-top:4px; padding-top:4px; border-top:1px solid #222; color:#aaa; font-size:11px;">
-                        ${plan.picks.length} upgrades · ${money(plan.totalCost)} of ${money(budget)} ·
+                        ${plan.picks.length} upgrades ·
+                        ${
+                            // A plan whose resales outrun its purchases spends
+                            // nothing at all — "−17.7M of 500M" reads as an
+                            // outlay, and it is the opposite of one
+                            plan.totalCost < 0
+                                ? `${money(-plan.totalCost)} back, none of ${money(budget)} spent`
+                                : `${money(plan.totalCost)} of ${money(budget)}`
+                        } ·
                         <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
                         <span style="color:#666;"> if gains in different slots add up</span>
                         <button id="mwi-labsim-verify-combo" style="${btnStyle} margin-left:8px;"
