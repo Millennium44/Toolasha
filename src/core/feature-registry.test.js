@@ -305,6 +305,31 @@ describe('getFeature / getAllFeatures / getFeaturesByCategory', () => {
     });
 });
 
+describe('checkFeatureHealth — a throwing customCheck does not kill the pass', () => {
+    test('a registry with one throwing customCheck still health-checks the rest', () => {
+        state.enabledFeatures.add('fine');
+        featureRegistry.replaceFeatures([
+            {
+                key: 'broken',
+                name: 'Broken',
+                initialize: () => {},
+                healthCheck: () => false,
+                customCheck: () => {
+                    throw new Error('customCheck boom');
+                },
+            },
+            { key: 'fine', name: 'Fine', initialize: () => {}, healthCheck: () => false },
+        ]);
+
+        // Must not throw — checkFeatureHealth runs in a detached setTimeout in
+        // production, so an unguarded throw here becomes an unhandled rejection
+        // that silently kills the whole health/retry pass.
+        const failed = featureRegistry.checkFeatureHealth();
+
+        expect(failed).toEqual([{ key: 'fine', name: 'Fine', reason: 'Health check returned false' }]);
+    });
+});
+
 describe('checkFeatureHealth', () => {
     test('skips features with no healthCheck', () => {
         state.enabledFeatures.add('a');

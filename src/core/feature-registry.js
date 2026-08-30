@@ -193,7 +193,14 @@ function checkFeatureHealth() {
         if (!feature.healthCheck) continue;
 
         // Skip if feature is not enabled
-        const isEnabled = feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
+        const isEnabled = (() => {
+            try {
+                return feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
+            } catch (error) {
+                console.error(`[Toolasha] Enabled check for ${feature.name} threw:`, error);
+                return false;
+            }
+        })();
 
         if (!isEnabled) continue;
 
