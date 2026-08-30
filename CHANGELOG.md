@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One "Yours" everywhere
+
+Enhancement parameter sources now resolve through one rule: Pro rates apply on every surface when toggled (they previously reached only the tooltip and one lab tab, and silently did nothing on soulbound pieces); "Manual" on a chip means hand-entered params are in force even when they match the defaults ("Yours" always means detected); and the advisor's back-slot special case now asks the item whether it's tradable instead of assuming the whole slot is — quivers unchanged, capes now priced like everything beside them. The one load-bearing split survives as a named rule: surfaces quoting a purchasable piece ask the item, the savings card's context settles the question itself, and the whole-game ranking has no single piece to ask. A parity harness pins all five surfaces before and after. Numbers move for manual-params users — that is the point.
+
 ### The palette learns verbs
 
 Commands can now be actions, not just panel-openers: a verb closes the palette, runs, and reports in a toast — success with its result, failure with the reason, and "nothing to do" said out loud rather than the verb vanishing. Five shipped: Recompute lab sims (counts and requeues only the gear-stale rooms instead of wholesale clearing), Start trial capture, Export trial JSON (now reports its filename, and refuses an empty week), Refresh watchlist prices (respecting the sweep's own rate limits), and Snapshot briefing now. Also fixed in passing: two palette toasts asked for a kind the toast module doesn't have and rendered as neutral info instead of warnings.
