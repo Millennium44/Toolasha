@@ -32,7 +32,15 @@ class ActionCountdown {
         if (!this.settingChangeHandler) {
             this.settingChangeHandler = (enabled) => {
                 if (enabled) {
-                    this.initialized = false;
+                    // Do NOT force `this.initialized = false` here: config.setSetting()
+                    // notifies on every call, even when the new value equals the old one
+                    // (there is no old-vs-new guard in config.js), so a settings resave or
+                    // import can deliver a second "enabled" notification with no
+                    // "disabled" in between. Forcing the flag defeated initialize()'s own
+                    // `if (this.initialized) return;` guard and re-ran every registration
+                    // — a second 'action_completed' listener that disable() could no
+                    // longer remove (this.actionCompletedHandler gets overwritten,
+                    // orphaning the first one) and a leaked domObserver registration.
                     this.initialize();
                 } else {
                     this.disable();

@@ -11,10 +11,16 @@ const handlers = vi.hoisted(() => ({
     readyCallback: null,
     domReady: true,
     actionCompleted: null,
+    settingChange: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: vi.fn(() => true), onSettingChange: vi.fn() },
+    default: {
+        getSetting: vi.fn(() => true),
+        onSettingChange: vi.fn((_key, callback) => {
+            handlers.settingChange = callback;
+        }),
+    },
 }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -41,6 +47,8 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 const actionCountdown = (await import('./action-countdown.js')).default;
+const { default: dataManager } = await import('../../core/data-manager.js');
+const { default: domObserver } = await import('../../core/dom-observer.js');
 
 /** @returns {HTMLElement} A progress-bar text element attached to the document */
 function mountBar() {
@@ -119,5 +127,35 @@ describe('tick loop lifetime', () => {
 
         handlers.readyCallback();
         expect(actionCountdown.timerId).not.toBeNull();
+    });
+
+    // config.js's setSetting() calls _notifySettingChange() unconditionally on every
+    // call, whether or not the stored value actually changed (there is no
+    // old-value-vs-new-value guard in setSetting/setSettingValue) — so a settings
+    // resave, an import, or any code path that sets 'actionPanel_liveCountdown' to
+    // true while it is already true delivers a second "enabled" notification with
+    // no "disabled" in between.
+    test('a redundant "enabled" notification does not double-register listeners', () => {
+        mountBar();
+        actionCountdown.initialize();
+
+        const onCallsAfterInit = dataManager.on.mock.calls.length;
+        const onClassCallsAfterInit = domObserver.onClass.mock.calls.length;
+        const onReadyCallsAfterInit = domObserver.onReady.mock.calls.length;
+
+        // The settings UI (or an import/reset flow) re-applies "enabled" without the
+        // value having actually flipped through "disabled" first.
+        handlers.settingChange(true);
+
+        // The handler force-clears `this.initialized` before calling `initialize()`
+        // again, bypassing initialize()'s own `if (this.isInitialized) return;`-style
+        // guard (which action-time-display.js's equivalent handler relies on instead
+        // of resetting the flag). That re-runs every registration a second time: a
+        // second 'action_completed' listener that disable() can no longer remove
+        // (this.actionCompletedHandler is overwritten, orphaning the first one), and
+        // a leaked domObserver registration whose unregister handle is discarded.
+        expect(dataManager.on.mock.calls.length).toBe(onCallsAfterInit);
+        expect(domObserver.onClass.mock.calls.length).toBe(onClassCallsAfterInit);
+        expect(domObserver.onReady.mock.calls.length).toBe(onReadyCallsAfterInit);
     });
 });
