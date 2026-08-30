@@ -51,24 +51,32 @@ class ActionFilter {
         this.unregisterHandlers.push(unregisterTitleObserver);
 
         // Re-update button labels when config finishes loading from storage
-        config.onSettingChange('profitCalc_pricingMode', () => {
-            if (this._updateModeBtn) this._updateModeBtn();
-        });
-        config.onSettingChange('profitCalc_craftUpgradeItems', () => {
-            if (this._updateCraftBtn) this._updateCraftBtn();
-        });
+        this.unregisterHandlers.push(
+            config.onSettingChange('profitCalc_pricingMode', () => {
+                if (this._updateModeBtn) this._updateModeBtn();
+            })
+        );
+        this.unregisterHandlers.push(
+            config.onSettingChange('profitCalc_craftUpgradeItems', () => {
+                if (this._updateCraftBtn) this._updateCraftBtn();
+            })
+        );
 
         // A character switch reloads settings with an empty previous map, so the
         // per-key change callbacks above never fire — the mode/craft buttons and
         // the profit sections they drive would keep the previous character's
         // pricing mode. This channel fires whenever settings finish loading, so
-        // the persistent Action Filter (which never re-initializes) resyncs.
+        // Action Filter — which panel-observer.js's cleanup() tears down and
+        // re-initializes on every character switch, like every other feature —
+        // resyncs even though its own per-key listeners above went quiet.
         // Ported from upstream Celasha/Toolasha#630.
-        config.onSettingsLoaded(() => {
-            if (this._updateModeBtn) this._updateModeBtn();
-            if (this._updateCraftBtn) this._updateCraftBtn();
-            this._refreshProfitDisplays();
-        });
+        this.unregisterHandlers.push(
+            config.onSettingsLoaded(() => {
+                if (this._updateModeBtn) this._updateModeBtn();
+                if (this._updateCraftBtn) this._updateCraftBtn();
+                this._refreshProfitDisplays();
+            })
+        );
 
         actionPanelSort.onSortModeChange(() => {
             if (this._updateSortBtn) this._updateSortBtn();

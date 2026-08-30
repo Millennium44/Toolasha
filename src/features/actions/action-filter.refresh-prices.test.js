@@ -27,8 +27,8 @@ vi.mock('../../core/config.js', () => ({
             mocks.settings[key] = value;
         },
         getPricingModeLabel: (mode) => mode,
-        onSettingChange: vi.fn(),
-        onSettingsLoaded: vi.fn(),
+        onSettingChange: vi.fn(() => () => {}),
+        onSettingsLoaded: vi.fn(() => () => {}),
     },
 }));
 
