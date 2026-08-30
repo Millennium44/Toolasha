@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The reroll walk obeys live caps, actually sorts, and gains a Sort button
+
+The "Close the menu" steps between rerolls were the walk enforcing a price ceiling read once at start — a cap edited mid-walk (or the block toggled off) was ignored until a page reload, so both currencies read as over-limit and the card got retired with a Back press. The walk now reads the shield popup's live values on every plan and re-plans the moment they move. The post-read auto-sort turns out to have never run in production: it was scheduled on the same timer registry every re-plan clears, and the very message proving the read had landed was the one cancelling the sort — it lives on its own timer now, with planning held until it has run so a step never names a slot the sort is about to move. And a ↕ Sort button sits on the walk widget in every state including the Done summary — one press, one forced sort.
+
 ### The pro bench matches a real pro, and can be restored in one press
 
 The shipped professional-enhancer defaults now match the maintainer's reference bench: achievement bonus on, Celestial enhancer +15, gloves +12, refined cape +10 (levels, jewelry, tea, and blessed tea already matched). The pin-items setting moved above the auto-detect switch, and a "Reset to pro defaults" button in the same group puts every bench setting below the switch back to those shipped values — writing through the same path a hand edit takes, with the inputs updating in place.
