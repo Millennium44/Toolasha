@@ -2933,6 +2933,7 @@ class GuildCreditValue {
     }
 
     cleanup() {
+        this.autofillManager.cleanup();
         this.unregisterObservers.forEach((fn) => fn());
         this.unregisterObservers = [];
         this._disconnectAdvisorObserver();

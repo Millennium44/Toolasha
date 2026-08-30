@@ -110,8 +110,9 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
     updateTabBadge: () => {},
     visibleTabsContainer: () => null,
 }));
+const autofill = vi.hoisted(() => ({ cleanup: vi.fn() }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
-    createAutofillManager: () => ({ initialize: () => {}, setPendingCalculation: () => {} }),
+    createAutofillManager: () => ({ initialize: () => {}, setPendingCalculation: () => {}, cleanup: autofill.cleanup }),
 }));
 // The marketplace hand-off. What matters here is which items the planner sends
 // and under what heading, not what the marketplace does when it gets them —
@@ -2430,5 +2431,30 @@ describe('the shrine cost block keeps up with the modal', () => {
         await settle();
 
         expect(game.listeners.items_updated).toHaveLength(0);
+    });
+});
+
+describe('the missing-mats autofill manager', () => {
+    beforeEach(() => {
+        game.settings = { guildCreditValue: true };
+        game.observers = {};
+        game.clientData = { itemDetailMap: {} };
+        guildCreditValue.cleanup();
+        autofill.cleanup.mockClear();
+    });
+
+    // The autofill manager's own `initialize()` registers a `domObserver.onClass`
+    // watcher on every buy modal for the lifetime of the page unless something
+    // calls its `cleanup()` — every other feature that owns one
+    // (missing-materials-button.js, house-cost-display.js, ability-book-calculator.js)
+    // calls `this.autofillManager.cleanup()` from its own `cleanup()`. This one did
+    // not, so disabling "Guild Credit Value" — or a character switch, which runs
+    // the same cleanup/re-initialize cycle — left the watcher (and whatever
+    // quantity intent it last held) running forever.
+    test('is torn down when the feature is disabled', () => {
+        guildCreditValue.initialize();
+        guildCreditValue.cleanup();
+
+        expect(autofill.cleanup).toHaveBeenCalledTimes(1);
     });
 });
