@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The overlay's Treasure tile reads the real ledger in packaged builds
+
+In the split production build the treasure tracker was silently copied into the ui bundle as a second, never-initialized instance whose overlay row registration won — so the Treasure tile and the panel it opened showed "Nothing opened yet" while the real tally sat in the market bundle (the Settings button reached it through the bundle bridge, which is why that path looked fine). The module is now a shared cross-bundle singleton like the other market-owned trackers, so both open paths land on the one ledger. The dev standalone was never affected.
+
 ### The reroll walk obeys live caps, actually sorts, and gains a Sort button
 
 The "Close the menu" steps between rerolls were the walk enforcing a price ceiling read once at start — a cap edited mid-walk (or the block toggled off) was ignored until a page reload, so both currencies read as over-limit and the card got retired with a Back press. The walk now reads the shield popup's live values on every plan and re-plans the moment they move. The post-read auto-sort turns out to have never run in production: it was scheduled on the same timer registry every re-plan clears, and the very message proving the read had landed was the one cancelling the sort — it lives on its own timer now, with planning held until it has run so a step never names a slot the sort is about to move. And a ↕ Sort button sits on the walk widget in every state including the Done summary — one press, one forced sort.

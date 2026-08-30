@@ -313,6 +313,12 @@ const marketExternalGlobals = new Map([
     ],
     [normalize(join(__dirname, 'src/features/actions/gathering-profit.js')), 'Toolasha.Market.gatheringProfit'],
     [normalize(join(__dirname, 'src/features/actions/production-profit.js')), 'Toolasha.Market.productionProfit'],
+    // A stateful singleton holding the chest tally, reached by the settings
+    // panel's Treasure button (ui bundle). Left inline, the ui bundle carried a
+    // second, never-initialized tracker whose module-scope registerRow won the
+    // overlay's 'treasure' row — so the tile and the panel it opened were blank
+    // while the real ledger sat in the market bundle.
+    [normalize(join(__dirname, 'src/features/inventory/treasure-tracker.js')), 'Toolasha.Market.treasureTracker'],
 ]);
 
 const buildGlobals = (globalsMap) => Object.fromEntries(globalsMap.entries());

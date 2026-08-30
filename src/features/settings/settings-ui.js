@@ -20,11 +20,10 @@ import whatsNew from './whats-new.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import pformancePanel from '../dev/pformance-panel.js';
-import bundledTreasureTracker from '../inventory/treasure-tracker.js';
+import treasureTracker from '../inventory/treasure-tracker.js';
 import overlayPanel from '../ui/overlay-panel.js';
 import syncManager from '../sync/sync-manager.js';
 import { copySyncSetupToOtherCharacters } from '../sync/sync-setup-copy.js';
-import { treasureTracker } from '../../utils/bundle-bridge.js';
 import {
     getCustomPriceOverrides,
     getCustomPriceOverridesAsync,
@@ -1838,7 +1837,7 @@ class SettingsUI {
         const treasureBtn = document.createElement('button');
         treasureBtn.textContent = 'Treasure';
         treasureBtn.className = 'toolasha-utility-button';
-        treasureBtn.addEventListener('click', () => (treasureTracker() || bundledTreasureTracker).toggle());
+        treasureBtn.addEventListener('click', () => treasureTracker.toggle());
         buttonsDiv.appendChild(treasureBtn);
 
         const pformanceBtn = document.createElement('button');
