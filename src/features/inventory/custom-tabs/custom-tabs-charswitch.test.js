@@ -324,6 +324,60 @@ describe('self-sufficient reload', () => {
         expect(dm.listeners.get('character_initialized')?.size ?? 0).toBe(0);
         ui = null;
     });
+
+    test('the loadout-binding cache is rebuilt for the arriving character', async () => {
+        // `_boundBaseHrids` is baseHrid → Map<loadoutName, level>, derived from
+        // `_config`'s loadoutBindings and rebuilt only when it is null. The reload
+        // swaps `_config` out from under it, so a cache built for the departing
+        // character kept deciding which items `_checkBindingEnhancements` even
+        // looks at — and the arriving character's bindings, whose bases are not in
+        // that cache, never synced again for the rest of the session.
+        store(
+            'ironChar',
+            config([
+                {
+                    id: 'ic-tab',
+                    name: 'Ironman Gear',
+                    items: ['/items/sword+5'],
+                    loadoutBindings: { Boss: ['/items/sword+5'] },
+                },
+            ])
+        );
+        store(
+            'mainChar',
+            config([
+                {
+                    id: 'mc-tab',
+                    name: 'Main Gear',
+                    items: ['/items/axe+1'],
+                    loadoutBindings: { Boss: ['/items/axe+1'] },
+                },
+            ])
+        );
+        loadoutSnapshotMock.snapshots = {
+            s1: { name: 'Boss', useExactEnhancement: false, equipment: [] },
+        };
+
+        await startUI();
+        // Prime the cache the way an ordinary items_updated tick does, while the
+        // ironman's config is the one in hand.
+        dm.characterItems = [{ itemHrid: '/items/sword', enhancementLevel: 5, count: 1 }];
+        ui._checkBindingEnhancements({ endCharacterItems: [{ itemHrid: '/items/sword' }] });
+
+        dm.charId = 'mainChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        expect(ui._configCharId).toBe('mainChar');
+
+        // The main's axe has been enhanced past what its binding holds.
+        dm.characterItems = [{ itemHrid: '/items/axe', enhancementLevel: 4, count: 1 }];
+        ui._checkBindingEnhancements({ endCharacterItems: [{ itemHrid: '/items/axe' }] });
+        await flushConfigWrites();
+
+        expect(ui._config.tabs[0].loadoutBindings.Boss).toEqual(['/items/axe+4']);
+        expect(ui._config.tabs[0].items).toEqual(['/items/axe+4']);
+
+        loadoutSnapshotMock.snapshots = {};
+    });
 });
 
 describe('Export / Import across characters', () => {

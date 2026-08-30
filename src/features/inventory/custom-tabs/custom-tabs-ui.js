@@ -807,6 +807,15 @@ export default class CustomTabsUI {
 
         this._config = loaded;
         this._configCharId = charId;
+        // `_boundBaseHrids` is derived from `_config`'s loadoutBindings and is
+        // rebuilt only when it is null, so a config swap has to drop it. Left
+        // standing, the departed character's cache decided which changed items
+        // `_checkBindingEnhancements` even considers: the arriving character's
+        // bound items are absent from it, so their bindings stopped syncing for
+        // the rest of the session (and a departed character with no bindings at
+        // all left a zero-size cache that short-circuits the check outright),
+        // while the levels it does carry are the departed character's.
+        this._boundBaseHrids = null;
 
         // The headers encode the departed character's tabs and their order
         // values, so they are torn down rather than updated — the same path the
