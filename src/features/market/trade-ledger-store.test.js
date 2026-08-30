@@ -86,7 +86,15 @@ const dataManagerMock = vi.hoisted(() => {
     };
 });
 
-const configMock = vi.hoisted(() => ({ tradeLedgerEnabled: true }));
+const configMock = vi.hoisted(() => ({
+    tradeLedgerEnabled: true,
+    /** Subscribers registered through config.onSettingsLoaded() */
+    loadedCallbacks: [],
+    /** Stand in for loadSettings() finishing: the map is populated and the channel fires. */
+    fireSettingsLoaded() {
+        for (const cb of configMock.loadedCallbacks) cb();
+    },
+}));
 
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'market123',
@@ -95,7 +103,14 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => configMock.tradeLedgerEnabled, onSettingChange: () => {} },
+    default: {
+        getSetting: () => configMock.tradeLedgerEnabled,
+        onSettingChange: () => {},
+        onSettingsLoaded: (cb) => {
+            configMock.loadedCallbacks.push(cb);
+            return () => {};
+        },
+    },
 }));
 
 const {
@@ -565,5 +580,41 @@ describe('a character switch resets in-memory state even while the feature is of
         await tradeLedgerStore.initialize();
 
         expect(tradeLedgerStore.records.some((r) => r.listingId === 1)).toBe(false);
+    });
+});
+
+describe('a character who has the ledger off stays off across a switch', () => {
+    test('the schema default read inside the settings-reload window is corrected once settings load', async () => {
+        // The switch sequence: feature-registry clears the settings cache on
+        // `character_switching`, then `character_switched` fans out to this
+        // module's import-time listener — all before feature-registry's own
+        // step calls config.loadSettings(). Inside that window getSetting()
+        // answers from SCHEMA_DEFAULTS, which is `true` for the ledger, so
+        // initialize() runs for a character who has it switched off.
+        dataManagerMock.characterId = 'iron456';
+        configMock.tradeLedgerEnabled = true; // the schema default standing in for the empty map
+        await dataManagerMock._emit('character_switched');
+        expect(tradeLedgerStore.isInitialized).toBe(true);
+
+        // Settings finish loading and this character's real value is `false`.
+        // loadSettings() fires no per-key change callback on a switch (the
+        // previous map was empty), and initialize()'s isInitialized
+        // short-circuit means a later re-init corrects nothing either — the
+        // settings-loaded channel is the only signal that arrives.
+        configMock.tradeLedgerEnabled = false;
+        configMock.fireSettingsLoaded();
+
+        expect(tradeLedgerStore.isInitialized).toBe(false);
+
+        // …and with the handlers gone, a market update records nothing.
+        await dataManagerMock._emit('market_listings_updated', { myMarketListings: [listing(3, 4)] });
+        expect(tradeLedgerStore.getRecords()).toEqual([]);
+    });
+
+    test('a character who has it on is left initialized', async () => {
+        dataManagerMock.characterId = 'iron456';
+        await dataManagerMock._emit('character_switched');
+        configMock.fireSettingsLoaded();
+        expect(tradeLedgerStore.isInitialized).toBe(true);
     });
 });
