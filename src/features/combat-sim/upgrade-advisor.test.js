@@ -1887,6 +1887,81 @@ describe('generateSkillingEquipmentCandidates targetSkill filtering', () => {
     });
 });
 
+describe("Philosopher's accessories are offered wherever the slot is worn", () => {
+    const NECK = '/equipment_types/neck';
+    const neckGameData = () => ({
+        actionDetailMap: {},
+        itemDetailMap: {
+            '/items/necklace_of_speed': {
+                name: 'Necklace Of Speed',
+                itemLevel: 75,
+                equipmentDetail: { type: NECK, combatStats: { attackSpeed: 0.03, castSpeed: 0.03 } },
+            },
+            '/items/philosophers_necklace': {
+                name: "Philosopher's Necklace",
+                itemLevel: 90,
+                equipmentDetail: {
+                    type: NECK,
+                    // The real shape: every style's damage and accuracy at once
+                    combatStats: {
+                        attackSpeed: 0.03,
+                        castSpeed: 0.03,
+                        slashDamage: 0.04,
+                        stabDamage: 0.04,
+                        smashDamage: 0.04,
+                        rangedDamage: 0.04,
+                        magicDamage: 0.04,
+                        slashAccuracy: 0.04,
+                        stabAccuracy: 0.04,
+                        smashAccuracy: 0.04,
+                        rangedAccuracy: 0.04,
+                        magicAccuracy: 0.04,
+                        defensiveDamage: 0.04,
+                    },
+                },
+            },
+        },
+    });
+
+    test('the necklace swap applies to a loadout wearing a styleless speed necklace', () => {
+        // Regression: the all-style Philosopher's Necklace tie-broke to
+        // 'melee_stab' while the speed necklace read 'defensive', and the
+        // role-substitution filter refused the swap in every loadout — the row
+        // vanished from the all-fights table while the ring and earrings
+        // (both sides styleless) sailed through.
+        const dto = {
+            equipment: { [NECK]: { hrid: '/items/necklace_of_speed', enhancementLevel: 5 } },
+            abilities: [],
+        };
+        const gameData = neckGameData();
+        const candidates = generateCandidates(dto, gameData, 'equipment');
+        const philo = candidates.find((c) => c.upgradeHrid === '/items/philosophers_necklace');
+
+        expect(philo).toBeTruthy();
+        expect(candidateAppliesToDTO(philo, dto, gameData)).toBe(true);
+    });
+
+    test('already wearing it that high is the one refusal; lower is still an upgrade', () => {
+        const gameData = neckGameData();
+        const candidate = {
+            slot: NECK,
+            currentHrid: '/items/necklace_of_speed',
+            currentLevel: 5,
+            upgradeHrid: '/items/philosophers_necklace',
+            upgradeLevel: 5,
+            type: 'tier',
+        };
+        const wearingHigh = {
+            equipment: { [NECK]: { hrid: '/items/philosophers_necklace', enhancementLevel: 5 } },
+        };
+        const wearingLow = {
+            equipment: { [NECK]: { hrid: '/items/philosophers_necklace', enhancementLevel: 3 } },
+        };
+        expect(candidateAppliesToDTO(candidate, wearingHigh, gameData)).toBe(false);
+        expect(candidateAppliesToDTO(candidate, wearingLow, gameData)).toBe(true);
+    });
+});
+
 describe('the off-hand a two-hander is traded for', () => {
     const TWO_HAND = '/equipment_types/two_hand';
     const MAIN = '/equipment_types/main_hand';

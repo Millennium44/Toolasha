@@ -570,6 +570,11 @@ function getItemRole(combatStats) {
     const magic = combatStats.magicDamage || 0;
     const melee = stab + slash + smash;
 
+    // An all-style piece (every damage stat positive — the Philosopher's
+    // Necklace) belongs to no single role; classifying it by the tie-winner
+    // barred it from replacing styleless jewelry. See getItemDamageStyle.
+    if (stab > 0 && slash > 0 && smash > 0 && ranged > 0 && magic > 0) return 'unknown';
+
     // If item has offensive damage stats, classify by highest.
     // Melee is subdivided by damage style so stab/slash/smash weapons form separate tier groups —
     // one combined 'melee' group let sortIndex ordering offer a spear user a slash sword as the
@@ -878,6 +883,12 @@ function getItemDamageStyle(combatStats) {
     const ranged = combatStats.rangedDamage || 0;
     const magic = combatStats.magicDamage || 0;
 
+    // An accessory that raises every style at once (the Philosopher's
+    // Necklace: slash/stab/smash/ranged/magic all equal) has no style of its
+    // own. Letting slash win the five-way tie called it a melee piece, and the
+    // substitution filter then refused it to every loadout wearing a styleless
+    // necklace — the swap vanished from the upgrade table entirely.
+    if (slash > 0 && stab > 0 && smash > 0 && ranged > 0 && magic > 0) return 'unknown';
     if (slash >= stab && slash >= smash && slash >= ranged && slash >= magic && slash > 0) return 'slash';
     if (stab >= slash && stab >= smash && stab >= ranged && stab >= magic && stab > 0) return 'stab';
     if (smash >= slash && smash >= stab && smash >= ranged && smash >= magic && smash > 0) return 'smash';
@@ -6244,6 +6255,20 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
     const worn = equipment[candidate.slot];
     // A bare slot is only bare in the loadouts where it is bare
     if (!candidate.currentHrid) return !worn?.hrid;
+
+    // A Philosopher's accessory is a strict superset of every other piece in
+    // its slot — the maintainer's ruling, 2026-08-30: always offer it where the
+    // slot is worn, never gate it behind the style/role substitution
+    // heuristics (which read the all-style Necklace as melee and refused it to
+    // a speed-necklace loadout). Only already wearing it at least that high
+    // says no.
+    if (candidate.upgradeHrid?.startsWith(PHILO_HRID_PREFIX) && JEWELRY_SLOTS.has(candidate.slot)) {
+        if (!worn?.hrid) return false;
+        if (worn.hrid === candidate.upgradeHrid) {
+            return (worn.enhancementLevel || 0) < (candidate.upgradeLevel || 0);
+        }
+        return true;
+    }
 
     // Enhancing is about one particular item: it helps the loadouts wearing
     // *that* item and nobody else, and not once it is already at the target

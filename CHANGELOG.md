@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Philosopher's Necklace shows up in the upgrade table
+
+It was generated and then silently filtered out of every fight: the all-style necklace tie-broke to "melee" in the role classifier while a speed necklace read "defensive", and the substitution filter refused the swap everywhere (the ring and earrings, styleless on both sides, sailed through — which is why they appeared and the necklace didn't). Two fixes: an item raising every style at once now classifies as styleless, and — per the maintainer's ruling that Philosopher's accessories are strict supersets — the philo path skips the substitution heuristics entirely and is offered wherever the slot is worn.
+
+### Settings stop silently re-enabling, and a lost toggle lands
+
+The trade ledger and trade history read their setting before the switch's settings reload finished, saw the schema default, and turned themselves back on for characters who had disabled them — both now re-check once settings actually load. A toggle flipped during that reload window was also silently dropped while the checkbox stayed flipped; writes now queue and land (with their notifications) when the reload completes.
+
+### Switch-time feature failures get the boot treatment
+
+A feature that failed to initialize during a character switch was silently dead until reload; the switch path now runs the same health-check, retry-once, and report flow boot always had. A throwing health probe no longer kills the whole pass, and the retry timer stands down if a new switch has started.
+
 ### A reconnect no longer doubles every feature
 
 Re-entering the same character — a websocket reconnect, or character select and straight back — re-emitted the first-login initialization event, and the whole startup block ran again over a live script: every feature initialized twice, observers and listeners doubled, and the duplicates unreachable by any later teardown. Startup is one-shot now; switches were always safe and stay with the feature registry.
