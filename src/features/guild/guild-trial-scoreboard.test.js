@@ -580,6 +580,29 @@ describe('the panel', () => {
         expect(written[0]).not.toMatch(/<[a-z]/i);
     });
 
+    // A character/guild switch (guild-trials.js's `_forgetCharacter`) calls
+    // `guildTrialScoreboard.close?.()` but has no way to know the arriving
+    // character's trial context yet — `noteContext`/`noteForecast` are only
+    // refreshed by the Trials-tab DOM scan, which may not run again until the
+    // new guild's tab is actually viewed. `close()` must let go of the
+    // departed guild's context and forecast itself, or a report copied (or a
+    // reopened panel) right after the switch mixes the new guild's fresh
+    // breakdown with the old guild's trial name and roster.
+    test('closing lets go of the previous trial’s context and forecast', () => {
+        guildTrialScoreboard.noteContext({ trialName: 'Trial Chameleon', members: ['Tib', 'Moo'] });
+        guildTrialScoreboard.noteForecast({ tier: 6, source: 'measured', limitedBy: 'time' });
+        guildTrialScoreboard.open();
+
+        guildTrialScoreboard.close();
+
+        // Simulates the arriving guild's own trial, with no context pushed yet
+        expect(guildTrialScoreboard.reportText()).not.toContain('Trial Chameleon');
+        // With no loadouts seen and no roster, the estimate has nobody left to
+        // report as unestimated — if the old roster survived, 'Tib' and 'Moo'
+        // would still show up here with no build behind them
+        expect(guildTrialScoreboard._estimate().unestimated).not.toContain('Tib');
+    });
+
     test('toggling twice leaves nothing behind', () => {
         guildTrialScoreboard.toggle();
         expect(document.querySelectorAll(`.${PANEL_CLASS}`)).toHaveLength(1);

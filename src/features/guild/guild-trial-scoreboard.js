@@ -425,7 +425,19 @@ class GuildTrialScoreboard {
         this.render();
     }
 
-    /** Close it */
+    /**
+     * Close it.
+     *
+     * Also lets go of `context`/`forecast`. Both are pushed in from outside —
+     * the trials feature's Trials-tab DOM scan — and a character or guild
+     * switch calls this before it can know the arriving guild's own trial
+     * name, roster or forecast. Leaving the departed guild's values in place
+     * would have a report copied (or the panel reopened) right after a switch
+     * mix the new guild's fresh damage breakdown with the old guild's trial
+     * name and member list — the same cross-guild bleed the switch handler
+     * takes care to avoid everywhere else. The scan re-pushes fresh values
+     * once it runs again for the new guild.
+     */
     close() {
         if (this.refreshId) clearInterval(this.refreshId);
         this.refreshId = null;
@@ -442,6 +454,8 @@ class GuildTrialScoreboard {
             this.container.remove();
         }
         this.container = null;
+        this.context = null;
+        this.forecast = null;
     }
 
     /** Open when shut, shut when open — what the command palette calls */
