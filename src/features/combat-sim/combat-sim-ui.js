@@ -12,7 +12,15 @@ import {
     missingMaterialsButton,
     dungeonTrackerStorage,
     marketHistoryPanel,
+    labyrinthClearRate,
+    loadoutSnapshot,
 } from '../../utils/bundle-bridge.js';
+import {
+    isGearCandidate,
+    projectedFingerprint,
+    rankInvalidatedRooms,
+    describeInvalidatedRooms,
+} from '../combat/labyrinth-upgrade-invalidation.js';
 import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
@@ -7104,6 +7112,121 @@ class CombatSimUI {
     }
 
     /**
+     * What re-simulating this upgrade would cost the labyrinth cache.
+     *
+     * The advisor ranks a candidate on damage and gold. It has never said that
+     * equipping the thing throws away every cached labyrinth room — the cache
+     * key does not encode gear, so a gear change clears both layers wholesale —
+     * nor which of those rooms was sitting near enough to its decision bar that
+     * the re-sim might come back with a different recommendation.
+     *
+     * It names candidates and decides nothing. A room 1pp under its bar is not
+     * a room this upgrade fixes; it is a room whose cached answer is about to
+     * stop being evidence. Which way it lands is unknown until it is re-simmed,
+     * and the wording says "would stale" and "within Npp of their bar" —
+     * statements about the cache, not predictions about the rooms.
+     *
+     * Silent on a candidate outside the fingerprint's coverage. A house room, an
+     * ability swap or a combat level changes nothing the fingerprint hashes, so
+     * there is no mechanism to report — and "would stale 0 cached rooms" on
+     * those rows would imply there was one.
+     *
+     * @param {Object} r - Result row
+     * @returns {string} HTML, empty when there is nothing true to say
+     * @private
+     */
+    _renderUpgradeInvalidation(r) {
+        try {
+            const candidate = r?.candidate || r;
+            if (!isGearCandidate(candidate)) return '';
+
+            const context = this._invalidationContext();
+            if (!context) return '';
+
+            const projected = projectedFingerprint(context, candidate, context.hash);
+            const summary = rankInvalidatedRooms(context.entries, { targetRate: context.targetRate });
+            const text = describeInvalidatedRooms(summary, projected !== context.current);
+            if (!text) return '';
+
+            const closest = summary.ranked[0];
+            const detail = closest
+                ? `Closest to its bar: ${closest.name || closest.room} at ${(closest.clearChance * 100).toFixed(1)}% ` +
+                  `against a ${(context.targetRate * 100).toFixed(0)}% target` +
+                  (closest.trials ? ` (${formatWithSeparator(closest.trials)} trials` : '') +
+                  (closest.trials && closest.halfWidthPp != null ? `, ±${closest.halfWidthPp.toFixed(1)}pp)` : '') +
+                  (closest.trials && closest.halfWidthPp == null ? ')' : '') +
+                  '.'
+                : '';
+
+            const title =
+                'Equipping this changes the gear fingerprint every cached labyrinth sim is stamped with, and the ' +
+                'cache key does not encode gear — so all of them are dropped and re-simulated.\n' +
+                `${detail}\n` +
+                'This names what would need re-simming. It does not say which rooms would still clear their bar ' +
+                'afterwards: the honest answer to that needs the re-sim.';
+
+            return `<span style="color:#aaa;" title="${escapeAttribute(title)}">${text}.</span>`;
+        } catch (error) {
+            console.error('[UpgradeAdvisor] Reading what this upgrade would stale failed:', error);
+            return '';
+        }
+    }
+
+    /**
+     * The pieces the invalidation line reads, gathered once per cache state.
+     *
+     * Every advisor row asks the same question of the same cache, and the answer
+     * only moves when the cache or the gear does. Memoised on the cache's size
+     * and the current fingerprint, which between them change on every event that
+     * could make the answer stale.
+     *
+     * @returns {Object|null} `{stored, loadouts, current, entries, targetRate, hash}`,
+     *   or null when the labyrinth bundle is absent or the cache is empty
+     * @private
+     */
+    _invalidationContext() {
+        const lab = labyrinthClearRate();
+        if (!lab?.combatCache?.size) return null;
+
+        let current = null;
+        try {
+            current = lab._snapshotContentFingerprint();
+        } catch {
+            return null;
+        }
+        const stamp = `${current}|${lab.combatCache.size}`;
+        if (this._invalidationCache?.stamp === stamp) return this._invalidationCache.context;
+
+        const store = loadoutSnapshot();
+        // No snapshot store means no way to build the projected fingerprint, and
+        // an unbuildable projection is not a projection of "no change"
+        if (!store) return null;
+        const snapshots = store.snapshots || {};
+        const stored = JSON.stringify(snapshots, (key, value) => (key === 'savedAt' ? undefined : value));
+        const loadouts = Object.values(snapshots).map((snapshot) => store.resolveEquipment(snapshot) || []);
+
+        // Only entries simmed under the gear worn now are evidence that this
+        // upgrade would destroy. One already stamped with other gear is stale
+        // already, and crediting the upgrade with staling it would be wrong.
+        const entries = [];
+        for (const [key, result] of lab.combatCache) {
+            if ((result?.snapshotFingerprint ?? current) !== current) continue;
+            entries.push({ key, result });
+        }
+
+        const context = {
+            stored,
+            loadouts,
+            current,
+            entries,
+            targetRate: (lab.getRecommendTargetPct?.() || 70) / 100,
+            hash: (value) => lab._hashString(value),
+        };
+        this._invalidationCache = { stamp, context };
+        return context;
+    }
+
+    /**
      * What kind of number the Cost column is holding, spelled out.
      *
      * The column shows one figure and the tag beside it is three characters.
@@ -7165,6 +7288,12 @@ class CombatSimUI {
         }
 
         if (r.candidate?.caveat) parts.push(`<span style="color:#ff9800;">${r.candidate.caveat}</span>`);
+
+        // What equipping this would throw away, for candidates the labyrinth
+        // gear fingerprint actually covers. Last, because it is the only line
+        // here that is not about the money.
+        const staled = this._renderUpgradeInvalidation(r);
+        if (staled) parts.push(staled);
 
         if (!parts.length) return '';
         return `<div style="margin-top:4px; font-size:10px; line-height:1.4; display:flex; flex-direction:column; gap:1px;">${parts.join('')}</div>`;
