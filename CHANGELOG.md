@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial ledger says how accurate the attribution was
+
+The server-credited vs measured comparison that ran on every trial and surfaced only in the JSON export now has a card in the trial ledger: party damage delta, name-match accounting (a rename can no longer drag a trial's delta), per-metric medians with outliers past 15%, and a standing note that healing and taken run wider by construction. Compact per-trial summaries also fold into the 4-cycle archive, so accuracy is trackable across weeks; old archives honestly read "no accuracy data".
+
 ### Price targets on watched pins, and every enhancement cost names its model
 
 Watchlist pins can carry a target price ("tell me under 4.2M ask") — set inline from the pin, shown as a flag that turns green when reached, alerted through the new notifications_priceTargetReached setting (off by default; needs the pooled price history, fires only on a sighting inside the freshness window and quotes its true age). The advisor's Watch button seeds a target from the row's own costed price without touching what it already does. And every surface that prices an enhancement sweep now names its parameter source — advisor cost breakdowns, the lab panel, and the savings card, in the same words the tooltip always used — so the four models' disagreements are finally visible where they happen.
