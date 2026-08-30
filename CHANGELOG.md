@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### What undercutting bought, and what tasks actually paid
+
+The Ledger tab gains a time-to-fill section: completed listings bucketed by undercut depth against the book with median time-to-full-fill per bucket, cancellations counted as censored rather than folded in, and reconstructed offsets labelled approximate. And task statistics gains realized payout per claim by task type over the 8-week window — the panel's own token valuation plus items at today's post-tax prices (unpriced stacks counted, not zeroed), net of reroll spend where attributable, no per-hour figures because completions carry no duration.
+
 ### The trial ledger says how accurate the attribution was
 
 The server-credited vs measured comparison that ran on every trial and surfaced only in the JSON export now has a card in the trial ledger: party damage delta, name-match accounting (a rename can no longer drag a trial's delta), per-metric medians with outliers past 15%, and a standing note that healing and taken run wider by construction. Compact per-trial summaries also fold into the 4-cycle archive, so accuracy is trackable across weeks; old archives honestly read "no accuracy data".
