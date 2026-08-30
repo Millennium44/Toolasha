@@ -1020,6 +1020,11 @@ export default class CustomTabsUI {
 
         this._invContainer = invContainer;
 
+        // Every hrid any tab asks for, this pass. `_claimTilesForHrid` needs it to
+        // tell an enhancement level a tab actually named from one that merely
+        // exists in the inventory.
+        this._assignedHrids = getAssignedItemSet(this._config);
+
         // Add the active class — this makes Inventory_items a flex container,
         // applies display:contents to category wrappers, hides category labels,
         // and hides ALL tiles by default (via CSS).
@@ -1526,12 +1531,20 @@ export default class CustomTabsUI {
                 else tileMap.delete(baseHrid);
             }
         } else {
-            // Base hrid: skip tiles that are also registered under an enhanced key still in the
-            // tileMap — those tiles belong to a tab that specifically requested that level.
+            // Base hrid: hold back the tiles a tab that named their exact level is
+            // still waiting for — specificity beats the base hrid even from a tab
+            // further down.
+            //
+            // Only a level SOME tab actually asked for reserves anything.
+            // `_buildTileMap` registers every enhanced tile under its `+N` key
+            // whether or not a tab wants that level, so treating the key's mere
+            // presence as a reservation withheld EVERY enhanced copy from the tab
+            // that assigned the base hrid — which this method is documented to
+            // match all levels of — and dropped it into Unorganized instead.
             const enhancedPrefix = hrid + '+';
             const reservedTiles = new Set();
             for (const [key, keyTiles] of tileMap) {
-                if (key.startsWith(enhancedPrefix)) {
+                if (key.startsWith(enhancedPrefix) && this._assignedHrids?.has(key)) {
                     for (const t of keyTiles) reservedTiles.add(t);
                 }
             }
@@ -1540,8 +1553,19 @@ export default class CustomTabsUI {
                 // Put the reserved tiles back so their enhanced-hrid tab can claim them
                 const reserved = entries.filter((t) => reservedTiles.has(t));
                 tileMap.set(hrid, reserved);
-            } else {
-                // nothing reserved, already deleted from map above
+            }
+            // Mirror of what the enhanced branch does to the base key: a claimed
+            // tile is still reachable through its own `+N` key, and the Unorganized
+            // bucket collects by key — so without this the tile is placed twice,
+            // once by its tab and once, later in the order, by Unorganized.
+            if (claimable.length > 0) {
+                const claimedSet = new Set(claimable);
+                for (const key of [...tileMap.keys()]) {
+                    if (!key.startsWith(enhancedPrefix)) continue;
+                    const remaining = tileMap.get(key).filter((t) => !claimedSet.has(t));
+                    if (remaining.length > 0) tileMap.set(key, remaining);
+                    else tileMap.delete(key);
+                }
             }
             return claimable;
         }
