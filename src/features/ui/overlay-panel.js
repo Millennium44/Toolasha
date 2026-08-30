@@ -152,6 +152,24 @@ const STORAGE_KEY = 'overlayPanelV2';
  * to be run backwards.
  */
 const LEGACY_STORAGE_KEY = 'overlayPanel';
+
+/**
+ * Which named layout is in force, kept per character.
+ *
+ * Separate from the layout record rather than a field in it, because it is not
+ * part of a layout: `toOPanelConfig` turns that record into the file the Save
+ * and Export buttons write, and a name folded into it would ride along into
+ * every saved copy — then come back on import as a layout claiming to be a
+ * different one, and count as drift against itself the moment it changed.
+ *
+ * It is the *name* that is stored, and nothing else. Whether the tiles on
+ * screen still match the layout of that name is not a fact worth persisting: it
+ * is re-derived by `_markAppliedLayoutDrift` against the saved copy as it
+ * stands now, so a layout somebody edited on another character — or in another
+ * tab — reads as "(edited)" here rather than as clean because it was clean when
+ * this character last pressed something.
+ */
+const APPLIED_LAYOUT_KEY = 'overlayAppliedLayout';
 /** Where the floating panel sits, shared by every character (see panel-geometry) */
 const GEOMETRY_KEY = 'overlayPanel';
 const PANEL_ID = 'toolasha-overlay-panel';
@@ -452,7 +470,13 @@ class OverlayPanel {
         this.undoState = null;
         /** Saved layout names as last read; null until storage has been asked */
         this.savedLayouts = null;
-        /** The name of the layout last applied, for the popover to say so */
+        /**
+         * The name of the layout last applied, for the popover to say so.
+         *
+         * Persisted per character (see `APPLIED_LAYOUT_KEY`) and restored by
+         * `initialize`, so a reload does not put the player back to Save as…
+         * and retyping the name the Update button exists to save them typing.
+         */
         this.appliedLayout = null;
         /** What auto-switching has seen and done — see `decideAutoSwitch` */
         this.switchState = freshSwitchState();
@@ -498,6 +522,10 @@ class OverlayPanel {
         // heard of — and a row whose feature registers after this still gets
         // appended at draw time, in registration order, deterministically.
         this.settings.order = resolveRows(registeredRows(), this.settings).map((row) => row.key);
+
+        // Before the panel is drawn, so the first render of the popover already
+        // has the Update button and the "Showing:" line on it
+        await this._restoreAppliedLayout();
 
         // Reopens itself where you left it — an overlay you have to summon after
         // every refresh is an overlay you stop using
@@ -615,6 +643,45 @@ class OverlayPanel {
     _save() {
         writeScoped(STORAGE_KEY, this.settings, 'settings').catch((error) => {
             console.error('[OverlayPanel] Saving the layout failed:', error);
+        });
+    }
+
+    /**
+     * Bring back the name of the layout in force, after a reload.
+     *
+     * Restored as a name and nothing more: no attempt is made here to decide
+     * whether the tiles still match it. That question belongs to
+     * `_markAppliedLayoutDrift`, which asks it of the saved copy as it stands
+     * *now* — restoring the name as though it were known-clean would let a
+     * layout that changed elsewhere come back reading "Showing: Combat" when
+     * the screen is nothing of the sort.
+     *
+     * A name whose layout has since been deleted is left as it is rather than
+     * dropped: it is still what was applied, the drift check simply has nothing
+     * to compare it against, and the Update button saves it back under that
+     * name — which is what somebody who deleted it by accident wants.
+     *
+     * @returns {Promise<void>}
+     */
+    async _restoreAppliedLayout() {
+        try {
+            // Discard rather than adopt: which layout one character is showing
+            // is not a fact about another character's screen
+            const name = await readScoped(APPLIED_LAYOUT_KEY, 'settings', null, { migrate: 'discard' });
+            this.appliedLayout = typeof name === 'string' && name ? name : null;
+        } catch (error) {
+            console.error('[OverlayPanel] Reading the applied layout failed:', error);
+        }
+    }
+
+    /**
+     * Record which layout is in force, so the next reload can still say so.
+     * @param {string|null} name - The layout's name, or null for none
+     */
+    _setAppliedLayout(name) {
+        this.appliedLayout = name || null;
+        writeScoped(APPLIED_LAYOUT_KEY, this.appliedLayout, 'settings').catch((error) => {
+            console.error('[OverlayPanel] Saving the applied layout failed:', error);
         });
     }
 
@@ -1858,6 +1925,10 @@ class OverlayPanel {
         if (answer) {
             select.value = '';
             this.savedLayouts = layoutNames(await deleteLayout(answer));
+            // "Showing: Dungeon" over a Dungeon that no longer exists is a line
+            // about nothing, and the Update button beside it would quietly
+            // recreate what was just deleted
+            if (normalizeName(answer) === this.appliedLayout) this._setAppliedLayout(null);
         }
         // Drawn from the names as they now stand, which is what makes a deleted
         // layout stop being on offer
@@ -1958,7 +2029,7 @@ class OverlayPanel {
             // find auto-switching still unpaused and switch out from under the
             // choice being made
             if (byHand) this.switchState = pauseForManualChoice(this.switchState, currentActivity());
-            this.appliedLayout = key;
+            this._setAppliedLayout(key);
 
             await this._applyLayout(read, `switch to ${key}`);
             return true;
@@ -2386,6 +2457,9 @@ class OverlayPanel {
         if (!answer) return;
 
         this._snapshot('Reset');
+        // Reset is a move away from every named layout, not an edit of the one
+        // in force: what is on screen afterwards is the shipped arrangement
+        this._setAppliedLayout(null);
 
         // The Default preset's own order and spans, for the rows this character
         // actually has on — "forget the arrangement" now has an arrangement to
