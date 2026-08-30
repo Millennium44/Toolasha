@@ -15,11 +15,20 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const plan = vi.hoisted(() => ({ state: null, stages: [] }));
-const loop = vi.hoisted(() => ({ result: null, warnings: [], pricing: null, offline: null }));
+const loop = vi.hoisted(() => ({ result: null, warnings: [], pricing: null, offline: null, pending: null }));
 const store = vi.hoisted(() => ({ overrides: {}, snapshot: null, written: [] }));
+// Mutable so the character-switch race test can move the active character
+// mid-flight, the way a real switch does.
+const characterId = vi.hoisted(() => ({ current: 'charA' }));
 
 vi.mock('../../core/config.js', () => ({
     default: { Z_FLOATING_PANEL: 9000, getSetting: () => true, getSettingValue: (key, fallback) => fallback },
+}));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => characterId.current,
+    },
 }));
 
 // Geometry and the stage ticks both live in IndexedDB, which is not what this
@@ -62,6 +71,7 @@ vi.mock('./ironcow-plan.js', async (importOriginal) => {
 
 vi.mock('./starfruit-loop.js', () => ({
     calculateStarfruitLoop: async () => {
+        if (loop.pending) await loop.pending;
         if (loop.result instanceof Error) throw loop.result;
         return loop.result;
     },
@@ -127,6 +137,8 @@ beforeEach(() => {
     loop.warnings = [];
     loop.pricing = { price: 950_000, source: 'bag', loose: 1_000_000, bag: 950_000, pricingMode: 'ask' };
     loop.offline = { hours: 16, assumed: true };
+    loop.pending = null;
+    characterId.current = 'charA';
     store.overrides = {};
     store.snapshot = null;
     store.written = [];
@@ -370,5 +382,30 @@ describe('lifecycle', () => {
 
         expect(ironCowFarmPanel.loop).toBeNull();
         expect(ironCowFarmPanel.pricedAt).toBeNull();
+    });
+
+    test("a character switch mid-costing does not apply the departing character's loop to the arriving one", async () => {
+        // Character B has already loaded and has no snapshot of their own.
+        characterId.current = 'charB';
+        await ironCowFarmPanel.load();
+        expect(ironCowFarmPanel.loop).toBeNull();
+
+        // B presses Refresh; the costing is slow and still in flight...
+        let releaseCosting;
+        loop.pending = new Promise((resolve) => {
+            releaseCosting = resolve;
+        });
+        const refreshing = ironCowFarmPanel.refresh();
+
+        // ...and the player switches to character A before it resolves.
+        characterId.current = 'charA';
+        releaseCosting();
+        await refreshing;
+
+        // B's panel must not be showing (or have saved under A's key) a loop
+        // that was costed for a character who is no longer even logged in.
+        expect(ironCowFarmPanel.loop).toBeNull();
+        expect(ironCowFarmPanel.pricedAt).toBeNull();
+        expect(store.snapshot).toBeNull();
     });
 });

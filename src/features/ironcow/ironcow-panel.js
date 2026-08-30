@@ -29,6 +29,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import { formatKMB, formatPercentage, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
@@ -274,10 +275,27 @@ class IronCowFarmPanel {
         // can never resolve after this and clobber the freshly-costed loop
         // back to whatever (or nothing) was last on disk.
         if (this.loaded) await this.loaded;
+        // Captured before the slow costing below: `calculateStarfruitLoop()`
+        // runs the gathering and alchemy calculators against whatever game
+        // data is loaded, which can take long enough for the player to switch
+        // characters while it is in flight. `this.loop`/`saveSnapshot` both
+        // resolve the *current* character at the moment they run — `loop` via
+        // the `ironCowRuntime` setter, `saveSnapshot` via `characterKey()`
+        // inside `writeScoped` — so without this guard a switch landing
+        // mid-costing applies the departing character's freshly-priced loop
+        // to the arriving character, in memory and in storage, clobbering
+        // whatever `load()` had just correctly set up for them.
+        const charId = dataManager.getCurrentCharacterId();
         this.busy = true;
         this._status('Costing…');
         try {
             const loop = await calculateStarfruitLoop();
+            if (dataManager.getCurrentCharacterId() !== charId) {
+                // The character this costing was for is gone; their panel
+                // already loaded its own state, and this stale result must
+                // not overwrite it.
+                return;
+            }
             if (loop) {
                 this.loop = loop;
                 this.pricedAt = loop.computedAt || Date.now();
