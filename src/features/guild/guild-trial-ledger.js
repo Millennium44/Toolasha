@@ -40,17 +40,43 @@
  * every share on screen is computed from the sums of whichever window is being
  * looked at.
  *
- * ## Attendance is only ever about trials this client watched
+ * ## Participation, and why "absent" is a claim this can rarely make
  *
- * Nothing here can see a trial nobody had the panel open for, and pretending
- * otherwise would turn "you were not watching" into "they did not show up".
- * Every count is against `trialsRun` — the trials in the ledger — and
- * {@link observedCoverage} states how much of the guild's actual activity that
- * was, so a no-show flag is read next to the honesty about what was seen.
+ * A cycle runs *many* trials — four skilling ones and several combat ones — and
+ * a character signs up for one of each. This client spectates at most one fight,
+ * so the members of every other trial are invisible to the recorder. Counting
+ * "seen in a trial I watched" over "trials I watched" therefore reported every
+ * member of the *other* boss fight as a no-show at 0%, which is the bug this
+ * module was reported for.
+ *
+ * Signing up *is* taking part: the game auto-places a signed-up character into
+ * their trial's fight, so there is no showing-up step to miss. Participation is
+ * consequently a fact about the sign-up sheet, and the sign-up sheet is on the
+ * socket for the whole guild — `signedUpSkillingTrialHrid` and
+ * `signedUpCombatTrialHrid` on every guild character, kept current by
+ * `guild-xp-tracker.js` whether or not any trial tab is open. {@link
+ * signupParticipation} turns that into a per-trial roster, and
+ * {@link accrueTrial} writes it into the cycle beside the watched fight.
+ *
+ * So a cycle carries two kinds of evidence, and {@link foldLedgerCycles} keeps
+ * them apart:
+ *
+ * - **A participation roster** for a trial (sign-ups, or the server's own
+ *   end-of-trial stats for an encounter) settles every member at once: on the
+ *   list is participation, off it is genuine absence.
+ * - **A watched fight** with no roster beside it only ever proves *presence*.
+ *   A member it did not name may have been in another trial entirely, so their
+ *   participation in that one is **unknown** — never absence.
+ *
+ * Every row therefore carries `participated` over `observable` rather than
+ * `trials` over `trialsRun`, `unknownTrials` counts what no evidence covers, and
+ * `absent` is set only where a roster actually proves it. An archived cycle from
+ * before any of this was recorded carries no roster, so it can only ever say
+ * "seen in the ones it saw" — it is read that way rather than retro-judged.
  */
 
 import storage from '../../core/storage.js';
-import { trialWeekStart } from './guild-trials-math.js';
+import { trialFromHrid, trialWeekStart } from './guild-trials-math.js';
 
 /** Object store the ledger lives in — shared with the rest of the guild history */
 export const LEDGER_STORE = 'guildHistory';
@@ -138,7 +164,45 @@ export function ledgerCyclesInKeys(keys, scope) {
  * @returns {Object} A fresh record
  */
 export function emptyLedgerCycle(weekStart, scope = 'default') {
-    return { weekStart, scope, trials: [], members: {} };
+    return { weekStart, scope, trials: [], members: {}, participation: {} };
+}
+
+/**
+ * The per-trial rosters the guild's own sign-up sheet states.
+ *
+ * Every guild character carries the two trials it signed up for, and the game
+ * auto-places a signed-up character into the fight — so this is the whole
+ * guild's participation for the cycle, for trials nothing here could watch as
+ * much as for the one it did. Only the current week's sign-ups count: a stale
+ * hrid is last week's answer, exactly as `participantCounts` treats it.
+ *
+ * Trials are keyed as {@link trialFromHrid} keys (`badger`, `milking`) rather
+ * than by hrid, so a roster and a watched fight's `encounter` are the same
+ * handle.
+ *
+ * @param {Array<Object>} members - Guild member metas, from the XP tracker
+ * @param {Object} [options] - Context
+ * @param {string|null} [options.currentWeek] - The week sign-ups must belong to
+ * @param {number} [options.at] - When this was read
+ * @returns {Object<string, {names: Array<string>, source: string, at: number}>} Trial key → roster
+ */
+export function signupParticipation(members, { currentWeek = null, at = Date.now() } = {}) {
+    const participation = {};
+
+    for (const member of members || []) {
+        if (currentWeek && member?.signupWeekStartAt !== currentWeek) continue;
+        const name = String(member?.name || '').trim();
+        if (!name) continue;
+
+        for (const hrid of [member?.signedUpSkillingTrialHrid, member?.signedUpCombatTrialHrid]) {
+            const trial = trialFromHrid(hrid);
+            if (!trial) continue;
+            const entry = participation[trial.key] || (participation[trial.key] = { names: [], source: 'signup', at });
+            if (!entry.names.includes(name)) entry.names.push(name);
+        }
+    }
+
+    return participation;
 }
 
 /** A fresh per-member tally, with every figure at its "nothing recorded" value */
@@ -282,9 +346,14 @@ export function sessionContribution(session, { encounter = null, tier = null, ro
  *
  * @param {Object} cycle - The cycle record (not mutated)
  * @param {Object} contribution - From {@link sessionContribution}
+ * @param {Object} [evidence] - What else was known about the cycle at this moment
+ * @param {Object} [evidence.participation] - Trial key → roster, from {@link signupParticipation}
+ *   or the server's own per-encounter stats. Merged into the cycle, freshest
+ *   roster per trial winning — a sign-up sheet read at the end of the cycle
+ *   knows about members who joined after the first trial was folded.
  * @returns {Object} The updated cycle
  */
-export function accrueTrial(cycle, contribution) {
+export function accrueTrial(cycle, contribution, { participation = null } = {}) {
     if (!contribution?.trialId) return cycle;
 
     const trials = Array.isArray(cycle?.trials) ? cycle.trials : [];
@@ -321,6 +390,7 @@ export function accrueTrial(cycle, contribution) {
         weekStart: cycle?.weekStart ?? contribution.weekStart,
         scope: cycle?.scope ?? 'default',
         members,
+        participation: mergeParticipation(cycle?.participation, participation),
         trials: [
             ...trials,
             {
@@ -331,9 +401,107 @@ export function accrueTrial(cycle, contribution) {
                 seconds: contribution.seconds,
                 participants: contribution.participants,
                 totals: { ...contribution.totals },
+                // Who this particular fight named, so a cycle holding several
+                // trials can say which of them a member was in rather than only
+                // how many. Additive: an archived trial entry has no such list
+                // and is read as "the whole cycle's tally" instead.
+                memberKeys: (contribution.members || []).map((member) => memberKey(member.name)).filter(Boolean),
             },
         ],
     };
+}
+
+/**
+ * Fold a fresh set of per-trial rosters into the ones a cycle already holds.
+ *
+ * Per trial, the freshest roster wins outright rather than being unioned: a
+ * sign-up sheet is a *statement of the whole list*, so a member who withdrew
+ * has to be able to leave it. A trial the new reading says nothing about keeps
+ * whatever was recorded for it.
+ *
+ * @param {Object|null} held - The cycle's rosters
+ * @param {Object|null} fresh - Trial key → roster
+ * @returns {Object} The merged rosters
+ */
+function mergeParticipation(held, fresh) {
+    const merged = { ...(held && typeof held === 'object' ? held : {}) };
+    for (const [key, entry] of Object.entries(fresh || {})) {
+        if (!key || !Array.isArray(entry?.names)) continue;
+        const existing = merged[key];
+        if (existing && Number(existing.at) > Number(entry.at)) continue;
+        merged[key] = { names: [...entry.names], source: entry.source || 'signup', at: Number(entry.at) || 0 };
+    }
+    return merged;
+}
+
+/**
+ * What one cycle can and cannot say about one member's participation.
+ *
+ * Three numbers, and the third is the whole point. `known` is how many trials
+ * the cycle is aware the guild ran — every trial with a roster, plus every
+ * watched fight that has no roster to fold into. `participated` is how many of
+ * those the member is evidenced in. `observable` is how many of them the cycle
+ * could have answered *for this member either way*:
+ *
+ * - A trial with a roster is observable for everybody. The roster names the
+ *   whole participating set, so off it is absence rather than ignorance.
+ * - A watched fight with no roster is observable only for the members it named.
+ *   A member it did not name was very likely in one of the other trials running
+ *   at the same time, and this client watched none of those.
+ *
+ * `known - observable` is therefore the count of trials this member's
+ * participation is simply unknown for, which is what the old code was silently
+ * scoring as absence.
+ *
+ * An archived cycle with no rosters and no per-trial member lists falls back to
+ * the per-cycle tally, which yields the same honest reading: seen in the ones it
+ * saw, unknown for the rest.
+ *
+ * @param {Object} cycle - A cycle record
+ * @param {string} key - From {@link memberKey}
+ * @param {Object|null} tally - The member's row in this cycle, if any
+ * @returns {{known: number, participated: number, observable: number}} The counts
+ */
+export function cycleParticipation(cycle, key, tally = null) {
+    const trials = Array.isArray(cycle?.trials) ? cycle.trials : [];
+    const rosters = cycle?.participation && typeof cycle.participation === 'object' ? cycle.participation : {};
+    const rosterKeys = Object.keys(rosters);
+    const seenTrials = Number(tally?.trials) || 0;
+
+    // Nothing states who ran what: the watched fights are all this cycle knows
+    // about, and only the ones that named this member can speak for them
+    if (!rosterKeys.length) {
+        return { known: trials.length, participated: seenTrials, observable: seenTrials };
+    }
+
+    const named = (names) => (names || []).some((name) => memberKey(name) === key);
+    let participated = 0;
+    for (const rosterKey of rosterKeys) if (named(rosters[rosterKey]?.names)) participated += 1;
+
+    // A watched fight whose trial a roster covers is that trial, already counted
+    // above — but the fight is the stronger evidence of the two, so a member the
+    // fight named and the sheet missed still counts as having taken part
+    let known = rosterKeys.length;
+    let observable = rosterKeys.length;
+    for (const trial of trials) {
+        const inFight = Array.isArray(trial?.memberKeys)
+            ? trial.memberKeys.includes(key)
+            : // An archived entry from before per-trial lists: the cycle's tally
+              // is the only handle, and it cannot be split across fights
+              seenTrials > 0;
+        const covered = trial?.encounter && rosters[trial.encounter];
+        if (covered) {
+            if (inFight && !named(rosters[trial.encounter]?.names)) participated += 1;
+            continue;
+        }
+        known += 1;
+        if (inFight) {
+            participated += 1;
+            observable += 1;
+        }
+    }
+
+    return { known, participated, observable };
 }
 
 /**
@@ -351,7 +519,8 @@ export function accrueTrial(cycle, contribution) {
  * @param {Array<Object>} cycles - Cycle records, any order
  * @param {Object} [options] - Context
  * @param {Array<string>} [options.rosterNames] - The guild's members, for no-show rows
- * @returns {{rows: Array<Object>, trialsRun: number, cycles: number, totals: Object}} The table
+ * @returns {{rows: Array<Object>, trialsRun: number, trialsKnown: number, cycles: number,
+ *   totals: Object}} The table
  */
 export function foldLedgerCycles(cycles, { rosterNames = [] } = {}) {
     const list = (cycles || []).filter(Boolean);
@@ -390,12 +559,41 @@ export function foldLedgerCycles(cycles, { rosterNames = [] } = {}) {
         }
     }
 
-    // A rostered member with nothing folded is the no-show the table exists to
-    // show; one already tallied keeps the tally
+    // A member a sign-up sheet names but no watched fight ever did took part in
+    // a trial this client could not see — the row the whole fix exists for
+    for (const cycle of list) {
+        for (const entry of Object.values(cycle.participation || {})) {
+            for (const name of entry?.names || []) {
+                const key = memberKey(name);
+                if (!key || byMember.has(key)) continue;
+                byMember.set(key, emptyTally(String(name).trim()));
+            }
+        }
+    }
+
+    // A member on the guild roster and in nothing else still gets a row: whether
+    // that reads as absence or as "nothing here could see" is settled per member
+    // below, from the evidence each cycle actually holds
     for (const name of rosterNames || []) {
         const key = memberKey(name);
         if (!key || byMember.has(key)) continue;
         byMember.set(key, emptyTally(String(name).trim()));
+    }
+
+    // Per member, what each cycle could and could not say about them
+    const evidence = new Map();
+    let trialsKnown = 0;
+    for (const key of byMember.keys()) evidence.set(key, { known: 0, participated: 0, observable: 0 });
+    for (const cycle of list) {
+        // `known` is a fact about the cycle rather than about anybody in it, so
+        // it is read once off a key nobody can have
+        trialsKnown += cycleParticipation(cycle, '').known;
+        for (const [key, counts] of evidence) {
+            const cycleCounts = cycleParticipation(cycle, key, cycle.members?.[key] || null);
+            counts.known += cycleCounts.known;
+            counts.participated += cycleCounts.participated;
+            counts.observable += cycleCounts.observable;
+        }
     }
 
     const rows = [...byMember.values()];
@@ -411,13 +609,21 @@ export function foldLedgerCycles(cycles, { rosterNames = [] } = {}) {
         row.damageShare = share(row.damage, totals.damage);
         row.healingShare = share(row.healing, totals.healing);
         row.tankShare = share(row.damageTaken, totals.damageTaken);
-        row.attendance = trialsRun > 0 ? row.trials / trialsRun : null;
-        // Only a claim when there was something to turn up to
-        row.noShow = trialsRun > 0 && row.trials === 0;
-        row.missed = Math.max(0, trialsRun - row.trials);
+
+        const counts = evidence.get(memberKey(row.name)) || { known: 0, participated: 0, observable: 0 };
+        row.participated = counts.participated;
+        row.observable = counts.observable;
+        // Trials that ran, that this member's participation in nothing here can
+        // settle — the count that stops a silent 0% from being an accusation
+        row.unknownTrials = Math.max(0, counts.known - counts.observable);
+        // Only ever a claim where a roster covered the trial and left them off
+        row.absent = counts.observable > 0 && counts.participated === 0;
+        row.noShow = row.absent;
+        row.attendance = counts.observable > 0 ? counts.participated / counts.observable : null;
+        row.missed = Math.max(0, counts.observable - counts.participated);
     }
 
-    return { rows, trialsRun, cycles: list.length, totals };
+    return { rows, trialsRun, trialsKnown, cycles: list.length, totals };
 }
 
 /**
@@ -472,7 +678,10 @@ export function ledgerTotalsRow(rows, trialsRun = 0) {
 export const LEDGER_COLUMNS = [
     { key: 'name', label: 'Member', numeric: false, value: (row) => row.name },
     { key: 'trials', label: 'Trials', numeric: true, value: (row) => row.trials },
-    { key: 'attendance', label: 'Attendance', numeric: true, value: (row) => row.attendance },
+    // Labelled for what it can actually measure. It was "Attendance", read over
+    // the trials this client watched, which called every member of the other
+    // boss fight a no-show
+    { key: 'attendance', label: 'Took part', numeric: true, value: (row) => row.attendance },
     { key: 'damageShare', label: 'Damage', numeric: true, value: (row) => row.damageShare },
     { key: 'healingShare', label: 'Healing', numeric: true, value: (row) => row.healingShare },
     { key: 'tankShare', label: 'Tanked', numeric: true, value: (row) => row.tankShare },
@@ -572,9 +781,12 @@ export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, no
 export const LEDGER_CSV_COLUMNS = [
     { key: 'name', label: 'Member' },
     { key: 'trials', label: 'Trials joined' },
-    { key: 'trialsRun', label: 'Trials run' },
+    { key: 'trialsRun', label: 'Trials watched' },
+    { key: 'participated', label: 'Trials participated' },
+    { key: 'observable', label: 'Trials observable' },
+    { key: 'unknownTrials', label: 'Trials unknown' },
     { key: 'missed', label: 'Trials missed' },
-    { key: 'attendance', label: 'Attendance fraction' },
+    { key: 'attendance', label: 'Participation fraction' },
     { key: 'damage', label: 'Damage' },
     { key: 'damageShare', label: 'Damage share' },
     { key: 'healing', label: 'Healing' },
@@ -604,6 +816,9 @@ export function ledgerCsvRows(rows, trialsRun) {
         name: row.name,
         trials: row.trials,
         trialsRun,
+        participated: row.participated,
+        observable: row.observable,
+        unknownTrials: row.unknownTrials,
         missed: row.missed,
         attendance: Number.isFinite(row.attendance) ? row.attendance : null,
         damage: Math.round(row.damage),
@@ -616,7 +831,7 @@ export function ledgerCsvRows(rows, trialsRun) {
         manaSpent: Math.round(row.manaSpent),
         starvedSeconds: Math.round(row.starvedMs / 1000),
         lowManaSeconds: Math.round(row.lowManaMs / 1000),
-        noShow: row.noShow,
+        noShow: row.absent,
     }));
 }
 
@@ -714,6 +929,10 @@ const ledgerWriteChains = new Map();
  * @param {number|null} [options.tier] - Highest tier the stream stated
  * @param {Array<string>} [options.roster] - Names the game stated for the party
  * @param {number|null} [options.participants] - Party size the game stated
+ * @param {Object|null} [options.participation] - Trial key → roster, from
+ *   {@link signupParticipation} and the server's own per-encounter stats. This
+ *   is the only evidence the ledger ever gets about trials it did not watch,
+ *   and without it a cycle can only say who it saw.
  * @returns {Promise<Object|null>} The contribution folded, or null when there was nothing to fold
  */
 export async function recordFinishedTrial({
@@ -724,6 +943,7 @@ export async function recordFinishedTrial({
     tier = null,
     roster = [],
     participants = null,
+    participation = null,
 } = {}) {
     const contribution = sessionContribution(session, { encounter, tier, roster, participants });
     if (!contribution) return null;
@@ -736,7 +956,7 @@ export async function recordFinishedTrial({
             const stored = await storage.get(key, LEDGER_STORE, null);
             const cycle =
                 stored && typeof stored === 'object' ? stored : emptyLedgerCycle(contribution.weekStart, scope);
-            const next = accrueTrial(cycle, contribution);
+            const next = accrueTrial(cycle, contribution, { participation });
             // Unchanged means this trial was already folded — an idempotent stop,
             // which is the normal case when a manual stop races the watcher
             if (next === cycle) return null;

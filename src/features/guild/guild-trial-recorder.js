@@ -51,7 +51,8 @@ import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { TRIAL_ACTIVE_MS, trialWeekStart } from './guild-trials-math.js';
 import { loadTrialRecord } from './guild-trials-store.js';
-import { recordFinishedTrial } from './guild-trial-ledger.js';
+import { recordFinishedTrial, signupParticipation } from './guild-trial-ledger.js';
+import { guildXPTracker } from './guild-xp-tracker.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** Object store sessions live in — shared with the rest of the guild history */
@@ -312,9 +313,57 @@ class GuildTrialRecorder {
                     .map((entry) => (typeof entry === 'string' ? entry : entry?.name))
                     .filter((name) => typeof name === 'string' && name),
                 participants: breakdown.participants ?? null,
+                participation: this._participation(breakdown),
             });
         } catch (error) {
             console.error('[GuildTrialRecorder] Folding the session into the ledger failed:', error);
+        }
+    }
+
+    /**
+     * Who took part in the cycle's trials, including the ones nobody watched.
+     *
+     * A cycle runs several trials at once and this client can spectate one of
+     * them, so the fight that just ended says nothing whatsoever about the
+     * members of the others. Two sources do, and neither needs a tab open:
+     *
+     * - **The sign-up sheet**, off every guild character's
+     *   `signedUpSkillingTrialHrid` / `signedUpCombatTrialHrid`, which the XP
+     *   tracker keeps current for the whole guild. Signing up *is* taking part:
+     *   the game auto-places a signed-up character into their trial's fight.
+     * - **The server's own end-of-trial stats**, per encounter, as
+     *   `guild-trial-damage.js` stored them. It keeps only the spectated
+     *   encounter today, but the message's rows are keyed per trial, so a
+     *   reading that ever covers more lands here without further change.
+     *
+     * Missing sources are simply absent rather than empty: an empty roster
+     * would claim the trial had nobody in it, which is the accusation this
+     * whole path exists to stop making.
+     *
+     * @param {Object} breakdown - `guildTrialDamage.breakdown()`
+     * @returns {Object|null} Trial key → roster, or null when nothing states one
+     * @private
+     */
+    _participation(breakdown) {
+        try {
+            const at = Date.now();
+            const participation = signupParticipation(guildXPTracker.getMemberList?.() || [], {
+                currentWeek: guildXPTracker.getCurrentWeekStartAt?.() || null,
+                at,
+            });
+
+            for (const [encounter, entry] of Object.entries(breakdown?.storedStats || {})) {
+                const names = Object.keys(entry?.reported || {});
+                if (!encounter || !names.length) continue;
+                // The server's figures beat a sign-up sheet for the trial they
+                // cover: they are what the trial actually credited
+                participation[encounter] = { names, source: 'stats', at };
+            }
+
+            return Object.keys(participation).length ? participation : null;
+        } catch (error) {
+            console.error('[GuildTrialRecorder] Reading the cycle’s participation failed:', error);
+            return null;
         }
     }
 

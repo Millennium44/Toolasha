@@ -240,6 +240,7 @@ export function buildLedgerTable({
     return {
         rows: sortLedgerRows(filterLedgerRows(folded.rows, filterText), sortKey, sortDirection),
         trialsRun: folded.trialsRun,
+        trialsKnown: folded.trialsKnown,
         cycles: folded.cycles,
         coverage: observedCoverage(cycles),
     };
@@ -293,6 +294,28 @@ function localDay(timestamp) {
 }
 
 /**
+ * One member's participation as a sentence, with what is unknown said outright.
+ *
+ * The guild runs several trials at once and this client watches at most one, so
+ * "took part in 1 of 1" alongside "2 trials nothing here could see" is the whole
+ * of what is honestly known. The old wording — "joined 1 of 4 recorded trials" —
+ * read as an accusation about three trials nobody could have seen them in.
+ *
+ * @param {Object} row - A folded ledger row
+ * @returns {string} e.g. `Alice took part in 2 of 2 trials (1 more nothing here could see)`
+ */
+export function participationText(row) {
+    const unknown = Number(row?.unknownTrials) || 0;
+    const tail = unknown ? ` (${unknown} more nothing here could see)` : '';
+    if (!row?.observable) {
+        return unknown
+            ? `${row.name} was in none of the trials this client watched; ${unknown} ran that it could not see`
+            : `${row.name} has no trials recorded`;
+    }
+    return `${row.name} took part in ${row.participated} of ${row.observable} trials${tail}`;
+}
+
+/**
  * "Last attended" as a sentence fragment, from a row's `lastSeen` timestamp.
  *
  * `lastSeen` is folded from whichever cycles are in the current window, so a
@@ -317,10 +340,19 @@ export function lastAttendedText(row) {
 export function ledgerCellText(row, key) {
     switch (key) {
         case 'name':
-            return row.noShow ? `${row.name} (no-show)` : row.name;
+            if (row.absent) return `${row.name} (no-show)`;
+            // Nothing here could see any trial they might have been in — a
+            // different claim from having skipped the ones it did see
+            if (row.observable === 0 && row.unknownTrials > 0) return `${row.name} (not seen)`;
+            return row.name;
         case 'trials':
             return String(row.trials);
         case 'attendance':
+            // A percentage of a denominator that does not cover every trial the
+            // member could have been in is a made-up figure. Where anything is
+            // unknown the cell counts instead of dividing.
+            if (!Number.isFinite(row.attendance)) return '—';
+            if (row.unknownTrials > 0) return `${row.participated} of ${row.observable}`;
             return percent(row.attendance);
         case 'damageShare':
             return percent(row.damageShare);
@@ -345,7 +377,11 @@ export function ledgerCellText(row, key) {
  * @returns {string} e.g. `Alice — 4 trials (50.0%), dmg 32.1%, heal 10.0%, tank 5.0%, 1 death`
  */
 function ledgerRowLine(row) {
-    const attendance = row?.noShow ? 'no-show' : `${row.trials} trials (${ledgerCellText(row, 'attendance')})`;
+    const attendance = row?.absent
+        ? 'no-show'
+        : row?.observable === 0 && row?.unknownTrials > 0
+          ? 'not seen'
+          : `${row.trials} trials (${ledgerCellText(row, 'attendance')})`;
     const deaths = Number(row?.deaths) || 0;
     return (
         `${row.name} — ${attendance}, dmg ${ledgerCellText(row, 'damageShare')}, ` +
@@ -521,12 +557,12 @@ function drawTable(card, table) {
                 textAlign: column.numeric ? 'right' : 'left',
                 padding: '2px 5px',
                 whiteSpace: 'nowrap',
-                color: entry.noShow ? ROW_COLORS.bad : '#e8ecf5',
+                color: entry.absent ? ROW_COLORS.bad : entry.observable === 0 ? ROW_COLORS.dim : '#e8ecf5',
             });
             line.appendChild(cell);
         }
         line.title =
-            `${entry.name} joined ${entry.trials} of ${table.trialsRun} recorded trials, ${lastAttendedText(entry)}.\n` +
+            `${participationText(entry)}, ${lastAttendedText(entry)}.\n` +
             `${formatKMB(entry.damage)} damage · ${formatKMB(entry.healing)} healing · ` +
             `${formatKMB(entry.damageTaken)} taken · ${entry.deaths} death${entry.deaths === 1 ? '' : 's'}.\n` +
             'Shares are of what was actually measured over the selected window.';
@@ -904,7 +940,9 @@ export function registerTrialLedgerRow() {
             const table = buildLedgerTable();
             if (!table.trialsRun) return blank(container);
 
-            const noShows = table.rows.filter((entry) => entry.noShow).length;
+            // Only members a roster actually places outside every trial. A
+            // member nothing here could see is not a no-show and never counts
+            const noShows = table.rows.filter((entry) => entry.absent).length;
             const top = table.rows.find((entry) => Number.isFinite(entry.damageShare) && entry.damageShare > 0);
             row(container, [
                 { text: top?.name || '—', color: ROW_COLORS.dim, ellipsis: true, title: top?.name || '' },
@@ -915,8 +953,8 @@ export function registerTrialLedgerRow() {
                 },
             ]);
             container.title =
-                `${table.trialsRun} recorded trials over ${table.cycles} cycle(s).` +
-                (noShows ? `\n${noShows} rostered member(s) joined none of them.` : '') +
+                `${table.trialsRun} watched trials of ${table.trialsKnown} known, over ${table.cycles} cycle(s).` +
+                (noShows ? `\n${noShows} rostered member(s) took part in none of them.` : '') +
                 '\nDouble-click for the whole ledger.';
         },
         onOpen: () => openTrialLedgerPanel(),

@@ -52,6 +52,7 @@ const {
     observedCoverage,
     recordFinishedTrial,
     sessionContribution,
+    signupParticipation,
     sortLedgerRows,
 } = await import('./guild-trial-ledger.js');
 const { trialWeekStart } = await import('./guild-trials-math.js');
@@ -193,6 +194,38 @@ describe('accrueTrial', () => {
         expect(twice.members.alice.trials).toBe(1);
     });
 
+    test('a trial entry records who it named, so a cycle can tell its trials apart', () => {
+        const contribution = sessionContribution(
+            session([[player('Alice', { damage: 900 }), player('Bob', { damage: 100 })]])
+        );
+        const cycle = accrueTrial(emptyLedgerCycle(WEEK, 'g'), contribution);
+        expect(cycle.trials[0].memberKeys.sort()).toEqual(['alice', 'bob']);
+    });
+
+    test('a participation roster is merged in without disturbing the tallies', () => {
+        const contribution = sessionContribution(session([[player('Alice', { damage: 900 })]]));
+        const cycle = accrueTrial(emptyLedgerCycle(WEEK, 'g'), contribution, {
+            participation: { hedgehog: { names: ['Carol'], source: 'signup', at: WEEK } },
+        });
+
+        expect(cycle.participation.hedgehog.names).toEqual(['Carol']);
+        expect(cycle.members.alice.trials).toBe(1);
+        expect(cycle.members.carol).toBeUndefined();
+    });
+
+    test('a later roster replaces an earlier one for the same trial', () => {
+        const one = sessionContribution(session([[player('Alice')]]));
+        const two = sessionContribution(session([[player('Alice')]], { startedAt: WEEK + 5_000_000 }));
+        let cycle = accrueTrial(emptyLedgerCycle(WEEK, 'g'), one, {
+            participation: { badger: { names: ['Alice'], source: 'signup', at: WEEK } },
+        });
+        cycle = accrueTrial(cycle, two, {
+            participation: { badger: { names: ['Alice', 'Bob'], source: 'signup', at: WEEK + 1 } },
+        });
+
+        expect(cycle.participation.badger.names).toEqual(['Alice', 'Bob']);
+    });
+
     test('the freshest spelling of a name wins', () => {
         const one = sessionContribution(session([[player('alice', { damage: 1 })]]));
         const two = sessionContribution(session([[player('Alice', { damage: 1 })]], { startedAt: WEEK + 9 }));
@@ -234,21 +267,125 @@ describe('foldLedgerCycles', () => {
         expect(alice.attendance).toBe(1);
     });
 
-    test('a rostered member who joined nothing is a no-show row', () => {
+    test('a rostered member the watched trial never named is unknown, not absent', () => {
+        // The guild runs several trials at once and this client watched one of
+        // them. Carol was very likely in another boss fight; nothing here saw
+        // it either way, and "not in the fight I watched" is not absence.
         const folded = foldLedgerCycles([cycleOf(WEEK, [[player('Alice', { damage: 300 })]])], {
             rosterNames: ['Alice', 'Carol'],
         });
 
         const carol = folded.rows.find((row) => row.name === 'Carol');
-        expect(carol).toMatchObject({ trials: 0, noShow: true, missed: 1 });
+        expect(carol).toMatchObject({
+            trials: 0,
+            participated: 0,
+            observable: 0,
+            unknownTrials: 1,
+            absent: false,
+            noShow: false,
+            attendance: null,
+            missed: 0,
+        });
         expect(carol.damageShare).toBe(0);
-        expect(folded.rows.find((row) => row.name === 'Alice').noShow).toBe(false);
+        expect(folded.rows.find((row) => row.name === 'Alice')).toMatchObject({
+            participated: 1,
+            observable: 1,
+            unknownTrials: 0,
+            absent: false,
+            attendance: 1,
+        });
     });
 
     test('with no trials at all nobody is accused of anything', () => {
         const folded = foldLedgerCycles([], { rosterNames: ['Alice'] });
         expect(folded.trialsRun).toBe(0);
-        expect(folded.rows[0]).toMatchObject({ noShow: false, attendance: null });
+        expect(folded.rows[0]).toMatchObject({ noShow: false, absent: false, attendance: null });
+    });
+
+    test('a member the signed-up roster puts in an unwatched trial is not absent', () => {
+        // Two trials ran; this client watched the Badger only. Carol signed up
+        // for the Hedgehog, which the game auto-places her into, so she took
+        // part in a trial nothing here could watch.
+        let cycle = cycleOf(WEEK, [[player('Alice', { damage: 300 })]]);
+        cycle = {
+            ...cycle,
+            trials: cycle.trials.map((trial) => ({ ...trial, encounter: 'badger' })),
+            participation: {
+                badger: { names: ['Alice'], source: 'signup', at: WEEK },
+                hedgehog: { names: ['Carol'], source: 'signup', at: WEEK },
+            },
+        };
+
+        const folded = foldLedgerCycles([cycle], { rosterNames: ['Alice', 'Carol', 'Dave'] });
+        expect(folded.trialsKnown).toBe(2);
+
+        expect(folded.rows.find((row) => row.name === 'Carol')).toMatchObject({
+            participated: 1,
+            observable: 2,
+            unknownTrials: 0,
+            absent: false,
+            attendance: 0.5,
+        });
+        // Dave signed up for neither, and the rosters covered both trials, so
+        // this one really is provable absence
+        expect(folded.rows.find((row) => row.name === 'Dave')).toMatchObject({
+            participated: 0,
+            observable: 2,
+            absent: true,
+            noShow: true,
+            attendance: 0,
+        });
+    });
+
+    test('the server’s per-encounter stats count as participation for an unwatched trial', () => {
+        let cycle = cycleOf(WEEK, [[player('Alice', { damage: 300 })]]);
+        cycle = {
+            ...cycle,
+            trials: cycle.trials.map((trial) => ({ ...trial, encounter: 'badger' })),
+            participation: { hedgehog: { names: ['Carol'], source: 'stats', at: WEEK } },
+        };
+
+        const folded = foldLedgerCycles([cycle], { rosterNames: ['Alice', 'Carol'] });
+        const carol = folded.rows.find((row) => row.name === 'Carol');
+        expect(carol.participated).toBe(1);
+        expect(carol.absent).toBe(false);
+        // The Badger was watched but no roster for it arrived, so whether Carol
+        // was in that one as well is still not knowable
+        expect(carol.observable).toBe(1);
+        expect(carol.unknownTrials).toBe(1);
+    });
+
+    test('a member seen in a watched fight counts even when the sign-up list missed them', () => {
+        let cycle = cycleOf(WEEK, [[player('Alice', { damage: 300 }), player('Bob', { damage: 100 })]]);
+        cycle = {
+            ...cycle,
+            trials: cycle.trials.map((trial) => ({ ...trial, encounter: 'badger' })),
+            participation: { badger: { names: ['Alice'], source: 'signup', at: WEEK } },
+        };
+
+        const bob = foldLedgerCycles([cycle], { rosterNames: ['Alice', 'Bob'] }).rows.find((row) => row.name === 'Bob');
+        expect(bob).toMatchObject({ participated: 1, observable: 1, absent: false, attendance: 1 });
+    });
+
+    test('an archived cycle from before participation was recorded is not retro-judged', () => {
+        // Two watched trials, Bob in one of them. Nothing in this record says
+        // which trials the guild ran or who signed up for them, so the trial
+        // Bob was not in cannot be charged against him.
+        const cycle = cycleOf(WEEK, [
+            [player('Alice', { damage: 300 }), player('Bob', { damage: 100 })],
+            [player('Alice', { damage: 300 })],
+        ]);
+
+        const folded = foldLedgerCycles([cycle]);
+        expect(folded.trialsRun).toBe(2);
+        expect(folded.rows.find((row) => row.name === 'Bob')).toMatchObject({
+            trials: 1,
+            participated: 1,
+            observable: 1,
+            unknownTrials: 1,
+            absent: false,
+            attendance: 1,
+        });
     });
 
     test('a member measured by nothing gets a null share rather than a zero', () => {
@@ -388,6 +525,43 @@ describe('observedCoverage', () => {
     });
 });
 
+describe('signupParticipation', () => {
+    test('every member’s two sign-ups become a per-trial roster', () => {
+        const members = [
+            {
+                characterID: 1,
+                name: 'Alice',
+                signupWeekStartAt: 'W',
+                signedUpSkillingTrialHrid: '/guild_trials/milking',
+                signedUpCombatTrialHrid: '/guild_trials/badger',
+            },
+            {
+                characterID: 2,
+                name: 'Carol',
+                signupWeekStartAt: 'W',
+                signedUpSkillingTrialHrid: '/guild_trials/milking',
+                signedUpCombatTrialHrid: '/guild_trials/hedgehog',
+            },
+            // Last week's sign-up, which says nothing about this week
+            {
+                characterID: 3,
+                name: 'Stale',
+                signupWeekStartAt: 'V',
+                signedUpCombatTrialHrid: '/guild_trials/badger',
+            },
+        ];
+
+        const participation = signupParticipation(members, { currentWeek: 'W', at: 5 });
+        expect(Object.keys(participation).sort()).toEqual(['badger', 'hedgehog', 'milking']);
+        expect(participation.milking).toEqual({ names: ['Alice', 'Carol'], source: 'signup', at: 5 });
+        expect(participation.badger.names).toEqual(['Alice']);
+    });
+
+    test('no sign-ups at all is no participation rather than an empty roster', () => {
+        expect(signupParticipation([], { currentWeek: 'W' })).toEqual({});
+    });
+});
+
 describe('ledgerCsvRows', () => {
     test('carries raw numbers and turns milliseconds into seconds', () => {
         const [row] = ledgerCsvRows(
@@ -408,6 +582,10 @@ describe('ledgerCsvRows', () => {
                     starvedMs: 90_000,
                     lowManaMs: 30_000,
                     noShow: false,
+                    absent: false,
+                    participated: 2,
+                    observable: 3,
+                    unknownTrials: 1,
                 },
             ],
             3

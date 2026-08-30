@@ -92,6 +92,7 @@ const {
     filterLedgerRows,
     guildTrialLedgerPanel,
     lastAttendedText,
+    participationText,
     lastCycleParticipants,
     ledgerCellText,
     ledgerTableText,
@@ -174,15 +175,58 @@ describe('buildLedgerTable', () => {
         expect(table.rows.map((row) => row.name)).toEqual(['Alice', 'Bob']);
         expect(table.rows[0].damageShare).toBeCloseTo(0.9, 6);
         expect(table.rows[0].attendance).toBe(1);
-        expect(table.rows[1].attendance).toBe(0.5);
+        // Bob was in one of the two watched fights. Nothing states who ran the
+        // other, so the trial he was not in cannot be charged against him
+        expect(table.rows[1]).toMatchObject({
+            participated: 1,
+            observable: 1,
+            unknownTrials: 1,
+            attendance: 1,
+            absent: false,
+        });
     });
 
-    test('a rostered member the ledger never saw arrives as a no-show', async () => {
+    test('a rostered member the watched fights never named is unknown, not a no-show', async () => {
+        // The likeliest explanation is that they were in one of the other boss
+        // fights running at the same time, which this client cannot spectate
         world.members = [{ name: 'Alice' }, { name: 'Bob' }, { name: 'Carol' }];
         await refreshLedgerView();
 
         const table = buildLedgerTable();
-        expect(table.rows.find((row) => row.name === 'Carol')).toMatchObject({ trials: 0, noShow: true });
+        expect(table.rows.find((row) => row.name === 'Carol')).toMatchObject({
+            trials: 0,
+            observable: 0,
+            unknownTrials: 2,
+            absent: false,
+            noShow: false,
+            attendance: null,
+        });
+    });
+
+    test('a member the sign-up roster puts in an unwatched trial is counted, not accused', async () => {
+        world.members = [{ name: 'Alice' }, { name: 'Bob' }, { name: 'Carol' }];
+        world.cycles = [
+            {
+                ...cycle(WEEK, 1, { alice: { name: 'Alice', damage: 9000 } }),
+                trials: [{ trialId: `${WEEK}:0`, at: WEEK, encounter: 'badger', memberKeys: ['alice'] }],
+                participation: {
+                    badger: { names: ['Alice'], source: 'signup', at: WEEK },
+                    hedgehog: { names: ['Carol'], source: 'signup', at: WEEK },
+                },
+            },
+        ];
+        await refreshLedgerView();
+
+        const table = buildLedgerTable();
+        expect(table.trialsKnown).toBe(2);
+        expect(table.rows.find((row) => row.name === 'Carol')).toMatchObject({
+            participated: 1,
+            observable: 2,
+            absent: false,
+        });
+        // Bob signed up for neither, and both rosters are known, so this is the
+        // one case where absence is actually provable
+        expect(table.rows.find((row) => row.name === 'Bob')).toMatchObject({ participated: 0, absent: true });
     });
 
     test('a slower, older read landing late does not overwrite a newer selection', async () => {
@@ -247,7 +291,9 @@ describe('ledgerTableText', () => {
         expect(lines[0]).toBe('Guild trial ledger — 2 trials in window');
         expect(lines[1]).toContain('Alice — 2 trials (100.0%)');
         expect(lines[1]).toContain('dmg 90.0%');
-        expect(lines[2]).toContain('Bob — 1 trials (50.0%)');
+        // A count rather than a percentage: one of the two watched trials says
+        // nothing about Bob either way, so no denominator covers him
+        expect(lines[2]).toContain('Bob — 1 trials (1 of 1)');
         expect(lines[3]).toContain('Total — 3 trials');
         expect(lines[3]).toContain('dmg 100.0%');
     });
@@ -257,7 +303,7 @@ describe('ledgerTableText', () => {
         expect(ledgerTableText(null)).toBe('No ledger rows to copy.');
     });
 
-    test('a no-show reads as a no-show rather than a bare zero', async () => {
+    test('a member nothing could see reads as not seen rather than a bare zero', async () => {
         world.members = [{ name: 'Alice' }, { name: 'Bob' }, { name: 'Carol' }];
         await refreshLedgerView();
         const table = buildLedgerTable();
@@ -265,7 +311,28 @@ describe('ledgerTableText', () => {
         const carolLine = ledgerTableText(table)
             .split('\n')
             .find((line) => line.startsWith('Carol'));
-        expect(carolLine).toContain('no-show');
+        expect(carolLine).toContain('not seen');
+        expect(carolLine).not.toContain('no-show');
+    });
+});
+
+describe('participationText', () => {
+    test('says what was seen and, separately, what could not be', () => {
+        expect(participationText({ name: 'Alice', participated: 2, observable: 2, unknownTrials: 1 })).toBe(
+            'Alice took part in 2 of 2 trials (1 more nothing here could see)'
+        );
+        expect(participationText({ name: 'Alice', participated: 2, observable: 2, unknownTrials: 0 })).toBe(
+            'Alice took part in 2 of 2 trials'
+        );
+    });
+
+    test('a member no evidence covers is never said to have missed anything', () => {
+        expect(participationText({ name: 'Carol', participated: 0, observable: 0, unknownTrials: 2 })).toBe(
+            'Carol was in none of the trials this client watched; 2 ran that it could not see'
+        );
+        expect(participationText({ name: 'Carol', participated: 0, observable: 0, unknownTrials: 0 })).toBe(
+            'Carol has no trials recorded'
+        );
     });
 });
 
@@ -298,9 +365,22 @@ describe('ledgerCellText', () => {
         expect(ledgerCellText({ healingShare: 0 }, 'healingShare')).toBe('0.0%');
     });
 
-    test('a no-show wears the label in its own cell', () => {
-        expect(ledgerCellText({ name: 'Carol', noShow: true }, 'name')).toBe('Carol (no-show)');
-        expect(ledgerCellText({ name: 'Alice', noShow: false }, 'name')).toBe('Alice');
+    test('a provable no-show wears the label; an unseen member wears a different one', () => {
+        expect(ledgerCellText({ name: 'Carol', absent: true }, 'name')).toBe('Carol (no-show)');
+        expect(ledgerCellText({ name: 'Alice', absent: false, observable: 2 }, 'name')).toBe('Alice');
+        expect(ledgerCellText({ name: 'Dave', absent: false, observable: 0, unknownTrials: 2 }, 'name')).toBe(
+            'Dave (not seen)'
+        );
+    });
+
+    test('participation is a count wherever a trial is unaccounted for, never a made-up percentage', () => {
+        expect(
+            ledgerCellText({ attendance: 0.5, participated: 1, observable: 2, unknownTrials: 0 }, 'attendance')
+        ).toBe('50.0%');
+        expect(ledgerCellText({ attendance: 1, participated: 1, observable: 1, unknownTrials: 3 }, 'attendance')).toBe(
+            '1 of 1'
+        );
+        expect(ledgerCellText({ attendance: null, unknownTrials: 3 }, 'attendance')).toBe('—');
     });
 
     test('starved time is minutes, and no starved time is a dash', () => {
