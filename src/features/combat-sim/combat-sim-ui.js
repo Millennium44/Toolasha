@@ -943,6 +943,10 @@ export function upgradeRowPurchase(result) {
     if (!itemHrid || !String(itemHrid).startsWith('/items/')) return null;
 
     const enhancementLevel = isBook ? 0 : Number(candidate.upgradeLevel) || 0;
+    // Where the row's own figure came from, in one word — `market`, `craft`,
+    // `tester shop`. It rides along with the price so the savings list can say
+    // whose number it is showing rather than presenting it as its own.
+    const costSource = result?.costDetail?.source || candidate.costSource || '';
     const baseName = dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
 
     // The books cost, read off the row the sim just costed rather than guessed
@@ -957,6 +961,11 @@ export function upgradeRowPurchase(result) {
         name: enhancementLevel > 0 ? `${baseName} +${enhancementLevel}` : baseName,
         quantity: isBook ? abilityBookCount(result) : 1,
         savable: !isBook && !isConsumable,
+        // The gear side's equivalent of `ability.cost`: the price this row was
+        // costed at, so the savings list shows the figure that was on screen
+        // when the button was pressed rather than re-deriving its own
+        cost,
+        costSource,
         ability: isBook
             ? {
                   abilityHrid: candidate.upgradeHrid,
@@ -1154,7 +1163,13 @@ export function upgradeRowActionsHtml(result) {
 
     let save = '';
     if (buy.savable) {
-        save = `<button type="button" ${attrs} data-buy-action="save" title="Save for this in Equipment Savings"
+        // The costed price rides the button exactly as it does on the ability
+        // and house rows. Without it the savings list re-derived the price with
+        // a different model, and the two surfaces disagreed about one target.
+        const cost = buy.cost == null ? '' : String(buy.cost);
+        save = `<button type="button" ${attrs} data-buy-action="save"
+            data-buy-cost="${cost}" data-buy-cost-source="${escapeAttribute(buy.costSource || '')}"
+            title="Save for this in Equipment Savings"
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
     } else if (buy.ability) {
         const cost = buy.ability.cost == null ? '' : String(buy.ability.cost);
@@ -1218,7 +1233,11 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
             try {
                 const action = button.getAttribute('data-buy-action');
                 if (action === 'save') {
-                    watchTarget(itemHrid, enhancementLevel);
+                    const rawCost = button.getAttribute('data-buy-cost');
+                    watchTarget(itemHrid, enhancementLevel, {
+                        cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
+                        costSource: button.getAttribute('data-buy-cost-source') || '',
+                    });
                     button.textContent = 'Saving ✓';
                 } else if (action === 'save-ability') {
                     // Fire-and-forget: the goal write is asynchronous and the
@@ -1269,7 +1288,10 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                         button.textContent = 'Opened ✓';
                     }
                 } else {
-                    watchItem(itemHrid);
+                    // The level goes with it, as it does to the Market button
+                    // on the same row: a "+5" watched as a +0 lands on the list
+                    // priced at a fraction of what the row was quoting
+                    watchItem(itemHrid, null, enhancementLevel);
                     button.textContent = 'Watching ✓';
                 }
             } catch (error) {

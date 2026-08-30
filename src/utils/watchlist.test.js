@@ -296,3 +296,71 @@ describe('sortRows', () => {
         expect(rows[0].name).toBe('Cheese');
     });
 });
+
+describe('an enhancement level is part of which row this is', () => {
+    test('the +5 and the +0 of one item are two rows', () => {
+        // Watched from the upgrade advisor, "Cheese Sword +5" is a different
+        // purchase at a different price from the +0 already on the list
+        const list = addToWatchlist([], [item('/items/sword')], 'aqua');
+        const both = addToWatchlist(list, [{ hrid: '/items/sword', name: 'Sword +5', enhancementLevel: 5 }]);
+
+        expect(both).toHaveLength(2);
+        expect(both[1]).toEqual({
+            hrid: '/items/sword',
+            name: 'Sword +5',
+            source: null,
+            enhancementLevel: 5,
+        });
+    });
+
+    test('the same level twice is still one row', () => {
+        const once = addToWatchlist([], [{ hrid: '/items/sword', name: 'Sword +5', enhancementLevel: 5 }]);
+        const twice = addToWatchlist(once, [{ hrid: '/items/sword', name: 'Sword +5', enhancementLevel: 5 }]);
+        expect(twice).toHaveLength(1);
+    });
+
+    test('a +0 row is stored exactly as it always was', () => {
+        // Every row written before levels existed is a +0, and a `+0` field on
+        // all of them would be a stored-shape change for nothing
+        const [row] = addToWatchlist([], [{ hrid: '/items/sword', name: 'Sword', enhancementLevel: 0 }]);
+        expect(row).toEqual({ hrid: '/items/sword', name: 'Sword', source: null });
+    });
+
+    test('taking off the +5 leaves the +0 where it is', () => {
+        const list = addToWatchlist(addToWatchlist([], [item('/items/sword')]), [
+            { hrid: '/items/sword', name: 'Sword +5', enhancementLevel: 5 },
+        ]);
+
+        const left = removeFromWatchlist(list, '/items/sword', 5);
+        expect(left).toHaveLength(1);
+        expect(left[0].enhancementLevel).toBeUndefined();
+    });
+
+    test('a row is priced and counted at its own level', () => {
+        const [plain, enhanced] = valueWatchlist(
+            [
+                { hrid: '/items/sword', name: 'Sword' },
+                { hrid: '/items/sword', name: 'Sword +5', enhancementLevel: 5 },
+            ],
+            {
+                quantityOf: (hrid, level) => (level === 5 ? 1 : 4),
+                pricesFor: (hrid, level) => (level === 5 ? { ask: 900, bid: 800 } : { ask: 100, bid: 90 }),
+            }
+        );
+
+        expect(plain.ask).toBe(100);
+        expect(plain.quantity).toBe(4);
+        expect(enhanced.ask).toBe(900);
+        expect(enhanced.quantity).toBe(1);
+    });
+
+    test('a listing of the +5 counts against the +5 row, not the +0', () => {
+        const counts = listedCounts([
+            { itemHrid: '/items/sword', isSell: true, orderQuantity: 2, filledQuantity: 0 },
+            { itemHrid: '/items/sword', enhancementLevel: 5, isSell: true, orderQuantity: 1, filledQuantity: 0 },
+        ]);
+
+        expect(counts['/items/sword'].listed).toBe(2);
+        expect(counts['/items/sword::5'].listed).toBe(1);
+    });
+});

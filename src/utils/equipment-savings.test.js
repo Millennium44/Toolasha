@@ -94,6 +94,8 @@ const {
     loadSavingsRecord,
     saveSavingsRecord,
     flushSavingsWrites,
+    targetKey,
+    migrateSavingsTargets,
 } = await import('./equipment-savings.js');
 
 beforeEach(() => {
@@ -432,7 +434,7 @@ describe('the book, and how a goal reads', () => {
 });
 
 describe('the stored record', () => {
-    test('a record written before ability goals existed loads unchanged', async () => {
+    test('a record written before ability goals existed loads with only its targets re-keyed', async () => {
         stored.record = {
             targets: { '/items/holy_sword': { enhancementLevel: 3 } },
             noSell: true,
@@ -443,8 +445,10 @@ describe('the stored record', () => {
 
         const gear = await loadSavingsRecord();
 
+        // The +3 moves to the key that says it is a +3, keeping everything else
+        // about the record exactly as it was written
         expect(gear).toEqual({
-            targets: { '/items/holy_sword': { enhancementLevel: 3 } },
+            targets: { '/items/holy_sword::3': { itemHrid: '/items/holy_sword', enhancementLevel: 3 } },
             noSell: true,
             marketValue: false,
             selected: '/items/holy_sword',
@@ -492,7 +496,9 @@ describe('the stored record', () => {
 
         await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 6, cost: 1 });
 
-        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+        expect(stored.record.targets).toEqual({
+            '/items/holy_sword': { itemHrid: '/items/holy_sword', enhancementLevel: 0 },
+        });
         expect(stored.record.houses['/house_rooms/dojo']).toBeDefined();
     });
 
@@ -518,7 +524,9 @@ describe('the stored record', () => {
         await saveSavingsRecord({ targets: { '/items/holy_sword': { enhancementLevel: 0 } }, noSell: true });
         await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 250_000_000 });
 
-        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+        expect(stored.record.targets).toEqual({
+            '/items/holy_sword': { itemHrid: '/items/holy_sword', enhancementLevel: 0 },
+        });
         expect(stored.record.noSell).toBe(true);
         expect(stored.record.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
 
@@ -532,7 +540,9 @@ describe('the stored record', () => {
 
         await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
 
-        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+        expect(stored.record.targets).toEqual({
+            '/items/holy_sword': { itemHrid: '/items/holy_sword', enhancementLevel: 0 },
+        });
         expect(stored.record.abilities['/abilities/fierce_aura']).toBeDefined();
     });
 
@@ -556,7 +566,9 @@ describe('the stored record and a store that cannot be read', () => {
         storageMock.unavailable = true;
         const gear = await loadSavingsRecord();
         expect(hasAbilityGoal('/abilities/fierce_aura')).toBe(true);
-        expect(gear).toEqual({ targets: { '/items/holy_sword': { enhancementLevel: 0 } } });
+        expect(gear).toEqual({
+            targets: { '/items/holy_sword': { itemHrid: '/items/holy_sword', enhancementLevel: 0 } },
+        });
     });
 
     test("but not another character's goals", async () => {
@@ -599,7 +611,9 @@ describe('the stored record and a store that cannot be read', () => {
             '/abilities/fierce_aura',
             '/abilities/toxic_pollen',
         ]);
-        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+        expect(stored.record.targets).toEqual({
+            '/items/holy_sword': { itemHrid: '/items/holy_sword', enhancementLevel: 0 },
+        });
     });
 
     test('after a readable load a removed goal stays removed', async () => {
@@ -667,5 +681,70 @@ describe('two switches close enough together to overlap', () => {
         expect(abilityGoals().map((goal) => goal.abilityHrid)).toEqual(['/abilities/fierce_aura']);
         expect(abilityGoalFor('/abilities/fierce_aura')).toMatchObject({ targetLevel: 55 });
         expect(hasAbilityGoal('/abilities/toxic_pollen')).toBe(false);
+    });
+});
+
+describe('a gear target is keyed by the item and the level together', () => {
+    test('a +0 keys as the bare hrid, so nothing written before this moves', () => {
+        expect(targetKey('/items/sword')).toBe('/items/sword');
+        expect(targetKey('/items/sword', 0)).toBe('/items/sword');
+    });
+
+    test('above +0 the level is part of the key', () => {
+        expect(targetKey('/items/sword', 5)).toBe('/items/sword::5');
+        expect(targetKey('/items/sword', 8)).toBe('/items/sword::8');
+    });
+});
+
+describe('folding an older list into the new key shape', () => {
+    test('a +5 filed under the bare hrid moves to the key that says so', () => {
+        const folded = migrateSavingsTargets({ '/items/sword': { enhancementLevel: 5 } });
+
+        expect(Object.keys(folded)).toEqual(['/items/sword::5']);
+        expect(folded['/items/sword::5']).toEqual({ itemHrid: '/items/sword', enhancementLevel: 5 });
+    });
+
+    test('everything on the entry comes with it', () => {
+        // A target that loses its mode is costed along a path its owner already
+        // ruled out, which is worse than losing the target
+        const folded = migrateSavingsTargets({
+            '/items/sword': { enhancementLevel: 5, noSell: true, craft: true, mode: 'ladder' },
+        });
+
+        expect(folded['/items/sword::5']).toMatchObject({ noSell: true, craft: true, mode: 'ladder' });
+    });
+
+    test('a +0 stays exactly where it was', () => {
+        const folded = migrateSavingsTargets({ '/items/boots': { enhancementLevel: 0 } });
+        expect(Object.keys(folded)).toEqual(['/items/boots']);
+    });
+
+    test('two levels of one item both survive, which is the whole point', () => {
+        const folded = migrateSavingsTargets({
+            '/items/sword': { enhancementLevel: 5 },
+            '/items/sword::8': { itemHrid: '/items/sword', enhancementLevel: 8 },
+        });
+
+        expect(Object.keys(folded).sort()).toEqual(['/items/sword::5', '/items/sword::8']);
+    });
+
+    test('where both shapes exist for one target the newer key wins', () => {
+        const folded = migrateSavingsTargets({
+            '/items/sword': { enhancementLevel: 5, mode: 'ladder' },
+            '/items/sword::5': { itemHrid: '/items/sword', enhancementLevel: 5 },
+        });
+
+        expect(Object.keys(folded)).toEqual(['/items/sword::5']);
+        expect(folded['/items/sword::5'].mode).toBeUndefined();
+    });
+
+    test('every entry comes out knowing its own item, key or no key', () => {
+        const folded = migrateSavingsTargets({ '/items/sword::5': { enhancementLevel: 5 } });
+        expect(folded['/items/sword::5'].itemHrid).toBe('/items/sword');
+    });
+
+    test('rubbish is skipped rather than kept', () => {
+        expect(migrateSavingsTargets({ '/items/sword': null, '': { enhancementLevel: 1 } })).toEqual({});
+        expect(migrateSavingsTargets(null)).toEqual({});
     });
 });

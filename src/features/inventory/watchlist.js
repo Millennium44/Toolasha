@@ -56,6 +56,8 @@ import {
     watchlistTotals,
     sortRows,
     listedCounts,
+    watchlistKey,
+    entryKey,
 } from '../../utils/watchlist.js';
 import { combatZones, zoneDrops, openableItems, openableDrops } from '../../utils/drop-sources.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -109,7 +111,9 @@ function mergeStates(stored, memory) {
         ...emptyState(),
         ...theirs,
         ...ours,
-        entries: mergeById((entry) => entry?.hrid)(theirs.entries, ours.entries),
+        // By identity rather than by hrid: the +0 and the +5 of one item are two
+        // rows, and folding them together would drop whichever was read second
+        entries: mergeById(entryKey)(theirs.entries, ours.entries),
         zones: { ...(theirs.zones || {}), ...(ours.zones || {}) },
         chests: { ...(theirs.chests || {}), ...(ours.chests || {}) },
     };
@@ -190,11 +194,20 @@ export function flushWatchlistWrites() {
  * Exported because it is what the inventory dot asks, and because "is this
  * tracked" is a reasonable thing for anything else to want to know.
  *
+ * Any level answers by default, which is what the dot wants: an inventory tile
+ * is an item, the dot is "you are tracking this thing", and a +0 stack going
+ * undotted because the row on the list is the +5 would read as the dot being
+ * broken. Ask about one level to get the narrower answer.
+ *
  * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel] - Only this enhancement, when given
  * @returns {boolean}
  */
-export function isWatched(itemHrid) {
-    return state.entries.some((entry) => entry.hrid === itemHrid);
+export function isWatched(itemHrid, enhancementLevel = null) {
+    if (enhancementLevel === null) return state.entries.some((entry) => entry.hrid === itemHrid);
+
+    const key = watchlistKey(itemHrid, enhancementLevel);
+    return state.entries.some((entry) => entryKey(entry) === key);
 }
 
 /** @returns {Array<Object>} The raw list */
@@ -208,20 +221,31 @@ export function watchlistEntries() {
  * By hand means no set owns it, so un-ticking every zone and chest leaves it
  * exactly where it is.
  *
+ * An enhancement level may be given, and when it is it is part of which row
+ * this is: the upgrade advisor's Watch button hands over "Cheese Sword +5", and
+ * a list that stored that as a Cheese Sword would quote the +0 price for a
+ * target that costs many times it.
+ *
  * @param {string} itemHrid - The item
  * @param {string} [name] - Its display name
+ * @param {number} [enhancementLevel] - Which enhancement of it
  */
-export function watchItem(itemHrid, name) {
-    state.entries = addToWatchlist(state.entries, [{ hrid: itemHrid, name: name || nameOf(itemHrid) }], null);
+export function watchItem(itemHrid, name, enhancementLevel = 0) {
+    const level = Number(enhancementLevel) || 0;
+    // The level is in the name because the name is the whole of what a row says
+    // it is about; two rows reading "Cheese Sword" would be unreadable
+    const label = name || (level > 0 ? `${nameOf(itemHrid)} +${level}` : nameOf(itemHrid));
+    state.entries = addToWatchlist(state.entries, [{ hrid: itemHrid, name: label, enhancementLevel: level }], null);
     persist();
 }
 
 /**
  * Take one item off, whichever set put it there.
  * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel] - Which enhancement of it
  */
-export function unwatchItem(itemHrid) {
-    state.entries = removeFromWatchlist(state.entries, itemHrid);
+export function unwatchItem(itemHrid, enhancementLevel = 0) {
+    state.entries = removeFromWatchlist(state.entries, itemHrid, enhancementLevel);
     persist();
 }
 
@@ -265,13 +289,20 @@ function nameOf(itemHrid) {
  * as zero held. A missing count is one held; an explicit `0` (removed from
  * this location) is skipped, as it is everywhere else this pattern lives.
  *
+ * Summed across levels only for a row that is not about one: a row tracking the
+ * +5 counts the +5s, because "how many have I got" about a +5 is not answered
+ * by a drawer full of +0s.
+ *
  * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel] - Which enhancement the row is about, if any
  * @returns {number}
  */
-function heldCount(itemHrid) {
+function heldCount(itemHrid, enhancementLevel = 0) {
+    const level = Number(enhancementLevel) || 0;
     let total = 0;
     for (const entry of dataManager.getInventory?.() || []) {
         if (entry?.itemHrid !== itemHrid || entry.count === 0) continue;
+        if (level > 0 && (Number(entry.enhancementLevel) || 0) !== level) continue;
         total += entry.count ?? 1;
     }
     return total;
@@ -299,9 +330,9 @@ export function watchlistRows() {
 
     const rows = valueWatchlist(state.entries, {
         quantityOf: heldCount,
-        pricesFor: (hrid) => getItemPrices(hrid),
+        pricesFor: (hrid, level) => getItemPrices(hrid, level),
         vendorOf: vendorPriceOf,
-        listedOf: (hrid) => listed[hrid],
+        listedOf: (hrid, level) => listed[watchlistKey(hrid, level)],
     });
     return sortRows(rows, state.sortBy, state.direction);
 }
@@ -750,7 +781,7 @@ class WatchlistPanel {
         remove.textContent = '✕';
         // Marked, because the header's close button is also an ✕ and "the first
         // button on the panel" is the wrong one
-        remove.dataset.removeItem = item.hrid;
+        remove.dataset.removeItem = entryKey(item);
         Object.assign(remove.style, {
             background: 'none',
             border: 'none',
@@ -760,7 +791,7 @@ class WatchlistPanel {
         });
         remove.title = 'Take this off the list';
         remove.addEventListener('click', () => {
-            unwatchItem(item.hrid);
+            unwatchItem(item.hrid, item.enhancementLevel || 0);
             inventoryBadgeManager.invalidateCache?.();
             this._render();
         });
@@ -1098,7 +1129,7 @@ marketAPI.on(() => {
 function watchlistVersion() {
     const entries = state.entries || [];
     if (!entries.length) return 'blank';
-    return `${entries.map((entry) => entry.hrid).join(',')}|${feed}`;
+    return `${entries.map(entryKey).join(',')}|${feed}`;
 }
 
 registerRow({

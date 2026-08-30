@@ -115,7 +115,11 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: (hrid) => game.prices[hrid] || null }));
+// Keyed `hrid` at +0 and `hrid:level` above it, as the real one is: a row that
+// carries an enhancement level has to be able to be priced at it
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrices: (hrid, level = 0) => game.prices[level > 0 ? `${hrid}:${level}` : hrid] || null,
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('./inventory-badge-manager.js', () => ({
     default: {
@@ -410,6 +414,38 @@ describe('the rows', () => {
         const row = watchlistRows()[0];
         expect(row.flag).toBe('no-market');
         expect(row.totalBid).toBe(250000);
+    });
+
+    test('a row watched at a level is priced, counted and named at that level', () => {
+        // The upgrade advisor's Watch button hands over "Cheese Sword +5". Put
+        // on the list as a plain Cheese Sword it would quote the +0 ask, which
+        // is a fraction of the price of the thing the row was about
+        game.prices['/items/cheese:5'] = { ask: 9000, bid: 8000 };
+        game.inventory = [
+            { itemHrid: '/items/cheese', count: 40 },
+            { itemHrid: '/items/cheese', count: 1, enhancementLevel: 5 },
+        ];
+
+        watchItem('/items/cheese', null, 5);
+        const [row] = watchlistRows();
+
+        expect(row.name).toBe('Cheese +5');
+        expect(row.ask).toBe(9000);
+        // The +0s in the bag are not copies of what this row is saving for
+        expect(row.quantity).toBe(1);
+    });
+
+    test('the +0 and the +5 of one item are two rows, and each can go on its own', () => {
+        game.prices['/items/cheese:5'] = { ask: 9000, bid: 8000 };
+        watchItem('/items/cheese');
+        watchItem('/items/cheese', null, 5);
+
+        expect(watchlistRows()).toHaveLength(2);
+
+        unwatchItem('/items/cheese', 5);
+        const left = watchlistRows();
+        expect(left).toHaveLength(1);
+        expect(left[0].ask).toBe(100);
     });
 
     test('removing a row takes it off the list', () => {

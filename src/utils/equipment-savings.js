@@ -61,6 +61,66 @@ import { createCuratedRecord, mergeMaps } from './persisted-record.js';
 const STORAGE_KEY = 'equipmentSavings';
 
 /**
+ * What tells one gear target from another.
+ *
+ * The list used to be keyed by item hrid alone, which made "save for the +5"
+ * and "save for the +8" of one sword the same entry: the second silently
+ * replaced the first, and the sword you were most of the way to affording
+ * stopped being on the list at all. They are two purchases at two prices, so
+ * they are two entries.
+ *
+ * A +0 keys as the bare hrid, deliberately: every entry written before this is
+ * either a +0 (already keyed that way) or carries its level in the entry, and
+ * suffixing the +0s too would have turned the common case into a migration for
+ * no gain. See `migrateSavingsTargets` for the other half.
+ *
+ * @param {string} itemHrid - The piece
+ * @param {number} [enhancementLevel] - Which enhancement of it
+ * @returns {string} The entry's key in the list
+ */
+export function targetKey(itemHrid, enhancementLevel = 0) {
+    const level = Number(enhancementLevel) || 0;
+    return level > 0 ? `${itemHrid}::${level}` : String(itemHrid);
+}
+
+/**
+ * Fold a stored list of targets into the (item, level) key shape.
+ *
+ * A list written before the key carried the level has its +5 filed under the
+ * bare hrid, with the 5 sitting inside the entry. That entry is moved to the
+ * key it should have had, keeping everything on it — `noSell`, `craft`, `mode`
+ * — because a target that loses its mode is costed along a path its owner
+ * already ruled out.
+ *
+ * Every entry comes out carrying its own `itemHrid`, so nothing downstream has
+ * to parse a key back into an item. An entry already under the new key is left
+ * alone, and where both shapes somehow exist for one target the one already
+ * under the right key wins: it is the one written by the newer build.
+ *
+ * @param {Object} targets - The list as stored
+ * @returns {Object} The list, re-keyed
+ */
+export function migrateSavingsTargets(targets) {
+    const source = targets && typeof targets === 'object' ? targets : {};
+    const out = {};
+
+    for (const [key, target] of Object.entries(source)) {
+        if (!key || !target || typeof target !== 'object') continue;
+
+        // The key is the authority on the item when it carries one, since that
+        // is what the entry was filed under
+        const itemHrid = String(target.itemHrid || key.split('::')[0]);
+        const level = Number(target.enhancementLevel) || 0;
+        const wanted = targetKey(itemHrid, level);
+
+        // Already correctly filed, or a newer entry is: never overwrite one
+        if (out[wanted] && key !== wanted) continue;
+        out[wanted] = { ...target, itemHrid, enhancementLevel: level };
+    }
+    return out;
+}
+
+/**
  * What one upgrade actually costs.
  *
  * @param {Object} input - What it needs
@@ -342,11 +402,21 @@ function mergeRecords(stored, memory) {
     const theirs = stored && typeof stored === 'object' ? stored : {};
     const ours = memory && typeof memory === 'object' ? memory : {};
     const maps = mergeMaps();
-    return {
+    const merged = {
         ...maps(theirs, ours),
         abilities: maps(theirs.abilities, ours.abilities),
         houses: maps(theirs.houses, ours.houses),
     };
+
+    // The gear targets are merged per target rather than taken wholesale from
+    // whichever side had one, and both sides are re-keyed first: a record
+    // written by an older build files a +5 under the bare hrid, and folding
+    // that in unchanged would put a second entry for the same target beside
+    // the migrated one — the very duplicate the key change exists to prevent
+    if (theirs.targets || ours.targets) {
+        merged.targets = maps(migrateSavingsTargets(theirs.targets), migrateSavingsTargets(ours.targets));
+    }
+    return merged;
 }
 
 /**

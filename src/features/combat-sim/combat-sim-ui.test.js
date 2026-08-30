@@ -100,11 +100,11 @@ vi.mock('../../core/storage.js', () => {
 // The two handoff targets are module-scope panels of their own; this file is
 // about what the sim panel hands them, not about their storage or their DOM
 vi.mock('../inventory/equipment-savings-row.js', () => ({
-    watchTarget: (itemHrid, enhancementLevel) => mocks.saved.push({ itemHrid, enhancementLevel }),
+    watchTarget: (itemHrid, enhancementLevel, quote) => mocks.saved.push({ itemHrid, enhancementLevel, quote }),
 }));
 
 vi.mock('../inventory/watchlist.js', () => ({
-    watchItem: (itemHrid) => mocks.watched.push({ itemHrid }),
+    watchItem: (itemHrid, name, enhancementLevel) => mocks.watched.push({ itemHrid, enhancementLevel }),
 }));
 
 // Ability goals live beside the gear targets in Equipment Savings; this file is
@@ -1674,8 +1674,57 @@ describe('upgrade row handoff', () => {
         container.querySelector('[data-buy-action="save"]').click();
         container.querySelector('[data-buy-action="watch"]').click();
 
-        expect(mocks.saved).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
-        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate' }]);
+        expect(mocks.saved).toMatchObject([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
+    });
+
+    test('the Watch button carries the enhancement level, as the Market button does', () => {
+        // "Cheese Sword +5" watched as a plain Cheese Sword lands on the list
+        // priced as a +0 — a fraction of what the row it came from was quoting
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/items/cheese_sword', upgradeLevel: 5, type: 'tier' })
+        );
+        wireUpgradeRowActions(container);
+
+        container.querySelector('[data-buy-action="watch"]').click();
+        container.querySelector('[data-buy-action="market"]').click();
+
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/cheese_sword', enhancementLevel: 5 }]);
+        // The two handoffs on one row must agree about which item this is
+        expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/cheese_sword', enhancementLevel: 5 }]);
+    });
+
+    test('Save for this hands over the price the row was quoting, and whose it is', () => {
+        // Without it, Equipment Savings re-derives the price with a different
+        // model and the two surfaces disagree about one target
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 44_000_000,
+            costDetail: { source: 'market' },
+            candidate: { description: 'Plate', upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="save"]').click();
+
+        expect(mocks.saved).toEqual([
+            {
+                itemHrid: '/items/plate',
+                enhancementLevel: 4,
+                quote: { cost: 44_000_000, costSource: 'market' },
+            },
+        ]);
+    });
+
+    test('a row that could not be priced saves as unpriced rather than as free', () => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(
+            candidate({ upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' })
+        );
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="save"]').click();
+
+        expect(mocks.saved[0].quote).toEqual({ cost: null, costSource: '' });
     });
 
     test('clicking a button does not also unfold the row it sits in', () => {

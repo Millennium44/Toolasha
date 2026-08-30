@@ -32,6 +32,10 @@ const game = vi.hoisted(() => ({
     // surviving a reload can look at what would actually be reloaded rather
     // than at the module's own memory of it
     writes: [],
+    // What is already in storage for this character, for a test about what a
+    // record written by an older build turns into when it is read back. Null —
+    // nothing stored — for every other test, which is what they assume.
+    stored: null,
     // The character's abilities, which is where an ability goal's progress
     // comes from
     abilities: [],
@@ -99,7 +103,8 @@ vi.mock('../../core/storage.js', () => ({
         getJSON: async () => null,
         setJSON: async () => {},
         get: async (_k, _s, fallback = null) => fallback,
-        tryGet: async () => ({ found: false, value: null }),
+        tryGet: async () =>
+            game.stored ? { found: true, value: structuredClone(game.stored) } : { found: false, value: null },
         set: async (key, value) => {
             game.writes.push({ key, value });
             return true;
@@ -153,6 +158,8 @@ vi.mock('../../utils/material-calculator.js', () => ({ calculateArtisanBonus: ()
 const {
     equipmentSavingsPanel,
     watchTarget,
+    unwatchTarget,
+    isTargeted,
     watchedTargets,
     everything,
     coinsHeld,
@@ -222,6 +229,7 @@ beforeEach(() => {
     game.artisan = 0;
     game.networthSeries = () => [];
     game.writes = [];
+    game.stored = null;
     // One learned ability at Lv40 with the experience of exactly that level, and
     // an experience table where every level is a round million
     game.abilities = [{ abilityHrid: '/abilities/fierce_aura', level: 40, experience: 40_000_000 }];
@@ -1268,7 +1276,7 @@ describe('which run the card is saving towards', () => {
     test('the direct run is what a fresh target is costed along', () => {
         watchTarget('/items/sinister_cape', 7);
 
-        expect(isLaddering('/items/sinister_cape')).toBe(false);
+        expect(isLaddering('/items/sinister_cape', 7)).toBe(false);
         expect(watchedTargets()[0].mode).toBe('direct');
         expect(watchedTargets()[0].cost).toBe(44_000_000);
     });
@@ -1277,7 +1285,7 @@ describe('which run the card is saving towards', () => {
         watchTarget('/items/sinister_cape', 7);
         const before = watchedTargets()[0];
 
-        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape', 7);
         const after = watchedTargets()[0];
 
         expect(after.mode).toBe('ladder');
@@ -1291,22 +1299,22 @@ describe('which run the card is saving towards', () => {
 
     test('and back again, leaving the direct run as the basis', () => {
         watchTarget('/items/sinister_cape', 7);
-        toggleLaddering('/items/sinister_cape');
-        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape', 7);
+        toggleLaddering('/items/sinister_cape', 7);
 
-        expect(isLaddering('/items/sinister_cape')).toBe(false);
+        expect(isLaddering('/items/sinister_cape', 7)).toBe(false);
         expect(watchedTargets()[0].cost).toBe(44_000_000);
     });
 
     test('the choice is written back with the watch entry, not held in the panel', async () => {
         watchTarget('/items/sinister_cape', 7);
         game.writes = [];
-        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape', 7);
         await flushSavingsWrites();
 
         const last = game.writes[game.writes.length - 1];
         expect(last.key).toContain('equipmentSavings');
-        expect(last.value.targets['/items/sinister_cape'].mode).toBe('ladder');
+        expect(last.value.targets['/items/sinister_cape::7'].mode).toBe('ladder');
     });
 
     test('the choice belongs to one target rather than to the whole list', () => {
@@ -1324,10 +1332,10 @@ describe('which run the card is saving towards', () => {
 
         watchTarget('/items/sinister_cape', 7);
         watchTarget('/items/sinister_hood', 7);
-        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape', 7);
 
-        expect(isLaddering('/items/sinister_cape')).toBe(true);
-        expect(isLaddering('/items/sinister_hood')).toBe(false);
+        expect(isLaddering('/items/sinister_cape', 7)).toBe(true);
+        expect(isLaddering('/items/sinister_hood', 7)).toBe(false);
     });
 
     test('the two rows swap places rather than the card losing one', () => {
@@ -1336,7 +1344,7 @@ describe('which run the card is saving towards', () => {
         expect(text()).toContain('Enhance +5 → +7');
         expect(text()).toContain('Ladder: enhance your +2 copy instead');
 
-        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape', 7);
         equipmentSavingsPanel.render();
 
         expect(text()).toContain('Ladder: enhance your +2 copy');
@@ -1371,7 +1379,7 @@ describe('which run the card is saving towards', () => {
 
     test('a ladder that disappears falls back to the direct run rather than to nothing', () => {
         watchTarget('/items/sinister_cape', 7);
-        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape', 7);
         // The spare gets sold
         game.inventory = game.inventory.filter((item) => (item.enhancementLevel || 0) !== 2);
         game.prices['/items/sinister_cape:0'] = null;
@@ -1379,7 +1387,7 @@ describe('which run the card is saving towards', () => {
         expect(watchedTargets()[0].mode).toBe('direct');
         expect(watchedTargets()[0].cost).toBe(44_000_000);
         // And the choice is remembered, so buying another spare puts it back
-        expect(isLaddering('/items/sinister_cape')).toBe(true);
+        expect(isLaddering('/items/sinister_cape', 7)).toBe(true);
     });
 });
 
@@ -1471,7 +1479,7 @@ describe('what a run costs, through the real Markov chain', () => {
         // way round costs more, because it starts a level lower
         expect(direct.ladder.cost).toBeGreaterThan(direct.cost);
 
-        toggleLaddering('/items/sinister_cape');
+        toggleLaddering('/items/sinister_cape', 7);
         const laddered = watchedTargets()[0];
         expect(Math.round(laddered.cost)).toBe(101_311_834);
         expect(Math.round(laddered.direct)).toBe(81_926_437);
@@ -2074,5 +2082,171 @@ describe('the Equipment Watch tile summarises its own inputs', () => {
         selectTarget('/items/rough_boots');
         tile().render(container);
         expect(container.textContent).toContain('Rough Boots');
+    });
+});
+
+describe('two levels of one piece are two targets', () => {
+    test('saving for the +8 does not replace the +5', () => {
+        // Keyed by item alone, the second Save for this silently took the place
+        // of the first: the sword somebody was most of the way to affording
+        // stopped being on the list at all
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        game.prices['/items/holy_sword:8'] = { ask: 500_000_000, bid: 450_000_000 };
+
+        watchTarget('/items/holy_sword', 5);
+        watchTarget('/items/holy_sword', 8);
+
+        const levels = watchedTargets().map((target) => target.enhancementLevel);
+        expect(levels.sort()).toEqual([5, 8]);
+    });
+
+    test('each is priced at its own level', () => {
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        game.prices['/items/holy_sword:8'] = { ask: 500_000_000, bid: 450_000_000 };
+
+        watchTarget('/items/holy_sword', 5);
+        watchTarget('/items/holy_sword', 8);
+
+        const byLevel = Object.fromEntries(watchedTargets().map((target) => [target.enhancementLevel, target.cost]));
+        // Each less the 40M the worn cheese sword trades in for
+        expect(byLevel[5]).toBe(160_000_000);
+        expect(byLevel[8]).toBe(460_000_000);
+    });
+
+    test('stopping one leaves the other', () => {
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        game.prices['/items/holy_sword:8'] = { ask: 500_000_000, bid: 450_000_000 };
+
+        watchTarget('/items/holy_sword', 5);
+        watchTarget('/items/holy_sword', 8);
+        unwatchTarget('/items/holy_sword', 5);
+
+        expect(isTargeted('/items/holy_sword', 5)).toBe(false);
+        expect(isTargeted('/items/holy_sword', 8)).toBe(true);
+        expect(watchedTargets()).toHaveLength(1);
+    });
+
+    test('the per-target switches belong to the level they were set on', () => {
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        game.prices['/items/holy_sword:8'] = { ask: 500_000_000, bid: 450_000_000 };
+
+        watchTarget('/items/holy_sword', 5);
+        watchTarget('/items/holy_sword', 8);
+        cycleTargetNoSell('/items/holy_sword', 8); // always sells
+
+        setNoSell(true);
+        const byLevel = Object.fromEntries(watchedTargets().map((target) => [target.enhancementLevel, target.noSell]));
+        expect(byLevel[5]).toBe(true);
+        expect(byLevel[8]).toBe(false);
+    });
+
+    test('what is written back carries both, under keys that tell them apart', async () => {
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        game.prices['/items/holy_sword:8'] = { ask: 500_000_000, bid: 450_000_000 };
+
+        watchTarget('/items/holy_sword', 5);
+        watchTarget('/items/holy_sword', 8);
+        await flushSavingsWrites();
+
+        const last = game.writes[game.writes.length - 1];
+        expect(Object.keys(last.value.targets).sort()).toEqual(['/items/holy_sword::5', '/items/holy_sword::8']);
+    });
+});
+
+describe('the price the advisor quoted is the price the card shows', () => {
+    test('a quoted cost is what the bar fills against', () => {
+        // The savings module and the upgrade advisor price a piece with
+        // different models. Two surfaces quoting two numbers for one target
+        // leaves the reader to work out which of them is lying.
+        watchTarget('/items/holy_sword', 0, { cost: 44_000_000, costSource: 'market' });
+
+        const [target] = watchedTargets();
+        expect(target.cost).toBe(44_000_000);
+        // What this module would have said on its own is kept beside it
+        expect(target.derivedCost).toBe(60_000_000);
+        expect(target.quotedFrom).toBe('market');
+    });
+
+    test('the card says whose number it is showing', () => {
+        watchTarget('/items/holy_sword', 0, { cost: 44_000_000, costSource: 'market' });
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Upgrade advisor (market)');
+        expect(text()).toContain('44,000,000');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('no quote leaves the module costing it as it always did', () => {
+        watchTarget('/items/holy_sword', 0);
+
+        const [target] = watchedTargets();
+        expect(target.cost).toBe(60_000_000);
+        expect(target.quotedCost).toBeNull();
+    });
+
+    test('a caller that could not price it saves an unpriced target, not a free one', () => {
+        watchTarget('/items/holy_sword', 0, { cost: null, costSource: 'market' });
+
+        const [target] = watchedTargets();
+        // Falls back to what this module can work out, rather than to zero
+        expect(target.cost).toBe(60_000_000);
+        expect(target.quotedCost).toBeNull();
+    });
+});
+
+describe('a list written before the key carried the level', () => {
+    /**
+     * Fire the event the module reloads on, and let the read settle.
+     * @returns {Promise<void>}
+     */
+    async function reloadCharacter() {
+        // The listeners are the module's own `reload`, so awaiting what they
+        // return is awaiting the read rather than guessing at how many ticks
+        // it takes
+        await Promise.all((game.gameListeners.character_initialized || []).map((handler) => handler({})));
+        await flushSavingsWrites();
+    }
+
+    test('a +5 filed under the bare hrid comes back as a +5 target', async () => {
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        // What an older build wrote: the level inside the entry, the key bare
+        game.stored = { targets: { '/items/holy_sword': { enhancementLevel: 5, mode: 'ladder' } } };
+
+        await reloadCharacter();
+
+        const [target] = watchedTargets();
+        expect(target.itemHrid).toBe('/items/holy_sword');
+        expect(target.enhancementLevel).toBe(5);
+        // Nothing on the entry is lost on the way through
+        expect(isLaddering('/items/holy_sword', 5)).toBe(true);
+    });
+
+    test('the migrated target can be joined by another level rather than replaced', async () => {
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        game.prices['/items/holy_sword:8'] = { ask: 500_000_000, bid: 450_000_000 };
+        game.stored = { targets: { '/items/holy_sword': { enhancementLevel: 5 } } };
+
+        await reloadCharacter();
+        watchTarget('/items/holy_sword', 8);
+
+        expect(
+            watchedTargets()
+                .map((target) => target.enhancementLevel)
+                .sort()
+        ).toEqual([5, 8]);
+    });
+
+    test('the pin follows the target it was pinned to', async () => {
+        game.prices['/items/holy_sword:5'] = { ask: 200_000_000, bid: 180_000_000 };
+        game.stored = {
+            targets: { '/items/holy_sword': { enhancementLevel: 5 } },
+            selected: '/items/holy_sword',
+        };
+
+        await reloadCharacter();
+        equipmentSavingsPanel.show();
+
+        expect(text()).toContain('Holy Sword');
+        expect(text()).not.toContain(FAILED);
     });
 });

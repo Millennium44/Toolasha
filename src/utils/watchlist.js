@@ -27,10 +27,49 @@
  * item that has no market at all: a bid of zero is the absence of a price, not a
  * value of nothing.
  *
+ * ## An enhancement level is part of which item this is
+ *
+ * A drop table is +0s and a row put on by hand from the upgrade advisor may not
+ * be: "Cheese Sword +5" is a different thing to buy, at a different price, from
+ * the +0 of the same name. So a row may carry an `enhancementLevel`, and that
+ * level is part of its identity — `watchlistKey` — rather than a label on it.
+ * Without that, tracking the +5 of something already on the list at +0 does
+ * nothing at all, and the row goes on quoting the +0 price for a target it is
+ * not about.
+ *
+ * A row with no level, which is every row a set ever added and every row written
+ * before this existed, keys as the bare hrid. That is what keeps the old stored
+ * shape, the set algebra and the inventory dot all working unchanged.
+ *
  * The model is NTally's, from MWI Combat Suite by Frotty (MIT) — see
  * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
  * Toolasha's own.
  */
+
+/**
+ * What tells one row from another.
+ *
+ * A +0 keys as the bare hrid, deliberately: every row that predates enhancement
+ * levels is a +0, and a scheme that suffixed them all would make each one a new
+ * row the next time anything compared keys.
+ *
+ * @param {string} hrid - The item
+ * @param {number} [enhancementLevel] - Which enhancement of it
+ * @returns {string} The row's identity
+ */
+export function watchlistKey(hrid, enhancementLevel = 0) {
+    const level = Number(enhancementLevel) || 0;
+    return level > 0 ? `${hrid}::${level}` : String(hrid);
+}
+
+/**
+ * One row's identity.
+ * @param {Object} entry - A row
+ * @returns {string} From `watchlistKey`
+ */
+export function entryKey(entry) {
+    return watchlistKey(entry?.hrid, entry?.enhancementLevel);
+}
 
 /**
  * Put items on the list under a given set.
@@ -40,18 +79,26 @@
  * home — which is the thing un-ticking relies on.
  *
  * @param {Array<{hrid: string, name: string, source: string|null}>} entries - The list
- * @param {Array<{hrid: string, name: string}>} items - What to add
+ * @param {Array<{hrid: string, name: string, enhancementLevel?: number}>} items - What to add
  * @param {string|null} source - The set adding them, or null when added by hand
  * @returns {Array<Object>} A new list
  */
 export function addToWatchlist(entries, items, source = null) {
-    const known = new Set((entries || []).map((entry) => entry.hrid));
+    const known = new Set((entries || []).map(entryKey));
     const added = [];
 
     for (const item of items || []) {
-        if (!item?.hrid || known.has(item.hrid)) continue;
-        known.add(item.hrid);
-        added.push({ hrid: item.hrid, name: item.name || item.hrid, source });
+        if (!item?.hrid) continue;
+        const key = entryKey(item);
+        if (known.has(key)) continue;
+        known.add(key);
+
+        const level = Number(item.enhancementLevel) || 0;
+        const row = { hrid: item.hrid, name: item.name || item.hrid, source };
+        // Only when there is one: a `enhancementLevel: 0` on every row would be
+        // a stored-shape change for every list that never asked for one
+        if (level > 0) row.enhancementLevel = level;
+        added.push(row);
     }
     return [...(entries || []), ...added];
 }
@@ -59,12 +106,17 @@ export function addToWatchlist(entries, items, source = null) {
 /**
  * Take one item off, whoever put it there.
  *
+ * The level is part of what is being removed: taking off the +5 must leave the
+ * +0 of the same item where it is, since they are two rows about two purchases.
+ *
  * @param {Array<Object>} entries - The list
  * @param {string} hrid - What to remove
+ * @param {number} [enhancementLevel] - Which enhancement of it
  * @returns {Array<Object>} A new list
  */
-export function removeFromWatchlist(entries, hrid) {
-    return (entries || []).filter((entry) => entry.hrid !== hrid);
+export function removeFromWatchlist(entries, hrid, enhancementLevel = 0) {
+    const key = watchlistKey(hrid, enhancementLevel);
+    return (entries || []).filter((entry) => entryKey(entry) !== key);
 }
 
 /**
@@ -122,15 +174,20 @@ export function vendorFloor(bid, vendor) {
  * Unclaimed items from a filled **buy** order count too: they are yours, bought
  * and paid for, and only a click away from the inventory.
  *
+ * Keyed by `watchlistKey`, so a listing of the +5 is counted against the +5 row
+ * rather than against the +0 of the same name — they are separate books on the
+ * market and separate rows here.
+ *
  * @param {Array<Object>} listings - The game's `myMarketListings`
- * @returns {Object<string, {listed: number, unclaimed: number}>} By item hrid
+ * @returns {Object<string, {listed: number, unclaimed: number}>} By `watchlistKey`
  */
 export function listedCounts(listings) {
     const counts = {};
-    const bump = (hrid, field, amount) => {
+    const bump = (hrid, level, field, amount) => {
         if (!hrid || !(amount > 0)) return;
-        counts[hrid] = counts[hrid] || { listed: 0, unclaimed: 0 };
-        counts[hrid][field] += amount;
+        const key = watchlistKey(hrid, level);
+        counts[key] = counts[key] || { listed: 0, unclaimed: 0 };
+        counts[key][field] += amount;
     };
 
     for (const listing of listings || []) {
@@ -140,8 +197,8 @@ export function listedCounts(listings) {
         const ended = listing?.status && listing.status !== '/market_listing_status/active';
         const remaining = ended ? 0 : Math.max(0, (listing?.orderQuantity || 0) - (listing?.filledQuantity || 0));
         // Only a sell order is holding items; a buy order's remainder is coin
-        if (listing?.isSell) bump(listing.itemHrid, 'listed', remaining);
-        bump(listing?.itemHrid, 'unclaimed', listing?.unclaimedItemCount || 0);
+        if (listing?.isSell) bump(listing.itemHrid, listing.enhancementLevel, 'listed', remaining);
+        bump(listing?.itemHrid, listing?.enhancementLevel, 'unclaimed', listing?.unclaimedItemCount || 0);
     }
     return counts;
 }
@@ -154,24 +211,27 @@ export function listedCounts(listings) {
  *
  * @param {Array<Object>} entries - The list
  * @param {Object} lookups - How to resolve a row
- * @param {Function} lookups.quantityOf - `(hrid) => number`
- * @param {Function} lookups.pricesFor - `(hrid) => {ask, bid}|null`
+ * @param {Function} lookups.quantityOf - `(hrid, enhancementLevel) => number`
+ * @param {Function} lookups.pricesFor - `(hrid, enhancementLevel) => {ask, bid}|null`
  * @param {Function} [lookups.vendorOf] - `(hrid) => number`
- * @param {Function} [lookups.listedOf] - `(hrid) => {listed, unclaimed}`
+ * @param {Function} [lookups.listedOf] - `(hrid, enhancementLevel) => {listed, unclaimed}`
  * @returns {Array<Object>} Rows with `held`, `listed`, `unclaimed`, `quantity`,
  *   `ask`, `bid`, `flag`, `totalAsk`, `totalBid`. `quantity` is everything you
  *   own of the item wherever it is sitting; `held` is only the bag.
  */
 export function valueWatchlist(entries, { quantityOf, pricesFor, vendorOf, listedOf }) {
     return (entries || []).map((entry) => {
-        const held = Number(quantityOf?.(entry.hrid)) || 0;
-        const market = listedOf?.(entry.hrid) || {};
+        // The level the row is about, which is what it must be counted and
+        // priced at — a +5 row quoting the +0 ask is quoting a different item
+        const level = Number(entry.enhancementLevel) || 0;
+        const held = Number(quantityOf?.(entry.hrid, level)) || 0;
+        const market = listedOf?.(entry.hrid, level) || {};
         const listed = Number(market.listed) || 0;
         const unclaimed = Number(market.unclaimed) || 0;
         // Everything you own of it, wherever it happens to be
         const quantity = held + listed + unclaimed;
 
-        const prices = pricesFor?.(entry.hrid) || {};
+        const prices = pricesFor?.(entry.hrid, level) || {};
         const ask = Number(prices.ask) || 0;
         const floor = vendorFloor(prices.bid, vendorOf?.(entry.hrid));
 

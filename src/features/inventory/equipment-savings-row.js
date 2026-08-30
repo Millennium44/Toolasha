@@ -109,6 +109,8 @@ import {
     addHouseGoal,
     removeHouseGoal,
     resetHouseGoals,
+    targetKey,
+    migrateSavingsTargets,
     MAX_HOUSE_ROOM_LEVEL,
 } from '../../utils/equipment-savings.js';
 
@@ -209,6 +211,16 @@ async function reload() {
             { targets: {}, noSell: false, marketValue: true, selected: null, locked: false },
             saved || {}
         );
+        // A list written before the key carried the enhancement level files a
+        // +5 under the bare hrid. Folded here, on the way in, so nothing below
+        // ever sees the old shape — and so the first write back is already in
+        // the new one
+        state.targets = migrateSavingsTargets(state.targets);
+        // The pin is a key into that list, so it moves with it
+        if (state.selected && !state.targets[state.selected]) {
+            const moved = Object.entries(state.targets).find(([, target]) => target.itemHrid === state.selected);
+            state.selected = moved ? moved[0] : null;
+        }
     } catch (error) {
         console.error('[EquipmentSavings] Reading the equipment savings list failed:', error);
     }
@@ -277,8 +289,9 @@ marketAPI.on(() => {
  */
 function listStamp() {
     const targets = Object.entries(state.targets).map(
-        ([itemHrid, target]) =>
-            `${itemHrid}:${target.enhancementLevel || 0}:${target.noSell ?? ''}:${target.craft ?? ''}:${target.mode ?? ''}`
+        ([key, target]) =>
+            `${key}:${target.enhancementLevel || 0}:${target.noSell ?? ''}:${target.craft ?? ''}:` +
+            `${target.mode ?? ''}:${target.quotedCost ?? ''}`
     );
     const abilities = abilityGoals().map((goal) => `${goal.abilityHrid}:${goal.targetLevel}:${goal.cost ?? ''}`);
     const houses = houseGoals().map((goal) => `${goal.houseRoomHrid}:${goal.targetLevel}:${goal.cost ?? ''}`);
@@ -307,24 +320,46 @@ function persist() {
 
 /**
  * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel] - Which enhancement of it
  * @returns {boolean} Whether it is being saved for
  */
-export function isTargeted(itemHrid) {
-    return Boolean(state.targets[itemHrid]);
+export function isTargeted(itemHrid, enhancementLevel = 0) {
+    return Boolean(state.targets[targetKey(itemHrid, enhancementLevel)]);
 }
 
 /**
  * Start saving for a piece.
  *
+ * The price may come with it. A caller that has already costed this exact
+ * purchase — the upgrade advisor, which quotes a figure on the row the button
+ * sits in — hands that figure over rather than leaving this module to re-derive
+ * it from a different model: two surfaces quoting two numbers for one target is
+ * the reader having to work out which of them is lying. It is stored as what it
+ * is, a quote from somewhere else with a name on it, and the panel says so.
+ *
  * @param {string} itemHrid - The item
  * @param {number} [enhancementLevel] - Which enhancement of it
+ * @param {Object} [quote] - What the caller costed it at
+ * @param {number|null} [quote.cost] - Coins, or null when the caller could not price it
+ * @param {string} [quote.costSource] - Short label for where that came from, e.g. `market`
  */
-export function watchTarget(itemHrid, enhancementLevel = 0) {
+export function watchTarget(itemHrid, enhancementLevel = 0, { cost = null, costSource = '' } = {}) {
     if (!itemHrid) return;
+    const level = Number(enhancementLevel) || 0;
     // `noSell` and `craft` start unset rather than false, so a target follows
     // the panel's switch until it is told otherwise — one of them differing is
     // the exception, not the rule
-    state.targets[itemHrid] = { enhancementLevel: Number(enhancementLevel) || 0 };
+    const target = { itemHrid, enhancementLevel: level };
+
+    // Explicitly, because `Number(null)` is 0 and an unpriced target recorded
+    // as costing nothing reports itself as already affordable
+    const quoted = cost === null || cost === undefined || cost === '' ? null : Number(cost);
+    if (Number.isFinite(quoted) && quoted >= 0) {
+        target.quotedCost = quoted;
+        if (costSource) target.quotedFrom = String(costSource);
+    }
+
+    state.targets[targetKey(itemHrid, level)] = target;
     persist();
 }
 
@@ -336,18 +371,20 @@ export function watchTarget(itemHrid, enhancementLevel = 0) {
  * with. Unset means "whatever the panel says", which is what most of them want.
  *
  * @param {string} itemHrid - The target
+ * @param {number} [enhancementLevel] - Which enhancement of it
  * @returns {boolean}
  */
-export function targetNoSell(itemHrid) {
-    return state.targets[itemHrid]?.noSell ?? state.noSell;
+export function targetNoSell(itemHrid, enhancementLevel = 0) {
+    return state.targets[targetKey(itemHrid, enhancementLevel)]?.noSell ?? state.noSell;
 }
 
 /**
  * Cycle one target between following the panel, selling, and not selling.
  * @param {string} itemHrid - The target
+ * @param {number} [enhancementLevel] - Which enhancement of it
  */
-export function cycleTargetNoSell(itemHrid) {
-    const target = state.targets[itemHrid];
+export function cycleTargetNoSell(itemHrid, enhancementLevel = 0) {
+    const target = state.targets[targetKey(itemHrid, enhancementLevel)];
     if (!target) return;
 
     // Follows → sells → keeps → follows
@@ -357,9 +394,13 @@ export function cycleTargetNoSell(itemHrid) {
     persist();
 }
 
-/** @param {string} itemHrid - Whether this target is being crafted rather than bought */
-export function isCrafting(itemHrid) {
-    return Boolean(state.targets[itemHrid]?.craft);
+/**
+ * @param {string} itemHrid - Whether this target is being crafted rather than bought
+ * @param {number} [enhancementLevel] - Which enhancement of it
+ * @returns {boolean}
+ */
+export function isCrafting(itemHrid, enhancementLevel = 0) {
+    return Boolean(state.targets[targetKey(itemHrid, enhancementLevel)]?.craft);
 }
 
 /**
@@ -373,18 +414,20 @@ export function isCrafting(itemHrid) {
  * another not.
  *
  * @param {string} itemHrid - The target
+ * @param {number} [enhancementLevel] - Which enhancement of it
  * @returns {boolean}
  */
-export function isLaddering(itemHrid) {
-    return state.targets[itemHrid]?.mode === 'ladder';
+export function isLaddering(itemHrid, enhancementLevel = 0) {
+    return state.targets[targetKey(itemHrid, enhancementLevel)]?.mode === 'ladder';
 }
 
 /**
  * Cost this target along the ladder instead of the direct run, or back again.
  * @param {string} itemHrid - The target
+ * @param {number} [enhancementLevel] - Which enhancement of it
  */
-export function toggleLaddering(itemHrid) {
-    const target = state.targets[itemHrid];
+export function toggleLaddering(itemHrid, enhancementLevel = 0) {
+    const target = state.targets[targetKey(itemHrid, enhancementLevel)];
     if (!target) return;
 
     if (target.mode === 'ladder') delete target.mode;
@@ -392,9 +435,12 @@ export function toggleLaddering(itemHrid) {
     persist();
 }
 
-/** @param {string} itemHrid - Craft it rather than buy it, or stop */
-export function toggleCrafting(itemHrid) {
-    const target = state.targets[itemHrid];
+/**
+ * @param {string} itemHrid - Craft it rather than buy it, or stop
+ * @param {number} [enhancementLevel] - Which enhancement of it
+ */
+export function toggleCrafting(itemHrid, enhancementLevel = 0) {
+    const target = state.targets[targetKey(itemHrid, enhancementLevel)];
     if (!target) return;
 
     if (target.craft) delete target.craft;
@@ -402,9 +448,12 @@ export function toggleCrafting(itemHrid) {
     persist();
 }
 
-/** @param {string} itemHrid - Stop saving for this */
-export function unwatchTarget(itemHrid) {
-    delete state.targets[itemHrid];
+/**
+ * @param {string} itemHrid - Stop saving for this
+ * @param {number} [enhancementLevel] - Which enhancement of it
+ */
+export function unwatchTarget(itemHrid, enhancementLevel = 0) {
+    delete state.targets[targetKey(itemHrid, enhancementLevel)];
     persist();
 }
 
@@ -475,10 +524,11 @@ export function setLocked(locked) {
  * one", and the thing somebody is actually saving for is often not the cheapest
  * — the eye is how you say so.
  *
- * @param {string|null} itemHrid - Which target
+ * @param {string|null} key - Which target, by `targetKey` — the item and its
+ *   level together, since the +5 and the +8 of one sword are two entries
  */
-export function selectTarget(itemHrid) {
-    state.selected = state.selected === itemHrid ? null : itemHrid;
+export function selectTarget(key) {
+    state.selected = state.selected === key ? null : key;
     persist();
 }
 
@@ -1306,7 +1356,7 @@ function costOf(itemHrid, enhancementLevel) {
     const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
     const worn = wornRivalOf(itemHrid);
     const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
-    const noSell = targetNoSell(itemHrid);
+    const noSell = targetNoSell(itemHrid, enhancementLevel);
 
     // Nobody is selling this one at this level — which is usually not a piece
     // you cannot have, but a piece you enhance to. Capes are the plain case:
@@ -1334,7 +1384,7 @@ function costOf(itemHrid, enhancementLevel) {
                 // there to climb — sell the spare and the card falls back to
                 // the direct run rather than to no figure, and buying another
                 // spare puts it back the way you left it
-                const laddering = Boolean(ladder) && isLaddering(itemHrid);
+                const laddering = Boolean(ladder) && isLaddering(itemHrid, enhancementLevel);
 
                 return {
                     cost: laddering ? ladder.cost : direct,
@@ -1354,7 +1404,7 @@ function costOf(itemHrid, enhancementLevel) {
         }
     }
 
-    if (!isCrafting(itemHrid)) {
+    if (!isCrafting(itemHrid, enhancementLevel)) {
         return {
             cost: upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell }),
             ask,
@@ -1489,7 +1539,8 @@ export function watchedTargets() {
     const coins = spendable();
     const perDay = incomePerDay();
 
-    const targets = Object.entries(state.targets).map(([itemHrid, target]) => {
+    const targets = Object.entries(state.targets).map(([key, target]) => {
+        const itemHrid = target.itemHrid || key;
         const enhancementLevel = target.enhancementLevel || 0;
         const {
             cost,
@@ -1506,9 +1557,19 @@ export function watchedTargets() {
 
         const worn = wornRivalOf(itemHrid);
         const wornBid = worn ? getItemPrices(worn.itemHrid, worn.enhancementLevel || 0)?.bid || 0 : 0;
-        const progress = savingsProgress(cost, coins);
+
+        // A figure the caller costed wins over one derived here. Not because it
+        // is the better number — it is a different model — but because it is
+        // the number the player was looking at when they pressed the button,
+        // and a savings row quoting a second one leaves them to work out which
+        // of the two surfaces is wrong. The derived figure is kept beside it,
+        // so the card can still say what the market alone would ask.
+        const quoted = Number.isFinite(target.quotedCost) ? target.quotedCost : null;
+        const settled = quoted ?? cost;
+        const progress = savingsProgress(settled, coins);
 
         return {
+            key,
             itemHrid,
             name: nameOf(itemHrid),
             enhancementLevel,
@@ -1522,10 +1583,15 @@ export function watchedTargets() {
             // Which of the two paths every figure below is counted along
             mode: mode || 'direct',
             recipe,
-            noSell: targetNoSell(itemHrid),
+            noSell: targetNoSell(itemHrid, enhancementLevel),
             ownNoSell: target.noSell !== undefined,
             worn: worn ? { ...worn, name: nameOf(worn.itemHrid), bid: wornBid } : null,
-            cost,
+            cost: settled,
+            // What this module would have said on its own, and who said
+            // otherwise — the card needs both to explain the figure it shows
+            derivedCost: cost,
+            quotedCost: quoted,
+            quotedFrom: quoted === null ? '' : target.quotedFrom || '',
             ...progress,
             seconds: timeToAffordSeconds(progress.needed, perDay),
         };
@@ -1978,7 +2044,7 @@ function progressBar(fraction) {
  * @returns {HTMLElement}
  */
 function targetCard(target) {
-    const watching = state.selected === target.itemHrid;
+    const watching = state.selected === targetKey(target.itemHrid, target.enhancementLevel);
 
     const card = document.createElement('div');
     Object.assign(card.style, {
@@ -2012,7 +2078,7 @@ function targetCard(target) {
     });
     eye.title = watching ? 'Shown at the top of the panel.' : 'Show this one at the top of the panel.';
     eye.addEventListener('click', () => {
-        selectTarget(target.itemHrid);
+        selectTarget(targetKey(target.itemHrid, target.enhancementLevel));
         equipmentSavingsPanel.render();
     });
 
@@ -2047,7 +2113,7 @@ function targetCard(target) {
     });
     remove.title = 'Stop saving for this.';
     remove.addEventListener('click', () => {
-        unwatchTarget(target.itemHrid);
+        unwatchTarget(target.itemHrid, target.enhancementLevel);
         equipmentSavingsPanel.render();
     });
 
@@ -2076,7 +2142,7 @@ function targetCard(target) {
         'Whether the piece this replaces is sold towards it.\n' +
         'Cycles: follows the panel switch, always sells, always keeps.';
     sell.addEventListener('click', () => {
-        cycleTargetNoSell(target.itemHrid);
+        cycleTargetNoSell(target.itemHrid, target.enhancementLevel);
         equipmentSavingsPanel.render();
     });
     perTarget.appendChild(sell);
@@ -2098,7 +2164,7 @@ function targetCard(target) {
             'Price the materials rather than the finished piece.\n' +
             'For an upgrade whose base you already hold, that is only the ingredients.';
         craft.addEventListener('click', () => {
-            toggleCrafting(target.itemHrid);
+            toggleCrafting(target.itemHrid, target.enhancementLevel);
             equipmentSavingsPanel.render();
         });
         perTarget.appendChild(craft);
@@ -2148,6 +2214,24 @@ function targetCard(target) {
                 target.affordable ? ROW_COLORS.good : ROW_COLORS.bad
             )
         );
+    }
+
+    // The figure came from the sim rather than from here, so the card says so
+    // rather than quietly presenting somebody else's number as its own — and
+    // says what this module would have made it, since the two differing is
+    // information rather than an error
+    if (target.quotedCost !== null && target.quotedCost !== undefined) {
+        const from = target.quotedFrom ? `Upgrade advisor (${target.quotedFrom}):` : 'Upgrade advisor:';
+        card.appendChild(priceLine(from, formatWithSeparator(Math.round(target.quotedCost)), ROW_COLORS.gold));
+        if (target.derivedCost !== null && Math.round(target.derivedCost) !== Math.round(target.quotedCost)) {
+            card.appendChild(
+                priceLine(
+                    'Priced here at:',
+                    formatWithSeparator(Math.round(target.derivedCost)),
+                    'rgba(232, 236, 245, 0.55)'
+                )
+            );
+        }
     }
 
     const bar = document.createElement('div');
@@ -2414,7 +2498,7 @@ function ladderButton(target) {
         'Direct takes the best copy you own, risking the one you are wearing.\n' +
         'Ladder takes a second copy up instead and leaves your kit alone.';
     button.addEventListener('click', () => {
-        toggleLaddering(target.itemHrid);
+        toggleLaddering(target.itemHrid, target.enhancementLevel);
         equipmentSavingsPanel.render();
     });
     return button;
@@ -3322,7 +3406,7 @@ export const equipmentSavingsPanel = createPanel({
         // only ability goals on it would otherwise have no headline at all.
         const headlines = [...plan.targets, ...plan.abilities, ...plan.houses];
         const watched =
-            headlines.find((target) => target.itemHrid === state.selected) ||
+            headlines.find((target) => target.key === state.selected) ||
             headlines
                 .filter((target) => target.cost !== null && !target.affordable)
                 .sort((a, b) => a.needed - b.needed)[0] ||
@@ -3537,7 +3621,7 @@ function injectSaveButton(actionMenu) {
     button.classList.add(MENU_BUTTON_CLASS);
 
     const label = () => {
-        button.textContent = isTargeted(hrid) ? 'Stop saving' : 'Save for';
+        button.textContent = isTargeted(hrid, level) ? 'Stop saving' : 'Save for';
     };
     label();
 
@@ -3545,7 +3629,7 @@ function injectSaveButton(actionMenu) {
         event.preventDefault();
         event.stopPropagation();
 
-        if (isTargeted(hrid)) unwatchTarget(hrid);
+        if (isTargeted(hrid, level)) unwatchTarget(hrid, level);
         else watchTarget(hrid, level);
 
         label();
@@ -3651,7 +3735,7 @@ registerRow({
         // because that is the next thing that happens. The pin matters: the
         // thing somebody is saving for is often not the cheapest, and a tile
         // that always shows the cheapest cannot be told otherwise.
-        const pinned = entries.find((target) => target.itemHrid === state.selected && target.cost !== null);
+        const pinned = entries.find((target) => target.key === state.selected && target.cost !== null);
         const next =
             pinned ||
             entries
