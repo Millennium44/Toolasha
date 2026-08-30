@@ -37,6 +37,7 @@ import { describe, test, expect, vi } from 'vitest';
 import { mergeForKey } from './sync-merge-registry.js';
 
 await import('./chest-tally.js');
+await import('./watchlist.js');
 await import('../features/market/trade-history.js');
 await import('../features/market/trade-ledger-store.js');
 await import('../features/market/estimated-listing-age.js');
@@ -184,6 +185,12 @@ const corpus = [
     { store: 'settings', key: 'treasureTally', label: 'Treasure tally' },
     { store: 'settings', key: `treasureTally_${CHAR}`, label: 'Treasure tally' },
     { store: 'settings', key: 'treasureTallySettings', label: null },
+
+    // utils/watchlist.js — character-scoped, and the panel's own geometry key
+    // (`watchlistPanel`) is the lookalike the base matcher must not eat
+    { store: 'settings', key: 'watchlist', label: 'Watchlist' },
+    { store: 'settings', key: `watchlist_${CHAR}`, label: 'Watchlist' },
+    { store: 'settings', key: 'watchlistPanel', label: null },
 
     // actions/loot-log-history.js — chunked, plus its legacy pre-split key
     { store: 'lootLogHistory', key: `lootLogRec_${CHAR}_2026-01`, label: 'LootLogHistory records' },

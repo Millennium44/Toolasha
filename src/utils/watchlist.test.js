@@ -8,6 +8,7 @@ import {
     listedCounts,
     watchlistTotals,
     sortRows,
+    mergeWatchlists,
 } from './watchlist.js';
 
 const item = (hrid, name) => ({ hrid, name: name || hrid });
@@ -362,5 +363,74 @@ describe('an enhancement level is part of which row this is', () => {
 
         expect(counts['/items/sword'].listed).toBe(2);
         expect(counts['/items/sword::5'].listed).toBe(1);
+    });
+});
+
+describe('merging two devices watchlists', () => {
+    const row = (hrid, extra = {}) => ({ hrid, name: hrid.split('/').pop(), source: null, ...extra });
+
+    test('the union keeps rows ticked on either device', () => {
+        const merged = mergeWatchlists(
+            { entries: [row('/items/cheese')] },
+            { entries: [row('/items/milk', { source: 'zone:cow' })] }
+        );
+
+        expect(merged.entries.map((entry) => entry.hrid)).toEqual(['/items/cheese', '/items/milk']);
+    });
+
+    test('the +0 and the +5 of one item stay two rows', () => {
+        const merged = mergeWatchlists(
+            { entries: [row('/items/cheese_sword')] },
+            { entries: [row('/items/cheese_sword', { enhancementLevel: 5 })] }
+        );
+
+        expect(merged.entries).toHaveLength(2);
+        expect(merged.entries[1].enhancementLevel).toBe(5);
+    });
+
+    test('the same entry key resolves to the incoming row', () => {
+        const local = { entries: [row('/items/cheese', { source: 'zone:a' })] };
+        const incoming = { entries: [row('/items/cheese', { source: 'zone:b' })] };
+
+        expect(mergeWatchlists(local, incoming).entries).toEqual([row('/items/cheese', { source: 'zone:b' })]);
+        expect(mergeWatchlists(incoming, local).entries).toEqual([row('/items/cheese', { source: 'zone:a' })]);
+    });
+
+    test('the ticked set maps are unioned and the sort order is a setting', () => {
+        const merged = mergeWatchlists(
+            { zones: { cow: true }, chests: { blue: true }, sortBy: 'name', direction: 'asc' },
+            { zones: { planet: true }, chests: {}, sortBy: 'value', direction: 'desc' }
+        );
+
+        expect(merged.zones).toEqual({ cow: true, planet: true });
+        expect(merged.chests).toEqual({ blue: true });
+        expect(merged.sortBy).toBe('value');
+        expect(merged.direction).toBe('desc');
+    });
+
+    test('a legacy row with no enhancementLevel keys as the bare hrid', () => {
+        // Every row a set ever added, and every row written before levels
+        // existed, has no level on it at all
+        const legacy = { entries: [{ hrid: '/items/cheese', name: 'Cheese', source: 'zone:cow' }] };
+        const modern = { entries: [row('/items/cheese', { enhancementLevel: 0 })] };
+
+        expect(mergeWatchlists(legacy, modern).entries).toHaveLength(1);
+        expect(mergeWatchlists(modern, legacy).entries).toHaveLength(1);
+    });
+
+    test('an absent or malformed side merges to the side that exists', () => {
+        expect(mergeWatchlists(null, { entries: [row('/items/cheese')] }).entries).toHaveLength(1);
+        expect(mergeWatchlists({ entries: [row('/items/cheese')] }, null).entries).toHaveLength(1);
+        expect(mergeWatchlists(undefined, undefined)).toEqual({ entries: [], zones: {}, chests: {} });
+        // A row with no hrid cannot be identified and is not carried
+        expect(mergeWatchlists({ entries: [{ name: 'nothing' }] }, {}).entries).toEqual([]);
+    });
+
+    test('a row un-ticked on one device comes back — no tombstones, documented', () => {
+        const removed = { entries: [] };
+        const stillHas = { entries: [row('/items/cheese')] };
+
+        expect(mergeWatchlists(removed, stillHas).entries).toHaveLength(1);
+        expect(mergeWatchlists(stillHas, removed).entries).toHaveLength(1);
     });
 });

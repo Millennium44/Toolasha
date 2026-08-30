@@ -38,7 +38,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
-import { createCuratedRecord, mergeById } from '../../utils/persisted-record.js';
+import { createCuratedRecord } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -58,6 +58,8 @@ import {
     listedCounts,
     watchlistKey,
     entryKey,
+    mergeWatchlists,
+    WATCHLIST_KEY,
 } from '../../utils/watchlist.js';
 import { combatZones, zoneDrops, openableItems, openableDrops } from '../../utils/drop-sources.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -66,7 +68,6 @@ import domObserver from '../../core/dom-observer.js';
 
 const PANEL_ID = 'toolasha-watchlist-panel';
 const GEOMETRY_KEY = 'watchlistPanel';
-const STORAGE_KEY = 'watchlist';
 const DEFAULT_PANEL = { width: 560, height: 640 };
 const REFRESH_MS = 5000;
 const DOT_CLASS = 'toolasha-watchlist-dot';
@@ -105,18 +106,12 @@ const emptyState = () => ({ entries: [], zones: {}, chests: {}, sortBy: 'value',
  * @returns {Object} The merged state
  */
 function mergeStates(stored, memory) {
-    const theirs = stored && typeof stored === 'object' ? stored : {};
-    const ours = memory && typeof memory === 'object' ? memory : {};
-    return {
-        ...emptyState(),
-        ...theirs,
-        ...ours,
-        // By identity rather than by hrid: the +0 and the +5 of one item are two
-        // rows, and folding them together would drop whichever was read second
-        entries: mergeById(entryKey)(theirs.entries, ours.entries),
-        zones: { ...(theirs.zones || {}), ...(ours.zones || {}) },
-        chests: { ...(theirs.chests || {}), ...(ours.chests || {}) },
-    };
+    // The same fold a cross-device sync pull performs (`utils/watchlist.js`
+    // registers it), over `emptyState()` so a partial stored shape still comes
+    // back with a sort order on it. Two tabs on one machine and two devices are
+    // the same problem at different speeds, and one fold is what keeps them
+    // from drifting apart.
+    return { ...emptyState(), ...mergeWatchlists(stored, memory) };
 }
 
 /**
@@ -129,7 +124,7 @@ function mergeStates(stored, memory) {
  * over a store that could not be read first.
  */
 const record = createCuratedRecord({
-    base: STORAGE_KEY,
+    base: WATCHLIST_KEY,
     store: 'settings',
     empty: emptyState,
     merge: mergeStates,

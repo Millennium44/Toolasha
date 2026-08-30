@@ -46,6 +46,18 @@
  * Toolasha's own.
  */
 
+import { registerSyncMerge } from './sync-merge-registry.js';
+
+/**
+ * The unscoped key the list lives under; the real key carries the character id.
+ *
+ * Here rather than in the panel because the sync-merge registration below needs
+ * it, and this module is the one the `ui` bundle can reach without dragging the
+ * panel — and its DOM, its observers and its module-scope storage read — along
+ * with it (`scripts/check-bundle-sharing.mjs` is what enforces that).
+ */
+export const WATCHLIST_KEY = 'watchlist';
+
 /**
  * What tells one row from another.
  *
@@ -70,6 +82,79 @@ export function watchlistKey(hrid, enhancementLevel = 0) {
 export function entryKey(entry) {
     return watchlistKey(entry?.hrid, entry?.enhancementLevel);
 }
+
+/**
+ * Two devices' watchlists as one.
+ *
+ * The list is a collection built a tick at a time — an item added on the phone
+ * and a zone's drop table ticked on the desktop are two halves of one list, and
+ * a whole-key sync write keeps whichever half the payload happened to carry. So
+ * the union, keyed by {@link entryKey} rather than by hrid: the +0 and the +5 of
+ * one item are two rows about two different purchases, and folding them
+ * together would drop whichever was read second. That identity was re-keyed
+ * when enhancement levels arrived, and a row with no level keys as the bare
+ * hrid — which is every row a set ever added and every row written before that,
+ * so a merge across an old device and a new one lines them up unchanged.
+ *
+ * The ticked-set maps (`zones`, `chests`) union by set key, and the display
+ * preferences (`sortBy`, `direction`) are a setting rather than a collection:
+ * one side has to win and the incoming copy does, on the registry's
+ * `(local, incoming)` convention.
+ *
+ * **An un-tick can come back.** The list keeps no tombstones — a row carries a
+ * hrid, a name and the set that put it there, and nothing about when it arrived
+ * or left — so "removed on this device" and "never seen on that one" are the
+ * same absence, and the union keeps the row. Tombstones are what would settle
+ * it (`inventory/custom-tabs/custom-tabs-data.js` has the pattern), and they
+ * are not cheap here: they would need a stamp on every add and remove path,
+ * including `removeSource`'s re-homing, for a mistake that costs one click to
+ * undo. Losing a whole afternoon of ticking to a pull does not.
+ *
+ * @param {Object|*} local - This device's stored list
+ * @param {Object|*} incoming - The downloaded list
+ * @returns {Object} The union
+ */
+export function mergeWatchlists(local, incoming) {
+    const theirs = local && typeof local === 'object' ? local : {};
+    const ours = incoming && typeof incoming === 'object' ? incoming : {};
+
+    const entries = [];
+    const seen = new Map();
+    for (const entry of [
+        ...(Array.isArray(theirs.entries) ? theirs.entries : []),
+        ...(Array.isArray(ours.entries) ? ours.entries : []),
+    ]) {
+        if (!entry?.hrid) continue;
+        const key = entryKey(entry);
+        const at = seen.get(key);
+        if (at !== undefined) entries[at] = entry;
+        else {
+            seen.set(key, entries.length);
+            entries.push(entry);
+        }
+    }
+
+    return {
+        ...theirs,
+        ...ours,
+        entries,
+        zones: { ...(theirs.zones || {}), ...(ours.zones || {}) },
+        chests: { ...(theirs.chests || {}), ...(ours.chests || {}) },
+    };
+}
+
+/*
+ * Registered so a cross-device sync PULL combines the list instead of
+ * overwriting it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: 'settings',
+    // `watchlist` and `watchlist_<charId>`. The panel's geometry lives under
+    // `watchlistPanel`, which carries no underscore and so is not matched.
+    base: WATCHLIST_KEY,
+    merge: mergeWatchlists,
+    label: 'Watchlist',
+});
 
 /**
  * Put items on the list under a given set.
