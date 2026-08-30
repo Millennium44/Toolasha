@@ -52,7 +52,7 @@ import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
-import { boardHeadHTML, boardRowHTML, boardTabsHTML, rankRows } from '../../utils/damage-board.js';
+import { boardHeadHTML, boardRowHTML, boardTabsHTML, rankRows, escapeText } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
 
 /** Class every part of this panel carries, so teardown is one query */
@@ -609,10 +609,16 @@ class GuildTrialScoreboard {
         const named = breakdown?.countedNames || [];
         if (!named.length) return '';
 
+        // Today `countedNames` only ever holds the viewer's own character, but
+        // it is still player-controlled text off the wire — the same reason
+        // every other name this file interpolates (`boardRowHTML`,
+        // `boardHeadHTML`) goes through `escapeText` first rather than trusting
+        // that today's one caller stays its only one.
+        const escaped = named.map((name) => escapeText(name));
         return (
             ` Each row is attributed off the ticks the server groups by actor;` +
-            ` ${named.slice(0, 2).join(' and ')}${named.length > 2 ? ` and ${named.length - 2} more` : ''}` +
-            ` ${named.length === 1 ? 'carries' : 'carry'} own attack counters that confirm it directly.`
+            ` ${escaped.slice(0, 2).join(' and ')}${escaped.length > 2 ? ` and ${escaped.length - 2} more` : ''}` +
+            ` ${escaped.length === 1 ? 'carries' : 'carry'} own attack counters that confirm it directly.`
         );
     }
 

@@ -472,6 +472,32 @@ describe('the panel', () => {
         expect(text()).not.toContain('partial');
     });
 
+    test('a counted name with markup in it is escaped, not injected as an element', () => {
+        // `countedNames` only ever holds the viewer's own character today, but
+        // it is player-controlled text off the wire like any other name in this
+        // panel — an in-game name can legally contain '<', '>' and '&', and
+        // `_ownRowNote` interpolates it straight into the panel's innerHTML.
+        const hostileName = '<img src=x onerror="window.__pwned = true">';
+        game.breakdown = breakdown({
+            source: 'spectated',
+            seconds: 60,
+            countedNames: [hostileName],
+            players: [{ index: '19', name: hostileName, damage: 600_000, deaths: 0, measured: true }],
+        });
+        guildTrialScoreboard.open();
+
+        const panel = document.querySelector(`.${PANEL_CLASS}`);
+        // No <img> (or any other markup the name supplied) actually landed in
+        // the DOM — an unescaped interpolation would have created one, and its
+        // onerror would have run as soon as the (invalid, src=x) image failed
+        // to load.
+        expect(panel.querySelector('img')).toBeNull();
+        expect(window.__pwned).toBeUndefined();
+        // The escaped text is still legible in the note, just inert
+        expect(panel.innerHTML).toContain('&lt;img src=x onerror=');
+        expect(text()).toContain('carries own attack counters');
+    });
+
     test('a placeholder name is flagged as one', () => {
         game.breakdown = breakdown({
             source: 'spectated',
