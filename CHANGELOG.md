@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Blaze verified: a cast proc, not an on-hit one
+
+Chasing the suspected auto-attack blaze gap against the real upstream simulator source showed there is no gap — blaze, bloom, and ripple roll once per ability cast in both engines, and every other per-hit effect asymmetry between the auto and ability paths is structural or deliberately upstream-matching (full census in the commit). The finding is pinned with tests and documented at the auto-attack path so nobody re-suspects it without a recorded fight as evidence.
+
 ### The guild audit's three flagged edges, closed
 
 The Missing Mats marketplace poll no longer builds tabs from the departed character's list when a switch lands inside its two-second window; the trial scoreboard escapes counted names like every other name it draws; and a member's stale name-keyed skill capture is pruned after an in-game rename (their stable character id proves the old entry is theirs).
