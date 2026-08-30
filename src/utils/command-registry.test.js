@@ -130,3 +130,38 @@ describe('registeredCommands', () => {
         expect(names()).toEqual(['Overlay']);
     });
 });
+
+describe('kind', () => {
+    test('a command that says nothing is a panel, which is what every old registrant meant', () => {
+        registerCommand({ name: 'Overlay', hint: '', run: () => {} });
+        expect(registeredCommands()[0].kind).toBe('panel');
+    });
+
+    test('a verb says so, and the palette can see it', () => {
+        registerCommand({ name: 'Recompute lab sims', hint: '', kind: 'verb', run: () => 'nothing stale' });
+        expect(registeredCommands()[0].kind).toBe('verb');
+    });
+
+    test('an unrecognised kind falls back to panel rather than being trusted', () => {
+        // A typo must not quietly opt a command into being awaited and toasted
+        registerCommand({ name: 'Overlay', hint: '', kind: 'action', run: () => {} });
+        expect(registeredCommands()[0].kind).toBe('panel');
+    });
+
+    test('re-registering can change a command from a panel into a verb', () => {
+        registerCommand({ name: 'Snapshot briefing now', hint: '', run: () => {} });
+        registerCommand({ name: 'Snapshot briefing now', hint: '', kind: 'verb', run: () => 'snapshot written' });
+
+        const found = registeredCommands();
+        expect(found).toHaveLength(1);
+        expect(found[0].kind).toBe('verb');
+    });
+
+    test('a verb with nothing to do is a result string, not a `when` that hides it', () => {
+        // The design note: a verb that vanishes while idle is unlearnable, and
+        // its absence is indistinguishable from the feature being switched off
+        registerCommand({ name: 'Recompute lab sims', hint: '', kind: 'verb', run: () => 'nothing stale' });
+        expect(names()).toContain('Recompute lab sims');
+        expect(registeredCommands()[0].run()).toBe('nothing stale');
+    });
+});

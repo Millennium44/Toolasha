@@ -61,6 +61,9 @@ const PALETTE_ID = 'toolasha-command-palette';
 /** More than fits on screen anyway, and the cap is what keeps typing responsive */
 const MAX_RESULTS = 60;
 
+/** A failed verb gets one line in a toast, not a stack trace — the console has that */
+const MAX_REASON_CHARS = 120;
+
 /** How long to keep looking for the settings panel after asking the game for it */
 const SETTINGS_WAIT_MS = 3000;
 const SETTINGS_POLL_MS = 60;
@@ -173,6 +176,46 @@ export function isPaletteHotkey(event) {
     if (!event || event.altKey || event.shiftKey) return false;
     if (!event.ctrlKey && !event.metaKey) return false;
     return (event.key || '').toLowerCase() === 'k';
+}
+
+/**
+ * What a verb's toast should read, given whatever its `run()` resolved to.
+ *
+ * A verb is asked for a short phrase and the phrase is prefixed with the
+ * command's own name, so the toast reads "Recompute lab sims: 3 stale rooms
+ * queued" — the answer alone is ambiguous once two verbs are in play and the
+ * toast can outlive the keystroke that caused it.
+ *
+ * A verb that returns nothing is not treated as a failure. It has done its job
+ * and merely declined to describe it, which is a smaller sin than the palette
+ * inventing a result; "done" is the honest floor.
+ *
+ * @param {string} label - The command's name, as listed
+ * @param {*} result - Whatever `run()` resolved to
+ * @returns {string} A single line, ready to toast
+ */
+export function verbResult(label, result) {
+    const said = typeof result === 'string' ? result.trim() : '';
+    return said ? `${label}: ${said}` : `${label}: done`;
+}
+
+/**
+ * One line describing why something threw.
+ *
+ * A toast is two or three lines of room and a stack trace is not what is wanted
+ * there — the console already has the whole error, logged beside this. What the
+ * player needs is enough to tell "the feature is off" from "the network went
+ * away", so: the message, first line only, trimmed to a length that will not
+ * push the dismiss button off the edge.
+ *
+ * @param {*} error - Whatever was thrown or rejected with
+ * @returns {string} A short reason, never empty
+ */
+export function oneLineReason(error) {
+    const raw = error?.message ?? (typeof error === 'string' ? error : '');
+    const first = String(raw).split('\n')[0].trim();
+    if (!first) return 'no reason given';
+    return first.length > MAX_REASON_CHARS ? `${first.slice(0, MAX_REASON_CHARS - 1)}…` : first;
 }
 
 /* ---------------------------------------------------------------------- *
@@ -586,8 +629,12 @@ class CommandPalette {
     _buildCommands() {
         const commands = [];
 
-        for (const panel of registeredCommands()) {
-            commands.push(this._command('Panel', panel.name, panel.hint, panel.run));
+        // Verbs sit in their own group rather than under "Panel", which would be
+        // a lie in the one place the palette is telling you what a keystroke is
+        // about to do
+        for (const entry of registeredCommands()) {
+            const group = entry.kind === 'verb' ? 'Action' : 'Panel';
+            commands.push(this._command(group, entry.name, entry.hint, entry.run, '', entry.kind));
         }
 
         for (const row of registeredRows()) {
@@ -616,10 +663,11 @@ class CommandPalette {
      * @param {string} hint - The dim text on the right
      * @param {Function} run - What selecting it does
      * @param {string} [extra] - Further text the query may match
+     * @param {'panel'|'verb'} [kind='panel'] - Whether picking it is awaited and reported on
      * @returns {Object} A command
      */
-    _command(group, label, hint, run, extra = '') {
-        return { group, label, hint, run, search: `${label} ${group} ${extra}`.toLowerCase() };
+    _command(group, label, hint, run, extra = '', kind = 'panel') {
+        return { group, label, hint, run, kind, search: `${label} ${group} ${extra}`.toLowerCase() };
     }
 
     /**
@@ -771,18 +819,38 @@ class CommandPalette {
 
     /**
      * @param {number} index - Which result to run
+     * @returns {Promise<void>} Settles once a verb has reported; immediately for a panel
      */
-    _run(index) {
+    async _run(index) {
         const command = this.results[index];
         if (!command) return;
 
         // Closed first: most of these open a panel, and a palette still sitting
-        // over the panel it just summoned is one more keystroke to dismiss
+        // over the panel it just summoned is one more keystroke to dismiss. A
+        // verb closes first too — it is not going to draw anything to look at,
+        // and leaving the palette up while it works would only invite a second
+        // press of the same key
         this.close();
+
+        if (command.kind !== 'verb') {
+            try {
+                command.run();
+            } catch (error) {
+                console.error(`[CommandPalette] "${command.label}" failed:`, error);
+            }
+            return;
+        }
+
+        // A verb has nothing on screen to stand for it, so the toast is not a
+        // nicety — it is the entire result of the keystroke. Both branches
+        // always say something: a verb that quietly did nothing and a verb that
+        // threw look identical from the player's chair, and that was the bug
         try {
-            command.run();
+            const result = await command.run();
+            showToast(verbResult(command.label, result));
         } catch (error) {
             console.error(`[CommandPalette] "${command.label}" failed:`, error);
+            showToast(`${command.label} failed: ${oneLineReason(error)}`, { kind: 'error' });
         }
     }
 

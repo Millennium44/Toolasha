@@ -31,9 +31,12 @@ vi.mock('../../core/settings-schema.js', () => ({
 vi.mock('../../utils/panel-z-index.js', () => ({ PANEL_Z_CAP: 1199 }));
 
 /** What the palette said when a command had nowhere to land */
-const toasts = vi.hoisted(() => ({ said: [] }));
+const toasts = vi.hoisted(() => ({ said: [], kinds: [] }));
 vi.mock('../../utils/toast.js', () => ({
-    showToast: (message) => toasts.said.push(message),
+    showToast: (message, options) => {
+        toasts.kinds.push(options?.kind || 'info');
+        return toasts.said.push(message);
+    },
 }));
 
 const rows = vi.hoisted(() => ({ current: [] }));
@@ -64,6 +67,8 @@ const {
     filterCommands,
     isTypingTarget,
     isPaletteHotkey,
+    verbResult,
+    oneLineReason,
     revealSetting,
     openGuildTrials,
     openHealthReport,
@@ -179,6 +184,7 @@ beforeEach(() => {
     registerCommand({ name: 'Overlay', hint: 'The tile overlay', run: () => overlay.toggle() });
     rows.current = [];
     toasts.said = [];
+    toasts.kinds = [];
     overlay.toggle.mockClear();
     overlay.listLayouts.mockClear();
     overlay.listLayouts.mockResolvedValue([]);
@@ -707,5 +713,177 @@ describe('the Guild Trials entry, on a page with both tabs', () => {
 
         expect(await openGuildTrials()).toBe(true);
         expect(clicks).toEqual(['guild', 'trials']);
+    });
+});
+
+/**
+ * A verb is the half of the registry that has no panel to stand for it, so the
+ * toast is not decoration — it is the entire visible result of the keystroke.
+ * What these pin is the difference the convention exists to make: that a verb
+ * which failed and a verb which quietly did nothing no longer look the same.
+ */
+describe('running a verb', () => {
+    /**
+     * Open the palette, pick the one command whose label matches, and wait for
+     * it to have reported.
+     * @param {string} label - The verb's name
+     * @returns {Promise<void>}
+     */
+    async function pick(label) {
+        palette.initialize();
+        palette.open();
+        type(label);
+        expect(drawnLabels()[0]).toBe(label);
+        await palette._run(0);
+    }
+
+    test('the result string is toasted, under the name of what produced it', async () => {
+        registerCommand({
+            name: 'Recompute lab sims',
+            hint: 'Re-run the stale rooms',
+            kind: 'verb',
+            run: () => '3 stale rooms queued',
+        });
+
+        await pick('Recompute lab sims');
+        expect(toasts.said).toEqual(['Recompute lab sims: 3 stale rooms queued']);
+        expect(toasts.kinds).toEqual(['info']);
+    });
+
+    test('an async verb is awaited rather than left running', async () => {
+        let settled = false;
+        registerCommand({
+            name: 'Snapshot briefing now',
+            hint: '',
+            kind: 'verb',
+            run: async () => {
+                await Promise.resolve();
+                settled = true;
+                return 'snapshot written';
+            },
+        });
+
+        await pick('Snapshot briefing now');
+        expect(settled).toBe(true);
+        expect(toasts.said).toEqual(['Snapshot briefing now: snapshot written']);
+    });
+
+    test('a verb that throws says so on screen, not only in the console', async () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+        registerCommand({
+            name: 'Export trial JSON',
+            hint: '',
+            kind: 'verb',
+            run: () => {
+                throw new Error('the store would not open');
+            },
+        });
+
+        await pick('Export trial JSON');
+        expect(toasts.said).toEqual(['Export trial JSON failed: the store would not open']);
+        expect(toasts.kinds).toEqual(['error']);
+        expect(logged).toHaveBeenCalled();
+        logged.mockRestore();
+    });
+
+    test('a rejected promise is the same failure as a thrown one', async () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+        registerCommand({
+            name: 'Refresh watchlist prices',
+            hint: '',
+            kind: 'verb',
+            run: async () => {
+                throw new Error('the price pool did not answer');
+            },
+        });
+
+        await pick('Refresh watchlist prices');
+        expect(toasts.kinds).toEqual(['error']);
+        expect(toasts.said[0]).toBe('Refresh watchlist prices failed: the price pool did not answer');
+        logged.mockRestore();
+    });
+
+    test('a verb with nothing to do is still listed, and still reports', async () => {
+        // The whole point of a string rather than a boolean: a command you can
+        // only find on the days it would have worked is one you cannot learn
+        registerCommand({ name: 'Recompute lab sims', hint: '', kind: 'verb', run: () => 'nothing stale' });
+
+        palette.initialize();
+        palette.open();
+        expect(drawnLabels()).toContain('Recompute lab sims');
+
+        await palette._run(drawnLabels().indexOf('Recompute lab sims'));
+        expect(toasts.said).toEqual(['Recompute lab sims: nothing stale']);
+    });
+
+    test('the palette is closed before the verb is awaited', async () => {
+        let openWhileRunning = null;
+        registerCommand({
+            name: 'Start trial capture',
+            hint: '',
+            kind: 'verb',
+            run: async () => {
+                openWhileRunning = palette.isOpen;
+                return 'capture started';
+            },
+        });
+
+        await pick('Start trial capture');
+        expect(openWhileRunning).toBe(false);
+    });
+
+    test('a panel keeps the old behaviour — not awaited, and no toast', async () => {
+        registerCommand({ name: 'Overlay', hint: '', run: () => overlay.toggle() });
+
+        await pick('Overlay');
+        expect(overlay.toggle).toHaveBeenCalled();
+        expect(toasts.said).toEqual([]);
+    });
+
+    test('a verb reads as an Action, not as a Panel', () => {
+        registerCommand({ name: 'Snapshot briefing now', hint: '', kind: 'verb', run: () => 'snapshot written' });
+
+        palette.initialize();
+        palette.open();
+        type('snapshot briefing');
+        const row = document.querySelector('[data-command-label="Snapshot briefing now"]');
+        expect(row.textContent).toContain('Action');
+    });
+});
+
+describe('verbResult', () => {
+    test('the name is prefixed so a toast still makes sense a moment later', () => {
+        expect(verbResult('Recompute lab sims', '3 stale rooms queued')).toBe(
+            'Recompute lab sims: 3 stale rooms queued'
+        );
+    });
+
+    test('a verb that returns nothing is done, not failed', () => {
+        expect(verbResult('Snapshot briefing now', undefined)).toBe('Snapshot briefing now: done');
+        expect(verbResult('Snapshot briefing now', '   ')).toBe('Snapshot briefing now: done');
+        expect(verbResult('Snapshot briefing now', 7)).toBe('Snapshot briefing now: done');
+    });
+});
+
+describe('oneLineReason', () => {
+    test('the message, and only its first line', () => {
+        expect(oneLineReason(new Error('the store would not open\n    at foo (bar.js:1)'))).toBe(
+            'the store would not open'
+        );
+    });
+
+    test('a thrown string is a reason too', () => {
+        expect(oneLineReason('no guild selected')).toBe('no guild selected');
+    });
+
+    test('something thrown with nothing to say still says something', () => {
+        expect(oneLineReason(undefined)).toBe('no reason given');
+        expect(oneLineReason(new Error(''))).toBe('no reason given');
+    });
+
+    test('a long reason is cut rather than allowed to push the toast apart', () => {
+        const reason = oneLineReason(new Error('x'.repeat(400)));
+        expect(reason.length).toBeLessThanOrEqual(120);
+        expect(reason.endsWith('…')).toBe(true);
     });
 });
