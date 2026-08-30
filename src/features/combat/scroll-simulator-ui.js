@@ -363,6 +363,9 @@ function injectButton(navButtons) {
 
 // ─── Public API ─────────────────────────────────────────────────
 
+/** The unregister function `onSettingChange` handed back, undone in `disable()`. */
+let unregisterSettingChange = null;
+
 function initialize() {
     domObserver.onClass('ScrollSimulatorUI', 'LoadoutsPanel_buttonsContainer', (node) => {
         const panel = node.closest('[class*="LoadoutsPanel_selectedLoadout"]') || node.parentElement;
@@ -370,7 +373,7 @@ function initialize() {
         if (navButtons) injectButton(navButtons);
     });
 
-    config.onSettingChange('simulateScrollEffects', (enabled) => {
+    unregisterSettingChange = config.onSettingChange('simulateScrollEffects', (enabled) => {
         if (!enabled) {
             document.getElementById(BUTTON_ID)?.remove();
             popup.close();
@@ -386,6 +389,10 @@ function openDefaultsPopup() {
 }
 
 function disable() {
+    if (unregisterSettingChange) {
+        unregisterSettingChange();
+        unregisterSettingChange = null;
+    }
     document.getElementById(BUTTON_ID)?.remove();
     popup.close();
 }
