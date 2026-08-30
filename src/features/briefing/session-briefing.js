@@ -176,7 +176,7 @@ function readCommunityBuffs() {
  *
  * @returns {number|null} Beaten listings, or null when the watcher has not run
  */
-function undercutCount() {
+export function undercutCount() {
     const states = marketUndercutAlerts?.listingStates;
     if (!states || typeof states.values !== 'function') return null;
     if (typeof states.size === 'number' && states.size === 0) return null;
@@ -307,30 +307,62 @@ export function collectFacts(now = Date.now()) {
             // yet; the line leaves the figure out instead of claiming none
             undercut: attempt('the undercut listings', () => undercutCount()) ?? null,
         },
-        enhancement: attempt('the enhancement session', () => {
-            const session = enhancementTracker.getCurrentSession?.();
-            if (!session) return null;
-            // The tracker only closes a session when a DIFFERENT enhancement
-            // starts — simply stopping leaves it "current" for ever, and the
-            // briefing was still announcing a run from weeks ago. An attempt
-            // lands every few seconds while enhancing actually runs, so a
-            // last-attempt stamp older than an hour is a stopped run, not news.
-            const lastTouch = session.lastUpdateTime || session.startTime || 0;
-            if (session.state !== 'tracking' || now - lastTouch > ENHANCEMENT_STALE_MS) return null;
-            return {
-                itemName: session.itemName,
-                currentLevel: session.currentLevel,
-                targetLevel: session.targetLevel,
-                protectionsUsed: session.protectionCount || 0,
-            };
-        }),
+        enhancement: attempt('the enhancement session', () =>
+            enhancementFact(enhancementTracker.getCurrentSession?.(), now)
+        ),
         guild: attempt('the guild trial signup', () => readGuildTrial(characterId)),
-        labyrinth: attempt('the labyrinth entries', () => forecastLabyrinthEntries({ characterInfo, now })),
+        labyrinth: attempt('the labyrinth entries', () =>
+            labyrinthFact(forecastLabyrinthEntries({ characterInfo, now }))
+        ),
         idle: attempt('the other characters', () =>
             newlyIdleCharacters(queueSnapshot.getOtherCharacterSnapshots?.() || [], now, new Map())
         ),
         notices: attempt('the notice log', () => unreadNoticeCount()) || 0,
     };
+}
+
+/**
+ * An enhancement session as the briefing wants it, or nothing.
+ *
+ * The tracker only closes a session when a DIFFERENT enhancement starts —
+ * simply stopping leaves it "current" for ever, and the briefing was still
+ * announcing a run from weeks ago. An attempt lands every few seconds while
+ * enhancing actually runs, so a last-attempt stamp older than an hour is a
+ * stopped run, not news.
+ *
+ * Exported because the account snapshot writer needs the same judgement about
+ * the departing character, and two copies of an hour would drift.
+ *
+ * @param {Object|null} session - `enhancementTracker.getCurrentSession()`
+ * @param {number} now - Epoch ms
+ * @returns {Object|null} The fact, or null when there is no live run
+ */
+export function enhancementFact(session, now) {
+    if (!session) return null;
+    const lastTouch = session.lastUpdateTime || session.startTime || 0;
+    if (session.state !== 'tracking' || now - lastTouch > ENHANCEMENT_STALE_MS) return null;
+    return {
+        itemName: session.itemName,
+        currentLevel: session.currentLevel,
+        targetLevel: session.targetLevel,
+        protectionsUsed: session.protectionCount || 0,
+    };
+}
+
+/**
+ * The labyrinth forecast as the briefing wants it.
+ *
+ * The forecast's own `available` is a boolean — "is the next entry due" — and
+ * the line wants the number of banked entries, which the forecast calls
+ * `entries`. Handed the boolean, the line printed "true available" and "true —
+ * capped", and did so for every character with a cooldown that had elapsed.
+ *
+ * @param {Object|null} forecast - `forecastLabyrinthEntries()`
+ * @returns {Object|null} `{ok, available, isFull}`, or null
+ */
+export function labyrinthFact(forecast) {
+    if (!forecast?.ok) return null;
+    return { ok: true, available: forecast.entries, isFull: Boolean(forecast.isFull) };
 }
 
 /**
@@ -343,7 +375,7 @@ export function collectFacts(now = Date.now()) {
  * @param {string|null} characterId - Who to ask about
  * @returns {{signedUp: boolean, trialName: string|null}|null} Null when it cannot be said
  */
-function readGuildTrial(characterId) {
+export function readGuildTrial(characterId) {
     const tracker = guildXpTracker();
     if (!tracker || !characterId) return null;
 

@@ -16,6 +16,7 @@
  */
 
 import { accountPanel, registerAccountRow } from './account-panel.js';
+import { initializeBriefingSnapshots } from '../briefing/briefing-snapshot.js';
 import { clearAccountCache, rememberCurrentCharacter } from './account-data.js';
 
 export { accountPanel };
@@ -27,6 +28,13 @@ export default {
         // Names are the one thing no store keeps against an id, so each login
         // records its own — that is what lets the other characters be named
         await rememberCurrentCharacter();
+
+        // The recorder lives with the reader. Its listener is registered once
+        // and never removed — feature-registry disables every feature during
+        // `character_switching`, so a listener taken down on disable would be
+        // gone before the switch it exists for (`queue-snapshot.js` says the
+        // same thing at more length).
+        initializeBriefingSnapshots();
 
         // Features re-initialize on a character switch, and the cache is keyed
         // to nothing: what it holds is the previous character's idea of who is

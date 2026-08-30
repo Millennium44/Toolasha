@@ -129,6 +129,7 @@ const {
     briefingPanel,
     collectFacts,
     maybeShowBriefing,
+    labyrinthFact,
     _resetBriefingState,
     OPENERS,
     default: feature,
@@ -244,10 +245,25 @@ describe('collectFacts', () => {
     });
 });
 
+describe('labyrinthFact', () => {
+    test('the line is given the entry COUNT, not the forecast’s "is one due" flag', () => {
+        // The forecast's own `available` is a boolean. Passed straight through,
+        // the line printed "true available" — and `true > 0`, so it printed it
+        // whenever a cooldown had elapsed rather than when entries were banked.
+        const forecast = { ok: true, entries: 3, isFull: false, available: true, msUntilNext: -5 };
+        expect(labyrinthFact(forecast)).toEqual({ ok: true, available: 3, isFull: false });
+    });
+
+    test('a forecast that could not be made says nothing', () => {
+        expect(labyrinthFact({ ok: false, reason: 'incomplete labyrinth info' })).toBeNull();
+        expect(labyrinthFact(null)).toBeNull();
+    });
+});
+
 describe('the card', () => {
     test('draws only the lines with something to say, and reports no failure', () => {
         game.queue = { queued: 0, seconds: 0 };
-        game.labyrinth = { ok: true, available: 3, isFull: false };
+        game.labyrinth = { ok: true, entries: 3, isFull: false };
 
         briefingPanel.show({ remember: false });
 
@@ -288,7 +304,7 @@ describe('the card', () => {
             lastUpdateTime: Date.now(),
         };
         game.guildMeta = { week: 'w', signupWeekStartAt: 'w', signedUpSkillingTrialHrid: '/trial/looms' };
-        game.labyrinth = { ok: true, available: 2, isFull: false };
+        game.labyrinth = { ok: true, entries: 2, isFull: false };
         game.snapshots = [
             { characterId: 'alt', characterName: 'Alt', timestamp: 1, totalQueueSeconds: 0, actions: [] },
         ];
@@ -310,7 +326,7 @@ describe('the card', () => {
 describe('the links', () => {
     test('a line with somewhere to go navigates there when clicked', () => {
         addNav('navigationBar.labyrinth');
-        game.labyrinth = { ok: true, available: 3, isFull: false };
+        game.labyrinth = { ok: true, entries: 3, isFull: false };
 
         briefingPanel.show({ remember: false });
         const row = lineRows().find((entry) => entry.dataset.briefingKey === 'labyrinth');
@@ -376,7 +392,7 @@ describe('the links', () => {
     });
 
     test('a missing nav button is survived rather than thrown over', () => {
-        game.labyrinth = { ok: true, available: 3, isFull: false };
+        game.labyrinth = { ok: true, entries: 3, isFull: false };
         briefingPanel.show({ remember: false });
         expect(() => lineRows()[0].click()).not.toThrow();
     });
