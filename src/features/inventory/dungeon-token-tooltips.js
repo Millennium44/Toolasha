@@ -101,11 +101,6 @@ class DungeonTokenTooltips {
             return;
         }
 
-        if (tooltipElement.dataset.dungeonProcessed) {
-            return;
-        }
-        tooltipElement.dataset.dungeonProcessed = 'true';
-
         const isCollectionTooltip = info.isCollectionTooltip;
         const isItemTooltip = info.isItemTooltip;
 
@@ -123,6 +118,23 @@ class DungeonTokenTooltips {
         } else {
             itemName = info.itemName;
         }
+
+        // Guard against duplicate processing, keyed on the item name (mirrors
+        // tooltip-prices.js and tooltip-consumables.js). MUI reuses one popper DOM
+        // element across sequential hovers, only swapping the content inside it, so a
+        // guard keyed only on the element — as this used to be — never re-fires for a
+        // later item shown in the same reused element: whatever was injected for the
+        // first item hovered stayed on screen, mislabeled, under every item after it.
+        if (tooltipElement.dataset.dungeonProcessedItem === itemName) {
+            return;
+        }
+
+        // Item changed (or first visit) — remove any previously injected table/value
+        // so stale data from the previous item doesn't bleed through.
+        if (tooltipElement.dataset.dungeonProcessedItem) {
+            tooltipElement.querySelector('.dungeon-token-shop-injected')?.remove();
+        }
+        tooltipElement.dataset.dungeonProcessedItem = itemName;
 
         const itemHrid = this.extractItemHridFromName(itemName);
         if (!itemHrid) {

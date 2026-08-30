@@ -94,7 +94,7 @@ describe('token values through the tooltip observer', () => {
         observerState.handler(el);
         await Promise.resolve();
         expect(el.querySelector('.dungeon-token-shop-injected')).not.toBeNull();
-        expect(el.dataset.dungeonProcessed).toBe('true');
+        expect(el.dataset.dungeonProcessedItem).toBe('Cowbell');
     });
 
     test('a cowbell collection tooltip gets its value line in the collection content', async () => {
@@ -109,7 +109,7 @@ describe('token values through the tooltip observer', () => {
         observerState.handler(el);
         await Promise.resolve();
         expect(el.querySelector('.dungeon-token-shop-injected')).toBeNull();
-        expect(el.dataset.dungeonProcessed).toBe('true');
+        expect(el.dataset.dungeonProcessedItem).toBe('Log');
     });
 
     test('a popper that is not a tooltip is not touched', async () => {
@@ -119,11 +119,46 @@ describe('token values through the tooltip observer', () => {
         document.body.appendChild(el);
         observerState.handler(el);
         await Promise.resolve();
-        expect(el.dataset.dungeonProcessed).toBeUndefined();
+        expect(el.dataset.dungeonProcessedItem).toBeUndefined();
     });
 
     test('cleanup unsubscribes', () => {
         feature.cleanup();
         expect(tooltipObserver.subscribers.has('DungeonTokenTooltips')).toBe(false);
+    });
+
+    // tooltip-observer.js redelivers a popper as freshly "opened" once it has been seen to
+    // leave and return to the document (its `open`/`delivered` bookkeeping is cleared on a
+    // genuine disconnect — see tooltip-observer.test.js's "notifies subscribers with 'closed'"
+    // cases). That is exactly what happens when the game closes one item's tooltip and reopens
+    // a new one for the next item hovered, reusing the same popper element instead of building
+    // a new one — the fix in commit 6dc52988 ("clear stale tooltip injections when item
+    // changes") exists in tooltip-prices.js for this precise reason, keying its "already
+    // processed" guard on the item name so a hover of a different item is reprocessed and
+    // stale content cleared. This module's guard was `dataset.dungeonProcessed === 'true'`
+    // with no item identity in it at all, so once any item had been processed on a given
+    // popper element, every later item reusing that element was silently ignored — whatever
+    // was injected for the first item stayed on screen under the new item's name.
+    test('a reused tooltip element is reprocessed when the game swaps in a different item', async () => {
+        const el = itemTooltip('Cowbell');
+        observerState.handler(el);
+        await Promise.resolve();
+        expect(el.querySelector('.dungeon-token-shop-injected')).not.toBeNull();
+
+        // The tooltip closes (removed from the document) and tooltip-observer's removal
+        // watcher settles it — flushing its MutationObserver microtask, per
+        // tooltip-observer.test.js — before the game reuses the same element for the next item.
+        el.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const nameEl = el.querySelector('.ItemTooltipText_name__2JAHA span');
+        nameEl.textContent = 'Log';
+        document.body.appendChild(el);
+        observerState.handler(el);
+        await Promise.resolve();
+
+        // The stale Cowbell value line must not still be showing under the Log tooltip
+        expect(el.querySelector('.dungeon-token-shop-injected')).toBeNull();
     });
 });
