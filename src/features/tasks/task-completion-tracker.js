@@ -304,6 +304,16 @@ class TaskCompletionTracker {
         this._loaded = false;
         /** The write in flight, if any */
         this._pending = null;
+        /**
+         * Bumped by `forget()` on every character switch. `load()` crosses an
+         * IndexedDB read, and a switch landing mid-read must not let the stale
+         * continuation overwrite `entries`/`recordedIds` with the departing
+         * character's rows once someone new is current — without this, a
+         * completion recorded for the arriving character while that read was
+         * still in flight would end up saved under the arriving character's
+         * key alongside the departing character's entire history.
+         */
+        this._generation = 0;
 
         this._store = createChunkedHistory({
             storeName: STORE_NAME,
@@ -393,8 +403,14 @@ class TaskCompletionTracker {
         const charId = this._charId();
         if (!charId) return [];
 
+        const generation = this._generation;
+
         try {
             const stored = await this._store.load(charId);
+            // A switch landed while the read was in flight: these rows are the
+            // departing character's, and `forget()` has already reset the
+            // fields this would otherwise refill for whoever is current now
+            if (this._generation !== generation) return [];
             this.entries = pruneEntries(stored, Date.now());
             this.recordedIds = new Set(this.entries.map((entry) => entry.questId));
             this._loaded = true;
@@ -405,7 +421,7 @@ class TaskCompletionTracker {
             console.error('[TaskCompletionTracker] Reading the completions failed:', error);
         }
 
-        return [...this.entries];
+        return this._generation === generation ? [...this.entries] : [];
     }
 
     /**
@@ -416,6 +432,7 @@ class TaskCompletionTracker {
      * arriving character be recorded with the departing one's rewards.
      */
     forget() {
+        this._generation += 1;
         this.live.clear();
         this.entries = [];
         this.recordedIds = new Set();
@@ -574,6 +591,8 @@ class TaskCompletionTracker {
         // memory for as long as the tab lives
         if (storage.isQuotaExceeded?.()) return;
 
+        const generation = this._generation;
+
         try {
             // A save hands the store the whole history, and the store deletes
             // every record the handed list does not mention. Writing before the
@@ -583,6 +602,17 @@ class TaskCompletionTracker {
             if (!this._loaded) {
                 const pending = this.entries;
                 await this.load();
+                // A switch landed while this read was in flight. `this.entries`
+                // is now whoever is current's, not this call's own character's
+                // — grafting `pending` onto it would hand the arriving
+                // character a completion that is not theirs, and the save below
+                // would write the mix back under *this* call's `charId`, which
+                // is the departing character's key gaining an entry that
+                // belongs to whoever arrived. Dropping the pending completion
+                // here is the same trade the other recorders make on this race
+                // (see production-income-recorder.js): a corrupted history is
+                // worse than one entry recorded a moment late by the next claim.
+                if (this._generation !== generation) return;
                 for (const entry of pending) {
                     if (this.recordedIds.has(entry.questId)) continue;
                     this.entries.push(entry);
@@ -590,6 +620,7 @@ class TaskCompletionTracker {
                 }
             }
 
+            if (this._generation !== generation) return;
             this.entries = pruneEntries(this.entries, Date.now());
             this.recordedIds = new Set(this.entries.map((entry) => entry.questId));
             await this._store.save(charId, this.entries);

@@ -419,6 +419,121 @@ describe('where the completions are kept', () => {
         expect(kept).toHaveLength(2);
         expect(kept[0].completedAt).toBeLessThan(kept[1].completedAt);
     });
+
+    describe('a character switch racing a slow read', () => {
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        test('a stale load for the departing character does not overwrite the arriving character in memory', async () => {
+            let resolveCow1;
+            const pendingCow1 = new Promise((resolve) => {
+                resolveCow1 = resolve;
+            });
+            const realLoad = tracker._store.load.bind(tracker._store);
+            vi.spyOn(tracker._store, 'load').mockImplementation((charId) =>
+                charId === 'cow1' ? pendingCow1 : realLoad(charId)
+            );
+
+            // cow1's read is started and hangs — this is the await `load()` is
+            // sitting behind when the character switches.
+            const staleLoad = tracker.load();
+
+            // character_switching: the departing character's state is dropped.
+            tracker.forget();
+
+            // cow2 logs in and claims a task before cow1's stale read lands.
+            game.charId = 'cow2';
+            tracker.ingest([claimed({ id: 42 })]);
+            await tracker.flush();
+            expect(tracker.entries.map((completion) => completion.questId)).toEqual([42]);
+
+            // cow1's read finally resolves, carrying cow1's own history.
+            resolveCow1([{ questId: 1, completedAt: Date.now() - HOUR, tokens: 4, coins: 100 }]);
+            await staleLoad;
+
+            // The stale resume must not have clobbered what is now in memory
+            // for cow2 with cow1's completions.
+            expect(tracker.entries.map((completion) => completion.questId)).toEqual([42]);
+        });
+
+        test('a stale load for the departing character does not get saved under the arriving character key', async () => {
+            let resolveCow1;
+            const pendingCow1 = new Promise((resolve) => {
+                resolveCow1 = resolve;
+            });
+            const realLoad = tracker._store.load.bind(tracker._store);
+            vi.spyOn(tracker._store, 'load').mockImplementation((charId) =>
+                charId === 'cow1' ? pendingCow1 : realLoad(charId)
+            );
+
+            const staleLoad = tracker.load();
+            tracker.forget();
+
+            game.charId = 'cow2';
+            tracker.ingest([claimed({ id: 42 })]);
+            await tracker.flush();
+
+            resolveCow1([{ questId: 1, completedAt: Date.now() - HOUR, tokens: 4, coins: 100 }]);
+            await staleLoad;
+
+            // A later completion for cow2 must not carry cow1's questId:1 into
+            // cow2's own stored week — that would be cow1's history saved
+            // under cow2's key.
+            tracker.ingest([claimed({ id: 43 })]);
+            await tracker.flush();
+
+            const cow2Key = `taskCompletionRec_cow2_${weekChunkId(Date.now())}`;
+            const stored = storageMock.store.get(cow2Key) || [];
+            expect(stored.map((completion) => completion.questId)).not.toContain(1);
+            expect(stored.map((completion) => completion.questId)).toEqual(expect.arrayContaining([42, 43]));
+        });
+
+        test("a switch mid-persist does not merge the departing character's pending completion into the arriving character", async () => {
+            let resolveCow1;
+            const pendingCow1 = new Promise((resolve) => {
+                resolveCow1 = resolve;
+            });
+            const realLoad = tracker._store.load.bind(tracker._store);
+            vi.spyOn(tracker._store, 'load').mockImplementation((charId) =>
+                charId === 'cow1' ? pendingCow1 : realLoad(charId)
+            );
+
+            // cow1 completes a task. `_loaded` is false, so `_persist` takes the
+            // first-read branch and its own internal `load()` is the one that
+            // hangs on `pendingCow1`.
+            tracker.ingest([claimed({ id: 1 })]);
+            const cow1Persist = tracker._pending;
+
+            // character_switching: cow1's state is dropped while that read is
+            // still in flight.
+            tracker.forget();
+
+            // cow2 logs in and claims a task before cow1's stale read lands —
+            // this goes through its own, unrelated `load()`/`_persist()` and
+            // completes first.
+            game.charId = 'cow2';
+            tracker.ingest([claimed({ id: 42 })]);
+            await tracker.flush();
+            expect(tracker.entries.map((completion) => completion.questId)).toEqual([42]);
+
+            // cow1's read finally lands, carrying nothing new (an empty store,
+            // as a first-ever completion would find) — but this is the resume
+            // that used to graft cow1's pending completion onto whatever
+            // `this.entries` held by then.
+            resolveCow1([]);
+            await cow1Persist;
+
+            // The arriving character's in-memory state must still be only its
+            // own completion.
+            expect(tracker.entries.map((completion) => completion.questId)).toEqual([42]);
+
+            // And cow1's completion must not have been saved under cow2's key.
+            const cow2Key = `taskCompletionRec_cow2_${weekChunkId(Date.now())}`;
+            const cow2Stored = storageMock.store.get(cow2Key) || [];
+            expect(cow2Stored.map((completion) => completion.questId)).toEqual([42]);
+        });
+    });
 });
 
 describe('the rate', () => {
