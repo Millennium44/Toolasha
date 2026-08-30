@@ -164,6 +164,45 @@ describe('the editor', () => {
         expect(panel.watchlist[0].target).toEqual({ side: 'bid', price: 4_000_000 });
     });
 
+    test('the side toggle survives the blur that pressing it causes', () => {
+        // In a browser, pressing a span while a text input has focus moves
+        // focus off the input first: `blur` fires on mousedown, before the
+        // click handler ever runs. The blur handler commits, and committing
+        // closes the editor — so by the time the toggle's own handler runs the
+        // input is detached, the target has been written on the side the
+        // player was trying to change, and the swap is unreachable. Only a
+        // synthetic click with no blur in front of it makes the toggle work.
+        panel.watchlist[0].target = { side: 'ask', price: 4_200_000 };
+        open();
+        const toggle = chip().querySelector('[title="Swap the side this target watches"]');
+
+        // The press, as a browser delivers it. Refusing mousedown's default is
+        // the whole of what keeps focus — and therefore the editor — alive
+        // until the click lands.
+        const down = new window.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+        toggle.dispatchEvent(down);
+        expect(down.defaultPrevented).toBe(true);
+
+        toggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+        // Still open, now on the other side, with nothing committed
+        expect(chip().querySelector('input')).toBeTruthy();
+        expect(chip().querySelector('input').value).toBe('4000000');
+        expect(panel.watchlist[0].target).toEqual({ side: 'ask', price: 4_200_000 });
+    });
+
+    test('a blur that does reach the box still commits, so clicking away saves', () => {
+        // The guard above must not turn the editor into something you can only
+        // leave with a key: clicking anywhere else still blurs, and a blur is
+        // still a commit.
+        const input = open();
+        input.value = '4200000';
+        input.dispatchEvent(new window.FocusEvent('blur'));
+
+        expect(panel.watchlist[0].target).toEqual({ side: 'ask', price: 4_200_000 });
+        expect(chip().querySelector('input')).toBe(null);
+    });
+
     test('an empty box clears the target', () => {
         panel.watchlist[0].target = { side: 'ask', price: 4_200_000 };
         const input = open();

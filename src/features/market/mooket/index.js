@@ -821,6 +821,13 @@ class MarketHistoryPanel {
             this.savePrefs();
         };
 
+        // Pressing a span while the box has focus takes focus off it, and the
+        // blur below commits — which closes the editor before this button's own
+        // click handler ever runs, so the swap was unreachable and the press
+        // wrote a target on the side the player was trying to change. Refusing
+        // mousedown's default keeps the focus where it is; the click then
+        // arrives with the editor still open.
+        sideButton.addEventListener('mousedown', (e) => e.preventDefault());
         sideButton.addEventListener('click', (e) => {
             e.stopPropagation();
             side = side === 'ask' ? 'bid' : 'ask';
