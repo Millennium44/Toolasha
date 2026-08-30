@@ -42,6 +42,7 @@ import {
     moveWatched,
     nextDisplayMode,
     watchedChange,
+    describeMove,
     normaliseWatchlist,
     describeUpdateAge,
     isStalePrice,
@@ -575,6 +576,10 @@ class MarketHistoryPanel {
             const change = watchedChange(entry, price);
 
             const stale = isStalePrice(price?.at);
+            // The market's own last step, as distinct from the move since the
+            // item was pinned that `change` carries. Null whenever that step
+            // cannot be dated, or spans too long to still describe one market.
+            const move = describeMove(price?.rise, price?.riseSpanMs);
 
             const chip = document.createElement('div');
             chip.style.cssText =
@@ -586,6 +591,7 @@ class MarketHistoryPanel {
                 `Ask ${change.ask === null ? '—' : formatWithSeparator(change.ask)} · ` +
                 `Bid ${change.bid === null ? '—' : formatWithSeparator(change.bid)}\n` +
                 `${describeUpdateAge(price?.at)}${stale ? ' — stale, treat with caution' : ''}\n` +
+                (move ? `Moved ${move.text} on the last reading\n` : '') +
                 'Click to chart it, right-click to unpin';
 
             const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -616,6 +622,18 @@ class MarketHistoryPanel {
                         : `${change.askChange >= 0 ? '+' : ''}${change.askChange.toFixed(1)}%`;
                 delta.style.color = this.changeColour(change.askChange);
                 chip.appendChild(delta);
+
+                // Beside the since-pinned delta, never instead of it: the two
+                // answer different questions, and the arrow plus the span is
+                // what tells them apart at a glance. Dimmed a little so the
+                // baseline the reader chose stays the louder of the two.
+                if (move) {
+                    const step = document.createElement('span');
+                    step.textContent = move.text;
+                    step.style.color = this.changeColour(move.percent);
+                    step.style.opacity = '0.75';
+                    chip.appendChild(step);
+                }
             }
 
             chip.addEventListener('click', () => {

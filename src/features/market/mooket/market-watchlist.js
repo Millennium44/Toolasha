@@ -118,6 +118,75 @@ export function watchedChange(entry, price) {
 }
 
 /**
+ * How long a move may have taken and still be a move.
+ *
+ * `foldPrice` measures every stored reading against the one it replaced, and
+ * the pooled dataset updates on the community's trading activity rather than on
+ * a clock: two readings of a heavily traded item are minutes apart, two readings
+ * of something nobody buys can be a week apart. A 2% move over three hours is
+ * news; the same 2% over nine days is the market drifting, and drawing the two
+ * identically would be the chip's worst possible lie.
+ *
+ * Six hours, because that is about the longest gap over which the move still
+ * describes one market rather than several — a session, a night, a server reset.
+ * Beyond it the chip shows nothing at all rather than a number it would have to
+ * qualify away, which is the same choice `savingsProgress` makes about an
+ * unpriced target: no figure beats a figure that has to be disbelieved.
+ */
+export const MAX_MOVE_SPAN_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * A move smaller than this rounds to "0.0%" at one decimal place, which is a
+ * chip saying nothing while taking up room to say it.
+ */
+export const MIN_MOVE_PERCENT = 0.05;
+
+/**
+ * How long a move took, in the fewest characters that still say it.
+ *
+ * Minutes and hours only: anything a chip will actually draw is inside
+ * {@link MAX_MOVE_SPAN_MS}, and a span under a minute reads as `1m` rather than
+ * as seconds, because the difference between forty seconds and ninety is not
+ * something the chip is claiming to know.
+ *
+ * @param {number} spanMs - Milliseconds between the two readings
+ * @returns {string} e.g. `3h`, `12m`
+ */
+export function formatMoveSpan(spanMs) {
+    const minutes = Math.max(1, Math.round(spanMs / 60000));
+    if (minutes < 60) return `${minutes}m`;
+    return `${Math.round(minutes / 60)}h`;
+}
+
+/**
+ * The move chip: how far the last reading moved the price, and over how long.
+ *
+ * Distinct from {@link watchedChange}, which measures against the price the item
+ * was *pinned* at — a baseline the reader chose, and one that only grows more
+ * distant. This is the market's own last step, which is what says whether
+ * anything is happening right now.
+ *
+ * Nothing is returned rather than a qualified figure in three cases: a move with
+ * no span behind it (a first reading, or an entry stored before spans were
+ * kept), a span longer than {@link MAX_MOVE_SPAN_MS}, and a move too small to
+ * survive rounding.
+ *
+ * @param {number|null|undefined} rise - Fractional move, as `foldPrice` stores it
+ * @param {number|null|undefined} spanMs - How long it took
+ * @param {number} [maxSpanMs] - The sanity bound, injectable for tests
+ * @returns {{percent: number, text: string}|null} The chip, or null for no chip
+ */
+export function describeMove(rise, spanMs, maxSpanMs = MAX_MOVE_SPAN_MS) {
+    const percent = Number(rise) * 100;
+    if (!Number.isFinite(percent)) return null;
+    if (!(spanMs > 0) || spanMs > maxSpanMs) return null;
+    if (Math.abs(percent) < MIN_MOVE_PERCENT) return null;
+
+    const arrow = percent > 0 ? '▲' : '▼';
+    return { percent, text: `${arrow}${Math.abs(percent).toFixed(1)}% / ${formatMoveSpan(spanMs)}` };
+}
+
+/**
  * How stale a chip's reading is, worded for its tooltip.
  *
  * The chip shows the last price the pooled dataset reported, not a live quote,

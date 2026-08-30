@@ -55,6 +55,18 @@ describe('foldPrice', () => {
         expect(foldPrice(undefined, { ask: 1, bid: 1, askQty: 0, bidQty: 0, at: 1 }).rise).toBe(0);
     });
 
+    test('the move carries how long it took', () => {
+        // A percentage with no span behind it cannot be read: the pooled
+        // dataset updates on trading activity, so the same 10% is news over an
+        // hour and drift over a week
+        const next = foldPrice(existing, { ask: 132, bid: 110, askQty: 1, bidQty: 1, at: 1000 + 3 * 3600_000 });
+        expect(next.riseSpanMs).toBe(3 * 3600_000);
+    });
+
+    test('a first reading has no span, as it has no move', () => {
+        expect(foldPrice(undefined, { ask: 1, bid: 1, askQty: 0, bidQty: 0, at: 1 }).riseSpanMs).toBe(0);
+    });
+
     test('a stored reading from the future is replaced, not trusted', () => {
         const future = { ...existing, at: Date.now() + 60_000 };
         expect(foldPrice(future, { ...existing, at: Date.now() })).not.toBeNull();

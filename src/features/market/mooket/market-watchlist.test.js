@@ -16,6 +16,9 @@ import {
     DISPLAY_MODES,
     MAX_WATCHED,
     STALE_PRICE_MS,
+    describeMove,
+    formatMoveSpan,
+    MAX_MOVE_SPAN_MS,
 } from './market-watchlist.js';
 
 const price = { ask: 120, bid: 100, at: 500 };
@@ -143,5 +146,74 @@ describe('isStalePrice', () => {
     test('a custom threshold is honored', () => {
         expect(isStalePrice(now - 5000, now, 1000)).toBe(true);
         expect(isStalePrice(now - 500, now, 1000)).toBe(false);
+    });
+});
+
+describe('formatMoveSpan', () => {
+    test('minutes below an hour', () => {
+        expect(formatMoveSpan(12 * 60_000)).toBe('12m');
+        expect(formatMoveSpan(59 * 60_000)).toBe('59m');
+    });
+
+    test('hours above one', () => {
+        expect(formatMoveSpan(3 * 3600_000)).toBe('3h');
+        expect(formatMoveSpan(90 * 60_000)).toBe('2h');
+    });
+
+    test('anything under a minute reads as a minute, not as seconds', () => {
+        // The gap between two readings is not measured finely enough for the
+        // difference between forty seconds and ninety to be a claim worth making
+        expect(formatMoveSpan(4_000)).toBe('1m');
+        expect(formatMoveSpan(0)).toBe('1m');
+    });
+});
+
+describe('describeMove', () => {
+    const HOUR = 3600_000;
+
+    test('a rise reads with an up arrow and its span', () => {
+        expect(describeMove(0.021, 3 * HOUR).text).toBe('▲2.1% / 3h');
+    });
+
+    test('a fall reads with a down arrow and no minus sign', () => {
+        // The arrow already carries the direction; a minus beside it is noise
+        expect(describeMove(-0.043, 25 * 60_000).text).toBe('▼4.3% / 25m');
+    });
+
+    test('the percentage is signed for the caller, which colours it', () => {
+        expect(describeMove(-0.043, HOUR).percent).toBeCloseTo(-4.3, 9);
+        expect(describeMove(0.043, HOUR).percent).toBeCloseTo(4.3, 9);
+    });
+
+    test('no chip at all beyond the sanity bound', () => {
+        // A move spanning a week is not a move; it is the market drifting, and
+        // drawing it the same way as an hourly step would be the chip's lie
+        expect(describeMove(0.08, MAX_MOVE_SPAN_MS + 1)).toBeNull();
+        expect(describeMove(0.08, 9 * 24 * HOUR)).toBeNull();
+        expect(describeMove(0.08, MAX_MOVE_SPAN_MS)).not.toBeNull();
+    });
+
+    test('no chip without a span behind the move', () => {
+        // A first reading, or an entry stored before spans were kept
+        expect(describeMove(0.08, 0)).toBeNull();
+        expect(describeMove(0.08, undefined)).toBeNull();
+        expect(describeMove(0.08, -5)).toBeNull();
+    });
+
+    test('no chip for a move that rounds away to nothing', () => {
+        expect(describeMove(0, HOUR)).toBeNull();
+        expect(describeMove(0.0002, HOUR)).toBeNull();
+        expect(describeMove(0.0006, HOUR).text).toBe('▲0.1% / 1h');
+    });
+
+    test('no chip for a move that is not a number', () => {
+        expect(describeMove(undefined, HOUR)).toBeNull();
+        expect(describeMove(null, HOUR)).toBeNull();
+        expect(describeMove(Infinity, HOUR)).toBeNull();
+    });
+
+    test('the bound is injectable, so the chip can be retuned without a rewrite', () => {
+        expect(describeMove(0.08, 2 * HOUR, HOUR)).toBeNull();
+        expect(describeMove(0.08, 2 * HOUR, 3 * HOUR)).not.toBeNull();
     });
 });

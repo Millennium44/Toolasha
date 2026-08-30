@@ -66,6 +66,14 @@ export function entryFromBook(book, at) {
  * book whose ask vanishes and returns would otherwise report a move of hundreds
  * of percent with nothing having happened.
  *
+ * How long that move took is kept beside it, because a percentage on its own is
+ * not a move. The pooled dataset updates on the community's trading activity
+ * rather than a clock, so the gap between two readings of a busy item is
+ * minutes and the gap between two readings of a quiet one can be days — and
+ * "2.1%" means opposite things across those two spans. A reader shown the
+ * figure without the span has no way to tell which they are looking at, so the
+ * span rides with it and the chip declines to draw a move it cannot date.
+ *
  * @param {Object|undefined} existing - What is held now
  * @param {Object} next - The new reading
  * @returns {Object|null} The entry to store, or null when the reading is not newer
@@ -76,13 +84,17 @@ export function foldPrice(existing, next) {
     if (existing && existing.at >= next.at && existing.at <= Date.now()) return null;
 
     let rise = 0;
+    // Zero rather than null for a first reading, matching `rise`: there is no
+    // move yet, so there is no span for one either
+    let riseSpanMs = 0;
     if (existing) {
         const before = existing.ask + existing.bid;
         const after = next.ask + next.bid;
         if (before !== 0) rise = after / before - 1;
+        riseSpanMs = Math.max(0, next.at - existing.at);
     }
 
-    return { ...next, rise };
+    return { ...next, rise, riseSpanMs };
 }
 
 /**
