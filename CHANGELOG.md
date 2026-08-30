@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The palette learns verbs
+
+Commands can now be actions, not just panel-openers: a verb closes the palette, runs, and reports in a toast — success with its result, failure with the reason, and "nothing to do" said out loud rather than the verb vanishing. Five shipped: Recompute lab sims (counts and requeues only the gear-stale rooms instead of wholesale clearing), Start trial capture, Export trial JSON (now reports its filename, and refuses an empty week), Refresh watchlist prices (respecting the sweep's own rate limits), and Snapshot briefing now. Also fixed in passing: two palette toasts asked for a kind the toast module doesn't have and rendered as neutral info instead of warnings.
+
 ### Long-horizon XP history starts today
 
 Daily checkpoints — one row per skill (and per ability, keyed per character) per day, unbounded, synced, never backfilled — begin recording now. First surfaces: a "This month: N xp" line on skill tooltips that names when its history starts, and the ability book's days-to-next-level reading a fortnight instead of ten minutes once three days of checkpoints exist, captioned "over 14d, 3 w/ combat" so idle days read as the real zeros they are. The rate tracker's 7-day window is untouched — this is a separate, tiny series.

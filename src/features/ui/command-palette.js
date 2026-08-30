@@ -366,7 +366,7 @@ export async function openGuildTrials() {
         const panel = await waitFor('[class*="GuildPanel"]');
         if (!panel) {
             showToast('Could not open the guild page — the trial figures live under its Trials tab.', {
-                kind: 'warning',
+                kind: 'warn',
             });
             return false;
         }
@@ -416,7 +416,7 @@ export async function openHealthReport() {
         const health = window.Toolasha?.debug?.health;
         if (typeof health !== 'function') {
             showToast('The health report is not available yet — try again once Toolasha has finished loading.', {
-                kind: 'warning',
+                kind: 'warn',
             });
             return false;
         }
