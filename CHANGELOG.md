@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The pro bench matches a real pro, and can be restored in one press
+
+The shipped professional-enhancer defaults now match the maintainer's reference bench: achievement bonus on, Celestial enhancer +15, gloves +12, refined cape +10 (levels, jewelry, tea, and blessed tea already matched). The pin-items setting moved above the auto-detect switch, and a "Reset to pro defaults" button in the same group puts every bench setting below the switch back to those shipped values — writing through the same path a hand edit takes, with the inputs updating in place.
+
 ### The last four: measured rates, a rush-floor verdict, target aftermath, and upgrade triage
 
 Alchemy panels show the measured success rate beside the predicted one ("predicted 63% · measured 58% (n=2,140, sim too high)") — display-only by design, exact per item/catalyst/level, a dim n-of-50 marker under the floor. The consumables panel's labyrinth block answers "could the rush floor come down?" by folding the near-miss median, torch headroom, and the gear fingerprint into one verdict that refuses across a gear boundary before it refuses on thin data. Price targets keep a bounded life ring, and the history panel shows the pooled price 24h/72h after each reach ("was that the bottom?") with gaps reported as no-reading, never interpolated. And gear candidates in the advisor say how many cached lab rooms they'd stale and how many sat within 2pp of their decision bar — naming candidates for a re-sim, deciding nothing.

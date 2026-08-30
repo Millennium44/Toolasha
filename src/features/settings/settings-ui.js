@@ -510,6 +510,11 @@ class SettingsUI {
             if (e.target.classList.contains('toolasha-scroll-defaults-btn')) {
                 scrollSimulatorUI.openDefaultsPopup();
             }
+            if (e.target.classList.contains('toolasha-setting-action-btn')) {
+                if (e.target.dataset.settingId === 'enhanceSim_resetProDefaults') {
+                    this.resetEnhanceSimToProDefaults(e.target);
+                }
+            }
         });
 
         return panel;
@@ -986,6 +991,29 @@ class SettingsUI {
                 `;
             }
 
+            case 'button': {
+                // A row that IS an action: nothing stored, nothing collected on
+                // save — the delegated click handler dispatches on the id
+                const label = settingDef.buttonLabel ?? settingDef.label ?? 'Run';
+                return `
+                    <button type="button"
+                        class="toolasha-setting-action-btn"
+                        data-setting-id="${settingId}"
+                        style="
+                            background: #4a7c59;
+                            border: 1px solid #5a8c69;
+                            border-radius: 4px;
+                            padding: 4px 10px;
+                            color: #e0e0e0;
+                            cursor: pointer;
+                            font-size: 12px;
+                            white-space: nowrap;
+                        ">
+                        ${label}
+                    </button>
+                `;
+            }
+
             default:
                 return `<span style="color: red;">Unknown type: ${type}</span>`;
         }
@@ -1413,6 +1441,60 @@ class SettingsUI {
         this.applyDisabledByState();
         this.applySettingsFilter();
         if (this.restoreButton) this.restoreButton.style.display = '';
+    }
+
+    /**
+     * Put the enhancement bench back to the shipped pro defaults.
+     *
+     * Resets exactly the settings the auto-detect switch governs (they carry
+     * `disabledBy: 'enhanceSim_autoDetect'`) — the bench Pro rates quote —
+     * writing each schema default through the same path a hand edit takes and
+     * updating the visible inputs in place, so the panel needs no rebuild.
+     *
+     * @param {HTMLElement} [button] - The pressed button, for a moment's feedback
+     */
+    async resetEnhanceSimToProDefaults(button) {
+        for (const group of Object.values(settingsGroups)) {
+            for (const [settingId, def] of Object.entries(group.settings)) {
+                if (def.disabledBy !== 'enhanceSim_autoDetect') continue;
+                const value = structuredClone(def.default);
+
+                await settingsStorage.setSetting(settingId, value);
+                if (!this.currentSettings[settingId]) this.currentSettings[settingId] = {};
+                if (def.type === 'checkbox') {
+                    this.currentSettings[settingId].isTrue = value;
+                    this.config.setSetting(settingId, value);
+                } else {
+                    this.currentSettings[settingId].value = value;
+                    this.config.setSettingValue(settingId, value);
+                }
+
+                // Mirror the stored value into whatever inputs are on screen
+                if (def.type === 'enhanceGear') {
+                    const enabledEl = document.getElementById(`${settingId}_enabled`);
+                    const tierEl = document.getElementById(`${settingId}_tier`);
+                    const levelEl = document.getElementById(`${settingId}_level`);
+                    if (enabledEl) enabledEl.checked = value?.enabled ?? true;
+                    if (tierEl && value?.tier) tierEl.value = value.tier;
+                    if (levelEl) levelEl.value = String(value?.level ?? 0);
+                } else {
+                    const input = document.getElementById(settingId);
+                    if (input) {
+                        if (def.type === 'checkbox') input.checked = !!value;
+                        else input.value = String(value);
+                    }
+                }
+            }
+        }
+
+        this.updateEnhanceSimSummary?.();
+        if (button) {
+            const label = button.textContent;
+            button.textContent = 'Reset ✓';
+            setTimeout(() => {
+                if (button.isConnected) button.textContent = label;
+            }, 1500);
+        }
     }
 
     /**

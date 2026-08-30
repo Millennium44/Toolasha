@@ -869,6 +869,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'When enabled, automatically fills the Protect From Level input with the optimal (cheapest) value whenever a protection item is placed in the slot.',
             },
+            enhancementItemPins: {
+                id: 'enhancementItemPins',
+                label: 'Enhancing panel: Pin items in the item picker',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a 📌 to each item in the Enhance Item list that moves it to the front. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
+            },
             enhanceSim_autoDetect: {
                 id: 'enhanceSim_autoDetect',
                 label: 'Auto-detect your stats (false = use settings below)',
@@ -876,12 +883,12 @@ export const settingsGroups = {
                 default: false,
                 help: 'Most players should leave this off to see realistic professional enhancer costs',
             },
-            enhancementItemPins: {
-                id: 'enhancementItemPins',
-                label: 'Enhancing panel: Pin items in the item picker',
-                type: 'checkbox',
-                default: true,
-                help: 'Adds a 📌 to each item in the Enhance Item list that moves it to the front. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
+            enhanceSim_resetProDefaults: {
+                id: 'enhanceSim_resetProDefaults',
+                label: 'Reset the bench below to the pro defaults',
+                type: 'button',
+                buttonLabel: 'Reset to pro defaults',
+                help: 'Puts every setting below back to the shipped professional-enhancer bench - the same values Pro rates quote.',
             },
             // --- ENHANCING ---
             enhanceSim_enhancingLevel: {
@@ -908,7 +915,7 @@ export const settingsGroups = {
                 id: 'enhanceSim_achievement',
                 label: 'Achievement bonus (+0.2%)',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Include enhancing achievement success bonus',
                 disabledBy: 'enhanceSim_autoDetect',
             },
@@ -917,7 +924,7 @@ export const settingsGroups = {
                 id: 'enhanceSim_gear_enhancer',
                 label: 'Enhancer',
                 type: 'enhanceGear',
-                default: { enabled: true, tier: 'celestial', level: 13 },
+                default: { enabled: true, tier: 'celestial', level: 15 },
                 tiers: [
                     { value: 'cheese', label: 'Cheese' },
                     { value: 'verdant', label: 'Verdant' },
@@ -934,7 +941,7 @@ export const settingsGroups = {
                 id: 'enhanceSim_gear_gloves',
                 label: 'Gloves',
                 type: 'enhanceGear',
-                default: { enabled: true, level: 10 },
+                default: { enabled: true, level: 12 },
                 disabledBy: 'enhanceSim_autoDetect',
             },
             enhanceSim_gear_top: {
@@ -988,7 +995,7 @@ export const settingsGroups = {
                 id: 'enhanceSim_gear_cape',
                 label: 'Cape',
                 type: 'enhanceGear',
-                default: { enabled: true, tier: 'normal', level: 5 },
+                default: { enabled: true, tier: 'refined', level: 10 },
                 tiers: [
                     { value: 'normal', label: 'Normal' },
                     { value: 'refined', label: 'Refined' },
