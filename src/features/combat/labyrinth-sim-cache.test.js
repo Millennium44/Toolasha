@@ -70,6 +70,9 @@ const {
     getAutomationUncapped,
     automationSimOptions,
     UNCAPPED_MAX_SIM_TRIALS,
+    gearChangedSince,
+    GEAR_CHANGED_MARK,
+    GEAR_CHANGED_DETAIL,
 } = await import('./labyrinth-sim-cache.js');
 const { buildAccuracyExport } = await import('./labyrinth-accuracy-export.js');
 
@@ -108,6 +111,8 @@ describe('the persisted combat cache mirror', () => {
             expect(stored.entries.map((entry) => entry.key).sort()).toEqual(['a', 'b', 'c']);
             // Display-only fields are stripped before the record is written
             expect(stored.entries[0].result).toEqual({ clearChance: 0.5 });
+            // The gear the entry was simmed under rides on the record, once
+            expect(stored.entries[0].snapshotFingerprint).toBe('fp');
         } finally {
             vi.useRealTimers();
         }
@@ -146,6 +151,83 @@ describe('the persisted combat cache mirror', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('the gear fingerprint a cached result carries', () => {
+    /** A stand-in for the clear-rate module's state, the mixin's `this` */
+    const context = (fingerprint = 'fp') => ({
+        combatCache: new Map(),
+        _combatCacheMeta: new Map(),
+        _snapshotContentFingerprint: () => fingerprint,
+        ...simCacheMethods,
+    });
+
+    test('the result in the cache is stamped with the gear it was simmed under', () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = context('gear-a');
+            ctx.combatCache.set('a', { clearChance: 0.5 });
+            ctx._persistCombatCacheEntry('a', ctx.combatCache.get('a'));
+            // On the result itself, not only in the meta map: the render path is
+            // handed a result and has no key to look a meta record up by
+            expect(ctx.combatCache.get('a').snapshotFingerprint).toBe('gear-a');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the stamp is not written into the stored result, which has its own field', () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = context('gear-a');
+            ctx.combatCache.set('a', { clearChance: 0.5 });
+            ctx._persistCombatCacheEntry('a', ctx.combatCache.get('a'));
+            ctx._flushCombatCache();
+            const [, stored] = storageWrites.list[0];
+            expect(stored.entries[0].result).toEqual({ clearChance: 0.5 });
+            expect(stored.entries[0].snapshotFingerprint).toBe('gear-a');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('gearChangedSince', () => {
+    test('a fingerprint that no longer matches is a gear change', () => {
+        expect(gearChangedSince('gear-a', 'gear-b', true)).toBe(true);
+    });
+
+    test('the same fingerprint is not', () => {
+        expect(gearChangedSince('gear-a', 'gear-a', true)).toBe(false);
+    });
+
+    test('nothing is marked before the loadout snapshots have landed', () => {
+        // The five-second whenReady deadline can pass with nothing loaded, and
+        // a fingerprint over an empty snapshot set matches no stored one — so
+        // without this guard a reload marks every tile on the floor at once
+        expect(gearChangedSince('gear-a', 'gear-b', false)).toBe(false);
+        expect(gearChangedSince('gear-a', '', false)).toBe(false);
+    });
+
+    test('an entry stored before the fingerprint existed shows its age only', () => {
+        expect(gearChangedSince(undefined, 'gear-b', true)).toBe(false);
+        expect(gearChangedSince(null, 'gear-b', true)).toBe(false);
+        expect(gearChangedSince('', 'gear-b', true)).toBe(false);
+    });
+
+    test('no current fingerprint to compare against is silence, not a guess', () => {
+        expect(gearChangedSince('gear-a', null, true)).toBe(false);
+    });
+
+    test('the marker claims only what the fingerprint actually covers', () => {
+        // FINGERPRINT_SPEC hashes loadout snapshots plus worn item and
+        // enhancement level, and explicitly excludes levels, abilities and
+        // buffs. The wording must not imply otherwise.
+        expect(GEAR_CHANGED_MARK).toBe('gear changed since this was computed');
+        expect(GEAR_CHANGED_MARK).not.toMatch(/abilit|buff|level|build/i);
+        // The longer form is allowed to name them, but only to say they are NOT checked
+        expect(GEAR_CHANGED_DETAIL).toContain('abilities and buffs are not');
     });
 });
 

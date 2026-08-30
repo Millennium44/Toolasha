@@ -44,6 +44,52 @@ import { scriptVersion } from '../../utils/script-version.js';
 const TRIAL_PROBE_ZONE = '/actions/combat/fly';
 
 /**
+ * What a tile says when the gear it was simmed under is not the gear worn now.
+ *
+ * The wording is deliberately narrow, and pinned by a test. The fingerprint
+ * behind it is {@link FINGERPRINT_SPEC} — loadout snapshots plus the worn
+ * item and enhancement level — and it does **not** cover levels, abilities or
+ * buffs. A marker reading "your build changed" would be claiming a check that
+ * is not made; "gear changed" claims exactly the one that is.
+ */
+export const GEAR_CHANGED_MARK = 'gear changed since this was computed';
+
+/** The longer form, for the marker's own tooltip */
+export const GEAR_CHANGED_DETAIL =
+    'This result was simulated with different equipment. Equipment and enhancement levels are compared — ' +
+    'skill levels, abilities and buffs are not, so a change to those is not detected here. Press Recompute ' +
+    'to sim the rooms again.';
+
+/**
+ * Whether a cached result should be marked as computed under different gear.
+ *
+ * Three cases are deliberately *not* a mark, and each of them used to be the
+ * obvious wrong answer:
+ *
+ *   - **The snapshots have not landed.** `loadoutSnapshot` fills itself from
+ *     storage and gives up after a five-second deadline (`whenReady`), and
+ *     until then the fingerprint is computed over an empty snapshot set — which
+ *     matches nothing, so every tile on the floor would be marked stale at
+ *     once, in the first seconds after a reload, when nothing has changed at
+ *     all. A staleness mark that fires on every tile is not information.
+ *   - **The entry predates the stored fingerprint.** Old cache records carry no
+ *     fingerprint, and "unknown" is not "different"; they show their age only,
+ *     exactly as they did before.
+ *   - **There is no current fingerprint to compare against.** Same reasoning as
+ *     the first: silence beats a guess.
+ *
+ * @param {string|null|undefined} stored - The fingerprint saved with the entry
+ * @param {string|null|undefined} current - The fingerprint of the gear worn now
+ * @param {boolean} snapshotsReady - Whether the loadout snapshot store has filled
+ * @returns {boolean} Whether to mark the tile
+ */
+export function gearChangedSince(stored, current, snapshotsReady) {
+    if (!snapshotsReady) return false;
+    if (!stored || !current) return false;
+    return stored !== current;
+}
+
+/**
  * The monster's ability hrids that deal no damage — its self-buffs and debuffs.
  * The uptime harness counts their casts but must not credit them incoming
  * damage: they take a turn but land no hit, and queueing one lets the next real
@@ -758,7 +804,16 @@ export const simCacheMethods = {
                 // have to match, since the cache key alone doesn't encode it
                 if (entry.snapshotFingerprint !== currentFingerprint) continue;
 
-                const result = { ...entry.result, computedAt: entry.computedAt, fromPersistedCache: true };
+                const result = {
+                    ...entry.result,
+                    computedAt: entry.computedAt,
+                    fromPersistedCache: true,
+                    // Carried on the result itself, not only in the meta map,
+                    // because the render path has the result and nothing else.
+                    // A load-time match is not a forever match: gear can change
+                    // in the same session the entry was read back in.
+                    snapshotFingerprint: entry.snapshotFingerprint ?? null,
+                };
                 this.combatCache.set(entry.key, result);
                 this._combatCacheMeta.set(entry.key, {
                     computedAt: entry.computedAt,
@@ -788,11 +843,19 @@ export const simCacheMethods = {
      *   freshly-simmed one build their record the same way)
      */
     _persistCombatCacheEntry(cacheKey, _result) {
+        const snapshotFingerprint = this._snapshotContentFingerprint();
         this._combatCacheMeta.set(cacheKey, {
             computedAt: Date.now(),
-            snapshotFingerprint: this._snapshotContentFingerprint(),
+            snapshotFingerprint,
             scriptVersion: scriptVersion(),
         });
+        // Stamped on the result too, so the render path — which is handed a
+        // result and has no key to look a meta record up by — can tell a sim
+        // run under this gear from one run under the gear before it. Additive:
+        // an entry that never gets here simply has no fingerprint, and shows
+        // its age alone, which is what every entry did before.
+        const cached = this.combatCache.get(cacheKey);
+        if (cached) cached.snapshotFingerprint = snapshotFingerprint;
 
         this._combatCacheDirty = true;
         if (this._combatCacheFlushTimer) return;
@@ -831,7 +894,14 @@ export const simCacheMethods = {
             // A loaded entry carries fromPersistedCache/computedAt for display;
             // strip them back out so a re-persisted entry doesn't claim to have
             // been computed at the moment it was merely re-written
-            const { computedAt: _computedAt, fromPersistedCache: _fromPersistedCache, ...bare } = cached;
+            const {
+                computedAt: _computedAt,
+                fromPersistedCache: _fromPersistedCache,
+                // The fingerprint has its own field on the record below; keeping
+                // a second copy inside `result` would make the two disagreeable
+                snapshotFingerprint: _snapshotFingerprint,
+                ...bare
+            } = cached;
             entries.push({
                 key,
                 result: bare,

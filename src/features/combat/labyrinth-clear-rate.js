@@ -71,7 +71,14 @@ import {
     remainingWord,
 } from './labyrinth-supplies.js';
 import { outcomeMethods } from './labyrinth-outcomes.js';
-import { simCacheMethods, DEFAULT_SIM_PRECISION_PCT, UNCAPPED_MAX_SIM_TRIALS } from './labyrinth-sim-cache.js';
+import {
+    simCacheMethods,
+    DEFAULT_SIM_PRECISION_PCT,
+    UNCAPPED_MAX_SIM_TRIALS,
+    gearChangedSince,
+    GEAR_CHANGED_MARK,
+    GEAR_CHANGED_DETAIL,
+} from './labyrinth-sim-cache.js';
 import { recommendationMethods, RECOMMEND_CLASS, RECOMMEND_CONTROLS_CLASS } from './labyrinth-recommendation.js';
 
 /**
@@ -4571,11 +4578,61 @@ class LabyrinthClearRate {
      * @param {Object} result - Combat clear result
      */
     _appendCacheAgeNote(el, result) {
+        // The gear mark is not conditional on the entry having survived a
+        // reload. The case the Recompute button's own tooltip admits — "a plain
+        // equip does not always refresh a sim" — happens inside one session, to
+        // an entry simmed minutes ago, and that entry has no age worth showing
+        // and every reason to be marked.
+        if (this._markGearChanged(el, result)) return;
         if (!result.fromPersistedCache || !Number.isFinite(result.computedAt)) return;
         const note = document.createElement('div');
         note.style.cssText = 'margin-top:4px; opacity:0.6; font-style:italic; white-space:nowrap;';
         note.textContent = this.cacheAgeLabel(result.computedAt);
         el.appendChild(note);
+    }
+
+    /**
+     * Mark a result that was simulated under gear other than what is worn now.
+     *
+     * An age is not the question a player is asking of a cached tile. "Cached
+     * 2h ago" is true of a result that is still perfectly good and of one that
+     * was invalidated by an equip ten minutes ago, and the tile reads the same
+     * either way — so the only honest response to a floor of them was to press
+     * Recompute and re-sim everything, including the rooms that had not changed.
+     *
+     * The comparison is the fingerprint the recommendation invalidation already
+     * keeps ({@link FINGERPRINT_SPEC}): loadout snapshots plus each worn item
+     * and its enhancement level. It sees nothing else, and the marker says
+     * nothing else — see {@link GEAR_CHANGED_MARK}.
+     *
+     * When it marks, it marks *instead of* the age rather than beside it: a
+     * result whose gear no longer holds is not stale-ish, and how long ago it
+     * stopped being true is not the useful half of the sentence.
+     *
+     * @param {HTMLElement} el - Preview element
+     * @param {Object} result - Combat clear result
+     * @returns {boolean} Whether a mark was drawn
+     */
+    _markGearChanged(el, result) {
+        // The five-second whenReady deadline can pass with nothing loaded, and
+        // a fingerprint over an empty snapshot set matches no stored one — so
+        // without this guard a reload marks every tile on the floor at once
+        const ready = loadoutSnapshot.snapshotsReady === true;
+        let current = null;
+        try {
+            current = ready ? this._snapshotContentFingerprint() : null;
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Reading the current gear fingerprint failed:', error);
+            return false;
+        }
+        if (!gearChangedSince(result?.snapshotFingerprint, current, ready)) return false;
+
+        const note = document.createElement('div');
+        note.style.cssText = 'margin-top:4px; opacity:0.85; font-style:italic; color:#f0ad4e;';
+        note.textContent = GEAR_CHANGED_MARK;
+        note.title = GEAR_CHANGED_DETAIL;
+        el.appendChild(note);
+        return true;
     }
 
     /**

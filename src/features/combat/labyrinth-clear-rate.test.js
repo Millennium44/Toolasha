@@ -3533,3 +3533,90 @@ describe('formulas across the widened ±1000 threshold range', () => {
         expect(labyrinthClearRate.getCombatSkipRoomLevel('/monsters/imp')).toBe(1149);
     });
 });
+
+describe('the stale-gear marker on a cached room tile', () => {
+    /** Replace the mocked loadoutSnapshot's gear in place, keeping the reference */
+    function setGear(equipmentSnapshots) {
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        Object.assign(gear.snapshots, equipmentSnapshots);
+    }
+
+    const sword = { equipment: [{ itemHrid: '/items/sword', enhancementLevel: 5 }] };
+    const axe = { equipment: [{ itemHrid: '/items/axe', enhancementLevel: 0 }] };
+
+    /** Draw the note for a result and read back what it said */
+    const noteFor = (result) => {
+        const el = document.createElement('div');
+        labyrinthClearRate._appendCacheAgeNote(el, result);
+        return el.textContent;
+    };
+
+    beforeEach(() => {
+        gear.ready = true;
+        setGear({ 1: sword });
+    });
+
+    test('a result simmed under the gear worn now shows its age, not a mark', () => {
+        const fingerprint = labyrinthClearRate._snapshotContentFingerprint();
+        const text = noteFor({
+            fromPersistedCache: true,
+            computedAt: Date.now() - 2 * 60 * 60 * 1000,
+            snapshotFingerprint: fingerprint,
+        });
+        expect(text).toContain('cached');
+        expect(text).not.toContain('gear changed');
+    });
+
+    test('a result simmed under other gear is marked, and the age gives way to it', () => {
+        const stale = labyrinthClearRate._snapshotContentFingerprint();
+        setGear({ 1: axe });
+
+        const text = noteFor({
+            fromPersistedCache: true,
+            computedAt: Date.now() - 2 * 60 * 60 * 1000,
+            snapshotFingerprint: stale,
+        });
+        expect(text).toBe('gear changed since this was computed');
+    });
+
+    test('a result simmed this session is marked too — an equip does not refresh a sim', () => {
+        const stale = labyrinthClearRate._snapshotContentFingerprint();
+        setGear({ 1: axe });
+
+        // No fromPersistedCache and no age: the case the Recompute button's own
+        // tooltip admits to, which the age note could never have shown
+        expect(noteFor({ snapshotFingerprint: stale })).toBe('gear changed since this was computed');
+    });
+
+    test('nothing is marked before the loadout snapshots have landed', () => {
+        // Otherwise a reload marks every tile on the floor at once: the
+        // fingerprint over an empty snapshot set matches no stored one
+        const stale = labyrinthClearRate._snapshotContentFingerprint();
+        setGear({});
+        gear.ready = false;
+
+        const text = noteFor({ fromPersistedCache: true, computedAt: Date.now() - 1000, snapshotFingerprint: stale });
+        expect(text).not.toContain('gear changed');
+        expect(text).toContain('cached');
+    });
+
+    test('an entry stored before the fingerprint existed shows the age only, as before', () => {
+        setGear({ 1: axe });
+        const text = noteFor({ fromPersistedCache: true, computedAt: Date.now() - 2 * 60 * 60 * 1000 });
+        expect(text).toContain('cached');
+        expect(text).not.toContain('gear changed');
+    });
+
+    test('the marker names gear and nothing else', () => {
+        const stale = labyrinthClearRate._snapshotContentFingerprint();
+        setGear({ 1: axe });
+        const el = document.createElement('div');
+        labyrinthClearRate._appendCacheAgeNote(el, { snapshotFingerprint: stale });
+
+        // The fingerprint covers loadouts and worn item + enhancement level and
+        // nothing else; the marker must not imply abilities or buffs are checked
+        expect(el.textContent).toBe('gear changed since this was computed');
+        expect(el.textContent).not.toMatch(/abilit|buff|level|build/i);
+        expect(el.firstChild.title).toContain('abilities and buffs are not');
+    });
+});
