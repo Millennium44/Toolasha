@@ -244,16 +244,31 @@ function bridgeOwnerOf(prop) {
 }
 
 /**
- * Files that default-import a module (i.e. reach for its singleton instance),
- * matched by basename. Named-only imports (`import { helper } from …`) do not
- * grab the instance and are not counted.
+ * Files that default-import a module (i.e. reach for its singleton instance).
+ * Named-only imports (`import { helper } from …`) do not grab the instance and
+ * are not counted.
+ *
+ * Each specifier is resolved against the importing file rather than matched on
+ * its basename. Half a dozen features are a directory with an `index.js` in it,
+ * so a basename match counted every library that default-imports any of them as
+ * an importer of all of them — which is how a bridge accessor for the price
+ * history panel (`market/mooket/index.js`) came out with two bundles as
+ * offenders that never mention it.
+ *
  * @param {string} file - Repo-relative path of the singleton module
  * @returns {Array<string>}
  */
 function defaultImportersOf(file) {
-    const basename = file.split('/').pop().replace(/\./g, '\\.');
-    const pattern = new RegExp(`import\\s+\\w+\\s*(?:,\\s*{[^}]*})?\\s*from\\s*'[^']*/${basename}'`);
-    return files.filter((path) => path !== file && pattern.test(readFileSync(join(ROOT, path), 'utf8')));
+    const target = join(ROOT, file);
+    return files.filter((path) => {
+        if (path === file) return false;
+        const source = readFileSync(join(ROOT, path), 'utf8');
+        const here = dirname(join(ROOT, path));
+        for (const match of source.matchAll(/import\s+\w+\s*(?:,\s*\{[^}]*\})?\s*from\s*'(\.[^']+)'/g)) {
+            if (resolve(here, match[1]) === target) return true;
+        }
+        return false;
+    });
 }
 
 /**
