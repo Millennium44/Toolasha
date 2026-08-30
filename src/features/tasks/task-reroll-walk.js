@@ -82,6 +82,7 @@ import {
 } from '../../utils/floating-widget.js';
 import { cardTaskKey } from './task-card-state.js';
 import { questForTaskCard } from './task-card-quest.js';
+import taskRerollProtection from './task-reroll-protection.js';
 import { getCowbellValue } from './task-profit-calculator.js';
 import { findRerollOptions } from './task-reroll-options.js';
 
@@ -281,7 +282,18 @@ class TaskRerollWalk {
         this.isInitialized = false;
         this.unregisterHandlers = [];
         this.timerRegistry = createTimerRegistry();
+        /**
+         * The post-read sort's own timer, kept out of {@link timerRegistry}.
+         *
+         * Every re-plan clears that registry, and a `quests_updated` — which
+         * reading tasks is guaranteed to produce — re-plans. The sort was
+         * therefore cancelled by the very message that proved the read had
+         * worked, on every board, every time.
+         */
+        this.sortTimerRegistry = createTimerRegistry();
         this.protectedHrids = new Set();
+        /** The cap ceiling the current step was planned under */
+        this.planCap = '';
         /** idle | ready | waiting | done | stopped */
         this.state = 'idle';
         /** Set by a plan that found the chooser drawn but unpressable; cleared each plan */
@@ -292,6 +304,8 @@ class TaskRerollWalk {
         this.paidWaits = 0;
         /** Read presses made on the unread-tasks notice this walk */
         this.readPresses = 0;
+        /** True between a Read press and the sort that follows it */
+        this.awaitingReadSort = false;
         /** Whether any card press has been made — after that, Read is never offered */
         this.walkBegun = false;
         this.step = null;
@@ -402,6 +416,35 @@ class TaskRerollWalk {
     }
 
     /**
+     * The cap block as it stands *now*, not as it stood when the walk started.
+     *
+     * The shield popup owns these three values and can change them at any
+     * moment, including while a walk is armed with its next press already
+     * labelled. `_loadThresholds` runs at start-up and at `start()` and nowhere
+     * else, so an edit made after that was invisible to the walk until the page
+     * was reloaded — the walk went on blocking at the old ceiling, decided
+     * "both reroll options blocked" on a card whose chooser was quoting prices
+     * the player had just allowed, and retired the card with a Back press
+     * labelled "Close the menu on #N".
+     *
+     * The popup's own module is the live copy: its selects write to it the
+     * instant they change, before the storage round-trip even resolves. The
+     * walk's stored copy stays as the fallback for a board where reroll
+     * protection is switched off and never loaded anything.
+     *
+     * @returns {{enabled: boolean, coin: number, cowbell: number}}
+     * @private
+     */
+    _liveCapBlock() {
+        const live = taskRerollProtection?.isInitialized ? taskRerollProtection : this;
+        return {
+            enabled: Boolean(live.capProtectionEnabled),
+            coin: Number(live.coinThreshold) || DEFAULT_COIN_THRESHOLD,
+            cowbell: Number(live.cowbellThreshold) || DEFAULT_COWBELL_THRESHOLD,
+        };
+    }
+
+    /**
      * The prices the plan blocks at right now.
      *
      * With the cap block switched off nothing is blocked on price — the walk
@@ -412,8 +455,9 @@ class TaskRerollWalk {
      * @private
      */
     _blockThresholds() {
-        if (!this.capProtectionEnabled) return { coinThreshold: Infinity, cowbellThreshold: Infinity };
-        return { coinThreshold: this.coinThreshold, cowbellThreshold: this.cowbellThreshold };
+        const cap = this._liveCapBlock();
+        if (!cap.enabled) return { coinThreshold: Infinity, cowbellThreshold: Infinity };
+        return { coinThreshold: cap.coin, cowbellThreshold: cap.cowbell };
     }
 
     /**
@@ -615,6 +659,9 @@ class TaskRerollWalk {
         const preference = String(config.getSettingValue('tasks_rerollWalkCurrency', 'auto') || 'auto');
         const cowbellValue = this._cowbellValue();
         const { coinThreshold, cowbellThreshold } = this._blockThresholds();
+        // What ceiling this plan was drawn under, so a cap edited while the
+        // walk sits armed can be noticed and the label redrawn against it
+        this.planCap = `${coinThreshold}/${cowbellThreshold}`;
         const cards = this._cards();
 
         while (this.index < cards.length) {
@@ -796,6 +843,7 @@ class TaskRerollWalk {
         this.paidFor = null;
         this.paidWaits = 0;
         this.readPresses = 0;
+        this.awaitingReadSort = false;
         this.walkBegun = false;
         this.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
         // A new walk is what finally replaces the last one's summary
@@ -803,6 +851,7 @@ class TaskRerollWalk {
         this.message = '';
         this.hidden = false;
         this.timerRegistry.clearAll();
+        this.sortTimerRegistry.clearAll();
         // Awaited, because the plan below is what obeys these numbers. Read
         // fire-and-forget they landed *after* the first plan was drawn, so a
         // threshold edited in the shield popup seconds earlier — the case this
@@ -834,7 +883,9 @@ class TaskRerollWalk {
         // Nothing is in flight once the walk has stopped waiting for it
         this.paidFor = null;
         this.paidWaits = 0;
+        this.awaitingReadSort = false;
         this.timerRegistry.clearAll();
+        this.sortTimerRegistry.clearAll();
         this._removeWidget();
     }
 
@@ -850,6 +901,13 @@ class TaskRerollWalk {
      * @private
      */
     _replan() {
+        // Held while the post-read sort is still to come: planning against a
+        // board that is about to be reordered names the wrong slot
+        if (this.awaitingReadSort) {
+            this.state = 'waiting';
+            this._render();
+            return;
+        }
         this.pending = false;
         this.step = this._plan();
         if (this.step) {
@@ -929,9 +987,27 @@ class TaskRerollWalk {
             // from under a click by it: the walk owns the pressing here, it re-reads
             // the board in the `_replan()` on the next line, and `advance()` proves
             // the slot and the task again before any click.
-            this.timerRegistry.clearAll();
-            this.timerRegistry.registerTimeout(
+            //
+            // And on a timer of its own. `_replanSoon` clears `timerRegistry`
+            // before every re-plan, and the walk re-plans on `quests_updated`
+            // while it is waiting — which is exactly what reading tasks sends.
+            // Sharing the registry meant the message proving the read had
+            // landed was also the message that cancelled the sort, so the
+            // forced sort never ran outside a test (where the websocket hook is
+            // stubbed and no such message arrives). The sort is not a click and
+            // nothing is planned off it, so it does not belong to the walk's
+            // press timer in the first place.
+            //
+            // Nothing is planned until that sort has happened, either: a plan
+            // drawn first names a slot the sort is about to move a different
+            // card into, and the next press would abort with "Slot 1 is not the
+            // card it was". So the `quests_updated` re-plan is held off until
+            // the board is in its final order.
+            this.awaitingReadSort = true;
+            this.sortTimerRegistry.clearAll();
+            this.sortTimerRegistry.registerTimeout(
                 setTimeout(() => {
+                    this.awaitingReadSort = false;
                     if (config.getSetting('taskSorter_sortAfterRead') || config.getSetting('taskSorter_autoSort')) {
                         try {
                             taskSorter.sortTasks(true);
@@ -942,6 +1018,7 @@ class TaskRerollWalk {
                     this._replan();
                 }, SERVER_SETTLE_MS)
             );
+            this.timerRegistry.clearAll();
             return true;
         }
 
@@ -1090,7 +1167,26 @@ class TaskRerollWalk {
             this.summary = '';
             return;
         }
+        // The shield popup's cap can move while the walk sits armed, and the
+        // step on the label was decided under the old one. Re-planning here
+        // rather than only in `_render` is what makes an edit land on the very
+        // next label instead of after a reload; `_render` is called from
+        // `_replan`, so the check belongs on this side of it.
+        if (this.state === 'ready' && this._capSignature() !== this.planCap) {
+            this._replan();
+            return;
+        }
         this._render();
+    }
+
+    /**
+     * The ceiling a plan is drawn under, as one comparable string.
+     * @returns {string}
+     * @private
+     */
+    _capSignature() {
+        const { coinThreshold, cowbellThreshold } = this._blockThresholds();
+        return `${coinThreshold}/${cowbellThreshold}`;
     }
 
     /**
@@ -1149,21 +1245,22 @@ class TaskRerollWalk {
         const widget = this.widget;
         if (!widget || !widget.settingsOpen) return;
 
+        const cap = this._liveCapBlock();
         widget.settings.replaceChildren();
         widget.settings.append(
             widgetDivider(),
             widgetNote('The walk rerolls a task until the shield popup would block the next reroll.'),
             widgetReadOnlyRow({
                 label: 'Block rerolls at',
-                value: this.capProtectionEnabled
-                    ? `${coinLabel(this.coinThreshold)} / ${cowbellLabel(this.cowbellThreshold)}`
+                value: cap.enabled
+                    ? `${coinLabel(cap.coin)} / ${cowbellLabel(cap.cowbell)}`
                     : 'off — nothing is blocked on price',
                 hint: 'Edited in the 🛡 task-protection popup, not here.',
-                title: this.capProtectionEnabled
+                title: cap.enabled
                     ? 'A reroll costing this much or more is blocked, exactly as the shield popup blocks it.'
                     : 'Cap protection is switched off in the shield popup, so the walk blocks nothing on ' +
-                      `price either. Its numbers, for when it is switched back on: ${coinLabel(this.coinThreshold)} / ` +
-                      `${cowbellLabel(this.cowbellThreshold)}.`,
+                      `price either. Its numbers, for when it is switched back on: ${coinLabel(cap.coin)} / ` +
+                      `${cowbellLabel(cap.cowbell)}.`,
             }),
             widgetSelectRow({
                 key: 'tasks_rerollWalkCurrency',
@@ -1226,6 +1323,7 @@ class TaskRerollWalk {
     cleanup() {
         this.stop();
         this.timerRegistry.clearAll();
+        this.sortTimerRegistry.clearAll();
         for (const unregister of this.unregisterHandlers) {
             try {
                 unregister();

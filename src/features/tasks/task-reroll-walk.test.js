@@ -60,7 +60,20 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => 7, getMooPassBuffs: () => [] },
 }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+// A real little registry rather than a stub: `quests_updated` is what the walk
+// re-plans on, and the post-read sort was being cancelled by exactly that
+// message — invisible for as long as no test could send one
+const ws = vi.hoisted(() => ({ handlers: {} }));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (event, handler) => {
+            (ws.handlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            ws.handlers[event] = (ws.handlers[event] || []).filter((h) => h !== handler);
+        },
+    },
+}));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 // The board watcher would re-render the widget on every DOM change a test makes;
 // the tests drive the walk directly instead
@@ -77,6 +90,14 @@ const {
     chooseReroll,
 } = await import('./task-reroll-walk.js');
 const walk = taskRerollWalkFeature.walk;
+// The shield popup's own module: the walk reads its live cap from here, so an
+// edit made while a walk is armed lands on the next plan
+const { default: taskRerollProtection } = await import('./task-reroll-protection.js');
+
+/** Deliver a websocket message to whatever the walk registered for it */
+const emit = (event) => {
+    for (const handler of ws.handlers[event] || []) handler({});
+};
 
 const MILKING = '/actions/milking/cow';
 const KEEPER = '/actions/brewing/coffee';
@@ -255,6 +276,15 @@ beforeEach(() => {
     walk.coinThreshold = 320000;
     walk.cowbellThreshold = 32;
     walk.capProtectionEnabled = true;
+    walk.awaitingReadSort = false;
+    walk.planCap = '';
+    // The shield popup's module is the live source; left uninitialised it says
+    // nothing and the walk falls back to its own stored copy above
+    taskRerollProtection.isInitialized = false;
+    taskRerollProtection.capProtectionEnabled = true;
+    taskRerollProtection.coinThreshold = 320000;
+    taskRerollProtection.cowbellThreshold = 32;
+    ws.handlers = {};
     // The walk is a singleton, and the spend readout now outlives one walk
     walk.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
     walk.summary = '';
@@ -1131,5 +1161,150 @@ describe('the control only exists when it is turned on', () => {
         expect(walk.coinThreshold).toBe(80000);
         expect(stored.values.taskCapCoinThreshold).toBe(40000);
         taskRerollWalkFeature.cleanup();
+    });
+});
+
+describe('the cap the walk obeys is the cap as it stands now', () => {
+    // The regression the maintainer photographed: a chooser open on card #1
+    // quoting a live "Pay 1" and "Pay 40000", and the chip reading
+    // "▶ Close the menu on #1 · spent 30.0K". Nothing in the plan can produce a
+    // "Close the menu" step except `verdictForCard` returning `skip` (or
+    // `trash`), and on a rerollable card the only route to that is
+    // `chooseReroll` finding BOTH currencies at or over their ceiling. So a
+    // close-the-menu press between rerolls is always the walk believing a
+    // ceiling that is not the one on screen — and the ceiling it believed was
+    // the one read when the walk started, a cap edit ago.
+
+    test('a cap raised while the walk is armed lands on the next plan, not after a reload', async () => {
+        // Started under "block at 40K": the 20K reroll is allowed, the 40K one
+        // it becomes is not, and with cowbells blocked outright the card is
+        // retired with a Back press.
+        stored.values.taskCapCoinThreshold_7 = 40000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        taskRerollProtection.isInitialized = true;
+        taskRerollProtection.coinThreshold = 40000;
+        taskRerollProtection.cowbellThreshold = 1;
+        const list = board([
+            { name: 'Milking - Cow', buttons: ['Back', 'Pay 1', 'Pay 40,000'], quest: quest(MILKING, 2, 0) },
+        ]);
+
+        await walk.start();
+        expect(chipText()).toBe('▶ Close the menu on #1');
+
+        // The player opens the shield popup and raises the cap. The popup's
+        // select writes its module before the storage round-trip resolves.
+        taskRerollProtection.coinThreshold = 320000;
+        // Any board mutation is what wakes the widget in production
+        walk._syncWidget();
+
+        expect(chipText()).toBe('▶ Reroll #1 — 40.0K🪙 (cowbells blocked)');
+        expect(clicks).toEqual([]);
+        expect(list.children).toHaveLength(1);
+    });
+
+    test('the cap block being switched off mid-walk unblocks the card too', async () => {
+        stored.values.taskCapCoinThreshold_7 = 40000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        taskRerollProtection.isInitialized = true;
+        taskRerollProtection.coinThreshold = 40000;
+        taskRerollProtection.cowbellThreshold = 1;
+        board([{ name: 'Milking - Cow', buttons: ['Back', 'Pay 1', 'Pay 40,000'], quest: quest(MILKING, 2, 0) }]);
+
+        await walk.start();
+        expect(chipText()).toBe('▶ Close the menu on #1');
+
+        taskRerollProtection.capProtectionEnabled = false;
+        walk._syncWidget();
+
+        expect(chipText()).toContain('Reroll #1');
+    });
+
+    test('the gear drawer quotes the live cap, not the one the walk started under', async () => {
+        taskRerollProtection.isInitialized = true;
+        taskRerollProtection.coinThreshold = 40000;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+
+        walk.widget.setSettingsOpen(true);
+        taskRerollProtection.coinThreshold = 160000;
+        walk._renderSettings();
+
+        expect(walk.widget.settings.textContent).toContain('160.0K');
+        expect(walk.widget.settings.textContent).not.toContain('40.0K');
+    });
+
+    test('a reroll that lands with the chooser still open is offered the next payment', async () => {
+        // The invariant the close-the-menu step was violating: paid, answered,
+        // chooser still open on the card with its new prices — the next press
+        // is the next payment, not a tidy-up.
+        const list = board([
+            { name: 'Milking - Cow', buttons: ['Back', 'Pay 1', 'Pay 20,000'], quest: quest(MILKING, 1, 0) },
+        ]);
+        await walk.start();
+        walk.advance();
+        expect(clicks).toHaveLength(1);
+
+        list.children[0].querySelector('[class*="RandomTask_name"]').textContent = 'Cooking - Stew';
+        const questFiber = document.getElementById('root')._reactRootContainer.current.child;
+        questFiber.memoizedProps.characterQuest = quest('/actions/cooking/stew', 1, 1);
+        setButtons(list, 1, ['Back', 'Pay 2', 'Pay 20,000']);
+        vi.advanceTimersByTime(3000);
+
+        expect(chipText()).toContain('Reroll #1');
+        expect(chipText()).not.toContain('Close the menu');
+    });
+});
+
+describe('the post-read sort survives the message that proves the read landed', () => {
+    test('a quests_updated during the wait does not cancel the forced sort', async () => {
+        // The walk re-plans on `quests_updated` while it is waiting, and
+        // `_replanSoon` clears the timer registry first. The post-read sort was
+        // on that registry, and reading tasks is precisely what makes the game
+        // send `quests_updated` — so the sort was cancelled every time, on
+        // every board, and only tests (whose websocket hook sent nothing) ever
+        // saw it run.
+        settings.values.taskSorter_sortAfterRead = true;
+        sorter.sortTasks.mockClear();
+        walk.isInitialized = false;
+        await walk.initialize();
+
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const notice = unreadNotice(list);
+
+        await walk.start();
+        walk.advance();
+        expect(clicks).toEqual(['Notice:Read']);
+
+        // The game answers the read
+        notice.remove();
+        emit('quests_updated');
+        vi.advanceTimersByTime(3000);
+
+        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
+        expect(chipText()).toContain('Reroll #1');
+    });
+
+    test('nothing is planned until that sort has happened', async () => {
+        settings.values.taskSorter_sortAfterRead = true;
+        sorter.sortTasks.mockClear();
+        walk.isInitialized = false;
+        await walk.initialize();
+
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const notice = unreadNotice(list);
+
+        await walk.start();
+        walk.advance();
+        notice.remove();
+
+        // The websocket re-plan fires long before the sort would
+        emit('quests_updated');
+        vi.advanceTimersByTime(200);
+        expect(walk.state).toBe('waiting');
+        expect(sorter.sortTasks).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(3000);
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(walk.state).toBe('ready');
     });
 });
