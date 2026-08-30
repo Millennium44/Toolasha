@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Every panel reachable from the palette, labyrinth trends, and honest cache staleness
+
+The command palette's hand-maintained list became a registry features push into as they initialize — a switched-off feature never registers, ten previously unreachable panels (dungeon tracker, monster stat check, scroll simulator, XP/hr, risk of ruin, consumables, queue monitor, ability book, market history, trade ledger) gained entries, and the list is alphabetical so it reads the same on every install. The consumables panel's supply section now shows burn per run for all three labyrinth consumables and a torches-per-floor trend over the full 30-run ledger (trusted starts only). And lab sim room tiles whose gear changed since their cached result say exactly that — "gear changed since this was computed", claiming only what the fingerprint covers — instead of a bare age, with nothing marked while loadout snapshots are still loading.
+
 ### Calibration drills down, and alchemy joins it
 
 Each skill card on the calibration panel now folds open to per-action medians (each action gated on its own sample) and carries an ask-vs-bid line — "X% of this forecast depends on selling into the ask" — from a recorded field that had no readers. And alchemy success rates join the calibration panel: sessions stamp their predicted rate at start (with the live catalyst and tea), old sessions honestly read unstamped rather than being judged against today's model, and each tracker kind gets its own Wilson-interval verdict — never pooled, never squeezed into the coins-per-hour ledger where a proportion would read as "1/h".

@@ -61,6 +61,13 @@ const ALLOWLIST = new Map([
         'stateless single-function macrotask yield; no module state to share',
     ],
     [
+        'src/utils/async-pool.js',
+        // One exported function over its own arguments, no module state; the
+        // politeness bound it enforces is per call site, so two copies bound
+        // their own sweeps identically to one.
+        'stateless single-function concurrency pool; no module state to share',
+    ],
+    [
         'src/utils/game-server.js',
         // Pure hostname checks (isTestServer and friends), no module state.
         // Imported by core/settings-schema.js to hide a test-server-only
