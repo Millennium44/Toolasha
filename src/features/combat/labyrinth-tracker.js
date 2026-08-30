@@ -151,8 +151,13 @@ class LabyrinthTracker {
                     (prev.roomType === COMBAT_ROOM_TYPE || prev.roomType === SKILLING_ROOM_TYPE) && !prev.isCleared;
                 const isNowCleared = curr.isCleared === true;
                 // Shrouded rooms go straight to cleared without entryCount;
-                // naturally cleared rooms always had entryCount set first
-                const wasEntered = prev.entryCount > 0;
+                // naturally cleared rooms always had entryCount set first — except
+                // a first-try win, whose entry and clear can land in the very same
+                // update (no intermediate "entered, still uncleared" snapshot ever
+                // observed). `prev` alone would read that as never entered, so the
+                // still-unstripped `curr` entryCount is also accepted, mirroring the
+                // guard `labyrinth-outcome-log.js`'s foldFloorOutcomes uses.
+                const wasEntered = prev.entryCount > 0 || curr.entryCount > 0;
 
                 if (wasTrackable && isNowCleared && wasEntered) {
                     this.recordClear(prev);

@@ -117,6 +117,22 @@ describe('labyrinth tracker', () => {
         expect(labyrinthTracker.getBestLevel('/monsters/chimerical_beast')).toBeNull();
     });
 
+    test('a first-try win whose entry and clear land in the same update is still recorded', async () => {
+        // A room revealed but not yet entered (entryCount 0), then in the very next
+        // update it is both entered AND cleared in one shot — the entry and the
+        // clear landed in the same websocket payload rather than across two. The
+        // outcome log's own guard treats the CURRENT room's entryCount as proof of
+        // entry for exactly this case; the best-level tracker must too.
+        await labyrinthTracker.initialize();
+
+        game.wsHandlers.labyrinth_updated({ labyrinth: { roomData: [[combatRoom({ entryCount: 0 })]] } });
+        game.wsHandlers.labyrinth_updated({
+            labyrinth: { roomData: [[combatRoom({ entryCount: 1, isCleared: true })]] },
+        });
+
+        expect(labyrinthTracker.getBestLevel('/monsters/chimerical_beast')).toBe(40);
+    });
+
     test('a lower recommendedLevel clear does not overwrite a recorded best', async () => {
         await labyrinthTracker.initialize();
 
