@@ -516,6 +516,36 @@ describe('setupCharacterSwitchHandler — serialized lifecycle', () => {
         vi.useRealTimers();
     });
 
+    test('reports a switch-init failure to the recovery callback instead of discarding it', async () => {
+        // Before this, initializeFeatures()'s return value was thrown away on
+        // the switch path — a feature that threw here was silently dead until
+        // a page reload, unlike boot, which gets a health check + retry + report.
+        vi.useFakeTimers();
+        state.currentCharacterId = 'B';
+        state.enabledFeatures = new Set(['broken']);
+        featureRegistry.replaceFeatures([
+            {
+                key: 'broken',
+                name: 'Broken',
+                initialize: () => {
+                    throw new Error('switch init failed');
+                },
+            },
+        ]);
+
+        const onInitFailures = vi.fn();
+        featureRegistry.setupCharacterSwitchHandler(onInitFailures);
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(onInitFailures).toHaveBeenCalledTimes(1);
+        expect(onInitFailures.mock.calls[0][0]).toEqual([
+            { key: 'broken', name: 'Broken', reason: 'Initialization threw: switch init failed' },
+        ]);
+        vi.useRealTimers();
+    });
+
     test('the switch after a burst gets a real teardown again', async () => {
         vi.useFakeTimers();
         state.currentCharacterId = 'C';

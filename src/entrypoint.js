@@ -337,6 +337,52 @@ function mergeFailures(...lists) {
 }
 
 /**
+ * The failed-features half of the startup health pass: wait for the DOM to
+ * settle, check health, retry what still looks broken once, and report
+ * whatever survives that.
+ *
+ * Shared between boot and a character switch's `initializeFeatures()`. Boot
+ * has always had this — a health check, one retry pass, and a user-facing
+ * toast for what does not come back — but the switch handler used to discard
+ * `initializeFeatures()`'s return value entirely, so a feature that threw
+ * during a character switch stayed dead, silently, until the page was
+ * reloaded. Routing both paths through the same function means a feature that
+ * fails a switch's init gets exactly the recovery boot gives it.
+ *
+ * @param {Array<{key: string, name: string, reason: string}>} initFailures - What initializeFeatures() reported
+ * @returns {void}
+ */
+function scheduleFailedFeatureRecovery(initFailures) {
+    setTimeout(async () => {
+        const failedFeatures = mergeFailures(initFailures, featureRegistry.checkFeatureHealth());
+        if (failedFeatures.length === 0) return;
+
+        console.warn(
+            '[Toolasha] Health check found failed features:',
+            failedFeatures.map((f) => f.name)
+        );
+
+        setTimeout(async () => {
+            // What the retry could not fix, plus whatever the second health
+            // pass still objects to. A feature that came up on the second
+            // attempt — usually because the panel it anchors to had not been
+            // drawn yet — is not worth interrupting anybody about.
+            const retryFailures = await featureRegistry.retryFailedFeatures(failedFeatures);
+            const stillFailed = mergeFailures(retryFailures, featureRegistry.checkFeatureHealth());
+
+            if (stillFailed.length > 0) {
+                console.warn(
+                    '[Toolasha] These features could not initialize:',
+                    stillFailed.map((f) => f.name)
+                );
+                console.warn('[Toolasha] Try refreshing the page or reopening the relevant game panels');
+                UI.healthStatus.reportFailures(stillFailed);
+            }
+        }, 1000);
+    }, 500);
+}
+
+/**
  * The selectors that should exist on a loaded game page, checked once, well
  * after startup, to catch the one failure a per-feature health check cannot:
  * the game renaming its classes out from under every selector at once. A
@@ -2023,8 +2069,10 @@ if (isCombatSimulatorPage()) {
         }
     })();
 
-    // Setup character switch handler once (NOT inside character_initialized listener)
-    featureRegistry.setupCharacterSwitchHandler();
+    // Setup character switch handler once (NOT inside character_initialized listener).
+    // scheduleFailedFeatureRecovery gives a switch's initializeFeatures() the same
+    // health-check/retry/report treatment boot gives its own initializeFeatures().
+    featureRegistry.setupCharacterSwitchHandler(scheduleFailedFeatureRecovery);
 
     // Whether the one-time startup block below has already run this page load.
     //
@@ -2144,22 +2192,24 @@ if (isCombatSimulatorPage()) {
 
                 UI.whatsNew.maybeShow();
 
-                // Health check after initialization
-                setTimeout(async () => {
-                    const failedFeatures = mergeFailures(initFailures, featureRegistry.checkFeatureHealth());
+                // Health check after initialization. The failed-features half
+                // (health check, one retry, report) is shared with the
+                // character-switch path — see scheduleFailedFeatureRecovery.
+                scheduleFailedFeatureRecovery(initFailures);
 
-                    // Note: Settings tab health check removed - tab only appears when user opens settings panel
-
-                    // Selector canary: runs regardless of whether any single feature
-                    // reported unhealthy, because a game update can rename every
-                    // class at once without a single per-feature check noticing —
-                    // each one's anchor is just "not open," which reads as null.
-                    //
-                    // The schema canary is the same argument one layer down: the
-                    // script hardcodes the game's own data keys and hrids, and a
-                    // renamed one produces empty maps and null lookups rather
-                    // than an error. Both are reported together — two toasts
-                    // about the same game update is one toast too many.
+                // Selector canary: runs regardless of whether any single feature
+                // reported unhealthy, because a game update can rename every
+                // class at once without a single per-feature check noticing —
+                // each one's anchor is just "not open," which reads as null.
+                //
+                // The schema canary is the same argument one layer down: the
+                // script hardcodes the game's own data keys and hrids, and a
+                // renamed one produces empty maps and null lookups rather
+                // than an error. Both are reported together — two toasts
+                // about the same game update is one toast too many.
+                //
+                // Note: Settings tab health check removed - tab only appears when user opens settings panel
+                setTimeout(() => {
                     const canaryFailures = [...checkAnchorCanaries(), ...UI.schemaCanary.runSchemaCanary()];
                     if (canaryFailures.length > 0) {
                         console.warn(
@@ -2167,34 +2217,6 @@ if (isCombatSimulatorPage()) {
                             canaryFailures.map((f) => f.name)
                         );
                         UI.healthStatus.reportFailures(canaryFailures);
-                    }
-
-                    if (failedFeatures.length > 0) {
-                        console.warn(
-                            '[Toolasha] Health check found failed features:',
-                            failedFeatures.map((f) => f.name)
-                        );
-
-                        setTimeout(async () => {
-                            // What the retry could not fix, plus whatever the
-                            // second health pass still objects to. A feature that
-                            // came up on the second attempt — usually because the
-                            // panel it anchors to had not been drawn yet — is not
-                            // worth interrupting anybody about.
-                            const retryFailures = await featureRegistry.retryFailedFeatures(failedFeatures);
-                            const stillFailed = mergeFailures(retryFailures, featureRegistry.checkFeatureHealth());
-
-                            if (stillFailed.length > 0) {
-                                console.warn(
-                                    '[Toolasha] These features could not initialize:',
-                                    stillFailed.map((f) => f.name)
-                                );
-                                console.warn(
-                                    '[Toolasha] Try refreshing the page or reopening the relevant game panels'
-                                );
-                                UI.healthStatus.reportFailures(stillFailed);
-                            }
-                        }, 1000);
                     }
                 }, 500); // Wait 500ms after initialization to check health
             } catch (error) {

@@ -332,8 +332,17 @@ async function disableAllFeatures() {
  * is still current when the burst settles re-initialises. Data-manager used to
  * do this by dropping the events outright, which meant the second character ran
  * on the first character's settings until some later, slower switch fixed it.
+ *
+ * @param {Function} [onInitFailures] - Called with the array `initializeFeatures()`
+ *   returns after each switch's re-init. Boot has always followed its own
+ *   `initializeFeatures()` with a health check, one retry pass, and a
+ *   user-facing report of what is still broken; before this parameter existed
+ *   the switch path discarded that return value entirely, so a feature that
+ *   threw during a switch stayed dead — silently — until the page reloaded.
+ *   The entrypoint passes the same recovery routine boot uses so both paths
+ *   get the same treatment.
  */
-function setupCharacterSwitchHandler() {
+function setupCharacterSwitchHandler(onInitFailures) {
     // One chain that every switch step is appended to, so no two ever overlap.
     let lifecycleChain = Promise.resolve();
     const enqueue = (step) => {
@@ -415,10 +424,14 @@ function setupCharacterSwitchHandler() {
             await new Promise((resolve) => setTimeout(resolve, 50));
             if (isStale()) return;
 
-            await initializeFeatures();
+            const initFailures = await initializeFeatures();
             // The layer is up again for the character that is current now, so
             // the next switch owes a real teardown.
             tornDown = false;
+
+            if (typeof onInitFailures === 'function') {
+                onInitFailures(initFailures);
+            }
         });
     });
 }
