@@ -440,6 +440,24 @@ describe('planning a walk down the board', () => {
         expect(chipText()).toBe('▶ Trash #1 (both reroll options blocked)');
     });
 
+    test('stopping while the thresholds are still being read leaves the walk stopped', async () => {
+        // `start()` became async when the threshold read was awaited, which put
+        // an await between the click that starts a walk and the plan that walk
+        // draws. Stop pressed inside that window used to be undone: the resumed
+        // start went on to `_replan()`, which set `ready` and drew the widget
+        // again, so the walk the player had just cancelled was sitting there
+        // armed and the next press of it clicked a game button.
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+        const starting = walk.start();
+        walk.stop();
+        await starting;
+
+        expect(walk.state).toBe('idle');
+        expect(walk.step).toBe(null);
+        expect(document.querySelector('.mwi-task-reroll-walk-advance')).toBe(null);
+    });
+
     test('with cap protection switched off the walk stops obeying its numbers', async () => {
         // The two thresholds belong to the shield popup's cap-protection block,
         // and that block has an on/off switch of its own. A walk that reads the

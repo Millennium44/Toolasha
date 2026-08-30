@@ -305,6 +305,8 @@ class TaskRerollWalk {
         this.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
         /** The last finished walk's summary, kept after its widget goes away */
         this.summary = '';
+        /** Bumped by every start and every stop, so an in-flight start can tell it was abandoned */
+        this.startGeneration = 0;
         this.coinThreshold = DEFAULT_COIN_THRESHOLD;
         this.cowbellThreshold = DEFAULT_COWBELL_THRESHOLD;
         /** The shield popup's cap-block switch — the thresholds mean nothing without it */
@@ -782,6 +784,12 @@ class TaskRerollWalk {
      * @returns {Promise<void>} Resolved once the first press is planned
      */
     async start() {
+        // Which start this is. `_loadThresholds` awaits storage, so between the
+        // reset below and the plan at the bottom the player can press Stop — or
+        // press Start again — and the resumed half of an abandoned start would
+        // otherwise plan anyway, setting `ready` and drawing the widget over a
+        // walk that had just been cancelled.
+        const generation = ++this.startGeneration;
         this.index = 0;
         this.pendingRetries = 0;
         this.pending = false;
@@ -801,6 +809,9 @@ class TaskRerollWalk {
         // re-read exists for — missed the very card the player was looking at
         // while they edited it.
         await this._loadThresholds();
+        // Stopped, or superseded by a later start, while that read was in
+        // flight: this walk is not the one the player is waiting on any more
+        if (generation !== this.startGeneration) return;
 
         if (!this._cards().length && !this._readButton()) {
             this.state = 'stopped';
@@ -814,6 +825,9 @@ class TaskRerollWalk {
 
     /** Stop, leaving the board exactly as it is, and put the widget away. */
     stop() {
+        // Bumped so a start still awaiting its thresholds cannot come back and
+        // re-arm the walk this call just cancelled
+        this.startGeneration += 1;
         this.state = 'idle';
         this.step = null;
         this.hidden = true;
