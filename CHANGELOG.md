@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The rest of the negative-cost family, found and fixed
+
+A census of every cost-sign site in the lab advisor after yesterday's find: a two-hander swap now names the weapon it displaces (the displaced piece lived in clearedSlots, which the breakdown never walked — the row credited its resale without saying whose); the single-fight Gold/1% tables stop sorting a free or credit-funded upgrade last (and stop listing an unpriced combat level as the cheapest row when sorting by cost), using the same rule the combat sim's ladders already apply; and the budget plan prints a self-funding pick as "+17.7M back" instead of describing a negative outlay. One deliberate convention reported, not changed: resale credits are priced at the raw bid with no sales fee deducted.
+
 ### A stale socket's late close no longer disconnects the live one
 
 During a character switch the departing socket can fire a delayed close after the arriving socket is already live; connection state treated any close as "the connection is gone" and stayed wrongly disconnected until a real reconnect — which could leave market fetches serving stale cached prices indefinitely. Close and error are now ignored from any socket but the most recently opened one, the same ownership rule message dispatch already follows.
