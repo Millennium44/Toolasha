@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loot log: deletes stick, and Show more stays open
+
+Deleting a historical loot entry bypassed the history module's own write serialization, so a loot update arriving mid-click could merge from a stale snapshot and silently resurrect the deleted entry — deletes now go through the same chain every other write uses. And the historical section rebuilt itself back down to the first twenty entries on every loot tick, collapsing a "Show more" expansion within seconds; the expansion count is remembered now.
+
 ### Seventeen listener leaks closed
 
 A census found fifteen features re-registering setting-change listeners on every character switch while discarding the unregister function — the same shape whose worst case resurrected a torn-down feature last week. All fifteen now capture and call their unregisters in teardown (watchlist, loadout enhancement display, monster stat check, scroll simulator, max produceable, gathering stats, inventory count, combat stats, action filter, trade history display), and two similar leaks found in passing are closed too: the scroll simulator's DOM observer, and the sort-mode listener, whose API now hands back an unregister at all.
