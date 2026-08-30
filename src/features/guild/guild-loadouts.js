@@ -336,6 +336,55 @@ export function monsterNames() {
     return names;
 }
 
+let itemNameCache = { map: null, names: new Set() };
+
+/**
+ * Every item name the game knows, lowercased, cached per data object.
+ *
+ * The popup scrape reads any `Modal_` whose header looks like "Name — Lv.N"
+ * over stat rows — and an ITEM detail modal has exactly that shape too: a
+ * "Chance Cape ★" with a level requirement over its stat lines was stored as
+ * a guild member and sat in the Trial Abilities roster as "not in the current
+ * roster" (2026-08-30). The monster guard cannot catch it; this can.
+ *
+ * @returns {Set<string>} Lowercased item names
+ */
+export function itemNames() {
+    const map = dataManager.getInitClientData?.()?.itemDetailMap;
+    if (!map || typeof map !== 'object') return new Set();
+    if (itemNameCache.map === map) return itemNameCache.names;
+
+    const names = new Set();
+    for (const detail of Object.values(map)) {
+        const name = typeof detail?.name === 'string' ? detail.name.trim().toLowerCase() : '';
+        if (name) names.add(name);
+    }
+    itemNameCache = { map, names };
+    return names;
+}
+
+/**
+ * Whether a "member" name is really an item's display name.
+ *
+ * The refined marker (★) and an enhancement suffix (+7) are display dressing
+ * on top of the item's own name, so they are stripped before the lookup. A
+ * player whose chosen name coincides with an item name exactly is
+ * indistinguishable and loses — the game's name rules make that unlikely, and
+ * a false member in the trial roster costs more than a missed capture.
+ *
+ * @param {string} name - The scraped header name
+ * @returns {boolean} True when it must not be stored as a member
+ */
+export function isItemName(name) {
+    const raw = String(name || '')
+        .replace(/\s*[★✦]+\s*$/u, '')
+        .replace(/\s*\+\d+\s*$/, '')
+        .trim()
+        .toLowerCase();
+    if (!raw) return false;
+    return itemNames().has(raw);
+}
+
 /**
  * Every player in a `new_battle`, as loadout snapshots.
  * @param {Object} data - `new_battle` payload
@@ -527,13 +576,16 @@ export function purgeMonsterLoadouts(record) {
     const players = record?.players && typeof record.players === 'object' ? record.players : null;
     if (!players) return { record, purged: [] };
 
+    // Items ride the same purge: a "Chance Cape ★" scraped off an item modal
+    // is no more a member than a Trial Chameleon is
+    const isImpostor = (entry) => isMonsterUnit(entry) || isItemName(entry?.name);
     const purged = [];
     for (const [key, entry] of Object.entries(players)) {
-        if (isMonsterUnit(entry)) purged.push(entry?.name || key);
+        if (isImpostor(entry)) purged.push(entry?.name || key);
     }
     if (!purged.length) return { record, purged };
 
-    const kept = Object.fromEntries(Object.entries(players).filter(([, entry]) => !isMonsterUnit(entry)));
+    const kept = Object.fromEntries(Object.entries(players).filter(([, entry]) => !isImpostor(entry)));
     return { record: { ...record, players: kept }, purged };
 }
 

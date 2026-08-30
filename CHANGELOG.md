@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### An item modal is not a guild member
+
+The loadout popup scrape reads any modal shaped "Name — Lv.N over stat rows" — which an item detail modal also is, so a refined cape landed in the trial roster as a player. Item names (with their ★ and +N dressing stripped) are now refused the way monster names already were, and the existing purge sweeps any impostor already stored.
+
 ### The new-code audit: eleven edges in yesterday's features, closed
 
 A hostile pass over the v3.33.0 campaign caught: Stop pressed while the reroll walk was still loading its thresholds was undone (the walk re-armed itself); the price-target side toggle was unreachable (blur committed the editor before the click landed); a goal-planner sync pull could drop the other device's whole list once local was full; an empty trial roster read every aura as definitively MISSING; a trial whose name-join matched nobody headlined a perfect +0.0%; the loot log re-grew a dead "Show more (0 remaining)" every few seconds; a character already OUT of a consumable was the one character the account panel said nothing about; the calibration cohort refusal named the wrong cohort; the trade ledger's fill tables showed the previous open's numbers until the read landed (and two rapid opens raced); a stale account read could relabel the departed character's facts as "(here)" for up to a minute; and the capture chips could yank keyboard focus back into the row after the reader had left it.

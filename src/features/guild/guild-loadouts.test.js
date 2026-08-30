@@ -45,6 +45,7 @@ const {
     MAX_LOADOUTS,
     pruneCharacterOnlyLoadouts,
     purgeMonsterLoadouts,
+    isItemName,
     readAbilities,
     saveLoadouts,
 } = await import('./guild-loadouts.js');
@@ -653,5 +654,29 @@ describe('merging two devices loadout records', () => {
         expect(Object.keys(merged.players)).toHaveLength(MAX_LOADOUTS);
         // The newer half survived
         expect(Object.keys(merged.players).every((key) => key.startsWith('b'))).toBe(true);
+    });
+});
+
+describe('isItemName', () => {
+    test('an item name with its display dressing is recognised', () => {
+        game.clientData = { itemDetailMap: { '/items/chance_cape': { name: 'Chance Cape' } } };
+        expect(isItemName('Chance Cape ★')).toBe(true);
+        expect(isItemName('Chance Cape +7')).toBe(true);
+        expect(isItemName('Chance Cape')).toBe(true);
+        expect(isItemName('ActualPlayer')).toBe(false);
+        expect(isItemName('')).toBe(false);
+    });
+
+    test('the purge drops an item filed as a member', () => {
+        game.clientData = { itemDetailMap: { '/items/chance_cape': { name: 'Chance Cape' } } };
+        const record = {
+            players: {
+                'chance cape ★': { name: 'Chance Cape ★', rows: [] },
+                real: { name: 'Real', rows: [] },
+            },
+        };
+        const { record: cleaned, purged } = purgeMonsterLoadouts(record);
+        expect(purged).toEqual(['Chance Cape ★']);
+        expect(Object.keys(cleaned.players)).toEqual(['real']);
     });
 });

@@ -40,6 +40,7 @@ import {
     extractPartyLoadouts,
     foldLoadout,
     isMonsterUnit,
+    isItemName,
     loadLoadouts,
     loadoutKey,
     loadoutList,
@@ -130,9 +131,11 @@ export function readUnitPopup(root, at = Date.now()) {
     if (rows.length < MIN_POPUP_ROWS) return null;
 
     // The boss's popup has exactly this shape — "Trial Chameleon - Lv.110" over
-    // a stat sheet — and was scraped into the roster as a member. A monster is
-    // not a loadout, whichever way it arrived
-    if (isMonsterUnit({ name })) return null;
+    // a stat sheet — and was scraped into the roster as a member. So does an
+    // ITEM detail modal: "Chance Cape ★" with a level requirement over stat
+    // rows landed in the trial roster the same way. Neither is a loadout,
+    // whichever way it arrived
+    if (isMonsterUnit({ name }) || isItemName(name)) return null;
 
     // The empty list is "not read", not "none equipped" — `abilitiesAuthoritative`
     // is what keeps foldLoadout from erasing a kit a socket payload captured
