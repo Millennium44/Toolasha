@@ -55,6 +55,7 @@ await import('../features/insights/enhancement-calibration.js');
 await import('../features/insights/prediction-calibration.js');
 await import('../features/inventory/custom-tabs/custom-tabs-data.js');
 await import('../features/leaderboard/leaderboard-xp-tracker.js');
+await import('../features/ui/overlay-layouts.js');
 await import('../features/skills/xp-tracker.js');
 await import('../features/actions/loot-log-history.js');
 await import('../features/networth/networth-history.js');
@@ -165,6 +166,11 @@ const corpus = [
     // inventory/custom-tabs/custom-tabs-data.js — a bespoke `match`, not `base`
     { store: 'settings', key: 'inventoryTabs_config', label: 'Custom inventory tabs' },
     { store: 'settings', key: `${CHAR}_inventoryTabs_config`, label: 'Custom inventory tabs' },
+
+    // ui/overlay-layouts.js — one global key, layouts are not per character,
+    // so the character-scoped form must NOT resolve to it
+    { store: 'settings', key: 'overlayLayouts', label: 'Overlay layouts' },
+    { store: 'settings', key: `overlayLayouts_${CHAR}`, label: null },
 
     // utils/chest-tally.js — and the lookalike record it must not absorb
     { store: 'settings', key: 'treasureTally', label: 'Treasure tally' },

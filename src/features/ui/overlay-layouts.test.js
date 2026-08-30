@@ -42,6 +42,7 @@ const {
     layoutNames,
     putLayout,
     removeLayout,
+    mergeLayoutMaps,
     loadLayouts,
     saveLayout,
     deleteLayout,
@@ -510,5 +511,54 @@ describe('deciding whether to switch', () => {
             saved: ['Dungeon'],
         });
         expect(settled.apply).toBe('Dungeon');
+    });
+});
+
+describe('merging two devices saved layouts', () => {
+    const layout = (savedAt, tag) => ({ savedAt, file: { tag } });
+
+    test('the union keeps a layout only one device has', () => {
+        const merged = mergeLayoutMaps({ Combat: layout(1000, 'a') }, { Market: layout(2000, 'b') });
+
+        expect(Object.keys(merged).sort()).toEqual(['Combat', 'Market']);
+    });
+
+    test('the same name resolves to the later save, in either direction', () => {
+        const old = { Combat: layout(1000, 'old') };
+        const fresh = { Combat: layout(9000, 'new') };
+
+        expect(mergeLayoutMaps(old, fresh).Combat.file.tag).toBe('new');
+        expect(mergeLayoutMaps(fresh, old).Combat.file.tag).toBe('new');
+    });
+
+    test('a stamped layout beats a stamp-less legacy one, whichever side holds it', () => {
+        const stamped = { Combat: layout(1000, 'stamped') };
+        const legacy = { Combat: { file: { tag: 'legacy' } } };
+
+        expect(mergeLayoutMaps(stamped, legacy).Combat.file.tag).toBe('stamped');
+        expect(mergeLayoutMaps(legacy, stamped).Combat.file.tag).toBe('stamped');
+    });
+
+    test('two stamp-less layouts fall back to last-write-wins', () => {
+        const local = { Combat: { file: { tag: 'mine' } } };
+        const incoming = { Combat: { file: { tag: 'theirs' } } };
+
+        expect(mergeLayoutMaps(local, incoming).Combat.file.tag).toBe('theirs');
+    });
+
+    test('an absent side merges to the side that exists', () => {
+        expect(mergeLayoutMaps(null, { Combat: layout(1, 'a') }).Combat.file.tag).toBe('a');
+        expect(mergeLayoutMaps({ Combat: layout(1, 'a') }, null).Combat.file.tag).toBe('a');
+        expect(mergeLayoutMaps(null, null)).toEqual({});
+    });
+
+    test('a name deleted on one device comes back — no tombstones, documented', () => {
+        // The union cannot tell "deleted here" from "never seen there", and
+        // keeping the layout is the cheaper mistake of the two
+        const deleted = {};
+        const stillHas = { Combat: layout(1000, 'a') };
+
+        expect(Object.keys(mergeLayoutMaps(deleted, stillHas))).toEqual(['Combat']);
+        expect(Object.keys(mergeLayoutMaps(stillHas, deleted))).toEqual(['Combat']);
     });
 });

@@ -46,6 +46,7 @@
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { toOPanelConfig } from '../../utils/opanel-config.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** The one key the whole map lives under */
 export const LAYOUTS_KEY = 'overlayLayouts';
@@ -102,6 +103,62 @@ export function putLayout(map, name, file) {
     if (!key || !file) return { ...(map || {}) };
     return { ...(map || {}), [key]: { savedAt: Date.now(), file } };
 }
+
+/**
+ * Two devices' layout maps as one.
+ *
+ * A layout is an hour of fiddling and there is deliberately more than one of
+ * them, so the map is a collection: the combat arrangement built on the desktop
+ * and the marketplace one built on the laptop are two different layouts, and a
+ * whole-key sync write throws one of them away outright. The union by name is
+ * the point.
+ *
+ * On the same name the later `savedAt` wins — {@link putLayout} stamps every
+ * save, so the copy stamped later is the arrangement the user most recently
+ * fiddled into place. A stamp-less entry predates that field; it loses to a
+ * stamped one, and two stamp-less entries fall back to last-write-wins (the
+ * incoming copy), which is exactly what a whole-key write already did.
+ *
+ * **A deletion can come back.** The map keeps no tombstones, so "the other
+ * device has never seen this layout" and "this device deleted it" are the same
+ * shape on disk, and the union has to keep it. Tombstones are what would settle
+ * that (`inventory/custom-tabs/custom-tabs-data.js` carries the pattern), and
+ * they are not worth it here: deleting a saved layout is rare, reviving one
+ * costs a second Delete, and losing the laptop's whole set of layouts to a pull
+ * is the failure that actually happens.
+ *
+ * @param {Object|null} local - This device's map
+ * @param {Object|null} incoming - The downloaded map
+ * @returns {Object} The union
+ */
+export function mergeLayoutMaps(local, incoming) {
+    const merged = { ...(local && typeof local === 'object' ? local : {}) };
+
+    for (const [name, layout] of Object.entries(incoming && typeof incoming === 'object' ? incoming : {})) {
+        const held = merged[name];
+        if (!held) {
+            merged[name] = layout;
+            continue;
+        }
+        const mine = Number(held?.savedAt);
+        const theirs = Number(layout?.savedAt);
+        const keepMine = Number.isFinite(mine) && (!Number.isFinite(theirs) || mine > theirs);
+        merged[name] = keepMine ? held : layout;
+    }
+    return merged;
+}
+
+/*
+ * Registered so a cross-device sync PULL combines the saved layouts instead of
+ * overwriting them. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: STORE,
+    // One exact global key — layouts are not per character (`scoped: false`)
+    key: LAYOUTS_KEY,
+    merge: mergeLayoutMaps,
+    label: 'Overlay layouts',
+});
 
 /**
  * The map with one layout gone.
