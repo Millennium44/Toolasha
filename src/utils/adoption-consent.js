@@ -13,6 +13,7 @@
  */
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
+import { escapeText } from './damage-board.js';
 
 const DECISION_KEY = 'adoptionTargetCharacterId';
 
@@ -103,10 +104,10 @@ function showDialog(characters, recommendedId, currentId) {
         const rows = ids
             .map((id) => {
                 const checked = id === recommendedId ? ' checked' : '';
-                const who = `${characters[id]}${id === currentId ? ' (this character)' : ''}`;
+                const who = `${escapeText(characters[id])}${id === currentId ? ' (this character)' : ''}`;
                 return (
                     `<label style="display:block; margin:4px 0; cursor:pointer;">` +
-                    `<input type="radio" name="mwi-adopt-target" value="${id}"${checked}> ${who}</label>`
+                    `<input type="radio" name="mwi-adopt-target" value="${escapeText(id)}"${checked}> ${who}</label>`
                 );
             })
             .join('');

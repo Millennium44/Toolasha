@@ -112,6 +112,28 @@ describe('adoption consent', () => {
         await pending;
     });
 
+    it('a character name with markup in it is escaped, not injected as an element', async () => {
+        // In-game names can legally contain '<', '>' and '&' (see the guild trial
+        // scoreboard's own-row-note fix) — showDialog() interpolates the display
+        // name straight into the modal's innerHTML with no escaping.
+        const hostileName = '<img src=x onerror="window.__pwned = true">';
+        mockDataManager.currentName = hostileName;
+        const pending = requestAdoptionConsent({});
+        await vi.waitFor(() => expect(dialog()).toBeTruthy());
+
+        // No <img> (or any other markup the name supplied) actually landed in the
+        // DOM — an unescaped interpolation would have created one, and its
+        // onerror would have run as soon as the (invalid, src=x) image failed to
+        // load.
+        expect(dialog().querySelector('img')).toBeNull();
+        expect(window.__pwned).toBeUndefined();
+        // The escaped text is still legible in the label, just inert
+        expect(dialog().innerHTML).toContain('&lt;img src=x onerror=');
+
+        document.querySelector('#mwi-adopt-later').click();
+        await pending;
+    });
+
     it('reset clears the decision and allows a new prompt', async () => {
         await setAdoptionTargetId('market123');
         await resetAdoptionDecision();
