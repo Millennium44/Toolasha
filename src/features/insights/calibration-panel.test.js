@@ -12,7 +12,11 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ records: [], enhancing: [] }));
+const store = vi.hoisted(() => ({
+    records: [],
+    enhancing: [],
+    alchemy: { transmute: [], decompose: [], coinify: [] },
+}));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({
@@ -36,6 +40,17 @@ vi.mock('./enhancement-calibration.js', () => ({
         getCachedRecords: () => store.enhancing,
         getRecords: async () => store.enhancing,
     },
+}));
+// The alchemy sessions come from the trackers themselves; mocked at the tracker
+// rather than at the store so the panel's own async read is what is exercised
+vi.mock('../alchemy/transmute-history-tracker.js', () => ({
+    transmuteHistoryTracker: { loadSessions: async () => store.alchemy.transmute },
+}));
+vi.mock('../alchemy/decompose-history-tracker.js', () => ({
+    decomposeHistoryTracker: { loadSessions: async () => store.alchemy.decompose },
+}));
+vi.mock('../alchemy/coinify-history-tracker.js', () => ({
+    coinifyHistoryTracker: { loadSessions: async () => store.alchemy.coinify },
 }));
 
 store.rows = [];
@@ -71,6 +86,7 @@ beforeEach(() => {
     store.records = [];
     store.enhancing = [];
     store.rows = [];
+    store.alchemy = { transmute: [], decompose: [], coinify: [] };
 });
 
 afterEach(() => {
@@ -238,6 +254,127 @@ describe('the ask/bid spread line', () => {
         expect(text()).not.toContain('could not be drawn');
         expect(text()).toContain('Too few bid-priced runs to call');
         expect(text()).not.toContain('0% of this forecast');
+    });
+});
+
+describe('the alchemy success cards', () => {
+    /**
+     * A tracker session with a stamped prediction.
+     * @param {Object} fields - `{id, item, rate, attempts, successes, catalyst}`
+     * @returns {Object}
+     */
+    const alchemySession = ({
+        id = 'a1',
+        item = '/items/gem',
+        rate = 0.6,
+        attempts = 1000,
+        successes = 600,
+        catalyst = null,
+    } = {}) => ({
+        id,
+        startTime: now - HOUR,
+        inputItemHrid: item,
+        predictedRate: rate,
+        predictedAt: now - HOUR,
+        predictedCatalystHrid: catalyst,
+        totalAttempts: attempts,
+        totalSuccesses: successes,
+    });
+
+    /**
+     * Open the panel with the alchemy read allowed to land.
+     *
+     * The sessions are read asynchronously and cached for a while, so the clock
+     * is pushed past that window to force a fresh read, and the microtask queue
+     * is flushed before the body is built again.
+     * @returns {Promise<void>}
+     */
+    let tick = 0;
+    const openWithAlchemy = async () => {
+        // Each test moves the clock further forward than the last: the cache is
+        // module state that outlives a test, and re-using the same instant would
+        // leave the previous test's sessions on screen
+        vi.setSystemTime(now + ++tick * 60_000);
+        calibrationPanel.show({ remember: false });
+        await vi.advanceTimersByTimeAsync(1);
+        calibrationPanel.render();
+    };
+
+    test('judges each tracker separately, against the rate stamped on its sessions', async () => {
+        store.alchemy.transmute = [alchemySession({ id: 't', rate: 0.6, attempts: 1000, successes: 400 })];
+        store.alchemy.coinify = [alchemySession({ id: 'c', rate: 0.7, attempts: 1000, successes: 700 })];
+
+        await openWithAlchemy();
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Transmute success (1000 attempts)');
+        expect(text()).toContain('Coinify success (1000 attempts)');
+        // Three separate models, so the bad transmute does not condemn coinify
+        expect(text()).toContain('Sim too high');
+        expect(text()).toContain('Consistent');
+        expect(text()).toContain('95% interval');
+        // And a kind with no sessions gets no card at all
+        expect(text()).not.toContain('Decompose success');
+    });
+
+    test('excludes unstamped sessions and says how many are sitting out', async () => {
+        store.alchemy.decompose = [
+            alchemySession({ id: 'd1', rate: 0.6, attempts: 400, successes: 240 }),
+            // Recorded before stamping: 5000 failures that must not vote
+            { ...alchemySession({ id: 'd2', attempts: 5000, successes: 0 }), predictedRate: null },
+        ];
+
+        await openWithAlchemy();
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Decompose success (400 attempts)');
+        expect(text()).toContain('1 unstamped session');
+        expect(text()).toContain('Consistent');
+    });
+
+    test('breaks a kind down by item and catalyst once opened', async () => {
+        store.alchemy.transmute = [
+            alchemySession({ id: 'a', item: '/items/gem', rate: 0.5, attempts: 1000, successes: 500 }),
+            alchemySession({
+                id: 'b',
+                item: '/items/gem',
+                catalyst: '/items/prime_catalyst',
+                rate: 0.75,
+                attempts: 1000,
+                successes: 500,
+            }),
+            alchemySession({ id: 'c', item: '/items/milk', rate: 0.5, attempts: 10, successes: 5 }),
+        ];
+
+        await openWithAlchemy();
+        expect(text()).toContain('▸ Per item and catalyst (3)');
+
+        const heading = [...calibrationPanel.panel.querySelectorAll('div')].find((el) =>
+            /^▸ Per item and catalyst/.test(el.textContent)
+        );
+        heading.click();
+
+        expect(text()).not.toContain('could not be drawn');
+        // The same item run with a catalyst was predicted a different rate, and
+        // is judged as its own combination rather than pooled with the plain one
+        expect(text()).toContain('Gem · Prime catalyst (1000)');
+        expect(text()).toContain('Gem (1000)');
+        expect(text()).toContain('Milk (10)too few attempts to call');
+
+        heading.click();
+    });
+
+    test('says nothing has been measured when the sessions are all unstamped', async () => {
+        store.alchemy.coinify = [{ ...alchemySession({ attempts: 900, successes: 300 }), predictedRate: null }];
+
+        await openWithAlchemy();
+
+        expect(text()).not.toContain('could not be drawn');
+        // The card is still drawn — the sessions exist — but it issues no verdict
+        expect(text()).toContain('Coinify success (0 attempts)');
+        expect(text()).toContain('Too few attempts to call');
+        expect(text()).toContain('1 unstamped session');
+        expect(text()).not.toContain('95% interval');
     });
 });
 

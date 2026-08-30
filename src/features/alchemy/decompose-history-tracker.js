@@ -26,6 +26,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
+import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
 
 const DECOMPOSE_ACTION_HRID = '/actions/alchemy/decompose';
@@ -305,6 +306,12 @@ class DecomposeHistoryTracker {
         // and a later game change to that number would otherwise silently
         // restate every past session's profit.
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
+        // Taken now, for the same reason the bulk multiplier is: the model that
+        // predicted this run is the one it has to be judged against, and the
+        // tea, catalyst and level penalty behind it will all have moved by the
+        // time the record is read. Unstamped sessions are excluded, never
+        // retro-stamped.
+        const stamp = predictedSuccessStamp('decompose', inputItemHrid, timestamp);
         this.activeSession = {
             id: `decompose_${timestamp}`,
             startTime: timestamp,
@@ -321,6 +328,9 @@ class DecomposeHistoryTracker {
             catalystOfDecompositionUsed: 0,
             primeCatalystUsed: 0,
             bulkMultiplier: itemDetails?.alchemyDetail?.bulkMultiplier ?? 1,
+            predictedRate: stamp?.predictedRate ?? null,
+            predictedAt: stamp?.predictedAt ?? null,
+            predictedCatalystHrid: stamp?.predictedCatalystHrid ?? null,
             results: {},
         };
         this.lastCurrentCount = null;

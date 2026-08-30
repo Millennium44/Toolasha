@@ -21,6 +21,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
+import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
 
 const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
@@ -295,6 +296,12 @@ class TransmuteHistoryTracker {
         // and a later game change to that number would otherwise silently
         // restate every past session's profit.
         const itemDetails = dataManager.getItemDetails(inputItemHrid);
+        // What the model says this run will succeed at, taken NOW — the tea,
+        // the catalyst in the slot and the level penalty are the ones this run
+        // is played with, and every one of them will have moved by the time
+        // anybody reads the record back. A session with no stamp is excluded
+        // from calibration rather than judged against a later model.
+        const stamp = predictedSuccessStamp('transmute', inputItemHrid, timestamp);
         this.activeSession = {
             id: `transmute_${timestamp}`,
             startTime: timestamp,
@@ -308,6 +315,9 @@ class TransmuteHistoryTracker {
             totalAttempts: 0,
             totalSuccesses: 0,
             bulkMultiplier: itemDetails?.alchemyDetail?.bulkMultiplier ?? 1,
+            predictedRate: stamp?.predictedRate ?? null,
+            predictedAt: stamp?.predictedAt ?? null,
+            predictedCatalystHrid: stamp?.predictedCatalystHrid ?? null,
             results: {},
         };
         this.lastCurrentCount = null;

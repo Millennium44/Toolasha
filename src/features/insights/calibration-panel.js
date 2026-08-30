@@ -24,6 +24,10 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { registerRow } from '../../utils/overlay-rows.js';
 import { predictionCalibration } from './prediction-calibration.js';
 import { enhancementCalibration } from './enhancement-calibration.js';
+import { transmuteHistoryTracker } from '../alchemy/transmute-history-tracker.js';
+import { decomposeHistoryTracker } from '../alchemy/decompose-history-tracker.js';
+import { coinifyHistoryTracker } from '../alchemy/coinify-history-tracker.js';
+import { summarizeAlchemyCalibration, verdictText } from './alchemy-calibration.js';
 import {
     summarizeCalibration,
     dailySeries,
@@ -89,6 +93,63 @@ function enhancementRecords() {
     const cached = enhancementCalibration.getCachedRecords();
     if (cached === null) enhancementCalibration.getRecords();
     return cached;
+}
+
+/** The three alchemy trackers, by the kind of session they keep */
+const ALCHEMY_TRACKERS = {
+    transmute: transmuteHistoryTracker,
+    decompose: decomposeHistoryTracker,
+    coinify: coinifyHistoryTracker,
+};
+
+/** How stale the alchemy read may get before it is taken again */
+const ALCHEMY_REREAD_MS = 15_000;
+
+let alchemyCache = null;
+let alchemyReadAt = 0;
+let alchemyReading = false;
+
+/**
+ * The alchemy sessions, read on the same fire-and-forget terms as the pairs.
+ *
+ * The trackers keep their sessions in IndexedDB and expose only an async read,
+ * while a panel body has to be built synchronously — so the draw uses whatever
+ * the last read produced and asks for a fresh one when it has gone stale. The
+ * first draw after opening has nothing yet and simply leaves the cards out; the
+ * refresh a few seconds later has them.
+ *
+ * @returns {Object|null} `{transmute, decompose, coinify}` arrays, or null before the first read
+ */
+function alchemySessions() {
+    if (!alchemyReading && Date.now() - alchemyReadAt > ALCHEMY_REREAD_MS) {
+        alchemyReading = true;
+        readAlchemySessions();
+    }
+    return alchemyCache;
+}
+
+/**
+ * Take the read, and never let a failing tracker blank the others.
+ * @returns {Promise<void>}
+ */
+async function readAlchemySessions() {
+    try {
+        const kinds = Object.keys(ALCHEMY_TRACKERS);
+        const results = await Promise.all(
+            kinds.map(async (kind) => {
+                try {
+                    return await ALCHEMY_TRACKERS[kind].loadSessions();
+                } catch (error) {
+                    console.error(`[CalibrationPanel] Could not read ${kind} sessions:`, error);
+                    return [];
+                }
+            })
+        );
+        alchemyCache = Object.fromEntries(kinds.map((kind, index) => [kind, results[index] || []]));
+    } finally {
+        alchemyReadAt = Date.now();
+        alchemyReading = false;
+    }
 }
 
 /**
@@ -517,6 +578,140 @@ function drawEnhancing(body, observations) {
     }
 }
 
+/**
+ * A rate as a percentage, or a dash.
+ * @param {number|null} rate - Proportion 0..1
+ * @returns {string}
+ */
+function ratePercent(rate) {
+    return Number.isFinite(rate) ? `${(rate * 100).toFixed(1)}%` : '—';
+}
+
+/**
+ * An alchemy combo as a line label, e.g. `Cheese +2 · prime`.
+ * @param {Object} combo - A combo from `summarizeKind`
+ * @returns {string}
+ */
+function comboLabel(combo) {
+    const item = titleCase((combo.inputItemHrid || 'unknown').split('/').pop());
+    const level = combo.enhancementLevel ? ` +${combo.enhancementLevel}` : '';
+    const catalyst = combo.catalystHrid
+        ? ` · ${titleCase(
+              combo.catalystHrid
+                  .split('/')
+                  .pop()
+                  .replace(/^catalyst_of_/, '')
+          )}`
+        : '';
+    return `${item}${level}${catalyst}`;
+}
+
+/**
+ * Alchemy success rates, observed against what was predicted when the session
+ * started.
+ *
+ * A card per tracker, never pooled: transmute, decompose and coinify are three
+ * different models — a per-item drop table rate and two flat ones — and pooling
+ * them would let a wrong transmute table hide inside two correct flat rates.
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Object} summary - From `summarizeAlchemyCalibration`
+ */
+function drawAlchemy(body, summary) {
+    for (const group of summary.kinds) {
+        const decided = group.verdict !== 'too few attempts' && group.verdict !== 'unstamped';
+        const off = group.verdict === 'sim too high' || group.verdict === 'sim too low';
+        const card = panelCard(
+            body,
+            `${titleCase(group.kind)} success (${group.attempts} attempts)`,
+            off ? ROW_COLORS.bad : ACCENT
+        );
+
+        card.appendChild(
+            panelLine(
+                'Observed',
+                ratePercent(group.observed),
+                ROW_COLORS.gold,
+                `${group.successes} of ${group.attempts} attempts produced output.`
+            )
+        );
+        card.appendChild(
+            panelLine(
+                'Predicted',
+                ratePercent(group.predicted),
+                ROW_COLORS.dim,
+                'The rate the model gave each session as it started, weighted by the attempts that ' +
+                    'session went on to make. Stamped then rather than computed now: the tea, the ' +
+                    'catalyst and the under-level penalty behind it have all moved since.'
+            )
+        );
+        if (decided) {
+            card.appendChild(
+                panelLine(
+                    '95% interval',
+                    `${ratePercent(group.low)} – ${ratePercent(group.high)}`,
+                    ROW_COLORS.dim,
+                    'Wilson interval on the observed rate. The verdict is whether the prediction falls inside it.'
+                )
+            );
+        }
+        card.appendChild(
+            panelLine(
+                'Verdict',
+                group.text,
+                decided ? (off ? ROW_COLORS.bad : ROW_COLORS.good) : ROW_COLORS.dim,
+                decided
+                    ? 'The prediction sits outside the interval the observed attempts allow for, so the ' +
+                          'sample is saying something the model does not.'
+                    : `${group.attempts} attempts is too few to contradict a prediction. Below that a run of ` +
+                          'bad luck and a wrong model look the same.'
+            )
+        );
+
+        if (group.unstamped) {
+            card.appendChild(
+                panelLine(
+                    'Excluded',
+                    `${group.unstamped} unstamped session${group.unstamped === 1 ? '' : 's'}`,
+                    ROW_COLORS.dim,
+                    'Sessions recorded before the predicted rate was stamped on them. They are never judged ' +
+                        'against today’s model — the tea, catalyst and level penalty they ran under are gone, ' +
+                        'so a prediction computed now would be measuring the model’s history, not its accuracy. ' +
+                        'History fills forward only.'
+                )
+            );
+        }
+
+        if (!group.combos.length) continue;
+        const foldKey = `alchemy:${group.kind}`;
+        const open = expandedGroups.has(foldKey);
+        card.appendChild(
+            foldHeading(`Per item and catalyst (${group.combos.length})`, open, () => {
+                if (open) expandedGroups.delete(foldKey);
+                else expandedGroups.add(foldKey);
+                calibrationPanel.render();
+            })
+        );
+        if (!open) continue;
+
+        for (const combo of group.combos) {
+            const comboOff = combo.verdict === 'sim too high' || combo.verdict === 'sim too low';
+            card.appendChild(
+                panelLine(
+                    `  ${comboLabel(combo)} (${combo.attempts})`,
+                    combo.verdict === 'too few attempts'
+                        ? 'too few attempts to call'
+                        : `${ratePercent(combo.observed)} vs ${ratePercent(combo.predicted)} · ${verdictText(combo)}`,
+                    comboOff ? ROW_COLORS.bad : combo.verdict === 'consistent' ? ROW_COLORS.good : ROW_COLORS.dim,
+                    combo.verdict === 'too few attempts'
+                        ? `${combo.attempts} attempts on this combination is too few to judge it on its own.`
+                        : `Observed against the rate stamped for this item and catalyst, over ${combo.sessions} session(s).`
+                )
+            );
+        }
+    }
+}
+
 export const calibrationPanel = createPanel({
     id: 'predictionCalibration',
     title: 'Prediction Calibration',
@@ -525,11 +720,13 @@ export const calibrationPanel = createPanel({
     draw: (body) => {
         const all = records();
         const enhancing = enhancementRecords();
+        const alchemy = alchemySessions();
         if (all === null || enhancing === null) {
             body.appendChild(panelNote('Reading history…'));
             return;
         }
-        if (!all.length && !enhancing.length) {
+        const alchemySummary = alchemy ? summarizeAlchemyCalibration(alchemy) : { kinds: [] };
+        if (!all.length && !enhancing.length && !alchemySummary.kinds.length) {
             body.appendChild(panelNote('No finished runs measured yet.'));
             body.appendChild(
                 panelNote(
@@ -566,6 +763,12 @@ export const calibrationPanel = createPanel({
         // percentile, not a rate pair, and pushing it through the deviation
         // arithmetic would be exactly the dishonesty it exists to avoid
         drawEnhancing(body, enhancing);
+
+        // Same reasoning, same treatment: an alchemy session is a proportion out
+        // of n trials, judged against its own interval rather than reduced to a
+        // percentage gap. See `alchemy-calibration.js` for why it does not go
+        // through the shared ledger.
+        drawAlchemy(body, alchemySummary);
 
         if (all.length) {
             drawTrend(body, all);

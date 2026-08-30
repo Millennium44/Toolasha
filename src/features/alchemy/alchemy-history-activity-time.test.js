@@ -25,7 +25,12 @@ const store = vi.hoisted(() => {
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: (_id, fallback) => fallback },
 }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+// `onSocketEvent` is here because the trackers now reach the alchemy profit
+// calculator (for the predicted-rate stamp), which pulls in the marketplace API
+// and with it the connection state that subscribes to raw socket events.
+vi.mock('../../core/websocket.js', () => ({
+    default: { on: () => {}, off: () => {}, onSocketEvent: () => {}, offSocketEvent: () => {} },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: (hrid) => game.items[hrid] ?? null,

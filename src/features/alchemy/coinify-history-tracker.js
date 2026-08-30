@@ -20,6 +20,7 @@ import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
+import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
 
 const COINIFY_ACTION_HRID = '/actions/alchemy/coinify';
@@ -266,6 +267,11 @@ class CoinifyHistoryTracker {
         }
         const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
         const coinsPerSuccess = (itemDetails?.sellPrice || 0) * 5 * bulkMultiplier;
+        // The model's prediction for this run, taken at the start: the tea, the
+        // catalyst in the slot and the under-level penalty are what this run is
+        // played with, and all three drift. A session with no stamp is excluded
+        // from calibration rather than judged against a model it never saw.
+        const stamp = predictedSuccessStamp('coinify', inputItemHrid, timestamp);
 
         this.activeSession = {
             id: `coinify_${timestamp}`,
@@ -285,6 +291,9 @@ class CoinifyHistoryTracker {
             primeCatalystUsed: 0,
             coinsPerSuccess,
             bulkMultiplier,
+            predictedRate: stamp?.predictedRate ?? null,
+            predictedAt: stamp?.predictedAt ?? null,
+            predictedCatalystHrid: stamp?.predictedCatalystHrid ?? null,
         };
         this.lastCurrentCount = null;
         this.itemCounts.reset();

@@ -345,6 +345,39 @@ class AlchemyProfitCalculator {
     }
 
     /**
+     * The unmodified base success rate for one kind of alchemy on one item.
+     *
+     * Public because the success-rate stamp written onto an alchemy session has
+     * to be the SAME number this calculator quotes — a stamp computed from a
+     * second copy of these constants could drift out of step, and the panel
+     * would then be judging the calculator against a model it never held.
+     * Reached as a method rather than as an exported constant because the
+     * trackers live in another bundle and see only this singleton.
+     *
+     * @param {string} actionType - `coinify` | `decompose` | `transmute`
+     * @param {Object|null} itemDetails - The input item, for the transmute rate
+     * @returns {number} Base rate 0..1, or 0 when there is none
+     */
+    baseSuccessRateFor(actionType, itemDetails) {
+        if (actionType === 'coinify') return BASE_SUCCESS_RATES.COINIFY;
+        if (actionType === 'decompose') return BASE_SUCCESS_RATES.DECOMPOSE;
+        if (actionType === 'transmute') return itemDetails?.alchemyDetail?.transmuteSuccessRate || 0;
+        return 0;
+    }
+
+    /**
+     * What a catalyst is worth to the success rate, and therefore also whether
+     * an item HRID is a catalyst at all.
+     * @param {string|null} catalystHrid - Candidate item
+     * @returns {number} Multiplicative bonus, 0 when it is not a catalyst
+     */
+    catalystSuccessBonus(catalystHrid) {
+        if (!catalystHrid) return 0;
+        if (catalystHrid === CATALYST_HRIDS.prime) return CATALYST_BONUSES.prime;
+        return Object.values(CATALYST_HRIDS).includes(catalystHrid) ? CATALYST_BONUSES.typeSpecific : 0;
+    }
+
+    /**
      * Calculate success rate with detailed breakdown
      * @param {number} baseRate - Base success rate (0-1)
      * @param {number} catalystBonus - Catalyst multiplicative bonus (0, 0.15, or 0.25)
