@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Price targets on watched pins, and every enhancement cost names its model
+
+Watchlist pins can carry a target price ("tell me under 4.2M ask") — set inline from the pin, shown as a flag that turns green when reached, alerted through the new notifications_priceTargetReached setting (off by default; needs the pooled price history, fires only on a sighting inside the freshness window and quotes its true age). The advisor's Watch button seeds a target from the row's own costed price without touching what it already does. And every surface that prices an enhancement sweep now names its parameter source — advisor cost breakdowns, the lab panel, and the savings card, in the same words the tooltip always used — so the four models' disagreements are finally visible where they happen.
+
 ### How close the losses were, and what the walk spent
 
 Each labyrinth pool card now says how near its losses came — "losses end with the monster at 8.0% median (n=14)" — from HP remainders recorded on every fight and never shown; only complete, measured losses count and nothing draws below five. The reroll walk shows a running spend on its chip and keeps the Done summary visible after the widget hides. Two walk bugs fixed in the same pass: thresholds were loaded fire-and-forget so an edit seconds before a walk could miss the first plan, and the walk enforced the price caps even with cap protection switched off (its gear drawer now says "off" instead of quoting numbers not in force).
