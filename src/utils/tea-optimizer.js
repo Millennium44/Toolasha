@@ -1259,17 +1259,18 @@ export function scoreEquipmentSetup(skillName, goal, equipment, playerLevel, sel
     const calcContext = { equipment, itemDetailMap: gameData.itemDetailMap };
 
     // Alchemy XP is derived from item level, not from action data — standard calculateXpPerHour
-    // always returns 0 for alchemy. Use a dedicated path with a representative item instead.
+    // always returns 0 for alchemy. Use a dedicated path with a representative item instead —
+    // and, for the gold goal, the alchemy profit calculator rather than the XP one: this branch
+    // used to return calculateAlchemyXpPerHour regardless of `goal`, so every gold-goal caller
+    // (the skilling optimizer's per-slot equipment ranking) was scoring alchemy equipment on
+    // XP/hour under a "Gold/hr" label.
     if (normalizedSkill === 'alchemy') {
         const repItemHrid = getRepresentativeAlchemyItemHrid(playerLevel, gameData.itemDetailMap);
         if (!repItemHrid) return 0;
-        return calculateAlchemyXpPerHour(
-            { actionType: 'decompose', itemHrid: repItemHrid },
-            emptyBuffs,
-            playerLevel,
-            otherEfficiency,
-            calcContext
-        );
+        const alchemyContext = { actionType: 'decompose', itemHrid: repItemHrid };
+        return goal === 'gold'
+            ? calculateAlchemyGoldPerHour(alchemyContext, emptyBuffs)
+            : calculateAlchemyXpPerHour(alchemyContext, emptyBuffs, playerLevel, otherEfficiency, calcContext);
     }
 
     let totalScore = 0;

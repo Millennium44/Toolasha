@@ -9,12 +9,38 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ gameData: null }));
+const state = vi.hoisted(() => ({ gameData: null, skills: [] }));
 const prices = vi.hoisted(() => ({ byHrid: {}, estimated: new Set() }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => state.gameData,
+        getSkills: () => state.skills,
+        getEquipment: () => new Map(),
+        getHouseRooms: () => new Map(),
+        getCommunityBuffLevel: () => 0,
+        getAchievementBuffFlatBoost: () => 0,
+        getPersonalBuffFlatBoost: () => 0,
+        characterData: {},
+    },
+}));
+
+// calculateAlchemyXpPerHour (and, incorrectly pre-fix, scoreEquipmentSetup's
+// alchemy branch under the gold goal too) reaches the real experience-parser
+// for a wisdom multiplier, which in turn wants house rooms, community/personal
+// buffs and guild data — none of which this file otherwise wires up. Stubbed
+// to a neutral multiplier since the tests below only care which calculator was
+// asked, not the wisdom arithmetic.
+vi.mock('./experience-parser.js', () => ({
+    calculateExperienceMultiplier: () => ({ totalWisdom: 0, breakdown: { consumableWisdom: 0 }, charmExperience: 0 }),
+}));
+
+const alchemyCalc = vi.hoisted(() => ({ decompose: null, coinify: null, transmute: null }));
+vi.mock('../features/market/alchemy-profit-calculator.js', () => ({
+    default: {
+        calculateCoinifyProfit: (...args) => alchemyCalc.coinify?.(...args) ?? null,
+        calculateDecomposeProfit: (...args) => alchemyCalc.decompose?.(...args) ?? null,
+        calculateTransmuteProfit: (...args) => alchemyCalc.transmute?.(...args) ?? null,
     },
 }));
 
@@ -31,7 +57,8 @@ vi.mock('./market-data.js', () => ({
     },
 }));
 
-const { getRelevantTeas, getTeaBuffDescription, actionHasUnpricedMaterials } = await import('./tea-optimizer.js');
+const { getRelevantTeas, getTeaBuffDescription, actionHasUnpricedMaterials, scoreEquipmentSetup } =
+    await import('./tea-optimizer.js');
 
 const knownItems = [
     '/items/milking_tea',
@@ -48,8 +75,12 @@ const knownItems = [
 
 beforeEach(() => {
     state.gameData = { itemDetailMap: Object.fromEntries(knownItems.map((hrid) => [hrid, {}])) };
+    state.skills = [];
     prices.byHrid = {};
     prices.estimated = new Set();
+    alchemyCalc.decompose = null;
+    alchemyCalc.coinify = null;
+    alchemyCalc.transmute = null;
 });
 
 describe('getRelevantTeas', () => {
@@ -268,5 +299,48 @@ describe('actionHasUnpricedMaterials', () => {
             outputItems: [{ itemHrid: '/items/cheese', count: 1 }],
         };
         expect(actionHasUnpricedMaterials(action, false, gameData)).toBe(true);
+    });
+});
+
+describe('scoreEquipmentSetup — alchemy', () => {
+    // Alchemy XP is derived from item level rather than action data, so the
+    // function special-cases it with a representative item — but the special
+    // case returned calculateAlchemyXpPerHour unconditionally, ignoring the
+    // `goal` argument entirely. The skilling optimizer calls this with
+    // goal: 'gold' to rank alchemy equipment by profit
+    // (skilling-optimizer-engine.js's goldBaseline/per-candidate scoring, and
+    // skilling-optimizer-ui.js's slotGoldBaseline); every one of those calls
+    // was silently scored on XP/hour instead.
+    beforeEach(() => {
+        state.gameData.itemDetailMap['/items/scrap_trinket'] = { alchemyDetail: {}, itemLevel: 5 };
+        state.gameData.actionDetailMap = {
+            '/actions/alchemy/decompose': {
+                type: '/action_types/alchemy',
+                name: 'Decompose',
+                levelRequirement: { level: 1 },
+            },
+        };
+        state.skills = [{ skillHrid: '/skills/alchemy', level: 10 }];
+    });
+
+    test('a gold-goal score comes from the alchemy profit calculator, not the XP path', () => {
+        alchemyCalc.decompose = () => ({ profitPerHour: 4321 });
+
+        const score = scoreEquipmentSetup('alchemy', 'gold', new Map(), 10);
+
+        expect(alchemyCalc.decompose).toBeTruthy();
+        expect(score).toBe(4321);
+    });
+
+    test('an xp-goal score is unaffected by the fix', () => {
+        // Not asserting an exact figure (that is calculateAlchemyXpPerHour's own
+        // arithmetic to pin) — only that the xp path still runs and does not
+        // accidentally get routed through the gold calculator instead.
+        alchemyCalc.decompose = () => ({ profitPerHour: 4321 });
+
+        const score = scoreEquipmentSetup('alchemy', 'xp', new Map(), 10);
+
+        expect(score).not.toBe(4321);
+        expect(score).toBeGreaterThan(0);
     });
 });
