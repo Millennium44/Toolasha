@@ -225,6 +225,46 @@ export function extractProfileSkills(message, at = Date.now()) {
 }
 
 /**
+ * Drop a renamed member's dead entry from the stored captures.
+ *
+ * Captures are keyed by name, and a name is not forever — an in-game rename
+ * means the next `profile_shared` for that member lands under a new key while
+ * the old one sits in storage untouched, since nothing writes to it again and
+ * nothing else ever prunes it. `characterId` survives the rename, so it is
+ * what identifies the old entry as *this* member's rather than guessing from
+ * name similarity or trusting a roster snapshot that might not be loaded yet
+ * (a skilling trial's forecast can open this panel before the guild's roster
+ * feature has one).
+ *
+ * Deliberately narrow: an entry is only ever dropped when its `characterId`
+ * exactly matches the capture just taken. That rules out ever touching a
+ * different member's entry — in this guild's own stored captures or, since
+ * captures are read and written one guild at a time
+ * ({@link memberSkillsStorageKey}), any other guild's.
+ *
+ * @param {Object} captures - name (lowercased) → capture
+ * @param {{characterId: (string|number|null)}} capture - The capture just taken
+ * @param {string} freshKey - `capture`'s own key, left alone even if it already existed
+ * @returns {Object} `captures` with any stale same-id entry removed
+ */
+export function pruneRenamedEntries(captures, capture, freshKey) {
+    const id = capture?.characterId;
+    if (id === null || id === undefined) return captures;
+
+    let pruned = captures;
+    for (const [existingKey, existing] of Object.entries(captures || {})) {
+        if (existingKey === freshKey) continue;
+        if (existing?.characterId !== id) continue;
+        // Copy on first match rather than up front: the overwhelmingly common
+        // case is no rename at all, and that case returns the original object
+        // untouched.
+        if (pruned === captures) pruned = { ...captures };
+        delete pruned[existingKey];
+    }
+    return pruned;
+}
+
+/**
  * Who to open next, and how far along the roster this is.
  *
  * Members who have never been captured come first, then those whose capture has
@@ -426,6 +466,27 @@ class GuildMemberSkills {
 
     /**
      * A profile was opened.
+     *
+     * Captures are keyed by name, but a game name can change — an in-game
+     * rename leaves the *old* name's key sitting in storage forever, since
+     * nothing else ever writes to it again or prunes it. `{@link
+     * pruneRenamedEntries}` finds that old entry precisely: `characterId` is
+     * stable across a rename, so any other stored entry sharing this capture's
+     * id is this same member's own stale history under a name they no longer
+     * use — never a different member's, since a match requires the same id.
+     * Bounded to entries this capture's own id can vouch for, so nothing about
+     * a different member (in this guild or, since captures are stored one
+     * guild at a time, any other) is ever at risk.
+     *
+     * A prune has to be saved with `overwrite: true`. This record's merge
+     * (`mergeMaps()`) folds stored keys under memory but keeps any stored key
+     * memory does not have — exactly right for two tabs each capturing a
+     * different member, and exactly wrong for a deletion: the ordinary
+     * `save()` would read the old name straight back out of storage on this
+     * very write, since memory no longer naming it looks identical to memory
+     * never having touched it. `leaderboard-xp-tracker.js`'s stale-series purge
+     * takes the same `overwrite: true` for the same reason.
+     *
      * @param {Object} message - `profile_shared`
      */
     _onProfile(message) {
@@ -433,8 +494,12 @@ class GuildMemberSkills {
             const capture = extractProfileSkills(message);
             if (!capture) return;
 
-            this.captures = { ...this.captures, [capture.name.toLowerCase()]: capture };
-            this.record.save().catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
+            const key = capture.name.toLowerCase();
+            const pruned = pruneRenamedEntries(this.captures, capture, key);
+            const renamed = pruned !== this.captures;
+            this.captures = { ...pruned, [key]: capture };
+            const saved = renamed ? this.record.save({ overwrite: true }) : this.record.save();
+            saved.catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
         } catch (error) {
             console.error('[GuildMemberSkills] Reading an opened profile failed:', error);
         }

@@ -70,6 +70,7 @@ const {
     memberSkillsStorageKey,
     nextMemberToLog,
     orderUnitsToAsk,
+    pruneRenamedEntries,
     REQUEST_TIMEOUT_MS,
     STALE_AFTER_MS,
     UNIT_FRESH_MS,
@@ -81,16 +82,18 @@ const now = Date.parse('2026-08-05T15:00:00Z');
  * A `profile_shared` message.
  * @param {string} name - Whose profile
  * @param {Object} levels - skillHrid → level
+ * @param {string} [characterId] - Override the fixture's default `${name}-id`,
+ *   for building two profiles that are the same character under two names
  * @returns {Object} The message
  */
-function profile(name, levels = { '/skills/alchemy': 90, '/skills/milking': 75 }) {
+function profile(name, levels = { '/skills/alchemy': 90, '/skills/milking': 75 }, characterId = `${name}-id`) {
     return {
         profile: {
-            sharableCharacter: { id: `${name}-id`, name },
+            sharableCharacter: { id: characterId, name },
             characterSkills: Object.entries(levels).map(([skillHrid, level]) => ({
                 skillHrid,
                 level,
-                characterID: `${name}-id`,
+                characterID: characterId,
             })),
         },
     };
@@ -317,6 +320,75 @@ describe('redoing a check on demand', () => {
 
         expect(guildMemberSkills.progress(now + 5000).logged).toBe(1);
         expect(guildMemberSkills.levelFor('Ada', '/skills/alchemy')).toBe(95);
+    });
+});
+
+describe('pruneRenamedEntries', () => {
+    test('drops another entry sharing the same characterId', () => {
+        const captures = { adalina: { characterId: 'id-1', at: now } };
+        const pruned = pruneRenamedEntries(captures, { characterId: 'id-1' }, 'ada');
+        expect(pruned).toEqual({});
+    });
+
+    test('leaves entries for a different characterId alone', () => {
+        const captures = { bo: { characterId: 'id-2', at: now } };
+        const pruned = pruneRenamedEntries(captures, { characterId: 'id-1' }, 'ada');
+        expect(pruned).toEqual({ bo: { characterId: 'id-2', at: now } });
+    });
+
+    test('does not touch its own key even if it already existed', () => {
+        const captures = { ada: { characterId: 'id-1', at: now } };
+        const pruned = pruneRenamedEntries(captures, { characterId: 'id-1' }, 'ada');
+        expect(pruned).toEqual({ ada: { characterId: 'id-1', at: now } });
+    });
+
+    test('a capture with no characterId prunes nothing', () => {
+        const captures = { adalina: { characterId: null, at: now } };
+        const pruned = pruneRenamedEntries(captures, { characterId: null }, 'ada');
+        expect(pruned).toBe(captures);
+    });
+
+    test('the common case (no rename) returns the same object, not a copy', () => {
+        const captures = { bo: { characterId: 'id-2', at: now } };
+        expect(pruneRenamedEntries(captures, { characterId: 'id-1' }, 'ada')).toBe(captures);
+    });
+});
+
+describe('an in-game rename does not leave dead storage under the old name', () => {
+    test('a profile under a new name drops the same character’s old-name entry', () => {
+        // "Adalina" opens their profile, then renames to "Ada" and is opened
+        // again — same character, same characterId, two different name keys.
+        game.wsHandlers.profile_shared(profile('Adalina', undefined, 'char-1'));
+        expect(guildMemberSkills.all()).toHaveProperty('adalina');
+
+        game.wsHandlers.profile_shared(profile('Ada', undefined, 'char-1'));
+
+        const captures = guildMemberSkills.all();
+        expect(captures).toHaveProperty('ada');
+        // The old name's entry is gone — not left behind as dead storage
+        expect(captures).not.toHaveProperty('adalina');
+        expect(Object.keys(captures)).toHaveLength(1);
+    });
+
+    test('two different members are never confused for a rename', () => {
+        game.wsHandlers.profile_shared(profile('Ada', undefined, 'char-1'));
+        game.wsHandlers.profile_shared(profile('Bo', undefined, 'char-2'));
+
+        const captures = guildMemberSkills.all();
+        expect(captures).toHaveProperty('ada');
+        expect(captures).toHaveProperty('bo');
+        expect(Object.keys(captures)).toHaveLength(2);
+    });
+
+    test('the pruned entry is also gone from what is persisted', async () => {
+        game.wsHandlers.profile_shared(profile('Adalina', undefined, 'char-1'));
+        await vi.advanceTimersByTimeAsync(0);
+        game.wsHandlers.profile_shared(profile('Ada', undefined, 'char-1'));
+        await vi.advanceTimersByTimeAsync(0);
+
+        const stored = game.store[memberSkillsStorageKey('Milky Way')];
+        expect(stored).toHaveProperty('ada');
+        expect(stored).not.toHaveProperty('adalina');
     });
 });
 
