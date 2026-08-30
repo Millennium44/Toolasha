@@ -293,6 +293,22 @@ describe('cohortSplit', () => {
         expect(split.detail).toContain('different-gear cohort');
     });
 
+    test('the refusal names the thin cohort as the one that is short, not the one that is not', () => {
+        // The sentence has to say which side is missing pairs. Naming it and
+        // then asserting it "has that many" states the opposite of the
+        // condition that produced the refusal, and the reader who acts on it
+        // goes and plays more runs in the cohort that was already full.
+        const short = cohortSplit([...cohortPairs(20, -2, true), ...cohortPairs(3, -31, false)]);
+        expect(short.detail).not.toContain('different-gear cohort has that many');
+
+        const other = cohortSplit([...cohortPairs(3, -2, true), ...cohortPairs(20, -31, false)]);
+        expect(other.detail).not.toContain('matched-gear cohort has that many');
+
+        // Both short is the one phrasing that was already true, and stays true
+        const both = cohortSplit([...cohortPairs(3, -2, true), ...cohortPairs(3, -31, false)]);
+        expect(both.detail).toContain('neither cohort has that many');
+    });
+
     test('matched clean and mismatched off says the gear explains the pooled gap', () => {
         const split = cohortSplit([...cohortPairs(6, -2, true), ...cohortPairs(6, -31, false)]);
         expect(split.verdict).toBe('mismatch_explains');

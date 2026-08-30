@@ -320,17 +320,22 @@ export function cohortSplit(records, options = {}) {
     const result = { matched, mismatched, unsigned, figures };
 
     if (matched.rated < minSamples || mismatched.rated < minSamples) {
+        // Names the side that is SHORT, which is the side this branch was
+        // entered for. The clause has to carry its own verb: "and the
+        // different-gear cohort has that many" reads as the opposite of the
+        // condition that produced the refusal, and sends the reader to play
+        // more runs in the cohort that was already full.
         const thin =
             matched.rated < minSamples && mismatched.rated < minSamples
-                ? 'neither cohort'
+                ? 'neither cohort has that many'
                 : matched.rated < minSamples
-                  ? 'the matched-gear cohort'
-                  : 'the different-gear cohort';
+                  ? 'the matched-gear cohort does not have them'
+                  : 'the different-gear cohort does not have them';
         return {
             ...result,
             verdict: 'insufficient',
             text: 'Too few per cohort to call',
-            detail: `${figures}. ${minSamples} pairs are needed on each side and ${thin} has that many, so the pooled median stands unexplained rather than being split on a handful of runs.`,
+            detail: `${figures}. ${minSamples} pairs are needed on each side and ${thin}, so the pooled median stands unexplained rather than being split on a handful of runs.`,
         };
     }
 
