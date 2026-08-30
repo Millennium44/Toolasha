@@ -58,12 +58,27 @@ const dataManagerMock = vi.hoisted(() => {
     };
 });
 
-const configMock = vi.hoisted(() => ({ tradeHistoryEnabled: true }));
+const configMock = vi.hoisted(() => ({
+    tradeHistoryEnabled: true,
+    /** Subscribers registered through config.onSettingsLoaded() */
+    loadedCallbacks: [],
+    /** Stand in for loadSettings() finishing: the map is populated and the channel fires. */
+    fireSettingsLoaded() {
+        for (const cb of configMock.loadedCallbacks) cb();
+    },
+}));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => configMock.tradeHistoryEnabled, onSettingChange: () => {} },
+    default: {
+        getSetting: () => configMock.tradeHistoryEnabled,
+        onSettingChange: () => {},
+        onSettingsLoaded: (cb) => {
+            configMock.loadedCallbacks.push(cb);
+            return () => {};
+        },
+    },
 }));
 
 const { default: tradeHistory, mergeHistory, pruneHistory } = await import('./trade-history.js');
@@ -267,5 +282,48 @@ describe('a character switch resets in-memory state even while the feature is of
         await tradeHistory.initialize();
 
         expect(tradeHistory.history['/items/a:0']).toBeUndefined();
+    });
+});
+
+/** Let the fire-and-forget character-switch handler run to completion. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe('a character who has trade history off stays off across a switch', () => {
+    test('the schema default read inside the settings-reload window is corrected once settings load', async () => {
+        // The switch sequence: feature-registry clears the settings cache on
+        // `character_switching`, then `character_switched` fans out to this
+        // module's import-time listener — all before feature-registry's own
+        // step calls config.loadSettings(). Inside that window getSetting()
+        // answers from SCHEMA_DEFAULTS, which is `true` here, so initialize()
+        // runs for a character who has the feature switched off.
+        dataManagerMock.characterId = 'iron456';
+        configMock.tradeHistoryEnabled = true; // the schema default standing in for the empty map
+        await dataManagerMock._emit('character_switched');
+        // The production listener does not return the promise, so the switch
+        // settles a few microtasks later.
+        await settle();
+        expect(tradeHistory.isInitialized).toBe(true);
+
+        // Settings finish loading and this character's real value is `false`.
+        // loadSettings() fires no per-key change callback on a switch (the
+        // previous map was empty), and initialize()'s isInitialized
+        // short-circuit means a later re-init corrects nothing either — the
+        // settings-loaded channel is the only signal that arrives.
+        configMock.tradeHistoryEnabled = false;
+        configMock.fireSettingsLoaded();
+
+        expect(tradeHistory.isInitialized).toBe(false);
+
+        // …and with the handler gone, a market update records no price.
+        await dataManagerMock._emit('market_listings_updated', { myMarketListings: [order('/items/a', true, 42)] });
+        expect(tradeHistory.history).toEqual({});
+    });
+
+    test('a character who has it on is left initialized', async () => {
+        dataManagerMock.characterId = 'iron456';
+        await dataManagerMock._emit('character_switched');
+        await settle();
+        configMock.fireSettingsLoaded();
+        expect(tradeHistory.isInitialized).toBe(true);
     });
 });

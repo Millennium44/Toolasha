@@ -107,6 +107,23 @@ class TradeHistory {
                 this.disable();
             }
         });
+
+        // A character switch clears the settings cache and fans `character_switched`
+        // out to this module's import-time listener *before* feature-registry
+        // reloads settings, so the initialize() below reads no stored value and
+        // getSetting() answers from SCHEMA_DEFAULTS — `true` for trade history.
+        // A character who turned it off would silently start recording prices
+        // again, and initialize()'s isInitialized short-circuit means the later
+        // re-init corrects nothing; loadSettings() fires no per-key change
+        // callback on a switch either (the previous map is empty). This
+        // channel, which fires whenever settings finish loading, is the one
+        // signal that reaches here, so the real value gets the last word.
+        // Only downward: bringing the feature *up* is the registry's re-init.
+        config.onSettingsLoaded(() => {
+            if (!config.getSetting('market_tradeHistory')) {
+                this.disable();
+            }
+        });
     }
 
     /**
