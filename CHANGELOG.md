@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Five guild-feature leaks and cross-guild bleeds closed
+
+The shrine modal stops stacking a fresh Upgrade-button listener (each with its own observer) on every redraw; the trial ledger panel left open across a character switch now shows the arriving guild instead of the departed one indefinitely; the trial scoreboard clears its context on close instead of merging the new guild's damage with the old guild's trial name; a profile shared in the switch window can no longer be filed under the departed guild's member-skills key; and the credit-value feature finally releases its buy-modal watcher on disable like its siblings do.
+
 ### The rest of the negative-cost family, found and fixed
 
 A census of every cost-sign site in the lab advisor after yesterday's find: a two-hander swap now names the weapon it displaces (the displaced piece lived in clearedSlots, which the breakdown never walked — the row credited its resale without saying whose); the single-fight Gold/1% tables stop sorting a free or credit-funded upgrade last (and stop listing an unpriced combat level as the cheapest row when sorting by cost), using the same rule the combat sim's ladders already apply; and the budget plan prints a self-funding pick as "+17.7M back" instead of describing a negative outlay. One deliberate convention reported, not changed: resale credits are priced at the raw bid with no sales fee deducted.
