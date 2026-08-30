@@ -1308,3 +1308,45 @@ describe('the post-read sort survives the message that proves the read landed', 
         expect(walk.state).toBe('ready');
     });
 });
+
+describe('the widget sorts on demand', () => {
+    /** @returns {HTMLElement|null} The widget's Sort control */
+    const sortButton = () => document.querySelector('.mwi-task-reroll-walk-sort');
+
+    test('one press runs the same forced sort the Sort Tasks button runs', async () => {
+        sorter.sortTasks.mockClear();
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+
+        expect(sortButton()).toBeTruthy();
+        sortButton().click();
+
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
+    });
+
+    test('one press is one sort — nothing is scheduled and no game button is clicked', async () => {
+        sorter.sortTasks.mockClear();
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+
+        sortButton().click();
+        vi.advanceTimersByTime(30000);
+
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(clicks).toEqual([]);
+    });
+
+    test('the ✓ Done summary carries it too', async () => {
+        sorter.sortTasks.mockClear();
+        // A board of one protected task walks straight to done
+        walk.protectedHrids = new Set([MILKING]);
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        await walk.start();
+
+        expect(chipText()).toContain('✓ Done');
+        expect(sortButton()).toBeTruthy();
+        sortButton().click();
+        expect(sorter.sortTasks).toHaveBeenCalledWith(true);
+    });
+});

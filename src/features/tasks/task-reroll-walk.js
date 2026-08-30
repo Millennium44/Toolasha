@@ -1212,6 +1212,7 @@ class TaskRerollWalk {
             closeClass: 'mwi-task-reroll-walk-stop',
         });
         widget.main.addEventListener('click', () => this._onMainClick());
+        widget.extras.appendChild(this._buildSortButton());
         widget.close.title = 'Hide the walk. A run in progress stops here, and the board is left exactly as it is.';
         widget.close.addEventListener('click', () => this.stop());
         // After the shell's own toggle, so the drawer is rebuilt with whatever
@@ -1222,6 +1223,50 @@ class TaskRerollWalk {
         this.widget = widget;
         this._renderSettings();
         return widget;
+    }
+
+    /**
+     * The widget's Sort control.
+     *
+     * One press, one sort, and nothing else: it runs the same forced pass the
+     * board's own Sort Tasks button runs, with no walk state touched and no
+     * timer set. It is deliberately not automation — the walk sorts by itself
+     * only after a Read, and a board that shuffles between rerolls is the thing
+     * the sorter's module header refuses to do. What it is for is the middle of
+     * a walk, where a card has just been rerolled into something that belongs
+     * somewhere else and the player wants to see it there.
+     *
+     * It sits beside the main button in every state, the ✓ Done summary
+     * included, because a finished walk is exactly when a board wants tidying.
+     *
+     * @returns {HTMLElement} The button
+     * @private
+     */
+    _buildSortButton() {
+        const button = document.createElement('button');
+        button.className = 'mwi-task-reroll-walk-sort';
+        button.textContent = '↕ Sort';
+        button.title =
+            'Sort the board now, the same way the Sort Tasks button does. One press, one sort — nothing is ' +
+            'automated and the walk is not disturbed.';
+        button.style.cssText =
+            'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#e0e0e0; font-size:11px; ' +
+            'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit; white-space:nowrap;';
+        button.addEventListener('mousedown', (event) => event.stopPropagation());
+        button.addEventListener('pointerdown', (event) => event.stopPropagation());
+        button.addEventListener('click', () => {
+            try {
+                taskSorter.sortTasks(true);
+            } catch (error) {
+                console.error('[TaskRerollWalk] Sorting from the widget failed:', error);
+            }
+            // A sort moves cards between slots, and the armed step names a
+            // slot. Re-reading the board here re-binds the label to the card
+            // that is actually there, rather than leaving the next press to
+            // abort with "Slot N is not the card it was".
+            if (this.state === 'ready') this._replan();
+        });
+        return button;
     }
 
     /** @private */
