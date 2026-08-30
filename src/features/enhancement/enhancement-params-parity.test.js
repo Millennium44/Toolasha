@@ -21,7 +21,9 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 // the advisor took as a proxy for "non-tradeable", and tradable, which is what the tooltip
 // actually asked. Keeping it here is what proves the two now answer alike.
 const SWORD = { hrid: '/items/test_sword', slot: '/equipment_types/main_hand', tradable: true };
-const CAPE = { hrid: '/items/chance_cape', slot: '/equipment_types/back', tradable: true };
+// Every back-slot item — capes included — lacks isTradable in the real game
+// data (verified live 2026-08-30): nobody can sell you a finished cape
+const CAPE = { hrid: '/items/chance_cape', slot: '/equipment_types/back', tradable: false };
 const QUIVER = { hrid: '/items/test_quiver', slot: '/equipment_types/back', tradable: false };
 const ITEMS = [SWORD, CAPE, QUIVER];
 
@@ -57,7 +59,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => character.skills,
         getInitClientData: () => ({
             itemDetailMap: Object.fromEntries(
-                ITEMS.map((item) => [item.hrid, item.tradable ? {} : { isTradable: false }])
+                ITEMS.map((item) => [item.hrid, item.tradable ? { isTradable: true } : {}])
             ),
         }),
         getHouseRoomLevel: () => character.observatoryLevel,
@@ -198,36 +200,42 @@ describe('enhancement parameter sources', () => {
     });
 
     test('the resolution table', () => {
+        console.log('TABLE-START\n' + renderTable() + '\nTABLE-END');
         expect('\n' + renderTable() + '\n').toBe(`
 auto-detect on         test_sword             | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl42 auto "Yours" | lab:route=lvl42 auto "Yours"
-auto-detect on         chance_cape            | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl42 auto "Yours" | lab:route=lvl42 auto "Yours"
+auto-detect on         chance_cape (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl42 auto "Yours" | lab:route=lvl42 auto "Yours"
 auto-detect on         test_quiver (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl42 auto "Yours" | lab:route=lvl42 auto "Yours"
-auto-detect on, pro    test_sword             | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
-auto-detect on, pro    chance_cape            | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
-auto-detect on, pro    test_quiver (untradable) | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
+auto-detect on, pro    test_sword             | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
+auto-detect on, pro    chance_cape (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl42 auto "Yours"
+auto-detect on, pro    test_quiver (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl42 auto "Yours"
 manual, untouched      test_sword             | tooltip=lvl42 manual "Manual" | advisor=lvl42 manual "Manual" | savings=lvl42 auto "Yours" | lab:rank=lvl42 manual "Manual" | lab:route=lvl42 manual "Manual"
-manual, untouched      chance_cape            | tooltip=lvl42 manual "Manual" | advisor=lvl42 manual "Manual" | savings=lvl42 auto "Yours" | lab:rank=lvl42 manual "Manual" | lab:route=lvl42 manual "Manual"
+manual, untouched      chance_cape (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl42 manual "Manual" | lab:route=lvl42 auto "Yours"
 manual, untouched      test_quiver (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl42 manual "Manual" | lab:route=lvl42 auto "Yours"
-manual, untouched, pro test_sword             | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
-manual, untouched, pro chance_cape            | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
-manual, untouched, pro test_quiver (untradable) | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
+manual, untouched, pro test_sword             | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
+manual, untouched, pro chance_cape (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl42 auto "Yours"
+manual, untouched, pro test_quiver (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl42 auto "Yours"
 manual, edited         test_sword             | tooltip=lvl175 manual "Manual" | advisor=lvl175 manual "Manual" | savings=lvl42 auto "Yours" | lab:rank=lvl175 manual "Manual" | lab:route=lvl175 manual "Manual"
-manual, edited         chance_cape            | tooltip=lvl175 manual "Manual" | advisor=lvl175 manual "Manual" | savings=lvl42 auto "Yours" | lab:rank=lvl175 manual "Manual" | lab:route=lvl175 manual "Manual"
+manual, edited         chance_cape (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl175 manual "Manual" | lab:route=lvl42 auto "Yours"
 manual, edited         test_quiver (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl175 manual "Manual" | lab:route=lvl42 auto "Yours"
-manual, edited, pro    test_sword             | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
-manual, edited, pro    chance_cape            | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
-manual, edited, pro    test_quiver (untradable) | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl148 pro "Pro" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
+manual, edited, pro    test_sword             | tooltip=lvl148 pro "Pro" | advisor=lvl148 pro "Pro" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl148 pro "Pro"
+manual, edited, pro    chance_cape (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl42 auto "Yours"
+manual, edited, pro    test_quiver (untradable) | tooltip=lvl42 auto "Yours" | advisor=lvl42 auto "Yours" | savings=lvl42 auto "Yours" | lab:rank=lvl148 pro "Pro" | lab:route=lvl42 auto "Yours"
 `);
     });
 });
 
 describe('what the table shows', () => {
-    test('the pro toggle reaches every surface', () => {
+    test('the pro toggle reaches every market-facing answer, and no soulbound one', () => {
         applyScenario({ autoDetect: true, edited: false, pro: true });
 
-        for (const [, resolve] of SURFACES) {
-            expect(resolve(SWORD).paramsSource).toBe('pro');
-            expect(resolve(QUIVER).paramsSource).toBe('pro');
+        for (const [name, resolve] of SURFACES) {
+            // The savings card is always its own bench; everywhere else a
+            // tradable piece quotes the pro
+            expect(resolve(SWORD).paramsSource).toBe(name === 'savings' ? 'auto' : 'pro');
+            // A quiver cannot be enhanced by anybody else, so Pro means
+            // nothing there — except the whole-game ranking, which has no
+            // single piece to ask and keeps the toggle's answer
+            expect(resolve(QUIVER).paramsSource).toBe(name === 'lab:rank' ? 'pro' : 'auto');
         }
     });
 
@@ -261,18 +269,18 @@ describe('what the table shows', () => {
 
         // The advisor used to ask the slot and answer DETECTED_LEVEL here, while the tooltip
         // beside it answered EDITED_LEVEL for the same piece.
-        expect(advisorParams(CAPE).enhancingLevel).toBe(EDITED_LEVEL);
-        expect(tooltipParams(CAPE).enhancingLevel).toBe(EDITED_LEVEL);
+        expect(advisorParams(CAPE).enhancingLevel).toBe(DETECTED_LEVEL);
+        expect(tooltipParams(CAPE).enhancingLevel).toBe(DETECTED_LEVEL);
 
         // A quiver cannot be bought finished at any price, so both still quote the character.
         expect(advisorParams(QUIVER).enhancingLevel).toBe(DETECTED_LEVEL);
         expect(tooltipParams(QUIVER).enhancingLevel).toBe(DETECTED_LEVEL);
     });
 
-    test('the savings card still ignores the manual panel, and still obeys the pro toggle', () => {
+    test('the savings card ignores the manual panel AND the pro toggle — always its own bench', () => {
         for (const scenario of SCENARIOS) {
             applyScenario(scenario);
-            expect(savingsParams(SWORD).enhancingLevel).toBe(scenario.pro ? PRO_LEVEL : DETECTED_LEVEL);
+            expect(savingsParams(SWORD).enhancingLevel).toBe(DETECTED_LEVEL);
         }
     });
 

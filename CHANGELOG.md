@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pro rates never touch soulbound gear, and capes were never tradable
+
+Two corrections to yesterday's parameter unification, both the maintainer's: a pro can never enhance an untradable piece for you, so the own-bench rule now sits above the Pro toggle — soulbound gear always quotes YOUR bench, Pro or not (the whole-game ranking, which has no single piece to ask, keeps the toggle). And the tradability read was inverted: the game marks tradables with isTradable: true and leaves the field off untradables — every cape and quiver lacks it — so the "tradable capes" the unification claimed to fix never existed; the resolver now reads the field the way the data actually works, verified live.
+
 ### One "Yours" everywhere
 
 Enhancement parameter sources now resolve through one rule: Pro rates apply on every surface when toggled (they previously reached only the tooltip and one lab tab, and silently did nothing on soulbound pieces); "Manual" on a chip means hand-entered params are in force even when they match the defaults ("Yours" always means detected); and the advisor's back-slot special case now asks the item whether it's tradable instead of assuming the whole slot is — quivers unchanged, capes now priced like everything beside them. The one load-bearing split survives as a named rule: surfaces quoting a purchasable piece ask the item, the savings card's context settles the question itself, and the whole-game ranking has no single piece to ask. A parity harness pins all five surfaces before and after. Numbers move for manual-params users — that is the point.

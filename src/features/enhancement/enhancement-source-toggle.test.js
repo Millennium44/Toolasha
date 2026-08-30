@@ -28,7 +28,12 @@ const settings = vi.hoisted(() => ({ store: {} }));
 
 const gameData = {
     itemDetailMap: {
-        [ITEM]: { name: 'Test Sword', itemLevel: 10, enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }] },
+        [ITEM]: {
+            name: 'Test Sword',
+            itemLevel: 10,
+            isTradable: true,
+            enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }],
+        },
         [MATERIAL]: { name: 'Test Material', sellPrice: 100 },
         [MIRROR]: { name: "Philosopher's Mirror", sellPrice: 1 },
         [PROTECTION]: { name: 'Mirror of Protection', sellPrice: 1 },

@@ -29,7 +29,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({
             itemDetailMap: {
-                [TRADEABLE]: { name: 'Test Sword' },
+                [TRADEABLE]: { name: 'Test Sword', isTradable: true },
                 [UNTRADEABLE]: { name: 'Soulbound Sword', isTradable: false },
             },
         }),
@@ -87,22 +87,25 @@ describe('the active source', () => {
         expect(enhancementParamsFor('tooltip', UNTRADEABLE).kit).toBe('detected');
     });
 
-    test('pro rates reach an untradeable item too — one toggle, one meaning', () => {
-        // This used to answer 'detected': the untradable rule sat above the toggle, so the one
-        // control that is supposed to mean "quote me a professional" silently did nothing on a
-        // soulbound piece while the chip beside it still said Yours. Asking what a top-end
-        // enhancer would spend has an answer whether or not anybody can sell you the result.
+    test('pro rates do NOT reach a soulbound item — a pro can never enhance it for you', () => {
+        // The maintainer's ruling, 2026-08-30: an untradable piece can only ever be enhanced
+        // at YOUR bench, so the own-bench rule sits above the toggle. Pro answers "what would
+        // buying the finished run cost" — a question with no answer for a piece nobody can
+        // hand over.
         setProRatesActive(true);
 
-        expect(enhancementParamsFor('tooltip', UNTRADEABLE).kit).toBe('pro');
+        expect(enhancementParamsFor('tooltip', UNTRADEABLE).kit).toBe('detected');
     });
 
-    test('every surface answers the same toggle', () => {
+    test('every market-facing surface answers the same toggle', () => {
         setProRatesActive(true);
 
-        for (const surface of ['tooltip', 'advisor', 'savings', 'lab:route', 'lab:ranking', 'planner']) {
+        for (const surface of ['tooltip', 'advisor', 'lab:route', 'lab:ranking', 'planner']) {
             expect(enhancementParamsFor(surface, TRADEABLE).kit).toBe('pro');
         }
+        // The savings card is always on its own bench — its enhancing path only
+        // fires for a piece with no ask, and the own-bench rule outranks Pro
+        expect(enhancementParamsFor('savings', TRADEABLE).kit).toBe('detected');
     });
 
     test('the savings card is on its own bench whatever the simulator says', () => {

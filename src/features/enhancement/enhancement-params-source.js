@@ -100,15 +100,23 @@ const SURFACE_RULES = {
  */
 function isTradable(itemHrid) {
     const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
-    return itemDetails?.isTradable !== false;
+    // The game marks tradables with `isTradable: true`; an ABSENT field is the
+    // untradable case — every cape and quiver lacks it (verified against live
+    // data 2026-08-30; reading absent-as-tradable priced soulbound back items
+    // as if a pro could enhance them). An item the data does not know at all
+    // falls through as tradable so a surface with no hrid keeps its old answer.
+    if (!itemDetails) return true;
+    return itemDetails.isTradable === true;
 }
 
 /**
  * The enhancing parameters a price-sweeping surface should be computed with.
  *
- * One resolution for every surface, in one order: the Pro toggle wins if it is on, then the
- * own-bench rule for pieces nobody can sell finished, then the simulator's own answer —
- * detection when auto-detect is on, the manual panel when it is off.
+ * One resolution for every surface, in one order: the own-bench rule first — a piece nobody
+ * can sell finished can only ever be enhanced at YOUR bench, so the Pro toggle means nothing
+ * there (the maintainer's ruling, 2026-08-30: a pro can never enchant a soulbound piece for
+ * you) — then Pro if it is on, then the simulator's own answer: detection when auto-detect is
+ * on, the manual panel when it is off.
  *
  * @param {string} surface - Key in {@link SURFACE_RULES}
  * @param {string} [itemHrid] - Item being costed, for the surfaces whose rule asks
@@ -120,13 +128,13 @@ export function enhancementParamsFor(surface, itemHrid) {
         console.error('[EnhancementParamsSource] Unknown surface:', surface);
     }
 
-    if (isProRatesActive()) {
-        return getProRatesParams();
-    }
-
     const ownBench = rule?.ownBench ?? 'unbuyable';
     if (ownBench === 'always' || (ownBench === 'unbuyable' && !isTradable(itemHrid))) {
         return getAutoDetectedParams();
+    }
+
+    if (isProRatesActive()) {
+        return getProRatesParams();
     }
 
     return getEnhancingParams();
