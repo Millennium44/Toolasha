@@ -524,6 +524,68 @@ export function summarizePool(attempts) {
 }
 
 /**
+ * How much of the pool was measured whole, and what ended the rest.
+ *
+ * Every recorded fight already carries `complete` — opened at its own
+ * `new_battle` snapshot and resolved to a known outcome — and `resolveReason`,
+ * the thing that closed it. Nothing outside the export has ever read either,
+ * so the pool header quotes counts without saying how much of what it counts is
+ * a whole fight. A pool that is one-fifth partials is a different pool from one
+ * that is not, and the difference is invisible.
+ *
+ * Two separate unknowns, kept separate. A fight recorded before these fields
+ * existed has no `complete` flag: it is not an incomplete fight, so it is
+ * excluded from the fraction's denominator and counted aside. And a fight with
+ * no `resolveReason` is filed under `unknown` in the histogram rather than
+ * being attributed to whichever reason happens to be commonest.
+ *
+ * @param {Array<Object>} attempts - From the recorder
+ * @returns {{total: number, complete: number, incomplete: number, unknownComplete: number,
+ *   measured: number, completeFraction: number|null,
+ *   reasons: Array<{reason: string, label: string, count: number}>, text: string}}
+ */
+export function poolHygiene(attempts) {
+    const list = (attempts || []).filter((attempt) => attempt);
+    const counts = new Map();
+    let complete = 0;
+    let incomplete = 0;
+    let unknownComplete = 0;
+
+    for (const attempt of list) {
+        // Strictly true/false: an absent flag is a fight recorded before the
+        // field existed, and reading it as "not complete" would invent partials
+        if (attempt.complete === true) complete += 1;
+        else if (attempt.complete === false) incomplete += 1;
+        else unknownComplete += 1;
+
+        const reason =
+            typeof attempt.resolveReason === 'string' && attempt.resolveReason ? attempt.resolveReason : 'unknown';
+        counts.set(reason, (counts.get(reason) || 0) + 1);
+    }
+
+    const reasons = [...counts.entries()]
+        .map(([reason, count]) => ({ reason, count, label: reason.replace(/_/g, '-') }))
+        .sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : 1));
+
+    const measured = complete + incomplete;
+    const parts = [];
+    if (measured > 0) parts.push(`${complete} of ${measured} complete`);
+    if (unknownComplete) parts.push(`${unknownComplete} before the field existed`);
+    for (const entry of reasons) parts.push(`${entry.count} ${entry.label}`);
+
+    return {
+        total: list.length,
+        complete,
+        incomplete,
+        unknownComplete,
+        measured,
+        completeFraction: measured > 0 ? complete / measured : null,
+        reasons,
+        text: list.length ? parts.join(' · ') : 'no fights recorded',
+    };
+}
+
+/**
  * The attack-tally key the engine files damage-over-time ticks under. Every
  * other key is a swing of some kind — `autoAttack`, an ability hrid, or one of
  * the reactive sources (`parry`, `retaliation`, a thorn type).

@@ -1035,6 +1035,36 @@ describe('the pool tab browses what the recorder holds', () => {
         expect(text).toContain('complete 100%');
     });
 
+    test('the header says how much of the pool was measured whole, and what closed the rest', () => {
+        labFightRecorder.noteAttempt({
+            monsterHrid: '/monsters/cyclops',
+            monsterName: 'Cyclops',
+            roomLevel: 200,
+            seconds: 50,
+            outcome: 'death',
+            cleared: false,
+            monsterMaxHp: 10_000,
+            monsterHpEnd: 6_000,
+            playerMaxHp: 500,
+            playerHpStart: 500,
+            playerHpEnd: 0,
+            monsterDamage: 4_000,
+            playerDamageTaken: 500,
+            complete: false,
+            resolveReason: 'stale',
+            fingerprint: 'fp-now',
+        });
+
+        labyrinthRoomLogs.render(false);
+        const text = listText();
+
+        expect(text).toContain('4 of 5 complete');
+        expect(text).toContain('1 stale');
+        // The four fixture fights carry no resolveReason at all, and are filed as
+        // unknown rather than being attributed to whatever closed the fifth
+        expect(text).toContain('4 unknown');
+    });
+
     test('the gear toggle widens the scope to everything recorded', () => {
         labyrinthRoomLogs.poolAllGear = true;
         labyrinthRoomLogs.render(false);

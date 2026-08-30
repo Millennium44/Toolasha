@@ -26,7 +26,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
-import { summarizePool } from './labyrinth-replay-check.js';
+import { summarizePool, poolHygiene } from './labyrinth-replay-check.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
@@ -1972,6 +1972,19 @@ class LabyrinthRoomLogs {
         });
         scopeLine.appendChild(toggle);
         header.appendChild(scopeLine);
+
+        // How much of what the title just counted is a whole fight, and what
+        // ended the rest. The counts above say nothing about it, and a pool
+        // that is a fifth partials is a different pool from one that is not.
+        const hygiene = poolHygiene(attempts);
+        const hygieneLine = document.createElement('div');
+        hygieneLine.style.cssText = 'color:#9fb4d8; font-size:10px; margin-top:2px;';
+        hygieneLine.textContent = hygiene.text;
+        hygieneLine.title =
+            'complete: the fight was opened at its own new_battle snapshot and resolved to a known ' +
+            'outcome — measured whole. The rest is what closed each fight. Fights recorded before ' +
+            'these fields existed are counted apart rather than folded in.';
+        header.appendChild(hygieneLine);
 
         const save = document.createElement('button');
         save.textContent = 'Save pool';

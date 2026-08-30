@@ -14,6 +14,7 @@ import {
     relMarginPct,
     binomialMarginPct,
     summarizePool,
+    poolHygiene,
     simDamageTally,
 } from './labyrinth-replay-check.js';
 
@@ -945,5 +946,84 @@ describe('the mix decides a soft-hit gap', () => {
         expect(result.metrics.find((m) => m.key === 'dotPerSwing')).toBeUndefined();
         expect(result.diagnosis).toContain('Both sides count swings only');
         expect(result.diagnosis).not.toContain('off as well');
+    });
+});
+
+describe('poolHygiene', () => {
+    /**
+     * Recorded fights, all alike.
+     * @param {number} count - How many
+     * @param {Object} fields - The two fields the count reads
+     * @returns {Array<Object>}
+     */
+    const fights = (count, fields) => Array.from({ length: count }, () => ({ ...fields }));
+
+    test('counts the complete fraction and what closed the rest', () => {
+        const hygiene = poolHygiene([
+            ...fights(412, { complete: true, resolveReason: 'new_battle' }),
+            ...fights(61, { complete: false, resolveReason: 'stale' }),
+            ...fights(27, { complete: false, resolveReason: 'room_switch' }),
+        ]);
+
+        expect(hygiene.total).toBe(500);
+        expect(hygiene.complete).toBe(412);
+        expect(hygiene.measured).toBe(500);
+        expect(hygiene.completeFraction).toBeCloseTo(0.824);
+        expect(hygiene.text).toContain('412 of 500 complete');
+        expect(hygiene.text).toContain('61 stale');
+        expect(hygiene.text).toContain('27 room-switch');
+    });
+
+    test('a fight recorded before the fields existed is not an incomplete fight', () => {
+        // No `complete` flag at all. Reading the absence as false would invent 10
+        // partials and understate the fraction of a pool that was measured whole.
+        const hygiene = poolHygiene([...fights(10, {}), ...fights(10, { complete: true, resolveReason: 'new_fight' })]);
+
+        expect(hygiene.total).toBe(20);
+        expect(hygiene.incomplete).toBe(0);
+        expect(hygiene.unknownComplete).toBe(10);
+        expect(hygiene.measured).toBe(10);
+        expect(hygiene.completeFraction).toBe(1);
+        expect(hygiene.text).toContain('10 of 10 complete');
+        expect(hygiene.text).toContain('10 before the field existed');
+    });
+
+    test('a missing resolve reason is its own bucket, never attributed to the commonest', () => {
+        const hygiene = poolHygiene([
+            ...fights(6, { complete: true, resolveReason: 'new_battle' }),
+            ...fights(3, { complete: true, resolveReason: null }),
+            ...fights(1, { complete: true }),
+        ]);
+
+        const byReason = Object.fromEntries(hygiene.reasons.map((r) => [r.reason, r.count]));
+        expect(byReason).toEqual({ new_battle: 6, unknown: 4 });
+        expect(hygiene.text).toContain('4 unknown');
+    });
+
+    test('the histogram is ordered by count, and underscores are not shown to a reader', () => {
+        const hygiene = poolHygiene([
+            ...fights(2, { complete: false, resolveReason: 'left_labyrinth' }),
+            ...fights(9, { complete: false, resolveReason: 'feature_disabled' }),
+            ...fights(5, { complete: true, resolveReason: 'new_battle' }),
+        ]);
+
+        expect(hygiene.reasons.map((r) => r.label)).toEqual(['feature-disabled', 'new-battle', 'left-labyrinth']);
+    });
+
+    test('an empty pool says so rather than dividing by nothing', () => {
+        for (const empty of [[], null, undefined]) {
+            const hygiene = poolHygiene(empty);
+            expect(hygiene.total).toBe(0);
+            expect(hygiene.completeFraction).toBeNull();
+            expect(hygiene.reasons).toEqual([]);
+            expect(hygiene.text).toBe('no fights recorded');
+        }
+    });
+
+    test('a pool of nothing but holes is still counted honestly', () => {
+        const hygiene = poolHygiene([null, undefined, { complete: false, resolveReason: 'stale' }]);
+        expect(hygiene.total).toBe(1);
+        expect(hygiene.completeFraction).toBe(0);
+        expect(hygiene.text).toContain('0 of 1 complete');
     });
 });
