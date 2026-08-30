@@ -68,7 +68,14 @@ import { partyLintWarnings } from '../../utils/party-lint.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { registerCommand } from '../../utils/command-registry.js';
 import { resolveSupplyHrids, readSupplyCounts, bestOwnedTier, SUPPLY_KINDS } from '../combat/labyrinth-supplies.js';
-import { rushFloorTable, preserveChance, observedUse } from '../combat/labyrinth-run-ledger.js';
+import {
+    rushFloorTable,
+    preserveChance,
+    observedUse,
+    burnSummary,
+    torchesPerFloor,
+    sparkText,
+} from '../combat/labyrinth-run-ledger.js';
 import storage from '../../core/storage.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
@@ -1949,7 +1956,118 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             }
             section.appendChild(line);
         }
+
+        const trend = this._labTrendLines(needs);
+        for (const el of trend) section.appendChild(el);
         return section;
+    }
+
+    /**
+     * What the whole ledger says, rather than what the last five runs said.
+     *
+     * The block above plans from the newest five, which is the right window for
+     * "how much do I need next run". These two lines answer the other question
+     * — is the burn drifting — and for that the five newest are far too short a
+     * lever: the ledger keeps thirty, and thirty is what a trend wants.
+     *
+     * Both lines read only runs watched from the door, for the reason
+     * `observedUse` sets out: a run joined mid-way reports a floor rather than
+     * a measurement, and averaging those in is how a 350-torch run comes out as
+     * 106. That is also why the count of trusted runs is stated rather than the
+     * count of runs — an average over three of thirty must not read as thirty.
+     *
+     * The torch line is normalised per deepest floor. Raw torch spend is not
+     * comparable run to run: a run that stopped on floor 3 and one that reached
+     * floor 7 spent very different amounts for the same play, and only the
+     * per-floor figure takes the run's length back out.
+     *
+     * @param {Array<Object>} needs - The rows above, for their item hrids
+     * @returns {HTMLElement[]} Nothing at all when no trusted run has landed yet
+     */
+    _labTrendLines(needs) {
+        const runs = this._ledgerRuns || [];
+        if (!runs.length) return [];
+
+        const out = [];
+        const dim = (el) => {
+            el.style.cssText = 'margin-top:3px; font-size:0.9em; display:flex; align-items:center; gap:4px 6px;';
+            el.style.color = COLORS.textDim;
+            el.style.flexWrap = 'wrap';
+            return el;
+        };
+        const hridFor = (kind) =>
+            runs.find((run) => run.itemHrids?.[kind])?.itemHrids?.[kind] ||
+            needs.find((need) => need.kind === kind)?.itemHrid ||
+            null;
+
+        // Per-supply burn across every trusted run the ledger holds
+        const burnLine = dim(document.createElement('div'));
+        const lead = document.createElement('span');
+        lead.textContent = 'Burn per run:';
+        burnLine.appendChild(lead);
+        let anyBurn = false;
+        for (const kind of SUPPLY_KINDS) {
+            const summary = burnSummary(runs, kind);
+            if (!summary) continue;
+            anyBurn = true;
+            const chip = document.createElement('span');
+            chip.style.cssText = 'display:inline-flex; align-items:center; gap:3px;';
+            const hrid = hridFor(kind);
+            if (hrid) chip.appendChild(itemIcon(hrid, 16));
+            const text = document.createElement('span');
+            const spread = summary.min === summary.max ? '' : ` (${summary.min}–${summary.max})`;
+            text.textContent = `${summary.average.toFixed(summary.average < 10 ? 1 : 0)}${spread}`;
+            chip.appendChild(text);
+            chip.title =
+                `${kind.charAt(0).toUpperCase()}${kind.slice(1)}: ${summary.total} spent across ` +
+                `${summary.runs} run${summary.runs === 1 ? '' : 's'} watched from the door, ` +
+                `averaging ${summary.average.toFixed(2)} per run (lowest ${summary.min}, highest ${summary.max}). ` +
+                'Runs joined part-way through are left out — their start is only where they were first seen, ' +
+                'so what they report is a floor rather than a measurement.';
+            burnLine.appendChild(chip);
+        }
+        if (anyBurn) out.push(burnLine);
+
+        // Torches per floor, so a short run and a deep one can be compared
+        const perFloor = torchesPerFloor(runs);
+        if (perFloor.length) {
+            // The ledger is newest first; a trend reads left to right in time
+            const oldestFirst = [...perFloor].reverse();
+            const values = oldestFirst.map((entry) => entry.perFloor);
+            const average = values.reduce((sum, n) => sum + n, 0) / values.length;
+            const trendLine = dim(document.createElement('div'));
+            const label = document.createElement('span');
+            label.textContent = 'Torches per floor:';
+            trendLine.appendChild(label);
+
+            const figure = document.createElement('span');
+            figure.textContent = average.toFixed(1);
+            trendLine.appendChild(figure);
+
+            // Two points are two points, not a shape; a single bar is noise
+            const spark = sparkText(values);
+            if (values.length >= 3) {
+                const bars = document.createElement('span');
+                bars.textContent = spark;
+                bars.style.cssText = 'letter-spacing:1px; font-family:monospace;';
+                trendLine.appendChild(bars);
+            } else {
+                const thin = document.createElement('span');
+                thin.textContent = `— ${values.length} run${values.length === 1 ? '' : 's'} so far`;
+                trendLine.appendChild(thin);
+            }
+
+            trendLine.title =
+                `Torches spent divided by the deepest floor reached, for each of the ${values.length} ` +
+                `run${values.length === 1 ? '' : 's'} watched from the door, oldest on the left. ` +
+                'Dividing by the floor is what makes a short run and a deep one comparable. ' +
+                `Average ${average.toFixed(2)} per floor; the runs read ` +
+                `${oldestFirst.map((entry) => `${entry.torches}/F${entry.floor}`).join(', ')}.`;
+            trendLine.style.textDecoration = 'underline dotted';
+            out.push(trendLine);
+        }
+
+        return out;
     }
 
     /**

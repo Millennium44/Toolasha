@@ -210,6 +210,105 @@ export function observedUse(runs, kind) {
 }
 
 /**
+ * What the trusted runs burned of one supply, as one summary.
+ *
+ * `observedUse` already answers "what did each run spend"; this is the reading
+ * a supply row wants beside it — how many runs are actually behind the average,
+ * and the spread they cover. The average is what the panel plans at, and an
+ * average over two runs and an average over twenty deserve to be told apart.
+ *
+ * Untrusted runs are excluded by `observedUse` itself, so a run joined mid-way
+ * cannot drag the average down (a 350-torch run first seen on floor 3 reads as
+ * 106, which is the mistake this whole flag exists to prevent).
+ *
+ * @param {Array<Object>} runs - Ledger records
+ * @param {string} kind - 'torch' | 'shroud' | 'beacon'
+ * @returns {{runs: number, total: number, average: number, min: number, max: number}|null}
+ *   Null when no trusted run has anything to say about this supply
+ */
+export function burnSummary(runs, kind) {
+    const used = observedUse(runs, kind);
+    if (!used.length) return null;
+    const total = used.reduce((sum, n) => sum + n, 0);
+    return {
+        runs: used.length,
+        total,
+        average: total / used.length,
+        min: Math.min(...used),
+        max: Math.max(...used),
+    };
+}
+
+/**
+ * Torches per floor, run by run — the trend that survives a change of plan.
+ *
+ * Raw torch spend is not comparable between runs: a run that stopped on floor 3
+ * and a run that reached floor 7 spent wildly different amounts for exactly the
+ * same play. Dividing by the deepest floor reached takes the run's length out
+ * of the figure and leaves the thing worth watching — whether a floor is
+ * getting cheaper or dearer to cross.
+ *
+ * Only runs watched from the door count, for the reason `observedUse` gives:
+ * a run first seen mid-way has a start of "wherever we came in", so both its
+ * spend and its per-floor rate are floors rather than measurements.
+ *
+ * @param {Array<Object>} runs - Ledger records, newest first as the ledger keeps them
+ * @returns {Array<{perFloor: number, torches: number, floor: number, endedAt: number}>}
+ *   Newest first, the ledger's own order
+ */
+export function torchesPerFloor(runs) {
+    const out = [];
+    for (const run of runs || []) {
+        if (run?.startTrusted !== true) continue;
+        const floor = Math.floor(Number(run?.floor) || 0);
+        if (floor < 1) continue;
+        const spent = Number(run?.spent?.torch);
+        const start = Number(run?.start?.torch);
+        const left = Number(run?.left?.torch);
+        let torches = null;
+        if (Number.isFinite(spent)) torches = Math.max(0, spent);
+        else if (Number.isFinite(start) && Number.isFinite(left)) torches = Math.max(0, start - left);
+        if (torches === null) continue;
+        out.push({ perFloor: torches / floor, torches, floor, endedAt: Number(run?.endedAt) || 0 });
+    }
+    return out;
+}
+
+/** The eight heights a text sparkline can draw, lowest first */
+const SPARK_BARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+/**
+ * A series as one string of block characters.
+ *
+ * Text rather than an SVG or a canvas because of where it goes: one line in the
+ * Consumables panel's supply block, beside numbers, at the panel's own font
+ * size. A chart there would be a chart nobody asked for, and a charts library
+ * for eight glyphs would be a dependency nobody asked for either.
+ *
+ * A flat series is drawn flat — every bar mid-height — rather than having its
+ * noise magnified to full scale, which is the standard sparkline trap: a run
+ * of 40, 40, 41 must not read as a doubling.
+ *
+ * @param {number[]} values - The series, in the order it should be drawn
+ * @returns {string} One glyph per value; empty when there is nothing to draw
+ */
+export function sparkText(values) {
+    const series = (values || []).map(Number).filter((n) => Number.isFinite(n));
+    if (!series.length) return '';
+    const low = Math.min(...series);
+    const high = Math.max(...series);
+    const span = high - low;
+    // A flat line sits in the middle: it has a level but no shape
+    if (span <= 0) return SPARK_BARS[3].repeat(series.length);
+    return series
+        .map(
+            (value) =>
+                SPARK_BARS[Math.min(SPARK_BARS.length - 1, Math.floor(((value - low) / span) * SPARK_BARS.length))]
+        )
+        .join('');
+}
+
+/**
  * Fold one labyrinth sighting into the tracker's state, pure.
  *
  * @param {Object} state - `{phase, run}` where run is

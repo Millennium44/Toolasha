@@ -64,6 +64,9 @@ const {
     foldSighting,
     observedUse,
     preserveChance,
+    burnSummary,
+    torchesPerFloor,
+    sparkText,
 } = await import('./labyrinth-run-ledger.js');
 
 describe('the grid arithmetic, straight from the game guide', () => {
@@ -271,5 +274,108 @@ describe('the ring survives a failed read and a second tab', () => {
                 .map((run) => run.key)
         ).toEqual(['9']);
         expect(stored().map((run) => run.key)).toEqual(['1']);
+    });
+});
+
+/**
+ * A ledger record, trimmed to what the trend readings look at.
+ * @param {Object} fields - Overrides
+ * @returns {Object}
+ */
+function run({ key = 'r', floor = 5, torch = 100, shroud = 2, beacon = 3, trusted = true, ...rest } = {}) {
+    return {
+        key,
+        startTrusted: trusted,
+        floor,
+        spent: { torch, shroud, beacon },
+        endedAt: 1000,
+        ...rest,
+    };
+}
+
+describe('burnSummary', () => {
+    test('averages what the trusted runs spent, and says how many there were', () => {
+        const summary = burnSummary([run({ torch: 100 }), run({ torch: 50 }), run({ torch: 60 })], 'torch');
+        expect(summary).toEqual({ runs: 3, total: 210, average: 70, min: 50, max: 100 });
+    });
+
+    test('each supply is summarised on its own', () => {
+        const runs = [run({ shroud: 4, beacon: 1 }), run({ shroud: 2, beacon: 5 })];
+        expect(burnSummary(runs, 'shroud')).toMatchObject({ runs: 2, average: 3 });
+        expect(burnSummary(runs, 'beacon')).toMatchObject({ runs: 2, average: 3 });
+    });
+
+    test('a run joined part-way through is left out entirely', () => {
+        // The 350-torch run that read as 106: its start is only where it was
+        // first seen, so its spend is a floor rather than a measurement
+        const summary = burnSummary([run({ torch: 300 }), run({ torch: 106, trusted: false })], 'torch');
+        expect(summary).toEqual({ runs: 1, total: 300, average: 300, min: 300, max: 300 });
+    });
+
+    test('no trusted run means no summary at all, rather than a zero', () => {
+        expect(burnSummary([run({ trusted: false })], 'torch')).toBeNull();
+        expect(burnSummary([], 'torch')).toBeNull();
+        expect(burnSummary(null, 'torch')).toBeNull();
+    });
+});
+
+describe('torchesPerFloor', () => {
+    test('normalises each run by the deepest floor it reached', () => {
+        // 120 torches over 6 floors and 40 over 2 are the same play; only the
+        // per-floor figure says so
+        const entries = torchesPerFloor([run({ torch: 120, floor: 6 }), run({ torch: 40, floor: 2 })]);
+        expect(entries.map((entry) => entry.perFloor)).toEqual([20, 20]);
+        expect(entries.map((entry) => entry.torches)).toEqual([120, 40]);
+        expect(entries.map((entry) => entry.floor)).toEqual([6, 2]);
+    });
+
+    test('untrusted runs are excluded, for the same reason the average excludes them', () => {
+        const entries = torchesPerFloor([run({ torch: 120, floor: 6 }), run({ torch: 12, floor: 6, trusted: false })]);
+        expect(entries).toHaveLength(1);
+        expect(entries[0].perFloor).toBe(20);
+    });
+
+    test('a run that never reached floor 1 has nothing to divide by', () => {
+        expect(torchesPerFloor([run({ floor: 0 })])).toEqual([]);
+    });
+
+    test('an old record with no `spent` falls back to start minus left', () => {
+        const legacy = { key: 'old', startTrusted: true, floor: 4, start: { torch: 90 }, left: { torch: 10 } };
+        expect(torchesPerFloor([legacy])[0]).toMatchObject({ torches: 80, floor: 4, perFloor: 20 });
+    });
+
+    test('a record with neither figure is skipped rather than counted as nothing', () => {
+        expect(torchesPerFloor([{ key: 'x', startTrusted: true, floor: 3 }])).toEqual([]);
+    });
+
+    test('the ledger order is kept, so the caller decides which way time runs', () => {
+        const entries = torchesPerFloor([
+            run({ key: 'new', torch: 10, floor: 1 }),
+            run({ key: 'old', torch: 30, floor: 1 }),
+        ]);
+        expect(entries.map((entry) => entry.torches)).toEqual([10, 30]);
+    });
+});
+
+describe('sparkText', () => {
+    test('one glyph per value, low to high', () => {
+        const bars = sparkText([1, 2, 3, 4]);
+        expect(bars).toHaveLength(4);
+        expect(bars[0]).toBe('▁');
+        expect(bars[3]).toBe('█');
+    });
+
+    test('a flat series is drawn flat rather than magnified into noise', () => {
+        expect(sparkText([40, 40, 40])).toBe('▄▄▄');
+    });
+
+    test('nothing to draw draws nothing', () => {
+        expect(sparkText([])).toBe('');
+        expect(sparkText(null)).toBe('');
+        expect(sparkText([NaN, undefined])).toBe('');
+    });
+
+    test('a single reading is one bar, not a shape', () => {
+        expect(sparkText([7])).toHaveLength(1);
     });
 });

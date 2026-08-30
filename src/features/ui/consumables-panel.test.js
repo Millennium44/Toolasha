@@ -775,3 +775,111 @@ describe('the idle plan pins across a character switch', () => {
         expect(consumablesPanel._simRates).toEqual({ rate: 'char2-rate' });
     });
 });
+
+describe('the labyrinth burn trend', () => {
+    const SUPPLIES = ['/items/basic_torch', '/items/basic_shroud', '/items/basic_beacon'];
+
+    /**
+     * @param {Object} fields - Overrides
+     * @returns {Object} A ledger record shaped as the run ledger stores them
+     */
+    const ledgerRun = ({ key, floor = 5, torch = 100, shroud = 2, beacon = 3, trusted = true }) => ({
+        key,
+        startTrusted: trusted,
+        floor,
+        left: { torch: 0, shroud: 0, beacon: 0 },
+        start: { torch, shroud, beacon },
+        spent: { torch, shroud, beacon },
+        itemHrids: { torch: '/items/basic_torch', shroud: '/items/basic_shroud', beacon: '/items/basic_beacon' },
+        endedAt: 1000,
+    });
+
+    /**
+     * The lab section's text, with the panel drawn over the given ledger.
+     *
+     * The runs go in *after* the panel has settled: `restore()` reads the
+     * ledger from storage as part of coming up, so anything set before that
+     * would be replaced by the empty stored one.
+     * @param {Array<Object>} runs - Ledger records, newest first
+     * @returns {Promise<string>}
+     */
+    const draw = async (runs) => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._ledgerRuns = runs;
+        consumablesPanel._render();
+        return consumablesPanel.bodyEl.textContent;
+    };
+
+    /** Every tooltip in the drawn panel, joined — the per-run detail lives there */
+    const titles = () =>
+        [...consumablesPanel.bodyEl.querySelectorAll('[title]')].map((el) => el.getAttribute('title')).join(' | ');
+
+    beforeEach(() => {
+        game.clientData = { itemDetailMap: Object.fromEntries(SUPPLIES.map((h) => [h, {}])) };
+        for (const hrid of SUPPLIES) game.items[hrid] = { name: hrid.split('/').pop() };
+        game.characterData = {
+            characterInfo: { labyrinthTorchCap: 100, labyrinthShroudCap: 4, labyrinthBeaconCap: 5 },
+        };
+        game.inventory = [];
+        consumablesPanel._ledgerRuns = [];
+    });
+
+    test('the burn line reads every trusted run, not just the five the plan uses', async () => {
+        // Six runs: the plan slices five, the trend must not
+        const text = await draw(Array.from({ length: 6 }, (_, i) => ledgerRun({ key: `r${i}`, torch: 60 })));
+        expect(text).toContain('Burn per run:');
+        expect(titles()).toContain('6 runs watched from the door');
+    });
+
+    test('the torch trend is per floor, so a short run and a deep one compare', async () => {
+        const text = await draw([
+            ledgerRun({ key: 'a', torch: 120, floor: 6 }),
+            ledgerRun({ key: 'b', torch: 40, floor: 2 }),
+            ledgerRun({ key: 'c', torch: 80, floor: 4 }),
+        ]);
+        expect(text).toContain('Torches per floor:');
+        // All three are 20 per floor despite spending 120, 40 and 80
+        expect(text).toContain('20.0');
+    });
+
+    test('untrusted runs are left out of both lines', async () => {
+        const text = await draw([
+            ledgerRun({ key: 'a', torch: 300, floor: 6 }),
+            ledgerRun({ key: 'b', torch: 12, floor: 6, trusted: false }),
+        ]);
+        // One run, at 50 per floor — the untrusted 2/floor run would have
+        // halved it, which is the 350-reads-as-106 mistake in miniature
+        expect(titles()).toContain('1 run watched from the door');
+        expect(text).toContain('50.0');
+    });
+
+    test('too few runs for a shape says so instead of drawing one', async () => {
+        const text = await draw([ledgerRun({ key: 'a', torch: 100, floor: 5 })]);
+        expect(text).toContain('Torches per floor:');
+        expect(text).toContain('1 run so far');
+        expect(text).not.toContain('▄');
+    });
+
+    test('a sparkline appears once there are three readings', async () => {
+        const text = await draw([
+            ledgerRun({ key: 'a', torch: 100, floor: 5 }),
+            ledgerRun({ key: 'b', torch: 50, floor: 5 }),
+            ledgerRun({ key: 'c', torch: 75, floor: 5 }),
+        ]);
+        expect(text).not.toContain('runs so far');
+        expect(text).toMatch(/[▁▂▃▄▅▆▇█]{3}/);
+    });
+
+    test('an empty ledger draws neither line', async () => {
+        const text = await draw([]);
+        expect(text).not.toContain('Burn per run:');
+        expect(text).not.toContain('Torches per floor:');
+    });
+
+    test('a ledger of nothing but untrusted runs draws neither line', async () => {
+        const text = await draw([ledgerRun({ key: 'a', trusted: false })]);
+        expect(text).not.toContain('Burn per run:');
+        expect(text).not.toContain('Torches per floor:');
+    });
+});
