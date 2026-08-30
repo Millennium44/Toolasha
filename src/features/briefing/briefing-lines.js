@@ -247,6 +247,24 @@ function consumableLine(facts, now) {
     const soonest = facts.consumable;
     if (!soonest || !Number.isFinite(soonest.secondsLeft)) return null;
     const name = soonest.name || 'A consumable';
+
+    // Already gone. `secondsLeft` is 0 when the stock is empty and the burn
+    // rate is not, and a lapsing horizon at `now` is one no replay can ever be
+    // earlier than — so the account panel dropped this line on every read, and
+    // the one character actually out of drinks was the one it said nothing
+    // about. There is no deadline left to carry: it is a reading, and nothing
+    // about the clock makes it false. Same shape as the already-wasting task
+    // board above.
+    if (!(soonest.secondsLeft > 0)) {
+        return {
+            key: 'consumable',
+            label: 'First to run dry',
+            value: `${name} has run out`,
+            tone: 'bad',
+            target: TARGETS.consumables,
+        };
+    }
+
     return {
         key: 'consumable',
         label: 'First to run dry',

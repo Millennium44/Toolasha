@@ -153,6 +153,25 @@ describe('briefingFromSnapshot', () => {
         expect(briefingFromSnapshot(snapshot, NOW).lines).toEqual([]);
     });
 
+    test('a character that was already out of a consumable still says so', () => {
+        // `secondsLeft` is 0 when the stock is gone and the burn rate is not,
+        // so the line's horizon lands on the snapshot instant itself. A
+        // lapsing horizon at `now` is one no replay can ever be earlier than,
+        // so the line was dropped on every read — the one character genuinely
+        // out of drinks was the one the panel said nothing about, while the
+        // ones with hours left got "Ale runs dry at 14:20".
+        //
+        // The task board's own already-matured case does this right (an
+        // already-wasting board keeps a horizon-less line); this is that.
+        const snapshot = { at: NOW - HOUR, facts: { consumable: { name: 'Ale', secondsLeft: 0 } } };
+        const briefing = briefingFromSnapshot(snapshot, NOW);
+
+        expect(briefing.lines.map((line) => line.key)).toEqual(['consumable']);
+        expect(briefing.lines[0].value).not.toMatch(/ at /);
+        // And still there a week later — nothing about the clock makes it false
+        expect(briefingFromSnapshot(snapshot, NOW + 7 * 24 * HOUR).lines).toHaveLength(1);
+    });
+
     test('a character with no snapshot is unknown, not quiet', () => {
         expect(briefingFromSnapshot(null, NOW)).toBeNull();
         expect(briefingFromSnapshot({ facts: {} }, NOW)).toBeNull();
