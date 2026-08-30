@@ -171,6 +171,10 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     missingMaterialsButton: () => mocks.bridgeMissingMats,
     dungeonTrackerStorage: () => ({ getAllRuns: async () => mocks.dungeonRuns }),
     marketHistoryPanel: () => mocks.bridgePricePanel,
+    // Null like an absent market bundle, so the handoff falls back to the
+    // bundled writers the tests spy on
+    marketWatchTarget: () => null,
+    marketWatchItem: () => null,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({

@@ -43,6 +43,10 @@ const coreExternalGlobals = new Map([
     // bundle at that copy — before this entry each of them default-imported the
     // Utils namespace object and called methods that were not on it.
     [normalize(join(__dirname, 'src/utils/performance-monitor.js')), 'Toolasha.Core.performanceMonitor'],
+    // A market path, but the core bundle's marketAPI is what calls show()/hide()
+    // on it — with a copy each, the initialized one never showed and the showing
+    // one was never initialized (two alert containers, one observer-less).
+    [normalize(join(__dirname, 'src/features/market/network-alert.js')), 'Toolasha.Core.networkAlert'],
 ]);
 
 const utilsExternalGlobals = new Map([
@@ -277,6 +281,17 @@ const combatFeatureExternals = new Map([
     [normalize(join(__dirname, 'src/features/combat/combat-drop-luck.js')), 'Toolasha.Combat.combatDropLuck'],
     [normalize(join(__dirname, 'src/features/combat/damage-tracker.js')), 'Toolasha.Combat.damageTracker'],
     [normalize(join(__dirname, 'src/features/combat/damage-taken-tracker.js')), 'Toolasha.Combat.damageTakenTracker'],
+    // The tax toggle's flag lives at module scope: with a ui-bundle copy the
+    // toggle flipped one flag while the income calculator read the other, so
+    // Tax On/Off did nothing until a reload.
+    [normalize(join(__dirname, 'src/features/combat-stats/sales-tax-view.js')), 'Toolasha.Combat.salesTaxView'],
+    // Its target-restore cache is per copy; two copies raced each other's
+    // load-in-flight guard from the DPS and Sim Accuracy panels.
+    [normalize(join(__dirname, 'src/features/combat/combat-record-control.js')), 'Toolasha.Combat.combatRecordControl'],
+    // The defaults popup reads and REWRITES the simulator's per-loadout scroll
+    // selections; the ui bundle's uninitialized copy showed everything blank
+    // and saved that blankness over the real record.
+    [normalize(join(__dirname, 'src/features/combat/scroll-simulator-ui.js')), 'Toolasha.Combat.scrollSimulatorUI'],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)

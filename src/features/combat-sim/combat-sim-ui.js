@@ -14,6 +14,8 @@ import {
     marketHistoryPanel,
     labyrinthClearRate,
     loadoutSnapshot,
+    marketWatchTarget,
+    marketWatchItem,
 } from '../../utils/bundle-bridge.js';
 import {
     isGearCandidate,
@@ -21,8 +23,12 @@ import {
     rankInvalidatedRooms,
     describeInvalidatedRooms,
 } from '../combat/labyrinth-upgrade-invalidation.js';
-import { watchTarget } from '../inventory/equipment-savings-row.js';
-import { watchItem } from '../inventory/watchlist.js';
+// Fallbacks for the standalone build only: in the packaged build this bundle
+// loads before market, so these bind bundle-local copies whose writes the
+// savings panel and watchlist never see — the bridge accessors above reach the
+// live market-bundle writers at call time instead.
+import { watchTarget as bundledWatchTarget } from '../inventory/equipment-savings-row.js';
+import { watchItem as bundledWatchItem } from '../inventory/watchlist.js';
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
@@ -1284,7 +1290,7 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                 const action = button.getAttribute('data-buy-action');
                 if (action === 'save') {
                     const rawCost = button.getAttribute('data-buy-cost');
-                    watchTarget(itemHrid, enhancementLevel, {
+                    (marketWatchTarget() || bundledWatchTarget)(itemHrid, enhancementLevel, {
                         cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
                         costSource: button.getAttribute('data-buy-cost-source') || '',
                     });
@@ -1341,7 +1347,7 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     // The level goes with it, as it does to the Market button
                     // on the same row: a "+5" watched as a +0 lands on the list
                     // priced at a fraction of what the row was quoting
-                    watchItem(itemHrid, null, enhancementLevel);
+                    (marketWatchItem() || bundledWatchItem)(itemHrid, null, enhancementLevel);
                     seedWatchlistPriceTarget(itemHrid, enhancementLevel, button.getAttribute('data-buy-cost'));
                     button.textContent = 'Watching ✓';
                 }

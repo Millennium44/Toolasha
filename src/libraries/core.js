@@ -24,6 +24,9 @@ import performanceMonitor, { installIntervalTracing } from '../utils/performance
 
 // API modules
 import marketAPI from '../api/marketplace.js';
+// A market path, but marketAPI above is its caller, so the one live copy has to
+// load here — every later bundle references it through Core (see rollup.config.js)
+import networkAlert from '../features/market/network-alert.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -53,6 +56,7 @@ toolashaRoot.Core = {
         clearCurrentProfile,
     },
     marketAPI,
+    networkAlert,
     performanceMonitor,
     installIntervalTracing,
 };

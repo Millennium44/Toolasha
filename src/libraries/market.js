@@ -71,11 +71,11 @@ import dungeonTokenTooltips from '../features/inventory/dungeon-token-tooltips.j
 import treasureTracker from '../features/inventory/treasure-tracker.js';
 import tradeLedgerStore from '../features/market/trade-ledger-store.js';
 import tradeLedgerView from '../features/market/trade-ledger-view.js';
-import watchlist, { watchlistPanel } from '../features/inventory/watchlist.js';
+import watchlist, { watchlistPanel, watchItem } from '../features/inventory/watchlist.js';
 import autoAllButton from '../features/inventory/auto-all-button.js';
 import inventoryCategoryTotals from '../features/inventory/inventory-category-totals.js';
 import customTabsFeature from '../features/inventory/custom-tabs/custom-tabs-feature.js';
-import equipmentSavings, { equipmentSavingsPanel } from '../features/inventory/equipment-savings-row.js';
+import equipmentSavings, { equipmentSavingsPanel, watchTarget } from '../features/inventory/equipment-savings-row.js';
 // The savings-goal alert reads the three costed lists the panel above draws, so
 // it rides in this bundle rather than beside the other alerts in the UI one — a
 // second copy of that panel's costing machinery in another bundle would be the
@@ -140,6 +140,11 @@ toolashaRoot.Market = {
     abilityCheckpoints,
     watchlist,
     watchlistPanel,
+    // The combat sim's Watch/Save buttons run in the sim bundle, which loads
+    // before this one and so carries dead inline copies of these modules; it
+    // reaches the live write paths through these two at call time instead
+    watchItem,
+    watchTarget,
     autoAllButton,
     inventoryCategoryTotals,
     customTabsFeature,

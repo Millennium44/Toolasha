@@ -62,6 +62,10 @@ import labSim from '../features/combat-sim/lab-sim.js';
 import combatStats from '../features/combat-stats/combat-stats.js';
 import combatStatsDataCollector from '../features/combat-stats/combat-stats-data-collector.js';
 import * as combatStatsCalculator from '../features/combat-stats/combat-stats-calculator.js';
+// Namespace-imported: their consumers import named functions, which compile to
+// property reads off these globals in the other bundles (see rollup.config.js)
+import * as salesTaxView from '../features/combat-stats/sales-tax-view.js';
+import * as combatRecordControl from '../features/combat/combat-record-control.js';
 
 // Abilities
 import abilityBookCalculator from '../features/abilities/ability-book-calculator.js';
@@ -138,6 +142,8 @@ toolashaRoot.Combat = {
     combatStats,
     combatStatsDataCollector,
     combatStatsCalculator,
+    salesTaxView,
+    combatRecordControl,
     abilityBookCalculator,
     manaTracker,
     damageTracker,

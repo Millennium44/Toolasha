@@ -18,11 +18,25 @@ import {
     sessionKey,
     MAX_SESSIONS,
 } from '../combat-stats/combat-session-history.js';
-import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
-import { loadSessions as loadEnhancementSessions } from '../enhancement/enhancement-storage.js';
+// These four records are fed in OTHER bundles (the collector in combat, the
+// rest in ui — both load after this one), so the direct imports below bind
+// bundle-local copies that are stale or empty in the packaged build: the
+// collector's never hears the websocket, the task tracker's never hears a
+// character switch, the loot log's is frozen at its first read, and the
+// enhancement sessions lag a debounce window. The bridge accessors reach the
+// live copies at call time; the imports stay as the standalone build's answer,
+// where they ARE the live copies.
+import {
+    combatStatsDataCollector as liveCombatStatsCollector,
+    taskCompletionTracker as liveTaskCompletionTracker,
+    lootLogHistory as liveLootLogHistory,
+    enhancementSessionStore,
+} from '../../utils/bundle-bridge.js';
+import bundledCombatStatsCollector from '../combat-stats/combat-stats-data-collector.js';
+import * as bundledEnhancementStorage from '../enhancement/enhancement-storage.js';
 import { createAlchemySessionStore, NO_CHARACTER } from '../alchemy/alchemy-session-store.js';
-import lootLogHistory from '../actions/loot-log-history.js';
-import taskCompletionTracker from '../tasks/task-completion-tracker.js';
+import bundledLootLogHistory from '../actions/loot-log-history.js';
+import bundledTaskCompletionTracker from '../tasks/task-completion-tracker.js';
 import networthHistory from './networth-history.js';
 import productionIncomeRecorder from './production-income-recorder.js';
 import chestOpeningRecorder from './chest-opening-recorder.js';
@@ -164,16 +178,28 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         taskCompletions,
         chestDays,
     ] = await Promise.all([
-        attempt('the loot log', () => lootLogHistory.getHistoricalEntries(new Set()), []),
+        attempt(
+            'the loot log',
+            () => (liveLootLogHistory() || bundledLootLogHistory).getHistoricalEntries(new Set()),
+            []
+        ),
         attempt('the production recorder', () => productionIncomeRecorder.load(), []),
         collectAlchemySessions(),
-        attempt('the enhancement sessions', () => loadEnhancementSessions(), {}),
+        attempt(
+            'the enhancement sessions',
+            () => (enhancementSessionStore() || bundledEnhancementStorage).loadSessions(),
+            {}
+        ),
         attempt('the combat session history', () => loadCombatSessions(), []),
         // The task board's own payout record. No new recorder is needed: the
         // completion tracker already stores the reward payload the server
         // itemised at the moment of each claim, per character, on an eight-week
         // rolling window
-        attempt('the task completions', () => taskCompletionTracker.getCompletions(), []),
+        attempt(
+            'the task completions',
+            () => (liveTaskCompletionTracker() || bundledTaskCompletionTracker).getCompletions(),
+            []
+        ),
         attempt('the chest openings', () => chestOpeningRecorder.load(), []),
     ]);
 
@@ -191,7 +217,7 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
     const liveSession = await attempt(
         'the live combat session',
         async () => {
-            const live = combatStatsDataCollector.getLatestData?.();
+            const live = (liveCombatStatsCollector() || bundledCombatStatsCollector).getLatestData?.();
             if (!live?.players?.length) return null;
             const key = sessionKey(live);
             if (key && combatSessions.some((session) => session?.key === key)) return null;

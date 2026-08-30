@@ -102,6 +102,21 @@ export function registerSyncMerge({ store, key, base, prefix, match, merge, labe
         merge,
         label: label || key || base || prefix || store,
     };
+
+    // The packaged build carries some registering modules in more than one
+    // bundle, and each copy makes this exact call with the same claim. This
+    // registry is shared, so the second registration is a duplicate: first-wins
+    // makes it harmless, but every matching key would trip the overlap report
+    // below and drown it in false positives. Same store + same label is the
+    // same claim — hand back a remover for the copy that already stands.
+    const existing = registrations.find((r) => r.store === registration.store && r.label === registration.label);
+    if (existing) {
+        return () => {
+            const index = registrations.indexOf(existing);
+            if (index !== -1) registrations.splice(index, 1);
+        };
+    }
+
     registrations.push(registration);
 
     return () => {

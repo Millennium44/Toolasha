@@ -68,6 +68,14 @@ class ChatProfileLink {
         if (this.stylesActive) return;
         this.stylesActive = true;
 
+        // The packaged build carries a copy of this module in more than one
+        // bundle, and each copy's markAsProfileLink can arrive here first. The
+        // listener acts on shared DOM, so a second copy's listener means every
+        // click opens the profile twice — the guard lives on globalThis so all
+        // copies count as one.
+        if (globalThis.__toolashaChatProfileLinkActive) return;
+        globalThis.__toolashaChatProfileLinkActive = true;
+
         addStyles(
             `.${NAME_CLASS} { color: #4a9eff; cursor: pointer; }
              .${NAME_CLASS}:hover { text-decoration: underline; }`,
@@ -150,6 +158,7 @@ class ChatProfileLink {
         if (this.delegatedClickHandler) {
             document.removeEventListener('click', this.delegatedClickHandler);
             this.delegatedClickHandler = null;
+            globalThis.__toolashaChatProfileLinkActive = false;
         }
         this.stylesActive = false;
         this.observerActive = false;

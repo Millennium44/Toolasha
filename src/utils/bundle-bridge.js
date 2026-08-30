@@ -326,6 +326,55 @@ export function combatStatsCalculator() {
     return toolashaRoot()?.Combat?.combatStatsCalculator || null;
 }
 
+/**
+ * The gear-target writer on the market bundle's savings row — the copy whose
+ * in-memory list the visible panel and the savings-goal alerts read. A
+ * bundle-local `watchTarget` writes into a copy those never hear about, and
+ * the next persist from the live copy silently drops the target.
+ * @returns {Function|null} watchTarget, or null when the market bundle is absent
+ */
+export function marketWatchTarget() {
+    return toolashaRoot()?.Market?.watchTarget || null;
+}
+
+/**
+ * The pin writer on the market bundle's watchlist — same story as
+ * {@link marketWatchTarget}: only that copy's memory backs the panel.
+ * @returns {Function|null} watchItem, or null when the market bundle is absent
+ */
+export function marketWatchItem() {
+    return toolashaRoot()?.Market?.watchItem || null;
+}
+
+/**
+ * The task-completion tracker the websocket actually feeds (ui bundle). The
+ * market bundle's inline copy never wires `character_switching`, so it serves
+ * the previous character's completions after a switch and never refreshes
+ * mid-session.
+ * @returns {Object|null} The tracker, or null when the ui bundle is absent
+ */
+export function taskCompletionTracker() {
+    return toolashaRoot()?.UI?.taskCompletionTracker || null;
+}
+
+/**
+ * The loot-log history the loot-log recorder writes into (ui bundle); a
+ * bundle-local copy is frozen at whatever storage held on its first read.
+ * @returns {Object|null} The history, or null when the ui bundle is absent
+ */
+export function lootLogHistory() {
+    return toolashaRoot()?.UI?.lootLogHistory || null;
+}
+
+/**
+ * The enhancement session store whose memory the tracker writes through (ui
+ * bundle) — reading it skips the debounce window a fresh storage read lags by.
+ * @returns {Object|null} The storage module, or null when the ui bundle is absent
+ */
+export function enhancementSessionStore() {
+    return toolashaRoot()?.UI?.enhancementStorage || null;
+}
+
 // ---------------------------------------------------------------------------
 // Sim bundle singletons
 // ---------------------------------------------------------------------------

@@ -53,6 +53,29 @@ const projectRoot = join(__dirname, '..');
  *
  * Keys are project-relative paths with forward slashes.
  */
+/**
+ * Stateful feature modules that must never be carried inline by two bundles.
+ *
+ * The sweep below only polices src/utils — feature modules can and do get
+ * duplicated freely, and most of that is benign (dead fallback copies behind
+ * bundle-bridge accessors, or pure math). These are the ones a second copy has
+ * actually broken: each holds module-level state that a user-facing surface in
+ * another bundle read or wrote through the wrong copy (the Treasure tile drew
+ * blank from a never-initialized duplicate; the settings scroll popup saved
+ * emptiness over the real record; the tax toggle flipped a flag nothing read).
+ * Each is in an externals map now; this list keeps a future import from
+ * quietly re-inlining one.
+ *
+ * Keys are project-relative paths with forward slashes.
+ */
+const SINGLE_COPY_FEATURES = new Set([
+    'src/features/inventory/treasure-tracker.js',
+    'src/features/combat-stats/sales-tax-view.js',
+    'src/features/combat/combat-record-control.js',
+    'src/features/combat/scroll-simulator-ui.js',
+    'src/features/market/network-alert.js',
+]);
+
 const ALLOWLIST = new Map([
     [
         'src/utils/yield-to-browser.js',
@@ -217,7 +240,7 @@ async function main() {
         const isExternal = typeof config.external === 'function' ? config.external : () => false;
         for (const modulePath of walkBundle(entry, isExternal)) {
             const relPath = relative(projectRoot, modulePath).split('\\').join('/');
-            if (!relPath.startsWith('src/utils/')) continue;
+            if (!relPath.startsWith('src/utils/') && !SINGLE_COPY_FEATURES.has(relPath)) continue;
             if (!inlineIn.has(relPath)) inlineIn.set(relPath, new Set());
             inlineIn.get(relPath).add(bundleName);
         }
@@ -226,7 +249,9 @@ async function main() {
     const violations = [];
     for (const [modulePath, bundles] of inlineIn) {
         if (bundles.size < 2) continue;
-        if (ALLOWLIST.has(modulePath)) continue;
+        // The single-copy feature list takes no allowlisting — an entry there
+        // is stateful by definition and belongs in an externals map
+        if (ALLOWLIST.has(modulePath) && !SINGLE_COPY_FEATURES.has(modulePath)) continue;
         violations.push({ modulePath, bundles: [...bundles].sort() });
     }
     violations.sort((a, b) => a.modulePath.localeCompare(b.modulePath));

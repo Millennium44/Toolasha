@@ -48,6 +48,12 @@ import taskSorter from '../features/tasks/task-sorter.js';
 import taskIcons from '../features/tasks/task-icons.js';
 import taskInventoryHighlighter from '../features/tasks/task-inventory-highlighter.js';
 import taskStatistics from '../features/tasks/task-statistics.js';
+// The websocket-fed copies of the records Gold Sources (market bundle) reads.
+// Market loads before this bundle, so it reaches these at call time through
+// the bundle bridge rather than the externals map.
+import taskCompletionTracker from '../features/tasks/task-completion-tracker.js';
+import lootLogHistory from '../features/actions/loot-log-history.js';
+import * as enhancementStorage from '../features/enhancement/enhancement-storage.js';
 // Side-effect import: registers the Task Tokens overlay row
 import '../features/tasks/task-tokens-row.js';
 import taskClaimCollector from '../features/tasks/task-claim-collector.js';
@@ -261,6 +267,9 @@ toolashaRoot.UI = {
     profitPanel,
     partyLootPanel,
     combatProfitView,
+    taskCompletionTracker,
+    lootLogHistory,
+    enhancementStorage,
 };
 
 console.log('[Toolasha] UI library loaded');
