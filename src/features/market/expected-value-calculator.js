@@ -562,7 +562,13 @@ class ExpectedValueCalculator {
             const minCount = drop.minCount || 0;
             const maxCount = drop.maxCount || 0;
 
-            if (dropRate <= 0) {
+            // Same guard as calculateContainerValue/countUnpricedDrops: a zero-count
+            // entry can never contribute to the total, so it isn't a real drop. Without
+            // this, an unpriced zero-count entry surfaced as a row with hasPriceData:
+            // false, and calculateExpectedValue counted it into missingCount — reporting
+            // a chest as partial even though nothing that could change the total was
+            // actually skipped.
+            if (dropRate <= 0 || (minCount === 0 && maxCount === 0)) {
                 continue;
             }
 

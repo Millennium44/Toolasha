@@ -295,6 +295,36 @@ describe('getDropBreakdown / calculateExpectedValue', () => {
         expect(result.expectedValue).toBeCloseTo(expectedSum, 6);
         expect(result.itemHrid).toBe(CHEST_HRID);
     });
+
+    test('a zero-count drop entry is excluded from the breakdown, matching calculateContainerValue', () => {
+        // calculateContainerValue (and the worker's countUnpricedDrops) both skip an
+        // entry whose minCount and maxCount are both 0 — it can never contribute to the
+        // total, so it isn't a real drop. getDropBreakdown lacked the same guard: an
+        // unpriced zero-count entry surfaced as a breakdown row with hasPriceData:false,
+        // which calculateExpectedValue's missingCount then counted — reporting a chest
+        // as partial ("≥ X, N drops unpriced") even though nothing was actually skipped
+        // that could have changed the total.
+        const ZERO_COUNT_UNPRICED = '/items/zero_count_unpriced';
+        mocks.itemDetails[ZERO_COUNT_UNPRICED] = { name: 'Zero Count Unpriced', isTradable: true };
+        mocks.initData.openableLootDropMap[CHEST_HRID].push({
+            itemHrid: ZERO_COUNT_UNPRICED,
+            dropRate: 1,
+            minCount: 0,
+            maxCount: 0,
+        });
+
+        const drops = expectedValueCalculator.getDropBreakdown(CHEST_HRID);
+        expect(drops.find((d) => d.itemHrid === ZERO_COUNT_UNPRICED)).toBeUndefined();
+
+        expectedValueCalculator.isInitialized = true;
+        try {
+            const result = expectedValueCalculator.calculateExpectedValue(CHEST_HRID);
+            expect(result.isPartial).toBe(false);
+            expect(result.missingCount).toBe(0);
+        } finally {
+            expectedValueCalculator.isInitialized = false;
+        }
+    });
 });
 
 describe('getCachedValue', () => {
