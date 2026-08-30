@@ -57,6 +57,26 @@ function valueOfShopItem(itemHrid, itemDetailMap) {
 }
 
 /**
+ * What one unit of a task's item reward is worth, today, if sold.
+ *
+ * Post-tax, for the same reason {@link valueOfShopItem} is: every other
+ * sell-side figure in this stack is net of the marketplace cut, and quoting a
+ * reward gross would make it look better than the action profit it is being
+ * compared against.
+ *
+ * Null rather than zero when nothing can price it. The two are very different
+ * claims — "this reward is worthless" against "this reward's worth is unknown"
+ * — and a caller averaging rewards has to be able to leave the unknown ones
+ * out instead of averaging in a zero.
+ * @param {string} itemHrid - Reward item
+ * @returns {number|null} Coins per unit after tax, or null when unpriced
+ */
+export function valueOfRewardItem(itemHrid) {
+    const listed = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+    return listed > 0 ? calculatePriceAfterTax(listed) : null;
+}
+
+/**
  * A shop line's costs, whichever shape the game used for it.
  * @param {Object} line - Shop line
  * @returns {Array<Object>} Cost entries

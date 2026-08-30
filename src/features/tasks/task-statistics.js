@@ -15,6 +15,7 @@ import {
     getCowbellValue,
     formatTokenFigure,
     valueTaskRewards,
+    valueOfRewardItem,
 } from './task-profit-calculator.js';
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
 import taskCompletionTracker from './task-completion-tracker.js';
@@ -22,6 +23,7 @@ import taskRerollTracker from './task-reroll-tracker.js';
 import { forecastTaskSlots } from './task-slot-forecast.js';
 import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
+import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 
 /** formatKMB, on a rounded figure — the shape every money row in this panel uses. */
@@ -142,13 +144,59 @@ class TaskStatistics {
         const slotStatus = this.calculateSlotStatus();
         const rewardsSummary = await this.calculateRewardsSummary();
         const completions = await this.calculateCompletions();
+        const payouts = await this.calculateTypePayouts();
 
         return {
             overflow: overflowData,
             slots: slotStatus,
             rewards: rewardsSummary,
             completions,
+            payouts,
         };
+    }
+
+    /**
+     * What each kind of task has actually paid, per claim.
+     *
+     * The section above this one answers "how did the last seven days go" as
+     * one number; this answers "which kind of task is worth taking", which is
+     * the question a reroll decision actually turns on. Both are made of the
+     * same recorded claims — this one uses the tracker's whole eight-week
+     * window, because a per-category median needs the claims.
+     *
+     * Items are priced at today's post-tax sell price, the same call every
+     * other sell-side figure in this stack goes through, and a reward with no
+     * price is left out and counted rather than valued at zero.
+     *
+     * @returns {Promise<Object|null>} Payout figures, or null when they cannot be read
+     */
+    async calculateTypePayouts() {
+        try {
+            const completions = await taskCompletionTracker.getCompletions();
+            if (!completions || completions.length === 0) return null;
+
+            const rerollHistory = await taskRerollTracker.loadHistory();
+            const tokenValue = calculateTaskTokenValue();
+            // Priced once per item rather than once per claim: eight weeks of
+            // claims name the same few dozen rewards over and over
+            const priceCache = new Map();
+
+            return analyzeTaskPayouts({
+                completions,
+                rerollHistory,
+                cowbellValue: getCowbellValue(),
+                valueRewards: (rewards) => valueTaskRewards(tokenValue, rewards),
+                priceItem: (itemHrid) => {
+                    if (priceCache.has(itemHrid)) return priceCache.get(itemHrid);
+                    const price = valueOfRewardItem(itemHrid);
+                    priceCache.set(itemHrid, price);
+                    return price;
+                },
+            });
+        } catch (error) {
+            console.error('[TaskStatistics] Reading the per-type payouts failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -539,6 +587,9 @@ class TaskStatistics {
         if (statsData.completions) {
             popup.appendChild(this.createCompletionsSection(statsData.completions, textColor));
         }
+        if (statsData.payouts) {
+            popup.appendChild(this.createTypePayoutSection(statsData.payouts, textColor));
+        }
         popup.appendChild(this.createActionProfitSection(statsData.rewards));
         popup.appendChild(this.createCompletionTimeSection(statsData.rewards, textColor));
 
@@ -592,6 +643,102 @@ class TaskStatistics {
         };
 
         return button;
+    }
+
+    /**
+     * Realized payout per claim, by task category.
+     *
+     * Deliberately carries no per-hour figure. A completion entry records what
+     * a task paid and when it was claimed, and nothing at all about how long
+     * it took; dividing by the wall-clock between claims would measure how
+     * often the character was logged in. The card says so rather than leaving
+     * the absence to be inferred.
+     *
+     * @param {Object} payouts - `analyzeTaskPayouts` output
+     * @param {string} textColor - Text color
+     * @returns {HTMLElement} Section element
+     */
+    createTypePayoutSection(payouts, textColor) {
+        const section = this.createSection('Realized Payout by Task Type (last 8 weeks)');
+
+        if (payouts.rows.length === 0) {
+            const claimed = payouts.totalClaims;
+            section.appendChild(
+                this.createRow(
+                    'Not enough claims yet',
+                    claimed === 0 ? 'Nothing recorded' : `${claimed} claimed; a row needs ${MIN_CLAIMS} of one type`,
+                    config.COLOR_TEXT_SECONDARY
+                )
+            );
+            return section;
+        }
+
+        for (const row of payouts.rows) {
+            section.appendChild(
+                this.createRow(`${row.label} (${row.claims})`, roundedKMB(row.medianPayout), config.COLOR_GOLD)
+            );
+
+            if (row.netMedian !== null) {
+                section.appendChild(
+                    this.createRow(
+                        `  net of rerolls (${row.attributed} of ${row.claims})`,
+                        roundedKMB(row.netMedian),
+                        row.netMedian >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS
+                    )
+                );
+            }
+
+            for (const band of row.bands) {
+                section.appendChild(
+                    this.createRow(
+                        `  ${band.label} (${band.claims})`,
+                        roundedKMB(band.medianPayout),
+                        config.COLOR_TEXT_SECONDARY
+                    )
+                );
+            }
+        }
+
+        if (payouts.best && payouts.worst && payouts.best.category !== payouts.worst.category) {
+            const separator = document.createElement('div');
+            separator.style.cssText = 'border-top: 1px solid #3a3a3a; margin: 6px 0;';
+            section.appendChild(separator);
+            section.appendChild(
+                this.createRow(
+                    'Best / worst payer',
+                    `${payouts.best.label} / ${payouts.worst.label}`,
+                    config.COLOR_ACCENT
+                )
+            );
+        }
+
+        for (const thin of payouts.thin) {
+            section.appendChild(
+                this.createRow(`${thin.label} (${thin.claims})`, 'too few to rank', config.COLOR_TEXT_SECONDARY)
+            );
+        }
+
+        const separator = document.createElement('div');
+        separator.style.cssText = 'border-top: 1px solid #3a3a3a; margin: 6px 0;';
+        section.appendChild(separator);
+
+        section.appendChild(this.createRow('Median per claim', 'items at today’s prices', config.COLOR_TEXT_SECONDARY));
+        section.appendChild(
+            this.createRow('No per-hour figure', 'claims record no duration', config.COLOR_TEXT_SECONDARY)
+        );
+        if (payouts.unpricedStacks > 0) {
+            section.appendChild(
+                this.createRow(
+                    'Unpriced rewards',
+                    `${payouts.unpricedStacks} excluded, across ${payouts.unpricedClaims} claim${
+                        payouts.unpricedClaims === 1 ? '' : 's'
+                    }`,
+                    textColor
+                )
+            );
+        }
+
+        return section;
     }
 
     /**

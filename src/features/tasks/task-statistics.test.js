@@ -22,6 +22,10 @@ const game = vi.hoisted(() => ({
     actionProfits: {},
     completions: null,
     rerollHistory: [],
+    /** Every claim the completion tracker has, for the per-type payout card */
+    claimLog: [],
+    /** itemHrid → coins per unit after tax; anything absent is unpriced */
+    itemPrices: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -34,6 +38,7 @@ vi.mock('../../core/config.js', () => ({
         COLOR_PROFIT: '#0f0',
         COLOR_LOSS: '#f00',
         COLOR_ESSENCE: '#a0f',
+        COLOR_GOLD: '#fa0',
     },
 }));
 
@@ -80,6 +85,9 @@ vi.mock('./task-profit-calculator.js', () => ({
     }),
     calculateTaskProfit: async (taskData) => ({ action: game.actionProfits[taskData.description] ?? null }),
     getCowbellValue: () => 200000,
+    // Null, not zero, for an item nothing can price — the payout card has to be
+    // able to leave those out rather than average them in as worthless
+    valueOfRewardItem: (itemHrid) => game.itemPrices[itemHrid] ?? null,
 }));
 
 vi.mock('./task-profit-display.js', () => ({
@@ -89,6 +97,7 @@ vi.mock('./task-profit-display.js', () => ({
 vi.mock('./task-completion-tracker.js', () => ({
     default: {
         summary: async () => game.completions,
+        getCompletions: async () => game.claimLog,
         initialize: () => {},
     },
 }));
@@ -134,6 +143,8 @@ beforeEach(() => {
     game.actionProfits = {};
     game.completions = null;
     game.rerollHistory = [];
+    game.claimLog = [];
+    game.itemPrices = {};
 });
 
 describe("Purple's Gift across a week of claims", () => {
@@ -246,5 +257,155 @@ describe('an action nobody can price', () => {
 
         expect(section.textContent).not.toContain('≥');
         expect(section.textContent).not.toContain('unpriced');
+    });
+});
+
+describe('the realized-payout-by-type card', () => {
+    beforeEach(() => {
+        // The card is reached through calculateAllStatistics, which also builds
+        // the seven-day section; give that one something valid so its own
+        // failure path is not what these tests are watching
+        game.completions = {
+            rates: { week: { completions: 0, tokens: 0, coins: 0, spanMs: 0 }, session: null },
+            recent: [],
+        };
+    });
+
+    /**
+     * `n` claims in one category.
+     * @param {Object} params - Inputs
+     * @param {string} params.category - Category slug
+     * @param {number} params.n - How many
+     * @param {number} params.coins - Coins per claim
+     * @param {number} [params.startId] - First quest id
+     * @param {Array<Object>} [params.items] - Item rewards on each claim
+     * @returns {Array<Object>} Completion entries
+     */
+    function claims({ category, n, coins, startId = 1, items = [] }) {
+        return Array.from({ length: n }, (_, index) => ({
+            questId: startId + index,
+            name: 'Task',
+            category,
+            taskHrid: '/actions/foraging/egg',
+            tokens: 1,
+            coins,
+            items,
+            goalCount: 100,
+            progressMet: true,
+            completedAt: 1_700_000_000_000,
+        }));
+    }
+
+    /** The rendered text of the payout card, or '' when it was not drawn. */
+    function cardText(stats) {
+        const section = taskStatistics.createTypePayoutSection(stats.payouts, '#fff');
+        return section.textContent;
+    }
+
+    test('the card is built rather than silently dropped when there are claims', async () => {
+        game.claimLog = claims({ category: 'combat', n: 6, coins: 1000 });
+        const stats = await taskStatistics.calculateAllStatistics();
+
+        expect(stats.payouts).not.toBeNull();
+        expect(stats.payouts.rows).toHaveLength(1);
+        const text = cardText(stats);
+        expect(text).toContain('Combat');
+        expect(text).not.toContain('undefined');
+        expect(text).not.toContain('NaN');
+    });
+
+    test('no claims at all leaves the card off entirely rather than drawing an empty one', async () => {
+        game.claimLog = [];
+        const stats = await taskStatistics.calculateAllStatistics();
+        expect(stats.payouts).toBeNull();
+    });
+
+    test('prices item rewards at today’s post-tax price and says so on the card', async () => {
+        game.itemPrices = { '/items/cheese': 300 };
+        game.claimLog = claims({
+            category: 'combat',
+            n: 6,
+            coins: 0,
+            items: [{ itemHrid: '/items/cheese', count: 2 }],
+        });
+
+        const stats = await taskStatistics.calculateAllStatistics();
+        // 0 coins + 1 token x 2000 + 1 gift x 10000 + 2 x 300 items
+        expect(stats.payouts.rows[0].medianPayout).toBe(12600);
+        expect(cardText(stats)).toContain('today');
+    });
+
+    test('excludes an unpriced reward and reports the count instead of valuing it at zero', async () => {
+        game.itemPrices = {};
+        game.claimLog = claims({
+            category: 'combat',
+            n: 6,
+            coins: 0,
+            items: [{ itemHrid: '/items/mystery', count: 5 }],
+        });
+
+        const stats = await taskStatistics.calculateAllStatistics();
+        expect(stats.payouts.rows[0].medianPayout).toBe(12000);
+        expect(stats.payouts.unpricedStacks).toBe(6);
+        expect(cardText(stats)).toContain('excluded');
+    });
+
+    test('gates a thin category out of the ranking but still names its claim count', async () => {
+        game.claimLog = [
+            ...claims({ category: 'combat', n: 6, coins: 1000, startId: 1 }),
+            ...claims({ category: 'brewing', n: 2, coins: 90000, startId: 100 }),
+        ];
+
+        const stats = await taskStatistics.calculateAllStatistics();
+        expect(stats.payouts.rows.map((row) => row.category)).toEqual(['combat']);
+        const text = cardText(stats);
+        expect(text).toContain('Brewing (2)');
+        expect(text).toContain('too few to rank');
+    });
+
+    test('nets attributable reroll spend, valuing cowbells through the panel’s own rate', async () => {
+        game.claimLog = claims({ category: 'combat', n: 6, coins: 1000, startId: 1 });
+        game.rerollHistory = [1, 2, 3, 4, 5, 6].map((taskId) => ({
+            taskId,
+            goldSpent: 10000,
+            cowbellsSpent: 1,
+        }));
+
+        const stats = await taskStatistics.calculateAllStatistics();
+        const row = stats.payouts.rows[0];
+        // 1000 + 2000 token + 10000 gift = 13000 gross; 10000 gold + 1 cowbell at 200000
+        expect(row.medianPayout).toBe(13000);
+        expect(row.netMedian).toBe(13000 - 210000);
+        expect(row.attributed).toBe(6);
+        expect(cardText(stats)).toContain('net of rerolls');
+    });
+
+    test('says outright that there is no per-hour figure', async () => {
+        game.claimLog = claims({ category: 'combat', n: 6, coins: 1000 });
+        const stats = await taskStatistics.calculateAllStatistics();
+        const text = cardText(stats);
+        expect(text).toContain('No per-hour figure');
+        expect(text).toContain('no duration');
+        expect(text).not.toContain('/ hr');
+    });
+
+    test('names a best and worst payer once two categories qualify', async () => {
+        game.claimLog = [
+            ...claims({ category: 'combat', n: 6, coins: 1000, startId: 1 }),
+            ...claims({ category: 'cooking', n: 6, coins: 90000, startId: 100 }),
+        ];
+
+        const stats = await taskStatistics.calculateAllStatistics();
+        expect(cardText(stats)).toContain('Cooking / Combat');
+    });
+
+    test('an unpriceable token drops the whole card rather than reporting zeroes', async () => {
+        game.valuation = { tokenValue: null, giftPerTask: null, error: 'Market data not loaded' };
+        game.claimLog = claims({ category: 'combat', n: 6, coins: 1000 });
+
+        const stats = await taskStatistics.calculateAllStatistics();
+        expect(stats.payouts.rows).toHaveLength(0);
+        expect(stats.payouts.valuedClaims).toBe(0);
+        expect(cardText(stats)).toContain('Not enough claims yet');
     });
 });
