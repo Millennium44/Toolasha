@@ -75,6 +75,13 @@ import autoAllButton from '../features/inventory/auto-all-button.js';
 import inventoryCategoryTotals from '../features/inventory/inventory-category-totals.js';
 import customTabsFeature from '../features/inventory/custom-tabs/custom-tabs-feature.js';
 import equipmentSavings, { equipmentSavingsPanel } from '../features/inventory/equipment-savings-row.js';
+// The savings-goal alert reads the three costed lists the panel above draws, so
+// it rides in this bundle rather than beside the other alerts in the UI one — a
+// second copy of that panel's costing machinery in another bundle would be the
+// alternative. `notification-service.js` keeps its cooldowns and its digest
+// buffer on a global for exactly this case, so being reached from two bundles
+// costs nothing.
+import savingsGoalAlerts from '../features/notifications/savings-goal-alerts.js';
 
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
@@ -133,6 +140,7 @@ toolashaRoot.Market = {
     customTabsFeature,
     equipmentSavings,
     equipmentSavingsPanel,
+    savingsGoalAlerts,
     marketplaceShortcuts,
     sellQueue,
     gatheringProfit,

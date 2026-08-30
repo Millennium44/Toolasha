@@ -3391,6 +3391,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Compares each active sell listing of yours against the current best ask for that item and enhancement level, and each buy order against the best bid — a strictly better price than yours means you have been beaten; matching the best price is still competitive and says nothing. The figures come from the market data this script already holds, which can be up to 15 minutes old: the message carries the age of the figure it used, and data older than that — or an item with no cached price at all — is treated as unknown rather than as an undercut. Once per listing per undercut, re-arming when you reprice the listing or your price is the best again.',
             },
+            notifications_savingsGoalReached: {
+                id: 'notifications_savingsGoalReached',
+                label: 'Notify when a savings goal becomes affordable',
+                type: 'checkbox',
+                default: false,
+                help: 'Fires the first time a target on the Equipment Savings list — a piece of gear, an ability level or a house room — costs less than what you can spend, using exactly the figures that panel draws (trade-in value of the piece you are replacing, market orders counted or not per your setting, crafts costed from their inputs). Prices come from the market data this script already holds, so the message carries the age of the figures behind the cost and says outright when they are older than the 15-minute cache window. Once per goal, re-arming when you spend back below the cost, when a price puts it out of reach again, or when you change the target. A goal you reached by levelling up or building rather than buying is skipped rather than announced.',
+            },
             notifications_otherCharacterIdle: {
                 id: 'notifications_otherCharacterIdle',
                 label: 'Notify when another character has run out of queue',

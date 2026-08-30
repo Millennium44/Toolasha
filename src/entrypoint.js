@@ -1880,6 +1880,16 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_marketListingUndercut'),
         },
         {
+            key: 'savingsGoalAlerts',
+            name: 'Savings Goal Alerts',
+            category: 'Notifications',
+            // In the Market bundle rather than the UI one: it reads the
+            // Equipment Savings panel's costed lists, which live there.
+            module: Market.savingsGoalAlerts,
+            async: true,
+            customCheck: () => config.getSetting('notifications_savingsGoalReached'),
+        },
+        {
             key: 'enhancementTargetAlerts',
             name: 'Enhancement Target Alerts',
             category: 'Notifications',

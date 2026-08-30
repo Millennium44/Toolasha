@@ -169,6 +169,46 @@ export function listingBeaten({ armed, isSell, listingPrice, bestPrice, priceAge
 }
 
 /**
+ * Whether a savings goal has just become affordable.
+ *
+ * The same one-bit state machine as `thresholdCrossing` and `listingBeaten`,
+ * pointed the other way: the savings panel recomputes `affordable` on every
+ * coin change, every price refresh and every redraw, so "you can afford it" is
+ * true for as long as you leave the coins alone. The *event* is the first
+ * observation that says so. `armed` means the last usable reading showed the
+ * goal still out of reach, so an affordable reading counts as news; spending
+ * back below the cost re-arms it, which is what makes the second time you save
+ * up for something as loud as the first.
+ *
+ * The initial state is armed on purpose, as it is for the other two: a goal you
+ * could already afford when the panel first costed it is worth one message, and
+ * the service's cooldown is what keeps it at one.
+ *
+ * A goal whose cost is unknown says nothing in either direction and leaves the
+ * state exactly as it was. This is the same rule `upgradeCost` and
+ * `savingsProgress` already keep — a target nobody is selling has no cost, not a
+ * cost of nothing — and it is the whole reason `costKnown` is a separate
+ * argument rather than inferred from `affordable`: `savingsProgress(null, …)`
+ * reports `affordable: false`, which must not be read as "still saving" and
+ * re-arm a goal that was never costed.
+ *
+ * @param {Object} input - Current observation
+ * @param {boolean} input.armed - Whether an affordable reading would count as news
+ * @param {boolean} input.affordable - `savingsProgress`'s verdict for this goal
+ * @param {boolean} input.costKnown - Whether the goal could be costed at all
+ * @returns {{fire: boolean, armed: boolean}} Whether to say something, and the next state
+ */
+export function goalAffordable({ armed, affordable, costKnown }) {
+    if (!costKnown) {
+        return { fire: false, armed };
+    }
+    if (!affordable) {
+        return { fire: false, armed: true };
+    }
+    return { fire: armed === true, armed: false };
+}
+
+/**
  * How many deaths have happened since the last look.
  *
  * The server's `deathCount` is a running total for the combat session, so the

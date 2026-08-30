@@ -16,6 +16,7 @@ import {
     labyrinthRunState,
     newDeaths,
     listingBeaten,
+    goalAffordable,
 } from './notification-predicates.js';
 
 describe('labyrinthRunState', () => {
@@ -273,5 +274,32 @@ describe('newlyIdleCharacters', () => {
     test('a nameless character still gets said out loud', () => {
         const [reported] = newlyIdleCharacters([{ ...done, characterName: '' }], now, new Map());
         expect(reported.characterName).toBe('A character');
+    });
+});
+
+describe('goalAffordable', () => {
+    const goal = (overrides) => ({ armed: true, affordable: false, costKnown: true, ...overrides });
+
+    test('says nothing while the goal is still out of reach', () => {
+        expect(goalAffordable(goal())).toEqual({ fire: false, armed: true });
+    });
+
+    test('fires the first time it comes into reach', () => {
+        expect(goalAffordable(goal({ affordable: true }))).toEqual({ fire: true, armed: false });
+    });
+
+    test('stays quiet while it remains affordable', () => {
+        expect(goalAffordable(goal({ affordable: true, armed: false }))).toEqual({ fire: false, armed: false });
+    });
+
+    test('spending back below the cost re-arms it', () => {
+        expect(goalAffordable(goal({ armed: false }))).toEqual({ fire: false, armed: true });
+    });
+
+    test('an uncosted goal leaves the state exactly as it was', () => {
+        // `savingsProgress(null, coins)` reports affordable false, which must
+        // not be read as "still saving" — an unpriced target is unknown
+        expect(goalAffordable(goal({ costKnown: false, armed: false }))).toEqual({ fire: false, armed: false });
+        expect(goalAffordable(goal({ costKnown: false, armed: true }))).toEqual({ fire: false, armed: true });
     });
 });

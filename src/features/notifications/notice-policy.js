@@ -70,6 +70,7 @@ export const NOTICE_KINDS = [
     { prefix: 'skill-levelup', category: 'skills', noun: { one: 'level up', many: 'level ups' } },
     { prefix: 'enhancement-target', category: 'enhancement', noun: { one: 'target reached', many: 'targets reached' } },
     { prefix: 'ttl-target', category: 'progress', noun: { one: 'target reached', many: 'targets reached' } },
+    { prefix: 'savings-goal', category: 'progress', noun: { one: 'goal affordable', many: 'goals affordable' } },
 ];
 
 /** Longest first, so `combat-consumable-low` never answers to `combat-death`'s row by accident */
