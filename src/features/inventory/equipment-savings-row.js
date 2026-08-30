@@ -76,6 +76,10 @@ import {
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
+// The one enhancement cost model: the shared protect-from sweep, and the shared
+// pricing rules. This card used to carry its own copy of both.
+import { cheapestProtectPlan } from '../../utils/enhancement-protect-sweep.js';
+import { getCheapestProtectionPrice, perAttemptMaterialCost } from '../../utils/enhancement-pricing.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { roomSkill } from '../../utils/room-skills.js';
@@ -1127,95 +1131,70 @@ function ownsBase(itemHrid) {
 export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
 
-    const calculator = enhancementCalculator()?.calculateEnhancement;
     // The character's own gear, skill and teas — not `getEnhancingParams`,
     // which hands back the simulator's manual settings unless auto-detect
     // happens to be on, and those default to a fully kitted enhancer. Costing
-    // your cape at somebody else's bench quotes a run you cannot make.
+    // your cape at somebody else's bench quotes a run you cannot make. The
+    // sweep engine below is shared with the tooltip and the sim; whose bench it
+    // runs on is not, and this is the card's answer to that.
     const params = enhancementConfig()?.getAutoDetectedParams?.();
     const details = dataManager.getItemDetails?.(itemHrid);
-    if (!calculator || !params || !details) return null;
+    const calculate = enhancementCalculator()?.calculateEnhancement;
+    if (!params || !details || !calculate) return null;
 
-    // Priced at the ask, falling back to what the vendor pays for anything the
-    // market has no answer for
-    const priceOf = (hrid) =>
-        hrid === '/items/coin' ? 1 : getItemPrices(hrid, 0)?.ask || dataManager.getItemDetails?.(hrid)?.sellPrice || 0;
+    // Priced by the one shared rule: a one-sided book cross-fills, and only then
+    // does it fall back to what the thing costs to make and what the vendor
+    // pays. This card used to take `ask || sellPrice`, which on a bid-only book
+    // quoted the vendor price — a ninth of the real bill on the fixtures in
+    // enhancement-cost-parity.test.js.
+    const materials = perAttemptMaterialCost(details);
+    if (!materials.hasCost) return null;
 
-    let materials = 0;
-    for (const cost of details.enhancementCosts || []) {
-        materials += (cost.count || 0) * priceOf(cost.itemHrid);
-    }
-    if (!(materials > 0)) return null;
-
-    const protection = cheapestProtection(itemHrid, priceOf);
+    // Without `includeSelf` this would offer a second copy of the piece as
+    // protection. This card exists for untradable gear, where there is no second
+    // copy to buy at any price, and the fallback would quote the vendor sell
+    // price — which is not an offer anyone will honour.
+    const protection = getCheapestProtectionPrice(itemHrid, { includeSelf: false });
 
     try {
         // Falling all the way back to +0 on every failure is what "no
         // protection" means, and past about +5 it is ruinous — nobody enhances
         // that way, so costing it that way would report a number no player
         // would ever pay. The run to price is the cheapest of the protect-from
-        // choices, which is the same search the enhancement display makes.
-        //
-        // From +2 whatever the run starts at, not from the start level. A
-        // protect-from below where you begin is not a wasted setting: the first
-        // failure drops you *below* the start, and from there the protection is
-        // what stops the next one sending you to +0. Bounding the search at the
-        // start level forbade the cheap strategies to exactly the runs that
-        // start high — so a +5 → +7 run could only protect from +5 while a
-        // +4 → +7 run was allowed to protect from +4, and the card reported
-        // that starting lower was cheaper. It is the same 2-to-target search
-        // the enhancement tooltip and the standalone library make.
-        const strategies = [0];
-        if (protection.price > 0) {
-            for (let from = 2; from <= targetLevel; from++) strategies.push(from);
-        }
-
-        let best = null;
-        for (const protectFrom of strategies) {
-            const run = calculator({
+        // choices, and that search — from +2 to the target whatever level the
+        // run starts at — now lives in the engine as `protectFromLevels`, with
+        // the reason attached.
+        const plan = cheapestProtectPlan({
+            chain: {
                 enhancingLevel: params.enhancingLevel || 0,
                 toolBonus: params.toolBonus || 0,
                 speedBonus: params.speedBonus || 0,
                 itemLevel: details.itemLevel || 0,
-                targetLevel,
-                startLevel,
-                protectFrom,
                 blessedTea: Boolean(params.teas?.blessed),
                 guzzlingBonus: params.guzzlingBonus || 1,
-            });
+                // Forwarded where it used to be dropped: without it the chain
+                // fell back to the stock 1% double-jump chance rather than the
+                // character's real one
+                blessedTeaBonus: params.blessedTeaBonus,
+            },
+            targetLevel,
+            startLevel,
+            materialCostPerAttempt: materials.cost,
+            protectionOptions: protection.price > 0 ? [{ itemHrid: protection.itemHrid, price: protection.price }] : [],
+            hasMissingPrices: materials.hasMissingPrices,
+            // The namespace's calculator rather than the engine's own import.
+            // In the built script they are the same module — enhancement-calculator
+            // is shared, so the market bundle's import resolves to exactly this
+            // object — but going through the bridge keeps the seam this module's
+            // suite stands a stub in front of to make the arithmetic legible.
+            calculate,
+        });
 
-            const total = run.attempts * materials + (run.protectionCount || 0) * protection.price;
-            if (best === null || total < best) best = total;
-        }
-
-        return best > 0 ? best : null;
+        return plan?.cost ?? null;
     } catch (error) {
         console.error('[EquipmentSavings] Costing an enhancement run failed:', error);
         return null;
     }
-}
-
-/**
- * The cheapest thing that will absorb a failed enhancement.
- *
- * The Mirror of Protection works on anything; some pieces name their own
- * protections. The piece itself protects too, but a target the market will not
- * sell has no second copy to buy, which is precisely the case this exists for.
- *
- * @param {string} itemHrid - The piece being enhanced
- * @param {Function} priceOf - Prices one item hrid
- * @returns {{itemHrid: string|null, price: number}}
- */
-function cheapestProtection(itemHrid, priceOf) {
-    const details = dataManager.getItemDetails?.(itemHrid);
-    const options = ['/items/mirror_of_protection', ...(details?.protectionItemHrids || [])];
-
-    let best = { itemHrid: null, price: 0 };
-    for (const hrid of options) {
-        const price = priceOf(hrid);
-        if (price > 0 && (!best.price || price < best.price)) best = { itemHrid: hrid, price };
-    }
-    return best;
 }
 
 /**

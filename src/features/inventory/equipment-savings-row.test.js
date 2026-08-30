@@ -150,6 +150,9 @@ vi.mock('../networth/networth-history.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrices: (hrid, level = 0) => game.prices[`${hrid}:${level}`] || null,
+    // The shared pricing rules fall back to a production cost when a book has
+    // neither side, and that walk prices the recipe's inputs through here
+    getItemPrice: (hrid, { mode = 'ask' } = {}) => game.prices[`${hrid}:0`]?.[mode] || 0,
 }));
 // The real one resolves a loadout and parses teas; what this file cares about
 // is that the saving reaches the recipe, whatever produced it
