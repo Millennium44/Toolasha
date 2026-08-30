@@ -15,6 +15,7 @@ import { calculateExperienceMultiplier } from '../../utils/experience-parser.js'
 import { calculateActionsPerHour } from '../../utils/profit-helpers.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
+import { appendMeasuredRate } from './alchemy-measured-rate.js';
 
 class AlchemyProfitDisplay {
     constructor() {
@@ -364,8 +365,13 @@ class AlchemyProfitDisplay {
             // Get item HRID from requirements
             const itemHrid = requirements && requirements.length > 0 ? requirements[0].itemHrid : null;
 
+            // The enhancement level rides along because it is part of what
+            // distinguishes one recorded success rate from another: a +5 item
+            // and a +0 item are the same hrid and not the same combination
+            const inputEnhancement = requirements?.length ? requirements[0].enhancementLevel || 0 : 0;
+
             // Always recreate display (complex collapsible structure makes refresh difficult)
-            this.createDisplay(infoContainer, profitData, actionType, itemHrid);
+            this.createDisplay(infoContainer, profitData, actionType, itemHrid, inputEnhancement);
         } catch (error) {
             console.error('[AlchemyProfitDisplay] Failed to update display:', error);
             this.removeDisplay();
@@ -404,13 +410,44 @@ class AlchemyProfitDisplay {
     }
 
     /**
+     * What this exact item, catalyst and enhancement level has actually done,
+     * beside the rate the panel is forecasting.
+     *
+     * Display-only. The forecast above it, and every figure computed from it,
+     * are untouched — see `alchemy-measured-rate.js` for why substituting the
+     * measurement into the arithmetic would be a feedback loop rather than a
+     * correction.
+     *
+     * @param {HTMLElement|null} line - Where the line goes
+     * @param {Object} profitData - The forecast being shown
+     * @param {string|null} actionType - `coinify` | `decompose` | `transmute`
+     * @param {string|null} itemHrid - The input item
+     * @param {number} enhancementLevel - Its enhancement level
+     * @private
+     */
+    _addMeasuredRate(line, profitData, actionType, itemHrid, enhancementLevel) {
+        if (!line || !actionType || !itemHrid) return;
+        appendMeasuredRate(
+            line,
+            actionType,
+            {
+                inputItemHrid: itemHrid,
+                catalystHrid: profitData?.catalystCost?.itemHrid || null,
+                enhancementLevel: Number(enhancementLevel) || 0,
+            },
+            { predicted: profitData?.successRate }
+        );
+    }
+
+    /**
      * Create profit display element with detailed breakdown
      * @param {HTMLElement} container - Container to append to
      * @param {Object} profitData - Profit calculation results from calculateProfit()
      * @param {string} actionType - Alchemy action type ('coinify', 'decompose', or 'transmute')
      * @param {string} itemHrid - Item HRID being processed
+     * @param {number} [enhancementLevel] - The input item's enhancement level
      */
-    createDisplay(container, profitData, actionType, itemHrid) {
+    createDisplay(container, profitData, actionType, itemHrid, enhancementLevel = 0) {
         // Remove any existing display
         this.removeDisplay();
 
@@ -709,12 +746,14 @@ class AlchemyProfitDisplay {
                 false,
                 1
             );
+            this._addMeasuredRate(successContent, profitData, actionType, itemHrid, enhancementLevel);
             modifiersDiv.appendChild(successSection);
         } else {
             // Fallback if breakdown not available
             const successRateLine = document.createElement('div');
             successRateLine.style.marginLeft = '8px';
             successRateLine.textContent = `• Success Rate: ${formatPercentage(profitData.successRate, 1)}`;
+            this._addMeasuredRate(successRateLine, profitData, actionType, itemHrid, enhancementLevel);
             modifiersDiv.appendChild(successRateLine);
         }
 

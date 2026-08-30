@@ -18,6 +18,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { capProfitRate, sellsFromProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
+import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 
 // Re-exported because this module is where both helpers were first written and
@@ -813,6 +814,17 @@ class AlchemyBestItems {
         if (profitData.successRate) parts.push(`${formatPercentage(profitData.successRate, 1)} success`);
         if (profitData.efficiency != null) parts.push(`${formatPercentage(profitData.efficiency, 1)} efficiency`);
         statsLine.textContent = parts.join(' | ');
+        // What this item's own recorded attempts say about the success rate the
+        // row above was ranked on. Beside the forecast, never inside it — the
+        // ranking is computed from `profitData` alone, and `alchemy-measured-rate.js`
+        // sets out why feeding a measurement back into a ranking that decides
+        // what gets run is a trap rather than an improvement.
+        appendMeasuredRate(
+            statsLine,
+            this.currentType,
+            { inputItemHrid: item.itemHrid, catalystHrid: item.catalyst || null, enhancementLevel: 0 },
+            { predicted: profitData.successRate }
+        );
         container.appendChild(statsLine);
 
         return container;
