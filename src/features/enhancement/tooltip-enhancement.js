@@ -17,7 +17,7 @@ import { calculateSuccessXP, calculateFailureXP } from './enhancement-xp.js';
 import {
     buildSourceChipHTML,
     describeEnhancementSource,
-    getTooltipEnhancementParams,
+    enhancementParamsFor,
     sectionAttributes,
     toggleProRates,
     SECTION_ATTR,
@@ -1055,7 +1055,7 @@ export function rerenderOpenEnhancementSections() {
             if (!itemHrid) continue;
 
             const kind = section.getAttribute(SECTION_ATTR);
-            const params = getTooltipEnhancementParams(itemHrid);
+            const params = enhancementParamsFor('tooltip', itemHrid);
 
             let html;
             if (kind === 'milestones') {

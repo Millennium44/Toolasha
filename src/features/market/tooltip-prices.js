@@ -18,7 +18,7 @@ import {
     installEnhancementSourceToggle,
     uninstallEnhancementSourceToggle,
 } from '../enhancement/tooltip-enhancement.js';
-import { getTooltipEnhancementParams } from '../enhancement/enhancement-params-source.js';
+import { enhancementParamsFor } from '../enhancement/enhancement-params-source.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import {
     numberFormatter,
@@ -456,7 +456,7 @@ class TooltipPrices {
         if (enhancementLevel === 0 && config.getSetting('itemTooltip_enhancementMilestones')) {
             // Whose stats these are — the character's, or the pro kit the chip lets you
             // compare against — is decided in one place so tooltip and chip cannot disagree
-            const enhancementConfig = getTooltipEnhancementParams(itemHrid);
+            const enhancementConfig = enhancementParamsFor('tooltip', itemHrid);
             if (enhancementConfig) {
                 const milestonesHTML = buildEnhancementMilestonesHTML(itemHrid, enhancementConfig);
                 if (milestonesHTML) {
@@ -478,7 +478,7 @@ class TooltipPrices {
         if (enhancementLevel > 0 && config.getSetting('itemTooltip_enhancementPath')) {
             // Untradeable items are always quoted from your own stats; everything else follows
             // the source chip on the section header
-            const enhancementConfig = getTooltipEnhancementParams(itemHrid);
+            const enhancementConfig = enhancementParamsFor('tooltip', itemHrid);
             if (enhancementConfig) {
                 // Calculate optimal enhancement path
                 const enhancementData = calculateEnhancementPath(itemHrid, enhancementLevel, enhancementConfig);

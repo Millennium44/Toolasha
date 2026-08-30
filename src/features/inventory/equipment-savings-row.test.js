@@ -158,6 +158,16 @@ vi.mock('../../utils/market-data.js', () => ({
 // is that the saving reaches the recipe, whatever produced it
 vi.mock('../../utils/material-calculator.js', () => ({ calculateArtisanBonus: () => game.artisan }));
 
+// The card resolves its bench through the shared resolver now, rather than reaching for
+// `getAutoDetectedParams` itself. This suite is about the card's arithmetic and its rendering,
+// not about which bench gets picked — that lives in enhancement-params-parity.test.js — so the
+// resolver is routed back to the bench this file already injects through window.Toolasha, and
+// still answers undefined when nothing is loaded, the way the bundle bridge did.
+vi.mock('../enhancement/enhancement-params-source.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    enhancementParamsFor: () => window.Toolasha?.Utils?.enhancementConfig?.getAutoDetectedParams?.(),
+}));
+
 const {
     equipmentSavingsPanel,
     watchTarget,
@@ -978,9 +988,9 @@ describe('targets nobody is selling at that level', () => {
                         protectFrom > 0 ? { attempts: 40, protectionCount: 5 } : { attempts: 200, protectionCount: 0 },
                 },
                 enhancementConfig: {
-                    // The character's own bench. `getEnhancingParams` would
-                    // hand back the simulator's manual settings, which default
-                    // to a fully kitted enhancer nobody here owns.
+                    // The character's own bench, which is what the `savings` surface resolves
+                    // to unless pro rates are on. The simulator's manual settings default to a
+                    // fully kitted enhancer nobody here owns.
                     getAutoDetectedParams: () => ({
                         enhancingLevel: 100,
                         toolBonus: 10,

@@ -29,6 +29,10 @@ vi.mock('../../core/data-manager.js', () => ({
         // What the forced armor candidates read to price a piece at the level
         // you already own it at; nothing in these tests owns anything
         getInventory: () => [],
+        // Read by the shared params resolver, to ask whether the piece being costed could be
+        // bought finished from anybody. Nothing in this suite is untradable, so the sweeps here
+        // all run on whichever bench the simulator settings resolve to.
+        getInitClientData: () => ({ itemDetailMap: {} }),
         // The same object throughout, so a test can put books in it
         characterData: character,
     },
@@ -126,6 +130,7 @@ vi.mock('../../utils/enhancement-calculator.js', async (importOriginal) => ({
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: vi.fn(),
     getAutoDetectedParams: vi.fn(),
+    getProRatesParams: vi.fn(),
     // Read by `describeEnhancementSource`, which names whose bench a sweep ran on
     describeParamsSource: vi.fn(() => null),
 }));

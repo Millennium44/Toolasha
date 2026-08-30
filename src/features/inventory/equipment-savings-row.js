@@ -75,7 +75,7 @@ import {
     ROW_COLORS,
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
-import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
+import { describeEnhancementSource, enhancementParamsFor } from '../enhancement/enhancement-params-source.js';
 // The one enhancement cost model: the shared protect-from sweep, and the shared
 // pricing rules. This card used to carry its own copy of both.
 import { cheapestProtectPlan } from '../../utils/enhancement-protect-sweep.js';
@@ -88,7 +88,6 @@ import {
     combatStatsCalculator,
     marketOrderTotals,
     enhancementCalculator,
-    enhancementConfig,
     craftingPlanCalculator,
     missingMaterialsButton,
 } from '../../utils/bundle-bridge.js';
@@ -1131,13 +1130,13 @@ function ownsBase(itemHrid) {
 export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
 
-    // The character's own gear, skill and teas — not `getEnhancingParams`,
-    // which hands back the simulator's manual settings unless auto-detect
-    // happens to be on, and those default to a fully kitted enhancer. Costing
-    // your cape at somebody else's bench quotes a run you cannot make. The
-    // sweep engine below is shared with the tooltip and the sim; whose bench it
-    // runs on is not, and this is the card's answer to that.
-    const params = enhancementConfig()?.getAutoDetectedParams?.();
+    // The character's own gear, skill and teas. This path only fires when the finished
+    // piece has no ask at any price, so there is nobody else whose bench could produce
+    // it — costing it at a bench typed into the simulator quotes a run that cannot be
+    // made. Pro rates still win: asking what a top-end enhancer would spend is a question
+    // with an answer even when nobody can sell you the result. One resolver decides both;
+    // the card's own rule is the `savings` entry in `SURFACE_RULES`.
+    const params = enhancementParamsFor('savings', itemHrid);
     const details = dataManager.getItemDetails?.(itemHrid);
     const calculate = enhancementCalculator()?.calculateEnhancement;
     if (!params || !details || !calculate) return null;
@@ -1370,11 +1369,9 @@ function costOf(itemHrid, enhancementLevel) {
                     cost: laddering ? ladder.cost : direct,
                     mode: laddering ? 'ladder' : 'direct',
                     // Whose bench every enhancement figure on this card was run
-                    // on. `enhancementCost` always uses the character's own
-                    // detected stats, but saying so is the point: the tooltip,
-                    // the advisor and this card each pick their own params, and
-                    // until now only the tooltip admitted which.
-                    enhanceSource: describeEnhancementSource(enhancementConfig()?.getAutoDetectedParams?.()),
+                    // on — the same resolver `enhancementCost` asked, so the chip
+                    // and the number can never name different benches.
+                    enhanceSource: describeEnhancementSource(enhancementParamsFor('savings', itemHrid)),
                     // Whichever one is not the basis is still worth a line, so
                     // the card always carries both
                     direct,

@@ -8,7 +8,7 @@ import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateSuccessXP, calculateFailureXP } from './enhancement-xp.js';
-import { getEnhancingParams, describeParamsSource } from '../../utils/enhancement-config.js';
+import { describeParamsSource } from '../../utils/enhancement-config.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -19,7 +19,7 @@ import {
     calculateEnhancementPath,
     buildEnhancementTooltipHTML,
 } from './tooltip-enhancement.js';
-import { getTooltipEnhancementParams } from './enhancement-params-source.js';
+import { enhancementParamsFor } from './enhancement-params-source.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
@@ -31,7 +31,7 @@ const BTN_CLASS = 'mwi-xph-calc-btn';
  * @param {Object} itemDetails
  * @param {number} maxLevel
  * @param {number} protectFrom
- * @param {Object} params - from getEnhancingParams()
+ * @param {Object} params - from enhancementParamsFor()
  * @returns {{itemHrid, name, xph, goldPerXP, costPerHour, costPartial}|null}
  */
 function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, params) {
@@ -385,7 +385,7 @@ class XPHCalculator {
         );
         let data = null;
         try {
-            data = calculateEnhancementPath(hrid, target, getTooltipEnhancementParams(hrid));
+            data = calculateEnhancementPath(hrid, target, enhancementParamsFor('lab:route', hrid));
         } catch (error) {
             console.error('[XPHCalculator] Route failed:', error);
         }
@@ -457,7 +457,9 @@ class XPHCalculator {
             return;
         }
 
-        const params = getEnhancingParams();
+        // One bench for the whole ranking: the sweep is over every enhanceable item in the
+        // game, so there is no single piece to ask whether anybody could sell it finished.
+        const params = enhancementParamsFor('lab:ranking');
         const results = [];
 
         for (const [itemHrid, itemDetails] of Object.entries(gameData.itemDetailMap || {})) {

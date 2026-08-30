@@ -52,7 +52,7 @@ import {
     getEnhancementMaterialPrice,
 } from '../enhancement/tooltip-enhancement.js';
 import { calculateSuccessXP, calculateFailureXP } from '../enhancement/enhancement-xp.js';
-import { getTooltipEnhancementParams, describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
+import { enhancementParamsFor, describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import * as houseCostCalculator from '../../utils/house-cost-calculator.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
@@ -423,7 +423,7 @@ function measureEnhancingRates() {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.itemDetailMap) return [];
 
-    const params = getTooltipEnhancementParams('/items/coin');
+    const params = enhancementParamsFor('planner', '/items/coin');
     const held = (dataManager.getInventory() || [])
         .filter((item) => item.itemLocationHrid === INVENTORY_LOCATION && item.count > 0 && !item.enhancementLevel)
         .map((item) => ({ hrid: item.itemHrid, details: gameData.itemDetailMap[item.itemHrid] }))
@@ -534,7 +534,7 @@ function acquisitionFor(itemHrid) {
  * @returns {Object|null} The run, or null when the item cannot be enhanced
  */
 function enhancementRun({ itemHrid, targetLevel, startLevel = 0 }) {
-    const params = getTooltipEnhancementParams(itemHrid);
+    const params = enhancementParamsFor('planner', itemHrid);
     const path = calculateEnhancementPath(itemHrid, targetLevel, params);
     const strategy = path?.optimalStrategy;
     if (!strategy) return null;

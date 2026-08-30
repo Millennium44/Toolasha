@@ -116,7 +116,7 @@ let buildEnhancementTooltipHTML;
 let installEnhancementSourceToggle;
 let uninstallEnhancementSourceToggle;
 let rerenderOpenEnhancementSections;
-let getTooltipEnhancementParams;
+let enhancementParamsFor;
 let PRO_RATES_SETTING;
 
 beforeAll(async () => {
@@ -128,12 +128,12 @@ beforeAll(async () => {
         uninstallEnhancementSourceToggle,
         rerenderOpenEnhancementSections,
     } = await import('./tooltip-enhancement.js'));
-    ({ getTooltipEnhancementParams, PRO_RATES_SETTING } = await import('./enhancement-params-source.js'));
+    ({ enhancementParamsFor, PRO_RATES_SETTING } = await import('./enhancement-params-source.js'));
 });
 
 /** Draw the enhancement section for an item into a stand-in tooltip, from whatever source is on */
 function openTooltip(level = 3) {
-    const params = getTooltipEnhancementParams(ITEM);
+    const params = enhancementParamsFor('tooltip', ITEM);
     const data = calculateEnhancementPath(ITEM, level, params);
     document.body.innerHTML = `<div class="MuiTooltip-popper">${buildEnhancementTooltipHTML(data)}</div>`;
 }

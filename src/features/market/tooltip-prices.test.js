@@ -58,7 +58,7 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     installEnhancementSourceToggle: () => {},
     uninstallEnhancementSourceToggle: () => {},
 }));
-vi.mock('../enhancement/enhancement-params-source.js', () => ({ getTooltipEnhancementParams: () => null }));
+vi.mock('../enhancement/enhancement-params-source.js', () => ({ enhancementParamsFor: () => null }));
 vi.mock('../actions/gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({ ask: 10, bid: 9 }) }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
