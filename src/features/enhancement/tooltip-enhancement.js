@@ -31,6 +31,7 @@ import {
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { sweepProtectFrom } from '../../utils/enhancement-protect-sweep.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 // The pricing rules moved to utils so the sim's advisor and the inventory savings card — each
@@ -93,26 +94,14 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
     // Test all protection strategies (0, 2, 3, ..., targetLevel)
     // Result: allResults[targetLevel][protectFrom] = cost data
 
+    // The prices are the same at every level — enhancementCosts is not level-indexed and the base
+    // item is bought once — so they are read once and the sweep below only walks the chain.
+    const prices = priceEnhancementInputs(itemHrid, itemDetails);
+
     const allResults = [];
 
     for (let targetLevel = 1; targetLevel <= currentEnhancementLevel; targetLevel++) {
-        const resultsForLevel = [];
-
-        // Test "never protect" (0)
-        const neverProtect = calculateCostForStrategy(itemHrid, targetLevel, 0, itemLevel, config);
-        if (neverProtect) {
-            resultsForLevel.push({ protectFrom: 0, ...neverProtect });
-        }
-
-        // Test all "protect from X" strategies (2 through targetLevel)
-        for (let protectFrom = 2; protectFrom <= targetLevel; protectFrom++) {
-            const result = calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config);
-            if (result) {
-                resultsForLevel.push({ protectFrom, ...result });
-            }
-        }
-
-        allResults.push(resultsForLevel);
+        allResults.push(sweepStrategiesForLevel(targetLevel, itemLevel, config, prices));
     }
 
     // Step 2: Build target_costs and target_times arrays (minimum cost/time for each level)
@@ -276,46 +265,140 @@ export function calculateEnhancementPath(itemHrid, currentEnhancementLevel, conf
 }
 
 /**
- * Calculate cost for a single protection strategy to reach a target level
- * @private
+ * Every protect-from strategy for one target level, priced.
+ *
+ * This used to be a loop here — protect-from 0, then 2 up to the target, one `calculateEnhancement`
+ * apiece — and that loop was one of four copies of the same walk in the codebase. It is now the
+ * shared engine's, which the enhancing panel's column, the sim's upgrade advisor and the inventory
+ * savings card also run. What is left here is turning a row into the record the mirror pass and the
+ * tooltip's breakdown want.
+ *
+ * One behaviour follows from the move and is a fix rather than a side effect: protection nobody can
+ * price used to leave `protectionCost` at 0, which made every protected strategy free by
+ * construction and win the minimum at every level. The engine has no protected rows at all when
+ * there is no priced protection item, so the answer falls back to the unprotected run — which is
+ * dearer, and true.
+ *
+ * @param {number} targetLevel - Level being priced
+ * @param {number} itemLevel - The item's own level, which the chain keys on
+ * @param {Object} config - Enhancement configuration
+ * @param {Object} prices - Result of {@link priceEnhancementInputs}
+ * @returns {Array<Object>} One record per strategy, cheapest not yet chosen
  */
-function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config) {
+function sweepStrategiesForLevel(targetLevel, itemLevel, config, prices) {
     try {
-        const params = {
-            enhancingLevel: config.enhancingLevel,
-            houseLevel: config.houseLevel,
-            toolBonus: config.toolBonus || 0,
-            speedBonus: config.speedBonus || 0,
-            itemLevel,
+        const { rows } = sweepProtectFrom({
+            chain: {
+                enhancingLevel: config.enhancingLevel,
+                toolBonus: config.toolBonus || 0,
+                speedBonus: config.speedBonus || 0,
+                itemLevel,
+                blessedTea: config.teas.blessed,
+                guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
+            },
             targetLevel,
-            protectFrom,
-            blessedTea: config.teas.blessed,
-            guzzlingBonus: config.guzzlingBonus,
-            blessedTeaBonus: config.blessedTeaBonus,
-        };
+            materialCostPerAttempt: prices.materialCostPerAttempt,
+            fixedCost: prices.baseCost,
+            protectionOptions: prices.protectionOptions,
+        });
 
-        // Calculate enhancement statistics. The matrix inversion is the expensive part of a
-        // strategy, and the cost pass needs exactly the same numbers, so it is handed the
-        // result rather than inverting an identical matrix a second time.
-        const result = calculateEnhancement(params);
-
-        if (!result || typeof result.attempts !== 'number' || typeof result.totalTime !== 'number') {
-            console.error('[Enhancement Tooltip] Invalid result from calculateEnhancement:', result);
-            return null;
-        }
-
-        // Calculate costs
-        const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config, result);
-
-        return {
-            expectedAttempts: result.attempts,
-            totalTime: result.totalTime,
-            ...costs,
-        };
+        return rows.map((row) => ({
+            protectFrom: row.protectFrom,
+            expectedAttempts: row.attempts,
+            totalTime: row.time,
+            ...prices.base,
+            materialCost: prices.materialCostPerAttempt * row.attempts,
+            materialBreakdown: prices.materials.map((material) => ({
+                ...material,
+                totalQuantity: material.countPerAction * row.attempts,
+                totalCost: material.unitPrice * material.countPerAction * row.attempts,
+            })),
+            protectionCost: row.protections * row.protectionPrice,
+            protectionItemHrid: row.protections > 0 ? row.itemHrid : null,
+            protectionCount: row.protections,
+            protectionAskPrice: row.protections > 0 ? row.protectionPrice : 0,
+            protectionBidPrice: row.protections > 0 ? prices.protectionBidPrice : 0,
+            totalCost: row.expectedCost,
+        }));
     } catch (error) {
         console.error('[Enhancement Tooltip] Strategy calculation error:', error);
-        return null;
+        return [];
     }
+}
+
+/**
+ * What the run's inputs cost, once.
+ *
+ * None of it varies with the target level: `enhancementCosts` is a flat per-attempt recipe, the
+ * base item is bought once whatever level it ends at, and the protection item is whichever is
+ * cheapest for this piece. Reading it once per path rather than once per (level, strategy) is why
+ * the sweep above only has to walk the chain.
+ *
+ * @param {string} itemHrid - The item being enhanced
+ * @param {Object} itemDetails - Its game data
+ * @returns {Object} Per-attempt material cost and breakdown, the base item's prices, and the
+ *   protection options the sweep should price the protected rows with
+ */
+function priceEnhancementInputs(itemHrid, itemDetails) {
+    const gameData = dataManager.getInitClientData();
+
+    // Per-attempt materials, through the one shared pricing rule
+    const materials = [];
+    let materialCostPerAttempt = 0;
+    for (const material of itemDetails.enhancementCosts || []) {
+        const materialDetail = gameData.itemDetailMap[material.itemHrid];
+        const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+        materialCostPerAttempt += price * material.count;
+        materials.push({
+            itemHrid: material.itemHrid,
+            name: materialDetail?.name || material.itemHrid,
+            countPerAction: material.count,
+            unitPrice: price,
+            bidPrice: getEnhancementMaterialPrice(material.itemHrid, 'bid'),
+        });
+    }
+
+    // Protection: the cheapest thing that will absorb a failure. A null price means nothing that
+    // could protect this item has one, and then there are no protected rows to price at all —
+    // rather than a set of them priced at zero, which is what used to happen
+    const protectionInfo = getCheapestProtectionPrice(itemHrid);
+    const protectionOptions =
+        protectionInfo.price > 0 ? [{ itemHrid: protectionInfo.itemHrid, price: protectionInfo.price }] : [];
+    let protectionBidPrice = 0;
+    if (protectionInfo.price > 0) {
+        const protPrices = getItemPrices(protectionInfo.itemHrid, 0);
+        protectionBidPrice = protPrices?.bid > 0 ? protPrices.bid : protectionInfo.price;
+    }
+
+    // Base item cost (initial investment) — market price or min(crafting, market) per setting
+    const craftingCostAsk = getProductionCost(itemHrid, 'ask');
+    const craftingCostBid = getProductionCost(itemHrid, 'bid');
+    const baseItemPrices = getItemPrices(itemHrid, 0);
+    const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
+    const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
+    const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
+    // Ask drives the decision: use crafted if ask is missing OR crafted ask is cheaper
+    const askIsCrafted = useCraftingCost && craftingCostAsk > 0 && (marketAsk === 0 || craftingCostAsk < marketAsk);
+    const baseAskPrice = askIsCrafted ? craftingCostAsk : marketAsk || getRealisticBaseItemPrice(itemHrid);
+    const baseBidPrice = askIsCrafted
+        ? craftingCostBid || craftingCostAsk
+        : marketBid || getProductionCost(itemHrid, 'bid') || getRealisticBaseItemPrice(itemHrid);
+
+    return {
+        materials,
+        materialCostPerAttempt,
+        protectionOptions,
+        protectionBidPrice,
+        baseCost: baseAskPrice,
+        base: {
+            baseCost: baseAskPrice,
+            baseAskPrice,
+            baseBidPrice,
+            baseAskIsCrafted: askIsCrafted,
+            baseBidIsCrafted: askIsCrafted,
+        },
+    };
 }
 
 /**
@@ -620,99 +703,6 @@ function buildMirrorOptimizedResult(
             copyCount: copyBaseItems,
             copyUnitPrice: copyBasePrice || 0,
         }),
-    };
-}
-
-/**
- * Calculate total cost for enhancement path
- * Matches original MWI Tools v25.0 cost calculation
- * @param {string} itemHrid - Item HRID
- * @param {number} targetLevel - Target enhancement level
- * @param {number} protectFrom - Protection threshold
- * @param {Object} config - Enhancement configuration
- * @param {Object} pathResult - Markov result for this strategy, already computed by the caller
- * @private
- */
-function calculateTotalCost(itemHrid, targetLevel, protectFrom, config, pathResult) {
-    const gameData = dataManager.getInitClientData();
-    const itemDetails = gameData.itemDetailMap[itemHrid];
-
-    // Calculate per-action material cost (same for all enhancement levels)
-    // enhancementCosts is a flat array of materials needed per attempt
-    let perActionCost = 0;
-    const materialBreakdown = [];
-    if (itemDetails.enhancementCosts) {
-        for (const material of itemDetails.enhancementCosts) {
-            const materialDetail = gameData.itemDetailMap[material.itemHrid];
-            const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
-            const bidPrice = getEnhancementMaterialPrice(material.itemHrid, 'bid');
-            perActionCost += price * material.count;
-
-            const totalQuantity = material.count * pathResult.attempts;
-            materialBreakdown.push({
-                itemHrid: material.itemHrid,
-                name: materialDetail?.name || material.itemHrid,
-                countPerAction: material.count,
-                totalQuantity,
-                unitPrice: price,
-                bidPrice,
-                totalCost: price * totalQuantity,
-            });
-        }
-    }
-
-    // Total material cost = per-action cost × total attempts
-    const materialCost = perActionCost * pathResult.attempts;
-
-    // Protection cost = cheapest protection option × protection count
-    let protectionCost = 0;
-    let protectionItemHrid = null;
-    let protectionCount = 0;
-    let protectionAskPrice = 0;
-    let protectionBidPrice = 0;
-    if (protectFrom > 0 && pathResult.protectionCount > 0) {
-        const protectionInfo = getCheapestProtectionPrice(itemHrid);
-        if (protectionInfo.price > 0) {
-            protectionCost = protectionInfo.price * pathResult.protectionCount;
-            protectionItemHrid = protectionInfo.itemHrid;
-            protectionCount = pathResult.protectionCount;
-            protectionAskPrice = protectionInfo.price;
-            const protPrices = getItemPrices(protectionInfo.itemHrid, 0);
-            protectionBidPrice = protPrices?.bid > 0 ? protPrices.bid : protectionInfo.price;
-        }
-    }
-
-    // Base item cost (initial investment) — market price or min(crafting, market) per setting
-    const craftingCostAsk = getProductionCost(itemHrid, 'ask');
-    const craftingCostBid = getProductionCost(itemHrid, 'bid');
-    const baseItemPrices = getItemPrices(itemHrid, 0);
-    const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
-    const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
-    const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
-    // Ask drives the decision: use crafted if ask is missing OR crafted ask is cheaper
-    const askIsCrafted = useCraftingCost && craftingCostAsk > 0 && (marketAsk === 0 || craftingCostAsk < marketAsk);
-    const baseAskPrice = askIsCrafted ? craftingCostAsk : marketAsk || getRealisticBaseItemPrice(itemHrid);
-    const baseBidPrice = askIsCrafted
-        ? craftingCostBid || craftingCostAsk
-        : marketBid || getProductionCost(itemHrid, 'bid') || getRealisticBaseItemPrice(itemHrid);
-    const baseCost = baseAskPrice;
-    const baseAskIsCrafted = askIsCrafted;
-    const baseBidIsCrafted = askIsCrafted;
-
-    return {
-        baseCost,
-        baseAskPrice,
-        baseBidPrice,
-        baseAskIsCrafted,
-        baseBidIsCrafted,
-        materialCost,
-        materialBreakdown,
-        protectionCost,
-        protectionItemHrid,
-        protectionCount,
-        protectionAskPrice,
-        protectionBidPrice,
-        totalCost: baseCost + materialCost + protectionCost,
     };
 }
 

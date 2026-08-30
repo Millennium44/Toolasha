@@ -210,6 +210,52 @@ describe('calculateEnhancementPath', () => {
         }
     });
 
+    test('protection nobody can price is refused, not costed at zero', () => {
+        // The bug the shared sweep engine fixed on the way through. This module
+        // used to run every protect-from strategy and leave protectionCost at 0
+        // when getCheapestProtectionPrice came back with nothing — which made a
+        // protected run free by construction, so it won the minimum at every
+        // level and the tooltip quoted a plan whose protections nobody sells.
+        const saved = { ...prices };
+        // The piece protects itself, so it has to lose its price too before
+        // there is genuinely nothing to protect with. The Philosopher's Mirror
+        // goes as well, so the answer is a plain enhance path rather than a
+        // mirror plan, which is a different shape with no protection line.
+        delete prices[PROTECTION];
+        delete prices[ITEM];
+        delete prices[MIRROR];
+        try {
+            const data = calculateEnhancementPath(ITEM, 5, enhancingConfig);
+            const strategy = data.optimalStrategy;
+
+            expect(strategy.protectFrom).toBe(0);
+            expect(strategy.protectionCost).toBe(0);
+            expect(strategy.protectionCount).toBe(0);
+            expect(strategy.protectionItemHrid).toBeNull();
+            // And the quote is the honest, dearer unprotected run
+            expect(strategy.materialCost).toBeGreaterThan(0);
+            expect(strategy.totalCost).toBeCloseTo(strategy.baseCost + strategy.materialCost, 6);
+        } finally {
+            Object.assign(prices, saved);
+        }
+    });
+
+    test('a priced protection still bills protections at what they cost', () => {
+        const savedMirror = prices[MIRROR];
+        // Priced out of reach, so the quote is a plain enhance path and not a
+        // mirror plan — the protection line only exists on the former
+        prices[MIRROR] = { ask: 1e12, bid: 1e12 };
+        try {
+            const strategy = calculateEnhancementPath(ITEM, 5, enhancingConfig).optimalStrategy;
+
+            expect(strategy.protectFrom).toBeGreaterThan(0);
+            expect(strategy.protectionItemHrid).toBe(ITEM);
+            expect(strategy.protectionCost).toBeCloseTo(strategy.protectionCount * strategy.protectionAskPrice, 6);
+        } finally {
+            prices[MIRROR] = savedMirror;
+        }
+    });
+
     test('time and attempts count only the levels the plan builds', () => {
         const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
         const strategy = data.optimalStrategy;

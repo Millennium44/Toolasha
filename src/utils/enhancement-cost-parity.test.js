@@ -47,6 +47,7 @@
 
 import { describe, test, expect } from 'vitest';
 import { calculateEnhancement } from './enhancement-calculator.js';
+import { cheapestProtectPlan, protectFromLevels } from './enhancement-protect-sweep.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -384,5 +385,89 @@ describe('the four enhancement sweeps, on identical inputs', () => {
         const book = BOOKS.twoSided;
         expect(Math.round(savingsCost(5, 7, book))).toBe(81_926_437);
         expect(Math.round(savingsCost(4, 7, book))).toBe(101_311_834);
+    }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// The after-picture
+// ---------------------------------------------------------------------------
+
+/**
+ * The same runs, through the one engine every surface now calls.
+ *
+ * Above, four transcriptions. Here, four *calls* — `cheapestProtectPlan` with
+ * the arguments each surface supplies. What is left to check is that the engine
+ * reproduces the numbers the surfaces used to produce where the semantics did
+ * not change, and that where they still differ it is a parameter differing and
+ * not an implementation.
+ */
+describe('after the consolidation: one engine, four callers', () => {
+    /**
+     * The engine, given one surface's arguments.
+     * @param {Object} args - Overrides on top of the shared fixture
+     * @returns {Object|null} The cheapest plan
+     */
+    const plan = ({ startLevel = 0, targetLevel, protectionPrice = 240_000, fixedCost = 0 }) =>
+        cheapestProtectPlan({
+            chain: CHAIN,
+            targetLevel,
+            startLevel,
+            fixedCost,
+            materialCostPerAttempt: crossFillPrice(MATERIAL, BOOKS.twoSided),
+            protectionOptions: protectionPrice > 0 ? [{ itemHrid: MIRROR, price: protectionPrice }] : [],
+        });
+
+    test('the engine reproduces every figure the before-table recorded', () => {
+        // The savings card and the advisor's enhancement candidate ask the same
+        // question of the same chain, so one call answers both
+        for (const run of RUNS) {
+            const engine = plan({ startLevel: run.start, targetLevel: run.target });
+            expect(engine.cost).toBeCloseTo(engineCost(run.start, run.target, BOOKS.twoSided), 4);
+            expect(engine.cost).toBeCloseTo(savingsCost(run.start, run.target, BOOKS.twoSided), 4);
+            expect(engine.cost).toBeCloseTo(advisorCost(run.start, run.target, BOOKS.twoSided), 4);
+        }
+    });
+
+    test('the tooltip differs from the others by its fixed cost, and by nothing else', () => {
+        // The tooltip is the only caller that folds in the base item, because it
+        // is the only one answering "what did this piece cost to make", not
+        // "what does the next stretch cost me"
+        const base = 5_000_000;
+        const withBase = plan({ targetLevel: 7, fixedCost: base });
+        const withoutBase = plan({ targetLevel: 7 });
+
+        expect(withBase.cost - withoutBase.cost).toBeCloseTo(base, 6);
+        expect(withBase.protectFrom).toBe(withoutBase.protectFrom);
+    });
+
+    test('the savings card differs by its protection list, and by nothing else', () => {
+        // Its `includeSelf: false` is a different protection *price*, which the
+        // engine takes as an argument. Same sweep, different input.
+        const withMirror = plan({ startLevel: 5, targetLevel: 7, protectionPrice: 240_000 });
+        const withCheaperSelf = plan({ startLevel: 5, targetLevel: 7, protectionPrice: 100_000 });
+
+        expect(withCheaperSelf.cost).toBeLessThan(withMirror.cost);
+    });
+
+    test('unpriceable protection is refused by every caller now, the tooltip included', () => {
+        // The last of the four differences to go. The tooltip used to run the
+        // protected strategies with protectionCost left at 0 and quote a plan
+        // whose protections nobody sells; the engine has no protected rows at
+        // all when there is no priced protection item.
+        const bare = plan({ targetLevel: 7, protectionPrice: 0 });
+        const protectedPlan = plan({ targetLevel: 7 });
+
+        expect(bare.protectFrom).toBe(0);
+        expect(bare.protections).toBe(0);
+        expect(bare.cost).toBeGreaterThan(protectedPlan.cost);
+    });
+
+    test('the search range is the engine’s, so no caller can re-bound it', () => {
+        // What the savings card had to fix once already: bounding the search at
+        // the start level made a +5 run cheaper to reach from +4
+        expect(protectFromLevels(7)).toEqual([2, 3, 4, 5, 6, 7]);
+
+        const costs = [0, 1, 2, 3, 4, 5, 6].map((startLevel) => plan({ startLevel, targetLevel: 7 }).cost);
+        for (let i = 1; i < costs.length; i++) expect(costs[i]).toBeLessThanOrEqual(costs[i - 1] + 1e-6);
     }, 60_000);
 });

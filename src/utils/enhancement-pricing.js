@@ -63,7 +63,10 @@ const _costCache = new Map();
 const _chainTimeCache = new Map();
 let _priceVersion = 0;
 
-marketAPI.on(() => {
+// Optional chaining because this module is now imported from four bundles and from tests that
+// stub the market API without a subscribe hook. Without a feed the memo simply never invalidates,
+// which is correct for a caller that has no prices to invalidate against.
+marketAPI?.on?.(() => {
     _priceVersion++;
 });
 
