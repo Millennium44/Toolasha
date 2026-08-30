@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A goal that comes within reach says so, prices show their move, and a trial recording admits its gaps
+
+Three additions: a savings-goal alert (off by default — notifications_savingsGoalReached) fires once when a watched gear/ability/house goal crosses affordable, re-arms when coins drop back or the target changes, and quotes the price's age; watchlist chips gain a movers span ("▲2.1% / 3h") from the rise the price fold always computed but never showed, with no chip when the reading gap exceeds six hours; and the trial trace reports its recording health live — quality fields on the Trace button's tooltip, and a scoreboard warning while a capture with a 5-second-plus gap is running instead of after the export.
+
 ### The calibration panel decides, and the fight pool says how clean it is
 
 Combat calibration now splits XP from gold — two fields recorded on every pair and never read — and issues a verdict: "kill rate is right, the gap is drops or prices" vs "the sim mis-models the fight itself", refusing below five pairs. A gear-cohort split does the same for matched vs mismatched-gear runs ("the sim is right — the gap is the gear it never saw"), with unsigned pairs kept out of both sides. And the labyrinth pool header now says how much of the sample is real: "412 of 500 complete · 61 stale · 27 room-switch".
