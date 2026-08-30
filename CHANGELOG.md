@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Ability rates stop spiking after a switch to a richer alt
+
+Ability experience history is keyed by ability, shared across every character, and was never cleared on a switch — its monotonic guard only resets when experience goes backwards, so switching to an alt with more banked experience in a shared ability read as the current character gaining the whole gap at once (tens of millions per hour). Cleared on character_switching now, before the pointer moves, matching the pattern its sibling row already documented.
+
 ### Custom tabs: bindings survive a switch, enhanced items stay in their tab, the editor closes with the feature
 
 Three real ones: the loadout-binding cache wasn't rebuilt on a character switch, so the arriving character's bound gear stopped following enhancements for the whole session (and could swap to the departed character's levels); a tab assigned a base item never showed its enhanced copies — the tile got withheld and fell into Unorganized, sometimes drawn twice with the tab's copy losing; and disabling the feature left an open tab editor alive as a ghost dialog whose edits were silently dropped.
