@@ -1389,9 +1389,18 @@ class LootLogStats {
         wrapper.appendChild(separator);
         wrapper.appendChild(this.buildCsvExportBar());
 
-        // Render first batch
-        this.historicalRendered = 0;
-        const batch = historicalEntries.slice(0, this.historicalBatchSize);
+        // Render as many as were already showing before this rebuild.
+        //
+        // This section is torn down and rebuilt from scratch on every call —
+        // including the one 200ms after each `loot_log_updated` message, which
+        // during a fast action can be every few seconds — and resetting to the
+        // first batch every time would collapse a "Show more" expansion the
+        // user just made almost as soon as they made it.
+        const targetCount = Math.min(
+            historicalEntries.length,
+            Math.max(this.historicalBatchSize, this.historicalRendered)
+        );
+        const batch = historicalEntries.slice(0, targetCount);
         for (const entry of batch) {
             const el = this.renderHistoricalEntry(entry);
             if (el) wrapper.appendChild(el);

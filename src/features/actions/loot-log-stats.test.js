@@ -1,3 +1,4 @@
+/** @vitest-environment happy-dom */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 import dataManager from '../../core/data-manager.js';
@@ -9,6 +10,7 @@ import lootLogHistory from './loot-log-history.js';
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: vi.fn(),
+        getSettingValue: vi.fn(),
         COLOR_PROFIT: '#0f0',
         COLOR_LOSS: '#f00',
         COLOR_GOLD: '#ff0',
@@ -406,5 +408,54 @@ describe('LootLogStats.deleteHistoricalEntry', () => {
         await expect(stats.deleteHistoricalEntry(2)).resolves.toBeUndefined();
 
         expect(lootLogHistory.deleteEntry).toHaveBeenCalledWith(2);
+    });
+});
+
+describe('LootLogStats.renderHistoricalEntries pagination', () => {
+    let stats;
+    let container;
+
+    /**
+     * @param {number} count - How many historical entries to fabricate
+     * @returns {Array<Object>} Entries `renderHistoricalEntries` can render
+     */
+    const makeEntries = (count) =>
+        Array.from({ length: count }, (_, i) => ({
+            characterActionId: i + 1,
+            actionHrid: '/actions/foraging/dummy',
+            startTime: new Date(2026, 0, 1, 0, i).toISOString(),
+            endTime: new Date(2026, 0, 1, 0, i, 30).toISOString(),
+            actionCount: 1,
+            drops: {},
+        }));
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        document.body.innerHTML = '<div class="LootLogPanel_actionLoots__3oTid"></div>';
+        container = document.querySelector('.LootLogPanel_actionLoots__3oTid');
+        dataManager.getActionDetails.mockReturnValue(undefined);
+        getItemPrices.mockReturnValue(undefined);
+        stats = new LootLogStats();
+        stats.currentLootLogData = [];
+    });
+
+    test('a "Show more" expansion survives a rebuild triggered by a later loot_log_updated', async () => {
+        // More than the default batch of 20, so "Show more" appears
+        const entries = makeEntries(25);
+        lootLogHistory.getHistoricalEntries.mockResolvedValue(entries);
+
+        await stats.renderHistoricalEntries();
+        expect(container.querySelectorAll('.mwi-loot-log-history-entry')).toHaveLength(20);
+
+        // The user asks to see the rest
+        container.querySelector('.mwi-loot-log-history-more').click();
+        expect(container.querySelectorAll('.mwi-loot-log-history-entry')).toHaveLength(25);
+
+        // A later `loot_log_updated` message tears the section down and rebuilds
+        // it from scratch — this used to reset `historicalRendered` to 0 and
+        // redraw only the first batch, collapsing the expansion the user just made
+        await stats.renderHistoricalEntries();
+
+        expect(container.querySelectorAll('.mwi-loot-log-history-entry')).toHaveLength(25);
     });
 });
