@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Iron Bell Farming stops writing across a character switch
+
+The panel's slow costing pass could resume after a switch and file the departing character's freshly-priced loop into the arriving character's snapshot — memory and storage both — and a stage tick landing in the one-read gap had the same key drift. Both now capture the character before their awaits and stand down if it moved, the pattern their siblings already carry.
+
 ### Loot log: deletes stick, and Show more stays open
 
 Deleting a historical loot entry bypassed the history module's own write serialization, so a loot update arriving mid-click could merge from a stale snapshot and silently resurrect the deleted entry — deletes now go through the same chain every other write uses. And the historical section rebuilt itself back down to the first twenty entries on every loot tick, collapsing a "Show more" expansion within seconds; the expansion count is remembered now.
