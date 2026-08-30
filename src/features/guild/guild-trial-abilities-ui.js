@@ -591,7 +591,21 @@ function drawHeader(body, state) {
  */
 export function auraGapText(state) {
     const captured = Number(state?.capturedCount) || 0;
-    const unseen = Math.max(0, (Number(state?.rosterCount) || 0) - captured);
+    const roster = Number(state?.rosterCount) || 0;
+    const unseen = Math.max(0, roster - captured);
+
+    // No roster is not an empty roster. `unseen === 0` was standing in for
+    // "everybody has been captured", and nobody-at-all satisfies it trivially
+    // — so the panel opened outside a trial, or before the first roster
+    // message, drew every aura as a proven MISSING.
+    if (roster === 0) {
+        return {
+            text: 'no participants yet',
+            color: ROW_COLORS.dim,
+            title: 'Nobody is on the roster yet, so nothing has been looked at and nothing is missing.',
+        };
+    }
+
     if (state?.complete || unseen === 0) {
         return {
             text: 'MISSING',

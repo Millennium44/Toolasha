@@ -269,6 +269,18 @@ describe('trial abilities panel', () => {
         expect(auraGapText({ capturedCount: 3, rosterCount: 3 }).text).toBe('MISSING');
     });
 
+    test('no roster at all is not proof that nobody equips the aura', () => {
+        // `unseen === 0` was doing the work of "everybody has been captured",
+        // and an empty roster satisfies it trivially: nothing outstanding
+        // because there is nothing. Opening the panel outside a trial, or
+        // before the first roster message lands, drew every aura as a red
+        // MISSING titled "Every participant is captured and nobody equips it"
+        // — the exact false claim the partial wording exists to avoid.
+        const empty = auraGapText({ capturedCount: 0, rosterCount: 0, complete: false });
+        expect(empty.text).not.toBe('MISSING');
+        expect(empty.title).not.toContain('Every participant is captured');
+    });
+
     test('a duplicated aura names its redundant copies without double-counting', async () => {
         await feature.initialize('Cats');
         guildTrialAbilities.setRoster(['Alice', 'Bob']);
