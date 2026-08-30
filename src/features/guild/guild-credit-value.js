@@ -994,6 +994,21 @@ class GuildCreditValue {
         this._shrineWatchedHrids = null;
         /** Signature of the costs+holdings the last shrine render was built from */
         this._shrineSignature = null;
+        /**
+         * Bumped in `cleanup()` — a character switch tearing this feature down
+         * mid-poll. The "Missing Mats Marketplace" click handler below waits up
+         * to ~2s (polling for the marketplace tablist to render) before it
+         * builds tabs from the `missingMats` it closed over at click time. A
+         * switch landing inside that window leaves the handler's poll running:
+         * `cleanup()` has already cleared this instance's own tab-tracking
+         * state, but nothing stopped the poll itself, and when it finally finds
+         * a tabsContainer — now the *arriving* character's — it would still
+         * create tabs from the *departed* character's stale mats. Captured at
+         * the top of the handler and checked again once the poll resolves, the
+         * same generation-counter shape `production-arbitrage-board.js` uses
+         * against its own in-flight async work.
+         */
+        this._switchGeneration = 0;
     }
 
     initialize() {
@@ -2780,6 +2795,12 @@ class GuildCreditValue {
                     'linear-gradient(180deg,rgba(91,141,239,0.2) 0%,rgba(91,141,239,0.1) 100%)';
             });
             missingBtn.addEventListener('click', async () => {
+                // Captured before the poll below: a character switch mid-poll
+                // bumps this in `cleanup()`, and the check right after the poll
+                // is what stops the departed character's mats from becoming
+                // tabs in the arriving character's marketplace.
+                const switchGeneration = this._switchGeneration;
+
                 navigateToMarketplace(missingMats[0].itemHrid, 0);
 
                 // Tear down any previous shrine tab listener before creating new tabs
@@ -2800,6 +2821,11 @@ class GuildCreditValue {
                     if (referenceTab) break;
                 }
                 if (!referenceTab) return;
+                // The feature was torn down (or re-initialized for a different
+                // character) while this poll was running — the mats and the
+                // container it just found both belong to a character this
+                // click handler is no longer speaking for.
+                if (switchGeneration !== this._switchGeneration) return;
 
                 // Allow tabs to wrap and make the scroller visible
                 const scroller = tabsContainer.closest('[class*="MuiTabs-scroller"]');
@@ -2949,6 +2975,9 @@ class GuildCreditValue {
     }
 
     cleanup() {
+        // Invalidate any Missing Mats Marketplace click still polling for the
+        // marketplace tablist — see `_switchGeneration`'s docstring.
+        this._switchGeneration++;
         this.autofillManager.cleanup();
         this.unregisterObservers.forEach((fn) => fn());
         this.unregisterObservers = [];

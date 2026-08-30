@@ -102,13 +102,24 @@ vi.mock('../../utils/market-data.js', () => ({
         estimated: false,
     }),
 }));
+// `tabsContainer` is a mutable hook rather than a fixed `null`: the poll tests
+// need to make the marketplace tablist "appear" partway through the handler's
+// polling loop, the way a slow marketplace mount does in the real game.
+const marketplaceTabs = vi.hoisted(() => ({ tabsContainer: null, createdTabs: [], removeShrineCalls: 0 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: () => {},
-    createMaterialTab: () => document.createElement('button'),
+    createMaterialTab: (mat, referenceTab, onClick) => {
+        marketplaceTabs.createdTabs.push(mat);
+        const btn = document.createElement('button');
+        btn.addEventListener('click', (e) => onClick(e, mat));
+        return btn;
+    },
     removeMaterialTabs: () => {},
-    removeShrineMarketTabs: () => {},
+    removeShrineMarketTabs: () => {
+        marketplaceTabs.removeShrineCalls += 1;
+    },
     updateTabBadge: () => {},
-    visibleTabsContainer: () => null,
+    visibleTabsContainer: () => marketplaceTabs.tabsContainer,
 }));
 const autofill = vi.hoisted(() => ({ cleanup: vi.fn() }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
@@ -2465,6 +2476,119 @@ describe('the shrine cost block keeps up with the modal', () => {
         } finally {
             window.MutationObserver = OriginalObserver;
         }
+    });
+});
+
+describe('Missing Mats Marketplace click — character switch mid-poll', () => {
+    // Same colour/material shape as the block above; only the poll and the
+    // switch timing matter here.
+    const CREDIT = '/items/blue_guild_credit';
+    const BAR = '/items/blue_bar';
+
+    function buildShrineModal(required) {
+        document.body.innerHTML = '';
+        const modal = document.createElement('div');
+        modal.className = 'GuildPanel_guildModalContent__x';
+        modal.innerHTML = `
+            <div class="GuildPanel_level__x">Lv. 3</div>
+            <button>Upgrade</button>
+            <div class="GuildPanel_itemRequirements__x">
+                <div class="Item_itemContainer__x"><svg><use href="/sprite.svg#blue_guild_credit"></use></svg></div>
+                <div class="GuildPanel_inputCount__x">${required}</div>
+            </div>`;
+        document.body.appendChild(modal);
+        return modal;
+    }
+
+    const missingButton = (modal) =>
+        [...modal.querySelectorAll('.mwi-shrine-cost button')].find(
+            (b) => b.textContent === 'Missing Mats Marketplace'
+        );
+
+    beforeEach(() => {
+        game.settings = {};
+        game.prices = { [BAR]: { ask: 100, bid: 90 } };
+        game.clientData = {
+            itemDetailMap: {
+                [CREDIT]: { name: 'Blue Guild Credit' },
+                [BAR]: {
+                    name: 'Blue Bar',
+                    guildCreditConversions: [{ creditItemHrid: CREDIT, itemCount: 1, creditCount: 10 }],
+                },
+            },
+        };
+        game.inventory = [{ itemHrid: CREDIT, itemLocationHrid: '/item_locations/inventory', count: 0 }];
+        marketplaceTabs.tabsContainer = null;
+        marketplaceTabs.createdTabs = [];
+        marketplaceTabs.removeShrineCalls = 0;
+        guildCreditValue.initialize();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        guildCreditValue.cleanup();
+        game.listeners = {};
+        document.body.innerHTML = '';
+    });
+
+    /** A live marketplace tablist with the "My Listings" tab the poll looks for */
+    function marketplaceTabsContainer() {
+        const container = document.createElement('div');
+        const myListings = document.createElement('button');
+        myListings.textContent = 'My Listings';
+        container.appendChild(myListings);
+        return container;
+    }
+
+    test('a character switch mid-poll stops the departed character from getting tabs', async () => {
+        const modal = buildShrineModal(156_000); // 15,600 bars short of 0 held
+        game.observers['GuildPanel_guildModalContent'](modal);
+        const button = missingButton(modal);
+        expect(button).toBeTruthy();
+
+        const clickDone = (async () => {
+            button.click();
+            // The click handler's own `addEventListener('click', async () => …)`
+            // runs detached from this call; give the microtask queue a turn so
+            // it actually starts (captures `switchGeneration`) before the switch.
+            await Promise.resolve();
+        })();
+        await clickDone;
+
+        // Let a couple of poll ticks pass with no tablist yet — the ordinary
+        // "still loading" case — then the character switch lands: feature
+        // teardown runs (as feature-registry's disable() does) while the poll
+        // is still waiting.
+        await vi.advanceTimersByTimeAsync(300);
+        expect(marketplaceTabs.createdTabs).toHaveLength(0);
+        guildCreditValue.cleanup();
+
+        // Only now does the marketplace tablist for the *new* character
+        // finally mount — the stale poll is still running and about to find it.
+        marketplaceTabs.tabsContainer = marketplaceTabsContainer();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        // The poll found a tabsContainer, but the generation guard must have
+        // stopped it from building tabs out of the departed character's mats.
+        expect(marketplaceTabs.createdTabs).toHaveLength(0);
+    });
+
+    test('without a character switch, the same poll does build the tabs', async () => {
+        const modal = buildShrineModal(156_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        const button = missingButton(modal);
+
+        button.click();
+        await Promise.resolve();
+
+        await vi.advanceTimersByTimeAsync(300);
+        expect(marketplaceTabs.createdTabs).toHaveLength(0);
+
+        marketplaceTabs.tabsContainer = marketplaceTabsContainer();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(marketplaceTabs.createdTabs.length).toBeGreaterThan(0);
     });
 });
 
