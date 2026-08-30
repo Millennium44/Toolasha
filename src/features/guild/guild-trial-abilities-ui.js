@@ -472,10 +472,20 @@ function playerChip(name, index, names, now) {
     });
     chip.addEventListener('blur', (event) => {
         // Focus moving to something that is not a chip is the reader leaving
-        // the row; a chip vanishing under a redraw is not (no relatedTarget),
-        // and that case must keep the intent so the row can restore it
+        // the row; a chip vanishing under a redraw is not, and that case must
+        // keep the intent so the row can restore it. relatedTarget is null
+        // BOTH for a redraw and for a click on something unfocusable (or the
+        // tab losing focus) — the tell is whether the chip is still in the
+        // document a beat later: still connected means the reader left and
+        // every later refresh must not yank focus back into the row.
         const to = event.relatedTarget;
-        if (to && !to.dataset?.trialChip) pendingChipFocus = null;
+        if (to) {
+            if (!to.dataset?.trialChip) pendingChipFocus = null;
+            return;
+        }
+        setTimeout(() => {
+            if (chip.isConnected && pendingChipFocus?.name === name) pendingChipFocus = null;
+        }, 0);
     });
     chip.addEventListener('click', () => {
         const at = Date.now();

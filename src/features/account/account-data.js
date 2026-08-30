@@ -448,12 +448,19 @@ export async function refreshAccount(ttlMs = CACHE_TTL_MS) {
     if (cached && Date.now() - cached.at < ttlMs) return cached;
     if (inFlight) return inFlight;
 
+    // A clear during the read (a character switch) must not let this run's
+    // result reinstall itself — its currentId belongs to the departed
+    // character, and the Needs-attention card cross-joins it with live facts
+    const generation = readGeneration;
     inFlight = (async () => {
         try {
-            cached = await readAccount();
+            const account = await readAccount();
+            if (generation !== readGeneration) return cached;
+            cached = account;
             lastFailure = null;
             return cached;
         } catch (error) {
+            if (generation !== readGeneration) return cached;
             noteFailure('Could not read the account', error);
             return cached;
         } finally {
@@ -464,7 +471,10 @@ export async function refreshAccount(ttlMs = CACHE_TTL_MS) {
     return inFlight;
 }
 
+let readGeneration = 0;
+
 /** Forget what was read, so the next refresh goes to storage. */
 export function clearAccountCache() {
     cached = null;
+    readGeneration += 1;
 }

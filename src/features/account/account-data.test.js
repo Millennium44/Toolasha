@@ -305,6 +305,19 @@ describe('reading it all back out of storage', () => {
  * worth asserting are that it is said at all, and that it is said once.
  */
 describe('a storage read that fails', () => {
+    test('a clear during the read stops that read from reinstalling itself', async () => {
+        // A character switch clears the cache while a refresh is in flight;
+        // the departed character's result must not come back as current —
+        // the Needs-attention card cross-joins it with live facts
+        const inFlight = refreshAccount(0);
+        clearAccountCache();
+        await inFlight;
+
+        // The stale run resolved without caching; the next refresh reads fresh
+        db.broken = 'IndexedDB is closed';
+        expect(await refreshAccount(0)).toBeNull();
+    });
+
     test('is reported to the player, and the reason is kept for the panel', async () => {
         db.broken = 'IndexedDB is closed';
 

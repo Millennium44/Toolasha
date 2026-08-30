@@ -283,6 +283,11 @@ class TradeLedgerView {
         if (filterInput) filterInput.value = '';
 
         this.modal.style.display = 'flex';
+        // The last open's tables are that open's answer, not this one's — the
+        // log and the books both moved while the modal was closed, and drawing
+        // the old figures until the read lands showed real-looking stale
+        // numbers with nothing saying so
+        this.fillTimes = null;
         this.renderContent();
 
         // The listing log lives in IndexedDB and the rest of the modal does
@@ -301,8 +306,12 @@ class TradeLedgerView {
      * @returns {Promise<void>}
      */
     async loadFillTimes() {
+        // Two rapid opens race their reads; only the newest may draw — the
+        // same token discipline guild-trial-ledger-view keeps
+        const generation = (this._fillTimesGeneration = (this._fillTimesGeneration || 0) + 1);
         try {
             const listings = await estimatedListingAge.personalListings();
+            if (generation !== this._fillTimesGeneration) return;
             const fills = tradeLedgerStore.getRecords();
             const sources = {
                 book: (itemHrid, level, isSell) => estimatedListingAge.cachedTopOfBook(itemHrid, level, isSell),
@@ -319,12 +328,13 @@ class TradeLedgerView {
                 buy: analyzeFillTimes({ listings, fills, isSell: false, sources }),
             };
         } catch (error) {
+            if (generation !== this._fillTimesGeneration) return;
             console.error('[Trade Ledger View] Fill-time analysis failed:', error);
             this.fillTimes = { error: true };
         }
 
         // The modal may have been closed, or reopened, while the read was out
-        if (this.modal) this.renderFillTimes();
+        if (this.modal && generation === this._fillTimesGeneration) this.renderFillTimes();
     }
 
     /**
