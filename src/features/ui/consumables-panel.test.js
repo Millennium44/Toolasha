@@ -739,4 +739,39 @@ describe('the idle plan pins across a character switch', () => {
 
         expect(consumablesPanel._idleLoadoutName).toBe('Tank');
     });
+
+    test('a departing character’s slow sim-rate read does not land on top of a fast switch', async () => {
+        // _refreshStoredReadings has the identical shape and hazard as
+        // reloadIdlePins above: it re-reads character-scoped state (this time
+        // via a single Promise.all) every time the panel is shown, and
+        // character_switched's hide()+restore() calls show() again on every
+        // switch with no way to cancel a read already in flight.
+        store.data.simConsumableRates_char1 = { rate: 'char1-rate' };
+        store.data.simConsumableRates_char2 = { rate: 'char2-rate' };
+
+        const { default: mockedStorage } = await import('../../core/storage.js');
+        const realGet = mockedStorage.get;
+        let releaseDeparting;
+        const gate = new Promise((resolve) => {
+            releaseDeparting = resolve;
+        });
+        mockedStorage.get = async (key, name, fallback) => {
+            if (key === 'simConsumableRates_char1') await gate;
+            return realGet(key, name, fallback);
+        };
+
+        bus.characterId = 'char1';
+        const departingLoad = consumablesPanel._refreshStoredReadings();
+        await settled();
+
+        bus.characterId = 'char2';
+        await consumablesPanel._refreshStoredReadings();
+        expect(consumablesPanel._simRates).toEqual({ rate: 'char2-rate' });
+
+        releaseDeparting();
+        await departingLoad;
+        mockedStorage.get = realGet;
+
+        expect(consumablesPanel._simRates).toEqual({ rate: 'char2-rate' });
+    });
 });

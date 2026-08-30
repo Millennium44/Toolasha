@@ -191,6 +191,8 @@ class ConsumablesPanel {
          * character's name. Mirrors `consumable-target.js`'s `loadTarget`.
          */
         this._idlePinsGeneration = 0;
+        /** Same purpose as `_idlePinsGeneration`, for `_refreshStoredReadings()` */
+        this._storedReadingsGeneration = 0;
         // The same mechanism the missing-materials features use: park a quantity,
         // and the buy modal fills itself in when it appears
         this.autofill = createAutofillManager('Consumables');
@@ -238,6 +240,7 @@ class ConsumablesPanel {
      * not work.
      */
     async _refreshStoredReadings() {
+        const started = (this._storedReadingsGeneration += 1);
         try {
             const [rates, byZone, ledger, runs, profiles] = await Promise.all([
                 readScoped('simConsumableRates', 'combatExport', null).catch(() => null),
@@ -246,6 +249,10 @@ class ConsumablesPanel {
                 storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => []),
                 storage.getJSON('profile_list', 'combatExport', []).catch(() => []),
             ]);
+            // A newer call — this panel shown again for a different character
+            // before this one's reads landed — already applied its own answer;
+            // this one belongs to a character the panel has since left
+            if (started !== this._storedReadingsGeneration) return;
             const changed =
                 JSON.stringify(rates) !== JSON.stringify(this._simRates) ||
                 JSON.stringify(byZone) !== JSON.stringify(this._simRatesByZone) ||
