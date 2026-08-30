@@ -639,6 +639,23 @@ function drawPlanner(body) {
     }
 }
 
+// `simple-panel.js`'s own character-switch handling reopens a panel that was
+// left open by calling `api.show()` directly — it has no idea this panel's
+// body depends on `state`, so it never goes through `openTrialLedgerPanel()`
+// (and therefore never calls `refreshLedgerView()`). Left alone, a panel (or
+// the overlay row, which reads the same `state` with no refresh trigger of
+// its own) kept drawing the *departed* guild's cycles, roster and kits after
+// a character or guild switch, until the window selector was touched or the
+// panel was closed and reopened by hand. `resetLedgerView()` first, so a
+// slow read landing after a second switch cannot be mistaken for the first
+// switch's answer (its `refreshGeneration` guard already covers that), and so
+// the departed guild's rows do not sit on screen for however long the read
+// takes.
+dataManager.on('character_switched', () => {
+    resetLedgerView();
+    return refreshLedgerView();
+});
+
 export const guildTrialLedgerPanel = createPanel({
     id: 'guildTrialLedger',
     title: 'Trial Ledger',

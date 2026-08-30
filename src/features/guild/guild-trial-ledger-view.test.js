@@ -19,6 +19,13 @@ const world = vi.hoisted(() => ({
     cycles: [],
     loadouts: { players: {} },
     rows: [],
+    // The real handler `simple-panel.js` registers at import time, captured
+    // so a test can fire it the way a genuine character switch would.
+    listeners: {},
+    // Whether `reopenIfLeftOpen` should behave as if this panel was left open
+    // across the switch — the panel-shell reopen path a character switch
+    // takes only when it finds something to reopen.
+    reopenOnSwitch: false,
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100, getSetting: () => true } }));
@@ -26,7 +33,9 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => 7,
         getInitClientData: () => ({ abilityDetailMap: {} }),
-        on: () => {},
+        on: (event, handler) => {
+            (world.listeners[event] ||= []).push(handler);
+        },
         off: () => {},
     },
 }));
@@ -37,7 +46,9 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: () => {},
     saveGeometry: () => {},
     saveOpenState: async () => {},
-    reopenIfLeftOpen: async () => {},
+    reopenIfLeftOpen: async (id, cb) => {
+        if (world.reopenOnSwitch) await cb();
+    },
     markPanelInteracted: () => {},
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: (definition) => world.rows.push(definition) }));
@@ -115,6 +126,7 @@ beforeEach(() => {
     world.members = [];
     world.loadouts = { players: {} };
     world.rows = [];
+    world.reopenOnSwitch = false;
     world.cycles = [
         cycle(WEEK, 2, {
             alice: {
@@ -318,6 +330,31 @@ describe('the panel', () => {
         expect(text).toContain('Attendance and contribution');
         expect(text).toContain('Roster composition');
         expect(text).toContain('Alice');
+    });
+
+    // simple-panel.js reopens a panel left open across a character switch by
+    // calling `api.show()` directly, bypassing `openTrialLedgerPanel()` (and
+    // therefore `refreshLedgerView()`) entirely. Nothing in this file listens
+    // for the switch itself, so the panel keeps drawing off `state.cycles` —
+    // the departed guild's own ledger — until something else happens to call
+    // `refreshLedgerView()` again (the window selector, or a manual reopen
+    // through the row).
+    test('a character switch does not leave the panel showing the departed guild’s ledger', async () => {
+        await refreshLedgerView();
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Alice');
+
+        // The arriving guild is a different one entirely
+        world.guildName = 'Testmaxxing';
+        world.cycles = [cycle(WEEK, 1, { zed: { name: 'Zed', trials: 1, damage: 500 } })];
+        world.reopenOnSwitch = true;
+
+        await world.listeners.character_switched?.[0]?.();
+
+        const text = guildTrialLedgerPanel.panel.textContent;
+        expect(text).toContain('Testmaxxing');
+        expect(text).not.toContain('Alice');
+        expect(text).toContain('Zed');
     });
 
     test('the composition box starts from the last recorded cycle', async () => {
