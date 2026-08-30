@@ -83,6 +83,7 @@ class InventoryCountDisplay {
         this.isInitialized = false;
         this.DEBOUNCE_DELAY = 300;
         this.debounceTimer = null;
+        this.unregisterSettingChange = null;
     }
 
     initialize() {
@@ -90,7 +91,7 @@ class InventoryCountDisplay {
 
         this.isInitialized = true;
 
-        config.onSettingChange('inventoryCountDisplay', (enabled) => {
+        this.unregisterSettingChange = config.onSettingChange('inventoryCountDisplay', (enabled) => {
             if (enabled) {
                 this._enable();
             } else {
@@ -305,6 +306,10 @@ class InventoryCountDisplay {
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     disable() {
+        if (this.unregisterSettingChange) {
+            this.unregisterSettingChange();
+            this.unregisterSettingChange = null;
+        }
         this._disable();
         this.isInitialized = false;
     }
