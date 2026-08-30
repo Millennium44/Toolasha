@@ -13,8 +13,21 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const hooks = vi.hoisted(() => ({ battle: null, newBattle: null, areaCallback: null }));
 
+// A faithful-enough stand-in for config's onSettingChange: real subscribe/
+// unsubscribe bookkeeping, so a test can prove a listener from a torn-down
+// `initialize()` either does or does not still fire.
+const settingListeners = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: vi.fn(() => true), onSettingChange: vi.fn(), Z_HUD: 50 },
+    default: {
+        getSetting: vi.fn(() => true),
+        onSettingChange: vi.fn((key, callback) => {
+            (settingListeners[key] ??= []).push(callback);
+            return () => {
+                settingListeners[key] = (settingListeners[key] || []).filter((cb) => cb !== callback);
+            };
+        }),
+        Z_HUD: 50,
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -102,6 +115,30 @@ afterEach(() => {
     combatText.cleanup();
     vi.restoreAllMocks();
     document.body.innerHTML = '';
+    for (const key of Object.keys(settingListeners)) delete settingListeners[key];
+});
+
+describe('cleanup unregisters the setting-change listeners it registered', () => {
+    test('a setting change after cleanup does not resurrect the feature', async () => {
+        const websocketHook = (await import('../../core/websocket.js')).default;
+
+        // initialize() (in beforeEach) subscribed applySettings to both
+        // settings; cleanup() tears the feature down the way a character
+        // switch or a toggle-off does
+        combatText.cleanup();
+        websocketHook.on.mockClear();
+
+        // Something else changes the Floating/Scrolling setting afterwards —
+        // another character's config reloading, or the settings panel firing
+        // its change event a tick late. A listener still on config's list
+        // would see this and, finding `handler` null, resubscribe: the
+        // feature comes back to life with no `initialize()` behind it, and
+        // every character switch since boot would have pushed one more copy
+        // of the same callback onto config's list.
+        for (const callback of settingListeners.combatText_floating || []) callback(true);
+
+        expect(websocketHook.on).not.toHaveBeenCalled();
+    });
 });
 
 describe('the unit tiles are looked up once, not per tick', () => {

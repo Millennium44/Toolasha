@@ -315,14 +315,25 @@ function applySettings() {
     }
 }
 
+/** The unregister functions `onSettingChange` handed back, undone in `cleanup()`. */
+let unregisterSettingListeners = [];
+
 export default {
     name: 'Combat Text',
     initialize: () => {
         applySettings();
-        config.onSettingChange(FLOATING_SETTING, applySettings);
-        config.onSettingChange(SCROLLING_SETTING, applySettings);
+        unregisterSettingListeners = [
+            config.onSettingChange(FLOATING_SETTING, applySettings),
+            config.onSettingChange(SCROLLING_SETTING, applySettings),
+        ];
     },
     cleanup: () => {
+        // Undone first: a setting change arriving after this point must not
+        // find `applySettings` still on config's list and resubscribe a
+        // feature that was just torn down — see `config.onSettingChange`'s
+        // own note about the same mistake in `custom-tabs-ui`.
+        unregisterSettingListeners.forEach((unregister) => unregister());
+        unregisterSettingListeners = [];
         if (handler) webSocketHook.off('battle_updated', handler);
         if (newBattleHandler) webSocketHook.off('new_battle', newBattleHandler);
         unregisterArea?.();
