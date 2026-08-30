@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Best-level tracker counts same-update first-try wins
+
+A first-try labyrinth win whose entry and clear land in one server update was skipped by the best-level tracker — its entered-check only looked at the previous snapshot. It now accepts the current update's entry count as proof of entry, the same guard the outcome log already used.
+
 ### CSV exports close two formula doors, and formatters stop printing "-0"
 
 Exported text cells beginning with + or - are now escaped like the other formula-starting characters spreadsheets evaluate (signed numbers are untouched). And a small negative that rounds to zero no longer displays as "-0" — six formatters decided the sign before rounding the magnitude.
