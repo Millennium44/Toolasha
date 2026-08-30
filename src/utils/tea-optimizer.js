@@ -794,26 +794,38 @@ export function getSkillActionsForDisplay(skillName, playerLevel) {
 /**
  * Calculate tea consumption cost per hour for a tea combination
  * Uses the same pricing logic as the tile calculation
+ *
+ * A tea with no real book price (`getItemPriceInfo` reports `null` or an
+ * `estimated` value-map figure, the same "not a quote anybody would trade
+ * at" bar `actionHasUnpricedMaterials` holds action items to) still gets
+ * charged at `getItemPrice(...) || 0`, i.e. free — matching the tile
+ * calculators' own numeric convention for an unpriced item. `hasMissingPrices`
+ * says so, rather than letting a combo that leans on a free-looking tea win
+ * the gold ranking with no indication the number rests on a guess.
+ *
  * @param {Array<string>} teaHrids - Array of tea item HRIDs
  * @param {number} drinkConcentration - Drink concentration as decimal
- * @returns {{ total: number, breakdown: Array<{hrid: string, name: string, unitsPerHour: number, unitPrice: number, costPerHour: number}> }}
+ * @returns {{ total: number, breakdown: Array<{hrid: string, name: string, unitsPerHour: number, unitPrice: number, costPerHour: number}>, hasMissingPrices: boolean }}
  */
 function calculateTeaCostPerHour(teaHrids, drinkConcentration) {
     const gameData = dataManager.getInitClientData();
     const drinksPerHour = calculateDrinksPerHour(drinkConcentration);
     const breakdown = [];
     let total = 0;
+    let hasMissingPrices = false;
 
     for (const teaHrid of teaHrids) {
         // Use getItemPrice with 'profit' context and 'buy' side to match tile calculation
-        const unitPrice = getItemPrice(teaHrid, { context: 'profit', side: 'buy' }) || 0;
+        const priceInfo = getItemPriceInfo(teaHrid, { context: 'profit', side: 'buy' });
+        if (priceInfo.price === null || priceInfo.estimated) hasMissingPrices = true;
+        const unitPrice = priceInfo.price || 0;
         const costPerHour = unitPrice * drinksPerHour;
         const name = gameData?.itemDetailMap?.[teaHrid]?.name || teaHrid;
         breakdown.push({ hrid: teaHrid, name, unitsPerHour: drinksPerHour, unitPrice, costPerHour });
         total += costPerHour;
     }
 
-    return { total, breakdown };
+    return { total, breakdown, hasMissingPrices };
 }
 
 /**
@@ -1090,6 +1102,12 @@ export function findOptimalTeas(
                 });
             }
         }
+
+        // The combo's own tea cost is subtracted from every counted action's score, so a tea
+        // with no real book price (see calculateTeaCostPerHour) is exactly as much of a "this
+        // number rests on a guess" case as an unpriced action material — but only when the combo
+        // actually counted for something; a wholly unprofitable combo does not become the pick.
+        if (goal === 'gold' && profitableCount > 0 && teaCostPerHour.hasMissingPrices) hasMissingPrices = true;
 
         // For gold, average across profitable actions only; for XP, average across all
         const avgDivisor = goal === 'gold' ? profitableCount || 1 : alchemyContext ? 1 : actions.length;
@@ -1480,7 +1498,9 @@ export function calculateSkillPerformance(skillName, equipment, teaHrids, player
         if (gold > 0) {
             totalGold += gold;
             goldCount++;
-            if (actionHasUnpricedMaterials(action, isGathering, gameData)) hasMissingPrices = true;
+            if (actionHasUnpricedMaterials(action, isGathering, gameData) || teaCost.hasMissingPrices) {
+                hasMissingPrices = true;
+            }
         }
     }
 

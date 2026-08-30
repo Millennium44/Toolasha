@@ -380,3 +380,42 @@ describe('calculateSkillPerformance — alchemy', () => {
         expect(result.goldPerHour).toBe(555);
     });
 });
+
+describe('an unpriced tea is flagged rather than charged as free', () => {
+    // calculateTeaCostPerHour billed a tea with no real book price at
+    // `getItemPrice(...) || 0` — i.e. free — with no signal that the number
+    // rests on a guess, unlike an unpriced action material
+    // (actionHasUnpricedMaterials), which the surrounding gold figure is
+    // already careful to flag. A combo that only clears a profit because its
+    // tea reads as free could win the ranking with no indication of that.
+    beforeEach(() => {
+        state.gameData.itemDetailMap['/items/unpriced_tea'] = {};
+        state.gameData.actionDetailMap = {
+            '/actions/cheesesmithing/make_cheese': {
+                type: '/action_types/cheesesmithing',
+                name: 'Make Cheese',
+                levelRequirement: { level: 1 },
+                inputItems: [{ itemHrid: '/items/cheap_input', count: 1 }],
+                outputItems: [{ itemHrid: '/items/pricey_output', count: 1 }],
+            },
+        };
+        // The tea itself is deliberately left out of prices.byHrid — getItemPriceInfo
+        // reports it as null, matching "nobody has ever listed this"
+        prices.byHrid = { '/items/cheap_input': 1, '/items/pricey_output': 1000 };
+    });
+
+    test('calculateSkillPerformance flags a profitable action whose tea cost is unpriced', () => {
+        const result = calculateSkillPerformance('cheesesmithing', new Map(), ['/items/unpriced_tea'], 10);
+
+        expect(result.goldPerHour).toBeGreaterThan(0); // the action is genuinely profitable either way
+        expect(result.hasMissingPrices).toBe(true);
+    });
+
+    test('a fully priced tea does not raise the flag', () => {
+        prices.byHrid['/items/unpriced_tea'] = 5;
+
+        const result = calculateSkillPerformance('cheesesmithing', new Map(), ['/items/unpriced_tea'], 10);
+
+        expect(result.hasMissingPrices).toBe(false);
+    });
+});
