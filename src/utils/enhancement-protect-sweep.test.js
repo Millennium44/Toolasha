@@ -15,7 +15,10 @@ import {
     clearProtectSweepMemo,
     chooseProtectionOptions,
     expectedRunXp,
+    cheapestProtectPlan,
+    protectFromLevels,
     NO_PROTECTION,
+    MIN_PROTECT_FROM,
 } from './enhancement-protect-sweep.js';
 
 beforeAll(() => {
@@ -215,5 +218,61 @@ describe('expectedRunXp', () => {
         // +0: success 1.4·1·(10+10)=28, fail 2 → 2 visits × (0.5·28 + 0.5·2) = 30
         // +1: success 1.4·2·20=56, fail 5 → 1 visit × 56 = 56
         expect(expectedRunXp(calc, { xpBaseLevel: 10 })).toBeCloseTo(86, 9);
+    });
+});
+
+describe('the protect-from search range', () => {
+    test('runs 2 to the target, and never bounds itself at the start level', () => {
+        expect(MIN_PROTECT_FROM).toBe(2);
+        expect(protectFromLevels(6)).toEqual([2, 3, 4, 5, 6]);
+        // +1 has no protectable failure: a failure there lands at +0 either way
+        expect(protectFromLevels(1)).toEqual([]);
+
+        // The search does not shrink when the run starts higher. Protecting from
+        // below the start is not a wasted setting — the first failure drops you
+        // under it, and the protection is what stops the next one going to +0.
+        const high = sweep({ startLevel: 4 });
+        expect(high.rows.slice(1).map((row) => row.protectFrom)).toEqual([2, 3, 4, 5, 6]);
+    });
+});
+
+describe('cheapestProtectPlan', () => {
+    const plan = (overrides = {}) =>
+        cheapestProtectPlan({
+            chain,
+            targetLevel: 6,
+            materialCostPerAttempt: 1000,
+            protectionOptions: [
+                { itemHrid: '/items/mirror_of_protection', name: 'Mirror', price: 5000, selected: true },
+            ],
+            ...overrides,
+        });
+
+    test('is the cheapest row of the sweep it wraps', () => {
+        const { rows, cheapestIndex } = sweep({ perActionTime: undefined, xpBaseLevel: undefined });
+        const cheapest = rows[cheapestIndex];
+        const one = plan();
+        expect(one.cost).toBeCloseTo(cheapest.expectedCost, 6);
+        expect(one.protectFrom).toBe(cheapest.protectFrom);
+    });
+
+    test('starting higher is never dearer than starting lower', () => {
+        const costs = [0, 1, 2, 3, 4, 5].map((startLevel) => plan({ startLevel }).cost);
+        for (let i = 1; i < costs.length; i++) expect(costs[i]).toBeLessThanOrEqual(costs[i - 1] + 1e-6);
+    });
+
+    test('a run nothing about which can be priced is unknown, not free', () => {
+        expect(plan({ materialCostPerAttempt: 0, protectionOptions: [] })).toBeNull();
+    });
+
+    test('carries the caller’s unpriced-material flag rather than hiding it', () => {
+        expect(plan({ hasMissingPrices: true }).hasMissingPrices).toBe(true);
+        expect(plan().hasMissingPrices).toBe(false);
+    });
+
+    test('with no protection to buy there is only the ruinous unprotected run', () => {
+        const bare = plan({ protectionOptions: [] });
+        expect(bare.protectFrom).toBe(NO_PROTECTION);
+        expect(bare.cost).toBeGreaterThan(plan().cost);
     });
 });

@@ -30,6 +30,35 @@ export const MIRROR_OF_PROTECTION_HRID = '/items/mirror_of_protection';
 export const NO_PROTECTION = 0;
 
 /**
+ * The lowest protect-from level the game will accept.
+ *
+ * A failure at +1 drops to +0, which is the same place an unprotected failure
+ * lands, so there is nothing for a protection item to absorb and the game does
+ * not offer the setting. The search therefore starts at 2 — never at 0, and
+ * never at the level the run happens to start from.
+ *
+ * That last point cost the savings card a bug: it used to bound the search
+ * below at the start level, which forbade the cheap strategies to exactly the
+ * runs that start high. A protect-from below where you begin is not a wasted
+ * setting, because the first failure drops you *below* the start and from there
+ * the protection is what stops the next one sending you to +0. So a +5 → +7 run
+ * could only protect from +5 while a +4 → +7 run was allowed to protect from
+ * +4, and the card reported that starting a level lower was cheaper.
+ */
+export const MIN_PROTECT_FROM = 2;
+
+/**
+ * Every protect-from level a target admits, cheapest search first.
+ * @param {number} targetLevel - Target enhancement level
+ * @returns {number[]} `[2, 3, …, targetLevel]`, empty below +2
+ */
+export function protectFromLevels(targetLevel) {
+    const levels = [];
+    for (let from = MIN_PROTECT_FROM; from <= targetLevel; from++) levels.push(from);
+    return levels;
+}
+
+/**
  * Expected XP a run earns, summed over the expected visits to every level.
  *
  * Same formula the panel's costs-by-level table uses: a success at +i is worth
@@ -188,13 +217,18 @@ export function sweepProtectFrom({
 
     const rows = [buildRow(solve(NO_PROTECTION), NO_PROTECTION, null)];
 
-    if (target >= 2 && protectionOptions.length > 0) {
+    // Protected rows exist only when there is a protection item with a price.
+    // Pricing an unpriceable protection at zero would make every protected
+    // strategy free by construction and win every comparison on a quote nobody
+    // has a basis for — see chooseProtectionOptions, which drops unpriced options.
+    if (target >= MIN_PROTECT_FROM && protectionOptions.length > 0) {
+        const levels = protectFromLevels(target);
         const solves = new Map();
-        for (let protectFrom = 2; protectFrom <= target; protectFrom++) {
+        for (const protectFrom of levels) {
             solves.set(protectFrom, solve(protectFrom));
         }
         for (const option of protectionOptions) {
-            for (let protectFrom = 2; protectFrom <= target; protectFrom++) {
+            for (const protectFrom of levels) {
                 rows.push(buildRow(solves.get(protectFrom), protectFrom, option));
             }
         }
@@ -210,6 +244,56 @@ export function sweepProtectFrom({
     });
 
     return { rows, cheapestIndex, bestGoldPerXpIndex };
+}
+
+/**
+ * What one run costs, on the cheapest protect-from plan.
+ *
+ * The enhancing panel wants the whole column — that is `sweepProtectFrom`. Every
+ * other surface wants one number: what does it cost me to take *this* piece from
+ * where it is to where I want it. That question was being answered by three
+ * separate sweeps (the item tooltip, the sim's upgrade advisor, the inventory
+ * savings card) which had drifted apart; this is the one answer they now share.
+ *
+ * ## From where it is now, always
+ *
+ * The run is solved from `startLevel`, not priced as the difference between two
+ * runs from +0. The advisor used to do the latter — `fullCost[target] −
+ * fullCost[start]` — and the surprise, recorded in `enhancement-cost-parity.test.js`,
+ * is that the two are the *same number* almost everywhere: an item cannot skip a
+ * level, so every path from +0 to +7 passes through +4 and the expected attempts
+ * split exactly at the crossing. They part only under Blessed Tea, whose double
+ * jump can vault the start level; there the difference undercounts the real run
+ * by about a per cent. Solving from the start level is right in both cases and
+ * is the only form that can say what it means.
+ *
+ * ## Unpriceable is not free
+ *
+ * `null` when nothing about the run can be priced, and `hasMissingPrices` when
+ * part of it could not be. A run quoted at 0 goes to the top of every value
+ * ranking it appears in, which is the failure mode this shape exists to prevent.
+ *
+ * @param {Object} args - Same shape as {@link sweepProtectFrom}, plus:
+ * @param {boolean} [args.hasMissingPrices=false] - Whether the caller's material
+ *   tally left something unpriced (from `perAttemptMaterialCost`)
+ * @returns {{cost: number, protectFrom: number, protectionItemHrid: string|null,
+ *   attempts: number, protections: number, hasMissingPrices: boolean}|null} The
+ *   cheapest plan, or null when the run cannot be priced at all
+ */
+export function cheapestProtectPlan({ hasMissingPrices = false, ...args }) {
+    const { rows, cheapestIndex } = sweepProtectFrom(args);
+    const row = rows[cheapestIndex];
+    // Nothing priced at all: not a free run, an unknown one
+    if (!row || !(row.expectedCost > 0)) return null;
+
+    return {
+        cost: row.expectedCost,
+        protectFrom: row.protectFrom,
+        protectionItemHrid: row.itemHrid,
+        attempts: row.attempts,
+        protections: row.protections,
+        hasMissingPrices: Boolean(hasMissingPrices),
+    };
 }
 
 const MEMO_LIMIT = 16;
