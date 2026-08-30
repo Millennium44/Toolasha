@@ -140,6 +140,9 @@ vi.mock('../../core/config.js', () => ({
         onSettingChange: (key, cb) => {
             listeners[key] = listeners[key] || [];
             listeners[key].push(cb);
+            return () => {
+                listeners[key] = (listeners[key] || []).filter((registered) => registered !== cb);
+            };
         },
     },
 }));
@@ -447,6 +450,24 @@ describe('the header', () => {
 
         // Cheese is held, the hat is not
         expect(watchlistPanel.headerCount.textContent).toBe('1 / 2');
+    });
+});
+
+describe('cleanup unregisters the setting-change listeners it registered', () => {
+    test('a character-switch cycle does not accumulate listeners', () => {
+        // Every character switch runs cleanup() then initialize() again
+        // (feature-registry.js). If the unregister functions onSettingChange
+        // hands back are discarded, each cycle leaves one more copy of the
+        // same callback on config's per-key list.
+        watchlist.cleanup();
+        for (let i = 0; i < 3; i++) {
+            watchlist.initialize();
+            watchlist.cleanup();
+        }
+        watchlist.initialize();
+
+        expect(listeners.watchlist_menuButton || []).toHaveLength(1);
+        expect(listeners.watchlist_inventoryDots || []).toHaveLength(1);
     });
 });
 

@@ -1015,6 +1015,9 @@ function applyMenuButtonSetting() {
     }
 }
 
+/** The unregister functions `onSettingChange` handed back, undone in `cleanup()`. */
+let unregisterSettingListeners = [];
+
 export default {
     name: 'Watchlist',
     initialize: () => {
@@ -1025,17 +1028,21 @@ export default {
 
         inventoryBadgeManager.registerProvider('watchlist-dot', markTrackedItem, 150);
         applyMenuButtonSetting();
-        config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting);
-        // Turning the dots off has to clear the ones already drawn; turning
-        // them on has to redraw without waiting for the grid to change
-        config.onSettingChange(DOTS_SETTING, () => {
-            if (!config.getSetting(DOTS_SETTING)) {
-                document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
-            }
-            inventoryBadgeManager.invalidateCache?.();
-        });
+        unregisterSettingListeners = [
+            config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting),
+            // Turning the dots off has to clear the ones already drawn; turning
+            // them on has to redraw without waiting for the grid to change
+            config.onSettingChange(DOTS_SETTING, () => {
+                if (!config.getSetting(DOTS_SETTING)) {
+                    document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
+                }
+                inventoryBadgeManager.invalidateCache?.();
+            }),
+        ];
     },
     cleanup: () => {
+        unregisterSettingListeners.forEach((unregister) => unregister());
+        unregisterSettingListeners = [];
         inventoryBadgeManager.unregisterProvider('watchlist-dot');
         document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
         detachMenuObserver?.();
