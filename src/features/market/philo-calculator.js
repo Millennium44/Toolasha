@@ -24,6 +24,7 @@ import {
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { settingsUI as sharedSettingsUI } from '../../utils/bundle-bridge.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -219,6 +220,17 @@ class PhiloCalculator {
 
         this.isInitialized = true;
         this.addSettingsButton();
+
+        // A `when` as well as a registration, because the calculator has no
+        // toggle of its own to no-op when switched off: openModal() would
+        // happily draw the modal for a feature the player has turned off,
+        // and the setting can go off without disable() being run
+        registerCommand({
+            name: 'Philo Gamba',
+            hint: 'Enhancing gamba profitability, costed against the market',
+            run: () => this.openModal(),
+            when: () => config.getSetting('market_showPhiloCalculator') === true,
+        });
     }
 
     /**
@@ -226,6 +238,7 @@ class PhiloCalculator {
      */
     disable() {
         try {
+            unregisterCommand('Philo Gamba');
             this.closeModal();
             this.isInitialized = false;
         } catch (error) {

@@ -38,6 +38,7 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import { calculateStarfruitLoop, cowbellPricing, loopWarnings, offlineWindow } from './starfruit-loop.js';
 import { loadOverrides, loadSnapshot, saveSnapshot, setOverride } from './ironcow-store.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import ironCowRuntime from './ironcow-runtime.js';
 // Side effect only: registers the "Iron Bell next step" overlay tile. Imported
 // here — rather than where the rest of the overlay's rows are wired in, a
@@ -238,10 +239,17 @@ class IronCowFarmPanel {
     async initialize() {
         await this.load();
         reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
+
+        registerCommand({
+            name: 'Iron Bell Farming',
+            hint: 'The cowbell plan, and what it earns',
+            run: () => this.toggle(),
+        });
     }
 
     /** Feature-registry teardown */
     disable() {
+        unregisterCommand('Iron Bell Farming');
         this._remove();
     }
 

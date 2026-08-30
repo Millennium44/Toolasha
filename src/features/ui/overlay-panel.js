@@ -97,6 +97,7 @@ import {
     emptyContract,
     EMPTY_POLICY,
 } from '../../utils/overlay-rows.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { holdEscapeWhile } from '../../utils/panel-escape.js';
@@ -530,10 +531,17 @@ class OverlayPanel {
         // Reopens itself where you left it — an overlay you have to summon after
         // every refresh is an overlay you stop using
         if (this.settings.open) this.show();
+
+        registerCommand({
+            name: 'Overlay',
+            hint: 'The tile overlay',
+            run: () => this.toggle(),
+        });
     }
 
     disable() {
         try {
+            unregisterCommand('Overlay');
             this._removePanel();
             this.isInitialized = false;
         } catch (error) {

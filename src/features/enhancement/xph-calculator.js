@@ -20,6 +20,7 @@ import {
     buildEnhancementTooltipHTML,
 } from './tooltip-enhancement.js';
 import { getTooltipEnhancementParams } from './enhancement-params-source.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
 const BTN_CLASS = 'mwi-xph-calc-btn';
@@ -136,6 +137,14 @@ class XPHCalculator {
 
         document.querySelectorAll('[class*="EnhancingPanel_enhancingPanel"]').forEach((panel) => {
             this._injectButton(panel);
+        });
+
+        // The injected button only exists while the enhancing panel is on
+        // screen, so off that page there was no way to reach this at all
+        registerCommand({
+            name: 'Enhancing XP/hr',
+            hint: 'Enhancing experience and cost per hour',
+            run: () => this._toggle(),
         });
     }
 
@@ -531,6 +540,7 @@ class XPHCalculator {
 
     disable() {
         try {
+            unregisterCommand('Enhancing XP/hr');
             this.unregisterHandlers.forEach((fn) => fn());
             this.unregisterHandlers = [];
             this.timerRegistry.clearAll();

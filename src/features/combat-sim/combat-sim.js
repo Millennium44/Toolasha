@@ -8,6 +8,7 @@ import domObserver from '../../core/dom-observer.js';
 import combatSimUI from './combat-sim-ui.js';
 import { cancelSimulation } from './combat-sim-runner.js';
 import { cancelAllZonesSimulation } from './all-zones-runner.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const BUTTON_CLASS = 'toolasha-combat-sim-btn';
 
@@ -32,6 +33,12 @@ class CombatSim {
         this.isInitialized = true;
 
         combatSimUI.buildPanel();
+
+        registerCommand({
+            name: 'Combat Simulator',
+            hint: 'Simulate a fight',
+            run: () => combatSimUI.toggle(),
+        });
 
         // Watch for the combat panel appearing and inject the button
         const unregister = domObserver.onClass('CombatSimButton', 'CombatPanel_combatPanel', (node) => {
@@ -86,6 +93,7 @@ class CombatSim {
      */
     disable() {
         try {
+            unregisterCommand('Combat Simulator');
             for (const unregister of this.unregisterHandlers) {
                 unregister();
             }

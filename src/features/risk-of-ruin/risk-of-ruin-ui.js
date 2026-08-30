@@ -31,6 +31,7 @@ import {
 } from '../../utils/risk-of-ruin-adapters/dungeon-chest-adapter.js';
 import { buildAlchemyTransmuteModel } from '../../utils/risk-of-ruin-adapters/alchemy-adapter.js';
 import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhancement-adapter.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
@@ -119,6 +120,14 @@ class RiskOfRuinUI {
         // and on knowing which character logged in, and the panel has no
         // business being held closed until both answer.
         reopenIfLeftOpen(PANEL_KEY, () => this._setPanelOpen(true, { remember: false }));
+
+        // Both ways in are places rather than gestures — a corner launcher
+        // the player can switch off, and a tab beside Inventory
+        registerCommand({
+            name: 'Risk of Ruin',
+            hint: 'Odds of busting a bankroll, per activity',
+            run: () => this._toggle(),
+        });
     }
 
     /**
@@ -1112,6 +1121,7 @@ class RiskOfRuinUI {
     }
 
     disable() {
+        unregisterCommand('Risk of Ruin');
         this.timerRegistry.clearAll();
         this.tabUnregister?.();
         this.tabUnregister = null;

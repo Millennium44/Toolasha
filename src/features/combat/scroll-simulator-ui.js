@@ -12,6 +12,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import scrollSimulator from './scroll-simulator.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import { SCROLL_BUFF_ITEMS, SCROLL_BUFF_LABELS } from '../../utils/scroll-buff-values.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const BUTTON_ID = 'toolasha-scroll-sim-btn';
 const POPUP_ID = 'toolasha-scroll-sim-popup';
@@ -375,6 +376,12 @@ function initialize() {
         if (navButtons) injectButton(navButtons);
     });
 
+    registerCommand({
+        name: 'Scroll Simulator',
+        hint: 'What your scroll and buff set is worth, per loadout',
+        run: () => openDefaultsPopup(),
+    });
+
     unregisterSettingChange = config.onSettingChange('simulateScrollEffects', (enabled) => {
         if (!enabled) {
             document.getElementById(BUTTON_ID)?.remove();
@@ -391,6 +398,7 @@ function openDefaultsPopup() {
 }
 
 function disable() {
+    unregisterCommand('Scroll Simulator');
     if (unregisterSettingChange) {
         unregisterSettingChange();
         unregisterSettingChange = null;

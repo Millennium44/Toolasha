@@ -22,6 +22,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { visibleTabsContainer, navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** How many weekly summary lines the modal shows. */
 const WEEKS_SHOWN = 8;
@@ -129,6 +130,12 @@ class TradeLedgerView {
 
         this.isInitialized = true;
         this.addMarketplaceTab();
+
+        registerCommand({
+            name: 'Trade Ledger',
+            hint: 'What your marketplace trades earned, by week and by item',
+            run: () => this.openModal(),
+        });
     }
 
     /**
@@ -900,6 +907,7 @@ class TradeLedgerView {
      */
     disable() {
         try {
+            unregisterCommand('Trade Ledger');
             if (this.tabCleanupObserver) {
                 this.tabCleanupObserver();
                 this.tabCleanupObserver = null;

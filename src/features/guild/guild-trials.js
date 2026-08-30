@@ -181,6 +181,7 @@ import {
     tilePersonalStats,
 } from './guild-trials-store.js';
 import { FOREIGN_CYCLE_REASON, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** Class every injected element carries, so cleanup is one query */
 const CSS_CLASS = 'mwi-trial-info';
@@ -2318,6 +2319,12 @@ class GuildTrials {
     async initialize() {
         if (this.initialized) return;
         if (!config.getSetting('guildTrialsInfo', true)) return;
+
+        registerCommand({
+            name: 'Trial Damage',
+            hint: 'Damage and healing per player, ranked',
+            run: () => guildTrialScoreboard.toggle(),
+        });
 
         // Whatever a previous life left behind is not this one's. The merge
         // below is for readings taken by a tick that beat the load, not for a
@@ -4565,6 +4572,7 @@ class GuildTrials {
     }
 
     cleanup() {
+        unregisterCommand('Trial Damage');
         for (const unregister of this.unregister) unregister();
         this.unregister = [];
         this.timers.clearAll();

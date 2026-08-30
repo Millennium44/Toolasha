@@ -8,6 +8,7 @@ import config from '../../core/config.js';
 import queueSnapshot from './queue-snapshot.js';
 import queueMonitorUI from './queue-monitor-ui.js';
 import queueAlerts from './queue-alerts.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 let unregisterSettingChange = null;
 
@@ -21,6 +22,24 @@ let unregisterSettingChange = null;
  */
 let idleSettingHandler = null;
 
+/** The palette entry's name, in one place so registering and withdrawing agree */
+const QUEUE_COMMAND = 'Queue Monitor';
+
+/**
+ * Offer the panel in the command palette, for as long as it is switched on.
+ *
+ * Registered beside every call that brings the panel up rather than once in
+ * `initialize`, because the panel has its own setting listener and can come
+ * back mid-session without the feature being re-initialised.
+ */
+function registerQueueCommand() {
+    registerCommand({
+        name: QUEUE_COMMAND,
+        hint: "Other characters' queues, and how long they have left",
+        run: () => queueMonitorUI.toggle(),
+    });
+}
+
 export default {
     name: 'Queue Monitor',
 
@@ -30,6 +49,7 @@ export default {
 
         if (config.getSetting('queueMonitor')) {
             queueMonitorUI.initialize();
+            registerQueueCommand();
         }
 
         // Independent of the panel: the point of the alert is that you are not
@@ -39,8 +59,10 @@ export default {
         unregisterSettingChange = config.onSettingChange('queueMonitor', (enabled) => {
             if (enabled) {
                 queueMonitorUI.initialize();
+                registerQueueCommand();
             } else {
                 queueMonitorUI.disable();
+                unregisterCommand(QUEUE_COMMAND);
             }
         });
 
@@ -57,6 +79,7 @@ export default {
     },
 
     disable: () => {
+        unregisterCommand(QUEUE_COMMAND);
         queueSnapshot.disable();
         queueMonitorUI.disable();
         queueAlerts.disable();

@@ -44,6 +44,7 @@ import { GistError, findSyncGist, readSyncGist, writeSyncGist, chunkPayload } fr
 import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js';
 import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
 import { buildPayloadJSON, applyPayload, contentHash, hashPayload } from './sync-payload.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const STORE = 'settings';
 
@@ -135,6 +136,22 @@ class SyncManager {
         this._startAuto();
         this._watchHandoff();
 
+        // Offered only when a push or pull could actually succeed. Asked
+        // fresh each time the palette opens rather than once here: sync is
+        // configured from the settings panel, without a re-initialise
+        registerCommand({
+            name: 'Sync push',
+            hint: 'Push settings and data to GitHub now',
+            run: () => this.push(),
+            when: () => this.isConfigured(),
+        });
+        registerCommand({
+            name: 'Sync pull',
+            hint: 'Pull the GitHub copy onto this device',
+            run: () => this.pull(),
+            when: () => this.isConfigured(),
+        });
+
         // A re-initialise for a DIFFERENT character is a switch: push shortly,
         // so the character just left has its changes on GitHub without waiting
         // out the quarter-hour timer. The unchanged-skip makes this free when
@@ -158,6 +175,8 @@ class SyncManager {
 
     /** Stop timers and setting listeners. */
     cleanup() {
+        unregisterCommand('Sync push');
+        unregisterCommand('Sync pull');
         this.handoffUnregister?.();
         this.handoffUnregister = null;
         this.handoffPushed = false;

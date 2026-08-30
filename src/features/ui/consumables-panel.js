@@ -66,6 +66,7 @@ import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../util
 import { buildReadiness, keyReadiness, memberReadiness, typicalRunSeconds } from '../../utils/dungeon-readiness.js';
 import { partyLintWarnings } from '../../utils/party-lint.js';
 import { combatLevel } from '../../utils/combat-level.js';
+import { registerCommand } from '../../utils/command-registry.js';
 import { resolveSupplyHrids, readSupplyCounts, bestOwnedTier, SUPPLY_KINDS } from '../combat/labyrinth-supplies.js';
 import { rushFloorTable, preserveChance, observedUse } from '../combat/labyrinth-run-ledger.js';
 import storage from '../../core/storage.js';
@@ -2345,6 +2346,15 @@ export const consumablesPanel = new ConsumablesPanel();
 // has to reopen if the page was left with it up.
 consumablesPanel.loadSettings();
 consumablesPanel.restore();
+
+// At module scope with the rest, because the panel has no feature-registry
+// lifecycle to hang it off: it starts itself here and there is no setting
+// that switches it off, so "imported" and "available" are the same thing.
+registerCommand({
+    name: 'Consumables',
+    hint: 'What your teas and food cost, and how long the pile lasts',
+    run: () => consumablesPanel.toggle(),
+});
 
 // And restored again on every character switch. The open flags are per
 // character, so running the pass once at module scope meant only the character

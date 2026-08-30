@@ -124,6 +124,7 @@ const utilsExternalGlobals = new Map([
     // `watchTimer`s tearing down each other's tabs for six seconds after an open.
     [normalize(join(__dirname, 'src/utils/shopping-list.js')), 'Toolasha.Utils.shoppingList'],
     [normalize(join(__dirname, 'src/utils/scroll-buff-values.js')), 'Toolasha.Utils.scrollBuffValues'],
+    [normalize(join(__dirname, 'src/utils/command-registry.js')), 'Toolasha.Utils.commandRegistry'],
     [normalize(join(__dirname, 'src/utils/overlay-rows.js')), 'Toolasha.Utils.overlayRows'],
     [normalize(join(__dirname, 'src/utils/overlay-flow.js')), 'Toolasha.Utils.overlayFlow'],
     [normalize(join(__dirname, 'src/utils/overlay-format.js')), 'Toolasha.Utils.overlayFormat'],

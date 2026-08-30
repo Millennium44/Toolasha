@@ -17,6 +17,7 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel } from '../../utils/panel-z-index.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 class DungeonTrackerUI {
     constructor() {
@@ -47,6 +48,12 @@ class DungeonTrackerUI {
             return;
         }
         this.isInitialized = true;
+
+        registerCommand({
+            name: 'Dungeon Tracker',
+            hint: 'Runs, clear times and what they dropped',
+            run: () => this.toggle(),
+        });
 
         // Load saved state
         await this.state.load();
@@ -794,6 +801,21 @@ class DungeonTrackerUI {
     }
 
     /**
+     * Show it if it is hidden, hide it if it is up.
+     *
+     * The tracker shows itself when a dungeon starts and hides when one
+     * ends, which is right for a tracker and leaves no way to go and look at
+     * the last run's figures. This is that way, and it is a toggle rather
+     * than a show because the same gesture is what you reach for to dismiss
+     * what it summoned.
+     */
+    toggle() {
+        if (!this.container) return;
+        if (this.container.style.display === 'none') this.show();
+        else this.hide();
+    }
+
+    /**
      * Hide the UI
      */
     hide() {
@@ -828,6 +850,7 @@ class DungeonTrackerUI {
      */
     cleanup() {
         try {
+            unregisterCommand('Dungeon Tracker');
             // Immediately hide UI to prevent visual artifacts during character switch
             this.hide();
 

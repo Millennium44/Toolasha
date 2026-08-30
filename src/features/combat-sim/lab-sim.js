@@ -8,6 +8,7 @@ import domObserver from '../../core/dom-observer.js';
 import labSimUI from './lab-sim-ui.js';
 import { cancelSimulation } from './combat-sim-runner.js';
 import { isMobileMode } from '../../utils/mobile.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const BUTTON_CLASS = 'toolasha-lab-sim-btn';
 
@@ -24,6 +25,12 @@ class LabSim {
         this.isInitialized = true;
 
         labSimUI.buildPanel();
+
+        registerCommand({
+            name: 'Lab Simulator',
+            hint: 'Simulate a labyrinth run',
+            run: () => labSimUI.toggle(),
+        });
 
         const unregister = domObserver.onClass('LabSimButton', 'LabyrinthPanel_tabsComponentContainer', (node) => {
             this._injectButton(node);
@@ -83,6 +90,7 @@ class LabSim {
 
     disable() {
         try {
+            unregisterCommand('Lab Simulator');
             for (const unregister of this.unregisterHandlers) {
                 unregister();
             }

@@ -67,6 +67,22 @@ class QueueMonitorUI {
     }
 
     /**
+     * Show the panel if it is hidden, hide it if it is up.
+     *
+     * The panel has no button of its own — it appears with the feature and
+     * stays — so this is the only way to put it away without switching the
+     * whole feature off in Settings.
+     * @returns {boolean} Whether there was a panel to toggle
+     */
+    toggle() {
+        if (!this.panel) return false;
+        const hidden = this.panel.style.display === 'none';
+        this.panel.style.display = hidden ? '' : 'none';
+        if (hidden) bringPanelToFront(this.panel);
+        return true;
+    }
+
+    /**
      * Disable and clean up
      */
     disable() {

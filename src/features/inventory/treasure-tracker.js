@@ -64,6 +64,7 @@ import { calculateDungeonTokenValue, labyrinthRewardValue, shopPurchasePrice } f
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /**
  * The ledger and the panel's preferences.
@@ -402,10 +403,17 @@ class TreasureTracker {
 
         this.lootOpenedHandler = (data, context) => this._onLootOpened(data, context);
         webSocketHook.on('loot_opened', this.lootOpenedHandler);
+
+        registerCommand({
+            name: 'Treasure Tracker',
+            hint: 'Chests opened and what came out',
+            run: () => this.toggle(),
+        });
     }
 
     disable() {
         try {
+            unregisterCommand('Treasure Tracker');
             if (this.lootOpenedHandler) {
                 webSocketHook.off('loot_opened', this.lootOpenedHandler);
                 this.lootOpenedHandler = null;

@@ -10,6 +10,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { formatReport, reportData, gapsBetween, initTimeline, initSummary } from '../../utils/performance-report.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import { performanceMonitor, scriptBuildLabel } from '../../utils/bundle-bridge.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 function getPerformanceMonitor() {
     return performanceMonitor();
@@ -63,7 +64,13 @@ class PFormancePanel {
     }
 
     initialize() {
-        // No-op — panel is created on-demand via show()
+        // The panel itself is still created on demand by show(); all that
+        // starts here is the palette entry that calls it
+        registerCommand({
+            name: 'PFormance',
+            hint: "What the script's own timers say",
+            run: () => this.toggle(),
+        });
     }
 
     show() {
@@ -99,6 +106,7 @@ class PFormancePanel {
     }
 
     disable() {
+        unregisterCommand('PFormance');
         this._removePanel();
     }
 

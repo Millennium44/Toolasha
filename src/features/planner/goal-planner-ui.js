@@ -58,6 +58,7 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { planGoals, describeGoal, describeLeg, GOAL_TYPES } from './goal-planner.js';
 import { buildPlannerContext, withHouseCosts, coinsHeld } from './goal-planner-context.js';
 import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'toolasha-goal-planner-panel';
 const GEOMETRY_KEY = 'goalPlannerPanel';
@@ -368,6 +369,12 @@ class GoalPlannerPanel {
     async initialize() {
         await this.load();
         reopenIfLeftOpen(GEOMETRY_KEY, () => this.show({ remember: false }));
+
+        registerCommand({
+            name: 'Goal Planner',
+            hint: 'Ordered steps to a goal, costed',
+            run: () => this.toggle(),
+        });
     }
 
     /**
@@ -384,6 +391,7 @@ class GoalPlannerPanel {
      * coins, presented as this one's.
      */
     disable() {
+        unregisterCommand('Goal Planner');
         this._remove();
         this.context = null;
         this.plans = [];

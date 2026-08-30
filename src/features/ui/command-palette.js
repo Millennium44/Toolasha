@@ -28,32 +28,33 @@
  * The production build is seven bundles and a module imported across a bundle
  * boundary is *copied*, state and all — so a palette that imported the Treasure
  * tracker would toggle a second, invisible copy of it while the real one stayed
- * shut. Anything outside the UI bundle is therefore reached through
- * `window.Toolasha`, which holds the instances that were actually initialised,
- * and every lookup is optional: a panel whose feature is switched off is simply
- * not offered.
+ * shut.
+ *
+ * The palette therefore does not reach for panels at all any more. Each feature
+ * registers what it offers into `utils/command-registry.js` — a shared module
+ * that loads before every feature bundle — and this file reads that list. That
+ * inverts the old arrangement, in which the palette held a hand-written array
+ * of fifteen entries and every cross-bundle target also needed an accessor in
+ * `bundle-bridge.js`; the practical effect of that tax was that a dozen good
+ * panels were unreachable here for no reason but that nobody had written their
+ * two lines.
+ *
+ * The property that survives — and is now actually enforced rather than merely
+ * documented — is that a panel whose feature is switched off is simply not
+ * offered: a feature registers from its `initialize()` and withdraws from its
+ * `disable()`, and the feature registry only initializes what the settings have
+ * switched on.
  */
 
 import config from '../../core/config.js';
 import { settingsGroups } from '../../core/settings-schema.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
+import { registerCommand, unregisterCommand, registeredCommands } from '../../utils/command-registry.js';
 import { showToast } from '../../utils/toast.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import { isTypingTarget } from '../../utils/dom.js';
 import overlayPanel from './overlay-panel.js';
-import { syncManager } from '../sync/index.js';
-import enhancementUI from '../enhancement/enhancement-ui.js';
-import {
-    goalPlanner,
-    ironCowFarmPanel,
-    treasureTracker,
-    pformancePanel,
-    combatSimUI,
-    labSimUI,
-    guildTrialScoreboard,
-    philoCalculator,
-} from '../../utils/bundle-bridge.js';
 
 const PALETTE_ID = 'toolasha-command-palette';
 
@@ -179,113 +180,39 @@ export function isPaletteHotkey(event) {
  * ---------------------------------------------------------------------- */
 
 /**
- * The floating panels, each with the call that shows or hides it.
+ * The palette's own three entries, registered when it starts.
  *
- * Resolved when the palette opens rather than at module scope, because the
- * bundles load in order and the panels register themselves as their features
- * initialise — a list built at import time would be a list of undefineds.
- * Each target is read through the bundle bridge, which answers null for
- * anything whose bundle has not published it.
+ * Everything else in the Panel section is registered by the feature that owns
+ * it — see `utils/command-registry.js` — and these three are here because the
+ * palette is what owns them. None is a panel with a toggle: two are navigation
+ * walks written in this file, and the third calls a diagnostic published by the
+ * entrypoint.
  *
- * @returns {Array<{name: string, hint: string, run: Function}>}
+ * `Health report` is deliberately unconditional. A diagnostic is most wanted
+ * when something is wrong, which is exactly the state in which a feature-gated
+ * entry would be missing.
  */
-function panelCommands() {
-    const entries = [
-        { name: 'Overlay', hint: 'The tile overlay', run: () => overlayPanel.toggle() },
-        { name: 'Goal Planner', hint: 'Ordered steps to a goal, costed', target: goalPlanner() },
-        { name: 'Iron Bell Farming', hint: 'The cowbell plan, and what it earns', target: ironCowFarmPanel() },
-        { name: 'Treasure Tracker', hint: 'Chests opened and what came out', target: treasureTracker() },
-        { name: 'PFormance', hint: "What the script's own timers say", target: pformancePanel() },
-        { name: 'Combat Simulator', hint: 'Simulate a fight', target: combatSimUI() },
-        {
-            name: 'Enhancement Tracker',
-            hint: 'Show or hide the enhancing cost/luck/worth-it panel',
-            // Same UI bundle as the palette, so imported directly rather than
-            // through the bridge; toggle() remembers a manual hide.
-            target: enhancementUI,
-        },
-        {
-            name: 'Lab Simulator',
-            hint: 'Simulate a labyrinth run',
-            // Not exported at a global of its own, so the Labyrinth page's own
-            // button is the way in. It is only meaningful on that page anyway
-            target: labSimUI(),
-            fallback: () => document.querySelector('.toolasha-lab-sim-btn'),
-        },
-        {
-            name: 'Guild Trials',
-            // Not a panel: the figures are drawn into the game's guild page, and
-            // this is the only signpost to them there is
-            hint: 'Trial pace and payout, on the guild In Progress tab',
-            run: () => openGuildTrials(),
-        },
-        {
-            name: 'Trial Damage',
-            hint: 'Damage and healing per player, ranked',
-            // A real panel, and reached the way every other panel here is
-            target: guildTrialScoreboard(),
-        },
-        // Gated on its own setting rather than just presence, unlike the other
-        // bridge entries above: the calculator has no toggle/show of its own to
-        // no-op when switched off, and openModal() would happily draw the modal
-        // for a feature the player turned off in Settings.
-        ...(config.getSetting('market_showPhiloCalculator') && philoCalculator()
-            ? [
-                  {
-                      name: 'Philo Gamba',
-                      hint: 'Enhancing gamba profitability, costed against the market',
-                      run: () => philoCalculator().openModal(),
-                  },
-              ]
-            : []),
-        { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
-        // Same UI bundle as the palette. Offered only when a push could
-        // succeed — a sync command on an unconfigured install would only toast
-        ...(syncManager.isConfigured()
-            ? [
-                  {
-                      name: 'Sync push',
-                      hint: 'Push settings and data to GitHub now',
-                      run: () => syncManager.push(),
-                  },
-                  {
-                      name: 'Sync pull',
-                      hint: 'Pull the GitHub copy onto this device',
-                      run: () => syncManager.pull(),
-                  },
-              ]
-            : []),
-        {
-            name: 'Health report',
-            // Reached through the page, like every other cross-bundle target
-            // here: `window.Toolasha.debug.health` is set by the entrypoint, and
-            // importing the entrypoint to call it would be a cycle. Always
-            // offered — a diagnostic is most wanted when something is wrong,
-            // which is exactly when a feature-gated entry would be missing.
-            hint: 'What did not start, and the storage and startup facts',
-            run: () => openHealthReport(),
-        },
-    ];
-
-    const commands = [];
-    for (const entry of entries) {
-        if (entry.run) {
-            commands.push({ name: entry.name, hint: entry.hint, run: entry.run });
-            continue;
-        }
-
-        const toggle = entry.target?.toggle || entry.target?.show;
-        if (toggle) {
-            commands.push({ name: entry.name, hint: entry.hint, run: () => toggle.call(entry.target) });
-        } else if (entry.fallback) {
-            // Offered only when the way in is actually on the page — a palette
-            // entry that does nothing is worse than one that is missing
-            const element = entry.fallback();
-            if (element) commands.push({ name: entry.name, hint: entry.hint, run: () => element.click() });
-        }
-    }
-    return commands;
+function registerOwnCommands() {
+    registerCommand({ name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() });
+    registerCommand({
+        name: 'Guild Trials',
+        // Not a panel: the figures are drawn into the game's guild page, and
+        // this is the only signpost to them there is
+        hint: 'Trial pace and payout, on the guild In Progress tab',
+        run: () => openGuildTrials(),
+    });
+    registerCommand({
+        name: 'Health report',
+        // Reached through the page, like every other cross-bundle target here:
+        // `window.Toolasha.debug.health` is set by the entrypoint, and importing
+        // the entrypoint to call it would be a cycle.
+        hint: 'What did not start, and the storage and startup facts',
+        run: () => openHealthReport(),
+    });
 }
+
+/** The names {@link registerOwnCommands} puts up, withdrawn together */
+const OWN_COMMANDS = ['Settings', 'Guild Trials', 'Health report'];
 
 /**
  * Every setting the schema names, flattened.
@@ -577,6 +504,8 @@ class CommandPalette {
         if (!config.getSetting('commandPalette')) return;
         this.initialized = true;
 
+        registerOwnCommands();
+
         // Captured, so the chord is seen before the game's own key handling and
         // before anything that stops propagation on its way up
         document.addEventListener('keydown', this.onKeyDown, true);
@@ -584,6 +513,7 @@ class CommandPalette {
 
     cleanup() {
         try {
+            for (const name of OWN_COMMANDS) unregisterCommand(name);
             document.removeEventListener('keydown', this.onKeyDown, true);
             this.close();
             this.initialized = false;
@@ -656,7 +586,7 @@ class CommandPalette {
     _buildCommands() {
         const commands = [];
 
-        for (const panel of panelCommands()) {
+        for (const panel of registeredCommands()) {
             commands.push(this._command('Panel', panel.name, panel.hint, panel.run));
         }
 

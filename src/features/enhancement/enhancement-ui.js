@@ -17,6 +17,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** Storage key the panel's user-dragged size is remembered under. */
 const GEOMETRY_KEY = 'enhancementTrackerPanel';
@@ -184,6 +185,12 @@ class EnhancementUI {
     initialize() {
         this.createFloatingUI();
         this.updateUI();
+
+        registerCommand({
+            name: 'Enhancement Tracker',
+            hint: 'Show or hide the enhancing cost/luck/worth-it panel',
+            run: () => this.toggle(),
+        });
 
         // Set up screen observer for visibility control
         this.setupScreenObserver();
@@ -1836,6 +1843,8 @@ class EnhancementUI {
      * Cleanup all UI resources
      */
     cleanup() {
+        unregisterCommand('Enhancement Tracker');
+
         // Clear any pending update debounces
         if (this.updateDebounce) {
             clearTimeout(this.updateDebounce);

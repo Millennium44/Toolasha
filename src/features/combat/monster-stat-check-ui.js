@@ -42,6 +42,7 @@ import { describeFights, MIN_REAL_CASTS } from './labyrinth-uptime-harness.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
 import { captureFile, startCapture } from './labyrinth-tick-capture.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const BLIND_VERDICT = {
     match: { glyph: '✓', color: '#6fce7f' },
@@ -438,6 +439,39 @@ class MonsterStatCheckPanel {
 
     close() {
         if (this.container) this.container.style.display = 'none';
+    }
+
+    /** Whether there is anything recorded to reopen onto */
+    get hasHistory() {
+        return this.history.size > 0;
+    }
+
+    /**
+     * Reopen onto the most recent comparison, or put the panel away.
+     *
+     * The only way in was clicking a monster in a tooltip, which both opens
+     * the panel and takes a fresh reading — so there was no way to go back
+     * and read the session's log without picking a fight with something.
+     * This opens onto what is already recorded and takes no reading at all.
+     * @returns {boolean} Whether the panel ended up open
+     */
+    toggle() {
+        if (this.container && this.container.style.display !== 'none') {
+            this.close();
+            return false;
+        }
+        // Paging order, so the discrepancies the panel exists to surface
+        // are what it opens onto
+        const key = this._pagingKeys()[0] || this._orderedKeys()[0];
+        const snap = key ? this.history.get(key) : null;
+        if (!snap) return false;
+        this.displayed = snap;
+        this.viewKey = key;
+        this._ensureBuilt();
+        this.container.style.display = 'flex';
+        bringPanelToFront(this.container);
+        this._render();
+        return true;
     }
 
     /**
@@ -1875,6 +1909,17 @@ function initialize() {
     // Restore the log saved from an earlier session so the panel opens with it.
     panel._loadPersisted();
 
+    // Offered only once something has been recorded: the panel has nothing
+    // to draw before the first monster is clicked, and a palette entry that
+    // opens onto nothing is worse than one that is missing. `_loadPersisted`
+    // is async, so this is asked at open time rather than answered here.
+    registerCommand({
+        name: 'Monster Stat Check',
+        hint: "Where the sim's monster stats differ from the game's",
+        run: () => panel.toggle(),
+        when: () => panel.hasHistory,
+    });
+
     // Turning the setting off mid-session should take the panel away without a
     // refresh. Turning it on relies on the registry initialising the feature.
     unregisterSettingChange = config.onSettingChange(SETTING_KEY, (enabled) => {
@@ -1883,6 +1928,7 @@ function initialize() {
 }
 
 function disable() {
+    unregisterCommand('Monster Stat Check');
     if (unregisterSettingChange) {
         unregisterSettingChange();
         unregisterSettingChange = null;

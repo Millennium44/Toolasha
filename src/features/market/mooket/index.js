@@ -53,6 +53,7 @@ import {
 } from './market-watchlist.js';
 import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 import { attachMinimize } from '../../../utils/panel-minimize.js';
+import { registerCommand, unregisterCommand } from '../../../utils/command-registry.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
 const TAB_ID = 'mwi-market-history-tab';
@@ -168,6 +169,12 @@ class MarketHistoryPanel {
 
         await this.loadPrefs();
 
+        registerCommand({
+            name: 'Market History Viewer',
+            hint: 'Pooled price history, per item',
+            run: () => this.toggle(),
+        });
+
         await marketPriceStore.initialize();
         marketHistoryAPI.connect();
 
@@ -233,6 +240,7 @@ class MarketHistoryPanel {
         // removed, so the next initialize() returned early and every History
         // click after that read `.style` off a null panel until a refresh
         try {
+            unregisterCommand('Market History Viewer');
             this.chart?.destroy();
             this.chart = null;
             this.shown = null;
@@ -401,9 +409,7 @@ class MarketHistoryPanel {
         tab.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            this.prefs.open = !this.prefs.open;
-            this.applyOpenState();
-            this.savePrefs();
+            this.toggle();
         });
 
         tabBar.appendChild(tab);
@@ -507,6 +513,19 @@ class MarketHistoryPanel {
         bar.appendChild(this.title);
 
         return bar;
+    }
+
+    /**
+     * Show the price history panel, or hide it.
+     *
+     * The cloned ⧉ History tab did exactly this inline and was the only way
+     * in — which meant the panel could only be reached from the marketplace
+     * page, and only once the game had drawn its tab bar.
+     */
+    toggle() {
+        this.prefs.open = !this.prefs.open;
+        this.applyOpenState();
+        this.savePrefs();
     }
 
     applyOpenState() {

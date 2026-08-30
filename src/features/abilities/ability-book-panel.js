@@ -42,6 +42,7 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { createSkillHistory } from '../../utils/skill-history.js';
 import { abilityPlan, cheapestNextLevel, aimedTotals, bookItemFor } from '../../utils/ability-books.js';
+import { registerCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'toolasha-ability-book-panel';
 const GEOMETRY_KEY = 'abilityBookPanel';
@@ -753,6 +754,15 @@ class AbilityBookPanel {
 }
 
 export const abilityBookPanel = new AbilityBookPanel();
+
+// Module scope, like the overlay row that is currently its only signpost:
+// the panel has no feature-registry lifecycle and no setting that switches
+// it off, so there is no state in which it is imported but unavailable.
+registerCommand({
+    name: 'Ability Book',
+    hint: 'What levelling each ability costs in books',
+    run: () => abilityBookPanel.toggle(),
+});
 
 // A target level is a question about one character's abilities — taking main's
 // Puncture from 41 to 100 is a different purchase from taking an ironcow's

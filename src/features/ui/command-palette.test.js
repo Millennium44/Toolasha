@@ -56,6 +56,8 @@ vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => {
     return { ...actual, philoCalculator: () => philo.instance };
 });
 
+const { registerCommand, unregisterCommand, resetCommands } = await import('../../utils/command-registry.js');
+
 const {
     default: palette,
     fuzzyScore,
@@ -171,6 +173,10 @@ function press(key) {
 }
 
 beforeEach(() => {
+    // The palette reads the registry, and in the page the features fill it.
+    // Here the test does, so what is on offer is what the test says it is.
+    resetCommands();
+    registerCommand({ name: 'Overlay', hint: 'The tile overlay', run: () => overlay.toggle() });
     rows.current = [];
     toasts.said = [];
     overlay.toggle.mockClear();
@@ -317,8 +323,13 @@ describe('the palette in the page', () => {
         expect(palette.isOpen).toBe(false);
     });
 
-    test('the Philo Gamba entry opens the calculator when the bundle has one', async () => {
+    test('a registered panel command is listed and runs what it registered', async () => {
         philo.instance = { openModal: vi.fn() };
+        registerCommand({
+            name: 'Philo Gamba',
+            hint: 'Enhancing gamba profitability, costed against the market',
+            run: () => philo.instance.openModal(),
+        });
 
         palette.initialize();
         palette.open();
@@ -329,7 +340,9 @@ describe('the palette in the page', () => {
         expect(philo.instance.openModal).toHaveBeenCalled();
     });
 
-    test('the Philo Gamba entry is not offered when the market bundle has not loaded', () => {
+    test('a command its feature never registered is not offered', () => {
+        // The property the old hand-written list only half kept: a feature
+        // that never initialised never registers, so nothing offers it
         philo.instance = null;
 
         palette.initialize();
@@ -337,6 +350,42 @@ describe('the palette in the page', () => {
         type('philo');
 
         expect(drawnLabels()).not.toContain('Philo Gamba');
+    });
+
+    test('a command withdrawn by its feature stops being offered', () => {
+        registerCommand({ name: 'Trade Ledger', hint: 'x', run: () => {} });
+
+        palette.initialize();
+        palette.open();
+        type('trade ledger');
+        expect(drawnLabels()).toContain('Trade Ledger');
+        palette.close();
+
+        unregisterCommand('Trade Ledger');
+        palette.open();
+        type('trade ledger');
+        expect(drawnLabels()).not.toContain('Trade Ledger');
+    });
+
+    test('a command whose `when` says no is left out, and asked again next time', () => {
+        let configured = false;
+        registerCommand({
+            name: 'Sync push',
+            hint: 'Push settings and data to GitHub now',
+            run: () => {},
+            when: () => configured,
+        });
+
+        palette.initialize();
+        palette.open();
+        type('sync push');
+        expect(drawnLabels()).not.toContain('Sync push');
+        palette.close();
+
+        configured = true;
+        palette.open();
+        type('sync push');
+        expect(drawnLabels()).toContain('Sync push');
     });
 
     test('it lists panels, rows with an onOpen, and settings by label', async () => {
