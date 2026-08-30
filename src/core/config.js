@@ -95,6 +95,14 @@ class Config {
         // per-character settings have arrived. See onSettingsLoaded().
         this.settingsLoadedCallbacks = [];
 
+        // Writes made while `settingsMap` is empty, applied once loadSettings()
+        // refills it. A character switch clears the map and only reloads it
+        // several awaits later; a settings-panel toggle in that window found no
+        // entry to write to and was dropped without a save or a notify, leaving
+        // the checkbox flipped over a value nothing had recorded. One entry per
+        // key, last write winning. See _deferWriteDuringReload().
+        this._pendingWrites = [];
+
         // Feature toggles with metadata for future UI
         this.features = {
             // Market Features
@@ -481,6 +489,7 @@ class Config {
         if (!characterId) {
             this.settingsMap = settingsStorage.buildDefaults();
             this.characterSettingsLoaded = false;
+            this._flushPendingWrites();
             return;
         }
 
@@ -511,6 +520,13 @@ class Config {
             this.settingsOwner = characterId;
             this.characterSettingsLoaded = true;
         }
+
+        // Apply anything written while the map was empty, before either fan-out
+        // below: the write is the newer intent, and a settings-loaded subscriber
+        // reading the key must see the value the player just set rather than the
+        // one that came off storage. Each replayed write saves and notifies for
+        // itself.
+        this._flushPendingWrites();
 
         // Fire change callbacks for settings that differ from what was previously loaded
         for (const key of Object.keys(this.settingChangeCallbacks)) {
@@ -667,6 +683,7 @@ class Config {
      * @param {*} value - Setting value
      */
     setSetting(key, value) {
+        if (this._deferWriteDuringReload('setSetting', key, value)) return;
         const setting = this.settingsMap[key];
         if (setting) {
             if (Object.hasOwn(setting, 'isTrue')) {
@@ -696,6 +713,7 @@ class Config {
      * @param {*} value - Setting value
      */
     setSettingValue(key, value) {
+        if (this._deferWriteDuringReload('setSettingValue', key, value)) return;
         if (this.settingsMap[key]) {
             this.settingsMap[key].value = value;
             this.saveSettings();
@@ -707,6 +725,54 @@ class Config {
 
             // Trigger registered callbacks for this setting
             this._notifySettingChange(key, value);
+        }
+    }
+
+    /**
+     * Hold a write made while the settings map is empty.
+     *
+     * The map is empty only between `clearSettingsCache()` and the
+     * `loadSettings()` that refills it — the character-switch window. Both
+     * setters key off `settingsMap[key]`, so a write there used to fall out of
+     * its `if` and vanish: nothing saved, no change callback, and a settings
+     * panel left showing a state that was never recorded. Queued here instead
+     * and replayed by `_flushPendingWrites()` at the end of the load, where the
+     * entry exists and the normal save-and-notify path runs.
+     *
+     * Emptiness, not a missing key, is the test: a key the map genuinely does
+     * not have (a typo, a setting dropped from the schema) must keep falling
+     * through as before rather than queueing for a load that will never claim it.
+     * @param {string} method - Setter to replay: 'setSetting' or 'setSettingValue'
+     * @param {string} key - Setting key
+     * @param {*} value - Value written
+     * @returns {boolean} Whether the write was queued instead of applied
+     * @private
+     */
+    _deferWriteDuringReload(method, key, value) {
+        if (Object.keys(this.settingsMap).length > 0) return false;
+        this._pendingWrites = this._pendingWrites.filter((write) => write.key !== key);
+        this._pendingWrites.push({ method, key, value });
+        return true;
+    }
+
+    /**
+     * Apply the writes held during the reload window, now that the map is back.
+     *
+     * Taken and cleared before replaying, so a setter that queues again (the
+     * map is populated by now, so it should not) cannot loop.
+     * @returns {void}
+     * @private
+     */
+    _flushPendingWrites() {
+        if (!this._pendingWrites.length) return;
+        const pending = this._pendingWrites;
+        this._pendingWrites = [];
+        for (const { method, key, value } of pending) {
+            try {
+                this[method](key, value);
+            } catch (error) {
+                console.error(`[Config] Deferred write of '${key}' failed:`, error);
+            }
         }
     }
 

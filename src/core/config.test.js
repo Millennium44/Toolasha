@@ -413,3 +413,90 @@ describe('setting-change listener dispatch', () => {
         expect(third).toHaveBeenCalledWith(true);
     });
 });
+
+/**
+ * A character switch clears the settings map and only repopulates it a few
+ * awaits later. A settings-panel toggle that lands in that window used to be
+ * a silent no-op — `settingsMap[key]` was undefined, both setters fell out of
+ * their `if`, and the checkbox stayed flipped over a value that was never
+ * written or notified.
+ */
+describe('Config — a write during the settings-reload window', () => {
+    beforeEach(() => {
+        config.settingsLoadedCallbacks = [];
+        config.settingChangeCallbacks = {};
+        config._pendingWrites = [];
+        settingsStorageMock.lastLoadReadable = true;
+        settingsStorageMock.saveSettings.mockClear();
+        dataManagerMock.characterId = 'char-1';
+    });
+
+    test('setSetting lands and notifies once loadSettings repopulates the map', async () => {
+        config.clearSettingsCache();
+        const cb = vi.fn();
+        config.onSettingChange('checkbox', cb);
+
+        config.setSetting('checkbox', true);
+        expect(cb).not.toHaveBeenCalled();
+
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+        await config.loadSettings();
+
+        expect(config.settingsMap.checkbox.isTrue).toBe(true);
+        expect(config.getSetting('checkbox')).toBe(true);
+        expect(cb).toHaveBeenCalledWith(true);
+    });
+
+    test('setSettingValue lands the same way', async () => {
+        config.clearSettingsCache();
+        const cb = vi.fn();
+        config.onSettingChange('pricingMode', cb);
+
+        config.setSettingValue('pricingMode', 'conservative');
+
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({
+            pricingMode: { id: 'pricingMode', value: 'hybrid' },
+        });
+        await config.loadSettings();
+
+        expect(config.getSetting('pricingMode')).toBe('conservative');
+        expect(cb).toHaveBeenCalledWith('conservative');
+    });
+
+    test('the settings-loaded channel sees the queued value, not the value that was loaded', async () => {
+        config.clearSettingsCache();
+        let seen = null;
+        config.onSettingsLoaded(() => {
+            seen = config.getSetting('checkbox');
+        });
+
+        config.setSetting('checkbox', true);
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+        await config.loadSettings();
+
+        expect(seen).toBe(true);
+    });
+
+    test('the queue is emptied, so a later load does not re-apply it', async () => {
+        config.clearSettingsCache();
+        config.setSetting('checkbox', true);
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+        await config.loadSettings();
+
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+        await config.loadSettings();
+
+        expect(config.getSetting('checkbox')).toBe(false);
+    });
+
+    test('the last write for a key wins', async () => {
+        config.clearSettingsCache();
+        config.setSetting('checkbox', true);
+        config.setSetting('checkbox', false);
+
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: true } });
+        await config.loadSettings();
+
+        expect(config.getSetting('checkbox')).toBe(false);
+    });
+});
