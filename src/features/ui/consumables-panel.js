@@ -76,6 +76,7 @@ import {
     torchesPerFloor,
     sparkText,
 } from '../combat/labyrinth-run-ledger.js';
+import { rushFloorVerdict } from '../combat/labyrinth-rush-floor-verdict.js';
 import storage from '../../core/storage.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
@@ -1957,9 +1958,91 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             section.appendChild(line);
         }
 
+        const verdict = this._rushFloorVerdictLine();
+        if (verdict) section.appendChild(verdict);
+
         const trend = this._labTrendLines(needs);
         for (const el of trend) section.appendChild(el);
         return section;
+    }
+
+    /**
+     * The rush-floor question, decided rather than left as two readings.
+     *
+     * The block above draws what the runs left over and what each candidate rush
+     * floor would cost; the pool card elsewhere draws how close the losses are.
+     * Neither answers "should the rush floor come down" on its own, and a reader
+     * holding both still has to combine them. This is the combination —
+     * `labyrinth-rush-floor-verdict.js` holds every rule, including the three
+     * refusals, so this method only supplies the data and paints the result.
+     *
+     * The current gear fingerprint is deliberately not supplied. Computing it
+     * needs the loadout hasher that lives on the labyrinth clear-rate singleton
+     * in another bundle, and `gearChangedSince` abstains on a missing current
+     * fingerprint by design — "nothing to compare against" is not "unchanged".
+     * The refusal that matters here still fires: a fight pool spanning more than
+     * one gear fingerprint is a boundary whether or not today's gear is known.
+     *
+     * @returns {HTMLElement|null} The line, or null when there is nothing to read
+     * @private
+     */
+    _rushFloorVerdictLine() {
+        try {
+            const runs = this._ledgerRuns || [];
+            const attempts = this._labFightAttempts;
+            // The read has not landed yet (or has never been started): kick it
+            // off and say nothing this draw rather than refusing on absence
+            if (!Array.isArray(attempts)) {
+                this._loadLabFightAttempts();
+                return null;
+            }
+            if (!attempts.length && !runs.length) return null;
+
+            const torchCap = Number(dataManager.characterData?.characterInfo?.labyrinthTorchCap) || 0;
+            const result = rushFloorVerdict({ attempts, runs, torchCap });
+
+            const line = document.createElement('div');
+            line.style.cssText = 'margin-top:3px; font-size:0.9em;';
+            line.style.color =
+                result.verdict === 'supported'
+                    ? ROW_COLORS.good
+                    : result.verdict === 'refused'
+                      ? COLORS.textDim
+                      : ROW_COLORS.gold;
+            line.textContent = `Rush floor: ${result.text}`;
+            line.title =
+                'Three readings folded into one: the median share of the monster left standing when a fight is ' +
+                'lost, the torches a trusted run actually spends against your capacity, and whether every ' +
+                'recorded fight was fought in one set of gear.\n' +
+                'It says whether the two measurements point the same way. Moving the rush floor is still yours.';
+            return line;
+        } catch (error) {
+            console.error('[ConsumablesPanel] Building the rush-floor verdict failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Read the recorded fight pool once, the way the ledger is read.
+     *
+     * The recorder is a websocket-fed singleton in the combat bundle; its
+     * storage record is a plain array and reading it is one get, which is what
+     * the ledger above already does for the same reason.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _loadLabFightAttempts() {
+        if (this._labFightAttemptsLoading) return;
+        this._labFightAttemptsLoading = true;
+        try {
+            const stored = await readScoped('labyrinthFightRecorder', 'labyrinth', []);
+            this._labFightAttempts = Array.isArray(stored) ? stored : [];
+        } catch (error) {
+            console.error('[ConsumablesPanel] Reading the labyrinth fight pool failed:', error);
+            this._labFightAttempts = [];
+        } finally {
+            this._labFightAttemptsLoading = false;
+        }
     }
 
     /**
