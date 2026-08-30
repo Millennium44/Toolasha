@@ -13,6 +13,12 @@ class ConnectionState {
         this.lastDisconnectedAt = null;
         this.lastConnectedAt = null;
 
+        // The socket 'open' most recently observed. webSocketHook.emitSocketEvent
+        // passes the originating socket as the handler's second argument
+        // precisely so a listener can tell which connection produced an event —
+        // see _isFromActiveSocket for why close/error need that here.
+        this.activeSocket = null;
+
         this.setupListeners();
     }
 
@@ -72,21 +78,56 @@ class ConnectionState {
     }
 
     setupListeners() {
-        webSocketHook.onSocketEvent('open', () => {
+        webSocketHook.onSocketEvent('open', (event, socket) => {
+            // A character switch opens the new socket before the old one has
+            // finished closing, so "the socket that just opened" is the one
+            // whose close/error should be able to affect state from here on —
+            // an event from whichever socket this replaced is stale.
+            this.activeSocket = socket ?? null;
             this.setReconnecting('socket_open', { allowConnected: true });
         });
 
-        webSocketHook.onSocketEvent('close', (event) => {
+        webSocketHook.onSocketEvent('close', (event, socket) => {
+            if (!this._isFromActiveSocket(socket)) {
+                return;
+            }
             this.setDisconnected('socket_close', event);
         });
 
-        webSocketHook.onSocketEvent('error', (event) => {
+        webSocketHook.onSocketEvent('error', (event, socket) => {
+            if (!this._isFromActiveSocket(socket)) {
+                return;
+            }
             this.setDisconnected('socket_error', event);
         });
 
         webSocketHook.on('init_character_data', () => {
             this.setConnected('init_character_data');
         });
+    }
+
+    /**
+     * Whether a socket lifecycle event came from the most recently opened
+     * socket, and so may actually affect connection state.
+     *
+     * During a character switch the departing socket is still open — and can
+     * still fire 'close' or 'error' — while the arriving socket has already
+     * opened and reported its own character. Without this check, that stale
+     * event flips a live connection to 'disconnected', and since nothing but
+     * a fresh 'init_character_data' brings it back, the state is then stuck
+     * disconnected until the next real reconnect: `marketAPI.fetch` reads
+     * `connectionState.isConnected()` and would serve stale cached prices
+     * indefinitely instead of ever fetching again.
+     *
+     * Permissive when no socket has been observed yet, matching the same
+     * fail-open pattern as dataManager._isFromActiveSocket.
+     *
+     * @param {Object|undefined} socket - The socket the event came from
+     * @returns {boolean}
+     * @private
+     */
+    _isFromActiveSocket(socket) {
+        return !this.activeSocket || socket === this.activeSocket;
     }
 
     setReconnecting(reason, options = {}) {
