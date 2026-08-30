@@ -657,17 +657,27 @@ class CollectionFilters {
         if (!charId || this._renamedFor === charId) return;
         this._renamedFor = charId;
 
-        try {
-            for (const key of STORED_KEYS) {
-                const legacy = await storage.get(this._legacyCharKey(key), 'collections', null);
-                if (legacy === null) continue;
+        // Each key's legacy → current move touches only that key's own two
+        // storage records, so the five keys have nothing to serialize against
+        // each other — only the three steps *within* one key have an order.
+        // Run in parallel: on a character whose legacy keys have already been
+        // renamed (the common case, since this only fires once per character
+        // per session) that turns five round trips of IndexedDB latency into
+        // one; on a first-touch character with keys still to move, five sets
+        // of up to three.
+        const renameOne = async (key) => {
+            const legacy = await storage.get(this._legacyCharKey(key), 'collections', null);
+            if (legacy === null) return;
 
-                const current = await storage.get(this._charKey(key), 'collections', null);
-                if (current === null) {
-                    await storage.set(this._charKey(key), legacy, 'collections', true);
-                }
-                await storage.delete(this._legacyCharKey(key), 'collections');
+            const current = await storage.get(this._charKey(key), 'collections', null);
+            if (current === null) {
+                await storage.set(this._charKey(key), legacy, 'collections', true);
             }
+            await storage.delete(this._legacyCharKey(key), 'collections');
+        };
+
+        try {
+            await Promise.all(STORED_KEYS.map(renameOne));
         } catch (error) {
             console.error('[CollectionFilters] Renaming legacy collection keys failed:', error);
         }
