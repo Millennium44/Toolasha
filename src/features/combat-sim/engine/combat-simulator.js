@@ -653,6 +653,52 @@ class CombatSimulator {
         return undefined;
     }
 
+    /**
+     * One auto attack: the swing, its pierces, and every per-hit side effect
+     * the engine models on a swing.
+     *
+     * **Blaze, bloom and ripple are deliberately absent here.** They are rolled
+     * once per *ability cast*, in `tryUseAbility`, and never on an auto attack.
+     * This was checked rather than assumed, because a blaze that also fired on
+     * autos would be worth several percent of a build's damage, and would show
+     * up first against a monster whose resistances dwarf its armour — where an
+     * elemental side-channel is the only thing that moves the numbers:
+     *
+     * - The reference sim this engine is ported from (see
+     *   `third-party/mwi-combat-simulator/`) puts the blaze and bloom rolls
+     *   inside `tryUseAbility` and nowhere else; its `processAutoAttackEvent`
+     *   contains no occurrence of `blaze`, `bloom` or `ripple` on any published
+     *   branch. This port matches it, so the absence is parity, not a dropped
+     *   port — and the audit that swept this engine against that reference
+     *   (`e02a7e5a`) did not flag it either.
+     * - Nothing in this repository — no comment, test, fixture or recorded
+     *   fight — carries evidence about what the *game* does on an auto attack.
+     *   The game's own `abilityDetailMap` has no `/abilities/blaze` entry at
+     *   all; `ability.js` synthesises one from `abilityFromCombatStat`, which is
+     *   why the stat can only be observed through whatever the sim chooses to
+     *   do with it.
+     *
+     * So the roll is not added here. Adding it would be modelling a mechanic on
+     * a guess, and the guess is expensive in the direction that flatters a
+     * build. If someone later produces real evidence — a recorded fight where a
+     * blaze lands with no ability cast behind it — the roll belongs here,
+     * mirroring the ability path exactly: `todoAbilities.push(new
+     * Ability('blaze'))` routed through `processAbilityDamageEffect`, which
+     * files it under the tally key `'blaze'`. That key is a *counted* source by
+     * `isCountedSource` in `labyrinth-replay-check.js`, which is correct for it:
+     * that path files a `'miss'` too, so every entry has a counted attempt
+     * behind it, unlike a DoT tick or a thorns reflect.
+     * `blaze-proc.test.js` pins both halves of the split.
+     *
+     * Two other asymmetries against the ability path are not bugs either:
+     * lifesteal and mana leech are computed inside
+     * `CombatUtilities.processAttack` under `if (!abilityEffect)`, i.e.
+     * auto-attack-only by construction; and `pierce` here is the
+     * `combatStats.pierce` chance, where the ability path uses the effect's own
+     * `pierceChance`. Both match the reference sim.
+     *
+     * @param {Object} event - The AutoAttackEvent being processed
+     */
     processAutoAttackEvent(event) {
         const targets = event.source.isPlayer ? this.enemies : this.players;
 
