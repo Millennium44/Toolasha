@@ -51,7 +51,7 @@ const {
     isProRatesActive,
     setProRatesActive,
     toggleProRates,
-    getTooltipEnhancementParams,
+    enhancementParamsFor,
     describeEnhancementSource,
     buildSourceChipHTML,
 } = await import('./enhancement-params-source.js');
@@ -63,29 +63,55 @@ beforeEach(() => {
 describe('the active source', () => {
     test('defaults to the player’s own stats', () => {
         expect(isProRatesActive()).toBe(false);
-        expect(getTooltipEnhancementParams(TRADEABLE).kit).toBe('yours');
+        expect(enhancementParamsFor('tooltip', TRADEABLE).kit).toBe('yours');
     });
 
     test('switching to pro rates changes which parameters the tooltip is computed from', () => {
-        expect(getTooltipEnhancementParams(TRADEABLE).kit).toBe('yours');
+        expect(enhancementParamsFor('tooltip', TRADEABLE).kit).toBe('yours');
 
         toggleProRates();
 
-        expect(getTooltipEnhancementParams(TRADEABLE).kit).toBe('pro');
-        expect(getTooltipEnhancementParams(TRADEABLE).paramsSource).toBe('pro');
+        expect(enhancementParamsFor('tooltip', TRADEABLE).kit).toBe('pro');
+        expect(enhancementParamsFor('tooltip', TRADEABLE).paramsSource).toBe('pro');
     });
 
     test('toggling twice comes back to the player’s stats', () => {
         expect(toggleProRates()).toBe(true);
         expect(toggleProRates()).toBe(false);
-        expect(getTooltipEnhancementParams(TRADEABLE).kit).toBe('yours');
+        expect(enhancementParamsFor('tooltip', TRADEABLE).kit).toBe('yours');
     });
 
-    test('an untradeable item is quoted from the character even when pro rates are on', () => {
-        // Nobody else can be enhancing a soulbound item, so a pro's costs would be a fiction
+    test('an untradeable item is quoted from the character', () => {
+        // Nobody else can be enhancing a soulbound item, so the simulator's manual bench would
+        // be describing a run that cannot be made
+        expect(enhancementParamsFor('tooltip', UNTRADEABLE).kit).toBe('detected');
+    });
+
+    test('pro rates reach an untradeable item too — one toggle, one meaning', () => {
+        // This used to answer 'detected': the untradable rule sat above the toggle, so the one
+        // control that is supposed to mean "quote me a professional" silently did nothing on a
+        // soulbound piece while the chip beside it still said Yours. Asking what a top-end
+        // enhancer would spend has an answer whether or not anybody can sell you the result.
         setProRatesActive(true);
 
-        expect(getTooltipEnhancementParams(UNTRADEABLE).kit).toBe('detected');
+        expect(enhancementParamsFor('tooltip', UNTRADEABLE).kit).toBe('pro');
+    });
+
+    test('every surface answers the same toggle', () => {
+        setProRatesActive(true);
+
+        for (const surface of ['tooltip', 'advisor', 'savings', 'lab:route', 'lab:ranking', 'planner']) {
+            expect(enhancementParamsFor(surface, TRADEABLE).kit).toBe('pro');
+        }
+    });
+
+    test('the savings card is on its own bench whatever the simulator says', () => {
+        // Its enhancing path only fires when the finished piece has no ask at any price
+        expect(enhancementParamsFor('savings', TRADEABLE).kit).toBe('detected');
+    });
+
+    test('a surface with no item to ask about takes the simulator’s answer', () => {
+        expect(enhancementParamsFor('lab:ranking').kit).toBe('yours');
     });
 });
 
@@ -101,7 +127,7 @@ describe('persistence', () => {
         const reloaded = await import('./enhancement-params-source.js');
 
         expect(reloaded.isProRatesActive()).toBe(true);
-        expect(reloaded.getTooltipEnhancementParams(TRADEABLE).kit).toBe('pro');
+        expect(reloaded.enhancementParamsFor('tooltip', TRADEABLE).kit).toBe('pro');
     });
 
     test('a stored choice of "yours" is honoured', () => {
@@ -116,6 +142,16 @@ describe('the source indicator', () => {
 
         expect(source.kind).toBe('yours');
         expect(source.label).toBe('Yours');
+    });
+
+    test('says Manual for a manual bench even when no field was named', () => {
+        // "Yours" means detected, everywhere. A manual run with nothing overridden is still the
+        // bench the player told it about; this used to print "Yours" beside the same numbers a
+        // genuinely detected run printed it beside.
+        const source = describeEnhancementSource({ paramsSource: 'manual', manualOverrides: [] });
+
+        expect(source.kind).toBe('manual');
+        expect(source.label).toBe('Manual');
     });
 
     test('names the pro kit, and says what it is', () => {

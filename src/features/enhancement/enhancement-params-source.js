@@ -56,30 +56,90 @@ export function toggleProRates() {
 }
 
 /**
- * The enhancing parameters a tooltip for this item should be computed with.
+ * The surfaces that quote an enhancement price sweep, and the one axis on which they still
+ * differ after unification.
  *
- * Untradeable items are never somebody else's listing — the player is the only one who can be
- * enhancing them — so they are always quoted from the character's own stats.
+ * `ownBench` names the question "could anybody but this player hand over the finished piece?".
+ * When the answer is no, the character's own detected bench is the only honest one: a bench the
+ * player typed into the simulator describes a run nobody can make on their behalf, and the
+ * figure would be a fiction. The values:
  *
- * @param {string} itemHrid - Item the tooltip is describing
+ * - `'unbuyable'` — ask the item. An untradable piece has no seller, so it is costed at the
+ *   player's bench. This is the tooltip's original rule (a tooltip on somebody's listing is
+ *   quoting a piece they could buy; an untradable one is not a listing at all) and, once its
+ *   premise is stated in terms of the item rather than the slot, the advisor's too.
+ * - `'always'` — the surface only ever asks about pieces that cannot be bought finished, so the
+ *   question is settled before it is asked. The savings card's enhancing path fires exactly
+ *   when the target level has no ask at any price.
+ * - `'never'` — the surface has no single item to ask about.
+ *
+ * Pro rates sit above all of it. One toggle, one meaning: when it is on, every surface here is
+ * quoting the professional's bench and every chip says Pro, an untradable piece included — the
+ * player asked what a top-end enhancer would spend, and that question has an answer whether or
+ * not anybody can sell them the result.
+ */
+const SURFACE_RULES = {
+    /** Item tooltips, on a listing or in the inventory. */
+    tooltip: { ownBench: 'unbuyable' },
+    /** Combat-sim upgrade advisor rows. */
+    advisor: { ownBench: 'unbuyable' },
+    /** Equipment savings card — see `equipment-savings-row.js`, `enhancementCost`. */
+    savings: { ownBench: 'always' },
+    /** Lab panel, single-item route. */
+    'lab:route': { ownBench: 'unbuyable' },
+    /** Lab panel, whole-game XP/hour ranking: one bench for every item in the sweep. */
+    'lab:ranking': { ownBench: 'never' },
+    /** Goal planner cost estimates. */
+    planner: { ownBench: 'unbuyable' },
+};
+
+/**
+ * Whether an item can be bought finished from somebody else.
+ * @param {string} [itemHrid] - Item being costed
+ * @returns {boolean} True when the market could supply it
+ */
+function isTradable(itemHrid) {
+    const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+    return itemDetails?.isTradable !== false;
+}
+
+/**
+ * The enhancing parameters a price-sweeping surface should be computed with.
+ *
+ * One resolution for every surface, in one order: the Pro toggle wins if it is on, then the
+ * own-bench rule for pieces nobody can sell finished, then the simulator's own answer —
+ * detection when auto-detect is on, the manual panel when it is off.
+ *
+ * @param {string} surface - Key in {@link SURFACE_RULES}
+ * @param {string} [itemHrid] - Item being costed, for the surfaces whose rule asks
  * @returns {Object} Enhancement parameters, tagged with `paramsSource`
  */
-export function getTooltipEnhancementParams(itemHrid) {
-    const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
-    const isTradeable = itemDetails?.isTradable !== false;
-
-    if (!isTradeable) {
-        return getAutoDetectedParams();
+export function enhancementParamsFor(surface, itemHrid) {
+    const rule = SURFACE_RULES[surface];
+    if (!rule) {
+        console.error('[EnhancementParamsSource] Unknown surface:', surface);
     }
+
     if (isProRatesActive()) {
         return getProRatesParams();
     }
+
+    const ownBench = rule?.ownBench ?? 'unbuyable';
+    if (ownBench === 'always' || (ownBench === 'unbuyable' && !isTradable(itemHrid))) {
+        return getAutoDetectedParams();
+    }
+
     return getEnhancingParams();
 }
 
 /**
  * Name the source of a set of parameters, for display beside the numbers they produced.
- * @param {Object} params - Result of getTooltipEnhancementParams() or getEnhancingParams()
+ *
+ * "Yours" means detected — everywhere, always. A manual bench is Manual even when every field in
+ * it happens to match what detection would have found: that is the bench the player told it
+ * about, not the bench it found, and the two are only the same by coincidence.
+ *
+ * @param {Object} params - Result of enhancementParamsFor() or getEnhancingParams()
  * @returns {{kind: 'pro'|'manual'|'yours', label: string, detail: string|null}} Chip content
  */
 export function describeEnhancementSource(params) {
@@ -91,9 +151,8 @@ export function describeEnhancementSource(params) {
         };
     }
 
-    const overrides = describeParamsSource(params);
-    if (overrides) {
-        return { kind: 'manual', label: 'Manual', detail: overrides };
+    if (params?.paramsSource === 'manual' || describeParamsSource(params)) {
+        return { kind: 'manual', label: 'Manual', detail: describeParamsSource(params) };
     }
 
     return { kind: 'yours', label: 'Yours', detail: null };
