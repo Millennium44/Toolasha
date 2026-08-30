@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Since you were away, and who needs you next
+
+Switching back to a character shows one dismissible card diffing the departing snapshot against arrival: "Ale ran dry at 14:20", "2 more listings undercut", "Sword +2 → +5" — net change only, with a tooltip saying reversals in between are invisible; no snapshot means no card, never a fabricated "nothing happened". Dismissal is a read-mark, not a delete, so the account panel keeps its knowledge. And the Needs-attention section now leads with "Next: <character> — <worst line>", ordered by one stated severity list (wasting > lapsed > deadline soon > reading) — never a tunable score — with never-recorded characters kept in their own group rather than ranked as fine.
+
 ### Calibration folds by script version, and the accuracy archive records its trace health
 
 Each skill card can fold open to per-version cohort medians — the direct measurement of whether a release's fix moved the numbers — with an ask-vs-bid movement verdict that separates "the market moved" from "the forecast's selling assumption drifted", refusals under five pairs per cohort, and wording pinned to never claim causation. And every archived trial-accuracy entry now records its trace quality (gaps, mid-fight start, reload stitches) so the gap-vs-accuracy question becomes answerable once cycles accumulate; untraced weeks record as untraced, never as clean-looking zeros.
