@@ -717,6 +717,13 @@ class DataManager {
         });
 
         // Handle action_type_consumable_slots_updated (when user changes tea assignments)
+        // updateDrinkSlotsMap clears the whole map before refilling, which is
+        // only safe because this message always carries EVERY action type, not
+        // just the changed one — measured on the test server 2026-08-29 by
+        // swapping one crafting tea: all 13 action types in every payload, and
+        // the message also streams during consumption with the full map each
+        // time. A partial payload here would silently strip the other skills'
+        // drink costs from the profit calculators until reload.
         this.webSocketHook.on('action_type_consumable_slots_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
 

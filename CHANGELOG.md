@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Drink costs verified whole
+
+Chasing a drink-costs-missing report (which turned out to be about the upstream script): both profit calculators do subtract drink costs, and the one latent hazard found — the drink-slots map being cleared and refilled on every tea change — was measured safe on the test server: the game's update message always carries every action type. Documented at the handler.
+
 ### The lab replay's hit metrics divide by the same thing on both sides
 
 Predicted hit rate, damage per hit, and crit rate counted every landed sim entry — damage-over-time ticks, thorns — while the observed side counted only swings, and observed damage per hit carried tick damage in its numerator. All three are now swing-only on both sides (fights record their DoT damage share from now on); old fights without the split keep the mixed figure, honestly labelled "incl. DoT", compared against a matching mixed prediction. On the Pyre Hunter sample this reveals the real like-for-like gap is ~-33% (not -6%), with the crit rate now clearly below prediction — the sim over-credits crits rather than under-modelling the monster.
