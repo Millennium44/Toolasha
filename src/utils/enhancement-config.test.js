@@ -79,8 +79,15 @@ describe('getEnhancingParams with auto-detect off', () => {
         // Level 42 with no tea, not the shipped 140 with ultra tea
         expect(params.enhancingLevel).toBe(42);
         expect(params.houseLevel).toBe(character.observatoryLevel);
-        expect(params.paramsSource).toBe('auto');
         expect(params.manualOverrides).toEqual([]);
+    });
+
+    test('the bench is tagged manual even when every field was answered from detection', () => {
+        // The numbers are the character's, field by field — that is what keeps a never-opened
+        // panel from quoting a stranger. The *bench* is still the manual panel's, and used to be
+        // tagged 'auto' whenever the override list was empty, which let two surfaces print
+        // "Yours" for two different benches.
+        expect(getEnhancingParams().paramsSource).toBe('manual');
     });
 
     test('the shipped celestial enhancer does not grant a success bonus the player lacks', () => {
@@ -151,6 +158,10 @@ describe('describeParamsSource', () => {
     test('says nothing when the params describe the character', () => {
         expect(describeParamsSource({ paramsSource: 'auto', manualOverrides: [] })).toBeNull();
         expect(describeParamsSource(undefined)).toBeNull();
+    });
+
+    test('says so for a manual bench with no field worth naming', () => {
+        expect(describeParamsSource({ paramsSource: 'manual', manualOverrides: [] })).toContain('manual params');
     });
 
     test('names the overridden fields', () => {

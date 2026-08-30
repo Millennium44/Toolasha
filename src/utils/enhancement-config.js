@@ -44,6 +44,11 @@ export function getBlessedTeaBonus(itemDetailMap) {
  * still holding those shipped numbers is a field nobody chose, so it is answered from detection
  * instead. Only a field the player actually edited overrides what they really have.
  *
+ * Surfaces that quote a price sweep should ask {@link
+ * module:features/enhancement/enhancement-params-source.enhancementParamsFor} instead, which
+ * layers the Pro-rates toggle and the own-bench rule over this. This is the layer underneath:
+ * detection when auto-detect is on, the manual panel when it is off.
+ *
  * @returns {Object} Enhancement parameters for simulator, tagged with `paramsSource`
  *   ('auto' | 'manual') and `manualOverrides` (labels of edited fields)
  */
@@ -123,17 +128,28 @@ function settingsEqual(a, b) {
 
 /**
  * Describe where a set of enhancing parameters came from, for display next to a prediction.
+ *
+ * Named fields when there are any: those are the ones worth reading back. A manual run with
+ * nothing named is still a manual run, though — every field happening to match what was detected
+ * does not make it a detected bench — so it says so rather than passing for the character's own.
+ *
  * @param {Object} params - Result of getEnhancingParams()
- * @returns {string|null} Short label when manual overrides are in play, otherwise null
+ * @returns {string|null} Short label when manual params are in force, otherwise null
  */
 export function describeParamsSource(params) {
     const overrides = params?.manualOverrides;
-    if (!Array.isArray(overrides) || overrides.length === 0) {
-        return null;
+    if (Array.isArray(overrides) && overrides.length > 0) {
+        const shown = overrides.slice(0, 3).join(', ');
+        return overrides.length > 3
+            ? `manual params: ${shown} +${overrides.length - 3} more`
+            : `manual params: ${shown}`;
     }
 
-    const shown = overrides.slice(0, 3).join(', ');
-    return overrides.length > 3 ? `manual params: ${shown} +${overrides.length - 3} more` : `manual params: ${shown}`;
+    if (params?.paramsSource === 'manual') {
+        return 'manual params: as set in the enhancement simulator';
+    }
+
+    return null;
 }
 
 /**
@@ -846,9 +862,12 @@ function getManualParams({ useShippedDefaults = false } = {}) {
         houseSuccessBonus: houseSuccessBonus,
         achievementSuccessBonus: achievementSuccessBonus,
         slotBreakdown: slotBreakdown,
-        // Fields left at their shipped values were answered from detection, so a run with no
-        // edited fields is an auto-detected run no matter what the toggle says
-        paramsSource: useShippedDefaults ? 'pro' : manualOverrides.length > 0 ? 'manual' : 'auto',
+        // This is the manual panel's answer, and it says so even when no field was edited.
+        // Individual untouched fields are still filled in from detection — that is what keeps a
+        // never-opened panel from quoting a stranger — but the bench as a whole is the one the
+        // player told it about, not the one it found. Two surfaces used to print "Yours" for
+        // two different benches because this said 'auto' whenever the override list was empty.
+        paramsSource: useShippedDefaults ? 'pro' : 'manual',
         manualOverrides,
     };
 }
