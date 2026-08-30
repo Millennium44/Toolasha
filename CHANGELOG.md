@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The overlay remembers which layout it is showing, and the advisor's buttons stop dropping data
+
+The applied layout's name now survives a reload — the one-press Update button and the Showing line are there after F5, with the "(edited)" drift check still adjudicating honestly. And the upgrade advisor's handoffs carry what the row knew: Watch passes the enhancement level (a +5 no longer lands on the watchlist priced at +0), Save-for-this carries the row's own costed price with its source shown beside the panel's derivation when they differ, and savings targets are keyed by item and level so saving for +5 and +8 of one item keeps both (existing targets migrate in place).
+
 ### A goal that comes within reach says so, prices show their move, and a trial recording admits its gaps
 
 Three additions: a savings-goal alert (off by default — notifications_savingsGoalReached) fires once when a watched gear/ability/house goal crosses affordable, re-arms when coins drop back or the target changes, and quotes the price's age; watchlist chips gain a movers span ("▲2.1% / 3h") from the rise the price fold always computed but never showed, with no chip when the reading gap exceeds six hours; and the trial trace reports its recording health live — quality fields on the Trace button's tooltip, and a scoreboard warning while a capture with a 5-second-plus gap is running instead of after the export.
