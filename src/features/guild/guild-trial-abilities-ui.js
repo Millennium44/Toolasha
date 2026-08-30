@@ -3,9 +3,10 @@
  *
  * The session logic lives in `guild-trial-abilities.js`; this file only draws
  * it. While the roster is still being clicked through, every claim on the
- * panel is hedged — coverage reads `Unknown`, never `MISSING`, because a kit
- * nobody has looked at is not an empty kit. Only when every current
- * participant has an authoritative capture does the panel say what is missing.
+ * panel is hedged — an uncovered aura reads as its own denominator ("none
+ * among 31 captured · 19 unseen"), never `MISSING`, because a kit nobody has
+ * looked at is not an empty kit. Only when every current participant has an
+ * authoritative capture does the panel say what is missing.
  *
  * The controls never skip anyone: a capture that times out leaves its player
  * outstanding and retryable, and nothing here auto-completes the roster.
@@ -334,7 +335,41 @@ function drawHeader(body, state) {
             ROW_COLORS.bad
         )
     );
-    card.appendChild(panelNote('Aura coverage unknown until capture is complete.'));
+    card.appendChild(panelNote(`Aura coverage is read against the ${state.capturedCount} captured so far.`));
+}
+
+/**
+ * What an uncovered aura reads as: the honest denominator, or the verdict.
+ *
+ * `Unknown` was the old answer for every uncovered aura until the very last
+ * participant landed — and at fifty participants one click apiece inside a
+ * sixty-five-minute trial, that headline is realistically never reached, so
+ * the card said nothing at all for the whole hour. But `covered` was always
+ * sound on partial data (a provider seen is a provider), and so is its
+ * negative *over the captures in hand*. So the partial row says exactly what
+ * has been looked at and exactly what has not, and only the full roster earns
+ * the flat `MISSING` — which still means what it always meant: proven absent.
+ *
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @returns {{text: string, color: string, title: string}} The row's right-hand side
+ */
+export function auraGapText(state) {
+    const captured = Number(state?.capturedCount) || 0;
+    const unseen = Math.max(0, (Number(state?.rosterCount) || 0) - captured);
+    if (state?.complete || unseen === 0) {
+        return {
+            text: 'MISSING',
+            color: ROW_COLORS.bad,
+            title: 'Every participant is captured and nobody equips it.',
+        };
+    }
+    return {
+        text: `none among ${captured} captured · ${unseen} unseen`,
+        color: ROW_COLORS.dim,
+        title:
+            `No provider among the ${captured} captured; ${unseen} unseen. ` +
+            'One of the unseen may equip it — this is not MISSING until every participant is captured.',
+    };
 }
 
 /**
@@ -375,14 +410,9 @@ function drawAuraCoverage(body, state, abilityDetailMap) {
             );
             wireProfileClick(line, aura.provider);
             card.appendChild(line);
-        } else if (state.coverage[hrid] === 'missing') {
-            card.appendChild(
-                panelLine(name, 'MISSING', ROW_COLORS.bad, 'Every participant is captured and nobody equips it.')
-            );
         } else {
-            card.appendChild(
-                panelLine(name, 'Unknown', ROW_COLORS.dim, 'Not seen yet — some participants still need Battle Info.')
-            );
+            const gap = auraGapText(state);
+            card.appendChild(panelLine(name, gap.text, gap.color, gap.title));
         }
     }
 }

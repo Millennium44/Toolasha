@@ -5,8 +5,9 @@
  *
  * The load-bearing assertion is the dull one: the panel draws every section
  * and none of them reports a failure. Beyond that, the panel's claims are what
- * matter — `Unknown` before the roster is fully captured, `MISSING` only
- * after, and a stat-only sighting drawn as unavailable rather than empty.
+ * matter — an honest denominator before the roster is fully captured,
+ * `MISSING` only after, and a stat-only sighting drawn as unavailable rather
+ * than empty.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -80,6 +81,7 @@ const {
     completionLine,
     staleSessionNote,
     classTagText,
+    auraGapText,
 } = await import('./guild-trial-abilities-ui.js');
 const { resetPlanUi } = await import('./guild-trial-abilities-ui.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
@@ -181,7 +183,7 @@ describe('trial abilities panel', () => {
         openTrialAbilitiesPanel();
         expect(text()).toContain('Trial abilities — 1/3 captured');
         expect(text()).toContain('2 players still need Battle Info');
-        expect(text()).toContain('Aura coverage unknown until capture is complete');
+        expect(text()).toContain('Aura coverage is read against the 1 captured so far');
         expect(text()).toContain('T4');
         expect(text()).not.toContain(FAILED);
     });
@@ -226,7 +228,7 @@ describe('trial abilities panel', () => {
         expect(note).toContain('2h');
     });
 
-    test('coverage says Unknown before completion and MISSING only after', async () => {
+    test('coverage names its denominator before completion and MISSING only after', async () => {
         await feature.initialize('Cats');
         guildTrialAbilities.setRoster(['Alice', 'Bob']);
         guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 78 }]));
@@ -234,15 +236,33 @@ describe('trial abilities panel', () => {
         guildTrialAbilitiesPanel.show();
         const coverage = () => card('Equipped aura coverage').textContent;
         expect(coverage()).toContain('Lv78 — Alice');
-        expect(coverage()).toContain('Unknown');
+        // The partial claim, said in full rather than as a shrug: what was
+        // looked at, and what was not
+        expect(coverage()).toContain('none among 1 captured · 1 unseen');
         expect(coverage()).not.toContain('MISSING');
 
         guildTrialAbilities.recordCapture(snapshot('Bob', 2, [{ hrid: '/abilities/sweep', level: 50 }]));
         guildTrialAbilitiesPanel.render();
         expect(coverage()).toContain('MISSING');
-        expect(coverage()).not.toContain('Unknown');
+        expect(coverage()).not.toContain('unseen');
         expect(text()).toContain('2/2 captured');
         expect(text()).not.toContain(FAILED);
+    });
+
+    test('the partial coverage row counts the captured, never waiting on the last player', () => {
+        // 31 of 50 is the shape that made the old wording useless: `unknown`
+        // for the whole hour because the fiftieth click never came
+        const partial = auraGapText({ capturedCount: 31, rosterCount: 50, complete: false });
+        expect(partial.text).toBe('none among 31 captured · 19 unseen');
+        expect(partial.title).toContain('No provider among the 31 captured; 19 unseen');
+        expect(partial.title).toContain('not MISSING');
+
+        const done = auraGapText({ capturedCount: 50, rosterCount: 50, complete: true });
+        expect(done.text).toBe('MISSING');
+        expect(done.title).toBe('Every participant is captured and nobody equips it.');
+
+        // A roster with nothing outstanding is complete however it is flagged
+        expect(auraGapText({ capturedCount: 3, rosterCount: 3 }).text).toBe('MISSING');
     });
 
     test('a duplicated aura names its redundant copies without double-counting', async () => {
