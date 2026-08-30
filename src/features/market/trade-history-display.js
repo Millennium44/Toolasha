@@ -18,6 +18,7 @@ class TradeHistoryDisplay {
         this.currentOrderBookData = null;
         this.isInitialized = false;
         this.needsPriceDataRetry = false; // Track if we need to retry due to missing price data
+        this.unregisterSettingChange = null;
     }
 
     /**
@@ -42,7 +43,7 @@ class TradeHistoryDisplay {
      * Setup setting change listener to refresh display when comparison mode changes
      */
     setupSettingListener() {
-        config.onSettingChange('market_tradeHistoryComparisonMode', () => {
+        this.unregisterSettingChange = config.onSettingChange('market_tradeHistoryComparisonMode', () => {
             // Refresh display if currently viewing an item
             if (this.currentItemHrid) {
                 const history = tradeHistory.getHistory(this.currentItemHrid, this.currentEnhancementLevel);
@@ -297,6 +298,11 @@ class TradeHistoryDisplay {
      */
     disable() {
         try {
+            if (this.unregisterSettingChange) {
+                this.unregisterSettingChange();
+                this.unregisterSettingChange = null;
+            }
+
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
