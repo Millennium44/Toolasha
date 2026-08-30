@@ -9,13 +9,25 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const disk = vi.hoisted(() => ({ values: {} }));
+const disk = vi.hoisted(() => ({ values: {}, readPending: null }));
+// Mutable so the character-switch race test can move the active character
+// mid-flight, the way a real switch does.
+const characterId = vi.hoisted(() => ({ current: 'charA' }));
 
 vi.mock('../../utils/character-key.js', () => ({
-    readScoped: async (base, _store, fallback) => (base in disk.values ? disk.values[base] : fallback),
+    readScoped: async (base, _store, fallback) => {
+        if (disk.readPending) await disk.readPending;
+        return base in disk.values ? disk.values[base] : fallback;
+    },
     writeScoped: async (base, value) => {
         disk.values[base] = value;
         return true;
+    },
+}));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => characterId.current,
     },
 }));
 
@@ -24,6 +36,8 @@ const { loadOverrides, setOverride, loadSnapshot, saveSnapshot, OVERRIDES_KEY, S
 
 beforeEach(() => {
     disk.values = {};
+    disk.readPending = null;
+    characterId.current = 'charA';
 });
 
 describe('the storage keys, deliberately unchanged by the display-name rename', () => {
@@ -66,6 +80,31 @@ describe('the stage ticks', () => {
         await expect(loadOverrides()).resolves.toEqual({});
         disk.values[OVERRIDES_KEY] = 'rooms';
         await expect(loadOverrides()).resolves.toEqual({});
+    });
+
+    test("a character switch mid-tick does not file the departing character's tick under the arriving one's key", async () => {
+        // Character B has already ticked "rooms" for themself.
+        characterId.current = 'charB';
+        await setOverride('rooms', true);
+        expect(disk.values[OVERRIDES_KEY]).toEqual({ rooms: true });
+
+        // Character A ticks "jewelry"; the read inside setOverride is slow
+        // and still in flight...
+        characterId.current = 'charA';
+        let releaseRead;
+        disk.readPending = new Promise((resolve) => {
+            releaseRead = resolve;
+        });
+        const ticking = setOverride('jewelry', true);
+
+        // ...and the player switches to character B before it resolves.
+        characterId.current = 'charB';
+        releaseRead();
+        await ticking;
+
+        // A's tick must never land under B's key: B's own stored tick map is
+        // untouched by a write that started life as A's.
+        expect(disk.values[OVERRIDES_KEY]).toEqual({ rooms: true });
     });
 });
 

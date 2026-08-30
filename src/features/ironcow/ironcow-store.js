@@ -11,6 +11,7 @@
  * not the main's plan, and a bare key would show each of them the other's.
  */
 
+import dataManager from '../../core/data-manager.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 // The panel's display name changed to "Iron Bell Farming", but these two keys
@@ -52,9 +53,17 @@ export async function loadOverrides() {
  * @returns {Promise<Object>} The new tick map
  */
 export async function setOverride(stageId, ticked) {
+    // Captured before `loadOverrides()`'s await: `characterKey()` is resolved
+    // again, fresh, inside `writeScoped` below, against whatever character is
+    // current *then*. A switch landing in the gap — the player ticks a stage
+    // just as a switch begins — would otherwise write the departing
+    // character's tick map under the arriving character's key, corrupting
+    // their stored overrides with a tick they never made.
+    const charId = dataManager.getCurrentCharacterId();
     const overrides = await loadOverrides();
     if (ticked) overrides[stageId] = true;
     else delete overrides[stageId];
+    if (dataManager.getCurrentCharacterId() !== charId) return overrides;
     try {
         await writeScoped(OVERRIDES_KEY, overrides, 'settings');
     } catch (error) {
