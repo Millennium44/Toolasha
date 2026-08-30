@@ -46,6 +46,13 @@ import {
     parseRosterNames,
     resolveRosterKits,
 } from './guild-trial-composition.js';
+import {
+    ACCURACY_METRICS,
+    OUTLIER_THRESHOLD_PCT,
+    archivedAccuracyTrend,
+    summarizeWeekAccuracy,
+} from './guild-trial-accuracy.js';
+import { loadTrialRecord, loadTrialStats } from './guild-trials-store.js';
 
 const ACCENT = '#b0d8ff';
 
@@ -85,6 +92,10 @@ const state = {
     tier: '',
     /** Kits, keyed by lowercased name, from the stored loadouts */
     loadouts: {},
+    /** This week's per-trial attribution accuracy, from `summarizeWeekAccuracy` */
+    accuracy: [],
+    /** Archived cycles' compact accuracy, from `archivedAccuracyTrend`, oldest first */
+    accuracyTrend: [],
 };
 
 /**
@@ -110,6 +121,8 @@ export function resetLedgerView() {
     state.rosterSeeded = false;
     state.tier = '';
     state.loadouts = {};
+    state.accuracy = [];
+    state.accuracyTrend = [];
     refreshGeneration = 0;
 }
 
@@ -141,6 +154,13 @@ export async function refreshLedgerView() {
     try {
         const cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
         const record = await loadLoadouts(characterId, guild);
+        // The accuracy card reads a different pair of stores from the ledger's:
+        // this week's measured-vs-reported blob, which the ladder's rollover
+        // discards, and the four archived cycles the rollover folds a compact
+        // summary into. Both are tolerated failing — an unreadable accuracy
+        // section must not cost the panel its table
+        const stats = await loadTrialStats().catch(() => null);
+        const trialRecord = await loadTrialRecord(guild, Date.now(), characterId).catch(() => null);
         // A newer refresh already started while these reads were in flight —
         // storage reads do not resolve in call order, so writing this one's
         // answer now would draw the window the user has already moved past
@@ -148,6 +168,8 @@ export async function refreshLedgerView() {
 
         state.cycles = cycles;
         state.loaded = true;
+        state.accuracy = summarizeWeekAccuracy(stats?.trials);
+        state.accuracyTrend = archivedAccuracyTrend(trialRecord?.history);
 
         const kits = {};
         for (const entry of Object.values(record?.players || {})) {
@@ -552,6 +574,176 @@ export function lastCycleParticipants(cycles) {
         .sort((a, b) => a.localeCompare(b));
 }
 
+// ─── Attribution accuracy ───────────────────────────────────────────────────
+
+/**
+ * A signed percentage difference, or a word for the cases a number would lie about.
+ *
+ * `Infinity` is what {@link module:./guild-trial-accuracy.deltaPct} produces when
+ * the game reported nothing and the stream measured something — real, and not a
+ * percentage. Null is "nothing to compare", which is a dash.
+ *
+ * @param {number|null} value - Signed percent
+ * @returns {string} e.g. `+3.2%`, `-11.0%`, `unreported`, `—`
+ */
+export function accuracyDeltaText(value) {
+    if (value === null || value === undefined || Number.isNaN(value)) return '—';
+    if (!Number.isFinite(value)) return 'unreported';
+    return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+
+/**
+ * The match line: how many of the game's names the measurement actually found.
+ *
+ * The join is by display name and nothing else — see the module note in
+ * `guild-trial-accuracy.js`. A name that did not join is stated as unmatched
+ * rather than folded into the medians as a perfect or a total miss.
+ *
+ * @param {Object} accuracy - From `summarizeTrialAccuracy`
+ * @returns {string} e.g. `9 of 10 names matched · 1 unmatched`
+ */
+export function accuracyMatchText(accuracy) {
+    const players = accuracy?.players || 0;
+    if (!players) return 'No names to match';
+    const parts = [`${accuracy.matched} of ${players} names matched`];
+    if (accuracy.unmatched) parts.push(`${accuracy.unmatched} unmatched`);
+    if (accuracy.measuredOnly) parts.push(`${accuracy.measuredOnly} measured only`);
+    return parts.join(' · ');
+}
+
+/**
+ * One metric's line: the middle player's miss, and the worst one's.
+ * @param {Object|null} held - A metric block from `summarizeTrialAccuracy`
+ * @returns {string} e.g. `median +2.1% · worst -18.4% (8 players)`
+ */
+export function accuracyMetricText(held) {
+    if (!held || !held.players) return 'nothing reported';
+    return (
+        `median ${accuracyDeltaText(held.median)} · worst ${accuracyDeltaText(held.worst)} ` +
+        `(${held.players} player${held.players === 1 ? '' : 's'})`
+    );
+}
+
+/** What the card says about its own join, wherever a tooltip has room for it */
+const ACCURACY_JOIN_NOTE =
+    'The game reports per-member totals at the end of a trial; the panel measures the same fight tick by tick. ' +
+    'The two are joined by display name, so a rename mid-week leaves a name on one side only — counted as ' +
+    'unmatched and kept out of every median rather than scored as a perfect or a total miss.';
+
+/** Ink for a delta: past the outlier threshold is news, inside it is not */
+function deltaColor(value, threshold = OUTLIER_THRESHOLD_PCT) {
+    if (value === null || value === undefined) return ROW_COLORS.dim;
+    if (!Number.isFinite(value)) return ROW_COLORS.bad;
+    return Math.abs(value) >= threshold ? ROW_COLORS.gold : ROW_COLORS.good;
+}
+
+/** Draw one trial's accuracy block */
+function drawTrialAccuracy(card, entry) {
+    const { accuracy } = entry;
+    const when = Number.isFinite(entry.at) ? ` (${localDay(entry.at)})` : '';
+
+    card.appendChild(
+        panelLine(
+            `${entry.encounter}${when}`,
+            accuracyDeltaText(accuracy.totals.damage.deltaPct),
+            deltaColor(accuracy.totals.damage.deltaPct),
+            'The whole party’s measured damage against the whole party’s reported damage, ' +
+                'summed over the names that matched. The per-metric lines below are per player.'
+        )
+    );
+    card.appendChild(panelLine('Names', accuracyMatchText(accuracy), ROW_COLORS.dim, ACCURACY_JOIN_NOTE));
+
+    for (const metric of ACCURACY_METRICS) {
+        const held = accuracy.metrics[metric.key];
+        card.appendChild(
+            panelLine(`  ${metric.label}`, accuracyMetricText(held), deltaColor(held?.median), metric.expectation)
+        );
+    }
+
+    if (!accuracy.outliers.length) {
+        card.appendChild(panelNote(`  No player past ${accuracy.threshold}% on any metric.`));
+        return;
+    }
+    for (const row of accuracy.outliers.slice(0, 6)) {
+        const label = ACCURACY_METRICS.find((metric) => metric.key === row.worstMetric)?.label || row.worstMetric;
+        card.appendChild(
+            panelLine(
+                `  ${row.name}`,
+                `${label} ${accuracyDeltaText(row.worstDeltaPct)}`,
+                deltaColor(row.worstDeltaPct),
+                `${formatKMB(row[row.worstMetric].measured)} measured against ` +
+                    `${formatKMB(row[row.worstMetric].reported)} reported.`
+            )
+        );
+    }
+}
+
+/**
+ * Draw the attribution-accuracy card.
+ *
+ * The retrospective home for a figure that used to exist only inside a debug
+ * export: how close the tick-by-tick measurement got to the game's own
+ * accounting, this week and across the archived cycles.
+ *
+ * @param {HTMLElement} body - The panel body
+ */
+function drawAccuracy(body) {
+    const card = panelCard(body, 'Attribution accuracy', ACCENT);
+
+    card.appendChild(
+        panelNote(
+            'Healing and taken are inferred from health deltas and are expected to run wider than damage. ' +
+                'A double-digit miss on those two is normal, not a fault.'
+        )
+    );
+
+    if (!state.loaded) {
+        card.appendChild(panelNote('Reading this week’s comparisons…'));
+        return;
+    }
+
+    if (!state.accuracy.length) {
+        card.appendChild(
+            panelNote(
+                'No comparison recorded this week. A trial only produces one if the panel was open when the ' +
+                    'game sent its end-of-trial totals.'
+            )
+        );
+    }
+    for (const entry of state.accuracy) drawTrialAccuracy(card, entry);
+
+    const trend = [...state.accuracyTrend].reverse();
+    if (!trend.length) return;
+
+    card.appendChild(panelLine('Archived cycles', `${trend.length} kept`, ROW_COLORS.dim, ACCURACY_JOIN_NOTE));
+    for (const cycle of trend) {
+        const label = Number.isFinite(cycle.weekStart) ? localDay(cycle.weekStart) : 'unknown week';
+        if (!cycle.hasAccuracy) {
+            card.appendChild(
+                panelLine(
+                    `  ${label}`,
+                    'no accuracy data',
+                    ROW_COLORS.dim,
+                    'Archived before the accuracy summary existed. There is nothing in the entry to reconstruct it from.'
+                )
+            );
+            continue;
+        }
+        const unmatched = cycle.unmatched ? `, ${cycle.unmatched} unmatched` : '';
+        card.appendChild(
+            panelLine(
+                `  ${label}`,
+                `dmg ${accuracyDeltaText(cycle.metrics.damage?.median)}`,
+                deltaColor(cycle.metrics.damage?.median),
+                `${cycle.trials} trial${cycle.trials === 1 ? '' : 's'}${unmatched}.\n` +
+                    ACCURACY_METRICS.map(
+                        (metric) => `${metric.label}: ${accuracyMetricText(cycle.metrics[metric.key])}`
+                    ).join('\n')
+            )
+        );
+    }
+}
+
 /** Draw the composition planner section */
 function drawPlanner(body) {
     const card = panelCard(body, 'Roster composition', ACCENT);
@@ -680,6 +872,12 @@ export const guildTrialLedgerPanel = createPanel({
 
         const ledger = panelCard(body, `Attendance and contribution (${table.rows.length})`, ACCENT);
         drawTable(ledger, table);
+
+        // Between the table and the planner on purpose: the accuracy card is a
+        // caveat on the figures directly above it — how much to trust the
+        // shares — and belongs beside them rather than in the live-fight
+        // scoreboard, which has a trial to watch and no room for a retrospective
+        drawAccuracy(body);
 
         drawPlanner(body);
     },

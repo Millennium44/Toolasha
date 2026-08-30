@@ -262,17 +262,36 @@ export function recordProvenance(record, { guildId = null, guildName = null } = 
  * a player who wants last cycle's numbers has nowhere else to get them. Bounded
  * to {@link MAX_ARCHIVED_CYCLES}, oldest dropped first.
  *
+ * ## The accuracy fold
+ *
+ * `accuracy` is the compact per-trial attribution summary from
+ * `guild-trial-accuracy.js`. It is folded in here because this is the last
+ * moment the week's measured-vs-reported pairs are still readable: they live in
+ * a week-guarded blob (see {@link loadTrialStats}) that the next cycle
+ * discards, so an accuracy figure not carried into the archive is gone. Only
+ * the medians, the worsts and the counts travel — never the per-player table,
+ * which would multiply this record by the party size for a detail nobody reads
+ * a month later.
+ *
  * @param {Object} record - The record (not mutated)
  * @param {string} reason - Why the cycle was closed, for the archive entry
  * @param {number} [at] - Clock
+ * @param {Object} [options] - Extras folded into the entry
+ * @param {Object|null} [options.accuracy] - Compact per-trial accuracy, keyed by encounter
  * @returns {Object} The record with its tiles moved into `history`
  */
-export function archiveCycle(record, reason, at = Date.now()) {
+export function archiveCycle(record, reason, at = Date.now(), { accuracy = null } = {}) {
     const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
     const history = Array.isArray(record?.history) ? [...record.history] : [];
 
     if (Object.keys(tiles).length) {
-        history.push({ archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles });
+        const entry = { archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles };
+        // Additive: written only when there is something to write, so an entry
+        // with no `accuracy` key is an archive from before this existed rather
+        // than a cycle that attributed nothing. `archivedAccuracyTrend` keeps
+        // those two apart and says "no accuracy data" for the former
+        if (accuracy && typeof accuracy === 'object' && Object.keys(accuracy).length) entry.accuracy = accuracy;
+        history.push(entry);
     }
 
     return {

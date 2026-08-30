@@ -26,6 +26,10 @@ const world = vi.hoisted(() => ({
     // across the switch — the panel-shell reopen path a character switch
     // takes only when it finds something to reopen.
     reopenOnSwitch: false,
+    // The week's measured-vs-reported blob and the trial record whose `history`
+    // carries the archived cycles, for the accuracy card
+    trialStats: { weekStart: 0, trials: {} },
+    trialRecord: { weekStart: 0, tiles: {}, history: [] },
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100, getSetting: () => true } }));
@@ -71,7 +75,18 @@ vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
     },
 }));
 
+// The accuracy card reads the trial store, which is IndexedDB and is never what
+// these tests are about; the arithmetic behind the card lives in
+// `guild-trial-accuracy.test.js`
+vi.mock('./guild-trials-store.js', () => ({
+    loadTrialStats: async () => world.trialStats,
+    loadTrialRecord: async () => world.trialRecord,
+}));
+
 const {
+    accuracyDeltaText,
+    accuracyMatchText,
+    accuracyMetricText,
     buildLedgerTable,
     coverageLine,
     filterLedgerRows,
@@ -127,6 +142,8 @@ beforeEach(() => {
     world.loadouts = { players: {} };
     world.rows = [];
     world.reopenOnSwitch = false;
+    world.trialStats = { weekStart: WEEK, trials: {} };
+    world.trialRecord = { weekStart: WEEK, tiles: {}, history: [] };
     world.cycles = [
         cycle(WEEK, 2, {
             alice: {
@@ -396,5 +413,142 @@ describe('the panel', () => {
         const text = guildTrialLedgerPanel.panel.textContent;
         expect(text).not.toContain('could not be drawn');
         expect(text).toContain('Nothing recorded yet');
+    });
+});
+
+describe('the accuracy card', () => {
+    /** The panel, drawn, as one string */
+    async function drawn() {
+        await refreshLedgerView();
+        guildTrialLedgerPanel.show({ remember: false });
+        return guildTrialLedgerPanel.panel.textContent;
+    }
+
+    test('names the section and states the healing/taken expectation up front', async () => {
+        const text = await drawn();
+        expect(text).not.toContain('could not be drawn');
+        expect(text).toContain('Attribution accuracy');
+        expect(text).toContain('expected to run wider than damage');
+    });
+
+    test('a week with no comparison says so rather than showing a perfect score', async () => {
+        const text = await drawn();
+        expect(text).toContain('No comparison recorded this week');
+    });
+
+    test("draws this week's trial with its overall delta, its metrics and its outliers", async () => {
+        world.trialStats = {
+            weekStart: WEEK,
+            trials: {
+                'Elite Trial': {
+                    at: WEEK,
+                    reported: {
+                        Alice: { damage: 1000, healing: 100, taken: 100 },
+                        Bob: { damage: 1000, healing: 100, taken: 100 },
+                        Renamed: { damage: 1000, healing: 100, taken: 100 },
+                    },
+                    measured: {
+                        Alice: { damage: 1000, healing: 100, taken: 100 },
+                        Bob: { damage: 1400, healing: 100, taken: 100 },
+                    },
+                },
+            },
+        };
+        const text = await drawn();
+
+        expect(text).not.toContain('could not be drawn');
+        expect(text).toContain('Elite Trial');
+        // Two matched players, 2400 measured against 2000 reported
+        expect(text).toContain('+20.0%');
+        expect(text).toContain('2 of 3 names matched');
+        expect(text).toContain('1 unmatched');
+        // Bob is 40% out on damage and gets a row; Alice is exact and does not
+        expect(text).toContain('Bob');
+        expect(text).toContain('Damage +40.0%');
+    });
+
+    test('a clean trial says nobody was past the threshold rather than listing nothing', async () => {
+        world.trialStats = {
+            weekStart: WEEK,
+            trials: {
+                'Elite Trial': {
+                    at: WEEK,
+                    reported: { Alice: { damage: 1000 } },
+                    measured: { Alice: { damage: 1000 } },
+                },
+            },
+        };
+        expect(await drawn()).toContain('No player past 15% on any metric');
+    });
+
+    test('an archived cycle with no accuracy renders as "no accuracy data"', async () => {
+        world.trialRecord = {
+            weekStart: WEEK,
+            tiles: {},
+            history: [{ archivedAt: WEEK, reason: 'a new cycle is scheduled', weekStart: WEEK - 1, tiles: {} }],
+        };
+        const text = await drawn();
+        expect(text).not.toContain('could not be drawn');
+        expect(text).toContain('Archived cycles');
+        expect(text).toContain('no accuracy data');
+    });
+
+    test('an archived cycle carrying a summary draws its damage median', async () => {
+        world.trialRecord = {
+            weekStart: WEEK,
+            tiles: {},
+            history: [
+                {
+                    archivedAt: WEEK,
+                    reason: 'a new cycle is scheduled',
+                    weekStart: WEEK - 1,
+                    tiles: {},
+                    accuracy: {
+                        elite: {
+                            at: WEEK - 1,
+                            players: 4,
+                            matched: 4,
+                            unmatched: 0,
+                            measuredOnly: 0,
+                            metrics: {
+                                damage: { median: 3.5, worst: -9, players: 4 },
+                                healing: { median: null, worst: null, players: 0 },
+                                taken: { median: null, worst: null, players: 0 },
+                            },
+                        },
+                    },
+                },
+            ],
+        };
+        const text = await drawn();
+        expect(text).not.toContain('no accuracy data');
+        expect(text).toContain('dmg +3.5%');
+    });
+});
+
+describe('the accuracy card’s text helpers', () => {
+    test('a delta reads with its sign, and the cases a number would lie about read as words', () => {
+        expect(accuracyDeltaText(3.14)).toBe('+3.1%');
+        expect(accuracyDeltaText(-11)).toBe('-11.0%');
+        expect(accuracyDeltaText(Infinity)).toBe('unreported');
+        expect(accuracyDeltaText(null)).toBe('—');
+    });
+
+    test('the match line names unmatched and measured-only counts, and omits them at zero', () => {
+        expect(accuracyMatchText({ players: 10, matched: 9, unmatched: 1, measuredOnly: 2 })).toBe(
+            '9 of 10 names matched · 1 unmatched · 2 measured only'
+        );
+        expect(accuracyMatchText({ players: 10, matched: 10, unmatched: 0, measuredOnly: 0 })).toBe(
+            '10 of 10 names matched'
+        );
+        expect(accuracyMatchText({ players: 0 })).toBe('No names to match');
+    });
+
+    test('a metric nothing was reported for says so rather than showing zeros', () => {
+        expect(accuracyMetricText({ median: null, worst: null, players: 0 })).toBe('nothing reported');
+        expect(accuracyMetricText({ median: 2.1, worst: -18.4, players: 8 })).toBe(
+            'median +2.1% · worst -18.4% (8 players)'
+        );
+        expect(accuracyMetricText({ median: 0, worst: 0, players: 1 })).toBe('median +0.0% · worst +0.0% (1 player)');
     });
 });

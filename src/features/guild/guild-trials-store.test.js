@@ -539,6 +539,30 @@ describe('archiving a finished cycle', () => {
         expect(after.history).toEqual([]);
     });
 
+    test('the accuracy summary rides along with the tiles when there is one', () => {
+        const accuracy = {
+            elite: { at: 5, players: 2, matched: 2, unmatched: 0, measuredOnly: 0, metrics: {} },
+        };
+        const after = archiveCycle(sampled([10]), 'a new cycle is scheduled', now, { accuracy });
+        expect(after.history[0].accuracy).toEqual(accuracy);
+    });
+
+    test('no accuracy leaves no key, so an old archive and an empty one stay different', () => {
+        // The trend view's whole tolerance for old archives rests on this: an
+        // entry with no `accuracy` key is "written before this existed", never
+        // "measured nothing"
+        const plain = archiveCycle(sampled([10]), 'a new cycle is scheduled', now);
+        expect(plain.history[0]).not.toHaveProperty('accuracy');
+
+        const empty = archiveCycle(sampled([10]), 'a new cycle is scheduled', now, { accuracy: {} });
+        expect(empty.history[0]).not.toHaveProperty('accuracy');
+    });
+
+    test('an archive written by the old three-argument call still works', () => {
+        const after = archiveCycle(sampled([10]), 'a new cycle is scheduled', now);
+        expect(after.history[0].tiles).toBeDefined();
+    });
+
     test('only the last few cycles are kept', () => {
         let held = sampled([10]);
         for (let cycle = 0; cycle < MAX_ARCHIVED_CYCLES + 3; cycle += 1) {

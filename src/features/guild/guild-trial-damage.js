@@ -121,6 +121,7 @@ import {
     resolveUnitNames,
     rosterFromBattle,
 } from './guild-trial-units.js';
+import { compactAccuracySummary, joinTrialStats } from './guild-trial-accuracy.js';
 import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel, trialFromHrid } from './guild-trials-math.js';
 import { loadTrialRoster, loadTrialStats, saveTrialRoster, saveTrialStats } from './guild-trials-store.js';
 
@@ -648,26 +649,15 @@ export function mergeWaveTallies({
  * tick-by-tick attribution against the server's own accounting. Rows are ordered
  * by reported damage, so the biggest contributors read first.
  *
+ * The join itself lives in `guild-trial-accuracy.js`, which also has the
+ * summarising the ledger's accuracy card draws; this is the export builder's
+ * name for it, kept so the export's shape does not move.
+ *
  * @param {{reported: Object|null|undefined, measured: Object|null|undefined}} input
- * @returns {Array<{name: string, damage: Object, healing: Object, taken: Object}>}
+ * @returns {Array<{name: string, matched: boolean, damage: Object, healing: Object, taken: Object}>}
  */
 export function compareTrialStats({ reported, measured } = {}) {
-    if (!reported || typeof reported !== 'object') return [];
-    const mine = measured && typeof measured === 'object' ? measured : {};
-    const deltaPct = (m, g) => (g > 0 ? ((m - g) / g) * 100 : m > 0 ? Infinity : 0);
-    const cell = (m, g) => ({ measured: m, reported: g, deltaPct: deltaPct(m, g) });
-
-    return Object.entries(reported)
-        .map(([name, game]) => {
-            const seen = mine[name] || {};
-            return {
-                name,
-                damage: cell(seen.damage || 0, game.damage || 0),
-                healing: cell(seen.healing || 0, game.healing || 0),
-                taken: cell(seen.taken || 0, game.taken || 0),
-            };
-        })
-        .sort((a, b) => b.damage.reported - a.damage.reported);
+    return joinTrialStats({ reported, measured });
 }
 
 class GuildTrialDamage {
@@ -1193,6 +1183,25 @@ class GuildTrialDamage {
             await saveTrialStats(blob);
         } catch (error) {
             console.error('[GuildTrialDamage] Saving trial stats failed:', error);
+        }
+    }
+
+    /**
+     * The week's comparisons in the compact form the archive carries.
+     *
+     * Read straight off `storedStats`, which spans the whole week and survives a
+     * `reset` between trials — so a cycle being archived carries every trial it
+     * held, not only the last one measured. Per metric: median, worst and a
+     * player count; never the per-player table.
+     *
+     * @returns {Object} `{[encounter]: {at, players, matched, unmatched, measuredOnly, metrics}}`
+     */
+    accuracySummary() {
+        try {
+            return compactAccuracySummary(this.storedStats);
+        } catch (error) {
+            console.error('[GuildTrialDamage] Summarizing trial accuracy failed:', error);
+            return {};
         }
     }
 

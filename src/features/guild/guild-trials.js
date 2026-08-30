@@ -3394,7 +3394,9 @@ class GuildTrials {
             guildName: this.guildName,
         });
         if (provenance === 'foreign') {
-            this.record = archiveCycle(this.record, FOREIGN_CYCLE_REASON, now);
+            this.record = archiveCycle(this.record, FOREIGN_CYCLE_REASON, now, {
+                accuracy: guildTrialDamage.accuracySummary?.() || null,
+            });
             this.blockHtml.clear();
             return;
         }
@@ -3410,7 +3412,13 @@ class GuildTrials {
 
         if (scheduled && cardsStateNothing && recordClaimsProgress) {
             console.warn('[GuildTrials] Archiving a finished cycle: the panel says the next one is scheduled');
-            this.record = archiveCycle(this.record, 'a new cycle is scheduled', now);
+            // Summarized before the reset below: `storedStats` outlives a reset
+            // by design, but the week-guarded blob behind it is discarded the
+            // moment the ladder rolls, so the archive is the last chance to
+            // keep this cycle's attribution accuracy
+            this.record = archiveCycle(this.record, 'a new cycle is scheduled', now, {
+                accuracy: guildTrialDamage.accuracySummary?.() || null,
+            });
             this.blockHtml.clear();
             guildTrialDamage.reset?.();
             // The one write meant to lose tiles — they have just been archived,
