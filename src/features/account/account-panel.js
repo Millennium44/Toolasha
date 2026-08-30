@@ -12,10 +12,12 @@
  * Drawing is all this file does. The reading and the arithmetic are next door.
  */
 
+import { collectFacts, OPENERS } from '../briefing/session-briefing.js';
 import { formatRelativeTime, networthFormatter } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS, shortDuration } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { registerRow } from '../../utils/overlay-rows.js';
+import { accountBriefings } from './account-briefing.js';
 import { accountReadFailure, cachedAccount, refreshAccount, windowChange } from './account-data.js';
 
 const ACCENT = '#c9a0ff';
@@ -188,6 +190,116 @@ function drawCharacters(body, data) {
     }
 }
 
+/**
+ * The live facts for whoever is logged in, or nothing.
+ *
+ * Failing here is not failing the section: the current character then falls
+ * back to its own last snapshot like everybody else, which is worse but is
+ * still true.
+ * @returns {Object|null} From `collectFacts`
+ */
+function liveFacts() {
+    try {
+        return collectFacts();
+    } catch (error) {
+        console.error('[AccountPanel] Could not read the live briefing facts:', error);
+        return null;
+    }
+}
+
+/**
+ * One character's lines, under its name.
+ * @param {HTMLElement} card - Where it goes
+ * @param {Object} entry - From `accountBriefings`
+ * @param {number} at - When the account was read
+ */
+function drawAttentionFor(card, entry, at) {
+    card.appendChild(
+        panelLine(
+            entry.isCurrent ? `${entry.name} (here)` : entry.name,
+            entry.isCurrent ? 'now' : formatRelativeTime(Math.max(0, at - entry.at)),
+            entry.isCurrent ? ROW_COLORS.accent : ROW_COLORS.dim,
+            entry.isCurrent
+                ? 'Read from the game, so these are current.'
+                : 'Recorded when you last switched away from this character.'
+        )
+    );
+
+    for (const line of entry.lines) {
+        const detail = document.createElement('div');
+        detail.style.marginLeft = '10px';
+        // Dimmed past a day: still worth having, no longer worth reading first
+        if (line.dim) detail.style.opacity = '0.55';
+        row(detail, [
+            { text: line.label, color: ROW_COLORS.dim, ellipsis: true },
+            { text: line.value, color: ROW_COLORS[line.tone] || ROW_COLORS.neutral, push: true },
+        ]);
+
+        // Only the character you are actually logged into can be navigated to —
+        // clicking through to a task board belonging to somebody else would open
+        // yours and say it was theirs
+        const open = entry.isCurrent && line.target ? OPENERS[line.target] : null;
+        if (open) {
+            detail.style.cursor = 'pointer';
+            detail.title = 'Open';
+            detail.addEventListener('click', () => {
+                try {
+                    open();
+                } catch (error) {
+                    console.error('[AccountPanel] Could not open what a line points at:', error);
+                }
+            });
+        }
+
+        card.appendChild(detail);
+    }
+}
+
+/**
+ * "Needs attention": the briefing, for every character rather than for one.
+ *
+ * A character with nothing left to say is collapsed into a single row with the
+ * others rather than given an empty heading each — the panel is already three
+ * cards long, and five "all clear" headings is how a section stops being read.
+ * A character nobody has a snapshot for gets a row of its own saying exactly
+ * that, because "we have never looked" is not "nothing is wrong".
+ *
+ * @param {HTMLElement} body - Where it goes
+ * @param {Object} data - The account
+ */
+function drawNeedsAttention(body, data) {
+    const entries = accountBriefings({
+        characters: data.characters,
+        snapshots: data.briefings,
+        liveFacts: liveFacts(),
+        now: data.at,
+    });
+
+    const card = panelCard(body, 'Needs attention', ACCENT);
+
+    const busy = entries.filter((entry) => entry.lines.length > 0);
+    const quiet = entries.filter((entry) => entry.known && entry.lines.length === 0);
+    const unknown = entries.filter((entry) => !entry.known);
+
+    for (const entry of busy) drawAttentionFor(card, entry, data.at);
+
+    if (busy.length === 0) card.appendChild(panelNote('Nothing needs any of your characters.'));
+    else if (quiet.length > 0) {
+        card.appendChild(panelNote(`Nothing needs ${quiet.map((entry) => entry.name).join(', ')}.`));
+    }
+
+    if (unknown.length > 0) {
+        card.appendChild(panelNote(`No briefing recorded yet for ${unknown.map((entry) => entry.name).join(', ')}.`));
+    }
+
+    // The one limit worth stating outright rather than leaving to be discovered:
+    // a character played in another tab, another browser or on a phone leaves
+    // nothing here, and its absence from the list above means nothing at all
+    card.appendChild(
+        panelNote('These are recorded when you switch characters here — playing elsewhere does not update them.')
+    );
+}
+
 export const accountPanel = createPanel({
     id: 'accountView',
     title: 'Account',
@@ -216,6 +328,7 @@ export const accountPanel = createPanel({
         }
 
         drawNetworth(body, data);
+        drawNeedsAttention(body, data);
         drawCharacters(body, data);
         body.appendChild(panelNote(`Read ${formatRelativeTime(Date.now() - data.at)} ago from stored history.`));
         // Stale figures with no sign that the refresh behind them is failing is

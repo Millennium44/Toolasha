@@ -48,17 +48,12 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { SNAPSHOT_FACT_KEYS, SNAPSHOT_STORE, snapshotKey } from './briefing-snapshot-store.js';
 import { forecastTaskSlots, countActiveTasks } from '../tasks/task-slot-forecast.js';
 import { soonestCombatConsumable } from '../notifications/combat-consumable-alerts.js';
 import { forecastLabyrinthEntries } from '../notifications/labyrinth-entry-forecast.js';
 import enhancementTracker from '../enhancement/enhancement-tracker.js';
 import { enhancementFact, labyrinthFact, readGuildTrial, undercutCount } from './session-briefing.js';
-
-/** Where a per-character snapshot lives, `settings` store */
-export const SNAPSHOT_PREFIX = 'briefingSnapshot_';
-
-/** The store it lives in — the same one the listing baseline uses */
-export const SNAPSHOT_STORE = 'settings';
 
 /** Long enough for any name the game allows, short enough to bound the record */
 const MAX_NAME_CHARS = 48;
@@ -72,17 +67,6 @@ const MAX_NAME_CHARS = 48;
  * only the two facts that are certainly small are kept.
  */
 export const MAX_SNAPSHOT_CHARS = 2000;
-
-/** The facts a snapshot may carry, and therefore the ones the panel may show */
-export const SNAPSHOT_FACT_KEYS = [
-    'tasksReady',
-    'taskSlots',
-    'consumable',
-    'listings',
-    'enhancement',
-    'guild',
-    'labyrinth',
-];
 
 /** The two that are a number and a small object, kept when the cap is hit */
 const CHEAPEST_FACT_KEYS = ['tasksReady', 'taskSlots'];
@@ -191,60 +175,36 @@ export function gatherSnapshotFacts(characterId, now, sources = {}) {
 }
 
 /**
- * Keep the record small enough that a hundred switches cost nothing.
+ * Narrow the record to the declared subjects, and keep it small.
+ *
+ * The narrowing is what makes `SNAPSHOT_FACT_KEYS` a contract rather than a
+ * comment: a fact gathered above but not declared there cannot reach storage,
+ * so the reader's copy of the list can never be behind the writer's.
+ *
  * @param {Object} facts - Gathered facts
- * @returns {Object} The same facts, or only the cheap ones
+ * @returns {Object} The declared facts, or only the cheap ones when oversized
  */
 export function capFacts(facts) {
+    const declared = {};
+    for (const key of SNAPSHOT_FACT_KEYS) {
+        if (facts?.[key] !== undefined) declared[key] = facts[key];
+    }
+
     let serialized = '';
     try {
-        serialized = JSON.stringify(facts) || '';
+        serialized = JSON.stringify(declared) || '';
     } catch (error) {
         console.error('[BriefingSnapshot] Facts would not serialize:', error);
         return {};
     }
-    if (serialized.length <= MAX_SNAPSHOT_CHARS) return facts;
+    if (serialized.length <= MAX_SNAPSHOT_CHARS) return declared;
 
     console.warn(`[BriefingSnapshot] Facts too large (${serialized.length} chars); keeping the small ones`);
     const kept = {};
     for (const key of CHEAPEST_FACT_KEYS) {
-        if (facts[key] !== undefined) kept[key] = facts[key];
+        if (declared[key] !== undefined) kept[key] = declared[key];
     }
     return kept;
-}
-
-/**
- * Where one character's snapshot lives.
- * @param {string} characterId - Whose
- * @returns {string} Storage key
- */
-export function snapshotKey(characterId) {
-    return `${SNAPSHOT_PREFIX}${characterId}`;
-}
-
-/**
- * The snapshots among a batch of `settings` keys.
- *
- * Handed the key list the account read already has, so enumerating the account's
- * briefings costs no extra key scan — only the reads for keys that exist.
- *
- * @param {Array<string>} settingsKeys - Every key in the settings store
- * @returns {Promise<Object<string, Object>>} Character id → snapshot
- */
-export async function readSnapshotsFromKeys(settingsKeys) {
-    const byId = {};
-    for (const key of settingsKeys || []) {
-        if (typeof key !== 'string' || !key.startsWith(SNAPSHOT_PREFIX)) continue;
-        const id = key.slice(SNAPSHOT_PREFIX.length);
-        if (!id) continue;
-        try {
-            const snapshot = await storage.get(key, SNAPSHOT_STORE, null);
-            if (snapshot && Number.isFinite(snapshot.at)) byId[id] = snapshot;
-        } catch (error) {
-            console.error(`[BriefingSnapshot] Could not read ${key}:`, error);
-        }
-    }
-    return byId;
 }
 
 /** Whether the switching listener is already on */

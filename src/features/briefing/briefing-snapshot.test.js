@@ -56,12 +56,12 @@ const {
     gatherSnapshotFacts,
     capFacts,
     recordSwitchSnapshot,
-    readSnapshotsFromKeys,
     initializeBriefingSnapshots,
     _resetBriefingSnapshotListener,
     MAX_SNAPSHOT_CHARS,
-    SNAPSHOT_FACT_KEYS,
 } = await import('./briefing-snapshot.js');
+
+const { readSnapshotsFromKeys, SNAPSHOT_FACT_KEYS } = await import('./briefing-snapshot-store.js');
 
 const NOW = 1_700_000_000_000;
 const HOUR = 3_600_000;
@@ -159,9 +159,13 @@ describe('gatherSnapshotFacts', () => {
 });
 
 describe('capFacts', () => {
+    test('a fact that is not a declared subject cannot reach storage', () => {
+        expect(capFacts({ tasksReady: 1, queue: { queued: 0 }, notices: 5 })).toEqual({ tasksReady: 1 });
+    });
+
     test('an ordinary record passes through untouched', () => {
         const facts = { tasksReady: 3, consumable: { name: 'Ale', secondsLeft: 10 } };
-        expect(capFacts(facts)).toBe(facts);
+        expect(capFacts(facts)).toEqual(facts);
     });
 
     test('an implausibly large record keeps only the small facts', () => {

@@ -22,6 +22,7 @@
 
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
+import { SNAPSHOT_PREFIX as BRIEFING_PREFIX, readSnapshotsFromKeys } from '../briefing/briefing-snapshot-store.js';
 import { showToast } from '../../utils/toast.js';
 import { idsFromRecordKeys, recordKeysFor } from '../../utils/chunked-history.js';
 
@@ -367,7 +368,7 @@ export async function rememberCurrentCharacter() {
  * Read every character's residue out of storage.
  *
  * @param {number} [now] - Clock, injectable for tests
- * @returns {Promise<Object>} `{at, currentId, characters, combined}`
+ * @returns {Promise<Object>} `{at, currentId, characters, combined, briefings}`
  */
 export async function readAccount(now = Date.now()) {
     const currentId = dataManager.getCurrentCharacterId();
@@ -388,6 +389,7 @@ export async function readAccount(now = Date.now()) {
         ...idsFromKeys(lootKeys, LOOT_PREFIX),
         ...idsFromRecordKeys(lootKeys, `${LOOT_RECORD_PREFIX}_`),
         ...idsFromKeys(settingsKeys, TRADE_PREFIX),
+        ...idsFromKeys(settingsKeys, BRIEFING_PREFIX),
     ]);
     if (currentId) ids.add(currentId);
 
@@ -417,6 +419,10 @@ export async function readAccount(now = Date.now()) {
         currentId,
         characters,
         combined: combineSeries(seriesById),
+        // Read off the key list already in hand rather than with a scan of its
+        // own — a snapshot lives in the settings store beside everything else
+        // keyed per character
+        briefings: await readSnapshotsFromKeys(settingsKeys),
     };
 }
 

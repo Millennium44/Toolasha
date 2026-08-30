@@ -11,7 +11,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({ data: {} }));
-const state = vi.hoisted(() => ({ account: null }));
+const state = vi.hoisted(() => ({ account: null, liveFacts: null, opened: [] }));
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100, getSetting: () => true } }));
 vi.mock('../../core/storage.js', () => ({
@@ -22,6 +22,13 @@ vi.mock('../../core/storage.js', () => ({
             store.data[key] = value;
         },
     },
+}));
+// The live half of the "Needs attention" section. Mocked rather than let
+// through because the real module reaches the enhancement tracker, the notice
+// log and the undercut watcher on import, none of which this panel is about.
+vi.mock('../briefing/session-briefing.js', () => ({
+    collectFacts: () => state.liveFacts,
+    OPENERS: { tasks: () => state.opened.push('tasks') },
 }));
 vi.mock('./account-data.js', async () => {
     const actual = await vi.importActual('./account-data.js');
@@ -75,6 +82,9 @@ function sampleAccount() {
             total: 1_000_000 + i * 25_000,
             contributors: 2,
         })),
+        briefings: {
+            b: { characterId: 'b', characterName: 'Alt', at: NOW - 5 * HOUR, facts: { tasksReady: 4 } },
+        },
     };
 }
 
@@ -83,6 +93,8 @@ const text = () => accountPanel.panel?.textContent || '';
 beforeEach(() => {
     store.data = {};
     state.account = sampleAccount();
+    state.liveFacts = {};
+    state.opened = [];
 });
 
 afterEach(() => {
@@ -135,6 +147,110 @@ describe('drawing the account', () => {
 
         expect(text()).toContain('Reading the account');
         expect(text()).not.toContain('could not be drawn');
+    });
+});
+
+describe('the "Needs attention" section', () => {
+    test('an alt’s recorded lines are shown under its name, with the age of the record', () => {
+        accountPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Needs attention');
+        expect(text()).toContain('Tasks to claim');
+        expect(text()).toContain('4 waiting');
+        // The age of the snapshot, not of anything recomputed
+        expect(text()).toContain('5h');
+    });
+
+    test('the character you are logged into is read from the game and marked as now', () => {
+        state.liveFacts = { tasksReady: 1 };
+        accountPanel.show({ remember: false });
+
+        expect(text()).toContain('Main (here)');
+        expect(text()).toContain('1 waiting');
+        expect(text()).toContain('now');
+    });
+
+    test('a countdown recorded long enough ago to have run out is not shown at all', () => {
+        // Recorded five hours ago with an hour of ale left
+        state.account.briefings.b.facts = { consumable: { name: 'Ale', secondsLeft: 3600 } };
+        state.liveFacts = { tasksReady: 1 };
+        accountPanel.show({ remember: false });
+
+        expect(text()).not.toContain('Ale');
+        expect(text()).toContain('Nothing needs Alt.');
+    });
+
+    test('a countdown that is still running is restated as an instant, never as a duration', () => {
+        state.account.briefings.b.facts = { consumable: { name: 'Ale', secondsLeft: 8 * 3600 } };
+        accountPanel.show({ remember: false });
+
+        expect(text()).toContain('Ale runs dry at');
+        expect(text()).not.toContain('Ale in ');
+    });
+
+    test('quiet characters are one row, not a heading each', () => {
+        state.account.briefings.b.facts = {};
+        accountPanel.show({ remember: false });
+
+        expect(text()).toContain('Nothing needs any of your characters.');
+    });
+
+    test('a character nobody has a snapshot for is named as unknown, not as fine', () => {
+        state.account.characters.push({
+            id: 'c',
+            name: 'Fresh',
+            named: true,
+            networth: null,
+            networthAt: null,
+            lastSeen: null,
+            points: 0,
+            queue: { state: 'unknown', remainingSeconds: null, stale: false, ageMs: null },
+            isCurrent: false,
+        });
+
+        accountPanel.show({ remember: false });
+
+        expect(text()).toContain('No briefing recorded yet for Fresh.');
+        expect(text()).not.toContain('Nothing needs Fresh');
+    });
+
+    test('the section says outright that it only learns anything when you switch here', () => {
+        accountPanel.show({ remember: false });
+        expect(text()).toContain('playing elsewhere does not update them');
+    });
+
+    test('only the current character’s lines are clickable — an alt’s would open your own board', () => {
+        state.liveFacts = { tasksReady: 1 };
+        accountPanel.show({ remember: false });
+
+        const rows = [...accountPanel.panel.querySelectorAll('div')].filter((node) =>
+            node.textContent.startsWith('Tasks to claim')
+        );
+        const clickable = rows.filter((node) => node.style.cursor === 'pointer');
+        expect(clickable).toHaveLength(1);
+
+        clickable[0].click();
+        expect(state.opened).toEqual(['tasks']);
+    });
+
+    test('a live read that throws leaves the rest of the section standing', () => {
+        state.account.briefings.a = { characterId: 'a', at: NOW - HOUR, facts: { tasksReady: 7 } };
+        Object.defineProperty(state, 'liveFacts', {
+            get() {
+                throw new Error('the collector is gone');
+            },
+            configurable: true,
+        });
+
+        accountPanel.show({ remember: false });
+
+        expect(text()).not.toContain('could not be drawn');
+        // Fallen back to the current character's own snapshot
+        expect(text()).toContain('7 waiting');
+
+        delete state.liveFacts;
+        Object.defineProperty(state, 'liveFacts', { value: {}, writable: true, configurable: true });
     });
 });
 
