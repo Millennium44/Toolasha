@@ -18,6 +18,7 @@ import { getCheapestProtectionPrice, getRealisticBaseItemPrice } from '../enhanc
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { isMarketplacePatchLive } from '../../utils/server-gate.js';
+import { TRAINEE_SHOP_PRICE } from '../../utils/enhancement-pricing.js';
 
 /**
  * Token-based item data for untradeable back slot items (capes/cloaks/quivers)
@@ -718,7 +719,7 @@ function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerR
 
         let price;
         if (material.itemHrid.startsWith('/items/trainee_')) {
-            price = 250000; // untradeable trainee charms: fixed 250k
+            price = TRAINEE_SHOP_PRICE; // untradeable trainee charms: shop-fixed
         } else if (material.itemHrid === '/items/coin') {
             price = 1; // coins at face value
         } else {
