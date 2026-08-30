@@ -83,3 +83,64 @@ describe('addTaskIndices', () => {
         expect(el.querySelector('span.script_taskMapIndex')).toBeNull();
     });
 });
+
+describe('addMapIndices', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    // The selector's last segment is `span.MuiBadge-root` — the code's
+    // `buttons` collection is actually these badge spans, and the label is
+    // inserted into the badge itself (`button.insertAdjacentHTML(...)` where
+    // `button` is one of these spans), not into the enclosing <button>.
+    /** One combat-zone tab, in the DOM shape the selector/insert targets. */
+    function zoneBadge() {
+        const button = document.createElement('button');
+        button.className = 'MuiButtonBase-root MuiTab-root';
+        const badge = document.createElement('span');
+        badge.className = 'MuiBadge-root';
+        button.appendChild(badge);
+        return badge;
+    }
+
+    /** The wrapper chain the selector requires, holding the given badges. */
+    function tabPanel(badges) {
+        const outer = document.createElement('div');
+        outer.className = 'MainPanel_subPanelContainer__1i-H9';
+        const mid = document.createElement('div');
+        mid.className = 'CombatPanel_tabsComponentContainer__GsQlg';
+        const tabs = document.createElement('div');
+        tabs.className = 'MuiTabs-root MuiTabs-vertical';
+        for (const badge of badges) tabs.appendChild(badge.closest('button'));
+        mid.appendChild(tabs);
+        outer.appendChild(mid);
+        document.body.appendChild(outer);
+        return outer;
+    }
+
+    it('numbers every zone tab in order', () => {
+        const badges = [zoneBadge(), zoneBadge(), zoneBadge()];
+        tabPanel(badges);
+        zoneIndices.addMapIndices();
+        const labels = badges.map((b) => b.querySelector('span.script_mapIndex').textContent);
+        expect(labels).toEqual(['1. ', '2. ', '3. ']);
+    });
+
+    it('a re-render that appends a new tab after already-labelled ones numbers it by position, not by how many are new', () => {
+        // Two zones already labelled from an earlier pass (their DOM nodes
+        // survived the re-render, spans and all); a third zone just appeared
+        // at the end with no span yet — the shape the observer sees when the
+        // game adds a zone tab mid-session.
+        const already1 = zoneBadge();
+        already1.insertAdjacentHTML('afterbegin', '<span class="script_mapIndex">1. </span>');
+        const already2 = zoneBadge();
+        already2.insertAdjacentHTML('afterbegin', '<span class="script_mapIndex">2. </span>');
+        const fresh = zoneBadge();
+        tabPanel([already1, already2, fresh]);
+
+        zoneIndices.addMapIndices();
+
+        // The new tab is third in the row — it must read "3.", not repeat "1."
+        expect(fresh.querySelector('span.script_mapIndex').textContent).toBe('3. ');
+    });
+});

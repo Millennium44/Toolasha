@@ -212,19 +212,20 @@ class ZoneIndices {
             return;
         }
 
+        // The number is this button's position among all of them — not a
+        // count of how many still need labelling. A re-render that keeps some
+        // buttons' DOM nodes (spans intact) while inserting a new one further
+        // down the row must not skip the counter for the ones it leaves
+        // alone, or the new button repeats an earlier number instead of
+        // taking its own.
         let index = 1;
         for (const button of buttons) {
-            // Skip if already has index
-            if (button.querySelector('span.script_mapIndex')) {
-                continue;
+            if (!button.querySelector('span.script_mapIndex')) {
+                button.insertAdjacentHTML(
+                    'afterbegin',
+                    `<span class="script_mapIndex" style="color: ${config.SCRIPT_COLOR_MAIN};">${index}. </span>`
+                );
             }
-
-            // Add index at the beginning
-            button.insertAdjacentHTML(
-                'afterbegin',
-                `<span class="script_mapIndex" style="color: ${config.SCRIPT_COLOR_MAIN};">${index}. </span>`
-            );
-
             index++;
         }
     }
