@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Long-horizon XP history starts today
+
+Daily checkpoints — one row per skill (and per ability, keyed per character) per day, unbounded, synced, never backfilled — begin recording now. First surfaces: a "This month: N xp" line on skill tooltips that names when its history starts, and the ability book's days-to-next-level reading a fortnight instead of ten minutes once three days of checkpoints exist, captioned "over 14d, 3 w/ combat" so idle days read as the real zeros they are. The rate tracker's 7-day window is untouched — this is a separate, tiny series.
+
 ### Since you were away, and who needs you next
 
 Switching back to a character shows one dismissible card diffing the departing snapshot against arrival: "Ale ran dry at 14:20", "2 more listings undercut", "Sword +2 → +5" — net change only, with a tooltip saying reversals in between are invisible; no snapshot means no card, never a fabricated "nothing happened". Dismissal is a read-mark, not a delete, so the account panel keeps its knowledge. And the Needs-attention section now leads with "Next: <character> — <worst line>", ordered by one stated severity list (wasting > lapsed > deadline soon > reading) — never a tunable score — with never-recorded characters kept in their own group rather than ranked as fine.
