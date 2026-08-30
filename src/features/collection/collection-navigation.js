@@ -309,23 +309,37 @@ class CollectionNavigation {
      * @param {Element} tooltipEl - MuiTooltip-popper element
      */
     handleTooltip(tooltipEl) {
-        if (tooltipEl.dataset.mwiCollectionEnhanced) {
-            return;
-        }
-
         const actionMenu = tooltipEl.querySelector('[class*="Collection_actionMenu"]');
         if (!actionMenu) {
             return;
         }
 
-        tooltipEl.dataset.mwiCollectionEnhanced = 'true';
-
         const nameEl = tooltipEl.querySelector('[class*="Collection_name"]');
         if (!nameEl) {
             return;
         }
+        const itemName = nameEl.textContent.trim();
 
-        const itemHrid = this.extractItemHridFromName(nameEl.textContent.trim());
+        // Guard against duplicate processing, keyed on the item name (mirrors
+        // tooltip-prices.js and tooltip-consumables.js). tooltip-observer.js redelivers a
+        // popper as freshly "opened" once it has genuinely left and returned to the
+        // document — which is what happens when the game closes one item's popover and
+        // reuses the same element to open the next item's. A guard keyed only on the
+        // element left the FIRST item's buttons — with that item's hrid baked into their
+        // click handlers — sitting in the SECOND item's popover, silently navigating to
+        // the wrong item when clicked.
+        if (tooltipEl.dataset.mwiCollectionEnhanced === itemName) {
+            return;
+        }
+
+        // Item changed (or first visit) — remove any buttons injected for the previous
+        // item so their stale, closed-over hrid can't be clicked from this popover.
+        if (tooltipEl.dataset.mwiCollectionEnhanced) {
+            actionMenu.querySelectorAll('.mwi-collection-nav-btn').forEach((btn) => btn.remove());
+        }
+        tooltipEl.dataset.mwiCollectionEnhanced = itemName;
+
+        const itemHrid = this.extractItemHridFromName(itemName);
         if (!itemHrid) {
             return;
         }
@@ -405,7 +419,7 @@ class CollectionNavigation {
      */
     createNavButton(label, onClick) {
         const btn = document.createElement('button');
-        btn.className = 'Button_button__1Fe9z Button_fullWidth__17pVU';
+        btn.className = 'Button_button__1Fe9z Button_fullWidth__17pVU mwi-collection-nav-btn';
         btn.textContent = label;
         btn.addEventListener('click', (e) => {
             e.stopPropagation();

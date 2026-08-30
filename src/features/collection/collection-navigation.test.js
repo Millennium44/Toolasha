@@ -8,7 +8,19 @@ const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
 vi.mock('../../core/config.js', () => ({
     default: { isFeatureEnabled: () => true, getSetting: () => true },
 }));
-vi.mock('../../core/data-manager.js', () => ({ default: {} }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getInitClientData: () => ({
+            itemDetailMap: {
+                '/items/cheese': { name: 'Cheese' },
+                '/items/log': { name: 'Log' },
+            },
+        }),
+        getItemDetails: () => null,
+    },
+}));
+const navigateToItem = vi.hoisted(() => vi.fn());
+vi.mock('../../utils/item-navigation.js', () => ({ navigateToItem }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
         onClass: (name, classNames, callback) => {
@@ -152,6 +164,7 @@ describe('collected-item popovers arrive through the shared tooltip observer', (
     beforeEach(() => {
         registrations.length = 0;
         document.body.innerHTML = '';
+        navigateToItem.mockClear();
     });
 
     afterEach(() => {
@@ -179,10 +192,45 @@ describe('collected-item popovers arrive through the shared tooltip observer', (
         observerHandler(popper);
         observerHandler(popper);
 
-        expect(popper.dataset.mwiCollectionEnhanced).toBe('true');
-        // dataManager is a bare mock here, so no item resolves and no buttons
-        // are added — the marker shows the popover was handled exactly once
-        expect(popper.querySelectorAll('button')).toHaveLength(0);
+        expect(popper.dataset.mwiCollectionEnhanced).toBe('Cheese');
+        // Handled exactly once: two buttons (View Action, Item Dictionary), not four
+        expect(popper.querySelectorAll('button')).toHaveLength(2);
+    });
+
+    // tooltip-observer.js redelivers a popper as freshly "opened" once it has genuinely left
+    // and returned to the document (see tooltip-observer.test.js's "closed" cases) — which is
+    // what happens when the game closes one item's collected-item popover and reopens the same
+    // element for a different item's. This module's guard, `dataset.mwiCollectionEnhanced`, has
+    // no item identity in it, so the early return on a reused element leaves the FIRST item's
+    // "View Action"/"Item Dictionary" buttons — with that item's hrid baked into their click
+    // handlers — sitting in the SECOND item's popover. Clicking them silently navigates to the
+    // wrong item.
+    test('a reused popover element does not keep the previous item wired into its buttons', async () => {
+        shell.initialize();
+        const observerHandler = registrations.find((r) => r.name === 'TooltipObserver').callback;
+
+        const popper = document.createElement('div');
+        popper.className = 'MuiTooltip-popper';
+        popper.innerHTML = '<div class="Collection_name__1">Cheese</div><div class="Collection_actionMenu__2"></div>';
+        document.body.appendChild(popper);
+
+        observerHandler(popper);
+        popper.querySelector('button').click();
+        expect(navigateToItem).toHaveBeenLastCalledWith('/items/cheese');
+
+        // The popover closes and tooltip-observer settles the removal (flushing its
+        // MutationObserver microtask) before the game reuses the same element for a
+        // different item's popover.
+        popper.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        popper.querySelector('.Collection_name__1').textContent = 'Log';
+        document.body.appendChild(popper);
+        observerHandler(popper);
+
+        popper.querySelector('button').click();
+        expect(navigateToItem).toHaveBeenLastCalledWith('/items/log');
     });
 
     test('disable unsubscribes', () => {
