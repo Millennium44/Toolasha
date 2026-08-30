@@ -29,6 +29,12 @@ let registered = [];
 /** `(css, id)` pairs passed to `Utils.dom.addStyles` while the entrypoint loaded */
 const styleCalls = [];
 
+/** Every `dataManager.on(event, handler)` the entrypoint registered, by event */
+const dataManagerHandlers = new Map();
+
+/** How many times the entrypoint asked the registry to bring the feature layer up */
+let initializeFeaturesCalls = 0;
+
 /** A library stand-in: every property is a callable that returns another one */
 function makeStub() {
     return new Proxy(function stub() {}, {
@@ -60,7 +66,14 @@ beforeAll(async () => {
             },
             webSocketHook: { install: () => {}, captureClientDataFromLocalStorage: () => {} },
             domObserver: { start: () => {} },
-            dataManager: { initialize: () => {}, on: () => {}, getIsCharacterSwitching: () => false },
+            dataManager: {
+                initialize: () => {},
+                on: (event, handler) => {
+                    if (!dataManagerHandlers.has(event)) dataManagerHandlers.set(event, []);
+                    dataManagerHandlers.get(event).push(handler);
+                },
+                getIsCharacterSwitching: () => false,
+            },
             featureRegistry: {
                 replaceFeatures: (features) => {
                     registered = features;
@@ -68,7 +81,10 @@ beforeAll(async () => {
                 setupCharacterSwitchHandler: () => {},
                 checkFeatureHealth: () => [],
                 retryFailedFeatures: async () => [],
-                initializeFeatures: async () => [],
+                initializeFeatures: async () => {
+                    initializeFeaturesCalls += 1;
+                    return [];
+                },
             },
             performanceMonitor: { mark: () => {} },
             marketAPI: { fetch: async () => null },
@@ -462,5 +478,62 @@ describe('the selector canary', () => {
                 '<span class="TabsComponent_badge__1Du26">Inventory</span>';
             expect(canary()).toEqual([]);
         });
+    });
+});
+
+describe('the character_initialized startup block', () => {
+    /**
+     * Feed the entrypoint's `character_initialized` listeners one payload and
+     * let the 100 ms startup timer and its async body run.
+     *
+     * Real timers rather than fake ones on purpose: the block ends in a 500 ms
+     * health-check timer whose canaries want a DOM this test has not built, and
+     * a short real wait runs the part under test without reaching it.
+     * @param {Object} payload - The event data
+     * @returns {Promise<void>}
+     */
+    async function fireCharacterInitialized(payload) {
+        for (const handler of dataManagerHandlers.get('character_initialized') || []) {
+            handler(payload);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    test('the entrypoint listens for character_initialized at all', () => {
+        expect(dataManagerHandlers.get('character_initialized')?.length).toBeGreaterThan(0);
+    });
+
+    /**
+     * A second `init_character_data` for the character that is already loaded —
+     * a socket reconnect, or a trip out to character select and back into the
+     * same character — is not a switch: data-manager compares the incoming id
+     * against `currentCharacterId`, finds them equal, and emits neither
+     * `character_switching` nor `character_switched`. It emits
+     * `character_initialized` with `_isCharacterSwitch: false`, which is
+     * indistinguishable from the first login.
+     *
+     * So the startup block runs a second time, and the half of the lifecycle
+     * that would have taken the first run down — feature-registry's teardown,
+     * which only ever runs off `character_switching` — never ran. Every
+     * feature's `initialize()` executes over the top of a live one: observers,
+     * DOM injections and `config.onSettingChange` callbacks registered twice,
+     * and the instance the first run stored dropped on the floor where no
+     * later `disable()` can reach it.
+     */
+    test('does not run a second time when the same character is initialized again', async () => {
+        initializeFeaturesCalls = 0;
+
+        await fireCharacterInitialized({ character: { id: 'char-1', name: 'One' }, _isCharacterSwitch: false });
+        expect(initializeFeaturesCalls).toBe(1);
+
+        await fireCharacterInitialized({ character: { id: 'char-1', name: 'One' }, _isCharacterSwitch: false });
+        expect(initializeFeaturesCalls).toBe(1);
+    });
+
+    test('still skips the block outright on a switch, which the registry owns', async () => {
+        initializeFeaturesCalls = 0;
+
+        await fireCharacterInitialized({ character: { id: 'char-2', name: 'Two' }, _isCharacterSwitch: true });
+        expect(initializeFeaturesCalls).toBe(0);
     });
 });

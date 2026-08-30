@@ -2026,6 +2026,25 @@ if (isCombatSimulatorPage()) {
     // Setup character switch handler once (NOT inside character_initialized listener)
     featureRegistry.setupCharacterSwitchHandler();
 
+    // Whether the one-time startup block below has already run this page load.
+    //
+    // `init_character_data` arrives again whenever the game opens a new socket
+    // for a character that is already loaded — a reconnect, or a trip out to
+    // character select and straight back into the same character. Data-manager
+    // compares the incoming id against `currentCharacterId`, finds them equal,
+    // and so emits neither `character_switching` nor `character_switched`; what
+    // it does emit is `character_initialized` with `_isCharacterSwitch: false`,
+    // which is indistinguishable from the first login.
+    //
+    // Without this guard the whole block ran a second time with nothing having
+    // taken the first run down — teardown only ever runs off `character_switching`
+    // — so every feature's `initialize()` executed over the top of a live one:
+    // observers and `config.onSettingChange` callbacks registered twice, panels
+    // built twice, and the instance the first run stored dropped where no later
+    // `disable()` could reach it. A same-character re-init needs nothing from
+    // here; a different character is a switch, which feature-registry owns.
+    let startupBegun = false;
+
     dataManager.on('character_initialized', (_data) => {
         performanceMonitor.mark('character:data');
         // Skip full initialization during character switches
@@ -2033,6 +2052,11 @@ if (isCombatSimulatorPage()) {
         if (_data._isCharacterSwitch) {
             return;
         }
+
+        if (startupBegun) {
+            return;
+        }
+        startupBegun = true;
 
         // Initialize all features using the feature registry
         setTimeout(async () => {
