@@ -13,8 +13,11 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import tradeLedgerStore from './trade-ledger-store.js';
+import estimatedListingAge from './estimated-listing-age.js';
+import marketPriceStore from './mooket/market-price-store.js';
 import { aggregateLedger } from '../../utils/trade-ledger.js';
-import { formatKMB, formatDateTime } from '../../utils/formatters.js';
+import { analyzeFillTimes, MIN_BUCKET_N } from '../../utils/fill-time-analysis.js';
+import { formatKMB, formatDateTime, formatRelativeTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { visibleTabsContainer, navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -86,6 +89,13 @@ export function summarizeItems(items) {
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'tradeLedgerModal';
 
+const FILL_TIME_TOOLTIP =
+    'Time from a listing being created to the fill that completed it — how long the capital stayed tied up, ' +
+    'not how long until the first unit went. Undercut depth is measured against the top of your own side of ' +
+    'the book as it stands NOW (the cached order book, else the nearest price sample); no historical book is ' +
+    'kept, so the depths are approximate. Listings cancelled or expired before filling are counted separately, ' +
+    'never folded into a median.';
+
 const BASIS_TOOLTIP =
     'Average-cost basis: each sell is matched against the average price of buys recorded in this ledger ' +
     'for the same item + enhancement level. Sell proceeds are always net of the market tax. ' +
@@ -101,6 +111,8 @@ class TradeLedgerView {
         this.itemNameCache = new Map();
         /** What the filter box currently reads; reset each time the modal is opened fresh. */
         this.filterText = '';
+        /** `{sell, buy}` from `analyzeFillTimes`, or null while the listing log is still loading. */
+        this.fillTimes = null;
     }
 
     /**
@@ -265,6 +277,47 @@ class TradeLedgerView {
 
         this.modal.style.display = 'flex';
         this.renderContent();
+
+        // The listing log lives in IndexedDB and the rest of the modal does
+        // not need it, so the fill-time section fills itself in when it
+        // arrives rather than holding the whole modal open on a read
+        this.loadFillTimes();
+    }
+
+    /**
+     * Read the personal listing log, join it to the ledger's fills, and redraw
+     * the fill-time section.
+     *
+     * Recomputed on every open rather than cached: both the listing log and the
+     * order books it is measured against move while the modal is closed, and
+     * showing a stale table would be worse than showing it a moment late.
+     * @returns {Promise<void>}
+     */
+    async loadFillTimes() {
+        try {
+            const listings = await estimatedListingAge.personalListings();
+            const fills = tradeLedgerStore.getRecords();
+            const sources = {
+                book: (itemHrid, level, isSell) => estimatedListingAge.cachedTopOfBook(itemHrid, level, isSell),
+                sample: (itemHrid, level, isSell) => {
+                    // The mooket store spells "no price" as -1, not null
+                    const entry = marketPriceStore.get(itemHrid, level);
+                    const price = isSell ? entry?.ask : entry?.bid;
+                    return typeof price === 'number' && price > 0 ? price : null;
+                },
+            };
+
+            this.fillTimes = {
+                sell: analyzeFillTimes({ listings, fills, isSell: true, sources }),
+                buy: analyzeFillTimes({ listings, fills, isSell: false, sources }),
+            };
+        } catch (error) {
+            console.error('[Trade Ledger View] Fill-time analysis failed:', error);
+            this.fillTimes = { error: true };
+        }
+
+        // The modal may have been closed, or reopened, while the read was out
+        if (this.modal) this.renderFillTimes();
     }
 
     /**
@@ -375,6 +428,10 @@ class TradeLedgerView {
             line-height: 1.6;
         `;
 
+        const fillTimeContainer = document.createElement('div');
+        fillTimeContainer.className = 'mwi-trade-ledger-fill-times';
+        fillTimeContainer.style.cssText = 'margin-bottom: 15px;';
+
         const filterRow = document.createElement('div');
         filterRow.style.cssText = 'margin-bottom: 10px;';
 
@@ -403,6 +460,7 @@ class TradeLedgerView {
 
         content.appendChild(header);
         content.appendChild(weeksContainer);
+        content.appendChild(fillTimeContainer);
         content.appendChild(filterRow);
         content.appendChild(tableContainer);
         this.modal.appendChild(content);
@@ -411,7 +469,7 @@ class TradeLedgerView {
         this.minimizeCtl = attachMinimize({
             panel: content,
             header,
-            body: [weeksContainer, filterRow, tableContainer],
+            body: [weeksContainer, fillTimeContainer, filterRow, tableContainer],
             panelKey: PANEL_KEY,
             beforeEl: closeBtn,
             accent: '#e8ecf5',
@@ -429,7 +487,154 @@ class TradeLedgerView {
      */
     renderContent() {
         this.renderWeeks();
+        this.renderFillTimes();
         this.renderItemTable();
+    }
+
+    /**
+     * One small table per side: undercut depth against the median time a
+     * listing at that depth took to fill completely, and how many listings
+     * each row rests on.
+     *
+     * The buy side is drawn only when there is something in it. Buy orders are
+     * priced against the top bid, and a trader who only sells would otherwise
+     * get a second empty table asking to be interpreted.
+     */
+    renderFillTimes() {
+        const container = this.modal?.querySelector('.mwi-trade-ledger-fill-times');
+        if (!container) return;
+        while (container.firstChild) {
+            container.removeChild(container.firstChild);
+        }
+
+        const heading = document.createElement('div');
+        heading.textContent = 'Time to fill vs undercut depth';
+        heading.title = FILL_TIME_TOOLTIP;
+        heading.style.cssText = 'font-size: 13px; color: #8fb4ff; margin-bottom: 6px;';
+        container.appendChild(heading);
+
+        if (!this.fillTimes) {
+            container.appendChild(this.buildFillTimeNote('Reading your listing log…'));
+            return;
+        }
+        if (this.fillTimes.error) {
+            container.appendChild(this.buildFillTimeNote('This section could not be drawn; see the console.'));
+            return;
+        }
+
+        const { sell, buy } = this.fillTimes;
+        if (sell.filled === 0 && sell.censored === 0 && buy.filled === 0 && buy.censored === 0) {
+            container.appendChild(
+                this.buildFillTimeNote(
+                    'No completed listings in the log yet. A listing counts once every unit on it has filled.'
+                )
+            );
+            return;
+        }
+
+        container.appendChild(this.buildFillTimeTable('Sells', sell));
+        if (buy.filled > 0 || buy.censored > 0) {
+            container.appendChild(this.buildFillTimeTable('Buys', buy));
+        } else {
+            container.appendChild(
+                this.buildFillTimeNote('Sell side only — no completed buy orders in the log to measure.')
+            );
+        }
+
+        container.appendChild(
+            this.buildFillTimeNote(
+                'Depths are measured against today’s book, not the book at the time — treat them as approximate.'
+            )
+        );
+    }
+
+    /**
+     * A muted one-liner under the fill-time tables.
+     * @param {string} text - What to say
+     * @returns {HTMLElement} The line
+     */
+    buildFillTimeNote(text) {
+        const note = document.createElement('div');
+        note.textContent = text;
+        note.title = FILL_TIME_TOOLTIP;
+        note.style.cssText = 'font-size: 11px; color: #9ca3af; margin: 4px 0;';
+        return note;
+    }
+
+    /**
+     * One side's depth table, with its censored count underneath.
+     * @param {string} sideLabel - "Sells" or "Buys"
+     * @param {Object} analysis - One `analyzeFillTimes` result
+     * @returns {HTMLElement} A block holding the table and its notes
+     */
+    buildFillTimeTable(sideLabel, analysis) {
+        const block = document.createElement('div');
+        block.style.cssText = 'margin-bottom: 8px;';
+
+        const table = document.createElement('table');
+        table.style.cssText = 'width: 100%; border-collapse: collapse; color: #e8ecf5; font-size: 12px;';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        headerRow.style.cssText = 'background: #1a1a1a;';
+        for (const label of [sideLabel, 'Median time to full fill', 'Listings']) {
+            const th = document.createElement('th');
+            th.textContent = label;
+            th.title = FILL_TIME_TOOLTIP;
+            th.style.cssText = 'padding: 4px 10px; text-align: left; border-bottom: 1px solid #555;';
+            headerRow.appendChild(th);
+        }
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        analysis.rows.forEach((row, index) => {
+            const tr = document.createElement('tr');
+            tr.style.cssText = `background: ${index % 2 === 0 ? '#2a2a2a' : '#252525'};`;
+
+            const depthCell = document.createElement('td');
+            depthCell.textContent = row.label;
+            depthCell.style.cssText = 'padding: 3px 10px;';
+            tr.appendChild(depthCell);
+
+            const timeCell = document.createElement('td');
+            if (row.medianMs !== null) {
+                timeCell.textContent = formatRelativeTime(row.medianMs);
+                timeCell.style.cssText = 'padding: 3px 10px; color: #4ade80;';
+            } else {
+                timeCell.textContent = row.count === 0 ? '—' : `too few (< ${MIN_BUCKET_N})`;
+                timeCell.title = `A median needs at least ${MIN_BUCKET_N} completed listings at this depth.`;
+                timeCell.style.cssText = 'padding: 3px 10px; color: #9ca3af;';
+            }
+            tr.appendChild(timeCell);
+
+            const countCell = document.createElement('td');
+            countCell.textContent = String(row.count);
+            countCell.style.cssText = 'padding: 3px 10px; color: #aaa;';
+            tr.appendChild(countCell);
+
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        block.appendChild(table);
+
+        const notes = [];
+        if (analysis.censored > 0) {
+            notes.push(`${analysis.censored} cancelled before filling (not in any median)`);
+        }
+        if (analysis.unpriced > 0) {
+            notes.push(`${analysis.unpriced} with no price to compare against`);
+        }
+        if (analysis.sources.sample > 0) {
+            notes.push(
+                `${analysis.sources.sample} depth${analysis.sources.sample === 1 ? '' : 's'} from a price sample`
+            );
+        }
+        if (notes.length > 0) {
+            block.appendChild(this.buildFillTimeNote(notes.join(' · ')));
+        }
+
+        return block;
     }
 
     /**

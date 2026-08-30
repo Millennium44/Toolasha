@@ -1449,3 +1449,64 @@ describe('teardown is awaitable, so the switch waits for the listing log to land
         ).toEqual([7]);
     });
 });
+
+describe('cachedTopOfBook', () => {
+    beforeEach(() => {
+        estimatedListingAge.orderBooksCache = {};
+    });
+
+    /** The wire's payload shape, wrapped the way the cache stores it. */
+    const cache = (orderBooks) => ({ data: { orderBooks }, lastUpdated: Date.now() });
+
+    test('reads the top ask and the top bid off a book keyed by level', () => {
+        estimatedListingAge.orderBooksCache = {
+            '/items/coal': cache({
+                0: { asks: [{ price: 120 }, { price: 130 }], bids: [{ price: 100 }, { price: 90 }] },
+            }),
+        };
+
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal', 0, true)).toBe(120);
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal', 0, false)).toBe(100);
+    });
+
+    test('reads a sparse array of books by enhancement level', () => {
+        const books = [];
+        books[2] = { asks: [{ price: 500 }], bids: [{ price: 400 }] };
+        estimatedListingAge.orderBooksCache = { '/items/sword': cache(books) };
+
+        expect(estimatedListingAge.cachedTopOfBook('/items/sword', 2, true)).toBe(500);
+        expect(estimatedListingAge.cachedTopOfBook('/items/sword', 2, false)).toBe(400);
+        expect(estimatedListingAge.cachedTopOfBook('/items/sword', 1, true)).toBeNull();
+    });
+
+    test('defaults to level 0 and the ask side', () => {
+        estimatedListingAge.orderBooksCache = {
+            '/items/coal': cache({ 0: { asks: [{ price: 120 }], bids: [{ price: 100 }] } }),
+        };
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal')).toBe(120);
+    });
+
+    test('reads the pre-wrapper cache shape too', () => {
+        estimatedListingAge.orderBooksCache = {
+            '/items/coal': { orderBooks: { 0: { asks: [{ price: 42 }] } } },
+        };
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal', 0, true)).toBe(42);
+    });
+
+    test('is null for an item, level or side the cache has nothing for', () => {
+        estimatedListingAge.orderBooksCache = {
+            '/items/coal': cache({ 0: { asks: [], bids: [{ price: 100 }] } }),
+        };
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal', 0, true)).toBeNull();
+        expect(estimatedListingAge.cachedTopOfBook('/items/tin', 0, true)).toBeNull();
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal', 9, false)).toBeNull();
+    });
+
+    test('rejects a zero or non-numeric top price rather than passing it on as a divisor', () => {
+        estimatedListingAge.orderBooksCache = {
+            '/items/coal': cache({ 0: { asks: [{ price: 0 }], bids: [{ price: null }] } }),
+        };
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal', 0, true)).toBeNull();
+        expect(estimatedListingAge.cachedTopOfBook('/items/coal', 0, false)).toBeNull();
+    });
+});

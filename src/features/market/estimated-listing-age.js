@@ -592,6 +592,34 @@ class EstimatedListingAge {
     }
 
     /**
+     * The top of one side of an item's cached order book.
+     *
+     * The reader-side counterpart to {@link _cacheOrderBook}, so nothing else
+     * has to know that the cache stores `{data, lastUpdated}` around a payload
+     * whose `orderBooks` may be a sparse array or an object keyed by level.
+     *
+     * The cache holds the *latest* book per item, up to a week old — not a
+     * history — so a price this answers with is current, whatever the age of
+     * whatever it is being compared against. Callers reconstructing a past
+     * offset from it are producing an approximation and should say so.
+     * @param {string} itemHrid - Item to look up
+     * @param {number} [enhancementLevel=0] - Which level's book
+     * @param {boolean} [isSell=true] - True for the top ask, false for the top bid
+     * @returns {number|null} Best price on that side, or null when the cache has no book
+     */
+    cachedTopOfBook(itemHrid, enhancementLevel = 0, isSell = true) {
+        const entry = this.orderBooksCache?.[itemHrid];
+        if (!entry) return null;
+        const orderBooks = (entry.data || entry)?.orderBooks;
+        if (!orderBooks) return null;
+
+        const book = Array.isArray(orderBooks) ? orderBooks[enhancementLevel] : orderBooks[String(enhancementLevel)];
+        const rows = isSell ? book?.asks : book?.bids;
+        const price = rows?.[0]?.price;
+        return typeof price === 'number' && price > 0 ? price : null;
+    }
+
+    /**
      * Load cached order books from IndexedDB
      */
     async loadOrderBooksCache() {
