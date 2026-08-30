@@ -69,6 +69,7 @@ const {
     loadCombatGear,
     saveCombatGear,
     flushGoalWrites,
+    mergeGoalLists,
     GOALS_KEY,
     SNAPSHOT_KEY,
     COMBAT_GEAR_KEY,
@@ -256,5 +257,62 @@ describe('the goal list and a store that cannot be read', () => {
         // list this time and lands beside it
         await addGoal({ id: 'b', type: 'gold', amount: 900 });
         expect(ids(settings().get(goalsKey())).sort()).toEqual(['a', 'b']);
+    });
+});
+
+describe('merging two devices goal lists', () => {
+    const goal = (id, createdAt, extra = {}) => ({
+        id,
+        type: 'gold',
+        amount: 1000,
+        createdAt,
+        ...extra,
+    });
+
+    test('the union keeps goals added on either device', () => {
+        const merged = mergeGoalLists([goal('a', 1000)], [goal('b', 2000)]);
+
+        expect(merged.map((entry) => entry.id)).toEqual(['a', 'b']);
+    });
+
+    test('the same id resolves to the later createdAt, in either direction', () => {
+        const old = [goal('a', 1000, { amount: 1 })];
+        const fresh = [goal('a', 9000, { amount: 2 })];
+
+        expect(mergeGoalLists(old, fresh)[0].amount).toBe(2);
+        expect(mergeGoalLists(fresh, old)[0].amount).toBe(2);
+    });
+
+    test('a stamp-less legacy goal loses to a stamped copy of the same id', () => {
+        const legacy = [{ id: 'a', type: 'gold', amount: 1 }];
+        const stamped = [goal('a', 5000, { amount: 2 })];
+
+        expect(mergeGoalLists(legacy, stamped)[0].amount).toBe(2);
+        expect(mergeGoalLists(stamped, legacy)[0].amount).toBe(2);
+    });
+
+    test('an id-less entry is dropped rather than merged under undefined', () => {
+        expect(mergeGoalLists([{ type: 'gold', amount: 1 }], [goal('a', 1)])).toEqual([goal('a', 1)]);
+    });
+
+    test('a non-array or absent side merges to the side that is a list', () => {
+        expect(mergeGoalLists(null, [goal('a', 1)])).toEqual([goal('a', 1)]);
+        expect(mergeGoalLists([goal('a', 1)], null)).toEqual([goal('a', 1)]);
+        expect(mergeGoalLists(undefined, undefined)).toEqual([]);
+    });
+
+    test('the union is capped, keeping the goals that have been on the list longest', () => {
+        const local = Array.from({ length: 30 }, (_, index) => goal(`local-${index}`, index));
+        const incoming = Array.from({ length: 30 }, (_, index) => goal(`remote-${index}`, 1000 + index));
+
+        const merged = mergeGoalLists(local, incoming);
+
+        expect(merged).toHaveLength(40);
+        expect(merged.slice(0, 30).map((entry) => entry.id)).toEqual(local.map((entry) => entry.id));
+    });
+
+    test('a goal deleted on one device comes back — no tombstones, documented', () => {
+        expect(mergeGoalLists([], [goal('a', 1)]).map((entry) => entry.id)).toEqual(['a']);
+        expect(mergeGoalLists([goal('a', 1)], []).map((entry) => entry.id)).toEqual(['a']);
     });
 });

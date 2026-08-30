@@ -17,6 +17,7 @@
 import dataManager from '../../core/data-manager.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createCuratedRecord, mergeById } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { normalizeGoal } from './goal-planner.js';
 
 /** Unscoped key for the goal list; the real key carries the character id */
@@ -28,6 +29,67 @@ export const COMBAT_GEAR_KEY = 'goalPlannerCombatGear';
 
 /** Nobody needs a hundred goals, and a runaway list is a slow panel */
 const MAX_GOALS = 40;
+
+/**
+ * Two devices' goal lists as one.
+ *
+ * The list is authored a goal at a time, and a whole-key sync write is the
+ * data-loss case: a goal added on the phone this morning and one added on the
+ * desktop this afternoon are two goals, and writing the key whole leaves
+ * whichever list the payload happened to carry. So the union by goal id, which
+ * is the same identity {@link goalsRecord}'s own `mergeById` merge uses for two
+ * tabs on one machine.
+ *
+ * A goal is written once and never edited — `addGoal` and `removeGoal` are the
+ * whole of the mutation, and `createdAt` is stamped at creation and never
+ * moved — so two copies of one id are the same goal, not two versions of it.
+ * The rule is stated anyway, because it is what an id collision *would* mean:
+ * the later `createdAt` wins, and a tie or a missing stamp resolves to the
+ * incoming copy on the registry's `(local, incoming)` convention.
+ *
+ * **A removal can come back.** The list keeps no tombstones, so a goal deleted
+ * on one device is indistinguishable from one the other device has not seen
+ * yet, and the union keeps it — re-deleting costs one click, while losing an
+ * afternoon of goals to a pull does not.
+ *
+ * The {@link MAX_GOALS} cap is re-applied to the union the way `saveGoals`
+ * applies it: the first forty, so the goals that have been on the list longest
+ * are the ones that survive rather than whichever device pushed last.
+ *
+ * @param {Array<Object>|*} local - This device's goals
+ * @param {Array<Object>|*} incoming - The downloaded goals
+ * @returns {Array<Object>} The union, oldest first
+ */
+export function mergeGoalLists(local, incoming) {
+    const byId = new Map();
+    for (const goal of Array.isArray(local) ? local : []) {
+        if (goal?.id) byId.set(goal.id, goal);
+    }
+    for (const goal of Array.isArray(incoming) ? incoming : []) {
+        if (!goal?.id) continue;
+        const held = byId.get(goal.id);
+        const mine = Number(held?.createdAt);
+        const theirs = Number(goal?.createdAt);
+        const keepMine = held && Number.isFinite(mine) && (!Number.isFinite(theirs) || mine > theirs);
+        byId.set(goal.id, keepMine ? held : goal);
+    }
+    return [...byId.values()].slice(0, MAX_GOALS);
+}
+
+/*
+ * Registered so a cross-device sync PULL combines the goal list instead of
+ * overwriting it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: 'settings',
+    // `goalPlannerGoals` and `goalPlannerGoals_<charId>`. The sibling keys
+    // (`goalPlannerSnapshot`, `goalPlannerCombatGear`) are caches and derived
+    // state, are written whole by the feature itself, and do not start with
+    // this base's own underscore — so they stay out of this registration.
+    base: GOALS_KEY,
+    merge: mergeGoalLists,
+    label: 'Goal planner goals',
+});
 
 /**
  * The goal list as stored, per character.

@@ -56,6 +56,7 @@ await import('../features/insights/prediction-calibration.js');
 await import('../features/inventory/custom-tabs/custom-tabs-data.js');
 await import('../features/leaderboard/leaderboard-xp-tracker.js');
 await import('../features/ui/overlay-layouts.js');
+await import('../features/planner/goal-planner-store.js');
 await import('../features/skills/xp-tracker.js');
 await import('../features/actions/loot-log-history.js');
 await import('../features/networth/networth-history.js');
@@ -171,6 +172,13 @@ const corpus = [
     // so the character-scoped form must NOT resolve to it
     { store: 'settings', key: 'overlayLayouts', label: 'Overlay layouts' },
     { store: 'settings', key: `overlayLayouts_${CHAR}`, label: null },
+
+    // planner/goal-planner-store.js — character-scoped, and the two sibling
+    // keys it shares a `goalPlanner` stem with are caches that must stay out
+    { store: 'settings', key: 'goalPlannerGoals', label: 'Goal planner goals' },
+    { store: 'settings', key: `goalPlannerGoals_${CHAR}`, label: 'Goal planner goals' },
+    { store: 'settings', key: 'goalPlannerSnapshot', label: null },
+    { store: 'settings', key: 'goalPlannerCombatGear', label: null },
 
     // utils/chest-tally.js — and the lookalike record it must not absorb
     { store: 'settings', key: 'treasureTally', label: 'Treasure tally' },
