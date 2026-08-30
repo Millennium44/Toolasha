@@ -730,6 +730,13 @@ export default class CustomTabsUI {
         this._actionBtnsEl = null;
         this._styleEl?.remove();
         document.querySelectorAll('.toolasha-ct-add-to-tab').forEach((el) => el.remove());
+        // The editor hangs off document.body, so `_clearLayout`'s sweep of the
+        // inventory container never sees it. Left standing it is a live dialog
+        // wired to a UI that no longer exists — every button edits the discarded
+        // `_config` and `_save()` refuses the write, and re-enabling the feature
+        // builds a second UI underneath it.
+        document.querySelectorAll('.toolasha-ct-modal-overlay').forEach((el) => el.remove());
+        this._editorTabId = null;
         this._isActive = false;
         this._configCharId = null;
     }

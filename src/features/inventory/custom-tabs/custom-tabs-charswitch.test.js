@@ -325,6 +325,24 @@ describe('self-sufficient reload', () => {
         ui = null;
     });
 
+    test('cleanup takes the tab editor down with it', async () => {
+        // The editor is appended to document.body, not to the inventory container
+        // `_clearLayout` sweeps, so nothing in the teardown path reached it. Left
+        // behind it is a dialog bound to a discarded UI: its buttons edit that
+        // instance's `_config`, and `_save()` — correctly — refuses every one of
+        // them, because cleanup nulled `_configCharId`. Re-enabling the feature
+        // builds a second UI underneath it.
+        store('ironChar', config([{ id: 'ic-tab', name: 'Ironman Gear' }]));
+        await startUI();
+        ui._openEditor('ic-tab');
+        expect(document.querySelector('.toolasha-ct-modal-overlay')).not.toBeNull();
+
+        ui.cleanup();
+        ui = null;
+
+        expect(document.querySelector('.toolasha-ct-modal-overlay')).toBeNull();
+    });
+
     test('the loadout-binding cache is rebuilt for the arriving character', async () => {
         // `_boundBaseHrids` is baseHrid → Map<loadoutName, level>, derived from
         // `_config`'s loadoutBindings and rebuilt only when it is null. The reload
