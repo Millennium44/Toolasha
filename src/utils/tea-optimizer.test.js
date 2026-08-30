@@ -57,8 +57,13 @@ vi.mock('./market-data.js', () => ({
     },
 }));
 
-const { getRelevantTeas, getTeaBuffDescription, actionHasUnpricedMaterials, scoreEquipmentSetup } =
-    await import('./tea-optimizer.js');
+const {
+    getRelevantTeas,
+    getTeaBuffDescription,
+    actionHasUnpricedMaterials,
+    scoreEquipmentSetup,
+    calculateSkillPerformance,
+} = await import('./tea-optimizer.js');
 
 const knownItems = [
     '/items/milking_tea',
@@ -342,5 +347,36 @@ describe('scoreEquipmentSetup — alchemy', () => {
 
         expect(score).not.toBe(4321);
         expect(score).toBeGreaterThan(0);
+    });
+});
+
+describe('calculateSkillPerformance — alchemy', () => {
+    // Unlike scoreEquipmentSetup and findOptimalTeas, calculateSkillPerformance had
+    // no alchemy special case at all — it ran alchemy actions through the same
+    // generic per-action loop as every other production skill. calculateXpPerHour
+    // returns 0 for alchemy by design (see its own doc comment: alchemy XP comes
+    // from item level, not actionDetails.experienceGain), and
+    // calculateProductionGoldPerHour never looks at buffs.alchemySuccess, so a
+    // catalytic tea's entire effect on the gold figure was dropped, and the XP
+    // figure always read as zero. This feeds the skilling optimizer's simulation
+    // panel (skilling-optimizer-ui.js's _runSimulation) whenever Alchemy is picked.
+    beforeEach(() => {
+        state.gameData.itemDetailMap['/items/scrap_trinket'] = { alchemyDetail: {}, itemLevel: 5 };
+        state.gameData.actionDetailMap = {
+            '/actions/alchemy/decompose': {
+                type: '/action_types/alchemy',
+                name: 'Decompose',
+                levelRequirement: { level: 1 },
+            },
+        };
+    });
+
+    test('goldPerHour comes from the alchemy profit calculator instead of always reading zero', () => {
+        alchemyCalc.decompose = () => ({ profitPerHour: 555 });
+
+        const result = calculateSkillPerformance('alchemy', new Map(), [], 10);
+
+        expect(alchemyCalc.decompose).toBeTruthy();
+        expect(result.goldPerHour).toBe(555);
     });
 });

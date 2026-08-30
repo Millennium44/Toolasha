@@ -1438,6 +1438,27 @@ export function calculateSkillPerformance(skillName, equipment, teaHrids, player
     const teaCost = calculateTeaCostPerHour(filteredTeas, drinkConcentration);
     const calcContext = { equipment, itemDetailMap: gameData.itemDetailMap };
 
+    // Alchemy XP and gold are both derived from a representative item rather
+    // than from action data — see scoreEquipmentSetup's identical special
+    // case. Left to fall through to the generic loop below, calculateXpPerHour
+    // always returns 0 for alchemy (it has no experienceGain, by design — see
+    // calculateAlchemyXpPerHour's own doc comment) and calculateProductionGoldPerHour
+    // ignores buffs.alchemySuccess entirely, so this skill's XP/hr always read
+    // as zero and its Gold/hr never reflected a catalytic tea's whole effect.
+    if (normalizedSkill === 'alchemy') {
+        const repItemHrid = getRepresentativeAlchemyItemHrid(playerLevel, gameData.itemDetailMap);
+        if (!repItemHrid) return empty;
+        const alchemyContext = { actionType: 'decompose', itemHrid: repItemHrid };
+        const xpPerHour = calculateAlchemyXpPerHour(alchemyContext, buffs, playerLevel, otherEfficiency, calcContext);
+        const goldPerHour = calculateAlchemyGoldPerHour(alchemyContext, buffs) - teaCost.total;
+        return {
+            xpPerHour: xpPerHour > 0 ? xpPerHour : 0,
+            goldPerHour: goldPerHour > 0 ? goldPerHour : 0,
+            teaCostPerHour: teaCost.total,
+            hasMissingPrices: false,
+        };
+    }
+
     let totalXp = 0,
         xpCount = 0;
     let totalGold = 0,
