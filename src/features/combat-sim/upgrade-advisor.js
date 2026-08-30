@@ -25,10 +25,12 @@ import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
-import { getCheapestProtectionPrice, getProductionCost } from '../enhancement/tooltip-enhancement.js';
+// The one enhancement cost model: the shared protect-from sweep and the shared
+// pricing rules. This module used to carry an inline copy of both.
+import { cheapestProtectPlan } from '../../utils/enhancement-protect-sweep.js';
+import { getCheapestProtectionPrice, perAttemptMaterialCost } from '../../utils/enhancement-pricing.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
@@ -460,106 +462,51 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
     }
 
     const enhancingParams = enhancementSweepParams(options.slot);
-    const itemLevel = itemDetails.itemLevel || 1;
 
-    // Calculate per-attempt material cost (matches tooltip-enhancement pricing)
-    let perAttemptCost = 0;
-    for (const material of itemDetails.enhancementCosts) {
-        let price = 0;
-        if (material.itemHrid.startsWith('/items/trainee_')) {
-            price = 250000;
-        } else if (material.itemHrid === '/items/coin') {
-            price = 1;
-        } else {
-            const marketPrice = getItemPrices(material.itemHrid, 0);
-            if (marketPrice) {
-                let ask = marketPrice.ask;
-                let bid = marketPrice.bid;
-                // A missing side is null, not a negative sentinel, and
-                // `null < 0` is false — so the cross-fill never ran and a
-                // bid-only book fell through to production cost or the vendor
-                // sell price, both far under what the material actually goes
-                // for. Anything that is not a positive quote is a missing side.
-                if (ask > 0 && !(bid > 0)) bid = ask;
-                if (bid > 0 && !(ask > 0)) ask = bid;
-                if (ask > 0) {
-                    price = ask;
-                }
-            }
-            // Fallback if no valid market ask
-            if (price === 0) {
-                const itemDetail = gameData.itemDetailMap[material.itemHrid];
-                price = getProductionCost(material.itemHrid, 'ask') || itemDetail?.sellPrice || 0;
-            }
-        }
-        perAttemptCost += price * material.count;
-    }
+    // The shared rule: a one-sided book cross-fills, then production cost, then
+    // the vendor price, and trainee charms take the one shop-price constant.
+    // This used to be an inline transcription here, complete with its own 250000.
+    const materials = perAttemptMaterialCost(itemDetails);
 
     // Get cheapest protection price. Null when nothing that could protect this
-    // item has a price — which makes every protecting strategy unpriceable
-    // below, not free. Quoting protection at zero made the most-protected path
-    // the cheapest by construction and put it top of the rankings.
-    const { price: protPrice } = getCheapestProtectionPrice(itemHrid);
+    // item has a price — which makes every protecting strategy unpriceable, not
+    // free. Quoting protection at zero made the most-protected path the cheapest
+    // by construction and put it top of the rankings.
+    const { price: protPrice, itemHrid: protHrid } = getCheapestProtectionPrice(itemHrid);
 
-    // Calculate full path cost for each level from 1 to targetLevel
-    // Find optimal protectFrom for each level (same approach as tooltip)
-    // Then: incremental cost = fullCost(targetLevel) - fullCost(startLevel)
-    const fullCost = new Array(targetLevel + 1).fill(0);
+    try {
+        // From the level the piece is actually at, not the difference between
+        // two runs from +0. The old form — fullCost[target] − fullCost[start] —
+        // gives the same number almost everywhere, because an item cannot skip
+        // a level and so every path to +7 passes through +4 (see
+        // enhancement-cost-parity.test.js). It parts company under Blessed Tea,
+        // whose double jump can vault the start level, and there it undercounts
+        // the real run. Solving from the start is right in both cases.
+        const plan = cheapestProtectPlan({
+            chain: {
+                // Every input comes from the player's own detected stats via
+                // getEnhancingParams — the observatory level and the blessed tea's real
+                // double-jump chance included, so the quote is their run, not a stock one
+                enhancingLevel: enhancingParams.enhancingLevel,
+                toolBonus: enhancingParams.toolBonus,
+                speedBonus: enhancingParams.speedBonus || 0,
+                itemLevel: itemDetails.itemLevel || 1,
+                blessedTea: enhancingParams.teas?.blessed || false,
+                guzzlingBonus: enhancingParams.guzzlingBonus || 1.0,
+                blessedTeaBonus: enhancingParams.blessedTeaBonus,
+            },
+            targetLevel,
+            startLevel,
+            materialCostPerAttempt: materials.cost,
+            protectionOptions: protPrice > 0 ? [{ itemHrid: protHrid, price: protPrice }] : [],
+            hasMissingPrices: materials.hasMissingPrices,
+        });
 
-    for (let level = 1; level <= targetLevel; level++) {
-        let bestCost = Infinity;
-
-        // Try all protection strategies: no protection, protect from 2, 3, ..., level
-        const protectOptions = [0];
-        for (let pf = 2; pf <= level; pf++) {
-            protectOptions.push(pf);
-        }
-
-        for (const protectFrom of protectOptions) {
-            try {
-                const result = calculateEnhancement({
-                    // Every input comes from the player's own detected stats via
-                    // getEnhancingParams — the observatory level and the blessed tea's real
-                    // double-jump chance included, so the quote is their run, not a stock one
-                    enhancingLevel: enhancingParams.enhancingLevel,
-                    houseLevel: enhancingParams.houseLevel,
-                    toolBonus: enhancingParams.toolBonus,
-                    speedBonus: enhancingParams.speedBonus || 0,
-                    itemLevel,
-                    targetLevel: level,
-                    protectFrom,
-                    blessedTea: enhancingParams.teas?.blessed || false,
-                    guzzlingBonus: enhancingParams.guzzlingBonus || 1.0,
-                    blessedTeaBonus: enhancingParams.blessedTeaBonus,
-                });
-
-                const protectionCount = result.protectionCount || 0;
-                // A strategy that consumes protection nobody can price has no
-                // cost to compare; skipping it leaves the unprotected path,
-                // which is priceable, rather than crowning a free one
-                if (protectionCount > 0 && !(protPrice > 0)) continue;
-
-                const materialCost = perAttemptCost * result.attempts;
-                const protectionCost = (protPrice || 0) * protectionCount;
-                const totalForLevel = materialCost + protectionCost;
-
-                if (totalForLevel < bestCost) {
-                    bestCost = totalForLevel;
-                }
-            } catch {
-                // Skip this strategy if calculation fails
-            }
-        }
-
-        // Every protection strategy failed for this level — unknown, not free
-        if (bestCost === Infinity) {
-            return null;
-        }
-        fullCost[level] = bestCost;
+        // Nothing about the run could be priced — unknown, not free
+        return plan ? Math.max(0, Math.round(plan.cost)) : null;
+    } catch {
+        return null;
     }
-
-    // Incremental cost = cost to reach targetLevel - cost to reach startLevel
-    return Math.max(0, Math.round(fullCost[targetLevel] - fullCost[startLevel]));
 }
 
 /**

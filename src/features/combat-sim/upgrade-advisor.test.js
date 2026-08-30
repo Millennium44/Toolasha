@@ -116,16 +116,25 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
 }));
 vi.mock('../../utils/profit-helpers.js', () => ({ resolveItemPrice: vi.fn() }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: vi.fn() }));
-vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: vi.fn() }));
+// Partial: the chain solve is stubbed so a test can say how many attempts a run
+// takes, but the cost statistics the shared sweep reads off that solve are the
+// real ones — stubbing them would test nothing
+vi.mock('../../utils/enhancement-calculator.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    calculateEnhancement: vi.fn(),
+}));
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: vi.fn(),
     getAutoDetectedParams: vi.fn(),
     // Read by `describeEnhancementSource`, which names whose bench a sweep ran on
     describeParamsSource: vi.fn(() => null),
 }));
-vi.mock('../enhancement/tooltip-enhancement.js', () => ({
+// The enhancement pricing rules moved to utils so every bundle could share one
+// copy; this file drives the advisor's use of them, not the rules themselves,
+// which have their own suite in src/utils/enhancement-pricing.test.js
+vi.mock('../../utils/enhancement-pricing.js', () => ({
     getCheapestProtectionPrice: vi.fn(),
-    getProductionCost: vi.fn(),
+    perAttemptMaterialCost: vi.fn(),
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityLevelUpCost: vi.fn(() => ({
@@ -192,12 +201,19 @@ const {
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
 const { calculateEnhancement } = await import('../../utils/enhancement-calculator.js');
-const { getCheapestProtectionPrice, getProductionCost } = await import('../enhancement/tooltip-enhancement.js');
+const { getCheapestProtectionPrice, perAttemptMaterialCost } = await import('../../utils/enhancement-pricing.js');
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
 const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.js');
 const { buildGameDataPayload, calculateSimRevenue } = await import('./combat-sim-adapter.js');
 const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
+
+// The advisor asks the shared pricing rule what one attempt's materials come to.
+// Most tests here are not about that number, so give it a default they can ignore
+// and let the ones that care override it.
+beforeEach(() => {
+    perAttemptMaterialCost.mockReturnValue({ cost: 0, hasCost: false, hasMissingPrices: true });
+});
 
 const MAIN_HAND = '/equipment_types/main_hand';
 const BACK = '/equipment_types/back';
@@ -2889,6 +2905,9 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
         });
         calculateEnhancement.mockReturnValue({ attempts: 3, protectionCount: 0 });
         getCheapestProtectionPrice.mockReturnValue({ price: 0 });
+        // The per-attempt bill is the shared rule's answer; what this test is
+        // about is that the sweep's figure is added to the base price at all
+        perAttemptMaterialCost.mockReturnValue({ cost: 100_000, hasCost: true, hasMissingPrices: false });
         getEnhancingParams.mockReturnValue({
             enhancingLevel: 100,
             toolBonus: 0,
@@ -2986,15 +3005,14 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
 /**
  * What an enhancement path is quoted at.
  *
- * Two sentinels were wrong in the same direction — downwards.
- *
- * A missing market side reads as null, so the cross-fill guarded by `bid < 0`
- * never ran: a bid-only book fell through to production cost or the vendor sell
- * price, both far under what the material goes for.
- *
- * And protection nobody could price came back as 0, which made every protecting
- * strategy free by construction — the most-protected path won every comparison
- * on a quote it had no basis for.
+ * The material rule itself now lives in `utils/enhancement-pricing.js` and is
+ * tested there — a one-sided book cross-fills rather than falling through to a
+ * vendor price, and trainee charms take the one shop-price constant. What is
+ * left for this suite is the advisor's own two decisions: that it asks the
+ * shared rule rather than carrying a transcription of it, and that protection
+ * nobody can price makes a protected strategy *unavailable* rather than free.
+ * A zero read as a price made the most-protected path win every comparison on a
+ * quote it had no basis for.
  */
 describe('pricing an enhancement path', () => {
     /** Wire the mocks this suite shares. */
@@ -3002,15 +3020,16 @@ describe('pricing an enhancement path', () => {
         resolveItemPrice.mockImplementation((hrid, { side }) =>
             side === 'sell' ? { price: 1_000_000 } : { price: 5_000_000 }
         );
-        // The advisor prices the whole path 1..level and subtracts, so the
-        // attempt count has to grow with the level for the difference to be
-        // anything: one attempt per level makes +5 → +6 exactly one attempt.
-        calculateEnhancement.mockImplementation(({ targetLevel }) => ({
-            attempts: targetLevel,
-            protectionCount: 0,
-        }));
+        // The chain is solved from the level the piece is at, so a +5 → +6 run
+        // is one attempt. An unprotected failure falls all the way to +0, which
+        // is why the unprotected run costs the whole climb rather than one step.
+        calculateEnhancement.mockImplementation(({ targetLevel, startLevel = 0, protectFrom }) =>
+            protectFrom > 0
+                ? { attempts: targetLevel - startLevel, protectionCount: 1 }
+                : { attempts: targetLevel, protectionCount: 0 }
+        );
         getCheapestProtectionPrice.mockReturnValue({ price: null, itemHrid: null });
-        getProductionCost.mockReturnValue(0);
+        perAttemptMaterialCost.mockReturnValue({ cost: 90_000, hasCost: true, hasMissingPrices: false });
         getEnhancingParams.mockReturnValue({
             enhancingLevel: 100,
             toolBonus: 0,
@@ -3022,6 +3041,7 @@ describe('pricing an enhancement path', () => {
         const gameData = buildGameData();
         gameData.itemDetailMap['/items/fine_sword'].enhancementCosts = [{ itemHrid: '/items/enhance_mat', count: 1 }];
         gameData.itemDetailMap['/items/enhance_mat'] = { name: 'Mat', sellPrice: 100 };
+        getItemPrices.mockReturnValue(null);
         return gameData;
     }
 
@@ -3044,69 +3064,39 @@ describe('pricing an enhancement path', () => {
         );
     }
 
-    test('a bid-only book is priced at the bid, not at the vendor price', () => {
+    test('the bill is the shared per-attempt figure times the attempts', () => {
         const gameData = setup();
-        // The game sends null for a side with no listing. Only the material has
-        // a book at all, so the cost is the enhancement path's.
-        getItemPrices.mockImplementation((hrid) => (hrid === '/items/enhance_mat' ? { ask: null, bid: 90_000 } : null));
-        getProductionCost.mockReturnValue(500);
 
-        const cost = enhanceCost(gameData);
+        // Only the unprotected run can be priced here, and an unprotected
+        // failure drops to +0 — six attempts at 90,000 the attempt
+        expect(enhanceCost(gameData)).toBe(540_000);
 
-        // One more attempt at 90,000 a material — the production cost of 500 and
-        // the 100 vendor price are what the dead sentinel used to pick instead
-        expect(cost).toBe(90_000);
-    });
-
-    test('an ask-only book still uses the ask', () => {
-        const gameData = setup();
-        getItemPrices.mockImplementation((hrid) => (hrid === '/items/enhance_mat' ? { ask: 90_000, bid: null } : null));
-
-        expect(enhanceCost(gameData)).toBe(90_000);
-    });
-
-    test('a book with neither side falls back, as it always did', () => {
-        const gameData = setup();
-        getItemPrices.mockReturnValue({ ask: null, bid: null });
-        getProductionCost.mockImplementation((hrid) => (hrid === '/items/enhance_mat' ? 500 : 0));
-
-        expect(enhanceCost(gameData)).toBe(500);
+        // The item's own recipe is what gets priced, through the shared rule
+        expect(perAttemptMaterialCost).toHaveBeenCalledWith(gameData.itemDetailMap['/items/fine_sword']);
     });
 
     test('unpriceable protection does not make a protected path free', () => {
         const gameData = setup();
-        // Only the material is listed — the sword itself is not, so the cost
-        // falls through to the enhancement path rather than a market delta
-        getItemPrices.mockImplementation((hrid) =>
-            hrid === '/items/enhance_mat' ? { ask: 90_000, bid: 80_000 } : null
-        );
-        // Protecting costs fewer attempts, so with protection at zero it would
-        // undercut the unprotected path every time
-        calculateEnhancement.mockImplementation(({ protectFrom, targetLevel }) =>
-            protectFrom > 0
-                ? { attempts: 1, protectionCount: targetLevel }
-                : { attempts: targetLevel, protectionCount: 0 }
-        );
+        // Protecting takes one attempt against the unprotected six, so at a
+        // price of zero it would undercut the unprotected path every time
         getCheapestProtectionPrice.mockReturnValue({ price: null, itemHrid: null });
 
-        // Only the unprotected path can be priced: one more attempt at 90,000
-        expect(enhanceCost(gameData)).toBe(90_000);
+        expect(enhanceCost(gameData)).toBe(540_000);
     });
 
     test('protection that has a price is used, and can win', () => {
         const gameData = setup();
-        getItemPrices.mockImplementation((hrid) =>
-            hrid === '/items/enhance_mat' ? { ask: 90_000, bid: 80_000 } : null
-        );
-        calculateEnhancement.mockImplementation(({ protectFrom, targetLevel }) =>
-            protectFrom > 0
-                ? { attempts: 1, protectionCount: targetLevel }
-                : { attempts: targetLevel, protectionCount: 0 }
-        );
         getCheapestProtectionPrice.mockReturnValue({ price: 10_000, itemHrid: '/items/mirror_of_protection' });
 
-        // Protecting is cheaper here and is now priced: one more protection
-        expect(enhanceCost(gameData)).toBe(10_000);
+        // One attempt at 90,000 plus one protection at 10,000, against 540,000
+        expect(enhanceCost(gameData)).toBe(100_000);
+    });
+
+    test('a recipe nothing in which can be priced is unknown, not free', () => {
+        const gameData = setup();
+        perAttemptMaterialCost.mockReturnValue({ cost: 0, hasCost: false, hasMissingPrices: true });
+
+        expect(enhanceCost(gameData)).toBeNull();
     });
 });
 
@@ -3669,6 +3659,7 @@ describe('explainUpgradeCost', () => {
         resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
         calculateEnhancement.mockReturnValue({ attempts: 3, protectionCount: 0 });
         getCheapestProtectionPrice.mockReturnValue({ price: 0 });
+        perAttemptMaterialCost.mockReturnValue({ cost: 100_000, hasCost: true, hasMissingPrices: false });
         getEnhancingParams.mockReturnValue({
             enhancingLevel: 100,
             toolBonus: 0,
