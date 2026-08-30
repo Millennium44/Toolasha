@@ -178,6 +178,7 @@ const {
     conflictKeys,
     planWithinBudget,
     valuePerMillion,
+    replacedIn,
     explainUpgradeCost,
     computeEconomics,
     assignRankScores,
@@ -5485,5 +5486,62 @@ describe('crediting the resale of what a swap replaces', () => {
 
         expect(detail.credits).toEqual([]);
         expect(detail.net).toBe(10_000_000);
+    });
+});
+
+describe('what a cross-slot swap displaces', () => {
+    const TWO_HAND = '/equipment_types/two_hand';
+    const OFF_HAND = '/equipment_types/off_hand';
+    const gameData = {
+        itemDetailMap: {
+            '/items/cursed_bow': { name: 'Cursed Bow' },
+            '/items/sundering_crossbow': { name: 'Sundering Crossbow' },
+            '/items/manticore_shield': { name: 'Manticore Shield' },
+            '/items/vampiric_bow': { name: 'Vampiric Bow' },
+        },
+    };
+
+    test('a two-hander traded for a one-hander and a shield names the two-hander', () => {
+        // The bow is in the slot the swap *clears*, not in either slot it adds
+        // to, so a walk of `addedSlots` alone finds two empty slots and reports
+        // that the swap displaces nothing
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: {
+                [MAIN_HAND]: { hrid: '/items/sundering_crossbow', enhancementLevel: 7 },
+                [OFF_HAND]: { hrid: '/items/manticore_shield', enhancementLevel: 7 },
+            },
+            clearedSlots: [TWO_HAND],
+        };
+        const dto = { equipment: { [TWO_HAND]: { hrid: '/items/cursed_bow', enhancementLevel: 7 } } };
+
+        expect(replacedIn(candidate, dto, gameData)).toBe('Cursed Bow +7');
+    });
+
+    test('and a one-hander and shield traded for a two-hander names both of them', () => {
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { [TWO_HAND]: { hrid: '/items/vampiric_bow', enhancementLevel: 5 } },
+            clearedSlots: [MAIN_HAND, OFF_HAND],
+        };
+        const dto = {
+            equipment: {
+                [MAIN_HAND]: { hrid: '/items/sundering_crossbow', enhancementLevel: 7 },
+                [OFF_HAND]: { hrid: '/items/manticore_shield', enhancementLevel: 0 },
+            },
+        };
+
+        expect(replacedIn(candidate, dto, gameData)).toBe('Sundering Crossbow +7 + Manticore Shield');
+    });
+
+    test('a slot named on both sides is not counted twice', () => {
+        const candidate = {
+            type: 'cross_slot',
+            addedSlots: { [MAIN_HAND]: { hrid: '/items/sundering_crossbow', enhancementLevel: 7 } },
+            clearedSlots: [MAIN_HAND],
+        };
+        const dto = { equipment: { [MAIN_HAND]: { hrid: '/items/vampiric_bow', enhancementLevel: 1 } } };
+
+        expect(replacedIn(candidate, dto, gameData)).toBe('Vampiric Bow +1');
     });
 });

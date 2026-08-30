@@ -4597,13 +4597,25 @@ export function attemptsNoise(appliedFights, baselineFights = []) {
  * they would help, "what it replaces" is a different answer per room. The row's
  * own description can only name one of them.
  *
+ * The slots it *clears* count as much as the slots it fills, and used not to. A
+ * two-hander traded for a one-hander and a shield puts nothing in the two-hand
+ * slot and takes nothing out of the two it fills — both are empty while the bow
+ * is held — so walking `addedSlots` alone found no occupant anywhere and the
+ * row said it displaced nothing. The reverse swap hid the same fact the other
+ * way round: buying a two-hander sells the sword *and* the shield, and the
+ * breakdown named neither. The credit for both is already in the price
+ * (`removedItems`), so the row was quietly charging for a sale it never
+ * mentioned.
+ *
  * @param {Object} candidate - The upgrade
  * @param {Object} dto - The loadout
  * @param {Object} [gameData] - For the item's name
  * @returns {string} Display name, or '' where it displaces nothing
  */
 export function replacedIn(candidate, dto, gameData) {
-    const slots = candidate.addedSlots ? Object.keys(candidate.addedSlots) : [candidate.slot];
+    const slots = candidate.addedSlots
+        ? [...new Set([...Object.keys(candidate.addedSlots), ...(candidate.clearedSlots || [])])]
+        : [candidate.slot];
     const names = [];
     for (const slot of slots) {
         const worn = dto?.equipment?.[slot];
