@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Calibration drills down, and alchemy joins it
+
+Each skill card on the calibration panel now folds open to per-action medians (each action gated on its own sample) and carries an ask-vs-bid line — "X% of this forecast depends on selling into the ask" — from a recorded field that had no readers. And alchemy success rates join the calibration panel: sessions stamp their predicted rate at start (with the live catalyst and tea), old sessions honestly read unstamped rather than being judged against today's model, and each tracker kind gets its own Wilson-interval verdict — never pooled, never squeezed into the coins-per-hour ledger where a proportion would read as "1/h".
+
 ### The trial capture loop names who is left
 
 The outstanding players are now chips in the header, each a one-click capture button for that player — targeting the healer you care about instead of walking the queue — with the same one-press-one-request rule and in-flight window as Open next Battle Info, focus kept in the row across redraws, and a fold past 24 names. Aura coverage also stops saying "unknown" until the last of fifty captures: it reads against the captured so far ("none among 31 captured · 19 unseen") and reserves MISSING for a complete roster.
