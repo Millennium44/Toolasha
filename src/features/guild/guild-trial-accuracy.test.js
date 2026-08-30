@@ -143,6 +143,27 @@ describe('summarizeTrialAccuracy', () => {
         expect(accuracy.outliers).toEqual([]);
     });
 
+    test('a join that matched nobody has no total to report, rather than a perfect one', () => {
+        // Every reported name unmatched — the whole-week rename case, or a
+        // stream that never resolved display names. The totals are summed over
+        // matched rows only, so both sides come to 0, and `deltaPct(0, 0)` is
+        // 0 by the "measured nothing where nothing was reported" rule. That
+        // rule is right per player and manufactures a perfect score over an
+        // empty set: the ledger card headlines the trial "+0.0%" in green.
+        const accuracy = summarizeTrialAccuracy({
+            reported: {
+                AliceOld: { damage: 1000, healing: 500, taken: 200 },
+                BobOld: { damage: 800, healing: 0, taken: 300 },
+            },
+            measured: { AliceNew: { damage: 990, healing: 480, taken: 210 } },
+        });
+
+        expect(accuracy.matched).toBe(0);
+        for (const { key } of ACCURACY_METRICS) {
+            expect(accuracy.totals[key].deltaPct).toBeNull();
+        }
+    });
+
     test('a name only the measurement knows is counted from the other end', () => {
         const accuracy = summarizeTrialAccuracy({
             reported: { Alice: { damage: 100 } },
@@ -195,7 +216,9 @@ describe('summarizeTrialAccuracy', () => {
         const accuracy = summarizeTrialAccuracy({});
         expect(accuracy.players).toBe(0);
         expect(accuracy.metrics.damage.median).toBeNull();
-        expect(accuracy.totals.damage.deltaPct).toBe(0);
+        // Not 0: no matched rows is nothing to report, the same as the
+        // wholesale-rename case above. A 0 here draws as a green "+0.0%".
+        expect(accuracy.totals.damage.deltaPct).toBeNull();
     });
 });
 

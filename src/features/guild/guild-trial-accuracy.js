@@ -192,7 +192,14 @@ export function summarizeTrialAccuracy({ reported, measured, threshold = OUTLIER
         totals[key] = {
             measured: measuredTotal,
             reported: reportedTotal,
-            deltaPct: deltaPct(measuredTotal, reportedTotal),
+            // Summed over matched rows only, so with no matched rows both
+            // sides are 0 — and `deltaPct(0, 0)` is 0 by the rule that
+            // measuring nothing where nothing was reported is exactly right.
+            // That rule is about one player. Over an empty set it manufactures
+            // a perfect party score out of a join that found nobody, which the
+            // card then headlines in green. Nothing matched is nothing to
+            // report.
+            deltaPct: matchedRows.length ? deltaPct(measuredTotal, reportedTotal) : null,
         };
     }
 
