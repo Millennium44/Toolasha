@@ -4777,6 +4777,35 @@ export function valuePerMillion(cost, attemptsSaved) {
     return attemptsSaved > 0 ? Infinity : null;
 }
 
+/**
+ * Coins per percentage point of the rate a lab table ranks on — the Gold/1%
+ * column, lowest first.
+ *
+ * Three things have to be kept apart at the cheap end and `cost / delta` keeps
+ * none of them apart:
+ *
+ * - **No price.** Nothing to rank on; sorts last, with the combat levels.
+ * - **Free.** The best ratio there is, and `cost ? … : Infinity` sent it to the
+ *   bottom instead, beside the rows nobody could price.
+ * - **Paid for by its own resale.** Dividing a credit by the gain makes the
+ *   figure *more* negative the less the row helps, so the feeblest refund
+ *   outranks the best one. Below zero the figure is therefore the credit
+ *   itself, which keeps every refund above every purchase while ordering them
+ *   among themselves by size. The same rule `computeGoldPerImprovement` applies
+ *   to the combat sim's ladders, for the same reason.
+ *
+ * @param {number|null|undefined} cost - Net coin cost; negative is a credit
+ * @param {number} deltaPct - Improvement in percentage points
+ * @returns {number} Coins per point, the credit itself at or below free, or
+ *   Infinity where there is nothing to rank on
+ */
+export function goldPerPercent(cost, deltaPct) {
+    if (!Number.isFinite(cost)) return Infinity;
+    if (!(deltaPct > 0)) return Infinity;
+    if (cost > 0) return Math.round(cost / deltaPct);
+    return cost;
+}
+
 export function planWithinBudget(results, budget, { baselineFights = [], includeUnmeasured = false } = {}) {
     const baseTries = baselineFights.map((fight) => expectedFightAttempts(fight.winRate || 0));
 

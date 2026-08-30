@@ -26,6 +26,7 @@ import {
     runSkillingUpgradeAnalysis,
     getStyleExcludedSkills,
     planWithinBudget,
+    goldPerPercent,
     runLabyrinthCombinationCheck,
     generateCandidates,
     generateHouseCandidates,
@@ -238,6 +239,37 @@ const KEPT_REASON_LABYRINTH =
  */
 const KEPT_REASON_SKILLING =
     'since it is combat gear you keep in a loadout — selling it to fund skilling gear is not a trade anybody makes.';
+
+/**
+ * The Cost cell of a gold row, in the wording the all-fights table uses.
+ *
+ * Four different things used to render as the same em dash or as a bare
+ * negative number: a price, a free row, a row funded by its own resale, and a
+ * row nobody could price. `cost ? formatWithSeparator(cost) : '—'` blanked the
+ * free ones and printed the credit-funded ones as "-17,700,000", which reads as
+ * a cost rather than as money coming back.
+ *
+ * @param {number|null|undefined} cost - Net coin cost; negative is a credit
+ * @returns {string} Cell text
+ */
+function goldCostCell(cost) {
+    if (cost > 0) return formatWithSeparator(cost);
+    if (cost === 0) return 'free';
+    return Number.isFinite(cost) ? `+${formatKMB(-cost)} back` : '—';
+}
+
+/**
+ * The Gold/1% cell for a row, alongside the figure it sorts on.
+ *
+ * @param {number|null|undefined} cost - Net coin cost
+ * @param {number} deltaPct - Improvement in percentage points
+ * @returns {string} Cell text
+ */
+function goldPerPctCell(cost, deltaPct) {
+    const value = goldPerPercent(cost, deltaPct);
+    if (!Number.isFinite(value)) return '—';
+    return value <= 0 ? 'pays for itself' : formatWithSeparator(value);
+}
 
 const ACCENT = '#4a9eff';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
@@ -4169,22 +4201,23 @@ class LabSimUI {
         const goldRows = goldResults.map((r) => {
             const delta = (r.winRateDelta || 0) * 100;
             const deltaColor = delta > 0 ? '#4caf50' : delta < 0 ? '#f44336' : '#888';
-            const cost = r.cost || 0;
             const winRate = (r.winRate || 0) * 100;
-            const goldPerPct = delta > 0 && cost ? Math.round(cost / delta) : Infinity;
+            const goldPerPct = goldPerPercent(r.cost, delta);
 
             return {
                 desc: r.candidate?.description || '',
                 actions: combatSimUI.upgradeRowActionsHtml(r),
-                cost,
-                costStr: cost ? formatWithSeparator(cost) : '\u2014',
+                // Unpriced sorts last rather than as the cheapest thing on the
+                // table, which is where `r.cost || 0` put a combat level
+                cost: Number.isFinite(r.cost) ? r.cost : Infinity,
+                costStr: goldCostCell(r.cost),
                 winRate,
                 winRateStr: winRate.toFixed(2) + '%',
                 deltaVal: delta,
                 deltaStr: (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%',
                 deltaColor,
                 goldPerPct,
-                goldPerPctStr: delta > 0 && cost ? formatWithSeparator(goldPerPct) : '\u2014',
+                goldPerPctStr: goldPerPctCell(r.cost, delta),
                 detailHtml: this._renderUpgradeCostDetail(r, analysisResult?.baseline),
             };
         });
@@ -5384,8 +5417,7 @@ class LabSimUI {
             const clearRate = (r.clearRate || 0) * 100;
             const deltaVal = (r.clearRateDelta || 0) * 100;
             const deltaColor = deltaVal > 0 ? '#4caf50' : deltaVal < 0 ? '#f44336' : '#888';
-            const cost = r.cost || 0;
-            const goldPerPct = deltaVal > 0 && cost ? Math.round(cost / deltaVal) : Infinity;
+            const goldPerPct = goldPerPercent(r.cost, deltaVal);
             // A skilling piece replacing combat armour is priced at the piece
             // alone — the plate goes back in the loadout, not on the market — and
             // a row whose cost is suspiciously *high* has to say why, the same
@@ -5394,15 +5426,15 @@ class LabSimUI {
 
             return {
                 desc: r.candidate?.description || '',
-                cost,
-                costStr: cost ? formatWithSeparator(cost) : '\u2014',
+                cost: Number.isFinite(r.cost) ? r.cost : Infinity,
+                costStr: goldCostCell(r.cost),
                 clearRate,
                 clearRateStr: clearRate.toFixed(1) + '%',
                 deltaVal,
                 deltaStr: (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
                 deltaColor,
                 goldPerPct,
-                goldPerPctStr: deltaVal > 0 && cost ? formatWithSeparator(goldPerPct) : '\u2014',
+                goldPerPctStr: goldPerPctCell(r.cost, deltaVal),
                 // Whatever handoff buttons the shared builder emits — the same
                 // ones the combat Upgrade tab's gear rows carry, since a
                 // skilling tool is bought in exactly the same marketplace
@@ -5432,7 +5464,7 @@ class LabSimUI {
             const deltaVal = (r.clearRateDelta || 0) * 100;
             const deltaColor = deltaVal > 0 ? '#4caf50' : deltaVal < 0 ? '#f44336' : '#888';
             const cost = r.cost || 0;
-            const goldPerPct = deltaVal > 0 && cost ? Math.round(cost / deltaVal) : Infinity;
+            const goldPerPct = goldPerPercent(r.cost, deltaVal);
             const xpDelta = r.xpPerRoomDelta || 0;
 
             return {
@@ -5447,7 +5479,7 @@ class LabSimUI {
                 deltaStr: (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
                 deltaColor,
                 goldPerPct,
-                goldPerPctStr: deltaVal > 0 && cost ? formatWithSeparator(goldPerPct) : '\u2014',
+                goldPerPctStr: goldPerPctCell(r.cost, deltaVal),
                 xpDelta,
                 xpDeltaStr: Math.abs(xpDelta) > 1e-9 ? (xpDelta >= 0 ? '+' : '') + xpDelta.toFixed(1) : '\u2014',
                 xpDeltaColor: xpDelta > 0 ? '#4caf50' : '#888',

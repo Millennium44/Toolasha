@@ -178,6 +178,7 @@ const {
     conflictKeys,
     planWithinBudget,
     valuePerMillion,
+    goldPerPercent,
     replacedIn,
     explainUpgradeCost,
     computeEconomics,
@@ -5543,5 +5544,36 @@ describe('what a cross-slot swap displaces', () => {
         const dto = { equipment: { [MAIN_HAND]: { hrid: '/items/vampiric_bow', enhancementLevel: 1 } } };
 
         expect(replacedIn(candidate, dto, gameData)).toBe('Vampiric Bow +1');
+    });
+});
+
+describe('the gold-per-percent figure a lab table sorts on', () => {
+    test('a purchase is its cost over the percentage points it buys', () => {
+        expect(goldPerPercent(2_000_000, 2)).toBe(1_000_000);
+    });
+
+    test('a row with no gain, or no coin price, has no figure to rank on', () => {
+        expect(goldPerPercent(2_000_000, 0)).toBe(Infinity);
+        expect(goldPerPercent(2_000_000, -1)).toBe(Infinity);
+        expect(goldPerPercent(null, 2)).toBe(Infinity);
+        expect(goldPerPercent(undefined, 2)).toBe(Infinity);
+    });
+
+    test('costing nothing beats every purchase instead of sorting with the unpriced', () => {
+        // `cost ? cost / delta : Infinity` sent a free upgrade that helps to the
+        // bottom of an ascending Gold/1% sort, beside the rows nobody could price
+        expect(goldPerPercent(0, 2)).toBe(0);
+        expect(goldPerPercent(0, 2)).toBeLessThan(goldPerPercent(2_000_000, 2));
+    });
+
+    test('a swap funded by its own resale is ordered by the credit, biggest first', () => {
+        // Dividing a credit by the gain makes the *worst* paying-for-itself swap
+        // the one that sorts first: a 1M refund for a hair of win rate reads as
+        // −20M/%, ahead of a 17.7M refund for five points at −3.5M/%
+        const great = goldPerPercent(-17_700_000, 5);
+        const feeble = goldPerPercent(-1_000_000, 0.05);
+
+        expect(great).toBeLessThan(feeble);
+        expect(feeble).toBeLessThan(goldPerPercent(0, 2));
     });
 });

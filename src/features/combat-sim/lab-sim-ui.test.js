@@ -2299,3 +2299,144 @@ describe('remembered-run banner', () => {
         expect(html).toContain('&lt;img src=x&gt;');
     });
 });
+
+describe('the lab Gold/1% table when a swap costs nothing, or pays', () => {
+    /** Four gold rows whose only difference is what they cost. */
+    const priced = () => ({
+        baseline: { winRate: 0.4962 },
+        results: [
+            {
+                candidate: { type: 'tier', description: 'Cheap real upgrade' },
+                costType: 'gold',
+                cost: 2_000_000,
+                winRate: 0.52,
+                winRateDelta: 0.02,
+                metricType: 'winRate',
+                costDetail: null,
+            },
+            {
+                candidate: { type: 'cross_slot', description: 'Cursed Bow +7 → Sundering Crossbow +7' },
+                costType: 'gold',
+                cost: -17_700_000,
+                winRate: 0.5462,
+                winRateDelta: 0.05,
+                metricType: 'winRate',
+                costDetail: null,
+            },
+            {
+                candidate: { type: 'tier', description: 'Feeble refund swap' },
+                costType: 'gold',
+                cost: -1_000_000,
+                winRate: 0.4967,
+                winRateDelta: 0.0005,
+                metricType: 'winRate',
+                costDetail: null,
+            },
+            {
+                candidate: { type: 'drink', description: 'Free upgrade that helps' },
+                costType: 'gold',
+                cost: 0,
+                winRate: 0.5062,
+                winRateDelta: 0.01,
+                metricType: 'winRate',
+                costDetail: null,
+            },
+            {
+                candidate: { type: 'combat_level', description: 'Attack Lv90 → Lv91' },
+                costType: 'gold',
+                cost: null,
+                winRate: 0.5162,
+                winRateDelta: 0.02,
+                metricType: 'winRate',
+                costDetail: null,
+            },
+        ],
+    });
+
+    let host;
+    let container;
+
+    /** Where a named gold row sits in the table, by the order it was drawn. */
+    const goldOrder = () => {
+        const names = [...container.querySelectorAll('tr[data-gold-row]')].map((tr) =>
+            tr.querySelector('td').textContent.trim()
+        );
+        return {
+            indexOf: (name) => names.findIndex((text) => text.includes(name)),
+            last: names.at(-1) || '',
+            length: names.length,
+        };
+    };
+    /** One gold row's cells, found by the name in its first column. */
+    const goldRow = (name) => {
+        const tr = [...container.querySelectorAll('tr[data-gold-row]')].find((row) =>
+            row.querySelector('td').textContent.includes(name)
+        );
+        return [...tr.querySelectorAll('td')].map((td) => td.textContent.trim());
+    };
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.buildPanel();
+        await settle();
+
+        host = document.createElement('div');
+        container = document.createElement('div');
+        host.appendChild(container);
+        document.body.appendChild(host);
+    });
+
+    afterEach(() => {
+        host.remove();
+        ui.destroy();
+    });
+
+    test('the biggest credit leads, and the feeblest refund does not jump it', () => {
+        // `cost / delta` on a credit makes the row that barely helps the most
+        // negative: 1M back for a twentieth of a point reads as −20M/%, ahead of
+        // 17.7M back for five points at −3.5M/%
+        ui._renderUpgradeResults(priced(), container);
+
+        const order = goldOrder();
+        expect(order.indexOf('Cursed Bow +7 → Sundering Crossbow +7')).toBeLessThan(
+            order.indexOf('Feeble refund swap')
+        );
+    });
+
+    test('and both of them lead the things that actually cost money', () => {
+        ui._renderUpgradeResults(priced(), container);
+
+        const order = goldOrder();
+        expect(order.indexOf('Feeble refund swap')).toBeLessThan(order.indexOf('Free upgrade that helps'));
+        expect(order.indexOf('Free upgrade that helps')).toBeLessThan(order.indexOf('Cheap real upgrade'));
+    });
+
+    test('a free upgrade that helps is not filed with the ones nobody could price', () => {
+        // `cost ? cost / delta : Infinity` sent it to the bottom of the ascending
+        // sort, below every purchase and beside the combat level
+        ui._renderUpgradeResults(priced(), container);
+
+        const order = goldOrder();
+        expect(order.indexOf('Cheap real upgrade')).toBeLessThan(order.indexOf('Attack Lv90'));
+        expect(order.last).toContain('Attack Lv90');
+    });
+
+    test('the cost cell says what the credit is instead of showing a negative price', () => {
+        ui._renderUpgradeResults(priced(), container);
+
+        expect(goldRow('Sundering Crossbow')[1]).toBe('+17.7M back');
+        expect(goldRow('Free upgrade that helps')[1]).toBe('free');
+        expect(goldRow('Attack Lv90')[1]).toBe('—');
+    });
+
+    test('and the value cell says it pays for itself rather than quoting gold per point', () => {
+        ui._renderUpgradeResults(priced(), container);
+
+        expect(goldRow('Sundering Crossbow')[4]).toBe('pays for itself');
+        expect(goldRow('Free upgrade that helps')[4]).toBe('pays for itself');
+        expect(goldRow('Cheap real upgrade')[4]).toBe('1,000,000');
+    });
+});
