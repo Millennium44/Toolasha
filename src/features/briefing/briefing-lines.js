@@ -19,6 +19,33 @@
  * A subject with nothing to say produces no line at all rather than a line
  * saying nothing. A briefing of eight "all fine" rows is a briefing nobody
  * reads the ninth time.
+ *
+ * ## Horizons
+ *
+ * Some lines are readings ("3 tasks waiting") and some are deadlines ("fills in
+ * 40m"). A deadline stops being true the moment it passes, and the difference
+ * only matters once a line outlives the clock it was built against — which is
+ * exactly what the account view does when it replays a snapshot taken at a
+ * character switch. So a deadline line additionally carries `horizon`:
+ *
+ *     horizon: { at: <epoch ms>, text: 'Ale runs dry', lapses: true }
+ *
+ * `at` is the instant the line's claim comes due, stated absolutely so it
+ * survives being read at a different `now`. `text` is the same claim worded for
+ * an absolute time rather than a countdown, so a reader that cannot trust its
+ * countdown can say "Ale runs dry at 14:20" without unpicking `value`.
+ *
+ * `lapses` says what the instant passing means. A countdown to something that
+ * then stops being worth saying — a queue that has since ended, a drink that has
+ * since run out and been noticed — `lapses: true`, and a reader replaying an old
+ * snapshot drops it. A countdown to something that only gets worse — a full task
+ * board reaching the moment it starts wasting tasks — `lapses: false`, and past
+ * the instant `text` alone is the whole claim.
+ *
+ * The field is additive and every existing reader ignores it: the session card
+ * draws `label`/`value`/`tone`/`target` and nothing else, and it is drawn
+ * against the clock it was built with, so its countdowns are current by
+ * construction.
  */
 
 import { shortDuration } from '../../utils/overlay-format.js';
@@ -88,7 +115,18 @@ function queueLine(facts, now) {
     const left = shortDuration(queue.seconds);
     const value = queue.infinite ? `${left} until endless action` : left;
     const tone = queue.seconds < QUEUE_WARN_SECONDS ? 'gold' : 'good';
-    return { key: 'queue', label: 'Action queue', value, tone, target: TARGETS.queue };
+    return {
+        key: 'queue',
+        label: 'Action queue',
+        value,
+        tone,
+        target: TARGETS.queue,
+        horizon: {
+            at: now + queue.seconds * 1000,
+            text: queue.infinite ? 'Endless action starts' : 'Queue ends',
+            lapses: true,
+        },
+    };
 }
 
 /**
@@ -111,18 +149,34 @@ function tasksReadyLine(facts) {
 /**
  * The task board filling up, which is a deadline rather than a reading.
  * @param {Object} facts - The collected facts
+ * @param {number} now - Epoch ms
  * @returns {Object|null} A line, or null
  */
-function taskSlotLine(facts) {
+function taskSlotLine(facts, now) {
     const forecast = facts.taskSlots;
     if (!forecast?.ok) return null;
 
     if (forecast.isFull) {
-        const value =
-            forecast.msUntilWaste > 0
-                ? `Full — first wasted in ${shortDuration(forecast.msUntilWaste / 1000)}`
-                : 'Full — tasks are being wasted';
-        return { key: 'taskSlots', label: 'Task board', value, tone: 'bad', target: TARGETS.tasks };
+        // A full board does not empty itself, so this claim never lapses — the
+        // waste instant only turns "about to waste" into "wasting"
+        const waste = { at: now + forecast.msUntilWaste, text: 'Full — tasks are being wasted', lapses: false };
+        if (!(forecast.msUntilWaste > 0)) {
+            return {
+                key: 'taskSlots',
+                label: 'Task board',
+                value: 'Full — tasks are being wasted',
+                tone: 'bad',
+                target: TARGETS.tasks,
+            };
+        }
+        return {
+            key: 'taskSlots',
+            label: 'Task board',
+            value: `Full — first wasted in ${shortDuration(forecast.msUntilWaste / 1000)}`,
+            tone: 'bad',
+            target: TARGETS.tasks,
+            horizon: waste,
+        };
     }
 
     // A board with hours of room is not news; only the near deadline is
@@ -133,6 +187,10 @@ function taskSlotLine(facts) {
         value: `Fills in ${shortDuration(Math.max(0, forecast.msUntilFull) / 1000)}`,
         tone: 'gold',
         target: TARGETS.tasks,
+        // Once it has filled, "fills in 40m" is not a smaller number, it is the
+        // wrong sentence — the full-board line is the one that replaces it, and
+        // only a fresher snapshot can say so
+        horizon: { at: now + Math.max(0, forecast.msUntilFull), text: 'Task board fills', lapses: true },
     };
 }
 
@@ -175,23 +233,30 @@ function buffLine(facts, now) {
         value: `${soonest.name} in ${shortDuration(soonest.msLeft / 1000)}${more}`,
         tone: 'gold',
         target: null,
+        horizon: { at: now + soonest.msLeft, text: `${soonest.name} ends`, lapses: true },
     };
 }
 
 /**
  * The consumable that runs out first — the same reading the low alert fires on.
  * @param {Object} facts - The collected facts
+ * @param {number} now - Epoch ms
  * @returns {Object|null} A line, or null
  */
-function consumableLine(facts) {
+function consumableLine(facts, now) {
     const soonest = facts.consumable;
     if (!soonest || !Number.isFinite(soonest.secondsLeft)) return null;
+    const name = soonest.name || 'A consumable';
     return {
         key: 'consumable',
         label: 'First to run dry',
-        value: `${soonest.name || 'A consumable'} in ${shortDuration(soonest.secondsLeft)}`,
+        value: `${name} in ${shortDuration(soonest.secondsLeft)}`,
         tone: soonest.secondsLeft <= CONSUMABLE_WARN_SECONDS ? 'bad' : 'neutral',
         target: TARGETS.consumables,
+        // The forecast is a burn rate against a stock, and the burn only
+        // continues while the character is fighting — past the instant it
+        // projected, the projection has nothing left to say
+        horizon: { at: now + soonest.secondsLeft * 1000, text: `${name} runs dry`, lapses: true },
     };
 }
 
@@ -348,7 +413,8 @@ const BUILDERS = [
  *
  * @param {Object} [facts] - Everything `session-briefing.js` managed to read
  * @param {number} [now] - Clock, injectable for tests
- * @returns {Array<{key: string, label: string, value: string, tone: string, target: string|null}>}
+ * @returns {Array<{key: string, label: string, value: string, tone: string, target: string|null,
+ *   horizon?: {at: number, text: string, lapses: boolean}}>}
  *   One line per subject with something to say, in reading order
  */
 export function buildBriefingLines(facts = {}, now = Date.now()) {

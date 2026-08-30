@@ -219,3 +219,67 @@ describe('buildBriefingLines', () => {
         expect(keys(facts)).toEqual(['queue', 'idle']);
     });
 });
+
+describe('horizons', () => {
+    test('a deadline carries the absolute instant its own countdown names', () => {
+        expect(line({ queue: { queued: 1, seconds: 600 } }, 'queue').horizon).toEqual({
+            at: NOW + 600_000,
+            text: 'Queue ends',
+            lapses: true,
+        });
+
+        expect(line({ consumable: { name: 'Ale', secondsLeft: 7200 } }, 'consumable').horizon).toEqual({
+            at: NOW + 7_200_000,
+            text: 'Ale runs dry',
+            lapses: true,
+        });
+
+        expect(line({ buffs: [{ name: 'Gathering', expiresAt: NOW + 900_000 }] }, 'buffs').horizon).toEqual({
+            at: NOW + 900_000,
+            text: 'Gathering ends',
+            lapses: true,
+        });
+    });
+
+    test('a filling task board lapses at the moment it fills, because the sentence changes', () => {
+        const entry = line({ taskSlots: { ok: true, isFull: false, msUntilFull: 40 * 60_000 } }, 'taskSlots');
+        expect(entry.horizon).toEqual({ at: NOW + 40 * 60_000, text: 'Task board fills', lapses: true });
+    });
+
+    test('a full task board does not lapse — the waste instant only makes it worse', () => {
+        const entry = line({ taskSlots: { ok: true, isFull: true, msUntilWaste: 20 * 60_000 } }, 'taskSlots');
+        expect(entry.value).toBe('Full — first wasted in 20m');
+        expect(entry.horizon).toEqual({
+            at: NOW + 20 * 60_000,
+            text: 'Full — tasks are being wasted',
+            lapses: false,
+        });
+    });
+
+    test('a board already wasting has no countdown left to carry', () => {
+        const entry = line({ taskSlots: { ok: true, isFull: true, msUntilWaste: -1 } }, 'taskSlots');
+        expect(entry.value).toBe('Full — tasks are being wasted');
+        expect(entry.horizon).toBeUndefined();
+    });
+
+    test('readings carry no horizon at all', () => {
+        for (const facts of [
+            { tasksReady: 3 },
+            { rerolls: { known: true, available: true, remaining: 1 } },
+            { listings: { filled: 2, undercut: 0 } },
+            { enhancement: { itemName: 'Sword', currentLevel: 4, targetLevel: 8 } },
+            { guild: { signedUp: false } },
+            { labyrinth: { ok: true, available: 3, isFull: true } },
+            { notices: 4 },
+        ]) {
+            for (const entry of buildBriefingLines(facts, NOW)) {
+                expect(entry.horizon).toBeUndefined();
+            }
+        }
+    });
+
+    test('an idle queue is a state rather than a deadline', () => {
+        expect(line({ queue: { queued: 0 } }, 'queue').horizon).toBeUndefined();
+        expect(line({ queue: { queued: 1, infinite: true, seconds: 0 } }, 'queue').horizon).toBeUndefined();
+    });
+});
