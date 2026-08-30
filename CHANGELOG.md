@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial capture loop names who is left
+
+The outstanding players are now chips in the header, each a one-click capture button for that player — targeting the healer you care about instead of walking the queue — with the same one-press-one-request rule and in-flight window as Open next Battle Info, focus kept in the row across redraws, and a fold past 24 names. Aura coverage also stops saying "unknown" until the last of fifty captures: it reads against the captured so far ("none among 31 captured · 19 unseen") and reserves MISSING for a complete roster.
+
 ### What undercutting bought, and what tasks actually paid
 
 The Ledger tab gains a time-to-fill section: completed listings bucketed by undercut depth against the book with median time-to-full-fill per bucket, cancellations counted as censored rather than folded in, and reconstructed offsets labelled approximate. And task statistics gains realized payout per claim by task type over the 8-week window — the panel's own token valuation plus items at today's post-tax prices (unpriced stacks counted, not zeroed), net of reroll spend where attributable, no per-hour figures because completions carry no duration.
