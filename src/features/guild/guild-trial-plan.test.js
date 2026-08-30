@@ -30,6 +30,7 @@ vi.mock('../../core/data-manager.js', () => ({
 const {
     GuildTrialPlan,
     planStorageKey,
+    mergePlanRecords,
     normalizeToken,
     buildAbilityIndex,
     resolveAbility,
@@ -238,5 +239,38 @@ describe('the plan record', () => {
         const reloaded = new GuildTrialPlan();
         await reloaded.initialize('Wolves');
         expect(reloaded.text()).toBe('');
+    });
+});
+
+describe('merging two devices trial plans', () => {
+    test('the plan saved later wins, in either direction', () => {
+        const mine = { text: 'Alice: Fierce Aura', savedAt: 5000 };
+        const theirs = { text: 'Bob: Aqua Aura', savedAt: 1000 };
+
+        expect(mergePlanRecords(mine, theirs)).toBe(mine);
+        expect(mergePlanRecords(theirs, mine)).toBe(mine);
+    });
+
+    test('a stamped plan beats a stamp-less one, whichever side carries it', () => {
+        const stamped = { text: 'Alice: Fierce Aura', savedAt: 5000 };
+        const legacy = { text: 'written before savedAt existed' };
+
+        expect(mergePlanRecords(stamped, legacy)).toBe(stamped);
+        expect(mergePlanRecords(legacy, stamped)).toBe(stamped);
+    });
+
+    test('two stamp-less plans fall back to last-write-wins', () => {
+        const local = { text: 'mine' };
+        const incoming = { text: 'theirs' };
+
+        expect(mergePlanRecords(local, incoming)).toBe(incoming);
+    });
+
+    test('an absent side merges to the side that exists', () => {
+        const plan = { text: 'Alice: Fierce Aura', savedAt: 1 };
+
+        expect(mergePlanRecords(null, plan)).toBe(plan);
+        expect(mergePlanRecords(plan, null)).toBe(plan);
+        expect(mergePlanRecords(null, null)).toBeNull();
     });
 });

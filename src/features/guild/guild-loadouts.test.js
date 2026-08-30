@@ -40,6 +40,8 @@ const {
     isMonsterUnit,
     loadLoadouts,
     loadoutList,
+    mergeLoadoutEntries,
+    mergeLoadoutRecords,
     MAX_LOADOUTS,
     pruneCharacterOnlyLoadouts,
     purgeMonsterLoadouts,
@@ -525,5 +527,131 @@ describe('the character-only key stops being a mixing bowl', () => {
         await pruneCharacterOnlyLoadouts('char-1', { players: { tib: { name: 'Tib', at: now, rows: [] } } });
 
         expect((await loadLoadouts('char-1')).players).toEqual({});
+    });
+});
+
+describe('merging two devices loadout records', () => {
+    const sighting = (name, at, extra = {}) => ({
+        name,
+        characterId: null,
+        level: 100,
+        rows: [],
+        abilities: [],
+        abilitiesAuthoritative: false,
+        stats: {},
+        source: 'battle_unit_fetched',
+        at,
+        ...extra,
+    });
+
+    test('the union keeps both devices halves of the roster', () => {
+        const local = { players: { alice: sighting('Alice', 1000) }, updatedAt: 1000 };
+        const incoming = { players: { bob: sighting('Bob', 2000) }, updatedAt: 2000 };
+
+        const merged = mergeLoadoutRecords(local, incoming);
+
+        expect(Object.keys(merged.players).sort()).toEqual(['alice', 'bob']);
+        expect(merged.updatedAt).toBe(2000);
+    });
+
+    test('the same player resolves to the later sighting, in either direction', () => {
+        const older = { players: { alice: sighting('Alice', 1000, { level: 100 }) } };
+        const newer = { players: { alice: sighting('Alice', 5000, { level: 120 }) } };
+
+        expect(mergeLoadoutRecords(older, newer).players.alice.level).toBe(120);
+        expect(mergeLoadoutRecords(newer, older).players.alice.level).toBe(120);
+    });
+
+    test('a fresher stat-only sighting does not demote an authoritative kit', () => {
+        const kit = [{ hrid: '/abilities/fierce_aura', level: 200, label: 'Fierce Aura' }];
+        const authoritative = {
+            players: {
+                alice: sighting('Alice', 1000, { abilities: kit, abilitiesAuthoritative: true, abilitiesAt: 1000 }),
+            },
+        };
+        const statOnly = { players: { alice: sighting('Alice', 9000, { abilities: [] }) } };
+
+        for (const merged of [
+            mergeLoadoutRecords(authoritative, statOnly),
+            mergeLoadoutRecords(statOnly, authoritative),
+        ]) {
+            // The newer sheet, and the only kit anybody actually read
+            expect(merged.players.alice.at).toBe(9000);
+            expect(merged.players.alice.abilities).toEqual(kit);
+            expect(merged.players.alice.abilitiesAuthoritative).toBe(true);
+            expect(merged.players.alice.abilitiesAt).toBe(1000);
+        }
+    });
+
+    test('an authoritative empty kit read later does replace an older one', () => {
+        const old = {
+            players: {
+                alice: sighting('Alice', 1000, {
+                    abilities: [{ hrid: '/abilities/fierce_aura', level: 200 }],
+                    abilitiesAuthoritative: true,
+                    abilitiesAt: 1000,
+                }),
+            },
+        };
+        const fresh = {
+            players: {
+                alice: sighting('Alice', 4000, { abilities: [], abilitiesAuthoritative: true, abilitiesAt: 4000 }),
+            },
+        };
+
+        expect(mergeLoadoutRecords(old, fresh).players.alice.abilities).toEqual([]);
+    });
+
+    test('a legacy entry with no abilitiesAt falls back to its sighting time', () => {
+        // Records written before `abilitiesAt` existed carry only `at`
+        const legacy = {
+            players: {
+                alice: sighting('Alice', 8000, { abilities: [{ hrid: '/abilities/x' }], abilitiesAuthoritative: true }),
+            },
+        };
+        const newerKit = {
+            players: {
+                alice: sighting('Alice', 9000, {
+                    abilities: [{ hrid: '/abilities/y' }],
+                    abilitiesAuthoritative: true,
+                    abilitiesAt: 9000,
+                }),
+            },
+        };
+
+        expect(mergeLoadoutRecords(legacy, newerKit).players.alice.abilities).toEqual([{ hrid: '/abilities/y' }]);
+        // …and the legacy kit still wins over a stamped kit that is older
+        const olderKit = {
+            players: {
+                alice: sighting('Alice', 500, {
+                    abilities: [{ hrid: '/abilities/z' }],
+                    abilitiesAuthoritative: true,
+                    abilitiesAt: 500,
+                }),
+            },
+        };
+        expect(mergeLoadoutRecords(olderKit, legacy).players.alice.abilities).toEqual([{ hrid: '/abilities/x' }]);
+    });
+
+    test('an absent side merges to the side that exists', () => {
+        expect(mergeLoadoutEntries(null, sighting('Alice', 1)).name).toBe('Alice');
+        expect(mergeLoadoutEntries(sighting('Alice', 1), null).name).toBe('Alice');
+        expect(mergeLoadoutRecords(null, { players: { a: sighting('A', 1) } }).players.a.name).toBe('A');
+        expect(mergeLoadoutRecords({ players: { a: sighting('A', 1) } }, null).players.a.name).toBe('A');
+    });
+
+    test('the union is still capped, oldest sightings first', () => {
+        const half = (prefix, offset) =>
+            Object.fromEntries(
+                Array.from({ length: MAX_LOADOUTS }, (_, index) => [
+                    `${prefix}${index}`,
+                    sighting(`${prefix}${index}`, offset + index),
+                ])
+            );
+        const merged = mergeLoadoutRecords({ players: half('a', 0) }, { players: half('b', 100_000) });
+
+        expect(Object.keys(merged.players)).toHaveLength(MAX_LOADOUTS);
+        // The newer half survived
+        expect(Object.keys(merged.players).every((key) => key.startsWith('b'))).toBe(true);
     });
 });

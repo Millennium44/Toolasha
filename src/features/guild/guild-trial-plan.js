@@ -35,6 +35,7 @@
  */
 
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Object store the plan lives in — the session's store, so both travel together */
 export const PLAN_STORE = 'guildHistory';
@@ -50,6 +51,53 @@ export const PLAN_KEY_PREFIX = 'guildTrialAbilityPlan';
 export function planStorageKey(guildName) {
     return `${PLAN_KEY_PREFIX}_${guildName || 'default'}`;
 }
+
+/**
+ * Which of two devices' plans a sync pull should keep: the one saved later.
+ *
+ * **Not a per-player merge, deliberately.** The captures beside it are a
+ * collection — two devices each clicked half the roster and the union is
+ * everybody — but a plan is not a collection. It is one block of prose the
+ * trial lead typed, and the lines in it are read together: "Alice: Fierce Aura"
+ * only means anything against the rest of the party's assignments. Splicing one
+ * device's Alice line into another device's plan would produce a plan nobody
+ * wrote, and would silently resurrect a line the lead had just deleted. So the
+ * whole plan wins or loses as one thing, which is the honest answer for
+ * hand-authored text.
+ *
+ * `savedAt` is stamped on every save ({@link GuildTrialPlan#setText}), so a
+ * newer plan on this device is no longer clobbered by an older one on the
+ * gist — which is what a whole-key write did. A copy with no stamp predates
+ * that field; it loses to a stamped copy (which is known to be a real save) and
+ * otherwise falls back to last-write-wins, the incoming copy, which is exactly
+ * the behaviour it had before this merge existed.
+ *
+ * @param {Object|null} local - This device's plan record
+ * @param {Object|null} incoming - The downloaded plan record
+ * @returns {Object|null} The plan to keep
+ */
+export function mergePlanRecords(local, incoming) {
+    if (!incoming || typeof incoming !== 'object') return local ?? incoming ?? null;
+    if (!local || typeof local !== 'object') return incoming;
+
+    const mine = Number(local.savedAt);
+    const theirs = Number(incoming.savedAt);
+    if (Number.isFinite(mine) && !Number.isFinite(theirs)) return local;
+    if (Number.isFinite(mine) && Number.isFinite(theirs)) return mine > theirs ? local : incoming;
+    return incoming;
+}
+
+/*
+ * Registered so a cross-device sync PULL keeps the newer plan rather than
+ * whichever copy the payload carried. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: PLAN_STORE,
+    // `guildTrialAbilityPlan_<guild>` and the `_default` bucket
+    prefix: `${PLAN_KEY_PREFIX}_`,
+    merge: mergePlanRecords,
+    label: 'Guild trial ability plan',
+});
 
 /**
  * A token reduced to what a human could not get wrong: letters and digits.

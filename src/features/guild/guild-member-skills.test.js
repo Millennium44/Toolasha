@@ -70,6 +70,8 @@ const {
     memberSkillsStorageKey,
     nextMemberToLog,
     orderUnitsToAsk,
+    dropRenamedDuplicates,
+    mergeMemberSkillCaptures,
     pruneRenamedEntries,
     REQUEST_TIMEOUT_MS,
     STALE_AFTER_MS,
@@ -722,5 +724,63 @@ describe('orderUnitsToAsk', () => {
         // DOM — the player's own — and never reach the teammates beside it
         const after = { me: 300, a: 100, b: 200 };
         expect(orderUnitsToAsk(units, after, 'Me')[0].name).toBe('A');
+    });
+});
+
+describe('merging two devices captured profiles', () => {
+    const capture = (name, at, extra = {}) => ({
+        name,
+        characterId: null,
+        skills: { '/skills/milking': 50 },
+        at,
+        ...extra,
+    });
+
+    test('the union keeps both devices halves of the roster walk', () => {
+        const merged = mergeMemberSkillCaptures({ alice: capture('Alice', 1000) }, { bob: capture('Bob', 2000) });
+
+        expect(Object.keys(merged).sort()).toEqual(['alice', 'bob']);
+    });
+
+    test('the fresher capture wins on conflict, in either direction', () => {
+        const old = { alice: capture('Alice', 1000, { skills: { '/skills/milking': 50 } }) };
+        const fresh = { alice: capture('Alice', 9000, { skills: { '/skills/milking': 90 } }) };
+
+        expect(mergeMemberSkillCaptures(old, fresh).alice.skills['/skills/milking']).toBe(90);
+        expect(mergeMemberSkillCaptures(fresh, old).alice.skills['/skills/milking']).toBe(90);
+    });
+
+    test('a week-old capture is kept rather than dropped for staleness', () => {
+        // STALE_AFTER_MS is when a member is OFFERED again, not when their
+        // levels stop being the only answer anybody has
+        const ancient = { alice: capture('Alice', 1) };
+        const merged = mergeMemberSkillCaptures(ancient, { bob: capture('Bob', Date.now()) });
+
+        expect(merged.alice).toBeTruthy();
+        expect(Date.now() - merged.alice.at).toBeGreaterThan(STALE_AFTER_MS);
+    });
+
+    test("a rename pruned on one device is not resurrected by the other's copy", () => {
+        const renamed = { alice: capture('Alice', 1000, { characterId: 7 }) };
+        const pruned = { alicia: capture('Alicia', 5000, { characterId: 7 }) };
+
+        for (const merged of [mergeMemberSkillCaptures(renamed, pruned), mergeMemberSkillCaptures(pruned, renamed)]) {
+            expect(Object.keys(merged)).toEqual(['alicia']);
+        }
+    });
+
+    test('an id-less legacy entry is never taken for anybody duplicate', () => {
+        // Captures written before `characterId` was stored carry a name only
+        const legacy = { alice: capture('Alice', 1000, { characterId: undefined }) };
+        const other = { bob: capture('Bob', 2000, { characterId: 7 }) };
+
+        expect(Object.keys(mergeMemberSkillCaptures(legacy, other)).sort()).toEqual(['alice', 'bob']);
+        expect(Object.keys(dropRenamedDuplicates(legacy))).toEqual(['alice']);
+    });
+
+    test('an absent or unusable side merges to the side that exists', () => {
+        expect(mergeMemberSkillCaptures(null, { a: capture('A', 1) })).toEqual({ a: capture('A', 1) });
+        expect(mergeMemberSkillCaptures({ a: capture('A', 1) }, null)).toEqual({ a: capture('A', 1) });
+        expect(mergeMemberSkillCaptures(undefined, undefined)).toEqual({});
     });
 });

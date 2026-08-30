@@ -47,6 +47,10 @@ await import('../features/combat/labyrinth-run-ledger.js');
 await import('../features/combat/labyrinth-tracker.js');
 await import('../features/guild/guild-xp-tracker.js');
 await import('../features/guild/guild-trials-store.js');
+await import('../features/guild/guild-member-skills.js');
+await import('../features/guild/guild-loadouts.js');
+await import('../features/guild/guild-trial-abilities.js');
+await import('../features/guild/guild-trial-plan.js');
 await import('../features/insights/enhancement-calibration.js');
 await import('../features/insights/prediction-calibration.js');
 await import('../features/inventory/custom-tabs/custom-tabs-data.js');
@@ -94,6 +98,23 @@ const corpus = [
     // guild/guild-trials-store.js — and the cache key its prefix must not eat
     { store: 'guildHistory', key: 'guildTrials_Some Guild', label: 'Guild trial records' },
     { store: 'guildHistory', key: 'guildTrialsRoster', label: null },
+
+    // guild/guild-member-skills.js — by guild name, or the guild-less bucket
+    { store: 'guildHistory', key: 'guildMemberSkills_Some Guild', label: 'Guild member skills' },
+    { store: 'guildHistory', key: 'guildMemberSkills_default', label: 'Guild member skills' },
+
+    // guild/guild-loadouts.js — by viewing character, then by their guild
+    { store: 'guildHistory', key: `guildLoadouts_${CHAR}`, label: 'Guild loadout sightings' },
+    { store: 'guildHistory', key: `guildLoadouts_${CHAR}_Some Guild`, label: 'Guild loadout sightings' },
+
+    // guild/guild-trial-abilities.js and guild-trial-plan.js — two prefixes
+    // that share `guildTrialAbilit` with each other and `guildTrial` with
+    // `guildTrials_` above, which is exactly the near-miss this probe is for
+    { store: 'guildHistory', key: 'guildTrialAbilities_Some Guild', label: 'Guild trial ability session' },
+    { store: 'guildHistory', key: 'guildTrialAbilities_default', label: 'Guild trial ability session' },
+    { store: 'guildHistory', key: `guildTrialAbilities_char_${CHAR}`, label: 'Guild trial ability session' },
+    { store: 'guildHistory', key: 'guildTrialAbilityPlan_Some Guild', label: 'Guild trial ability plan' },
+    { store: 'guildHistory', key: 'guildTrialAbilityPlan_default', label: 'Guild trial ability plan' },
 
     // market/trade-history.js
     { store: 'settings', key: 'tradeHistory', label: 'Personal trade prices' },

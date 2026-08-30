@@ -53,6 +53,7 @@ import storage from '../../core/storage.js';
 import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
 import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Object store the session lives in — shared with the rest of the guild history */
 export const SESSION_STORE = 'guildHistory';
@@ -341,6 +342,57 @@ export function mergeSessions(stored, live) {
         players,
     };
 }
+
+/**
+ * Two devices' stored sessions as one.
+ *
+ * Two people in the same guild click different participants, and each of their
+ * devices holds half the trial's captures — so a whole-key sync write is the
+ * data-loss case this registry exists for, and the fold {@link mergeSessions}
+ * already performs for two tabs on one machine is exactly the fold two devices
+ * need. It carries the rule that matters: the second argument wins per player
+ * *except* that it may never demote an authoritative kit to a stat-only
+ * sighting. A stat-only sighting proves the player exists and says nothing
+ * about their abilities, and letting the fresher device's sighting erase the
+ * other's socket-read kit is the bug this module's session fold was written
+ * against.
+ *
+ * Sessions whose starts are further apart than {@link SESSION_MAX_AGE_MS} are
+ * two different trials, and the later one stands alone rather than being
+ * contaminated by the other's roster — {@link mergeSessions}'s own rule.
+ *
+ * The persisted `roster` rides beside the session rather than inside it (see
+ * `_persist`), and `mergeSessions` therefore does not know about it. Within one
+ * trial it is unioned here, because a participant list is the join key for
+ * every capture and the device that watched the second half of the hour saw
+ * joiners the first never did.
+ *
+ * @param {Object|null} local - This device's stored session
+ * @param {Object|null} incoming - The downloaded session
+ * @returns {Object|null} The session to store
+ */
+export function mergeStoredSessions(local, incoming) {
+    if (!local || !Number.isFinite(local.startedAt)) return incoming ?? local ?? null;
+    if (!incoming || !Number.isFinite(incoming.startedAt)) return local;
+
+    const merged = mergeSessions(local, incoming);
+    if (Math.abs(incoming.startedAt - local.startedAt) > SESSION_MAX_AGE_MS) return merged;
+    return { ...merged, roster: normalizeRoster([...(local.roster || []), ...(incoming.roster || [])]) };
+}
+
+/*
+ * Registered so a cross-device sync PULL combines the session instead of
+ * overwriting it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: SESSION_STORE,
+    // `guildTrialAbilities_<guild>`, `_default`, and the `_char_<id>` fallback.
+    // Neither `guildTrials_` (the trial record) nor `guildTrialAbilityPlan_`
+    // (the plan) starts with this prefix, so the three stay disjoint.
+    prefix: `${SESSION_KEY_PREFIX}_`,
+    merge: mergeStoredSessions,
+    label: 'Guild trial ability session',
+});
 
 class GuildTrialAbilities {
     constructor() {

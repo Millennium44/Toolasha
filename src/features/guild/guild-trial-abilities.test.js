@@ -44,6 +44,7 @@ const {
     TRIAL_START_GRACE_MS,
     playerKey,
     normalizeRoster,
+    mergeStoredSessions,
     captureFor,
     expectedAuraHrids,
     aggregateAuras,
@@ -885,5 +886,90 @@ describe('class tags from the ability stream', () => {
 
         expect(s.classes(STREAM_GAME)).toEqual({ alice: expect.objectContaining({ key: 'ranged' }) });
         expect(s.state(STREAM_GAME).classes).toEqual(s.classes(STREAM_GAME));
+    });
+});
+
+describe('merging two devices stored trial sessions', () => {
+    const player = (name, extra = {}) => ({
+        characterId: null,
+        name,
+        capturedAt: null,
+        capturedTier: null,
+        source: 'battle_unit_fetched',
+        classStats: null,
+        abilitiesAuthoritative: false,
+        abilities: null,
+        ...extra,
+    });
+
+    const session = (startedAt, players, extra = {}) => ({
+        startedAt,
+        lastActivityAt: startedAt,
+        guildName: 'Some Guild',
+        captureTier: null,
+        capturedTiers: [],
+        completedAt: null,
+        players,
+        roster: [],
+        ...extra,
+    });
+
+    test('two devices each clicking half the party keep both halves', () => {
+        const local = session(1000, { 'name:alice': player('Alice') }, { roster: ['Alice', 'Bob'] });
+        const incoming = session(1200, { 'name:bob': player('Bob') }, { roster: ['Bob', 'Carol'] });
+
+        const merged = mergeStoredSessions(local, incoming);
+
+        expect(Object.keys(merged.players).sort()).toEqual(['name:alice', 'name:bob']);
+        // The roster is the join key for every capture, so it is unioned too
+        expect(merged.roster.map((member) => member.name).sort()).toEqual(['Alice', 'Bob', 'Carol']);
+        expect(merged.startedAt).toBe(1000);
+    });
+
+    test('a stat-only sighting never demotes the other device authoritative kit', () => {
+        const kit = [{ hrid: '/abilities/fierce_aura', level: 200 }];
+        const captured = session(1000, {
+            'name:alice': player('Alice', { abilities: kit, abilitiesAuthoritative: true, capturedAt: 1000 }),
+        });
+        const statOnly = session(1000, { 'name:alice': player('Alice') });
+
+        for (const merged of [mergeStoredSessions(captured, statOnly), mergeStoredSessions(statOnly, captured)]) {
+            expect(merged.players['name:alice'].abilitiesAuthoritative).toBe(true);
+            expect(merged.players['name:alice'].abilities).toEqual(kit);
+        }
+    });
+
+    test('sessions further apart than the trial hour are two trials, later wins', () => {
+        const last = session(1_000_000, { 'name:alice': player('Alice') });
+        const next = session(1_000_000 + SESSION_MAX_AGE_MS + 1, { 'name:bob': player('Bob') });
+
+        expect(Object.keys(mergeStoredSessions(last, next).players)).toEqual(['name:bob']);
+        expect(Object.keys(mergeStoredSessions(next, last).players)).toEqual(['name:bob']);
+    });
+
+    test('a session with no roster field merges without inventing one', () => {
+        // Sessions persisted before the roster rode along carry no `roster`
+        const legacy = { ...session(1000, { 'name:alice': player('Alice') }) };
+        delete legacy.roster;
+        const merged = mergeStoredSessions(legacy, session(1000, { 'name:bob': player('Bob') }, { roster: ['Bob'] }));
+
+        expect(merged.roster.map((member) => member.name)).toEqual(['Bob']);
+        expect(Object.keys(merged.players).sort()).toEqual(['name:alice', 'name:bob']);
+    });
+
+    test('an absent or startedAt-less side merges to the side that is usable', () => {
+        const live = session(1000, { 'name:alice': player('Alice') });
+
+        expect(mergeStoredSessions(null, live)).toBe(live);
+        expect(mergeStoredSessions(live, null)).toBe(live);
+        expect(mergeStoredSessions(live, { players: {} })).toBe(live);
+        expect(mergeStoredSessions(null, null)).toBeNull();
+    });
+
+    test('capturedTiers are unioned rather than replaced', () => {
+        const local = session(1000, {}, { capturedTiers: [3, 4], captureTier: 3 });
+        const incoming = session(1000, {}, { capturedTiers: [4, 5], captureTier: 4 });
+
+        expect(mergeStoredSessions(local, incoming).capturedTiers.sort()).toEqual([3, 4, 5]);
     });
 });

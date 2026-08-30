@@ -39,6 +39,7 @@ import { guildXPTracker } from './guild-xp-tracker.js';
 import { fillProfileCommand, findChatInput, openPlayerProfile } from '../../utils/profile-command.js';
 import { GAME } from '../../utils/selectors.js';
 import { createPersistedRecord, mergeMaps } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Object store the captures live in — shared with the rest of the guild history */
 const STORE_NAME = 'guildHistory';
@@ -195,6 +196,88 @@ export function orderUnitsToAsk(units, requests, localName = null) {
 export function memberSkillsStorageKey(guildName) {
     return `${KEY_PREFIX}_${guildName || 'default'}`;
 }
+
+/**
+ * Drop a member's stale entry under a name they no longer use.
+ *
+ * The same rule {@link pruneRenamedEntries} applies on capture, re-applied over
+ * a whole map: `characterId` survives a rename, so two keys carrying one id are
+ * one member filed under an old name and a new one, and only the newer capture
+ * is about who they are. A union of two devices' maps is exactly where the old
+ * key comes back — one device pruned it, the other never saw the rename — so
+ * the merge has to prune again or the sync would undo the prune forever.
+ *
+ * Entries with no `characterId` (a capture that arrived with a name only) are
+ * never touched: nothing identifies them as anybody's duplicate.
+ *
+ * @param {Object} captures - name (lowercased) → capture
+ * @returns {Object} A new map with each id's older name-keys dropped
+ */
+export function dropRenamedDuplicates(captures) {
+    const entries = Object.entries(captures || {});
+    /** @type {Map<string|number, string>} id → the key holding its newest capture */
+    const newest = new Map();
+    for (const [key, capture] of entries) {
+        const id = capture?.characterId;
+        if (id === null || id === undefined) continue;
+        const held = newest.get(id);
+        if (held === undefined || (Number(capture?.at) || 0) > (Number(captures[held]?.at) || 0)) newest.set(id, key);
+    }
+
+    const winners = new Set(newest.values());
+    const kept = {};
+    for (const [key, capture] of entries) {
+        const id = capture?.characterId;
+        if (id !== null && id !== undefined && !winners.has(key)) continue;
+        kept[key] = capture;
+    }
+    return kept;
+}
+
+/**
+ * Two devices' captures as one map.
+ *
+ * The captures are a *collection*: one device walked half the roster and the
+ * other walked the other half, and a whole-key sync write throws one half away.
+ * So the union is the point, and the per-member rule is the freshest capture —
+ * `at` is stamped when the profile actually arrived, so the later stamp is the
+ * later reading of that member's levels, whichever device took it. A tie goes
+ * to the incoming copy, which is the registry's `(local, incoming)` convention.
+ *
+ * Nothing is dropped for age. {@link STALE_AFTER_MS} is when a capture is
+ * *offered for refreshing*, not when it stops being the best answer available —
+ * the panel already draws every capture with its age, and a merge that deleted
+ * week-old levels would lose the only levels anybody has.
+ *
+ * @param {Object} local - This device's captures
+ * @param {Object} incoming - The downloaded captures
+ * @returns {Object} The union
+ */
+export function mergeMemberSkillCaptures(local, incoming) {
+    const base = local && typeof local === 'object' ? local : {};
+    const fresh = incoming && typeof incoming === 'object' ? incoming : {};
+
+    const merged = { ...base };
+    for (const [key, capture] of Object.entries(fresh)) {
+        const held = merged[key];
+        merged[key] = held && (Number(held.at) || 0) > (Number(capture?.at) || 0) ? held : capture;
+    }
+    return dropRenamedDuplicates(merged);
+}
+
+/*
+ * Registered so a cross-device sync PULL combines the captures instead of
+ * overwriting them. Registration runs at import time, long before the earliest
+ * pull. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: STORE_NAME,
+    // `guildMemberSkills_<guild>` and the guild-less `_default` bucket. The
+    // trailing underscore keeps this off any sibling key built without one.
+    prefix: `${KEY_PREFIX}_`,
+    merge: mergeMemberSkillCaptures,
+    label: 'Guild member skills',
+});
 
 /**
  * The skills out of a `profile_shared` payload.

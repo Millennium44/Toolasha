@@ -44,6 +44,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { COMBAT_ENCOUNTERS } from './guild-trials-math.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Object store the records live in — shared with the guild XP history */
 export const LOADOUT_STORE = 'guildHistory';
@@ -407,6 +408,96 @@ export function foldLoadout(record, loadout) {
 
     return { players, updatedAt: Math.max(record?.updatedAt ?? 0, loadout.at || 0) };
 }
+
+/**
+ * Two devices' sightings of one player as one entry.
+ *
+ * Symmetric on purpose, which is what makes it different from
+ * {@link foldLoadout}. Folding is a *stream*: a snapshot arrives now, so "now"
+ * is the newest thing there is and the older stored entry can only lose. A
+ * merge has no such direction — either side may be holding the fresher stat
+ * sheet and either side may be holding the only authoritative kit, and the two
+ * are not always the same side.
+ *
+ * So the two facts are resolved separately:
+ *
+ * - the **stat sheet** goes to the later `at`, thin sighting included, for
+ *   `foldLoadout`'s own reason: the recent reading is what that player is now.
+ * - the **kit** goes to the latest *authoritative* reading of it, judged by
+ *   `abilitiesAt` (the moment the abilities were actually read) and falling
+ *   back to `at` for entries stored before that field existed. A stat-only
+ *   sighting says nothing about abilities and may never demote a real kit —
+ *   the exact bug `foldLoadout` documents, which a naive "newest entry wins"
+ *   merge would reintroduce from the other direction: the fresher device's
+ *   popup-scraped sighting erasing the other device's socket-read kit.
+ *
+ * @param {Object|null} a - One side's entry
+ * @param {Object|null} b - The other side's entry
+ * @returns {Object|null} The entry to keep
+ */
+export function mergeLoadoutEntries(a, b) {
+    if (!a) return b || null;
+    if (!b) return a;
+
+    const fresher = (Number(b.at) || 0) >= (Number(a.at) || 0) ? b : a;
+    const older = fresher === b ? a : b;
+
+    const kitAt = (entry) => (entry?.abilitiesAuthoritative === true ? Number(entry.abilitiesAt ?? entry.at) || 0 : -1);
+    const bestKit = kitAt(older) > kitAt(fresher) ? older : fresher;
+    if (bestKit === fresher || kitAt(bestKit) < 0) return fresher;
+
+    return {
+        ...fresher,
+        abilities: bestKit.abilities,
+        abilitiesAuthoritative: true,
+        abilitiesAt: bestKit.abilitiesAt ?? bestKit.at ?? null,
+    };
+}
+
+/**
+ * Two devices' loadout records as one.
+ *
+ * The record is a *collection of sightings*: each device clicked different
+ * people in different fights, and a whole-key sync write throws one device's
+ * clicks away. Union by player key, {@link mergeLoadoutEntries} per player, and
+ * the same {@link MAX_LOADOUTS} cap `foldLoadout` applies — oldest sightings
+ * fall off the end rather than the record doubling on every pull.
+ *
+ * @param {Object|null} local - This device's record
+ * @param {Object|null} incoming - The downloaded record
+ * @returns {Object} `{players, updatedAt}`
+ */
+export function mergeLoadoutRecords(local, incoming) {
+    const players = { ...(local?.players || {}) };
+    for (const [key, entry] of Object.entries(incoming?.players || {})) {
+        players[key] = mergeLoadoutEntries(players[key], entry);
+    }
+
+    const keys = Object.keys(players);
+    if (keys.length > MAX_LOADOUTS) {
+        const ordered = keys.sort((a, b) => (players[b]?.at || 0) - (players[a]?.at || 0));
+        for (const stale of ordered.slice(MAX_LOADOUTS)) delete players[stale];
+    }
+
+    return {
+        ...(local && typeof local === 'object' ? local : {}),
+        ...(incoming && typeof incoming === 'object' ? incoming : {}),
+        players,
+        updatedAt: Math.max(Number(local?.updatedAt) || 0, Number(incoming?.updatedAt) || 0),
+    };
+}
+
+/*
+ * Registered so a cross-device sync PULL combines the sightings instead of
+ * overwriting them. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: LOADOUT_STORE,
+    // `guildLoadouts_<char>` and `guildLoadouts_<char>_<guild>` alike
+    prefix: `${LOADOUT_KEY_PREFIX}_`,
+    merge: mergeLoadoutRecords,
+    label: 'Guild loadout sightings',
+});
 
 /**
  * The record as a list, most recently seen first.
