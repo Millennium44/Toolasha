@@ -1978,6 +1978,87 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.34.0](https://github.com/Millennium44/Toolasha/compare/v3.33.0...v3.34.0) (2026-08-31)
+
+
+### Features
+
+* a "since you were away" card on switching back to a character ([9b4e12b](https://github.com/Millennium44/Toolasha/commit/9b4e12bd69ffb86f429666e2139db5a4208e27fc))
+* a Ledger button on the trial payout controls ([44470c2](https://github.com/Millennium44/Toolasha/commit/44470c29ba45e6bc4036a44d240642b5366d7c4f))
+* a Sort button on the reroll walk widget, usable mid-walk and on the done summary ([0cf5d26](https://github.com/Millennium44/Toolasha/commit/0cf5d26e1c6d36f713f36ea4ef4604c2ac71d396))
+* ability XP checkpoints, so "days to next level" reads a fortnight ([c98f63e](https://github.com/Millennium44/Toolasha/commit/c98f63e7d8a431c8d69bb199e289b5f18a59a232))
+* command palette verbs report what they did ([cffca47](https://github.com/Millennium44/Toolasha/commit/cffca476e11922064dfb2e2f7904b707967cd836))
+* daily skill checkpoints, and this month's XP in the skill tooltip ([75b904d](https://github.com/Millennium44/Toolasha/commit/75b904d19e3bf6d1ded5a03fd359c4a3670095ac))
+* fold the labyrinth rush-floor question into one verdict line ([465efd6](https://github.com/Millennium44/Toolasha/commit/465efd6e18efd0e88e0c0c08cc27ad25ac713bf6))
+* guild trial ledger learns the unwatched boss fight's roster from the server's own stats ([413ec77](https://github.com/Millennium44/Toolasha/commit/413ec776871b3c7a450d9274d98ed4a9e1c9f03a))
+* one resolver for whose enhancing bench a price sweep quotes ([8dee8e5](https://github.com/Millennium44/Toolasha/commit/8dee8e57437459cd05e2c7d85ca20c3c43f0666b))
+* pro-default bench values, setting reorder, and a reset-to-pro button ([04726fd](https://github.com/Millennium44/Toolasha/commit/04726fd201df0a63ed5727be72f7d6dd3ec8c888))
+* rank the account's "Needs attention" section by one stated severity list ([45f612d](https://github.com/Millennium44/Toolasha/commit/45f612d438e34ca94aa88bbcdd9f8a84e0b498d7))
+* recompute lab sims from the command palette ([40c1a60](https://github.com/Millennium44/Toolasha/commit/40c1a601325181dd57af695946626d84336086a0))
+* record a price target's life and say what happened after it fired ([1c7a5b3](https://github.com/Millennium44/Toolasha/commit/1c7a5b300f1658e05b8ee0d72c8e4d597efa52f5))
+* record the trace's quality alongside the archived trial accuracy ([6c9db72](https://github.com/Millennium44/Toolasha/commit/6c9db72a158a81124b378ae34db9a13e09933ab7))
+* refresh watchlist prices and snapshot a briefing from the palette ([f027a80](https://github.com/Millennium44/Toolasha/commit/f027a806e9e8a5132cf2bcc2618b5d75854c2907))
+* say which cached labyrinth rooms an upgrade would stale ([5b6b448](https://github.com/Millennium44/Toolasha/commit/5b6b4481e8ce92dc6d7ddca3506b84799dd74bf4))
+* show the measured alchemy success rate beside the predicted one ([14f7a86](https://github.com/Millennium44/Toolasha/commit/14f7a86f61a7a927adf753adda885b356c48f810))
+* split calibration medians by the script version that forecast them ([24eb34a](https://github.com/Millennium44/Toolasha/commit/24eb34a66410dce77dfca88ad9258c48ee881fc2))
+* start and export a trial capture from the command palette ([5a37cf7](https://github.com/Millennium44/Toolasha/commit/5a37cf79d6bb8404848e4ba855b75f560b2dac62))
+* trace-gaps-vs-accuracy pairing card, and the ui bundle drops its dead guild graph ([dca0a9e](https://github.com/Millennium44/Toolasha/commit/dca0a9e0b874f4e8b3c218420bd4a15cef850723))
+
+
+### Bug Fixes
+
+* a character already out of a consumable is not silent on the account panel ([012f736](https://github.com/Millennium44/Toolasha/commit/012f7367d5e2451532b4ea4af41434786f043b1a))
+* a goal-planner pull no longer drops the other device's whole list ([6f69048](https://github.com/Millennium44/Toolasha/commit/6f6904898db01de0a7b6d62f5ccfb0ce45ca6012))
+* a manual enhancing bench says so, even when it matches detection ([60059c9](https://github.com/Millennium44/Toolasha/commit/60059c957445dff60d16ad35fc60c9e0de34fe7d))
+* a trial whose name join found nobody stops headlining +0.0% ([23b6854](https://github.com/Millennium44/Toolasha/commit/23b68547ea74b2a28dece7cd68715017fd9dca2d))
+* an empty trial roster no longer reads as proof an aura is missing ([5b7eb33](https://github.com/Millennium44/Toolasha/commit/5b7eb3357d9a5934c8756a75ac7995c8513c0f41))
+* an item detail modal is not scraped into the guild roster ([96039b1](https://github.com/Millennium44/Toolasha/commit/96039b14d7136c509ffa956fff5562d31edf5c7e))
+* combined session view times players by their own runs, not the archive's wall-clock span ([a5f0375](https://github.com/Millennium44/Toolasha/commit/a5f0375a3051ef4da9fc90bf665acf453201c60d))
+* measured alchemy rates see sessions recorded after the first read ([08b9714](https://github.com/Millennium44/Toolasha/commit/08b9714099add71aef8b1fefffc5228398e73a38))
+* overlay Treasure tile opens the real ledger in packaged builds ([88398e9](https://github.com/Millennium44/Toolasha/commit/88398e90105bc4de3b484490f7e9a0c0962c1bb6))
+* palette warning toasts use the kind the toast module defines ([aedfd6f](https://github.com/Millennium44/Toolasha/commit/aedfd6f6f92264f0213bc9b0f82c713f7d403452))
+* production-cost memo now invalidates on gear and drink changes ([1d09e7d](https://github.com/Millennium44/Toolasha/commit/1d09e7dccfde65907d22adaadd0524686b3bddea))
+* reroll walk asks for spending presses the game now demands from the player ([1f18102](https://github.com/Millennium44/Toolasha/commit/1f18102196df7743ccad3eab0bd9599454c95043))
+* reroll walk pays by itself again — the synthetic click now carries isTrusted ([70ece1a](https://github.com/Millennium44/Toolasha/commit/70ece1aa43a3153a3b00cccbd0d769efbc3a1c99))
+* share or bridge every stateful module the split build duplicated ([5bf0c73](https://github.com/Millennium44/Toolasha/commit/5bf0c737dcf0d5cd1309eefce220adf03f3d51c7))
+* soulbound gear always quotes your own bench, Pro toggle or not ([d651f22](https://github.com/Millennium44/Toolasha/commit/d651f22b00b8903cea2ab729b17cc4a9c8922880))
+* stale reopens, a stale account read, and chip focus theft ([56059bb](https://github.com/Millennium44/Toolasha/commit/56059bb0ed3acba155cfebc91d2237b74a858055))
+* stopping the reroll walk mid-start no longer re-arms it ([fb703c7](https://github.com/Millennium44/Toolasha/commit/fb703c718aabc38c1a19db48b0a6d6a5e8ccad9f))
+* the calibration cohort refusal names the cohort that is short ([bd05cc4](https://github.com/Millennium44/Toolasha/commit/bd05cc48ca8f14bb901defac33a2633a97a7f646))
+* the loot log stops re-growing a dead "Show more (0 remaining)" ([27f2a16](https://github.com/Millennium44/Toolasha/commit/27f2a1644d9de71edaff4ef315ebbeafee1f27a5))
+* the price target's side toggle is reachable ([3c0ccb9](https://github.com/Millennium44/Toolasha/commit/3c0ccb92e8c72ff202df8dbee1de11b33cbbc0a9))
+* the reroll walk obeys a cap edited mid-walk, and its post-read sort survives quests_updated ([21a9e63](https://github.com/Millennium44/Toolasha/commit/21a9e63c542aa91c0e5cd746de7de0ec1113071e))
+* trial ledger no longer calls the other boss fight's members absent ([6b9fa0b](https://github.com/Millennium44/Toolasha/commit/6b9fa0b5bf2248a780a14e760ada2286d5d827ec))
+
+
+### Code Refactoring
+
+* every enhancement price sweep resolves its bench through one call ([1177b15](https://github.com/Millennium44/Toolasha/commit/1177b1559cbe4a87aac8d77478f9d6a25961c4cd))
+
+
+### Performance Improvements
+
+* loadout snapshot subscribes to the websocket on first read, not at import ([56c30df](https://github.com/Millennium44/Toolasha/commit/56c30dfbc20d035ceb4093610298711f90e1d49b))
+
+
+### Documentation
+
+* changelog for away-diff and attention ranking ([76b7880](https://github.com/Millennium44/Toolasha/commit/76b78802386699a4f1fb6ed9cbf4aee5db3d8c7f))
+* changelog for the combined-session timing fix ([0862dab](https://github.com/Millennium44/Toolasha/commit/0862dab0dc3713f41608af389042cd45053eace8))
+* changelog for the daily checkpoints ([1be693b](https://github.com/Millennium44/Toolasha/commit/1be693b343090639e5ca3fb6da42b368ff014cd0))
+* changelog for the final Toolasha four ([420054b](https://github.com/Millennium44/Toolasha/commit/420054bf94942306db37118eff9d77b7bfcdba33))
+* changelog for the ledger participation fix ([c1f81ba](https://github.com/Millennium44/Toolasha/commit/c1f81ba37467be847e9b3c91be46953b8d5972e7))
+* changelog for the parameter-source unification ([b13b5ad](https://github.com/Millennium44/Toolasha/commit/b13b5ad948346ceb05cf5c8dd47d4ca6bde933bf))
+* changelog for the reroll walk fixes ([9bef119](https://github.com/Millennium44/Toolasha/commit/9bef119f12db66334500d0fc3eb710538efc251a))
+* changelog for the trial-roster widening and the three staleness fixes ([2bb9d29](https://github.com/Millennium44/Toolasha/commit/2bb9d29a386020356a7033f6e73efc4d10c3c808))
+* changelog for version cohorts and trace-quality archiving ([c57609a](https://github.com/Millennium44/Toolasha/commit/c57609aafe550f380474d75176fe212ff2f3654e))
+* reroll walk header describes the ask-for-spending-presses contract ([3fa1e02](https://github.com/Millennium44/Toolasha/commit/3fa1e0225e357bcf3c2ef2cf87c3e896b4f10c28))
+
+
+### Tests
+
+* characterise which bench each enhancement surface quotes ([c46d8fb](https://github.com/Millennium44/Toolasha/commit/c46d8fb14c716c9672d0cc667e2df9f2e2f68169))
+
 ## [3.33.0](https://github.com/Millennium44/Toolasha/compare/v3.32.1...v3.33.0) (2026-08-30)
 
 ### Features
