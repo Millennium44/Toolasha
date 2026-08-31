@@ -51,6 +51,7 @@ const {
     isArtisanTeaOutOfStock,
     calculateEnhancementMaterialRequirements,
     ARTISAN_MATERIAL_MODE,
+    affordableActions,
 } = await import('./material-calculator.js');
 
 beforeEach(() => {
@@ -77,6 +78,39 @@ beforeEach(() => {
     state.equipment = new Map();
     state.drinks = [];
     state.marketListings = [];
+});
+
+describe('affordableActions', () => {
+    test('floors a genuinely partial action down', () => {
+        expect(affordableActions(129, 10)).toBe(12);
+        expect(affordableActions(65, 4.5)).toBe(14);
+    });
+
+    test('an exact multiple of a fractional cost is not read one short', () => {
+        // 8880 / 8.88 evaluates to 999.9999999999999 in IEEE arithmetic; a
+        // plain floor answered 999 for a bag holding exactly 1000 actions
+        expect(8880 / 8.88).toBeLessThan(1000); // the trap this guards against
+        expect(affordableActions(8880, 8.88)).toBe(1000);
+        expect(affordableActions(888, 0.888)).toBe(1000);
+        expect(affordableActions(9, 0.9)).toBe(10);
+    });
+
+    test('a cost of zero affords infinitely many actions', () => {
+        expect(affordableActions(5, 0)).toBe(Infinity);
+    });
+
+    test('inverts the expected-mode requirement: ceil(perAction × N) never exceeds the stack', () => {
+        for (const [available, perAction] of [
+            [8880, 8.88],
+            [129, 10],
+            [65, 4.5],
+            [7, 0.7],
+        ]) {
+            const actions = affordableActions(available, perAction);
+            expect(Math.ceil(perAction * actions)).toBeLessThanOrEqual(available);
+            expect(perAction * (actions + 1)).toBeGreaterThan(available);
+        }
+    });
 });
 
 describe('calculateMaterialRequirements', () => {

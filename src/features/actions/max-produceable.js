@@ -22,6 +22,7 @@ import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { getDrinkConcentration, parseArtisanBonus } from '../../utils/tea-parser.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
+import { affordableActions } from '../../utils/material-calculator.js';
 
 /**
  * Action type constants for classification
@@ -369,7 +370,9 @@ class MaxProduceable {
                 upgradeAccountedFor = true;
             }
 
-            return Math.floor(invCount / materialsPerAction);
+            // Not a plain floor: IEEE division under-reads exact multiples of a
+            // fractional per-action cost (8880 / 8.88 → 999.999…), see the helper
+            return affordableActions(invCount, materialsPerAction);
         });
 
         let minCrafts = Math.min(...maxCraftsPerInput);

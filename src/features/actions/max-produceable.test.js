@@ -192,6 +192,17 @@ describe('calculateMaxProduceable — Artisan Tea', () => {
         // iron:    5 × 0.9 = 4.5        →  65 / 4.5 = 14.44 → 14
         expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(13);
     });
+
+    test('an exact multiple of a fractional per-action cost is not floored one short', () => {
+        // 10 × (1 − 0.112) = 8.88 per action, and 8880 in the bag is exactly
+        // 1000 actions' worth — but IEEE division says 8880 / 8.88 is
+        // 999.9999999999999, which a plain floor read as 999.
+        buffs.artisanBonus = 0.112;
+        game.actionDetails[SWORD].inputItems = [{ itemHrid: CHEESE, count: 10 }];
+        game.inventory = [stack(CHEESE, 8880)];
+
+        expect(maxProduceable.calculateMaxProduceable(SWORD)).toBe(1000);
+    });
 });
 
 describe('calculateMaxProduceable — upgrade items', () => {

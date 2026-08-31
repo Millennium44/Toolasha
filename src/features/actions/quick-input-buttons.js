@@ -21,6 +21,7 @@ import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser
 import { formatPercentage, timeReadable, formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { setReactInputValue } from '../../utils/react-input.js';
+import { affordableActions } from '../../utils/material-calculator.js';
 import {
     calculateExpPerHour,
     calculateMultiLevelProgress,
@@ -1200,7 +1201,7 @@ class QuickInputButtons {
                 const materialsPerAction = baseRequirement;
 
                 if (materialsPerAction > 0) {
-                    const possibleActions = Math.floor(availableAmount / materialsPerAction);
+                    const possibleActions = affordableActions(availableAmount, materialsPerAction);
                     maxActions = Math.min(maxActions, possibleActions);
                 }
             }
@@ -1221,7 +1222,9 @@ class QuickInputButtons {
                     const materialsPerAction = baseRequirement * (1 - artisanBonus);
 
                     if (materialsPerAction > 0) {
-                        const possibleActions = Math.floor(availableAmount / materialsPerAction);
+                        // Not a plain floor: IEEE division under-reads exact multiples
+                        // of a fractional artisan-reduced cost (8880 / 8.88 → 999.999…)
+                        const possibleActions = affordableActions(availableAmount, materialsPerAction);
                         maxActions = Math.min(maxActions, possibleActions);
                     }
                 }

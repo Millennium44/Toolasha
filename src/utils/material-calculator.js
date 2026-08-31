@@ -46,6 +46,27 @@ function calculateTotalRequired(basePerAction, artisanBonus, numActions, artisan
 }
 
 /**
+ * How many actions a held stack affords at a possibly fractional per-action cost.
+ *
+ * A plain `Math.floor(available / perAction)` trips over IEEE division when the
+ * artisan reduction makes the per-action cost fractional: `8880 / 8.88` evaluates
+ * to `999.9999999999999`, and the panel says 999 crafts when the bag holds
+ * exactly 1000 actions' worth. The nudge is thousands of ULPs — far larger than
+ * any accumulated division error — while claiming a spurious extra action would
+ * need the stack to be within one trillionth of a whole action, which integer
+ * inventories cannot produce.
+ *
+ * @param {number} available - Units held
+ * @param {number} perAction - Units consumed per action (may be fractional)
+ * @returns {number} Whole actions affordable; Infinity when the action consumes none
+ */
+export function affordableActions(available, perAction) {
+    if (!(perAction > 0)) return Infinity;
+    const ratio = available / perAction;
+    return Math.floor(ratio + ratio * 1e-12 + 1e-12);
+}
+
+/**
  * Calculate materials reserved by queued actions
  * @param {string} actionHrid - Action HRID to check queue for (optional - if null, calculates for ALL queued actions)
  * @returns {Map<string, number>} Map of itemHrid -> queued quantity
