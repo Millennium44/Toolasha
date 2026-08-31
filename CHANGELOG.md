@@ -1988,17 +1988,15 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.35.0](https://github.com/Millennium44/Toolasha/compare/v3.34.0...v3.35.0) (2026-08-31)
 
-
 ### Features
 
-* own-use make-vs-buy line on craftable item tooltips ([823f5ec](https://github.com/Millennium44/Toolasha/commit/823f5ec2ecc7d87b04249f5b22ae36f3e35fcd9f))
-
+- own-use make-vs-buy line on craftable item tooltips ([823f5ec](https://github.com/Millennium44/Toolasha/commit/823f5ec2ecc7d87b04249f5b22ae36f3e35fcd9f))
 
 ### Bug Fixes
 
-* own-use line says only the percent, measured against the price avoided ([9e3f6aa](https://github.com/Millennium44/Toolasha/commit/9e3f6aaed4168511292c9543dfaf9fc9ec89f6af))
-* reroll walk's chooser-price memory keys on the quest slot, not the task name ([e9dd518](https://github.com/Millennium44/Toolasha/commit/e9dd5184d698a3b9bde056355799ba5636548f3f))
-* shorter own-use line, saving amount kept ([7393432](https://github.com/Millennium44/Toolasha/commit/739343298549a281dd0277b93b535f3dc89c9515))
+- own-use line says only the percent, measured against the price avoided ([9e3f6aa](https://github.com/Millennium44/Toolasha/commit/9e3f6aaed4168511292c9543dfaf9fc9ec89f6af))
+- reroll walk's chooser-price memory keys on the quest slot, not the task name ([e9dd518](https://github.com/Millennium44/Toolasha/commit/e9dd5184d698a3b9bde056355799ba5636548f3f))
+- shorter own-use line, saving amount kept ([7393432](https://github.com/Millennium44/Toolasha/commit/739343298549a281dd0277b93b535f3dc89c9515))
 
 ## [3.34.0](https://github.com/Millennium44/Toolasha/compare/v3.33.0...v3.34.0) (2026-08-31)
 
