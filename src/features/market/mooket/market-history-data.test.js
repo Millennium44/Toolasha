@@ -50,9 +50,11 @@ describe('splitVolume', () => {
         expect(splitVolume(row({ p: 115 }))).toEqual({ atAsk: 75, atBid: 25 });
     });
 
-    test('one side quoted leaves nothing to interpolate against', () => {
-        expect(splitVolume(row({ a: -1 }))).toEqual({ atAsk: 100, atBid: 0 });
-        expect(splitVolume(row({ b: -1 }))).toEqual({ atAsk: 0, atBid: 100 });
+    test('one side quoted leaves nothing to interpolate against — the whole volume traded at it', () => {
+        // Only a bid on the book: anything that traded was sold into that bid.
+        expect(splitVolume(row({ a: -1 }))).toEqual({ atAsk: 0, atBid: 100 });
+        // Only an ask: anything that traded was a buyer lifting that ask.
+        expect(splitVolume(row({ b: -1 }))).toEqual({ atAsk: 100, atBid: 0 });
     });
 
     test('neither side quoted is halved, as an admission rather than a measurement', () => {

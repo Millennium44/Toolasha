@@ -81,9 +81,12 @@ export function splitVolume(row) {
     }
 
     // Only a bid quoted means anything that traded was sold into it, and vice
-    // versa. The naming is from the taker's side throughout.
-    if (bid > 0) return { atAsk: volume, atBid: 0 };
-    if (ask > 0) return { atAsk: 0, atBid: volume };
+    // versa: the quoted side is the only price a trade could have happened at.
+    // `atBid` is volume traded at the bid (sellers hitting it), `atAsk` volume
+    // traded at the ask (buyers lifting it) — the same naming as the two-sided
+    // case above.
+    if (bid > 0) return { atAsk: 0, atBid: volume };
+    if (ask > 0) return { atAsk: volume, atBid: 0 };
     return { atAsk: volume / 2, atBid: volume / 2 };
 }
 
