@@ -758,6 +758,105 @@ export function verdictLine(verdict) {
 }
 
 /**
+ * What keeps one player off the plan, in the export's words.
+ *
+ * A verdict can carry several deviations at once — `status` names only the
+ * worst — so the export lists them all rather than the headline: a player
+ * missing one aura and under level on another is both, and a lead fixing the
+ * kit needs both named.
+ *
+ * @param {Object} verdict - From `comparePlan`
+ * @returns {string} e.g. `missing: Aqua Aura · under level: Vampirism 120 < 150`
+ */
+function offPlanReasons(verdict) {
+    const parts = [];
+    if (verdict.status === 'uncaptured') parts.push('not captured — needs Battle Info');
+    if (verdict.missing?.length) parts.push(`missing: ${verdict.missing.join(', ')}`);
+    if (verdict.underLevel?.length) {
+        const under = verdict.underLevel
+            .map((entry) => `${entry.name} ${entry.level ?? '?'} < ${entry.required}`)
+            .join(', ');
+        parts.push(`under level: ${under}`);
+    }
+    return parts.join(' · ');
+}
+
+/**
+ * The off-plan roster as shareable text, one player per line.
+ *
+ * ```text
+ * Off plan 2/3 (T4, 2026-08-31)
+ * Bob — missing: Aqua Aura
+ * Cara — under level: Aqua Aura 90 < 150
+ * ```
+ *
+ * Off plan is everyone the plan names whose verdict is not `ok` — the same
+ * arithmetic as the status line's `N/M on plan`, from the other side. Extras
+ * alone keep a player on plan and out of this list, exactly as they keep the
+ * status green.
+ *
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @param {number} [now] - Clock, for the date when the session has none
+ * @returns {string|null} The list, or null with no plan or everyone on it
+ */
+export function offPlanExportText(state, now = Date.now()) {
+    const compare = state?.planCompare;
+    const summary = compare?.summary;
+    if (!summary?.planLines || !summary.plannedPlayers) return null;
+
+    const off = (compare.verdicts || []).filter((verdict) => verdict.status !== 'ok');
+    if (!off.length) return null;
+
+    const trial = tierRangeLabel(state.capturedTiers, state.captureTier) || 'trial';
+    const at = Number.isFinite(state.startedAt) ? state.startedAt : now;
+    const date = new Date(at).toISOString().slice(0, 10);
+    const lines = off.map((verdict) => `${verdict.name} — ${offPlanReasons(verdict)}`);
+    return [`Off plan ${off.length}/${summary.plannedPlayers} (${trial}, ${date})`, ...lines].join('\n');
+}
+
+/**
+ * The Plan heading's export button: the off-plan list onto the clipboard.
+ *
+ * Lives in the heading row so it is reachable with the card folded — the
+ * status line is, and this is that line made pasteable. With everyone on plan
+ * (or no plan at all) the press says so instead of copying an empty list.
+ *
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @returns {HTMLElement} The button
+ */
+function offPlanExportButton(state) {
+    const button = controlButton(
+        'Export off-plan',
+        'Copy every player not on plan, one per line with what deviates.',
+        async (event) => {
+            // The heading it sits in folds the card on click
+            event.stopPropagation();
+            const flash = (label) => {
+                button.textContent = label;
+                setTimeout(() => {
+                    button.textContent = 'Export off-plan';
+                }, 1500);
+            };
+            const exportText = offPlanExportText(state);
+            if (!exportText) {
+                flash(state?.planCompare?.summary?.planLines ? 'All on plan ✓' : 'No plan saved');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(exportText);
+                flash('Copied ✓');
+            } catch (error) {
+                console.error('[GuildTrialAbilitiesUI] Copying the off-plan list failed:', error);
+                flash('Copy failed');
+            }
+        }
+    );
+    button.style.cssText +=
+        'padding: 0 6px; font-size: 11px; line-height: 16px; font-weight: normal; margin-left: auto;';
+    return button;
+}
+
+/**
  * The Plan card: the text the lead wrote, and what it says about the roster.
  *
  * Collapsed by default — the panel's job is the capture, and the plan is
@@ -772,6 +871,11 @@ function drawPlan(body, state) {
     // the card happens to be collapsed on the draw that crosses the guild
     guardPlanUiGuild(state.guildName ?? null);
     const { card, collapsed } = collapsibleCard(body, 'Plan', 'plan');
+    // Into the heading row, before the fold check: folded or not, the export
+    // rides beside the title the way the fold marker does
+    const heading = card.firstElementChild;
+    Object.assign(heading.style, { display: 'flex', alignItems: 'center', gap: '8px' });
+    heading.appendChild(offPlanExportButton(state));
     if (collapsed) return;
     card.appendChild(panelNote(planStatusLine(state.planCompare)));
 

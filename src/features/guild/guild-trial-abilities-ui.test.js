@@ -85,6 +85,7 @@ const {
     isAwaitingCapture,
     auraGapText,
     CHIP_LIMIT,
+    offPlanExportText,
 } = await import('./guild-trial-abilities-ui.js');
 const { resetPlanUi, resetChipUi } = await import('./guild-trial-abilities-ui.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
@@ -761,6 +762,104 @@ describe('trial abilities panel', () => {
         // Dana is on nobody's plan, so her row says nothing about one
         expect(players.slice(players.indexOf('Dana'))).not.toContain('on plan');
         expect(text()).not.toContain(FAILED);
+    });
+
+    test('offPlanExportText lists every deviation under a counted header, and stays null with nothing to say', () => {
+        const state = {
+            capturedTiers: [4],
+            captureTier: 4,
+            startedAt: NOW,
+            planCompare: {
+                verdicts: [
+                    { name: 'Alice', status: 'ok', missing: [], underLevel: [], extra: ['Sweep'] },
+                    { name: 'Bob', status: 'missing', missing: ['Aqua Aura'], underLevel: [], extra: [] },
+                    {
+                        name: 'Cara',
+                        status: 'missing',
+                        missing: ['Fierce Aura'],
+                        underLevel: [{ name: 'Aqua Aura', level: 90, required: 150 }],
+                        extra: [],
+                    },
+                    { name: 'Dana', status: 'uncaptured', missing: [], underLevel: [], extra: [] },
+                ],
+                summary: { planLines: 4, plannedPlayers: 4, onPlan: 1 },
+            },
+        };
+
+        expect(offPlanExportText(state)).toBe(
+            [
+                `Off plan 3/4 (T4, ${new Date(NOW).toISOString().slice(0, 10)})`,
+                'Bob — missing: Aqua Aura',
+                'Cara — missing: Fierce Aura · under level: Aqua Aura 90 < 150',
+                'Dana — not captured — needs Battle Info',
+            ].join('\n')
+        );
+
+        // Everyone on plan, and no plan at all, are both a null — the button
+        // speaks instead of copying an empty list
+        expect(
+            offPlanExportText({
+                planCompare: {
+                    verdicts: [{ name: 'Alice', status: 'ok', missing: [], underLevel: [], extra: [] }],
+                    summary: { planLines: 1, plannedPlayers: 1, onPlan: 1 },
+                },
+            })
+        ).toBeNull();
+        expect(
+            offPlanExportText({ planCompare: { verdicts: [], summary: { planLines: 0, plannedPlayers: 0 } } })
+        ).toBeNull();
+        expect(offPlanExportText(null)).toBeNull();
+    });
+
+    test('the Plan heading’s export button copies the off-plan list and flashes Copied', async () => {
+        let copied = null;
+        vi.spyOn(navigator.clipboard, 'writeText').mockImplementation((value) => {
+            copied = value;
+            return Promise.resolve();
+        });
+
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice', 'Bob']);
+        guildTrialAbilities.setTier(4);
+        guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 200 }]));
+        guildTrialAbilities.recordCapture(snapshot('Bob', 2, [{ hrid: '/abilities/sweep', level: 50 }]));
+        await guildTrialPlan.setText('Alice: Fierce Aura 200\nBob: Aqua Aura');
+
+        openTrialAbilitiesPanel();
+        const exportButton = button('Export off-plan');
+        // In the heading row, so it is pressable with the card folded
+        expect(card('Plan').contains(exportButton)).toBe(true);
+
+        exportButton.click();
+        await vi.waitFor(() => expect(exportButton.textContent).toBe('Copied ✓'));
+        expect(copied).toContain('Off plan 1/2 (T4,');
+        expect(copied).toContain('Bob — missing: Aqua Aura');
+        expect(copied).not.toContain('Alice');
+
+        // The flash gives the label back
+        vi.advanceTimersByTime(2000);
+        expect(button('Export off-plan')).toBeTruthy();
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('with everyone on plan the export says so instead of copying', async () => {
+        const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+        guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 200 }]));
+        await guildTrialPlan.setText('Alice: Fierce Aura');
+
+        openTrialAbilitiesPanel();
+        button('Export off-plan').click();
+        await vi.waitFor(() =>
+            expect(
+                [...guildTrialAbilitiesPanel.panel.querySelectorAll('button')].some(
+                    (el) => el.textContent === 'All on plan ✓'
+                )
+            ).toBe(true)
+        );
+        expect(writeText).not.toHaveBeenCalled();
     });
 
     test('a guild switch drops an unsaved plan draft instead of leaking it onto the new guild', async () => {
