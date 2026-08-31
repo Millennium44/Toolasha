@@ -225,7 +225,7 @@ describe('own-use make vs buy', () => {
         const compared = ownUseCompare(data({ itemPrice: { ask: 0, bid: 9_999 } }));
         expect(compared.make).toBe(40_000);
         expect(compared.buy).toBeNull();
-        expect(ownUseLine(compared).text).toContain('no asks to buy against');
+        expect(ownUseLine(compared).text).toBe('Own use: make ≈40.0K (no asks)');
     });
 
     test('a make side that cannot be priced says nothing at all', () => {
@@ -234,11 +234,11 @@ describe('own-use make vs buy', () => {
         expect(ownUseLine(null)).toBeNull();
     });
 
-    test('the line names the cheaper side and the percent it saves of the price avoided', () => {
-        expect(ownUseLine(ownUseCompare(data())).text).toBe('Own use: make ≈40.0K vs buy 50.0K — making saves 20%');
+    test('the line carries the saving and the percent of the price avoided', () => {
+        expect(ownUseLine(ownUseCompare(data())).text).toBe('Own use: make ≈40.0K vs buy 50.0K — save 10.0K (20%)');
         // Buying at 50K instead of making at 80K avoids the 80K — the saving
         // is measured against what the cheaper choice spares you
         const buyingWins = ownUseCompare(data({ materialCostPerHour: 7_500_000 }));
-        expect(ownUseLine(buyingWins).text).toContain('buying saves 38%');
+        expect(ownUseLine(buyingWins).text).toContain('save 30.0K (38%)');
     });
 });

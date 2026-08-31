@@ -153,21 +153,19 @@ export function ownUseLine(comparison) {
     if (!comparison) return null;
     const make = formatKMB(comparison.make);
     if (comparison.buy === null) {
-        return { text: `Own use: make ≈${make} — no asks to buy against`, color: config.COLOR_TOOLTIP_INFO };
+        return { text: `Own use: make ≈${make} (no asks)`, color: config.COLOR_TOOLTIP_INFO };
     }
     const buy = formatKMB(comparison.buy);
     if (comparison.cheaper === 'even') {
-        return { text: `Own use: make ≈${make} vs buy ${buy} — about even`, color: config.COLOR_TOOLTIP_INFO };
+        return { text: `Own use: make ≈${make} vs buy ${buy} — even`, color: config.COLOR_TOOLTIP_INFO };
     }
-    // Only the percent: the absolute saving is one of the two numbers already
-    // on the line, restated. Measured against the side avoided — the price the
-    // cheaper choice spares you — so "making saves 99%" means "for 1% of the
-    // ask".
+    // "save" without a verb: both prices are on the line, so the saving can
+    // only mean taking the cheaper of them. The percent is of the price
+    // avoided — the side the cheaper choice spares you.
     const avoided = comparison.cheaper === 'make' ? comparison.buy : comparison.make;
     const pct = ((comparison.saves / avoided) * 100).toFixed(0);
-    const verb = comparison.cheaper === 'make' ? 'making' : 'buying';
     return {
-        text: `Own use: make ≈${make} vs buy ${buy} — ${verb} saves ${pct}%`,
+        text: `Own use: make ≈${make} vs buy ${buy} — save ${formatKMB(comparison.saves)} (${pct}%)`,
         color: config.COLOR_TOOLTIP_PROFIT,
     };
 }
