@@ -11,7 +11,13 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ clientData: null, patchLive: true }));
+const mocks = vi.hoisted(() => ({
+    clientData: null,
+    patchLive: true,
+    settings: {},
+    enhancingParams: { teas: {} },
+    workerTasks: [],
+}));
 
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
     explainAbilityCost: () => ({ books: 0, bookPrice: null, total: null }),
@@ -20,10 +26,17 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
     calculateBattleHousesCost: () => ({ totalCost: 0, breakdown: [] }),
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getInitClientData: () => mocks.clientData } }));
-vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({ teas: {} }) }));
+vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => mocks.enhancingParams }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => null }));
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => null } }));
-vi.mock('../../utils/enhancement-worker-manager.js', () => ({ calculateEnhancementBatch: async () => [] }));
+vi.mock('../../core/config.js', () => ({ default: { getSetting: (key) => mocks.settings[key] ?? null } }));
+vi.mock('../../utils/enhancement-worker-manager.js', () => ({
+    // Records what the worker would have been asked to run — the parity the
+    // blessed-tea test below pins — and answers "unpriced" for every task
+    calculateEnhancementBatch: async (tasks) => {
+        mocks.workerTasks.push(...tasks);
+        return tasks.map(() => null);
+    },
+}));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: () => ({ price: 0 }),
     getRealisticBaseItemPrice: () => 0,
@@ -51,6 +64,9 @@ const CREDIT = '/items/guild_credit_1';
 
 beforeEach(() => {
     mocks.patchLive = true;
+    mocks.settings = {};
+    mocks.enhancingParams = { teas: {} };
+    mocks.workerTasks = [];
     mocks.clientData = {
         itemDetailMap: {},
         guildBuffDetailMap: {
@@ -209,5 +225,40 @@ describe('guild shrine score', () => {
             expect(score.guildShrineKnown).toBe(true);
             expect(score.guildShrineCombat).toBe(0);
         });
+    });
+});
+
+describe('enhancement worker task parity', () => {
+    // The worker's chain defaults blessedTeaBonus to the stock 1% when the task omits it, while
+    // every main-thread sweep (tooltip, savings card) forwards the live double-jump chance read
+    // from item data. Audit round 24 found the score calculator's tasks dropping the field, so a
+    // profile score and a tooltip could price the same +14 piece from two different chains.
+    test('worker tasks carry the live blessed tea chance, not the stock default', async () => {
+        mocks.settings = { networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 13 };
+        mocks.enhancingParams = {
+            enhancingLevel: 120,
+            toolBonus: 5,
+            speedBonus: 10,
+            guzzlingBonus: 1.12,
+            blessedTeaBonus: 0.011,
+            teas: { blessed: true },
+        };
+        mocks.clientData.itemDetailMap['/items/big_axe'] = { itemLevel: 60, equipmentDetail: {} };
+
+        await calculateCombatScore({
+            profile: {
+                equippedAbilities: [],
+                wearableItemMap: {
+                    '/item_locations/main_hand': { itemHrid: '/items/big_axe', enhancementLevel: 14 },
+                },
+            },
+        });
+
+        expect(mocks.workerTasks.length).toBeGreaterThan(0);
+        for (const task of mocks.workerTasks) {
+            expect(task.blessedTea).toBe(true);
+            expect(task.guzzlingBonus).toBe(1.12);
+            expect(task.blessedTeaBonus).toBe(0.011);
+        }
     });
 });

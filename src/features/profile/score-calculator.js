@@ -575,6 +575,10 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
                             protectFrom,
                             blessedTea: enhancementParams.teas.blessed,
                             guzzlingBonus: enhancementParams.guzzlingBonus,
+                            // The live double-jump chance from item data; omitting it made the
+                            // worker fall back to the stock 1% while every main-thread sweep
+                            // (tooltip, savings card) runs on the real figure
+                            blessedTeaBonus: enhancementParams.blessedTeaBonus,
                         });
                     }
                     subLevelTasks.push({ workerStartIndex: levelStartIndex, strategies });
@@ -601,6 +605,8 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
                                 protectFrom,
                                 blessedTea: enhancementParams.teas.blessed,
                                 guzzlingBonus: enhancementParams.guzzlingBonus,
+                                // Same live double-jump chance as the main-thread sweeps
+                                blessedTeaBonus: enhancementParams.blessedTeaBonus,
                             });
                         }
                         subLevelTasks.push({ workerStartIndex: levelStartIndex, strategies });
