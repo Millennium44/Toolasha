@@ -121,12 +121,36 @@ function levelAtExperience(table, experience) {
  * (efficiency and Gourmet included, which is why the per-hour figures are the
  * ones divided: teas amortize over the extra actions efficiency repeats).
  *
+ * Deliberately not the same model as the dungeon ROI board's `describeKeyCost`:
+ * that one prices a replacement key from materials alone, each sourced at the
+ * cheaper of buying and crafting, with no tea cost — a board ranking dungeons
+ * must not move with whichever teas happen to be equipped. This line is about
+ * the bench as it stands right now, teas and all, so the two can quote
+ * different make costs for the same key and both be right about their question.
+ *
  * @param {Object|null} profitData - From `profitCalculator.calculateProfit`
+ * @param {Object|null} [actionDetail] - The producing action's detail, for the
+ *   multi-output gate; null skips that gate rather than failing it
  * @returns {{make: number, buy: number|null, saves: number|null,
  *   cheaper: 'make'|'buy'|'even'|null}|null} The comparison, or null when the
  *   make side cannot be priced
  */
-export function ownUseCompare(profitData) {
+export function ownUseCompare(profitData, actionDetail = null) {
+    // A recipe with several outputs bills its whole bench spend to whichever
+    // output the calculator picked, so a per-item make figure for that output
+    // charges it for items the other outputs also are. No single-output split
+    // is honest without pricing the co-products, so say nothing.
+    if ((actionDetail?.outputItems?.length ?? 0) > 1) {
+        return null;
+    }
+
+    // An unpriceable material or tea was costed at zero upstream, which here
+    // would dress a bench that cannot be priced up as one that is cheap
+    const unpriced = (entries) => Array.isArray(entries) && entries.some((entry) => entry.missingPrice);
+    if (unpriced(profitData?.materialCosts) || unpriced(profitData?.teaCosts)) {
+        return null;
+    }
+
     const madePerHour = Number(profitData?.totalItemsPerHour);
     const spendPerHour = Number(profitData?.materialCostPerHour) + Number(profitData?.totalTeaCostPerHour || 0);
     if (!Number.isFinite(madePerHour) || madePerHour <= 0 || !Number.isFinite(spendPerHour) || spendPerHour < 0) {
@@ -837,7 +861,10 @@ class TooltipPrices {
         }
 
         if (config.getSetting('itemTooltip_ownUseCompare')) {
-            const line = ownUseLine(ownUseCompare(profitData));
+            // The producing action, for the multi-output gate; a lookup that
+            // cannot run (no game data yet) skips the gate rather than the line
+            const ownUseAction = dataManager.getActionDetails?.(profitData.actionHrid) ?? null;
+            const line = ownUseLine(ownUseCompare(profitData, ownUseAction));
             if (line) {
                 const title =
                     'Buying at the current ask vs crafting at your own bench cost per item (materials + teas, ' +

@@ -234,6 +234,31 @@ describe('own-use make vs buy', () => {
         expect(ownUseLine(null)).toBeNull();
     });
 
+    test('an unpriceable material or tea silences the line rather than riding as free', () => {
+        // The calculator costs a missing price at zero, so the per-hour spend
+        // still parses — only the missingPrice flags say the figure is fiction
+        const missingMaterial = data({ materialCosts: [{ itemHrid: '/items/coal', missingPrice: true }] });
+        expect(ownUseCompare(missingMaterial)).toBeNull();
+        const missingTea = data({ teaCosts: [{ itemHrid: '/items/artisan_tea', missingPrice: true }] });
+        expect(ownUseCompare(missingTea)).toBeNull();
+        // Priced entries keep the line
+        const priced = data({
+            materialCosts: [{ itemHrid: '/items/coal', missingPrice: false }],
+            teaCosts: [{ itemHrid: '/items/artisan_tea', missingPrice: false }],
+        });
+        expect(ownUseCompare(priced)).not.toBeNull();
+    });
+
+    test('a recipe with several outputs is not costed as if one output paid for all of them', () => {
+        const multiOutput = {
+            outputItems: [{ itemHrid: '/items/cheese' }, { itemHrid: '/items/whey' }],
+        };
+        expect(ownUseCompare(data(), multiOutput)).toBeNull();
+        // One output — or no action detail to check — leaves the line alone
+        expect(ownUseCompare(data(), { outputItems: [{ itemHrid: '/items/cheese' }] })).not.toBeNull();
+        expect(ownUseCompare(data(), null)).not.toBeNull();
+    });
+
     test('the line carries the saving and the percent of the price avoided', () => {
         expect(ownUseLine(ownUseCompare(data())).text).toBe('Own use: make ≈40.0K vs buy 50.0K — save 10.0K (20%)');
         // Buying at 50K instead of making at 80K avoids the 80K — the saving
