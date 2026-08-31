@@ -40,7 +40,7 @@ export function getBlessedTeaBonus(itemDetailMap) {
  *
  * Every surface that quotes what *this* character's enhancing will cost goes through here, so
  * the default has to be the character's own stats. The manual fields ship preloaded with a
- * professional enhancer's kit — level 140, a +13 celestial enhancer, ultra tea — and any field
+ * professional enhancer's kit — level 140, a +15 celestial enhancer, ultra tea — and any field
  * still holding those shipped numbers is a field nobody chose, so it is answered from detection
  * instead. Only a field the player actually edited overrides what they really have.
  *
@@ -64,9 +64,11 @@ export function getEnhancingParams() {
 
 /**
  * The kit this script ships with: enhancing 140, a max Observatory, ultra and blessed tea, a
- * +13 Celestial enhancer and +10 enhancing gear. It is what the manual fields are preloaded
- * with, so the "pro rates" a surface quotes and the defaults the settings panel shows are one
- * definition rather than two that can drift.
+ * +15 Celestial enhancer, +12 gloves, a +10 refined chance cape and +10 everything else. It is
+ * what the manual fields are preloaded with, so the "pro rates" a surface quotes and the
+ * defaults the settings panel shows are one definition rather than two that can drift — the
+ * shipped values passed to `readSetting` below MUST equal the `default`s in settings-schema.js
+ * (enhancement-config.test.js pins the pairing field by field).
  *
  * Character-wide facts that are not part of anybody's kit — the server's community buff level,
  * the item map's blessed tea chance — still come from live data, exactly as they do for the
@@ -588,7 +590,7 @@ function getManualParams({ useShippedDefaults = false } = {}) {
     const slotBreakdown = [];
 
     // Enhancer
-    const enhancer = getGear('enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 13 }, 'Enhancer');
+    const enhancer = getGear('enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 15 }, 'Enhancer');
     if (enhancer.enabled) {
         const hrid = ENHANCER_TIERS[enhancer.tier] || ENHANCER_TIERS.celestial;
         const bonus = getGearSlotBonus(hrid, enhancer.level, itemDetailMap);
@@ -608,7 +610,7 @@ function getManualParams({ useShippedDefaults = false } = {}) {
     }
 
     // Gloves
-    const gloves = getGear('enhanceSim_gear_gloves', { enabled: true, level: 10 }, 'Gloves');
+    const gloves = getGear('enhanceSim_gear_gloves', { enabled: true, level: 12 }, 'Gloves');
     if (gloves.enabled) {
         const bonus = getGearSlotBonus(FIXED_GEAR.gloves, gloves.level, itemDetailMap);
         equipmentSpeedBonus += bonus.speed;
@@ -720,7 +722,7 @@ function getManualParams({ useShippedDefaults = false } = {}) {
     }
 
     // Cape
-    const cape = getGear('enhanceSim_gear_cape', { enabled: true, tier: 'normal', level: 5 }, 'Cape');
+    const cape = getGear('enhanceSim_gear_cape', { enabled: true, tier: 'refined', level: 10 }, 'Cape');
     if (cape.enabled) {
         const hrid = CAPE_TIERS[cape.tier] || CAPE_TIERS.normal;
         const bonus = getGearSlotBonus(hrid, cape.level, itemDetailMap);
@@ -780,7 +782,7 @@ function getManualParams({ useShippedDefaults = false } = {}) {
     // --- ACHIEVEMENT ---
     // The toggle only says whether to count the achievement buff; how big it is comes from the
     // character's own data, the same source auto-detect reads, so the two modes cannot drift.
-    const achievementEnabled = getValue('enhanceSim_achievement', false, 'Achievement');
+    const achievementEnabled = getValue('enhanceSim_achievement', true, 'Achievement');
     const achievementSuccessBonus = achievementEnabled
         ? dataManager.getAchievementBuffRatioBoost('/action_types/enhancing', '/buff_types/enhancing_success') * 100
         : 0;

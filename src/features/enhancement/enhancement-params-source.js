@@ -163,7 +163,9 @@ export function describeEnhancementSource(params) {
         return {
             kind: 'pro',
             label: 'Pro',
-            detail: 'Pro rates: enhancing 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear',
+            // Must describe the shipped kit in enhancement-config.js / settings-schema.js —
+            // the same numbers "Reset to pro defaults" writes into the manual bench
+            detail: 'Pro rates: enhancing 140, Observatory 8, ultra + blessed tea, +15 Celestial enhancer, +10–12 gear',
         };
     }
 

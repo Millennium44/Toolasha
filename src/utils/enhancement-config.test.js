@@ -20,12 +20,22 @@ const character = vi.hoisted(() => ({
     settings: {},
 }));
 
+/** Every (settingId, fallback) pair the module hands to config — the shipped defaults */
+const recordedFallbacks = vi.hoisted(() => new Map());
+
 vi.mock('../core/config.js', () => ({
     default: {
-        getSettingValue: (key, fallback) => (key in character.settings ? character.settings[key] : fallback),
+        getSettingValue: (key, fallback) => {
+            recordedFallbacks.set(key, fallback);
+            return key in character.settings ? character.settings[key] : fallback;
+        },
         isFeatureEnabled: () => false,
     },
 }));
+
+// settings-schema pulls these in for unrelated settings groups; neither matters here
+vi.mock('./bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));
+vi.mock('./game-server.js', () => ({ isTestServer: () => false }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -65,7 +75,7 @@ const SHIPPED = {
     enhanceSim_enhancingLevel: 140,
     enhanceSim_houseLevel: 8,
     enhanceSim_tea: 'ultra',
-    enhanceSim_gear_enhancer: { enabled: true, tier: 'celestial', level: 13 },
+    enhanceSim_gear_enhancer: { enabled: true, tier: 'celestial', level: 15 },
 };
 
 describe('getEnhancingParams with auto-detect off', () => {
@@ -258,5 +268,36 @@ describe('getProRatesParams', () => {
 
         expect(pro.enhancingLevel).toBeGreaterThan(yours.enhancingLevel);
         expect(pro.paramsSource).not.toBe(yours.paramsSource);
+    });
+});
+
+describe('shipped defaults versus the settings schema', () => {
+    // "Reset to pro defaults" (settings-ui) writes each schema `default` into the manual bench,
+    // and getProRatesParams() answers from the shipped table below instead. If the two tables
+    // disagree, the reset bench differs from the Pro chip's quote, and a bench freshly reset to
+    // "pro defaults" reads as a hand-edited one (stored value ≠ the resolver's shipped value).
+    // Audit round 24 found exactly that: the enhancer (13 vs 15), gloves (10 vs 12), cape
+    // (normal +5 vs refined +10) and achievement (off vs on) had drifted after a schema change.
+    test('every enhanceSim field the resolver reads ships the schema default', async () => {
+        const { getSettingDefinition } = await import('../core/settings-schema.js');
+
+        recordedFallbacks.clear();
+        character.settings = { enhanceSim_autoDetect: false };
+        resetDetectedSettingsCache();
+        getEnhancingParams();
+
+        const keys = [...recordedFallbacks.keys()].filter((key) => key.startsWith('enhanceSim_'));
+        // The whole bench, not a lucky subset: level, house, tea ×2, achievement, ten gear
+        // slots, community buff, and the auto-detect switch itself
+        expect(keys.length).toBeGreaterThanOrEqual(16);
+
+        for (const key of keys) {
+            const definition = getSettingDefinition(key);
+            expect(definition, `${key} has no settings-schema definition`).toBeTruthy();
+            expect(
+                { key, shipped: recordedFallbacks.get(key) },
+                `${key}: resolver's shipped default drifted from the schema default`
+            ).toEqual({ key, shipped: definition.default });
+        }
     });
 });
