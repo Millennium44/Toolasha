@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: the walk's live caps actually go live, and four more fixes
+
+The reroll walk's "cap edited mid-walk lands on the next plan" fix turned out to read the shield's liveness flag off the wrong object, so it had never once fired in production — it does now, and the protected-task list is read live too, re-checked at the very press (the walk's handler-route clicks never pass the shield's own listener). An in-flight payment is tracked by quest slot rather than DOM node, closing a doubled-charge window when React remounts the card mid-payment, and a discard is billed only once the card is actually gone, with the same wait-then-ask-the-player fallback payments have. The own-use tooltip line goes silent instead of guessing when a material or tea has no price or the recipe has co-products, and the cross-bundle guard suite now also covers namespace-published singletons.
+
 ### Make-vs-buy for things you consume, right in the tooltip
 
 Craftable items' tooltips gain an "Own use" line comparing buying at the current ask against crafting at your own bench cost per item (materials and teas at your real efficiency and Gourmet) — with no sales tax on either side, because a dungeon key or a meal you use is never sold. It names the cheaper side and what it saves, calls it about even inside a percent, and prices the making alone when there are no asks. Toggleable next to the profit settings; the dungeon ROI board already carried this comparison for keys, and now every craftable consumable's tooltip does too.
