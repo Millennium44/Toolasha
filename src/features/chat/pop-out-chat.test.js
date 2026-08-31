@@ -39,6 +39,15 @@ describe('pop-out chat window: clickable names', () => {
         expect(html).toContain('fillProfileCommand(paneObj, msg.sName)');
     });
 
+    test("carries its own select-option contrast rule — the game page's injected one cannot reach this document", () => {
+        const html = new PopOutChat()._buildPopoutHTML();
+        // The selects carry the shared class, but this window is its own
+        // document: without a local rule, Firefox's native dropdown popup
+        // still renders their options light-on-white
+        expect(html).toContain('toolasha-select');
+        expect(html).toMatch(/\.toolasha-select option \{[^}]*background-color[^}]*\}/);
+    });
+
     test('the generated inner <script> is syntactically valid JavaScript', () => {
         const html = new PopOutChat()._buildPopoutHTML();
         const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];

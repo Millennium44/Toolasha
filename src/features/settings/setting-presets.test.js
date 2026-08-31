@@ -208,6 +208,18 @@ describe('which settings a bulk write owns', () => {
         expect(targets.has('color_profit')).toBe(false);
         expect(targets.has('enhanceSim_enhancingLevel')).toBe(false);
     });
+
+    test('compound gear rows and action buttons are not switches, and are never written', () => {
+        // A bulk write putting a boolean where {enabled, tier, level} lives —
+        // or "storing" a button — would corrupt the setting for every reader
+        const targets = new Set(presetTargetIds());
+        expect(getSettingDefinition('enhanceSim_gear_enhancer').type).toBe('enhanceGear');
+        expect(targets.has('enhanceSim_gear_enhancer')).toBe(false);
+        expect(getSettingDefinition('enhanceSim_resetProDefaults').type).toBe('button');
+        expect(targets.has('enhanceSim_resetProDefaults')).toBe(false);
+        expect(defaultCheckboxValues()).not.toHaveProperty('enhanceSim_resetProDefaults');
+        expect(defaultCheckboxValues()).not.toHaveProperty('enhanceSim_gear_enhancer');
+    });
 });
 
 describe('what a preset resolves to', () => {
