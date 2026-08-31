@@ -222,8 +222,11 @@ function bridgeAccessors() {
 }
 
 /**
- * The module a library default-imports under `prop`, and the bundle that owns
- * it — that is the live, namespace-published copy.
+ * The module a library imports under `prop` — as a default import or as a
+ * `* as` namespace — and the bundle that owns it; that is the live,
+ * namespace-published copy. The namespace form matters: `Toolasha.UI
+ * .enhancementStorage` is `import * as enhancementStorage`, and matching only
+ * default imports silently dropped its accessor from this suite.
  * @param {string} prop - The namespace property the accessor reads
  * @returns {{file: string, owner: string} | null}
  */
@@ -236,7 +239,7 @@ function bridgeOwnerOf(prop) {
         } catch {
             continue;
         }
-        const match = new RegExp(`import\\s+${prop}\\s+from\\s*'(\\.[^']+\\.js)'`).exec(source);
+        const match = new RegExp(`import\\s+(?:\\*\\s*as\\s+)?${prop}\\s+from\\s*'(\\.[^']+\\.js)'`).exec(source);
         if (!match) continue;
         return { file: rel(resolve(dirname(join(ROOT, libPath)), match[1])), owner };
     }
@@ -244,9 +247,9 @@ function bridgeOwnerOf(prop) {
 }
 
 /**
- * Files that default-import a module (i.e. reach for its singleton instance).
- * Named-only imports (`import { helper } from …`) do not grab the instance and
- * are not counted.
+ * Files that default-import or `* as`-import a module (i.e. reach for its
+ * singleton instance or its whole stateful namespace). Named-only imports
+ * (`import { helper } from …`) do not grab the instance and are not counted.
  *
  * Each specifier is resolved against the importing file rather than matched on
  * its basename. Half a dozen features are a directory with an `index.js` in it,
@@ -264,7 +267,7 @@ function defaultImportersOf(file) {
         if (path === file) return false;
         const source = readFileSync(join(ROOT, path), 'utf8');
         const here = dirname(join(ROOT, path));
-        for (const match of source.matchAll(/import\s+\w+\s*(?:,\s*\{[^}]*\})?\s*from\s*'(\.[^']+)'/g)) {
+        for (const match of source.matchAll(/import\s+(?:\*\s*as\s+)?\w+\s*(?:,\s*\{[^}]*\})?\s*from\s*'(\.[^']+)'/g)) {
             if (resolve(here, match[1]) === target) return true;
         }
         return false;
