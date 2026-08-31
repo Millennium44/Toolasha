@@ -203,8 +203,12 @@ const AT_REST = ['Go', 'Reroll', ''];
 /** The reroll chooser */
 const CHOOSER = ['Back', 'MooPass Free Reroll (2)'];
 
+/** Quests carry a unique id, and the walk's chooser-price memory keys on it */
+let questSeq = 0;
+
 /** A quest for a card, with however many rerolls have been spent on it */
 const quest = (actionHrid, coinSpent = 0, cowbellSpent = 0) => ({
+    id: ++questSeq,
     actionHrid,
     coinRerollCount: coinSpent,
     cowbellRerollCount: cowbellSpent,
@@ -603,6 +607,33 @@ describe('planning a walk down the board', () => {
         // The remembered quote keeps #1 shut; the walk is on to the next card
         expect(chipText()).toContain('#2');
         expect(chipText()).not.toContain('#1');
+    });
+
+    test("one card's over-cap chooser cannot condemn another card carrying the same task", async () => {
+        // Two cards holding the same task with the same goal are one signature,
+        // and a memory keyed on the signature let the first card's over-cap
+        // chooser prices stand in for the second card's untouched 10K reroll —
+        // the walk offered to trash tasks it had never priced. The memory keys
+        // on the quest id now, which each slot owns alone.
+        settings.values.tasks_rerollWalkTrashAtLimit = false;
+        taskRerollProtection.isInitialized = true;
+        taskRerollProtection.coinThreshold = 20000;
+        taskRerollProtection.cowbellThreshold = 1;
+        const list = board([
+            { name: 'Defeat - Stabby', buttons: ['Back', 'Pay 40,000'], quest: quest(MILKING, 2, 0) },
+            { name: 'Defeat - Stabby', buttons: AT_REST, quest: quest(MILKING) },
+        ]);
+
+        await walk.start();
+        expect(chipText()).toContain('Close the menu on #1');
+
+        walk.advance();
+        setButtons(list, 1, AT_REST);
+        vi.advanceTimersByTime(500);
+
+        // #1 stays shut on its own remembered prices; #2 is judged on its own
+        // untouched ladder, not its twin's chooser
+        expect(chipText()).toContain('Reroll #2 — 10.0K🪙');
     });
 
     test('an empty board says so rather than offering a press', async () => {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One task card's reroll prices can no longer condemn its twin
+
+The reroll walk's chooser-price memory was keyed by task name and goal, and two cards can carry the same task — one card's over-cap chooser then stood in for the other's untouched 10K reroll, and the walk offered to trash tasks it had never priced. The memory (and the manual-press fallback marker) now key on the quest slot's own id and reroll counts, which nothing shares and every reroll retires.
+
 ### The trace-gaps pairing card, and the ui bundle sheds its dead guild copy
 
 The accuracy card now pairs archived cycles' trace quality against their damage deltas — did gappy-trace weeks sit alongside wider attribution misses than clean ones? It refuses to answer below three usable cycles with both sides represented ("too few to pair", filling in as cycles archive), and when it does answer it presents a pairing, never a cause. And the packaged ui bundle no longer carries a dead inline copy of the entire guild feature graph (~30 modules dragged in through the chat commands' five guild imports) — those now reference the combat bundle's live instances.

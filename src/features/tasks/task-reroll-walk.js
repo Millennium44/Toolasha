@@ -319,8 +319,14 @@ class TaskRerollWalk {
          * two disagree on a card near the threshold the walk used to oscillate:
          * predict affordable, open, read blocked, close, predict affordable
          * again. Once a chooser has spoken, its prices stand in for the ladder
-         * for as long as that task is that task — a reroll changes the
-         * signature and retires the entry on its own.
+         * until that quest slot's reroll counts move.
+         *
+         * Keyed by quest id and reroll counts, NOT by the card's task signature:
+         * two cards can carry the same task with the same goal, and a
+         * name-keyed memory let one card's over-cap prices condemn the other's
+         * fresh 10K reroll — the walk offered to trash tasks it had never even
+         * priced. The quest id is the slot's own; the counts retire the entry
+         * the moment a reroll (or anything else) moves them.
          */
         this.chooserQuotes = new Map();
         /** The game button a manual step is asking the player to press */
@@ -752,11 +758,16 @@ class TaskRerollWalk {
             // rather than on the ladder's prediction. The disagreement between
             // the two is what used to reopen a card the chooser had already
             // priced over the cap — close, predict affordable, open, read
-            // blocked, close again, forever.
-            if (chooser.some((option) => option.available)) {
-                this.chooserQuotes.set(signature, costs);
-            } else if (!chooser.length && this.chooserQuotes.has(signature)) {
-                costs = this.chooserQuotes.get(signature);
+            // blocked, close again, forever. A card whose quest cannot be read
+            // remembers nothing: a memory that cannot name its owner is exactly
+            // the cross-card poisoning this key exists to prevent.
+            const questKey = quest?.id
+                ? `${quest.id}:${Number(quest.coinRerollCount) || 0}:${Number(quest.cowbellRerollCount) || 0}`
+                : null;
+            if (questKey && chooser.some((option) => option.available)) {
+                this.chooserQuotes.set(questKey, costs);
+            } else if (questKey && !chooser.length && this.chooserQuotes.has(questKey)) {
+                costs = this.chooserQuotes.get(questKey);
             }
             const choice = costs
                 ? chooseReroll({
@@ -789,7 +800,7 @@ class TaskRerollWalk {
 
             if (verdict.action === 'trash') {
                 if (discardOpen) {
-                    const manual = this.manualFor.has(signature);
+                    const manual = this.manualFor.has(questKey || signature);
                     return this._step(
                         'confirmDiscard',
                         card,
@@ -851,7 +862,7 @@ class TaskRerollWalk {
                     // moves), so forget the payment — and hand this card's next
                     // attempt to the player, whose real press always counts —
                     // rather than stopping the walk or pressing into the void.
-                    this.manualFor.add(signature);
+                    this.manualFor.add(questKey || signature);
                     this.paidFor = null;
                     this.pendingBill = null;
                 }
@@ -868,7 +879,7 @@ class TaskRerollWalk {
                 // never happened). Manual is the fallback for a card whose
                 // payment already went unanswered once: that step highlights
                 // the button and asks the player for the press instead.
-                const payManually = this.manualFor.has(signature);
+                const payManually = this.manualFor.has(questKey || signature);
                 return this._step(
                     'pay',
                     card,
