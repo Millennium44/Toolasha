@@ -302,6 +302,21 @@ class TaskRerollWalk {
         /** The card a `pay` press was just made on, and how it looked at the time */
         this.paidFor = null;
         this.paidWaits = 0;
+        /** A payment the player pressed, billed only once the server answers it */
+        this.pendingBill = null;
+        /**
+         * What each card's own open chooser quoted, by task signature.
+         *
+         * The ladder is a prediction and the chooser is the truth, and when the
+         * two disagree on a card near the threshold the walk used to oscillate:
+         * predict affordable, open, read blocked, close, predict affordable
+         * again. Once a chooser has spoken, its prices stand in for the ladder
+         * for as long as that task is that task — a reroll changes the
+         * signature and retires the entry on its own.
+         */
+        this.chooserQuotes = new Map();
+        /** The game button a manual step is asking the player to press */
+        this.highlightedButton = null;
         /** Read presses made on the unread-tasks notice this walk */
         this.readPresses = 0;
         /** True between a Read press and the sort that follows it */
@@ -378,6 +393,26 @@ class TaskRerollWalk {
         };
         webSocketHook.on('quests_updated', questHandler);
         this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
+
+        // The game accepts a reroll payment only from a real user gesture — a
+        // synthetic click on Pay lands as if it never happened (verified live
+        // 2026-08-31; the open and Back presses still take synthetic clicks).
+        // So a spend step is the player's press, not the walk's: the walk
+        // highlights the button, and this listener is how it hears the press it
+        // asked for. Capture phase, read-only — it never blocks or redirects
+        // the click, it only does the walk's bookkeeping alongside it.
+        const spendHandler = (event) => {
+            if (this.state !== 'ready' || !this.step?.manual) return;
+            if (!event.isTrusted) return;
+            // Re-derived rather than trusted from the plan: the board redraws
+            // between the plan and the press, and the confirm step never had a
+            // button to carry in the first place
+            const button = this._buttonFor(this.step);
+            if (!button || !(button === event.target || button.contains(event.target))) return;
+            this._manualPressed();
+        };
+        document.addEventListener('click', spendHandler, true);
+        this.unregisterHandlers.push(() => document.removeEventListener('click', spendHandler, true));
     }
 
     /** @private */
@@ -655,6 +690,29 @@ class TaskRerollWalk {
             }
         }
 
+        // A payment the player pressed is billed here, once the board proves the
+        // server answered it — the press itself is no proof, since the shield's
+        // lockdown (or the game refusing a click) leaves the card exactly as it
+        // was. Either the card is gone, or its task or a reroll count moved.
+        if (this.pendingBill && this.paidFor) {
+            const paidCard = this.paidFor.card;
+            const now = document.contains(paidCard) ? this._rerollFingerprint(paidCard) : null;
+            const answered =
+                !now ||
+                now.signature !== this.paidFor.signature ||
+                now.coin !== this.paidFor.coin ||
+                now.cowbell !== this.paidFor.cowbell;
+            if (answered) {
+                this.tally.rerolled += 1;
+                const { currency, cost } = this.pendingBill;
+                if (Number.isFinite(cost) && cost > 0) {
+                    if (currency === 'coin') this.tally.goldSpent += cost;
+                    else if (currency === 'cowbell') this.tally.cowbellsSpent += cost;
+                }
+                this.pendingBill = null;
+            }
+        }
+
         const trashAtLimit = Boolean(config.getSetting('tasks_rerollWalkTrashAtLimit'));
         const preference = String(config.getSettingValue('tasks_rerollWalkCurrency', 'auto') || 'auto');
         const cowbellValue = this._cowbellValue();
@@ -671,7 +729,19 @@ class TaskRerollWalk {
             const hrid = quest?.actionHrid || quest?.monsterHrid || '';
 
             const chooser = findRerollOptions(card);
-            const costs = this._costsFor(quest, chooser);
+            const signature = cardTaskKey(card);
+            let costs = this._costsFor(quest, chooser);
+            // An open chooser is the truth about this task's prices; remember it
+            // so a closed card is re-judged on what its chooser actually said
+            // rather than on the ladder's prediction. The disagreement between
+            // the two is what used to reopen a card the chooser had already
+            // priced over the cap — close, predict affordable, open, read
+            // blocked, close again, forever.
+            if (chooser.some((option) => option.available)) {
+                this.chooserQuotes.set(signature, costs);
+            } else if (!chooser.length && this.chooserQuotes.has(signature)) {
+                costs = this.chooserQuotes.get(signature);
+            }
             const choice = costs
                 ? chooseReroll({
                       ...costs,
@@ -702,7 +772,13 @@ class TaskRerollWalk {
             }
 
             if (verdict.action === 'trash') {
-                if (discardOpen) return this._step('confirmDiscard', card, slot, `Confirm discard #${slot}`);
+                if (discardOpen) {
+                    // Confirming a discard destroys the task, and the game only
+                    // takes that press from the player — see the pay step below
+                    return this._step('confirmDiscard', card, slot, `Press Confirm on #${slot} to discard`, null, {
+                        manual: true,
+                    });
+                }
                 if (chooser.length) {
                     const back = this._backButton(card);
                     if (back) return this._step('back', card, slot, `Close the menu on #${slot}`);
@@ -749,19 +825,38 @@ class TaskRerollWalk {
                         this.pending = true;
                         return null;
                     }
-                    this.message = `Slot ${slot}'s reroll has not come back — walk stopped.`;
-                    return null;
+                    // The card never moved, so the press evidently never took —
+                    // the shield's lockdown ate it, or the game refused it.
+                    // Nothing was spent (the bill only lands when the card
+                    // moves), so forget the payment and ask for the press again
+                    // rather than stopping a walk over a click that didn't count.
+                    this.paidFor = null;
+                    this.pendingBill = null;
                 }
                 this.paidFor = null;
 
                 // The cost travels with the step, because this is the moment it
                 // is known: an open chooser prices itself, so `choice.cost` here
                 // is the number on the very button the press is about to click,
-                // not the ladder's guess at it
-                return this._step('pay', card, slot, `Reroll #${slot} — ${verdict.reason}`, option.button, {
-                    currency: choice.currency,
-                    cost: choice.cost,
-                });
+                // not the ladder's guess at it.
+                //
+                // Manual: the game accepts a reroll payment only from a real
+                // user gesture, so this step highlights the button and asks for
+                // the press instead of making it — the widget's own click can
+                // only scroll the card into view. The spend listener in
+                // `initialize` is what advances the walk when the press lands.
+                return this._step(
+                    'pay',
+                    card,
+                    slot,
+                    `Press #${slot}'s highlighted ${choice.costLabel} button`,
+                    option.button,
+                    {
+                        currency: choice.currency,
+                        cost: choice.cost,
+                        manual: true,
+                    }
+                );
             }
             if (!this._rerollButton(card)) {
                 this.message = `Slot ${slot} has no reroll button — walk stopped.`;
@@ -842,6 +937,8 @@ class TaskRerollWalk {
         this.pending = false;
         this.paidFor = null;
         this.paidWaits = 0;
+        this.pendingBill = null;
+        this.chooserQuotes.clear();
         this.readPresses = 0;
         this.awaitingReadSort = false;
         this.walkBegun = false;
@@ -880,9 +977,11 @@ class TaskRerollWalk {
         this.state = 'idle';
         this.step = null;
         this.hidden = true;
+        this._highlightButton(null);
         // Nothing is in flight once the walk has stopped waiting for it
         this.paidFor = null;
         this.paidWaits = 0;
+        this.pendingBill = null;
         this.awaitingReadSort = false;
         this.timerRegistry.clearAll();
         this.sortTimerRegistry.clearAll();
@@ -1024,46 +1123,96 @@ class TaskRerollWalk {
 
         const cards = this._cards();
 
+        // A board that moved under the plan is not a reason to stop — the plan
+        // was drawn from a snapshot and the snapshot went stale, which the
+        // combat ticks alone do many times a minute. Read it again and say what
+        // the next press really is; stopping here is what left the chip saying
+        // "Close the menu" about a menu that had already closed.
         if (cards[planned.slot - 1] !== planned.card || !document.contains(planned.card)) {
-            return this._abort(`Slot ${planned.slot} is not the card it was — walk stopped.`);
+            this._replan();
+            return false;
         }
         if (cardTaskKey(planned.card) !== planned.signature) {
-            return this._abort(`The task in slot ${planned.slot} changed — walk stopped.`);
+            this._replan();
+            return false;
         }
 
         const button = this._buttonFor(planned);
         if (!button || !planned.card.contains(button)) {
-            return this._abort(`The button for slot ${planned.slot} is gone — walk stopped.`);
+            this._replan();
+            return false;
+        }
+
+        // A manual step is the player's press, not the walk's: the game refuses
+        // synthetic clicks on the buttons that spend or destroy, so the chip
+        // can only bring the button to the player. The spend listener does the
+        // bookkeeping when their press lands.
+        if (planned.manual) {
+            try {
+                planned.card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            } catch {
+                planned.card.scrollIntoView?.();
+            }
+            return false;
         }
 
         clickThroughReact(button, { reactFirst: true });
         this.walkBegun = true;
 
+        // A press the server has to answer for is a manual step and never gets
+        // here; everything the walk still clicks is React state, back within a
+        // frame. What comes back is a label, not another click.
+        this.state = 'waiting';
+        this._render();
+        this._replanSoon(UI_SETTLE_MS);
+        return true;
+    }
+
+    /**
+     * The player made the press a manual step asked for — do the bookkeeping
+     * the walk used to do around its own click.
+     * @private
+     */
+    _manualPressed() {
+        const planned = this.step;
+        if (!planned?.manual) return;
+        this.walkBegun = true;
+
         if (planned.kind === 'pay') {
-            this.tally.rerolled += 1;
-            // Billed as the click leaves, from the price the chooser quoted for
-            // the button just pressed. A free reroll carries no cost and adds
-            // nothing to either total.
-            const cost = Number(planned.cost);
-            if (Number.isFinite(cost) && cost > 0) {
-                if (planned.currency === 'coin') this.tally.goldSpent += cost;
-                else if (planned.currency === 'cowbell') this.tally.cowbellsSpent += cost;
-            }
-            // What the card looked like as the coin left, so the next plan can
-            // tell "the reroll has not come back" from "the reroll came back"
+            // Billed only once the server answers — the shield's lockdown (or a
+            // refused click) leaves the card unmoved, and a press that moved
+            // nothing cost nothing
+            this.pendingBill = { currency: planned.currency, cost: Number(planned.cost) };
             this.paidFor = { card: planned.card, ...this._rerollFingerprint(planned.card) };
             this.paidWaits = 0;
         }
         if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;
 
-        // A press the server has to answer for waits for its answer; a press
-        // that only opened or closed a menu is React state and is back within a
-        // frame. Either way what comes back is a label, not another click.
-        const serverBound = planned.kind === 'pay' || planned.kind === 'confirmDiscard';
         this.state = 'waiting';
         this._render();
-        this._replanSoon(serverBound ? SERVER_SETTLE_MS : UI_SETTLE_MS);
-        return true;
+        this._replanSoon(SERVER_SETTLE_MS);
+    }
+
+    /**
+     * Point at the button a manual step wants pressed, and only that one.
+     * @param {HTMLElement|null} button - The button, or null to clear
+     * @private
+     */
+    _highlightButton(button) {
+        if (this.highlightedButton === button) return;
+        if (this.highlightedButton) {
+            try {
+                this.highlightedButton.style.outline = '';
+                this.highlightedButton.style.outlineOffset = '';
+            } catch {
+                // A button that left the DOM has nothing to clear
+            }
+        }
+        this.highlightedButton = button || null;
+        if (button) {
+            button.style.outline = '3px solid #ffb020';
+            button.style.outlineOffset = '2px';
+        }
     }
 
     /**
@@ -1080,8 +1229,19 @@ class TaskRerollWalk {
         if (planned.kind === 'confirmDiscard') return this._discardButton(card);
         if (planned.kind === 'pay') {
             const option = preferredRerollOption(findRerollOptions(card), planned.currency);
+            if (!option) return null;
+            if (planned.manual) {
+                // The player presses whatever button is on screen, and the board
+                // redraws freely between the plan and the press — so the guard
+                // is that the button still costs what the label says, not that
+                // it is the same DOM element
+                if (Number.isFinite(option.cost) && Number.isFinite(planned.cost) && option.cost !== planned.cost) {
+                    return null;
+                }
+                return option.button;
+            }
             // The chooser must still be offering exactly what the label priced
-            if (!option || (planned.button && option.button !== planned.button)) return null;
+            if (planned.button && option.button !== planned.button) return null;
             return option.button;
         }
         return null;
@@ -1142,7 +1302,9 @@ class TaskRerollWalk {
         // The running total rides along with the next action, so a walk that has
         // been paying for a while says so before the next payment, not after
         const running = spent ? ` · spent ${spent}` : '';
-        if (this.state === 'ready' && this.step) return `▶ ${this.step.label}${running}`;
+        if (this.state === 'ready' && this.step) {
+            return `${this.step.manual ? '👉' : '▶'} ${this.step.label}${running}`;
+        }
         if (this.state === 'waiting') return `⏳ Waiting for the game…${running}`;
         if (this.state === 'stopped') return `⚠ ${this.message}${running}`;
         // Idle carries the last walk's summary while there is one: the ✕ takes
@@ -1175,6 +1337,20 @@ class TaskRerollWalk {
         if (this.state === 'ready' && this._capSignature() !== this.planCap) {
             this._replan();
             return;
+        }
+        // A board redraw can retire the armed step — the menu it wanted closed
+        // closes, the task it priced rerolls, the card unmounts. Re-plan the
+        // moment the step stops matching what is on screen, so the chip never
+        // goes on asking for a press the board has already outgrown.
+        if (this.state === 'ready' && this.step?.card) {
+            const stale =
+                !document.contains(this.step.card) ||
+                cardTaskKey(this.step.card) !== this.step.signature ||
+                !this._buttonFor(this.step);
+            if (stale) {
+                this._replan();
+                return;
+            }
         }
         this._render();
     }
@@ -1336,6 +1512,14 @@ class TaskRerollWalk {
 
     /** @private */
     _render() {
+        // The highlight follows the armed manual step and nothing else — it is
+        // how the player knows which press the label is asking for
+        const manualButton =
+            this.state === 'ready' && this.step?.manual && document.contains(this.step.card)
+                ? this._buttonFor(this.step)
+                : null;
+        this._highlightButton(manualButton);
+
         const widget = this._ensureWidget();
         if (!widget) return;
 
@@ -1350,7 +1534,9 @@ class TaskRerollWalk {
         if (widget.main.style.color !== color) widget.main.style.color = color;
         const title =
             this.state === 'ready'
-                ? 'One press, one game action. Nothing else happens until you press again.'
+                ? this.step?.manual
+                    ? 'The game only accepts this press straight from you — press the highlighted button on the card. This chip scrolls it into view.'
+                    : 'One press, one game action. Nothing else happens until you press again.'
                 : this.state === 'idle'
                   ? 'Start at the top of the board. Every press does one thing, then says what the next would do.'
                   : 'Press to walk the board again from the top.';
