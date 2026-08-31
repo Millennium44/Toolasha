@@ -116,6 +116,28 @@ export function computeBestCraftingPlan(
         };
     }
 
+    // Circular dependency or depth limit — must buy. Checked BEFORE the memo:
+    // the memo path re-expands a cached craft's children through this same
+    // function, and that re-expansion carries neither node in `visited` — two
+    // recipes memoised as 'craft' that consume each other would otherwise
+    // reconstruct one another forever (depth grows but was never re-checked
+    // after a memo hit).
+    if (visited.has(itemHrid) || depth >= maxDepth) {
+        return {
+            itemHrid,
+            itemName,
+            quantity,
+            strategy: 'buy',
+            unitCost: buyPrice ?? Infinity,
+            totalCost: (buyPrice ?? Infinity) * quantity,
+            buyPrice,
+            craftCost: null,
+            actionHrid: null,
+            actionsNeeded: 0,
+            children: [],
+        };
+    }
+
     // Check memo for previously computed unit cost
     if (memo.has(itemHrid)) {
         const cachedUnitCost = memo.get(itemHrid);
@@ -149,23 +171,6 @@ export function computeBestCraftingPlan(
                           )
                       )
                     : [],
-        };
-    }
-
-    // Circular dependency or depth limit — must buy
-    if (visited.has(itemHrid) || depth >= maxDepth) {
-        return {
-            itemHrid,
-            itemName,
-            quantity,
-            strategy: 'buy',
-            unitCost: buyPrice ?? Infinity,
-            totalCost: (buyPrice ?? Infinity) * quantity,
-            buyPrice,
-            craftCost: null,
-            actionHrid: null,
-            actionsNeeded: 0,
-            children: [],
         };
     }
 
@@ -381,4 +386,53 @@ export function computeBestCraftingPlan(
         actionsNeeded: strategy === 'craft' ? Math.ceil(quantity / outputCount) : 0,
         children,
     };
+}
+
+/**
+ * Flatten a plan's "buy" leaves into what is still missing from an inventory.
+ *
+ * The plan must already be sized for the real total wanted — the caller plans
+ * for `numActions × outputCount` units and this reads the quantities off that
+ * tree. Scaling a one-unit plan's quantities instead is the bug this replaces:
+ * a one-unit plan's buy counts are already a whole action's worth (rounded up),
+ * so multiplying them by units-of-output overcounted a multi-output recipe by
+ * its outputCount again.
+ *
+ * Coins are skipped (not bought on the marketplace); untradable items are
+ * reported with `isTradeable: false` so the caller can leave them off the tabs.
+ *
+ * @param {Object} plan - A node from {@link computeBestCraftingPlan}
+ * @param {Array<Object>} inventory - Inventory rows ({itemHrid, count, enhancementLevel})
+ * @returns {Array<{itemHrid: string, itemName: string, missing: number, required: number, isTradeable: boolean}>}
+ *   One line per buy item still short, aggregated across branches
+ */
+export function collectMissingMaterials(plan, inventory) {
+    const needed = new Map(); // itemHrid → { itemName, quantity }
+
+    (function walk(node) {
+        if (!node) return;
+        if (node.strategy === 'buy') {
+            if (node.itemHrid === '/items/coin') return;
+            const line = needed.get(node.itemHrid);
+            if (line) line.quantity += node.quantity;
+            else needed.set(node.itemHrid, { itemName: node.itemName, quantity: node.quantity });
+            return;
+        }
+        for (const child of node.children || []) walk(child);
+    })(plan);
+
+    const rows = Array.isArray(inventory) ? inventory : [];
+    const missing = [];
+    for (const [itemHrid, line] of needed) {
+        const required = Math.ceil(line.quantity);
+        // Only unenhanced copies count — an enhanced piece is not a material
+        const have = rows
+            .filter((row) => row.itemHrid === itemHrid && !row.enhancementLevel)
+            .reduce((sum, row) => sum + (row.count || 0), 0);
+        const short = Math.max(0, required - have);
+        if (short <= 0) continue;
+        const isTradeable = dataManager.getItemDetails(itemHrid)?.isTradable !== false;
+        missing.push({ itemHrid, itemName: line.itemName, missing: short, required, isTradeable });
+    }
+    return missing;
 }

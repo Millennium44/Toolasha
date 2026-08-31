@@ -57,7 +57,7 @@ vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: () => buffs.actionStats,
 }));
 
-const { computeBestCraftingPlan } = await import('./crafting-plan-calculator.js');
+const { computeBestCraftingPlan, collectMissingMaterials } = await import('./crafting-plan-calculator.js');
 
 const COWHIDE = '/items/cowhide';
 const LEATHER = '/items/rough_leather';
@@ -360,6 +360,37 @@ describe('recursion safety', () => {
         expect(plan.children[0]).toMatchObject({ itemHrid: '/items/b', strategy: 'buy' });
     });
 
+    test('two recipes that consume each other terminate even when both are worth crafting', () => {
+        // A: 1 B → 1 A, market 100.  B: 1 A → 2 B, market 150.
+        // B crafts at 50 (A bought at 100, split over 2 outputs) and A then
+        // crafts at 50 — BOTH end up memoised as 'craft', and the memo path
+        // used to re-expand each one's children into the other forever
+        // (neither `visited` nor the depth limit was checked before the memo),
+        // overflowing the stack on a single call.
+        game.itemDetails['/items/a'] = { name: 'A', isTradable: true };
+        game.itemDetails['/items/b'] = { name: 'B', isTradable: true };
+        market.prices['/items/a'] = 100;
+        market.prices['/items/b'] = 150;
+        game.initClientData.actionDetailMap = {
+            '/actions/x/a': {
+                type: '/action_types/crafting',
+                inputItems: [{ itemHrid: '/items/b', count: 1 }],
+                outputItems: [{ itemHrid: '/items/a', count: 1 }],
+            },
+            '/actions/x/b': {
+                type: '/action_types/crafting',
+                inputItems: [{ itemHrid: '/items/a', count: 1 }],
+                outputItems: [{ itemHrid: '/items/b', count: 2 }],
+            },
+        };
+
+        const plan = computeBestCraftingPlan('/items/a', 1);
+
+        expect(plan.strategy).toBe('craft');
+        expect(plan.craftCost).toBe(50);
+        expect(plan.children[0].itemHrid).toBe('/items/b');
+    });
+
     test('a memoised item keeps its decision and re-expands children for the new quantity', () => {
         // Two boot recipes sharing rough leather, so the second hits the memo
         game.itemDetails['/items/leather_gloves'] = { name: 'Leather Gloves', isTradable: true };
@@ -381,6 +412,59 @@ describe('recursion safety', () => {
         expect(plan.children[1]).toMatchObject({ itemHrid: LEATHER, strategy: 'craft', unitCost: 30 });
         expect(plan.children[1].quantity).toBe(2);
         expect(plan.children[1].children[0].quantity).toBe(6); // 3 cowhide × 2 leather
+    });
+});
+
+describe('collectMissingMaterials', () => {
+    test('a multi-output recipe is billed per action, not per unit of output', () => {
+        // 1 shaft → 2 arrows. 20 arrows = 10 actions = 10 shafts. The display
+        // used to scale a one-unit plan's buy counts by numActions × outputCount,
+        // billing 20 shafts here — double what ten actions consume.
+        game.itemDetails['/items/arrow'] = { name: 'Arrow', isTradable: true };
+        game.itemDetails['/items/shaft'] = { name: 'Shaft', isTradable: true };
+        market.prices['/items/arrow'] = 8;
+        market.prices['/items/shaft'] = 10;
+        game.initClientData.actionDetailMap['/actions/crafting/arrow'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/ammo',
+            inputItems: [{ itemHrid: '/items/shaft', count: 1 }],
+            outputItems: [{ itemHrid: '/items/arrow', count: 2 }],
+        };
+
+        const plan = computeBestCraftingPlan('/items/arrow', 20);
+        const missing = collectMissingMaterials(plan, [{ itemHrid: '/items/shaft', count: 4 }]);
+
+        expect(missing).toEqual([
+            { itemHrid: '/items/shaft', itemName: 'Shaft', missing: 6, required: 10, isTradeable: true },
+        ]);
+    });
+
+    test('aggregates branches, skips coins, ignores enhanced copies, drops covered lines', () => {
+        const plan = {
+            strategy: 'craft',
+            children: [
+                { strategy: 'buy', itemHrid: COWHIDE, itemName: 'Cowhide', quantity: 5, children: [] },
+                {
+                    strategy: 'craft',
+                    children: [
+                        { strategy: 'buy', itemHrid: COWHIDE, itemName: 'Cowhide', quantity: 2.5, children: [] },
+                        { strategy: 'buy', itemHrid: '/items/coin', itemName: 'Coin', quantity: 100, children: [] },
+                        { strategy: 'buy', itemHrid: LEATHER, itemName: 'Rough Leather', quantity: 2, children: [] },
+                    ],
+                },
+            ],
+        };
+
+        const missing = collectMissingMaterials(plan, [
+            { itemHrid: COWHIDE, count: 3 },
+            { itemHrid: COWHIDE, count: 50, enhancementLevel: 2 }, // not a material
+            { itemHrid: LEATHER, count: 2 }, // fully covered — dropped
+        ]);
+
+        // 5 + 2.5 across branches → ceil(7.5) = 8 needed, 3 held → 5 short
+        expect(missing).toEqual([
+            { itemHrid: COWHIDE, itemName: 'Cowhide', missing: 5, required: 8, isTradeable: true },
+        ]);
     });
 });
 
