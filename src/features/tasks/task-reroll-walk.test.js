@@ -914,6 +914,37 @@ describe('one press, one game click', () => {
 
         walk.advance();
         expect(clicks).toEqual(['Milking - Cow:trash', 'Milking - Cow:Confirm Discard']);
+        // Counted only once the card actually goes — a confirm the game
+        // refuses removes nothing
+        expect(walk.tally.trashed).toBe(0);
+        list.replaceChildren();
+        vi.advanceTimersByTime(3000);
+        expect(walk.tally.trashed).toBe(1);
+    });
+
+    test('a discard confirm the game never answered goes to the player, counted once', async () => {
+        // The pay press has this fallback already; the confirm did not, so a
+        // build refusing the walk's synthetic confirm looped forever — one
+        // phantom discard added to the tally per press.
+        stored.values.taskCapCoinThreshold_7 = 10000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        const list = board([{ name: 'Milking - Cow', buttons: ['Confirm Discard'], quest: quest(MILKING) }]);
+        await walk.start();
+        expect(chipText()).toContain('Confirm discard #1');
+
+        walk.advance();
+        expect(clicks).toEqual(['Milking - Cow:Confirm Discard']);
+
+        // The card never moves: the press was refused. Nothing was trashed,
+        // and the card's next confirm is asked of the player.
+        vi.advanceTimersByTime(10000);
+        expect(walk.tally.trashed).toBe(0);
+        expect(clicks).toEqual(['Milking - Cow:Confirm Discard']);
+        expect(chipText()).toContain('Press Confirm on #1 to discard');
+
+        userPress(list, 1, 'Confirm Discard');
+        list.replaceChildren();
+        vi.advanceTimersByTime(3000);
         expect(walk.tally.trashed).toBe(1);
     });
 

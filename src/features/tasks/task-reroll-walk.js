@@ -735,7 +735,7 @@ class TaskRerollWalk {
             }
         }
 
-        // A payment the player pressed is billed here, once the board proves the
+        // A payment or discard confirm is billed here, once the board proves the
         // server answered it — the press itself is no proof, since the shield's
         // lockdown (or the game refusing a click) leaves the card exactly as it
         // was. Either the card is gone, or its task or a reroll count moved.
@@ -751,11 +751,15 @@ class TaskRerollWalk {
                 now.coin !== this.paidFor.coin ||
                 now.cowbell !== this.paidFor.cowbell;
             if (answered) {
-                this.tally.rerolled += 1;
-                const { currency, cost } = this.pendingBill;
-                if (Number.isFinite(cost) && cost > 0) {
-                    if (currency === 'coin') this.tally.goldSpent += cost;
-                    else if (currency === 'cowbell') this.tally.cowbellsSpent += cost;
+                const { kind, currency, cost } = this.pendingBill;
+                if (kind === 'trash') {
+                    this.tally.trashed += 1;
+                } else {
+                    this.tally.rerolled += 1;
+                    if (Number.isFinite(cost) && cost > 0) {
+                        if (currency === 'coin') this.tally.goldSpent += cost;
+                        else if (currency === 'cowbell') this.tally.cowbellsSpent += cost;
+                    }
                 }
                 this.pendingBill = null;
             }
@@ -826,6 +830,20 @@ class TaskRerollWalk {
 
             if (verdict.action === 'trash') {
                 if (discardOpen) {
+                    // A confirm already pressed and unanswered is waited out
+                    // the way a payment is; one the game evidently refused goes
+                    // to the player, whose real press always counts — pressing
+                    // it again into the void counted a discard per press
+                    if (this._rerollStillInFlight(card)) {
+                        if (this.paidWaits < PAID_WAIT_LIMIT) {
+                            this.paidWaits += 1;
+                            this.pending = true;
+                            return null;
+                        }
+                        this.manualFor.add(questKey || signature);
+                        this.paidFor = null;
+                        this.pendingBill = null;
+                    }
                     const manual = this.manualFor.has(questKey || signature);
                     return this._step(
                         'confirmDiscard',
@@ -966,6 +984,28 @@ class TaskRerollWalk {
             coin: Number(quest?.coinRerollCount) || 0,
             cowbell: Number(quest?.cowbellRerollCount) || 0,
         };
+    }
+
+    /**
+     * Track a press the server has to answer, so it is billed only once the
+     * card proves the answer arrived. A press the shield's lockdown ate, or
+     * one the game refused, leaves the card unmoved — and a press that moved
+     * nothing cost nothing and trashed nothing.
+     *
+     * @param {Object} planned - The pay or confirmDiscard step just pressed
+     * @private
+     */
+    _armSettle(planned) {
+        this.pendingBill =
+            planned.kind === 'pay'
+                ? { kind: 'reroll', currency: planned.currency, cost: Number(planned.cost) }
+                : { kind: 'trash', currency: null, cost: 0 };
+        this.paidFor = {
+            card: planned.card,
+            questId: questForTaskCard(planned.card)?.id ?? null,
+            ...this._rerollFingerprint(planned.card),
+        };
+        this.paidWaits = 0;
     }
 
     /**
@@ -1262,19 +1302,7 @@ class TaskRerollWalk {
         clickThroughReact(button, { reactFirst: true });
         this.walkBegun = true;
 
-        if (planned.kind === 'pay') {
-            // Billed only once the server answers — a press the shield's
-            // lockdown ate, or a build that refuses the walk's press, leaves
-            // the card unmoved and a press that moved nothing cost nothing
-            this.pendingBill = { currency: planned.currency, cost: Number(planned.cost) };
-            this.paidFor = {
-                card: planned.card,
-                questId: questForTaskCard(planned.card)?.id ?? null,
-                ...this._rerollFingerprint(planned.card),
-            };
-            this.paidWaits = 0;
-        }
-        if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;
+        if (planned.kind === 'pay' || planned.kind === 'confirmDiscard') this._armSettle(planned);
 
         // A press the server has to answer for waits for its answer; a press
         // that only opened or closed a menu is React state and is back within a
@@ -1296,19 +1324,7 @@ class TaskRerollWalk {
         if (!planned?.manual) return;
         this.walkBegun = true;
 
-        if (planned.kind === 'pay') {
-            // Billed only once the server answers — the shield's lockdown (or a
-            // refused click) leaves the card unmoved, and a press that moved
-            // nothing cost nothing
-            this.pendingBill = { currency: planned.currency, cost: Number(planned.cost) };
-            this.paidFor = {
-                card: planned.card,
-                questId: questForTaskCard(planned.card)?.id ?? null,
-                ...this._rerollFingerprint(planned.card),
-            };
-            this.paidWaits = 0;
-        }
-        if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;
+        if (planned.kind === 'pay' || planned.kind === 'confirmDiscard') this._armSettle(planned);
 
         this.state = 'waiting';
         this._render();
