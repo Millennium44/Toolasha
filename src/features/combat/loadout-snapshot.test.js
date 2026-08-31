@@ -12,7 +12,16 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({ items: [] }));
 
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+// Records every subscription so the tests can see *when* the module attaches
+// its handler — the point of the lazy hookup is that importing costs nothing.
+const ws = vi.hoisted(() => ({ onCalls: [] }));
+
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (event, handler) => ws.onCalls.push({ event, handler }),
+        off: () => {},
+    },
+}));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
 vi.mock('../../core/storage.js', () => ({ default: { setJSON: () => {}, getJSON: async () => null } }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -32,6 +41,9 @@ const {
     highestOwnedEnhancements,
     resolveEnhancementLevel,
 } = await import('./loadout-snapshot.js');
+
+// Snapshot taken before any test touches the store: what importing alone cost
+const subscriptionsAtImport = ws.onCalls.length;
 
 const CAPE = '/items/gatherer_cape_refined';
 const owned = (hrid, enhancementLevel, count = 1) => ({ itemHrid: hrid, enhancementLevel, count });
@@ -171,6 +183,52 @@ describe('a whole loadout at once', () => {
 
         const map = store.getSnapshotForSkill('/action_types/enhancing');
         expect(map.get('/item_locations/back').enhancementLevel).toBe(20);
+    });
+});
+
+/**
+ * This module is inlined into every production bundle, but only the combat
+ * bundle's copy is ever read — the rest are dead weight, and a constructor-time
+ * WebSocket subscription had all of them rebuilding private caches on every
+ * loadouts_updated message. The subscription is paid for on first use instead.
+ */
+describe('lazy websocket subscription', () => {
+    test('importing the module subscribes to nothing', () => {
+        expect(subscriptionsAtImport).toBe(0);
+    });
+
+    test('constructing a store subscribes to nothing', () => {
+        const before = ws.onCalls.length;
+        new loadoutSnapshot.constructor();
+        expect(ws.onCalls.length).toBe(before);
+    });
+
+    test('the first read subscribes, once, and data then flows in', () => {
+        const store = new loadoutSnapshot.constructor();
+        const before = ws.onCalls.length;
+
+        expect(store.getAllSnapshots()).toEqual([]);
+        expect(ws.onCalls.length).toBe(before + 1);
+        expect(ws.onCalls[before].event).toBe('loadouts_updated');
+
+        // A second read does not stack another handler
+        store.getAllSnapshots();
+        expect(ws.onCalls.length).toBe(before + 1);
+
+        // The handler the read attached is live: a message fills the store
+        ws.onCalls[before].handler({ characterLoadoutMap: { 1: { name: 'Fighting' } } });
+        expect(store.getAllSnapshots().map((s) => s.name)).toEqual(['Fighting']);
+    });
+
+    test('a read after disable() subscribes again', () => {
+        const store = new loadoutSnapshot.constructor();
+        store.getAllSnapshots();
+        store.disable();
+        const before = ws.onCalls.length;
+
+        store.getAllSnapshots();
+
+        expect(ws.onCalls.length).toBe(before + 1);
     });
 });
 

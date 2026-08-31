@@ -185,8 +185,25 @@ class LoadoutSnapshot {
         this.snapshotsReady = false;
         this._readyWaiters = [];
 
-        // Register WebSocket handler at module load time so in-session loadout
-        // changes are captured whenever loadouts_updated fires.
+        // No WebSocket subscription here. This module is inlined into every
+        // production bundle, but only the combat bundle's copy is ever read
+        // (directly or through the bundle bridge) — a constructor-time
+        // subscription had all six copies rebuilding their private caches on
+        // every loadouts_updated message, five of which nothing ever read.
+        // The copy that gets used subscribes on its first actual access.
+        this.loadoutsUpdatedHandler = null;
+    }
+
+    /**
+     * Attach the `loadouts_updated` handler to the shared WebSocket hook, once.
+     *
+     * Called from every public entry point rather than the constructor, so only
+     * a copy something actually reads (or initializes) pays for a live cache.
+     * disable() clears the handler; the next access re-subscribes.
+     * @private
+     */
+    _ensureSubscribed() {
+        if (this.loadoutsUpdatedHandler) return;
         this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
         getWebSocketHook().on('loadouts_updated', this.loadoutsUpdatedHandler);
     }
@@ -196,6 +213,7 @@ class LoadoutSnapshot {
      * @param {Function} fn
      */
     onUpdate(fn) {
+        this._ensureSubscribed();
         this.updateListeners.push(fn);
     }
 
@@ -236,6 +254,7 @@ class LoadoutSnapshot {
      *   declared ready by the deadline
      */
     whenReady(timeoutMs = SNAPSHOT_READY_TIMEOUT_MS) {
+        this._ensureSubscribed();
         if (this.snapshotsReady) return Promise.resolve(true);
         return new Promise((resolve) => {
             this._readyWaiters.push(resolve);
@@ -247,11 +266,8 @@ class LoadoutSnapshot {
         if (this.isInitialized) return;
         this.isInitialized = true;
 
-        // Re-register WS handler if it was cleared by disable()
-        if (!this.loadoutsUpdatedHandler) {
-            this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
-            getWebSocketHook().on('loadouts_updated', this.loadoutsUpdatedHandler);
-        }
+        // Covers both the first subscription and re-registering after disable()
+        this._ensureSubscribed();
 
         // Load from storage — loadouts_updated only fires when the user visits the loadouts
         // UI, so storage is always the source of snapshots at startup.
@@ -324,6 +340,7 @@ class LoadoutSnapshot {
      * @returns {boolean} True if any snapshot was updated
      */
     updateEnhancementLevel(itemHrid, newLevel) {
+        this._ensureSubscribed();
         let changed = false;
         for (const snapshot of Object.values(this.snapshots)) {
             // Exact-mode snapshots intentionally hold a frozen level — never auto-update them.
@@ -350,6 +367,7 @@ class LoadoutSnapshot {
      * @returns {Object|null} snapshot entry or null
      */
     _findSnapshot(actionTypeHrid) {
+        this._ensureSubscribed();
         if (!config.getSetting('loadoutSnapshot')) return null;
 
         let skillDefault = null;
@@ -415,6 +433,7 @@ class LoadoutSnapshot {
      * @returns {Array<Object>} Array of snapshot objects
      */
     getAllSnapshots() {
+        this._ensureSubscribed();
         return Object.values(this.snapshots).sort((a, b) => a.ordinal - b.ordinal);
     }
 
@@ -434,6 +453,7 @@ class LoadoutSnapshot {
      * @returns {Array<{itemHrid: string, enhancementLevel: number, itemLocationHrid: string}>}
      */
     resolveEquipment(snapshot) {
+        this._ensureSubscribed();
         const owned = highestOwnedEnhancements();
         return (snapshot?.equipment || []).map((equip) => ({
             ...equip,
