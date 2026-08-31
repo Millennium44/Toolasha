@@ -476,3 +476,47 @@ export function archivedAccuracyTrend(history) {
         };
     });
 }
+
+/**
+ * Whether gappy traces sat alongside wider accuracy deltas, across the archive.
+ *
+ * A pairing, never a cause: the same week produced both readings, and a week
+ * with a broken trace may also have been a week with an unusual roster, a
+ * mid-fight join, or a build change — none of which this can distinguish. The
+ * verdict therefore only ever says what stood next to what.
+ *
+ * Refuses below a minimum: with fewer than `minCycles` usable cycles, or with
+ * either side of the split empty, there is nothing honest to pair and the
+ * result says so instead of manufacturing a comparison from one point. A cycle
+ * is usable only when it carries an accuracy figure AND a traced quality with a
+ * finite gap count — an untraced week can neither confirm nor refute anything.
+ *
+ * @param {Array<Object>} trend - From {@link archivedAccuracyTrend}, any order
+ * @param {Object} [options] - Overrides
+ * @param {number} [options.minCycles] - Fewest usable cycles worth pairing
+ * @returns {{verdict: 'insufficient', usable: number, clean: number, gappy: number, minCycles: number}
+ *   | {verdict: 'paired', clean: {cycles: number, medianAbsDelta: number},
+ *      gappy: {cycles: number, medianAbsDelta: number}}}
+ */
+export function traceGapAccuracyPairing(trend, { minCycles = 3 } = {}) {
+    const usable = (Array.isArray(trend) ? trend : []).filter(
+        (cycle) =>
+            cycle &&
+            cycle.hasAccuracy === true &&
+            cycle.quality?.traced === true &&
+            Number.isFinite(cycle.metrics?.damage?.median) &&
+            Number.isFinite(cycle.quality.gapsOver5s)
+    );
+    const clean = usable.filter((cycle) => cycle.quality.gapsOver5s === 0);
+    const gappy = usable.filter((cycle) => cycle.quality.gapsOver5s > 0);
+
+    if (usable.length < minCycles || !clean.length || !gappy.length) {
+        return { verdict: 'insufficient', usable: usable.length, clean: clean.length, gappy: gappy.length, minCycles };
+    }
+
+    const side = (cycles) => ({
+        cycles: cycles.length,
+        medianAbsDelta: median(cycles.map((cycle) => Math.abs(cycle.metrics.damage.median))),
+    });
+    return { verdict: 'paired', clean: side(clean), gappy: side(gappy) };
+}

@@ -19,6 +19,7 @@ import {
     measuredOnlyNames,
     summarizeTrialAccuracy,
     summarizeWeekAccuracy,
+    traceGapAccuracyPairing,
 } from './guild-trial-accuracy.js';
 
 /** A pair where every name matches and the measurement is exactly right */
@@ -485,5 +486,50 @@ describe('archivedAccuracyTrend', () => {
     test('tolerates no history at all', () => {
         expect(archivedAccuracyTrend(null)).toEqual([]);
         expect(archivedAccuracyTrend([null])).toEqual([]);
+    });
+});
+
+describe('pairing trace gaps against accuracy across the archive', () => {
+    /** A trend entry with an accuracy figure and a traced quality */
+    const cycle = (damageMedian, gapsOver5s) => ({
+        hasAccuracy: true,
+        metrics: { damage: { median: damageMedian } },
+        quality: { traced: true, gapsOver5s },
+    });
+
+    test('refuses below the minimum rather than pairing an anecdote', () => {
+        const verdict = traceGapAccuracyPairing([cycle(2, 0), cycle(9, 3)]);
+        expect(verdict.verdict).toBe('insufficient');
+        expect(verdict.usable).toBe(2);
+        expect(verdict.minCycles).toBe(3);
+    });
+
+    test('refuses when every usable cycle sits on one side of the split', () => {
+        const verdict = traceGapAccuracyPairing([cycle(2, 0), cycle(3, 0), cycle(4, 0)]);
+        expect(verdict.verdict).toBe('insufficient');
+        expect(verdict.clean).toBe(3);
+        expect(verdict.gappy).toBe(0);
+    });
+
+    test('pairs median absolute damage deltas per side once both are represented', () => {
+        const verdict = traceGapAccuracyPairing([cycle(-2, 0), cycle(4, 0), cycle(-9, 3), cycle(11, 1)]);
+        expect(verdict.verdict).toBe('paired');
+        expect(verdict.clean).toEqual({ cycles: 2, medianAbsDelta: 3 });
+        expect(verdict.gappy).toEqual({ cycles: 2, medianAbsDelta: 10 });
+    });
+
+    test('a cycle without accuracy, without a trace, or without a gap count cannot vote', () => {
+        const verdict = traceGapAccuracyPairing([
+            { hasAccuracy: false, metrics: { damage: { median: 1 } }, quality: { traced: true, gapsOver5s: 0 } },
+            { hasAccuracy: true, metrics: { damage: { median: 1 } }, quality: { traced: false, gapsOver5s: null } },
+            { hasAccuracy: true, metrics: { damage: { median: 1 } }, quality: { traced: true, gapsOver5s: null } },
+            null,
+            cycle(2, 0),
+            cycle(3, 2),
+            cycle(5, 0),
+        ]);
+        expect(verdict.verdict).toBe('paired');
+        expect(verdict.clean.cycles).toBe(2);
+        expect(verdict.gappy.cycles).toBe(1);
     });
 });

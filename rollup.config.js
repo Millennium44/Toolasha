@@ -292,6 +292,15 @@ const combatFeatureExternals = new Map([
     // selections; the ui bundle's uninitialized copy showed everything blank
     // and saved that blankness over the real record.
     [normalize(join(__dirname, 'src/features/combat/scroll-simulator-ui.js')), 'Toolasha.Combat.scrollSimulatorUI'],
+    // The chat commands (ui bundle) import these five guild roots, which used
+    // to drag the ENTIRE guild feature graph into the ui bundle as dead inline
+    // copies (~30 modules; the live ones all run in combat, reached via the
+    // bridge). Externalizing the roots prunes the whole subtree.
+    [normalize(join(__dirname, 'src/features/guild/guild-token-value.js')), 'Toolasha.Combat.guildTokenValue'],
+    [normalize(join(__dirname, 'src/features/guild/guild-trial-recorder.js')), 'Toolasha.Combat.guildTrialExport'],
+    [normalize(join(__dirname, 'src/features/guild/guild-trials-store.js')), 'Toolasha.Combat.guildTrialStore'],
+    [normalize(join(__dirname, 'src/features/guild/guild-xp-tracker.js')), 'Toolasha.Combat.guildXPTracker'],
+    [normalize(join(__dirname, 'src/features/guild/guild-trials.js')), 'Toolasha.Combat.guildTrialsModule'],
 ]);
 
 // Market modules imported cross-library (by combat, actions, ui)

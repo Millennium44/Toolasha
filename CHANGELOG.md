@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trace-gaps pairing card, and the ui bundle sheds its dead guild copy
+
+The accuracy card now pairs archived cycles' trace quality against their damage deltas — did gappy-trace weeks sit alongside wider attribution misses than clean ones? It refuses to answer below three usable cycles with both sides represented ("too few to pair", filling in as cycles archive), and when it does answer it presents a pairing, never a cause. And the packaged ui bundle no longer carries a dead inline copy of the entire guild feature graph (~30 modules dragged in through the chat commands' five guild imports) — those now reference the combat bundle's live instances.
+
 ### The trial ledger learns the other boss fight's roster, and three staleness fixes
 
 The end-of-trial stats message carries every trial's rows, not just the fight being watched — the damage tracker was filtering the rest away. It now stores each trial's server-credited roster, so the attendance ledger settles the unwatched boss fight's members automatically; an unwatched trial's entry is a roster, never a measurement claim, and the accuracy card skips it rather than drawing a "0 of N matched" line for a fight nobody watched. Alongside: measured alchemy rates now see sessions recorded after the panel's first read instead of freezing at the page-load snapshot; the enhancement production-cost fallback re-prices when gear, drinks or the character change instead of serving the old buffs' figure forever; and the loadout snapshot subscribes to the websocket on first read, so the packaged build's five never-read copies stop rebuilding caches on every loadout message.

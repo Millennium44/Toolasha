@@ -86,6 +86,12 @@ import eliteAchievementReminder from '../features/profile/elite-achievement-remi
 
 // Guild
 import guildXPTracker from '../features/guild/guild-xp-tracker.js';
+// Namespace-imported for the ui bundle's chat commands, which used to inline a
+// private copy of the whole guild graph through these five roots — the
+// externals map (rollup.config.js) now points its imports here instead
+import * as guildTokenValue from '../features/guild/guild-token-value.js';
+import * as guildTrialStore from '../features/guild/guild-trials-store.js';
+import * as guildTrialsModule from '../features/guild/guild-trials.js';
 import guildXPDisplay from '../features/guild/guild-xp-display.js';
 import guildCreditValue from '../features/guild/guild-credit-value.js';
 import * as guildTokenExchangeCapture from '../features/guild/guild-token-exchange-capture.js';
@@ -168,6 +174,9 @@ toolashaRoot.Combat = {
     // gathers from the live combat copies instead of empty duplicates
     guildTrialsStore,
     guildTrialExport,
+    guildTokenValue,
+    guildTrialStore,
+    guildTrialsModule,
     guildTrialScoreboard,
     guildTrialLedgerView,
 };

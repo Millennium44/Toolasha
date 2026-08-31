@@ -51,6 +51,7 @@ import {
     OUTLIER_THRESHOLD_PCT,
     archivedAccuracyTrend,
     summarizeWeekAccuracy,
+    traceGapAccuracyPairing,
 } from './guild-trial-accuracy.js';
 import { loadTrialRecord, loadTrialStats } from './guild-trials-store.js';
 
@@ -775,6 +776,36 @@ function drawAccuracy(body) {
                     ACCURACY_METRICS.map(
                         (metric) => `${metric.label}: ${accuracyMetricText(cycle.metrics[metric.key])}`
                     ).join('\n')
+            )
+        );
+    }
+
+    // The pairing the trace-quality field was archived for: does a week with a
+    // gappy trace sit alongside a wider damage delta than a clean one? Drawn
+    // from the archive alone, and it refuses until there is enough on both
+    // sides to say anything — one point per side is an anecdote, not a pairing.
+    const pairing = traceGapAccuracyPairing(state.accuracyTrend);
+    if (pairing.verdict === 'insufficient') {
+        card.appendChild(
+            panelLine(
+                'Trace gaps vs accuracy',
+                `too few to pair (${pairing.usable} usable)`,
+                ROW_COLORS.dim,
+                `Needs at least ${pairing.minCycles} archived cycles carrying both an accuracy figure and a ` +
+                    `traced gap count, with clean and gappy traces both represented ` +
+                    `(clean: ${pairing.clean}, gappy: ${pairing.gappy}). It fills in as cycles archive.`
+            )
+        );
+    } else {
+        card.appendChild(
+            panelLine(
+                'Trace gaps vs accuracy',
+                `gappy ${accuracyDeltaText(pairing.gappy.medianAbsDelta)} over ${pairing.gappy.cycles} · ` +
+                    `clean ${accuracyDeltaText(pairing.clean.medianAbsDelta)} over ${pairing.clean.cycles}`,
+                ROW_COLORS.dim,
+                'Median |damage delta| across archived cycles, split by whether that week’s trace had gaps over ' +
+                    '5s. A pairing, not a cause — the same week produced both readings, and a roster change or a ' +
+                    'mid-fight join cannot be told apart from trace damage here.'
             )
         );
     }
