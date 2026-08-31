@@ -14,13 +14,21 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const game = vi.hoisted(() => ({ items: {}, prices: {}, actions: {} }));
+const game = vi.hoisted(() => ({
+    items: {},
+    prices: {},
+    actions: {},
+    equipment: new Map(),
+    drinks: [],
+    buffVersion: 0,
+}));
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ itemDetailMap: game.items, actionDetailMap: game.actions }),
-        getEquipment: () => new Map(),
-        getActionDrinkSlots: () => [],
+        getEquipment: () => new Map(game.equipment),
+        getActionDrinkSlots: () => game.drinks,
+        getBuffStateVersion: () => game.buffVersion,
     },
 }));
 vi.mock('../api/marketplace.js', () => ({ default: { on: () => {} } }));
@@ -29,8 +37,13 @@ vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid, { mode = 'ask' } = {}) => game.prices[`${hrid}:0`]?.[mode] || 0,
 }));
 
-const { getEnhancementMaterialPrice, perAttemptMaterialCost, getCheapestProtectionPrice, TRAINEE_SHOP_PRICE } =
-    await import('./enhancement-pricing.js');
+const {
+    getEnhancementMaterialPrice,
+    perAttemptMaterialCost,
+    getCheapestProtectionPrice,
+    getProductionCost,
+    TRAINEE_SHOP_PRICE,
+} = await import('./enhancement-pricing.js');
 
 beforeEach(() => {
     game.items = {
@@ -40,6 +53,11 @@ beforeEach(() => {
     };
     game.prices = {};
     game.actions = {};
+    game.equipment = new Map();
+    game.drinks = [];
+    // Monotonic across tests, never reset: the memo maps are module state and
+    // survive between tests, so rewinding the version would revive their entries
+    game.buffVersion++;
 });
 
 describe('getEnhancementMaterialPrice', () => {
@@ -137,6 +155,63 @@ describe('perAttemptMaterialCost', () => {
         );
 
         expect(result.cost).toBe(10);
+    });
+});
+
+describe('production-cost memo invalidation', () => {
+    /** One recipe per test hrid: 2 ore at 250 ask = 500 with no buffs */
+    function makeRecipe(matHrid, oreHrid) {
+        game.items[matHrid] = { name: 'Memo Mat' };
+        game.items[oreHrid] = { name: 'Memo Ore' };
+        game.prices[`${oreHrid}:0`] = { ask: 250, bid: 240 };
+        game.actions[`/actions/make_${matHrid.split('/').pop()}`] = {
+            type: '/action_types/crafting',
+            inputItems: [{ itemHrid: oreHrid, count: 2 }],
+            outputItems: [{ itemHrid: matHrid, count: 1 }],
+        };
+    }
+
+    const ARTISAN_TEA = {
+        name: 'Artisan Tea',
+        consumableDetail: { buffs: [{ typeHrid: '/buff_types/artisan', flatBoost: 0.1 }] },
+    };
+
+    test('the same query twice is served from the memo', () => {
+        makeRecipe('/items/memo_mat', '/items/memo_ore');
+        expect(getProductionCost('/items/memo_mat')).toBe(500);
+
+        // Change the inputs behind the memo's back; neither the price feed nor
+        // the buff state moved, so the stale figure is exactly what a memo serves
+        game.prices['/items/memo_ore:0'] = { ask: 1_000, bid: 990 };
+        expect(getProductionCost('/items/memo_mat')).toBe(500);
+    });
+
+    test('a drink change recomputes the fallback', () => {
+        makeRecipe('/items/drink_mat', '/items/drink_ore');
+        game.items['/items/artisan_tea'] = ARTISAN_TEA;
+        expect(getProductionCost('/items/drink_mat')).toBe(500);
+
+        // Drinking artisan tea bumps the buff version, so the memo misses and
+        // the 10% material reduction reaches the figure
+        game.drinks = [{ itemHrid: '/items/artisan_tea' }];
+        game.buffVersion++;
+        expect(getProductionCost('/items/drink_mat')).toBe(450);
+    });
+
+    test('a gear change recomputes the fallback', () => {
+        makeRecipe('/items/gear_mat', '/items/gear_ore');
+        game.items['/items/artisan_tea'] = ARTISAN_TEA;
+        game.items['/items/conc_pouch'] = {
+            name: 'Concentration Pouch',
+            equipmentDetail: { noncombatStats: { drinkConcentration: 0.5 } },
+        };
+        game.drinks = [{ itemHrid: '/items/artisan_tea' }];
+        expect(getProductionCost('/items/gear_mat')).toBe(450);
+
+        // Equipping drink concentration scales the tea to 15%: 2 × 250 × 0.85
+        game.equipment.set('/item_locations/pouch', { itemHrid: '/items/conc_pouch', enhancementLevel: 0 });
+        game.buffVersion++;
+        expect(getProductionCost('/items/gear_mat')).toBe(425);
     });
 });
 

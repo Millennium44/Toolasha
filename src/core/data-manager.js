@@ -73,6 +73,10 @@ class DataManager {
         this.characterEquipment = new Map();
         this.characterHouseRooms = new Map(); // House room HRID -> {houseRoomHrid, level}
         this.actionTypeDrinkSlotsMap = new Map(); // Action type HRID -> array of drink items
+        // Bumped whenever equipment or drink slots change; memo keys elsewhere
+        // (enhancement-pricing's production-cost cache) compare against it so a
+        // figure computed under old gear/drink buffs is not served after a change.
+        this.buffStateVersion = 0;
         this.characterGuildBuffMap = {}; // Guild buff HRID -> {guildBuffHrid, level}
         this.guildBuildingLevelMap = {}; // Building/shrine HRID -> level
         this.guildShrineCapturedAt = null; // When the shrine levels above were read off the wire
@@ -396,6 +400,7 @@ class DataManager {
             this.characterEquipment.clear();
             this.characterHouseRooms.clear();
             this.actionTypeDrinkSlotsMap.clear();
+            this.buffStateVersion++;
             this.personalActionTypeBuffsMap = {};
             this.characterGuildBuffMap = {};
             this.guildBuildingLevelMap = {};
@@ -935,6 +940,7 @@ class DataManager {
      * @param {Array} items - Character items array
      */
     updateEquipmentMap(items) {
+        let equipmentChanged = false;
         for (const item of items) {
             if (item.itemLocationHrid !== '/item_locations/inventory') {
                 if (item.count === 0) {
@@ -942,7 +948,13 @@ class DataManager {
                 } else {
                     this.characterEquipment.set(item.itemLocationHrid, item);
                 }
+                equipmentChanged = true;
             }
+        }
+        // Delta messages only carry items that changed, so any non-inventory
+        // item here means a slot changed and equipment-dependent memos are stale
+        if (equipmentChanged) {
+            this.buffStateVersion++;
         }
     }
 
@@ -982,6 +994,7 @@ class DataManager {
         for (const [actionTypeHrid, drinks] of Object.entries(drinkSlotsMap)) {
             this.actionTypeDrinkSlotsMap.set(actionTypeHrid, drinks || []);
         }
+        this.buffStateVersion++;
     }
 
     /**
@@ -1449,6 +1462,20 @@ class DataManager {
      */
     getEquipment() {
         return new Map(this.characterEquipment);
+    }
+
+    /**
+     * Fingerprint of the equipment/drink-slot state, for memos computed from it.
+     *
+     * Bumped whenever the equipment map or the drink slots change (equip,
+     * unequip, drink change, character switch). A cache entry that stores the
+     * version it was computed under, and misses when the versions differ, is
+     * exactly as fresh as the buffs — without the cache owner wiring its own
+     * listeners into every message that can move gear.
+     * @returns {number} Monotonic counter; only equality is meaningful
+     */
+    getBuffStateVersion() {
+        return this.buffStateVersion;
     }
 
     /**

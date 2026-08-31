@@ -52,16 +52,27 @@ import { findProducingAction } from './production-index.js';
 export const TRAINEE_SHOP_PRICE = 250_000;
 
 /**
- * Production cost and chain time memos. Both depend on market prices, so an
- * entry is only good for the price feed it was computed against: each entry
- * carries the feed version it saw, and a price update just bumps the version —
- * O(1) instead of emptying both maps — so every older entry misses on its next
- * read and is recomputed (and overwritten) then. The maps stay bounded by the
- * number of distinct keys, since a key is re-set rather than appended.
+ * Production cost and chain time memos. Both depend on market prices and on the
+ * player's buff state (artisan tea and drink concentration change what a recipe
+ * consumes), so an entry is only good for the price feed *and* the gear/drink
+ * state it was computed against: each entry carries the versions it saw, and an
+ * update just bumps a version — O(1) instead of emptying both maps — so every
+ * older entry misses on its next read and is recomputed (and overwritten) then.
+ * The price version is this module's own counter, fed by the market feed; the
+ * buff version is read from dataManager, which bumps it on equipment and drink
+ * slot changes, so this module needs no websocket wiring of its own and tests
+ * drive invalidation by mocking the getter. The maps stay bounded by the number
+ * of distinct keys, since a key is re-set rather than appended.
  */
 const _costCache = new Map();
 const _chainTimeCache = new Map();
 let _priceVersion = 0;
+
+// Optional chaining: tests and older bundles may mock dataManager without the
+// getter, and a fingerprint that cannot be read simply never invalidates.
+function _buffVersion() {
+    return dataManager.getBuffStateVersion?.() ?? 0;
+}
 
 // Optional chaining because this module is now imported from four bundles and from tests that
 // stub the market API without a subscribe hook. Without a feed the memo simply never invalidates,
@@ -212,10 +223,11 @@ export function getRealisticBaseItemPrice(itemHrid) {
  */
 export function getProductionCost(itemHrid, mode = 'ask') {
     const cacheKey = `${itemHrid}|${mode}`;
+    const buffVersion = _buffVersion();
     const cached = _costCache.get(cacheKey);
-    if (cached && cached.version === _priceVersion) return cached.value;
+    if (cached && cached.version === _priceVersion && cached.buffVersion === buffVersion) return cached.value;
     const result = _computeProductionCost(itemHrid, mode);
-    _costCache.set(cacheKey, { version: _priceVersion, value: result });
+    _costCache.set(cacheKey, { version: _priceVersion, buffVersion, value: result });
     return result;
 }
 
@@ -288,10 +300,11 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
  * @returns {number} Total chain time in seconds (base times, no speed bonuses applied)
  */
 export function getProductionChainTime(itemHrid) {
+    const buffVersion = _buffVersion();
     const cached = _chainTimeCache.get(itemHrid);
-    if (cached && cached.version === _priceVersion) return cached.value;
+    if (cached && cached.version === _priceVersion && cached.buffVersion === buffVersion) return cached.value;
     const result = _computeProductionChainTime(itemHrid);
-    _chainTimeCache.set(itemHrid, { version: _priceVersion, value: result });
+    _chainTimeCache.set(itemHrid, { version: _priceVersion, buffVersion, value: result });
     return result;
 }
 
