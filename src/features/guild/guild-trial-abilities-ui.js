@@ -1307,11 +1307,11 @@ export const guildTrialAbilitiesPanel = createPanel({
         const abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {};
         adoptStoredCaptures();
         const state = guildTrialAbilities.state(abilityDetailMap);
-        drawHeader(body, state);
-        // Controls right under the header on purpose: everything below grows —
-        // the plan, the coverage lists, a row per capture — and buttons that
-        // keep moving down are buttons you miss
+        // Controls first, above even the summary, on purpose: everything below
+        // grows — the plan, the coverage lists, a row per capture — and buttons
+        // that keep moving down are buttons you miss
         drawControls(body, state);
+        drawHeader(body, state);
         drawPlan(body, state);
         drawAuraCoverage(body, state, abilityDetailMap);
         drawUtilityCounts(body, state, abilityDetailMap);

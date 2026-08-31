@@ -764,6 +764,17 @@ describe('trial abilities panel', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    test('the Controls card draws first, above the summary', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+
+        openTrialAbilitiesPanel();
+        const content = text();
+        expect(content.indexOf('Controls')).toBeGreaterThan(-1);
+        expect(content.indexOf('Controls')).toBeLessThan(content.indexOf('Trial abilities —'));
+        expect(content).not.toContain(FAILED);
+    });
+
     test('offPlanExportText lists every deviation under a counted header, and stays null with nothing to say', () => {
         const state = {
             capturedTiers: [4],
