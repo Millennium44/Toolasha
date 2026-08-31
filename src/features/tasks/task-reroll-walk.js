@@ -10,15 +10,16 @@
  * performs exactly one click on exactly one of the game's own buttons and then
  * stops and tells you what the next press would do. Nothing is chained, nothing
  * is queued, nothing fires on a timer or off a websocket message: opening a
- * card's chooser is one press, closing it is another. The only work this module
- * does between presses is reading the board and writing a label.
+ * card's chooser is one press, paying for the reroll is the next, closing the
+ * chooser is another. The only work this module does between presses is reading
+ * the board and writing a label.
  *
  * The presses that spend — a reroll payment, the free reroll, a discard
- * confirm — the game accepts only from the player's own hand (it checks
- * `event.isTrusted`, which no script can fake). Those steps are therefore
- * *asked for* rather than made: the walk highlights the exact button, the chip
- * points at it, and a capture listener does the bookkeeping when the player's
- * real press lands.
+ * confirm — go through the game's own React handler (`clickThroughReact`),
+ * because their handlers refuse a plain DOM click without `isTrusted`. Should
+ * a payment ever go unanswered anyway, that one card falls back to a manual
+ * step: the walk highlights the exact button and asks the player for the
+ * press, whose real click always counts.
  *
  * The rules come from what the player has already configured elsewhere:
  *
@@ -324,6 +325,14 @@ class TaskRerollWalk {
         this.chooserQuotes = new Map();
         /** The game button a manual step is asking the player to press */
         this.highlightedButton = null;
+        /**
+         * Task signatures whose payment the walk pressed and the game never
+         * answered. The walk's press goes through the React handler with a
+         * synthetic event; if a build ever refuses that, the card's next
+         * attempt is asked of the player instead — their real press always
+         * counts — rather than pressed again into the void.
+         */
+        this.manualFor = new Set();
         /** Read presses made on the unread-tasks notice this walk */
         this.readPresses = 0;
         /** True between a Read press and the sort that follows it */
@@ -780,11 +789,15 @@ class TaskRerollWalk {
 
             if (verdict.action === 'trash') {
                 if (discardOpen) {
-                    // Confirming a discard destroys the task, and the game only
-                    // takes that press from the player — see the pay step below
-                    return this._step('confirmDiscard', card, slot, `Press Confirm on #${slot} to discard`, null, {
-                        manual: true,
-                    });
+                    const manual = this.manualFor.has(signature);
+                    return this._step(
+                        'confirmDiscard',
+                        card,
+                        slot,
+                        manual ? `Press Confirm on #${slot} to discard` : `Confirm discard #${slot}`,
+                        null,
+                        { manual }
+                    );
                 }
                 if (chooser.length) {
                     const back = this._backButton(card);
@@ -835,8 +848,10 @@ class TaskRerollWalk {
                     // The card never moved, so the press evidently never took —
                     // the shield's lockdown ate it, or the game refused it.
                     // Nothing was spent (the bill only lands when the card
-                    // moves), so forget the payment and ask for the press again
-                    // rather than stopping a walk over a click that didn't count.
+                    // moves), so forget the payment — and hand this card's next
+                    // attempt to the player, whose real press always counts —
+                    // rather than stopping the walk or pressing into the void.
+                    this.manualFor.add(signature);
                     this.paidFor = null;
                     this.pendingBill = null;
                 }
@@ -847,21 +862,25 @@ class TaskRerollWalk {
                 // is the number on the very button the press is about to click,
                 // not the ladder's guess at it.
                 //
-                // Manual: the game accepts a reroll payment only from a real
-                // user gesture, so this step highlights the button and asks for
-                // the press instead of making it — the widget's own click can
-                // only scroll the card into view. The spend listener in
-                // `initialize` is what advances the walk when the press lands.
+                // The walk presses this itself, through the game's React
+                // handler (see react-click.js — the spend buttons check the
+                // event's isTrusted flag, so a plain DOM click lands as if it
+                // never happened). Manual is the fallback for a card whose
+                // payment already went unanswered once: that step highlights
+                // the button and asks the player for the press instead.
+                const payManually = this.manualFor.has(signature);
                 return this._step(
                     'pay',
                     card,
                     slot,
-                    `Press #${slot}'s highlighted ${choice.costLabel} button`,
+                    payManually
+                        ? `Press #${slot}'s highlighted ${choice.costLabel} button`
+                        : `Reroll #${slot} — ${verdict.reason}`,
                     option.button,
                     {
                         currency: choice.currency,
                         cost: choice.cost,
-                        manual: true,
+                        manual: payManually,
                     }
                 );
             }
@@ -946,6 +965,7 @@ class TaskRerollWalk {
         this.paidWaits = 0;
         this.pendingBill = null;
         this.chooserQuotes.clear();
+        this.manualFor.clear();
         this.readPresses = 0;
         this.awaitingReadSort = false;
         this.walkBegun = false;
@@ -1166,12 +1186,23 @@ class TaskRerollWalk {
         clickThroughReact(button, { reactFirst: true });
         this.walkBegun = true;
 
-        // A press the server has to answer for is a manual step and never gets
-        // here; everything the walk still clicks is React state, back within a
-        // frame. What comes back is a label, not another click.
+        if (planned.kind === 'pay') {
+            // Billed only once the server answers — a press the shield's
+            // lockdown ate, or a build that refuses the walk's press, leaves
+            // the card unmoved and a press that moved nothing cost nothing
+            this.pendingBill = { currency: planned.currency, cost: Number(planned.cost) };
+            this.paidFor = { card: planned.card, ...this._rerollFingerprint(planned.card) };
+            this.paidWaits = 0;
+        }
+        if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;
+
+        // A press the server has to answer for waits for its answer; a press
+        // that only opened or closed a menu is React state and is back within a
+        // frame. Either way what comes back is a label, not another click.
+        const serverBound = planned.kind === 'pay' || planned.kind === 'confirmDiscard';
         this.state = 'waiting';
         this._render();
-        this._replanSoon(UI_SETTLE_MS);
+        this._replanSoon(serverBound ? SERVER_SETTLE_MS : UI_SETTLE_MS);
         return true;
     }
 

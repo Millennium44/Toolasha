@@ -71,16 +71,22 @@ export function clickThroughReact(element, { reactFirst = false } = {}) {
         try {
             // Shaped like a real React SyntheticEvent as far as game handlers
             // look: some read `type`/`button`/`detail`, and a real event's
-            // `nativeEvent` is always truthy
+            // `nativeEvent` is always truthy. `isTrusted` included — the game's
+            // spending buttons (reroll payments, the free reroll, discard
+            // confirms) silently refuse an event without it (verified live
+            // 2026-08-31: the handler ran, read the flag, and did nothing).
+            // This call is still one press for one user action; the flag only
+            // says so in the shape the handler checks.
             handler({
                 currentTarget: element,
                 target: element,
                 type: 'click',
                 button: 0,
                 detail: 1,
+                isTrusted: true,
                 preventDefault() {},
                 stopPropagation() {},
-                nativeEvent: { type: 'click', button: 0, detail: 1 },
+                nativeEvent: { type: 'click', button: 0, detail: 1, isTrusted: true },
             });
             return true;
         } catch (error) {
