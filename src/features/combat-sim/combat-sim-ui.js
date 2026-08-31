@@ -974,6 +974,22 @@ export function upgradeRowPurchase(result) {
     const cost = Number.isFinite(result?.cost) ? result.cost : null;
     const targetLevel = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
 
+    // What a price pin on the watched ITEM should be targeted at. `cost` is the
+    // row's net — purchase minus the resale credit of what it replaces — and the
+    // price panel's pin compares against the item's own ask, which never falls
+    // to net-of-your-resale (an enhancement row's net is the target level's ask
+    // minus the current piece's bid: a target unreachable by construction). The
+    // breakdown's buy line for this exact item is a figure the market can hit;
+    // its gross, then the net, stand in when there is no such line.
+    const buyLine = (result?.costDetail?.buys || []).find(
+        (line) => line?.hrid === itemHrid && (line.enhancementLevel || 0) === enhancementLevel
+    );
+    const watchCost = Number.isFinite(buyLine?.price)
+        ? buyLine.price
+        : Number.isFinite(result?.costDetail?.gross)
+          ? result.costDetail.gross
+          : cost;
+
     return {
         itemHrid,
         enhancementLevel,
@@ -984,6 +1000,7 @@ export function upgradeRowPurchase(result) {
         // costed at, so the savings list shows the figure that was on screen
         // when the button was pressed rather than re-deriving its own
         cost,
+        watchCost,
         costSource,
         ability: isBook
             ? {
@@ -1204,11 +1221,13 @@ export function upgradeRowActionsHtml(result) {
             ? `Open this in the marketplace, with ${buy.quantity} ready in the buy box — what this upgrade needs`
             : 'Open this in the marketplace';
 
-    // The costed price rides the Watch button as well as the Save one: watching
+    // A costed price rides the Watch button as well as the Save one: watching
     // an item you have just been quoted a price for almost always means "tell
     // me when it costs that", and the price panel's pin can carry that as a
-    // target rather than making the reader retype a figure already on screen
-    const watchCost = buy.cost == null ? '' : String(buy.cost);
+    // target rather than making the reader retype a figure already on screen.
+    // The WATCH price, not the row's net cost — see `upgradeRowPurchase`: the
+    // pin fires on the item's own ask, which resale credit never reaches.
+    const watchCost = buy.watchCost == null ? '' : String(buy.watchCost);
     return `${save}<button type="button" ${attrs} data-buy-action="watch" data-buy-cost="${watchCost}"
         title="Add to the watchlist" style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"
         title="${escapeAttribute(marketTitle)}" style="${ROW_ACTION_STYLE}">Market</button>`;

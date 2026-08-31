@@ -1728,6 +1728,35 @@ describe('upgrade row handoff', () => {
         expect(mocks.watched).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
     });
 
+    test('the pin is targeted at the item’s own buy price, never the net after resale', () => {
+        // The row's cost is net of the resale credit for the piece it replaces,
+        // and an ask never falls to net-of-YOUR-resale — an enhancement row's
+        // net (target ask minus the current piece's bid) is unreachable by
+        // construction. The pin fires on the item's ask, so it carries the
+        // breakdown's buy line for that item instead
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 1_000_000, // 5M ask minus the 4M the worn +10 sells for
+            costDetail: {
+                gross: 5_000_000,
+                buys: [{ hrid: '/items/plate', enhancementLevel: 12, price: 5_000_000 }],
+            },
+            candidate: {
+                description: 'Plate +10 → +12',
+                upgradeHrid: '/items/plate',
+                upgradeLevel: 12,
+                type: 'enhancement',
+            },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.seededTargets).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 12, cost: 5_000_000 }]);
+        // The Save handoff keeps the net: a savings goal is the outlay, not the ask
+        container.querySelector('[data-buy-action="save"]').click();
+        expect(mocks.saved[0].quote.cost).toBe(1_000_000);
+    });
+
     test('an unpriced row seeds no target', () => {
         const container = document.createElement('div');
         container.innerHTML = upgradeRowActionsHtml(
