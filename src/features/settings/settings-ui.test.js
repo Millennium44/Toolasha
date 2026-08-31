@@ -976,7 +976,10 @@ describe('the pro-defaults reset button', () => {
         await settle();
 
         expect(mocks.written).toContainEqual(['enhanceSim_enhancingLevel', 140]);
-        expect(mocks.written).toContainEqual(['enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 15 }]);
+        expect(mocks.written).toContainEqual([
+            'enhanceSim_gear_enhancer',
+            { enabled: true, tier: 'celestial', level: 15 },
+        ]);
         expect(mocks.written).toContainEqual(['enhanceSim_gear_gloves', { enabled: true, level: 12 }]);
         // The setting the button does not govern is untouched
         expect(mocks.written.map(([id]) => id)).not.toContain('enhanceSim_autoDetect');
@@ -1025,7 +1028,10 @@ describe('the pro-defaults reset button', () => {
         await settle();
 
         // Stored values reset all the same
-        expect(mocks.written).toContainEqual(['enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 15 }]);
+        expect(mocks.written).toContainEqual([
+            'enhanceSim_gear_enhancer',
+            { enabled: true, tier: 'celestial', level: 15 },
+        ]);
         // The detected display did not get clobbered
         expect(enhancer.enabled.checked).toBe(false);
         expect(enhancer.tier.value).toBe('holy');
