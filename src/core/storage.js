@@ -84,6 +84,15 @@ class Storage {
          * silently undoes it, which is what these two counters exist to stop.
          */
         this._restoreGeneration = 0;
+        /**
+         * True from `beginRestore()` until `endRestore()`. A debounce timer
+         * that fires inside this window would land its pre-restore value on a
+         * store the restore has already rewritten but not yet latched — the
+         * latch (`finishRestore`) only goes up after every store is written —
+         * so firing timers hold their entry queued instead of writing, and
+         * `endRestore()` flushes whatever survived the latch.
+         */
+        this._restoreInProgress = false;
         /** Store names whose writes are refused until the page reloads */
         this._restorePendingStores = new Set();
         /** Keys already warned about under the latch, so the console is not flooded */
@@ -780,6 +789,17 @@ class Storage {
                     return;
                 }
 
+                if (this._restoreInProgress) {
+                    // A restore is writing stores right now, and the latch that
+                    // would sort this write's store into "restored, refuse" or
+                    // "untouched, fine" is not up yet. Writing would race the
+                    // restore's own transaction; dropping would lose a write to
+                    // a store the restore never touches. So the entry stays
+                    // queued with no timer: `finishRestore` drops it if its
+                    // store was restored, `endRestore` flushes it if not.
+                    return;
+                }
+
                 if (this._restoreGeneration !== restoreGeneration) {
                     // A restore replaced this key while the timer was running.
                     // Standing down is the whole point: the value in hand is the
@@ -1332,6 +1352,32 @@ class Storage {
      * @returns {Promise<void>}
      */
     async beginRestore() {
+        // Raised before the flush so a timer that fires while the flush's
+        // transactions are in flight also holds — the flush below is already
+        // writing its value if it was queued in time, and a later write to the
+        // same key belongs after the restore's own transaction, not during it.
+        this._restoreInProgress = true;
+        await this.flushAll();
+    }
+
+    /**
+     * The restore is done writing (or gave up): stop holding debounce timers.
+     *
+     * Idempotent, and safe to call twice on nested begin/end pairs — a sync
+     * pull calls `beginRestore` itself before reading merge bases, and then
+     * `importEverything` calls it again on the way in. Every entry a firing
+     * timer left queued during the window is flushed now: whatever belonged to
+     * a restored store was already dropped by `finishRestore`, so what remains
+     * is writes to untouched stores, which must land rather than sit with no
+     * timer until the unload flush.
+     *
+     * Callers pair it with `beginRestore` in a `finally` — a restore that
+     * throws must not leave every debounced write in the script held forever.
+     * @returns {Promise<void>}
+     */
+    async endRestore() {
+        if (!this._restoreInProgress) return;
+        this._restoreInProgress = false;
         await this.flushAll();
     }
 

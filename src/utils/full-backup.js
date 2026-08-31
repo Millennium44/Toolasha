@@ -144,48 +144,60 @@ export async function importEverything(payload, options = {}) {
 
     // Land everything already queued before the restore overwrites it: a
     // debounced write that fires afterwards is the pre-restore value going
-    // straight back on top of the restored one
+    // straight back on top of the restored one. From here until endRestore,
+    // timers that fire hold their write instead — the latch below only goes up
+    // after every store is written, and a 3-second debounce can fire inside a
+    // multi-store restore.
     await storage.beginRestore?.();
 
-    for (const storeName of targetStoreNames) {
-        if (!Object.prototype.hasOwnProperty.call(payloadStores, storeName)) {
-            continue;
+    try {
+        for (const storeName of targetStoreNames) {
+            if (!Object.prototype.hasOwnProperty.call(payloadStores, storeName)) {
+                continue;
+            }
+
+            if (!availableStoreSet.has(storeName)) {
+                console.warn(`[FullBackup] Skipping unknown store in backup payload: ${storeName}`);
+                continue;
+            }
+
+            // Excluded on export (below) and just as much on import: an old
+            // build's payload, or one from before a key was added to the
+            // exclusion list, can still carry one of these, and writing it here
+            // would plant it on this device exactly as if it had been recorded
+            // locally.
+            const entries = stripExcludedKeys(storeName, payloadStores[storeName] || {});
+            const want = Object.keys(entries).length;
+            // The restore is the one writer the latch is not protecting against
+            // — it is what the latch is protecting. A second pull in the same
+            // session would otherwise be refused by the first one's latch.
+            const count = await storage.putAll(storeName, entries, { bypassRestoreLatch: true });
+            restored[storeName] = count;
+            expected[storeName] = want;
+
+            // One key the store refuses aborts the whole transaction and takes
+            // every healthy key with it, so a shortfall is not "most of it
+            // landed" — it is usually "none of this store landed". Saying so is
+            // what stops a caller recording the restore as done.
+            if (count !== want) {
+                console.error(
+                    `[FullBackup] Store ${storeName} restored ${count} of ${want} keys — the rest did not land`
+                );
+                failed.push({ store: storeName, expected: want, written: count });
+            } else if (want > 0) {
+                written.add(storeName);
+            }
         }
 
-        if (!availableStoreSet.has(storeName)) {
-            console.warn(`[FullBackup] Skipping unknown store in backup payload: ${storeName}`);
-            continue;
-        }
-
-        // Excluded on export (below) and just as much on import: an old build's
-        // payload, or one from before a key was added to the exclusion list,
-        // can still carry one of these, and writing it here would plant it on
-        // this device exactly as if it had been recorded locally.
-        const entries = stripExcludedKeys(storeName, payloadStores[storeName] || {});
-        const want = Object.keys(entries).length;
-        // The restore is the one writer the latch is not protecting against —
-        // it is what the latch is protecting. A second pull in the same session
-        // would otherwise be refused by the first one's latch.
-        const count = await storage.putAll(storeName, entries, { bypassRestoreLatch: true });
-        restored[storeName] = count;
-        expected[storeName] = want;
-
-        // One key the store refuses aborts the whole transaction and takes
-        // every healthy key with it, so a shortfall is not "most of it landed"
-        // — it is usually "none of this store landed". Saying so is what stops
-        // a caller recording the restore as done.
-        if (count !== want) {
-            console.error(`[FullBackup] Store ${storeName} restored ${count} of ${want} keys — the rest did not land`);
-            failed.push({ store: storeName, expected: want, written: count });
-        } else if (want > 0) {
-            written.add(storeName);
-        }
+        // Only stores that wrote their full count are latched: a store that
+        // wrote nothing has not been restored, and refusing its writes would
+        // break a feature for nothing.
+        if (written.size > 0) storage.finishRestore?.(written);
+    } finally {
+        // Always, even on a throw: leaving the hold up would keep every
+        // debounced write in the script queued until the unload flush
+        await storage.endRestore?.();
     }
-
-    // Only stores that wrote their full count are latched: a store that wrote
-    // nothing has not been restored, and refusing its writes would break a
-    // feature for nothing.
-    if (written.size > 0) storage.finishRestore?.(written);
 
     return { restored, expected, failed, complete: failed.length === 0 };
 }

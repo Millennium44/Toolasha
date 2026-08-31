@@ -229,20 +229,29 @@ export async function applyPayload(json) {
     // flush inside `importEverything` then finds nothing left to do.
     await storage.beginRestore?.();
 
-    const merged = await mergeLocalHistories(payload);
+    try {
+        const merged = await mergeLocalHistories(payload);
 
-    // What is remembered as "the state of this device" has to be what was
-    // actually written. `mergeLocalHistories` (and the settings fix-ups above)
-    // mutate the payload, so the downloaded text no longer describes what
-    // landed — hashing it made every later rebuild compare unequal, which read
-    // as "this device has changed" and raised a conflict on every silent pull
-    // until an auto-push happened to reset it. Re-serialising only when
-    // something was rewritten keeps the common no-op pull free.
-    const rewrote = merged.length > 0 || Boolean(settingsStore);
-    const applied = rewrote ? JSON.stringify(payload) : json;
+        // What is remembered as "the state of this device" has to be what was
+        // actually written. `mergeLocalHistories` (and the settings fix-ups
+        // above) mutate the payload, so the downloaded text no longer describes
+        // what landed — hashing it made every later rebuild compare unequal,
+        // which read as "this device has changed" and raised a conflict on
+        // every silent pull until an auto-push happened to reset it.
+        // Re-serialising only when something was rewritten keeps the common
+        // no-op pull free.
+        const rewrote = merged.length > 0 || Boolean(settingsStore);
+        const applied = rewrote ? JSON.stringify(payload) : json;
 
-    const { restored, failed, complete } = await importEverything(payload);
-    return { restored, failed, complete, merged, exportedAt: payload?.exportedAt ?? null, applied };
+        const { restored, failed, complete } = await importEverything(payload);
+        return { restored, failed, complete, merged, exportedAt: payload?.exportedAt ?? null, applied };
+    } finally {
+        // `importEverything` ends the hold itself on its way out; this covers
+        // a throw between the flush above and reaching it, which would
+        // otherwise leave every debounced write in the script held until the
+        // unload flush. Ending an already-ended hold is a no-op.
+        await storage.endRestore?.();
+    }
 }
 
 /**

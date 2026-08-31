@@ -1045,6 +1045,7 @@ describe('Storage restore quiescing', () => {
         storage._flushFailures.clear();
         storage._restorePendingStores.clear();
         storage._restoreWarned.clear();
+        storage._restoreInProgress = false;
         vi.spyOn(console, 'warn').mockImplementation(() => {});
     });
 
@@ -1056,6 +1057,7 @@ describe('Storage restore quiescing', () => {
         storage._flushFailures.clear();
         storage._restorePendingStores.clear();
         storage._restoreWarned.clear();
+        storage._restoreInProgress = false;
         storage._saveToIndexedDB.mockRestore?.();
         storage.db = null;
         vi.restoreAllMocks();
@@ -1127,6 +1129,42 @@ describe('Storage restore quiescing', () => {
             await storage.putAll('settings', { toolasha_sync_lastSyncedAt: 'T' }, { bypassRestoreLatch: true })
         ).toBe(1);
         expect(dataByStore.get('settings').get('toolasha_sync_lastSyncedAt')).toBe('T');
+    });
+
+    test('a timer firing mid-restore holds its write instead of racing the restore', async () => {
+        // The window the latch cannot cover: after `beginRestore()` has
+        // flushed, before `finishRestore()` has latched. A 3-second debounce
+        // can fire inside a multi-store restore, and it used to write the
+        // pre-restore value over a store the restore had already rewritten.
+        const { db, dataByStore } = createFakeDb(['settings', 'xpHistory']);
+        storage.db = db;
+
+        await storage.beginRestore();
+        const droppedWrite = storage.set('watchlist', 'mid-restore', 'settings');
+        const survivingWrite = storage.set('sample', 42, 'xpHistory');
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+        // Both timers fired, neither wrote — they are held, still queued
+        expect(dataByStore.get('settings').has('watchlist')).toBe(false);
+        expect(dataByStore.get('xpHistory').has('sample')).toBe(false);
+        expect(storage.pendingWrites.size).toBe(2);
+
+        // The restore latches the store it wrote, which drops that hold...
+        storage.finishRestore(['settings']);
+        expect(await droppedWrite).toBe(false);
+        expect(storage.pendingWrites.has('settings:watchlist')).toBe(false);
+
+        // ...and ending the restore lands the one to the untouched store
+        await storage.endRestore();
+        expect(await survivingWrite).toBe(true);
+        expect(dataByStore.get('xpHistory').get('sample')).toBe(42);
+        expect(dataByStore.get('settings').has('watchlist')).toBe(false);
+    });
+
+    test('ending a restore that never began does nothing', async () => {
+        const flushSpy = vi.spyOn(storage, 'flushAll');
+        await storage.endRestore();
+        expect(flushSpy).not.toHaveBeenCalled();
     });
 
     test('a recorder flushing through the bulk path is refused like every other writer', async () => {

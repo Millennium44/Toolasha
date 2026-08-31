@@ -12,6 +12,7 @@ vi.mock('../core/storage.js', () => ({
         getAll: vi.fn((storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map()))),
         beginRestore: vi.fn(() => Promise.resolve()),
         finishRestore: vi.fn(),
+        endRestore: vi.fn(() => Promise.resolve()),
         putAll: vi.fn((storeName, entries) => {
             const store = db.get(storeName) || new Map();
             for (const [key, value] of Object.entries(entries || {})) {
@@ -358,6 +359,7 @@ describe('importEverything reports what did not land', () => {
         });
         storage.beginRestore.mockClear();
         storage.finishRestore.mockClear();
+        storage.endRestore.mockClear();
     });
 
     test('a store whose transaction wrote nothing is reported, not counted as restored', async () => {
@@ -425,5 +427,37 @@ describe('importEverything reports what did not land', () => {
         expect(storage.finishRestore).toHaveBeenCalledWith(new Set(['xpHistory', 'dungeonRuns']));
 
         vi.restoreAllMocks();
+    });
+
+    test('the debounce hold is released after the latch goes up, in order', async () => {
+        seedDb();
+        const storage = (await import('../core/storage.js')).default;
+        const order = [];
+        storage.finishRestore.mockImplementation(() => order.push('finishRestore'));
+        storage.endRestore.mockImplementation(() => {
+            order.push('endRestore');
+            return Promise.resolve();
+        });
+        const payload = await exportEverything();
+
+        await importEverything(payload);
+
+        // endRestore flushes what the hold kept queued, so the latch must
+        // already be up when it runs — the other order writes pre-restore
+        // values into restored stores
+        expect(order).toEqual(['finishRestore', 'endRestore']);
+    });
+
+    test('the debounce hold is released even when a store write throws', async () => {
+        seedDb();
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+
+        storage.putAll.mockImplementation(() => Promise.reject(new Error('disk full')));
+
+        await expect(importEverything(payload)).rejects.toThrow('disk full');
+        // Leaving the hold up would queue every debounced write in the script
+        // until the unload flush
+        expect(storage.endRestore).toHaveBeenCalled();
     });
 });
