@@ -350,6 +350,18 @@ describe('MarketAPI getPriceTimestamp', () => {
         marketAPI.pricePatchs = {};
         expect(marketAPI.getPriceTimestamp('/items/x', 0)).toBeNull();
     });
+
+    test('with no snapshot at all, a patch getPrice would serve carries its own time', async () => {
+        // getPrice() serves the patch whenever it is fresher than the (absent)
+        // snapshot; reporting that price's age as unknown while quoting it was
+        // the one disagreement between the two.
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = null;
+        marketAPI.pricePatchs = { '/items/x:0': { a: 1, b: 2, timestamp: 2000 } };
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 1, bid: 2 });
+        expect(marketAPI.getPriceTimestamp('/items/x', 0)).toBe(2000);
+    });
 });
 
 describe('MarketAPI patch observation times', () => {

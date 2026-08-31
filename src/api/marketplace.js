@@ -343,7 +343,12 @@ class MarketAPI {
      */
     getPriceTimestamp(itemHrid, enhancementLevel = 0) {
         const patch = this.pricePatchs[`${itemHrid}:${enhancementLevel}`];
-        if (patch && this.lastFetchTimestamp && patch.timestamp > this.lastFetchTimestamp) {
+        // The same freshness test getPrice() applies, with a null snapshot
+        // reading as 0: when the snapshot never loaded (a failed first fetch)
+        // getPrice() serves the patch, so the patch's time is this price's
+        // time — answering null there reported a price in active use as one
+        // of unknown age.
+        if (patch && patch.timestamp > (this.lastFetchTimestamp || 0)) {
             return patch.timestamp;
         }
         return this.lastFetchTimestamp || null;
