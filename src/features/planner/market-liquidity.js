@@ -245,9 +245,12 @@ export async function applySellLimit(rate) {
         ],
     };
 
-    // Only a method that already had a ceiling gets a smaller one
-    const ceiling = Number(rate.sustainable?.gold);
-    if (rate.sustainable && !rate.sustainable.unbounded && Number.isFinite(ceiling)) {
+    // Only a method that already had a ceiling gets a smaller one. An absent
+    // ceiling (null/undefined) is unbounded and stays that way — Number(null)
+    // is 0, and clamping to min(0, …) would zero a cap the rate never had.
+    const rawCeiling = rate.sustainable?.gold;
+    const ceiling = Number(rawCeiling);
+    if (rate.sustainable && !rate.sustainable.unbounded && rawCeiling != null && Number.isFinite(ceiling)) {
         const realizable = Math.min(ceiling, goldPerHour * LIQUIDITY_HORIZON_DAYS * 24);
         const goldPerUnit = Number(rate.sustainable.goldPerUnit) || 0;
         limited.sustainable = {

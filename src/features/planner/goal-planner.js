@@ -357,6 +357,10 @@ function goldRates(context) {
 export function sustainableGold(rate) {
     const cap = rate?.sustainable;
     if (!cap || cap.unbounded) return Number.POSITIVE_INFINITY;
+    // An absent ceiling is unbounded, not zero: Number(null) is 0, and a cap of
+    // 0 removes the rate from the ranking entirely — the opposite of "nothing
+    // limits it". A *measured* 0 (an empty stack) still comes through as 0.
+    if (cap.gold === null || cap.gold === undefined) return Number.POSITIVE_INFINITY;
     const gold = Number(cap.gold);
     return Number.isFinite(gold) ? Math.max(0, gold) : Number.POSITIVE_INFINITY;
 }

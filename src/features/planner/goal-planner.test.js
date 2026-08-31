@@ -223,6 +223,15 @@ describe('a rate is only a rate while its inputs last', () => {
         expect(sustainableGold(crossbow)).toBe(851_200_000);
     });
 
+    test('an absent ceiling is unbounded, not zero — Number(null) must not zero the rate', () => {
+        // A cap that says nothing about gold limits nothing. Coercing null to 0
+        // silently removed the rate from the ranking altogether.
+        expect(sustainableGold({ sustainable: { gold: null, unitLabel: 'Ore' } })).toBe(Infinity);
+        expect(sustainableGold({ sustainable: { unitLabel: 'Ore' } })).toBe(Infinity);
+        // A measured empty stack is a real zero and stays one
+        expect(sustainableGold({ sustainable: { gold: 0 } })).toBe(0);
+    });
+
     test('the windfall is taken once, and the rest is earned honestly', () => {
         const { legs, hours, covered } = planEarnings([milking, crossbow], 903_400_000);
 

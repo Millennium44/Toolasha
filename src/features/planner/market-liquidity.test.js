@@ -210,6 +210,18 @@ describe('bounding a rate by its slowest-selling output', () => {
         expect(bounded.limits[0].itemHrid).toBe('/items/slow');
     });
 
+    test('a ceiling of null is absent, not zero — the throttle must not invent one', async () => {
+        history.rows['/items/tailoring_essence'] = tradedAt(1 / 7);
+        const rate = { ...charm(), sustainable: { ...charm().sustainable, gold: null } };
+
+        const bounded = await applySellLimit(rate);
+
+        // The pace is still throttled, but Number(null) is 0 and min(0, …)
+        // used to stamp a hard ceiling of nothing onto a cap that had none
+        expect(bounded.goldPerHour).toBeLessThan(1_000_000);
+        expect(bounded.sustainable.gold).toBeNull();
+    });
+
     test('an uncapped method stays uncapped — a throttle is not a ceiling', async () => {
         history.rows['/items/milk'] = tradedAt(24);
         const bounded = await applySellLimit({
