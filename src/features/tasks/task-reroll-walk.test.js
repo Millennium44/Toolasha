@@ -854,6 +854,30 @@ describe('one press, one game click', () => {
         expect(walk.state).toBe('waiting');
     });
 
+    test('a card React remounted mid-payment neither bills the press nor offers Pay again', async () => {
+        // A remount redraws the same quest slot into a fresh node with the
+        // server having said nothing. Tracking the payment by node identity
+        // read the old node's absence as the answer: the press was billed as a
+        // reroll that never landed, and the Pay button was offered again at its
+        // stale pre-payment price.
+        const q = quest(MILKING);
+        board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: q }]);
+
+        await walk.start();
+        walk.advance();
+        expect(clicks).toEqual(['Milking - Cow:10,000']);
+
+        // Same task, same quest, same prices — brand-new nodes
+        board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: q }]);
+        vi.advanceTimersByTime(10000);
+
+        expect(walk.tally.goldSpent).toBe(0);
+        expect(walk.tally.rerolled).toBe(0);
+        // The unanswered press goes to the player; it is never re-pressed
+        expect(clicks).toEqual([]);
+        expect(chipText()).toContain("Press #1's highlighted 10.0K🪙");
+    });
+
     test('once the reroll does land the walk carries on from the task that arrived', async () => {
         const list = board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
 

@@ -740,8 +740,11 @@ class TaskRerollWalk {
         // lockdown (or the game refusing a click) leaves the card exactly as it
         // was. Either the card is gone, or its task or a reroll count moved.
         if (this.pendingBill && this.paidFor) {
-            const paidCard = this.paidFor.card;
-            const now = document.contains(paidCard) ? this._rerollFingerprint(paidCard) : null;
+            const paidCard = this._paidCard();
+            // Re-pointed: React remounts card nodes freely, and the fingerprint
+            // below must be read off the node that carries the slot now
+            if (paidCard) this.paidFor.card = paidCard;
+            const now = paidCard ? this._rerollFingerprint(paidCard) : null;
             const answered =
                 !now ||
                 now.signature !== this.paidFor.signature ||
@@ -966,6 +969,27 @@ class TaskRerollWalk {
     }
 
     /**
+     * The card the in-flight payment was made on, found again when React has
+     * remounted its node.
+     *
+     * A remount redraws the same quest slot into a fresh element without the
+     * server having said anything, and a payment tracked by node identity read
+     * the old node's absence as the answer — billing a press the game may have
+     * refused, and offering the Pay button again at its stale pre-payment
+     * price. The quest id is the slot's own and survives the remount.
+     *
+     * @returns {HTMLElement|null} The card, or null when the slot itself is gone
+     * @private
+     */
+    _paidCard() {
+        const paid = this.paidFor;
+        if (!paid) return null;
+        if (document.contains(paid.card)) return paid.card;
+        if (paid.questId === null || paid.questId === undefined) return null;
+        return this._cards().find((card) => questForTaskCard(card)?.id === paid.questId) || null;
+    }
+
+    /**
      * Is the payment already made on this card still unanswered?
      *
      * @param {HTMLElement} card - The card the plan is about to offer a payment on
@@ -974,7 +998,11 @@ class TaskRerollWalk {
      */
     _rerollStillInFlight(card) {
         const paid = this.paidFor;
-        if (!paid || paid.card !== card) return false;
+        if (!paid) return false;
+        const samePlace =
+            paid.card === card ||
+            (paid.questId !== null && paid.questId !== undefined && questForTaskCard(card)?.id === paid.questId);
+        if (!samePlace) return false;
         const now = this._rerollFingerprint(card);
         return now.signature === paid.signature && now.coin === paid.coin && now.cowbell === paid.cowbell;
     }
@@ -1239,7 +1267,11 @@ class TaskRerollWalk {
             // lockdown ate, or a build that refuses the walk's press, leaves
             // the card unmoved and a press that moved nothing cost nothing
             this.pendingBill = { currency: planned.currency, cost: Number(planned.cost) };
-            this.paidFor = { card: planned.card, ...this._rerollFingerprint(planned.card) };
+            this.paidFor = {
+                card: planned.card,
+                questId: questForTaskCard(planned.card)?.id ?? null,
+                ...this._rerollFingerprint(planned.card),
+            };
             this.paidWaits = 0;
         }
         if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;
@@ -1269,7 +1301,11 @@ class TaskRerollWalk {
             // refused click) leaves the card unmoved, and a press that moved
             // nothing cost nothing
             this.pendingBill = { currency: planned.currency, cost: Number(planned.cost) };
-            this.paidFor = { card: planned.card, ...this._rerollFingerprint(planned.card) };
+            this.paidFor = {
+                card: planned.card,
+                questId: questForTaskCard(planned.card)?.id ?? null,
+                ...this._rerollFingerprint(planned.card),
+            };
             this.paidWaits = 0;
         }
         if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;
