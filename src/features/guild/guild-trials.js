@@ -3814,8 +3814,11 @@ class GuildTrials {
         // clears — so a guild that levels its Hall mid-trial has a card that is a
         // *mixture* of two bonuses and divides cleanly by neither. Confirmed by
         // the guild it happened to; see `MAX_MID_TRIAL_UPGRADE_LEVELS`
+        // Prose for the Trials tab only, like the token gold valuation above:
+        // the figures it explains stay on both tabs, but three sentences of
+        // ladder provenance are reading matter, not a glance at a running trial
         const upgraded = trials.find((trial) => trial.points?.interpretation === 'mid-trial-upgrade');
-        if (upgraded?.points?.quoted) {
+        if (!inProgress && upgraded?.points?.quoted) {
             const { tier, statedPoints } = upgraded.points.quoted;
             const derived = upgraded.points.ladder;
             rows.push(

@@ -5327,6 +5327,22 @@ describe('the payout block, audited', () => {
         expect(document.body.innerHTML).toContain('banked across a Builder’s Hall upgrade');
     });
 
+    test('the mid-trial-upgrade explainer is Trials-tab prose; In Progress keeps only the figures', () => {
+        // The same MilkMaxxing card, seen from the In Progress tab: the payout
+        // numbers are wanted at a glance there, the three sentences of ladder
+        // provenance are not
+        game.buildingLevels = { '/guild_buildings/builders_hall': 6, '/guild_buildings/treasury': 5 };
+        const root = buildTrialsTab({ name: 'Milking', level: 190, points: 1222, signups: '12/106' });
+        root.className = 'GuildPanel_inProgressTab__a';
+        fire();
+
+        expect(text()).not.toContain('consistent with a Builder’s Hall upgrade during the trial');
+        expect(text()).not.toContain('used exactly as stated');
+        // The figures the prose explained are untouched
+        expect(text()).toContain('Guild Points banked1,222');
+        expect(text()).toContain('Tokens, every eligible member605');
+    });
+
     test('with no building level anywhere, the bonus is read back out of the cards', () => {
         // No Buildings tab has been opened and no guild traffic has carried a
         // level, but three cards state Guild Points for tiers whose base the
