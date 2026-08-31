@@ -304,6 +304,7 @@ beforeEach(() => {
     // The shield popup's module is the live source; left uninitialised it says
     // nothing and the walk falls back to its own stored copy above
     taskRerollProtection.protection.isInitialized = false;
+    taskRerollProtection.protection.protectedHrids = new Set();
     taskRerollProtection.protection.capProtectionEnabled = true;
     taskRerollProtection.protection.coinThreshold = 320000;
     taskRerollProtection.protection.cowbellThreshold = 32;
@@ -1374,6 +1375,44 @@ describe('the cap the walk obeys is the cap as it stands now', () => {
 
         expect(chipText()).toContain('Reroll #1');
         expect(chipText()).not.toContain('Close the menu');
+    });
+});
+
+describe('the protected list the walk obeys is the list as it stands now', () => {
+    test('a task protected in the shield popup mid-walk is skipped on the next plan', async () => {
+        // The walk's own copy of the list is read from storage once at
+        // start-up; the popup writes its module's set the instant a row is
+        // clicked. A walk reading only its copy rerolled tasks the player had
+        // protected minutes earlier.
+        taskRerollProtection.protection.isInitialized = true;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+        await walk.start();
+        expect(chipText()).toContain('Reroll #1');
+
+        taskRerollProtection.protection.protectedHrids.add(MILKING);
+        walk._replan();
+
+        expect(chipText()).toContain('✓ Done — 1 kept');
+        expect(clicks).toEqual([]);
+    });
+
+    test('a task protected between the plan and the press is not pressed', async () => {
+        // The walk's press goes through the game's React handler and dispatches
+        // no DOM event, so the shield's capture listener cannot intercept it —
+        // the press itself has to look at the list again.
+        taskRerollProtection.protection.isInitialized = true;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+        await walk.start();
+        expect(chipText()).toContain('Reroll #1');
+
+        // Protected after the step was armed; no board mutation wakes a replan
+        taskRerollProtection.protection.protectedHrids.add(MILKING);
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+        expect(chipText()).toContain('✓ Done — 1 kept');
     });
 });
 

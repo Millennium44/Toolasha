@@ -508,6 +508,23 @@ class TaskRerollWalk {
     }
 
     /**
+     * The protected-task list as it stands *now*.
+     *
+     * The shield popup writes its own module's set the instant a row is
+     * clicked, before the storage round-trip resolves; the walk's copy is read
+     * from storage once at start-up and stays as the fallback for a session
+     * where reroll protection is switched off (whose popup cannot edit the
+     * list anyway).
+     *
+     * @returns {Set<string>}
+     * @private
+     */
+    _liveProtectedHrids() {
+        const instance = taskRerollProtection?.protection;
+        return instance?.isInitialized ? instance.protectedHrids : this.protectedHrids;
+    }
+
+    /**
      * The prices the plan blocks at right now.
      *
      * With the cap block switched off nothing is blocked on price — the walk
@@ -787,7 +804,7 @@ class TaskRerollWalk {
 
             const verdict = verdictForCard({
                 completed: this._isCompleted(card),
-                isProtected: Boolean(hrid && this.protectedHrids.has(hrid)),
+                isProtected: Boolean(hrid && this._liveProtectedHrids().has(hrid)),
                 choice,
                 trashAtLimit,
             });
@@ -1185,6 +1202,20 @@ class TaskRerollWalk {
         if (!button || !planned.card.contains(button)) {
             this._replan();
             return false;
+        }
+
+        // Protection is re-checked at the press, not only at the plan: the
+        // walk's click goes through the game's React handler and dispatches no
+        // DOM event, so the shield's capture listener never sees it. A task
+        // protected between the plan and the press is caught here or nowhere.
+        // Back is exempt — closing a menu destroys nothing.
+        if (planned.kind !== 'back') {
+            const quest = questForTaskCard(planned.card);
+            const hrid = quest?.actionHrid || quest?.monsterHrid || '';
+            if (hrid && this._liveProtectedHrids().has(hrid)) {
+                this._replan();
+                return false;
+            }
         }
 
         // A manual step is the player's press, not the walk's: the game refuses
