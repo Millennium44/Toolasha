@@ -106,6 +106,49 @@ describe('registration', () => {
         registerSyncMerge({ store: 's', key: 'named', merge: (a) => a });
         expect(listSyncMerges()).toEqual([{ store: 's', label: 'named' }]);
     });
+
+    test('a bundle copy making the identical claim is deduped, and either remover clears it', () => {
+        // The packaged build loads some modules in more than one bundle; each
+        // copy registers the same claim with the same label
+        registerSyncMerge({ store: 's', base: 'rec', merge: () => 'first', label: 'records' });
+        const offSecond = registerSyncMerge({ store: 's', base: 'rec', merge: () => 'second', label: 'records' });
+
+        expect(listSyncMerges()).toEqual([{ store: 's', label: 'records' }]);
+        expect(mergeForKey('s', 'rec_char-A').merge()).toBe('first');
+
+        // The second caller's remover clears the shared registration
+        offSecond();
+        expect(mergeForKey('s', 'rec_char-A')).toBeNull();
+    });
+
+    test('a different claim sharing a defaulted label is not a duplicate', () => {
+        // `base: 'rec'` and `prefix: 'rec'` both default their label to 'rec',
+        // but they are different claims: only the prefix one covers 'recXYZ'
+        registerSyncMerge({ store: 's', base: 'rec', merge: () => 'scoped' });
+        registerSyncMerge({ store: 's', prefix: 'rec', merge: () => 'raw' });
+
+        expect(listSyncMerges()).toHaveLength(2);
+        // 'recXYZ' is only the prefix claim's; dropping it as a duplicate
+        // would silently fall back to a whole-key write
+        expect(mergeForKey('s', 'recXYZ')?.merge()).toBe('raw');
+    });
+
+    test('two match-only claims on one store both defaulting to label=store both survive', () => {
+        registerSyncMerge({ store: 's', match: (k) => k === 'alpha', merge: () => 'alpha merge' });
+        registerSyncMerge({ store: 's', match: (k) => k === 'beta', merge: () => 'beta merge' });
+
+        expect(mergeForKey('s', 'alpha')?.merge()).toBe('alpha merge');
+        expect(mergeForKey('s', 'beta')?.merge()).toBe('beta merge');
+    });
+
+    test("a non-duplicate's remover removes its own claim, not the earlier one", () => {
+        registerSyncMerge({ store: 's', base: 'rec', merge: () => 'scoped' });
+        const offPrefix = registerSyncMerge({ store: 's', prefix: 'rec', merge: () => 'raw' });
+
+        offPrefix();
+        expect(mergeForKey('s', 'recXYZ')).toBeNull();
+        expect(mergeForKey('s', 'rec_char-A')?.merge()).toBe('scoped');
+    });
 });
 
 describe('scopedKeyMatcher', () => {

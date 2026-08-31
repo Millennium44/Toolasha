@@ -96,20 +96,38 @@ export function registerSyncMerge({ store, key, base, prefix, match, merge, labe
         throw new Error('[SyncMergeRegistry] registerSyncMerge needs one of key, base, prefix or match');
     }
 
+    // What was claimed, not just what it was called. Two claims can share a
+    // label without being the same claim — `base: 'rec'` and `prefix: 'rec'`
+    // both default their label to 'rec', and two match-only claims on one
+    // store both default to the store name — and deduping on the label alone
+    // would silently drop the second one (and hand its caller a remover that
+    // deletes the *first*). The signature mirrors the matcher priority above;
+    // a bare `match` is identified by its source, which is identical across
+    // bundle copies of one module and different for genuinely different code.
+    let claim;
+    if (typeof match === 'function') claim = `match:${String(match)}`;
+    else if (typeof key === 'string') claim = `key:${key}`;
+    else if (typeof base === 'string') claim = `base:${base}`;
+    else claim = `prefix:${prefix}`;
+
     const registration = {
         store,
         match: matcher,
         merge,
         label: label || key || base || prefix || store,
+        claim,
     };
 
     // The packaged build carries some registering modules in more than one
     // bundle, and each copy makes this exact call with the same claim. This
     // registry is shared, so the second registration is a duplicate: first-wins
     // makes it harmless, but every matching key would trip the overlap report
-    // below and drown it in false positives. Same store + same label is the
-    // same claim — hand back a remover for the copy that already stands.
-    const existing = registrations.find((r) => r.store === registration.store && r.label === registration.label);
+    // below and drown it in false positives. Same store + same label + same
+    // claim is the same registration — hand back a remover for the copy that
+    // already stands.
+    const existing = registrations.find(
+        (r) => r.store === registration.store && r.label === registration.label && r.claim === registration.claim
+    );
     if (existing) {
         return () => {
             const index = registrations.indexOf(existing);
