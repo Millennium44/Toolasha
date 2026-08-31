@@ -10,6 +10,7 @@
  * stored map under memory so nothing typed in is lost either way.
  */
 
+import marketAPI from '../../api/marketplace.js';
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 
 const STORAGE_KEY = 'Toolasha_customPriceOverrides';
@@ -111,6 +112,12 @@ async function persist() {
     // A merge-save may have folded stored entries in; keep the cache as the
     // record now holds it so reads and the next write agree
     overridesCache = record.get();
+    // An override changes what getItemPrice answers, so the surfaces that
+    // redraw on price updates (listing displays, value rows, production-cost
+    // caches) must hear about the edit the same way they hear about a price
+    // patch — coalesced, and even when the write itself could not land, since
+    // the in-memory map they read from has already changed.
+    marketAPI.scheduleNotify();
     return written;
 }
 

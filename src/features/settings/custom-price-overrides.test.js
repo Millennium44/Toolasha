@@ -42,7 +42,10 @@ const storageMock = vi.hoisted(() => {
     };
 });
 
+const marketAPIMock = vi.hoisted(() => ({ scheduleNotify: vi.fn() }));
+
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../../api/marketplace.js', () => ({ default: marketAPIMock }));
 vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => 'char1', getCurrentCharacterGameMode: () => 'standard' },
 }));
@@ -69,6 +72,7 @@ const seed = (map) => storageMock.storeFor('settings').set(KEY, map);
 beforeEach(() => {
     storageMock.reset();
     resetCustomPriceOverridesCache();
+    marketAPIMock.scheduleNotify.mockClear();
 });
 
 describe('custom price overrides', () => {
@@ -135,6 +139,20 @@ describe('custom price overrides', () => {
         await initCustomPriceOverrides();
         await removeCustomPriceOverride('/items/milk', 0);
         expect(stored()).toEqual({ '/items/cheese:0': { buy: 5 } });
+    });
+
+    test('an edit tells the price listeners, so consumers redraw without waiting for a market event', async () => {
+        await setCustomPriceOverride('/items/milk', 0, 10, null);
+        expect(marketAPIMock.scheduleNotify).toHaveBeenCalledTimes(1);
+        await removeCustomPriceOverride('/items/milk', 0);
+        expect(marketAPIMock.scheduleNotify).toHaveBeenCalledTimes(2);
+    });
+
+    test('an edit whose write could not land still notifies — the in-memory map already changed', async () => {
+        storageMock.unavailable = true;
+        await setCustomPriceOverride('/items/cheese', 0, 5, null);
+        expect(getCustomPrice('/items/cheese', 0, 'buy')).toBe(5);
+        expect(marketAPIMock.scheduleNotify).toHaveBeenCalledTimes(1);
     });
 
     test('once storage is back, the next write lands', async () => {
