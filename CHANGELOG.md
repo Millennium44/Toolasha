@@ -1994,6 +1994,35 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.35.1](https://github.com/Millennium44/Toolasha/compare/v3.35.0...v3.35.1) (2026-08-31)
+
+### Bug Fixes
+
+- debounce timers firing mid-restore hold their write instead of racing it ([4b08d46](https://github.com/Millennium44/Toolasha/commit/4b08d465cb103e3ad4c3c0e31b3dc4fe60164f60))
+- own-use line stays silent for multi-output recipes and unpriced materials ([eaae98d](https://github.com/Millennium44/Toolasha/commit/eaae98de5caa1ecb0f3acc835f6435e2cd61e41e))
+- planner's enhancing training rate names its own bench instead of riding coin's tradability ([bfcdac7](https://github.com/Millennium44/Toolasha/commit/bfcdac7cb1bc31129780aef160cf48ea19c83d67))
+- pro rates and 'Reset to pro defaults' describe one kit again ([32b836d](https://github.com/Millennium44/Toolasha/commit/32b836dc08ff0924f0d91c0bc2935a42786b0b65))
+- pro-defaults reset keeps the panel honest, and gear rows can match their default again ([5eb79bc](https://github.com/Millennium44/Toolasha/commit/5eb79bc0403838ec284d569f233aa8a09fac2cfb))
+- profile score's worker tasks carry the live blessed tea chance ([c971ff9](https://github.com/Millennium44/Toolasha/commit/c971ff96723d83dea5c91c137d6b16763d95d41b))
+- reroll walk bills a discard only once the card is gone, with the manual fallback pays have ([433d202](https://github.com/Millennium44/Toolasha/commit/433d2024d380ef970dc16432a683719fd5207f82))
+- reroll walk obeys the protected list live, and re-checks it at the press ([a361c92](https://github.com/Millennium44/Toolasha/commit/a361c92565fe8ca82fc818318c0f0f2dcc19c9ce))
+- reroll walk tracks an in-flight payment by quest slot, not by card node ([b338b7b](https://github.com/Millennium44/Toolasha/commit/b338b7bf9efd8100d48fe07618ec43df452a447e))
+- reroll walk's live cap read reaches the shield module's instance, not its export wrapper ([10ef5fd](https://github.com/Millennium44/Toolasha/commit/10ef5fdee92f5f0fe0581d602172ed323b173a9a))
+- sync-merge dedupe compares the claim, not just the label ([2aec43a](https://github.com/Millennium44/Toolasha/commit/2aec43aecbf46a8d544a4f2d9977625129e9ec5f))
+- the pop-out chat carries its own select-option contrast rule ([7c24f1b](https://github.com/Millennium44/Toolasha/commit/7c24f1b9ed024ab1c0155437091da6aadb0f44fc))
+- trial stats no longer claim an unwatched fight as measured, or leak across weeks ([be3f53b](https://github.com/Millennium44/Toolasha/commit/be3f53bb7d618242591d8fcca2f8036fab9b9a54))
+
+### Documentation
+
+- changelog for audit round 23's five fixes and the guard-suite widening ([d2e1f92](https://github.com/Millennium44/Toolasha/commit/d2e1f92b5266159d073bae5f752f9118dacd432a))
+- changelog for audit round 24's nine fixes ([bcd36fc](https://github.com/Millennium44/Toolasha/commit/bcd36fc32963c56dd55865bfae4054d5a1612b58))
+- savings card comment stops claiming Pro rates reach it ([99eb4c7](https://github.com/Millennium44/Toolasha/commit/99eb4c7aae2be7321033cd548e09ab0cdd1c94e0))
+
+### Tests
+
+- bridge guard also covers namespace-published singletons ([fe97a51](https://github.com/Millennium44/Toolasha/commit/fe97a512c6c11184245f9216ca1be69619620959))
+- prettier pass on the settings-ui reset tests ([70a4d11](https://github.com/Millennium44/Toolasha/commit/70a4d11c5e6cdc12747ce4c53fd17feaa873a0b8))
+
 ## [3.35.0](https://github.com/Millennium44/Toolasha/compare/v3.34.0...v3.35.0) (2026-08-31)
 
 ### Features
