@@ -6,7 +6,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { computeBestCraftingPlan } from './crafting-plan-calculator.js';
+import { computeBestCraftingPlan, collectMissingMaterials } from './crafting-plan-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import { findActionInput, onDetailPanel } from '../../utils/action-panel-helper.js';
@@ -422,28 +422,36 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
             const inputField = findActionInput(panel);
             const numActions = parseInt(inputField?.value) || 1;
             const outputCount = output.count || 1;
+            // The rendered plan is for ONE unit of output, so its buy counts are
+            // already a whole action's worth, rounded up. Re-plan for the real
+            // total instead of scaling those counts — multiplying them by
+            // numActions × outputCount overcounted a multi-output recipe by its
+            // outputCount, and compounded the per-unit round-ups below it.
             const totalQty = numActions * outputCount;
-            const inventory = dataManager.getInventory() || [];
-
-            const missingMaterials = [];
-            for (const [itemHrid, item] of buyItems) {
-                const needed = Math.ceil(item.quantity * totalQty);
-                const have = inventory
-                    .filter((i) => i.itemHrid === itemHrid && !i.enhancementLevel)
-                    .reduce((sum, i) => sum + (i.count || 0), 0);
-                const missing = Math.max(0, needed - have);
-                const itemDetails = dataManager.getItemDetails(itemHrid);
-                const isTradeable = itemDetails?.isTradable !== false;
-                if (missing > 0 && isTradeable) {
-                    missingMaterials.push({
-                        itemHrid,
-                        itemName: item.itemName,
-                        missing,
-                        required: needed,
-                        isTradeable,
-                    });
-                }
+            let fullPlan;
+            try {
+                fullPlan = computeBestCraftingPlan(
+                    output.itemHrid,
+                    totalQty,
+                    mode,
+                    new Set(),
+                    new Map(),
+                    0,
+                    undefined,
+                    buyIntermediates,
+                    taskMode,
+                    timeCostEnabled ? goldPerHour : 0,
+                    noProcessing
+                );
+            } catch (e) {
+                console.error('[CraftingPlan] computeBestCraftingPlan error:', e);
+                return;
             }
+
+            const inventory = dataManager.getInventory() || [];
+            const missingMaterials = collectMissingMaterials(fullPlan, inventory).filter(
+                (material) => material.isTradeable
+            );
 
             if (missingMaterials.length === 0) return;
 
