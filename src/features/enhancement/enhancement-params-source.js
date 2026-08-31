@@ -177,6 +177,27 @@ export function describeEnhancementSource(params) {
 }
 
 /**
+ * One plain-text line naming the bench, for a surface with no chip.
+ *
+ * The XP/hour ranking's status line is the caller that matters: it used to call
+ * `describeParamsSource` directly, which names a manual bench and nothing else —
+ * so with Pro rates on, the whole table quoted the professional's bench in
+ * silence while the item route beside it wore a "Pro" chip. Pro is the one
+ * state that must be unmissable (reading a professional's cost as your own is
+ * the mistake the chip exists to prevent), so it is named here too; the
+ * player's own detected bench stays unremarked, as before.
+ *
+ * @param {Object} params - Result of enhancementParamsFor()
+ * @returns {string|null} Note to print beside the numbers, or null for the player's own bench
+ */
+export function benchNote(params) {
+    const source = describeEnhancementSource(params);
+    if (source.kind === 'pro') return 'pro rates — a top-end enhancer’s bench, not yours';
+    if (source.kind === 'manual') return source.detail || 'manual params: as set in the enhancement simulator';
+    return null;
+}
+
+/**
  * Escape a value for use inside a double-quoted HTML attribute.
  * @param {*} value - Value to escape
  * @returns {string} Escaped text

@@ -53,6 +53,7 @@ const {
     toggleProRates,
     enhancementParamsFor,
     describeEnhancementSource,
+    benchNote,
     buildSourceChipHTML,
 } = await import('./enhancement-params-source.js');
 
@@ -185,6 +186,26 @@ describe('the source indicator', () => {
         expect(source.kind).toBe('manual');
         expect(source.label).toBe('Manual');
         expect(source.detail).toContain('Enhancing level');
+    });
+});
+
+describe('the chipless bench note', () => {
+    // The XP/hour ranking has no chip; its status line is where the bench is
+    // named, and Pro is the state that must never pass in silence there
+    test('names pro rates, which describeParamsSource never did', () => {
+        expect(benchNote({ paramsSource: 'pro' })).toContain('pro rates');
+        expect(benchNote({ paramsSource: 'pro' })).toContain('not yours');
+    });
+
+    test('still names a manual bench, fields and all', () => {
+        expect(benchNote({ paramsSource: 'manual', manualOverrides: ['Enhancing level'] })).toContain(
+            'Enhancing level'
+        );
+        expect(benchNote({ paramsSource: 'manual', manualOverrides: [] })).toContain('manual params');
+    });
+
+    test('stays silent for the player’s own detected bench', () => {
+        expect(benchNote({ paramsSource: 'auto', manualOverrides: [] })).toBeNull();
     });
 });
 

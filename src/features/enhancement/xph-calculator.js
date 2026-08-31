@@ -8,7 +8,7 @@ import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { calculateSuccessXP, calculateFailureXP } from './enhancement-xp.js';
-import { describeParamsSource } from '../../utils/enhancement-config.js';
+import { benchNote, enhancementParamsFor } from './enhancement-params-source.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -19,7 +19,6 @@ import {
     calculateEnhancementPath,
     buildEnhancementTooltipHTML,
 } from './tooltip-enhancement.js';
-import { enhancementParamsFor } from './enhancement-params-source.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
@@ -476,8 +475,11 @@ class XPHCalculator {
 
         const withCost = results.filter((r) => r.costPerHour !== null).length;
         const partialNote = results.some((r) => r.costPartial) ? ' * = partial price data.' : '';
-        // Say so when the ranking was built on hand-entered stats instead of this character's
-        const sourceNote = describeParamsSource(params);
+        // Say so when the ranking was built on somebody else's bench — hand-entered
+        // stats or the Pro kit — instead of this character's. Pro especially: the
+        // item route beside this table wears a chip, and a ranking quoting the
+        // professional's bench in silence next to it read as this character's own.
+        const sourceNote = benchNote(params);
         status.textContent =
             `${results.length} items · ${withCost} with cost data.${partialNote}` +
             (sourceNote ? ` · ${sourceNote}` : '');
