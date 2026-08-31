@@ -1780,6 +1780,89 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(report.storedStats.hedgehog.measured).toBe(null);
     });
 
+    test('a lone group on a client that measured nothing is a roster, not a measurement', () => {
+        // The cycle's other combat fight ends first, before this client has
+        // watched a single tick — no encounter, no spectator stream, no own
+        // fight. "There is only one group it can be" is true of the *trial*,
+        // but claiming it as this client's own would store `measured: {}` — a
+        // watched-and-split-nobody claim the accuracy card draws as the
+        // attribution failing — for a fight nobody here saw.
+        game.guildMembers = { 910011: 'Tank' };
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 910011,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 750_000,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 2_000,
+                },
+            ],
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported).toBe(null);
+        expect(report.storedStats.badger.reported.Tank.damage).toBe(750_000);
+        expect(report.storedStats.badger.measured).toBe(null);
+    });
+
+    test('a lone group still becomes the session’s own once something was actually measured', () => {
+        game.guildMembers = { 910011: 'Tank' };
+        // The own-battle gate armed once this session, even though the
+        // encounter itself was never identified — the lone group is the trial
+        // that measurement belongs to
+        guildTrialDamage.fights = 1;
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 910011,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 750_000,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 2_000,
+                },
+            ],
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported).not.toBe(null);
+        expect(report.storedStats.badger.measured).not.toBe(null);
+    });
+
+    test('a re-statement with nothing watched beside it does not erase the stored measurement', async () => {
+        // First: the watched fight's stats land while the session still knows
+        // its encounter, so the pair is stored with a measurement claim
+        game.guildMembers = { 910011: 'Tank' };
+        guildTrialDamage.encounter = 'badger';
+        const stats = {
+            guildTrialStatList: [
+                {
+                    characterId: 910011,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 750_000,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 2_000,
+                },
+            ],
+        };
+        game.wsHandlers.guild_trial_stats_updated(stats);
+        await vi.advanceTimersByTimeAsync(0);
+        const storedMeasured = game.storedStats.trials.badger.measured;
+        expect(storedMeasured).not.toBe(null);
+
+        // Then the same trial's rows arrive again after a reset — a websocket
+        // re-delivery, or a later message re-stating an earlier fight. The
+        // session no longer knows the encounter and measured nothing, so the
+        // new entry carries `measured: null` — which must not overwrite the
+        // week's only measurement for that fight on disk.
+        guildTrialDamage.reset();
+        game.wsHandlers.guild_trial_stats_updated(stats);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(game.storedStats.trials.badger.reported.Tank.damage).toBe(750_000);
+        expect(game.storedStats.trials.badger.measured).toEqual(storedMeasured);
+    });
+
     test('a new trial does not inherit the previous one’s reported totals or boss sheets', () => {
         // First trial: Badger, tiers 1 and 2, plus its game-reported totals
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);

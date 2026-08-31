@@ -352,12 +352,31 @@ class GuildTrialRecorder {
                 at,
             });
 
+            // The stored stats deliberately outlive the weekly reset in memory
+            // (the cycle archive is their last reader) — but a stale week's
+            // roster folded into this cycle would settle attendance off last
+            // week's fight, so only entries stamped inside this session's own
+            // trial week count here.
+            const week = Number.isFinite(this.session?.weekStart) ? this.session.weekStart : trialWeekStart(at);
             for (const [encounter, entry] of Object.entries(breakdown?.storedStats || {})) {
                 const names = Object.keys(entry?.reported || {});
                 if (!encounter || !names.length) continue;
+                if (!Number.isFinite(entry?.at) || trialWeekStart(entry.at) !== week) continue;
                 // The server's figures beat a sign-up sheet for the trial they
-                // cover: they are what the trial actually credited
-                participation[encounter] = { names, source: 'stats', at };
+                // cover: they are what the trial actually credited. They are
+                // joined by display name, though, and an id nothing could name
+                // any more — a member renamed or gone from the guild by the
+                // time the stats landed — is silently missing from them. A
+                // signed-up member took part either way (the game auto-places
+                // them), so the sheet's names are kept alongside rather than
+                // replaced: dropping them would settle a credited member as
+                // absent.
+                const signed = participation[encounter]?.names || [];
+                const combined = [...names];
+                for (const name of signed) {
+                    if (!combined.some((held) => held.toLowerCase() === name.toLowerCase())) combined.push(name);
+                }
+                participation[encounter] = { names: combined, source: 'stats', at };
             }
 
             return Object.keys(participation).length ? participation : null;

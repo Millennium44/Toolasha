@@ -21,6 +21,10 @@ const game = vi.hoisted(() => ({
     traceId: null,
     /** Every call the recorder made into the attendance ledger */
     accrued: [],
+    /** The guild's member metas, as the XP tracker would list them */
+    members: [],
+    /** The sign-up week the tracker would answer with */
+    currentWeek: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -66,10 +70,22 @@ vi.mock('./guild-trial-trace.js', () => ({
 vi.mock('./guild-trial-abilities.js', () => ({
     default: { exportSnapshot: () => game.abilitiesSnapshot },
 }));
-vi.mock('./guild-trial-ledger.js', () => ({
+// The ledger's fold is replaced with a spy; `signupParticipation` stays real,
+// because what `_participation` does with the sheet is exactly what the
+// participation tests below are about
+vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     recordFinishedTrial: async (options) => {
         game.accrued.push(options);
         return null;
+    },
+}));
+// The whole-guild roster `_participation` reads sign-ups off; a fixture list,
+// so a test decides who signed up for what this week
+vi.mock('./guild-xp-tracker.js', () => ({
+    guildXPTracker: {
+        getMemberList: () => game.members,
+        getCurrentWeekStartAt: () => game.currentWeek,
     },
 }));
 
@@ -141,6 +157,8 @@ beforeEach(() => {
     game.traceId = null;
     game.abilitiesSnapshot = null;
     game.accrued = [];
+    game.members = [];
+    game.currentWeek = null;
     guildTrialRecorder.session = null;
     guildTrialRecorder.lastActivityAt = 0;
     guildTrialRecorder.phase = null;
@@ -491,6 +509,65 @@ describe('stopping', () => {
 
     test('stopping what was never started is not an error', () => {
         expect(guildTrialRecorder.stop('button')).toBeNull();
+    });
+});
+
+describe('the participation the ledger is handed', () => {
+    /** A guild member meta with this week's combat sign-up on it */
+    const signup = (name) => ({
+        name,
+        signedUpCombatTrialHrid: '/guild_combat/badger',
+        signupWeekStartAt: 'this-week',
+    });
+
+    test('the server roster joins the sign-up sheet instead of replacing it', () => {
+        game.currentWeek = 'this-week';
+        game.members = [signup('Tank'), signup('Ghost')];
+        // The server credited Tank and a member whose id the sheet no longer
+        // carries (renamed, or gone from the guild by the time the stats
+        // landed) — and never mentioned Ghost, whose id nothing could name
+        game.breakdown = breakdown({
+            storedStats: {
+                badger: {
+                    reported: {
+                        Tank: { damage: 1, healing: 0, taken: 0 },
+                        Renamed: { damage: 2, healing: 0, taken: 0 },
+                    },
+                    measured: null,
+                    at: now,
+                },
+            },
+        });
+
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+
+        const roster = game.accrued[0].participation.badger;
+        expect(roster.source).toBe('stats');
+        // The credited names, and the signed-up member the stats could not
+        // name — a signed-up member took part either way, and dropping them
+        // would settle a credited member as absent
+        expect(roster.names.sort()).toEqual(['Ghost', 'Renamed', 'Tank']);
+    });
+
+    test('a stale week’s stored roster does not become this cycle’s participation', () => {
+        // `storedStats` outlives the weekly reset in memory on purpose — the
+        // cycle archive is its last reader — but a page left open across the
+        // rollover must not file last week's fight as this cycle's evidence
+        game.breakdown = breakdown({
+            storedStats: {
+                badger: {
+                    reported: { Tank: { damage: 1, healing: 0, taken: 0 } },
+                    measured: null,
+                    at: now - 14 * 86_400_000,
+                },
+            },
+        });
+
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+
+        expect(game.accrued[0].participation).toBe(null);
     });
 });
 

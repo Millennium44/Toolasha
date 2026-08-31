@@ -1142,12 +1142,19 @@ class GuildTrialDamage {
             // just ended, and there is only one it can be — while two groups
             // name neither: guessing would pin the measurement to the wrong
             // fight, which is the mistake the old per-encounter filter existed
-            // to prevent.
+            // to prevent. The lone-group inference additionally requires that
+            // something was actually measured: a stats message landing on a
+            // client that watched nothing (the cycle's other fight ending
+            // first, or a re-delivery after a reset) must file a roster with
+            // `measured: null`, not an empty measurement — `measured: {}` is
+            // the claim "watched, and split nobody out", which the accuracy
+            // card would then draw as the attribution failing.
+            const measuredAnything = this.spectator.ticks > 0 || this.fights > 0;
             const own = this.encounter
                 ? grouped[this.encounter]
                     ? this.encounter
                     : null
-                : encounters.length === 1
+                : encounters.length === 1 && measuredAnything
                   ? encounters[0]
                   : null;
             if (own) {
@@ -1208,7 +1215,19 @@ class GuildTrialDamage {
         try {
             const blob = await loadTrialStats();
             blob.trials = blob.trials && typeof blob.trials === 'object' ? blob.trials : {};
-            for (const [encounter, entry] of Object.entries(entries)) blob.trials[encounter] = entry;
+            for (const [encounter, entry] of Object.entries(entries)) {
+                // A trial re-stated with nothing watched beside it — a
+                // re-delivery after a reset, or a later message carrying an
+                // earlier fight's rows again — must not erase the measurement
+                // this week already stored for the same encounter. The loaded
+                // blob is week-guarded, so a held pair is this week's by
+                // construction; its fresher roster still lands.
+                const held = blob.trials[encounter];
+                blob.trials[encounter] =
+                    entry.measured === null && held?.measured !== null && held?.measured !== undefined
+                        ? { ...entry, measured: held.measured }
+                        : entry;
+            }
             this.storedStats = blob.trials;
             await saveTrialStats(blob);
         } catch (error) {
