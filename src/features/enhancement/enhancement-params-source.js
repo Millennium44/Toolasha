@@ -68,9 +68,10 @@ export function toggleProRates() {
  *   player's bench. This is the tooltip's original rule (a tooltip on somebody's listing is
  *   quoting a piece they could buy; an untradable one is not a listing at all) and, once its
  *   premise is stated in terms of the item rather than the slot, the advisor's too.
- * - `'always'` — the surface only ever asks about pieces that cannot be bought finished, so the
- *   question is settled before it is asked. The savings card's enhancing path fires exactly
- *   when the target level has no ask at any price.
+ * - `'always'` — the question is settled before it is asked. The savings card's enhancing path
+ *   fires exactly when the target level has no ask at any price, so nobody else could supply
+ *   the piece; the planner's training-rate measure asks how fast THIS character's skill climbs,
+ *   which nobody else's bench can answer at any price.
  * - `'never'` — the surface has no single item to ask about.
  *
  * Pro rates sit above all of it. One toggle, one meaning: when it is on, every surface here is
@@ -91,6 +92,13 @@ const SURFACE_RULES = {
     'lab:ranking': { ownBench: 'never' },
     /** Goal planner cost estimates. */
     planner: { ownBench: 'unbuyable' },
+    /**
+     * Goal planner enhancing-XP training rate: how fast this character levels enhancing. The
+     * XP lands on this character whatever the market thinks, so no other bench is honest.
+     * It used to pass `/items/coin` as a stand-in item, which left the answer riding on
+     * whether coin's game data carries `isTradable` — a flag on an item nobody is enhancing.
+     */
+    'planner:training': { ownBench: 'always' },
 };
 
 /**

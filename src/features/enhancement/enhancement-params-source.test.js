@@ -116,6 +116,16 @@ describe('the active source', () => {
     test('a surface with no item to ask about takes the simulator’s answer', () => {
         expect(enhancementParamsFor('lab:ranking').kit).toBe('yours');
     });
+
+    test('the planner’s training rate is the character’s own bench, whatever the toggle says', () => {
+        // It rates how fast THIS character's skill climbs; a pro's bench cannot earn them XP.
+        // It used to be asked as the item-rule surface with '/items/coin' as a stand-in, which
+        // left the bench choice riding on coin's `isTradable` flag.
+        expect(enhancementParamsFor('planner:training').kit).toBe('detected');
+
+        setProRatesActive(true);
+        expect(enhancementParamsFor('planner:training').kit).toBe('detected');
+    });
 });
 
 describe('persistence', () => {

@@ -423,7 +423,11 @@ function measureEnhancingRates() {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.itemDetailMap) return [];
 
-    const params = enhancementParamsFor('planner', '/items/coin');
+    // The character's own bench, always: this rates how fast THEIR skill climbs. The item-rule
+    // surface ('planner') is for costing a piece, where the market can matter; it used to be
+    // asked here with '/items/coin' as a stand-in, leaving the bench choice riding on whether
+    // coin's game data happens to carry `isTradable`.
+    const params = enhancementParamsFor('planner:training');
     const held = (dataManager.getInventory() || [])
         .filter((item) => item.itemLocationHrid === INVENTORY_LOCATION && item.count > 0 && !item.enhancementLevel)
         .map((item) => ({ hrid: item.itemHrid, details: gameData.itemDetailMap[item.itemHrid] }))
