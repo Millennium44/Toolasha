@@ -59,7 +59,14 @@
  * singletons, for the reason `calibration-badge.js` gives about the calibration
  * recorder: a tracker is a websocket-bound singleton owned by its own bundle,
  * and importing it from a rendering module would bundle a second, uninitialised
- * copy. The store wrapper is a storage reader and nothing else.
+ * copy. The store wrapper is a storage reader and nothing else — and it is
+ * built fresh for every read, the way `gold-sources-collect.js` reads the same
+ * keys. A chunked-history store serves its first read from memory forever
+ * after, which is right for the tracker that does the writing and wrong for a
+ * reader whose storage is written by somebody else: a long-lived reader here
+ * would never see a session recorded after its first read, and the
+ * {@link CACHE_TTL_MS} refresh would re-serve the page-load snapshot until a
+ * reload.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -81,11 +88,11 @@ export const MEASURED_COLORS = Object.freeze({
     pending: '#6b7280',
 });
 
-/** The three trackers' session stores, keyed by kind — read-only use */
-const STORES = {
-    transmute: createAlchemySessionStore('transmuteSessions', 'AlchemyMeasuredRate'),
-    decompose: createAlchemySessionStore('decomposeSessions', 'AlchemyMeasuredRate'),
-    coinify: createAlchemySessionStore('coinifySessions', 'AlchemyMeasuredRate'),
+/** The three trackers' legacy base keys, keyed by kind */
+const STORE_KEYS = {
+    transmute: 'transmuteSessions',
+    decompose: 'decomposeSessions',
+    coinify: 'coinifySessions',
 };
 
 /** One character's sessions, summarised lazily, kept until they age out */
@@ -200,7 +207,11 @@ export async function loadMeasuredRates() {
         await Promise.all(
             ALCHEMY_KINDS.map(async (kind) => {
                 try {
-                    sessionsByKind[kind] = (await STORES[kind].load(scope)) || [];
+                    // A fresh store per read: a kept instance would serve its
+                    // first read forever, and the trackers write through their
+                    // own instances, so this one's memory would never move
+                    const store = createAlchemySessionStore(STORE_KEYS[kind], 'AlchemyMeasuredRate');
+                    sessionsByKind[kind] = (await store.load(scope)) || [];
                 } catch (error) {
                     // One unreadable tracker must not blank the other two
                     console.error(`[AlchemyMeasuredRate] Could not read ${kind} sessions:`, error);

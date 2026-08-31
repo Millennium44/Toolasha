@@ -20,9 +20,22 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('./alchemy-session-store.js', () => ({
     NO_CHARACTER: 'default',
-    createAlchemySessionStore: (baseKey) => ({
-        load: async () => state.sessions[baseKey.replace('Sessions', '')] || [],
-    }),
+    // Like the real chunked-history store, an instance serves its first read
+    // from memory forever after — which is what makes holding one across reads
+    // a staleness bug, and what the fresh-store-per-read tests below rely on
+    createAlchemySessionStore: (baseKey) => {
+        let loaded = false;
+        let entries = [];
+        return {
+            load: async () => {
+                if (!loaded) {
+                    entries = [...(state.sessions[baseKey.replace('Sessions', '')] || [])];
+                    loaded = true;
+                }
+                return [...entries];
+            },
+        };
+    },
 }));
 
 /**
@@ -157,6 +170,18 @@ describe('measuredComboFor', () => {
         await loadMeasuredRates();
 
         expect(measuredComboFor('coinify', { inputItemHrid: '/items/sword' })).toBeNull();
+    });
+
+    test('a session recorded after the first read is in the next computation', async () => {
+        state.sessions.transmute = [session()];
+        await loadMeasuredRates();
+        expect(measuredComboFor('transmute', { inputItemHrid: '/items/sword' }).attempts).toBe(100);
+
+        // The tracker records another run mid-session; nothing invalidates the
+        // cache, the TTL refresh just asks again — and must see the new session
+        state.sessions.transmute = [...state.sessions.transmute, session({ startTime: 2 })];
+        await loadMeasuredRates();
+        expect(measuredComboFor('transmute', { inputItemHrid: '/items/sword' }).attempts).toBe(200);
     });
 
     test('unstamped sessions are excluded, so an unstamped item shows nothing', async () => {
