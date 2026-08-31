@@ -679,6 +679,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            itemTooltip_ownUseCompare: {
+                id: 'itemTooltip_ownUseCompare',
+                label: 'Show make-vs-buy line for own use (no sales tax)',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a line to the profit section comparing buying the item at the current ask against crafting it for your own consumption — materials and teas at your efficiency, with no sales tax on either side, since a dungeon key or a meal you use is never sold. The profit figures above it stay seller-priced.',
+            },
             itemTooltip_detailedProfit: {
                 id: 'itemTooltip_detailedProfit',
                 label: 'Show detailed materials breakdown in profit display',

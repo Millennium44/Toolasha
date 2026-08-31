@@ -110,6 +110,63 @@ function levelAtExperience(table, experience) {
 /**
  * TooltipPrices class handles injecting market prices into item tooltips
  */
+/**
+ * Buying versus making, for an item that will be consumed rather than sold.
+ *
+ * Every profit figure in this module is a seller's: the crafted output is
+ * priced at market minus the sales tax, because the question is "should I
+ * craft this to sell". A dungeon key or a meal is never sold, so that tax
+ * belongs on neither side here — buying costs the ask you actually pay, and
+ * making costs the materials and teas your own bench burns per finished item
+ * (efficiency and Gourmet included, which is why the per-hour figures are the
+ * ones divided: teas amortize over the extra actions efficiency repeats).
+ *
+ * @param {Object|null} profitData - From `profitCalculator.calculateProfit`
+ * @returns {{make: number, buy: number|null, saves: number|null,
+ *   cheaper: 'make'|'buy'|'even'|null}|null} The comparison, or null when the
+ *   make side cannot be priced
+ */
+export function ownUseCompare(profitData) {
+    const madePerHour = Number(profitData?.totalItemsPerHour);
+    const spendPerHour = Number(profitData?.materialCostPerHour) + Number(profitData?.totalTeaCostPerHour || 0);
+    if (!Number.isFinite(madePerHour) || madePerHour <= 0 || !Number.isFinite(spendPerHour) || spendPerHour < 0) {
+        return null;
+    }
+    const make = spendPerHour / madePerHour;
+
+    const buy = Number(profitData?.itemPrice?.ask);
+    if (!(buy > 0)) return { make, buy: null, saves: null, cheaper: null };
+
+    const saves = Math.abs(buy - make);
+    // Within a percent of the ask the two are the same decision, and calling a
+    // winner on that margin is precision the inputs do not have
+    const cheaper = saves < buy * 0.01 ? 'even' : make < buy ? 'make' : 'buy';
+    return { make, buy, saves, cheaper };
+}
+
+/**
+ * The own-use line's text and color, ready for the tooltip.
+ * @param {Object|null} comparison - From {@link ownUseCompare}
+ * @returns {{text: string, color: string}|null} Null when there is nothing to say
+ */
+export function ownUseLine(comparison) {
+    if (!comparison) return null;
+    const make = formatKMB(comparison.make);
+    if (comparison.buy === null) {
+        return { text: `Own use: make ≈${make} — no asks to buy against`, color: config.COLOR_TOOLTIP_INFO };
+    }
+    const buy = formatKMB(comparison.buy);
+    if (comparison.cheaper === 'even') {
+        return { text: `Own use: make ≈${make} vs buy ${buy} — about even`, color: config.COLOR_TOOLTIP_INFO };
+    }
+    const pct = ((comparison.saves / comparison.buy) * 100).toFixed(0);
+    const text =
+        comparison.cheaper === 'make'
+            ? `Own use: make ≈${make} vs buy ${buy} — making saves ${formatKMB(comparison.saves)} (${pct}%)`
+            : `Own use: make ≈${make} vs buy ${buy} — buying saves ${formatKMB(comparison.saves)} (${pct}%)`;
+    return { text, color: config.COLOR_TOOLTIP_PROFIT };
+}
+
 class TooltipPrices {
     constructor() {
         this.unregisterObserver = null;
@@ -773,6 +830,16 @@ class TooltipPrices {
                 html += this.buildDetailedProfitDisplay(profitData, false);
             } else {
                 html += `<div style="font-weight: bold; color: ${config.COLOR_TOOLTIP_INFO};">Cost: ${formatKMB(profitData.totalMaterialCost)}/item</div>`;
+            }
+        }
+
+        if (config.getSetting('itemTooltip_ownUseCompare')) {
+            const line = ownUseLine(ownUseCompare(profitData));
+            if (line) {
+                const title =
+                    'Buying at the current ask vs crafting at your own bench cost per item (materials + teas, ' +
+                    'your efficiency and Gourmet). No sales tax on either side — a consumed item is never sold.';
+                html += `<div style="color: ${line.color}; margin-top: 4px;" title="${title}">${line.text}</div>`;
             }
         }
 

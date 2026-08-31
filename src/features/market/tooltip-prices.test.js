@@ -84,7 +84,7 @@ vi.mock('../../utils/dom.js', () => ({
     },
 }));
 
-const { default: tooltipPrices } = await import('./tooltip-prices.js');
+const { default: tooltipPrices, ownUseCompare, ownUseLine } = await import('./tooltip-prices.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
 
 /**
@@ -187,5 +187,58 @@ describe('routing by classification', () => {
     test('disable unsubscribes', () => {
         tooltipPrices.disable();
         expect(tooltipObserver.subscribers.has('TooltipPrices')).toBe(false);
+    });
+});
+
+describe('own-use make vs buy', () => {
+    /** Per-hour figures for a bench making 100 items from 4M of spend */
+    const data = (overrides = {}) => ({
+        totalItemsPerHour: 100,
+        materialCostPerHour: 3_500_000,
+        totalTeaCostPerHour: 500_000,
+        itemPrice: { ask: 50_000, bid: 45_000 },
+        ...overrides,
+    });
+
+    test('the make side is the whole hourly spend over the whole hourly output', () => {
+        const compared = ownUseCompare(data());
+        // (3.5M + 500K) / 100 — teas amortized over efficiency's extra items
+        expect(compared.make).toBe(40_000);
+        expect(compared.buy).toBe(50_000);
+        expect(compared.cheaper).toBe('make');
+        expect(compared.saves).toBe(10_000);
+    });
+
+    test('neither side carries a sales tax', () => {
+        // Buying costs exactly the ask; making costs exactly the bench spend.
+        // A consumed item is never sold, so no side is taxed.
+        const compared = ownUseCompare(data({ itemPrice: { ask: 40_000, bid: 1 } }));
+        expect(compared.cheaper).toBe('even');
+    });
+
+    test('within a percent of the ask no winner is called', () => {
+        const compared = ownUseCompare(data({ itemPrice: { ask: 40_300, bid: 0 } }));
+        expect(compared.cheaper).toBe('even');
+    });
+
+    test('an item with no asks still prices the making of it', () => {
+        const compared = ownUseCompare(data({ itemPrice: { ask: 0, bid: 9_999 } }));
+        expect(compared.make).toBe(40_000);
+        expect(compared.buy).toBeNull();
+        expect(ownUseLine(compared).text).toContain('no asks to buy against');
+    });
+
+    test('a make side that cannot be priced says nothing at all', () => {
+        expect(ownUseCompare(data({ totalItemsPerHour: 0 }))).toBeNull();
+        expect(ownUseCompare(null)).toBeNull();
+        expect(ownUseLine(null)).toBeNull();
+    });
+
+    test('the line names the cheaper side and what it saves', () => {
+        expect(ownUseLine(ownUseCompare(data())).text).toBe(
+            'Own use: make ≈40.0K vs buy 50.0K — making saves 10.0K (20%)'
+        );
+        const buyingWins = ownUseCompare(data({ materialCostPerHour: 7_500_000 }));
+        expect(ownUseLine(buyingWins).text).toContain('buying saves 30.0K (60%)');
     });
 });

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Make-vs-buy for things you consume, right in the tooltip
+
+Craftable items' tooltips gain an "Own use" line comparing buying at the current ask against crafting at your own bench cost per item (materials and teas at your real efficiency and Gourmet) — with no sales tax on either side, because a dungeon key or a meal you use is never sold. It names the cheaper side and what it saves, calls it about even inside a percent, and prices the making alone when there are no asks. Toggleable next to the profit settings; the dungeon ROI board already carried this comparison for keys, and now every craftable consumable's tooltip does too.
+
 ### One task card's reroll prices can no longer condemn its twin
 
 The reroll walk's chooser-price memory was keyed by task name and goal, and two cards can carry the same task — one card's over-cap chooser then stood in for the other's untouched 10K reroll, and the walk offered to trash tasks it had never priced. The memory (and the manual-press fallback marker) now key on the quest slot's own id and reroll counts, which nothing shares and every reroll retires.
