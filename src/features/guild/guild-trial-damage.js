@@ -1091,6 +1091,18 @@ class GuildTrialDamage {
      * live measurement so the two can be compared, and so the comparison
      * survives a refresh until the week's ladder rolls over.
      *
+     * Grouped per trial rather than filtered to the spectated one: the rows are
+     * keyed by `trialHrid` and one message can carry several trials' totals, so
+     * the combat fight nobody here watched still yields the names the server
+     * credited — a participation roster the attendance ledger reads
+     * (`guild-trial-recorder.js` `_participation`), where a watched-fight-only
+     * record could prove presence for exactly one fight. Only the spectated
+     * encounter's rows become `reported`, the pair the comparison card draws —
+     * an unwatched trial's entry carries `measured: null`, a roster with no
+     * measurement claim beside it, and the accuracy summaries skip it. Skilling
+     * rows are still dropped: they carry no damage, healing or damage taken,
+     * and filing one as a combat comparison would draw a card full of zeros.
+     *
      * Not gated on `active` or stream liveness: it arrives a few seconds after
      * `end_guild_battle`, once the fight is already over and the stream quiet.
      *
@@ -1101,41 +1113,59 @@ class GuildTrialDamage {
             const list = Array.isArray(data?.guildTrialStatList) ? data.guildTrialStatList : [];
             if (!list.length) return;
 
-            const reported = {};
+            const grouped = {};
             for (const entry of list) {
                 const trial = trialFromHrid(entry?.trialHrid);
-                // Combat only — a skilling trial's members carry no damage,
-                // healing or damage taken — and only this week's own encounter,
-                // so a second trial's numbers cannot land on this one's card.
                 if (!trial || trial.kind !== 'combat') continue;
-                if (this.encounter && trial.key !== this.encounter) continue;
                 const characterId = Number(entry?.characterId);
                 let name = this.characterNames[characterId];
                 if (!name) {
                     // This trial's own messages never happened to name this id —
-                    // a mid-tier join, or a roster message that carried the id
-                    // with no name beside it. The guild already knows it.
+                    // a mid-tier join, another trial's member, or a roster
+                    // message that carried the id with no name beside it. The
+                    // guild already knows it.
                     name = this._knownName(characterId);
                     if (name) this.characterNames[characterId] = name;
                 }
                 if (!name) continue;
+                const reported = grouped[trial.key] || (grouped[trial.key] = {});
                 const row = reported[name] || (reported[name] = { damage: 0, healing: 0, taken: 0 });
                 row.damage += Number(entry?.damageDealt) || 0;
                 row.healing += Number(entry?.healingDone) || 0;
                 row.taken += Number(entry?.premitigatedDamageTaken) || 0;
             }
-            if (!Object.keys(reported).length) return;
+            const encounters = Object.keys(grouped);
+            if (!encounters.length) return;
 
-            this.reported = reported;
-            this.reportedMeasured = this._measuredByName();
-            const encounter = this.encounter;
-            if (encounter) {
-                this.storedStats = {
-                    ...this.storedStats,
-                    [encounter]: { reported, measured: this.reportedMeasured, at: Date.now() },
+            // Which group is the trial this client watched. With no encounter
+            // identified, a lone group is it — the message arrived, so a trial
+            // just ended, and there is only one it can be — while two groups
+            // name neither: guessing would pin the measurement to the wrong
+            // fight, which is the mistake the old per-encounter filter existed
+            // to prevent.
+            const own = this.encounter
+                ? grouped[this.encounter]
+                    ? this.encounter
+                    : null
+                : encounters.length === 1
+                  ? encounters[0]
+                  : null;
+            if (own) {
+                this.reported = grouped[own];
+                this.reportedMeasured = this._measuredByName();
+            }
+
+            const at = Date.now();
+            const entries = {};
+            for (const [key, reported] of Object.entries(grouped)) {
+                entries[key] = {
+                    reported,
+                    measured: key === own ? this.reportedMeasured || {} : null,
+                    at,
                 };
             }
-            this._persistStats(encounter).catch(() => {});
+            this.storedStats = { ...this.storedStats, ...entries };
+            this._persistStats(entries).catch(() => {});
         } catch (error) {
             console.error('[GuildTrialDamage] Reading the trial stats failed:', error);
         }
@@ -1168,17 +1198,17 @@ class GuildTrialDamage {
     }
 
     /**
-     * Merge this trial's comparison into the week's saved blob and write it back.
-     * Load-merge-save rather than saving the in-memory copy, so a reset between
-     * trials cannot drop an earlier trial's entry from disk.
-     * @param {string} encounter - The encounter the comparison is for
+     * Merge the message's per-encounter comparisons into the week's saved blob
+     * and write it back. Load-merge-save rather than saving the in-memory copy,
+     * so a reset between trials cannot drop an earlier trial's entry from disk.
+     * @param {Object} entries - Encounter → `{reported, measured, at}`
      */
-    async _persistStats(encounter) {
-        if (!encounter || !this.reported) return;
+    async _persistStats(entries) {
+        if (!entries || !Object.keys(entries).length) return;
         try {
             const blob = await loadTrialStats();
             blob.trials = blob.trials && typeof blob.trials === 'object' ? blob.trials : {};
-            blob.trials[encounter] = { reported: this.reported, measured: this.reportedMeasured || {}, at: Date.now() };
+            for (const [encounter, entry] of Object.entries(entries)) blob.trials[encounter] = entry;
             this.storedStats = blob.trials;
             await saveTrialStats(blob);
         } catch (error) {

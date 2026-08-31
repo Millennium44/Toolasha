@@ -1691,6 +1691,95 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(guildTrialDamage.breakdown().reported).toBe(null);
     });
 
+    test('the other combat trial’s stats are stored as a roster, without a measurement claim', async () => {
+        // The other boss fight's members were never in any message this client
+        // watched — the guild roster is what names their ids
+        game.guildMembers = { 910011: 'Tank', 910012: 'Cleric' };
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        guildTrialDamage.encounter = 'hedgehog';
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 900001,
+                    trialHrid: '/guild_combat/hedgehog',
+                    damageDealt: 500_000,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 0,
+                },
+                {
+                    characterId: 910011,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 750_000,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 2_000,
+                },
+                {
+                    characterId: 910012,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 0,
+                    healingDone: 90_000,
+                    premitigatedDamageTaken: 0,
+                },
+                // A skilling line still files nowhere
+                {
+                    characterId: 910011,
+                    trialHrid: '/guild_skilling/crafting',
+                    damageDealt: 999,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 0,
+                },
+            ],
+        });
+
+        const report = guildTrialDamage.breakdown();
+        // The comparison card's own pair is still only the spectated encounter's
+        expect(Object.keys(report.reported)).toEqual(['Player01']);
+        // …but the unwatched fight's roster is stored beside it, which is what
+        // the attendance ledger reads as participation evidence
+        expect(Object.keys(report.storedStats).sort()).toEqual(['badger', 'hedgehog']);
+        expect(Object.keys(report.storedStats.badger.reported).sort()).toEqual(['Cleric', 'Tank']);
+        expect(report.storedStats.badger.reported.Tank).toEqual({ damage: 750_000, healing: 0, taken: 2_000 });
+        // A roster, not a measurement: nothing was watched there, and the
+        // entry says so rather than claiming a measurement that found nobody
+        expect(report.storedStats.badger.measured).toBe(null);
+        expect(report.storedStats.hedgehog.measured).not.toBe(null);
+        // …and both reach disk, so a refresh (and the recorder) read them back.
+        // The write is fire-and-forget, so let its microtasks settle first
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(game.storedStats.trials).sort()).toEqual(['badger', 'hedgehog']);
+        expect(game.storedStats.trials.badger.measured).toBe(null);
+    });
+
+    test('with no spectated encounter, two trials’ stats claim no card but both are stored', () => {
+        game.guildMembers = { 910011: 'Tank', 910012: 'Cleric' };
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 910011,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 1,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 0,
+                },
+                {
+                    characterId: 910012,
+                    trialHrid: '/guild_combat/hedgehog',
+                    damageDealt: 2,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 0,
+                },
+            ],
+        });
+
+        const report = guildTrialDamage.breakdown();
+        // Guessing which of the two was watched would pin the measurement to
+        // the wrong fight, so neither becomes the session's own pair
+        expect(report.reported).toBe(null);
+        expect(Object.keys(report.storedStats).sort()).toEqual(['badger', 'hedgehog']);
+        expect(report.storedStats.badger.measured).toBe(null);
+        expect(report.storedStats.hedgehog.measured).toBe(null);
+    });
+
     test('a new trial does not inherit the previous one’s reported totals or boss sheets', () => {
         // First trial: Badger, tiers 1 and 2, plus its game-reported totals
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);

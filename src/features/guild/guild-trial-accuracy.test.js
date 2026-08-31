@@ -235,6 +235,19 @@ describe('summarizeWeekAccuracy', () => {
         expect(summarizeWeekAccuracy(null)).toEqual([]);
         expect(summarizeWeekAccuracy({ broken: null })).toEqual([]);
     });
+
+    test('a trial whose stats arrived unwatched is a roster, not an accuracy entry', () => {
+        // `measured: null` is the damage module's marker for a trial nobody
+        // watched — server totals with no measurement beside them. A "0 of N
+        // matched" line for it would read as the attribution failing, so it is
+        // skipped; an empty `{}` still summarizes, because a watched trial
+        // that measured nobody is exactly that claim.
+        const week = summarizeWeekAccuracy({
+            badger: { reported: { Ada: { damage: 1 } }, measured: null, at: 5 },
+            hedgehog: { reported: { Ada: { damage: 1 } }, measured: {}, at: 6 },
+        });
+        expect(week.map((entry) => entry.encounter)).toEqual(['hedgehog']);
+    });
 });
 
 describe('compactAccuracySummary', () => {

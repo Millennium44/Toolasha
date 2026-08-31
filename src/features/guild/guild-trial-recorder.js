@@ -332,9 +332,9 @@ class GuildTrialRecorder {
      *   tracker keeps current for the whole guild. Signing up *is* taking part:
      *   the game auto-places a signed-up character into their trial's fight.
      * - **The server's own end-of-trial stats**, per encounter, as
-     *   `guild-trial-damage.js` stored them. It keeps only the spectated
-     *   encounter today, but the message's rows are keyed per trial, so a
-     *   reading that ever covers more lands here without further change.
+     *   `guild-trial-damage.js` stored them — every combat trial the message
+     *   carried, the fights nobody here watched included, so the other boss
+     *   fight's roster lands here off the wire alone.
      *
      * Missing sources are simply absent rather than empty: an empty roster
      * would claim the trial had nobody in it, which is the accusation this

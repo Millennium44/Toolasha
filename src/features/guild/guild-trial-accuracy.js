@@ -249,14 +249,22 @@ export function summarizeTrialAccuracy({ reported, measured, threshold = OUTLIER
  */
 export function summarizeWeekAccuracy(trials, { threshold = OUTLIER_THRESHOLD_PCT } = {}) {
     if (!trials || typeof trials !== 'object') return [];
-    return Object.entries(trials)
-        .filter(([, pair]) => pair && typeof pair === 'object')
-        .map(([encounter, pair]) => ({
-            encounter,
-            at: Number.isFinite(pair.at) ? pair.at : null,
-            accuracy: summarizeTrialAccuracy({ reported: pair.reported, measured: pair.measured, threshold }),
-        }))
-        .sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+    return (
+        Object.entries(trials)
+            .filter(([, pair]) => pair && typeof pair === 'object')
+            // `measured: null` is a trial whose server totals arrived with nothing
+            // watched beside them — a roster for the attendance ledger, not a
+            // measurement, and a "0 of N matched" line for it would read as the
+            // attribution failing. An empty `{}` stays: a watched trial that
+            // measured nobody is exactly that claim.
+            .filter(([, pair]) => pair.measured !== null && pair.measured !== undefined)
+            .map(([encounter, pair]) => ({
+                encounter,
+                at: Number.isFinite(pair.at) ? pair.at : null,
+                accuracy: summarizeTrialAccuracy({ reported: pair.reported, measured: pair.measured, threshold }),
+            }))
+            .sort((a, b) => (a.at ?? 0) - (b.at ?? 0))
+    );
 }
 
 /**
