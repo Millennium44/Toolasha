@@ -1130,12 +1130,12 @@ function ownsBase(itemHrid) {
 export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
     if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
 
-    // The character's own gear, skill and teas. This path only fires when the finished
-    // piece has no ask at any price, so there is nobody else whose bench could produce
-    // it — costing it at a bench typed into the simulator quotes a run that cannot be
-    // made. Pro rates still win: asking what a top-end enhancer would spend is a question
-    // with an answer even when nobody can sell you the result. One resolver decides both;
-    // the card's own rule is the `savings` entry in `SURFACE_RULES`.
+    // The character's own gear, skill and teas — always. This path only fires when the
+    // finished piece has no ask at any price, so there is nobody else whose bench could
+    // produce it: a bench typed into the simulator, or the Pro toggle's, quotes a run
+    // that cannot be made on this player's behalf. The card's rule is the `savings`
+    // entry in `SURFACE_RULES` (`ownBench: 'always'`), and the parity suite pins that
+    // it ignores the manual panel and the Pro toggle alike.
     const params = enhancementParamsFor('savings', itemHrid);
     const details = dataManager.getItemDetails?.(itemHrid);
     const calculate = enhancementCalculator()?.calculateEnhancement;
