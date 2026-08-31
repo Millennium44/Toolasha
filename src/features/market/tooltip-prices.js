@@ -159,12 +159,17 @@ export function ownUseLine(comparison) {
     if (comparison.cheaper === 'even') {
         return { text: `Own use: make ≈${make} vs buy ${buy} — about even`, color: config.COLOR_TOOLTIP_INFO };
     }
-    const pct = ((comparison.saves / comparison.buy) * 100).toFixed(0);
-    const text =
-        comparison.cheaper === 'make'
-            ? `Own use: make ≈${make} vs buy ${buy} — making saves ${formatKMB(comparison.saves)} (${pct}%)`
-            : `Own use: make ≈${make} vs buy ${buy} — buying saves ${formatKMB(comparison.saves)} (${pct}%)`;
-    return { text, color: config.COLOR_TOOLTIP_PROFIT };
+    // Only the percent: the absolute saving is one of the two numbers already
+    // on the line, restated. Measured against the side avoided — the price the
+    // cheaper choice spares you — so "making saves 99%" means "for 1% of the
+    // ask".
+    const avoided = comparison.cheaper === 'make' ? comparison.buy : comparison.make;
+    const pct = ((comparison.saves / avoided) * 100).toFixed(0);
+    const verb = comparison.cheaper === 'make' ? 'making' : 'buying';
+    return {
+        text: `Own use: make ≈${make} vs buy ${buy} — ${verb} saves ${pct}%`,
+        color: config.COLOR_TOOLTIP_PROFIT,
+    };
 }
 
 class TooltipPrices {

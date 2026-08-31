@@ -234,11 +234,11 @@ describe('own-use make vs buy', () => {
         expect(ownUseLine(null)).toBeNull();
     });
 
-    test('the line names the cheaper side and what it saves', () => {
-        expect(ownUseLine(ownUseCompare(data())).text).toBe(
-            'Own use: make ≈40.0K vs buy 50.0K — making saves 10.0K (20%)'
-        );
+    test('the line names the cheaper side and the percent it saves of the price avoided', () => {
+        expect(ownUseLine(ownUseCompare(data())).text).toBe('Own use: make ≈40.0K vs buy 50.0K — making saves 20%');
+        // Buying at 50K instead of making at 80K avoids the 80K — the saving
+        // is measured against what the cheaper choice spares you
         const buyingWins = ownUseCompare(data({ materialCostPerHour: 7_500_000 }));
-        expect(ownUseLine(buyingWins).text).toContain('buying saves 30.0K (60%)');
+        expect(ownUseLine(buyingWins).text).toContain('buying saves 38%');
     });
 });
