@@ -1453,6 +1453,14 @@ class SettingsUI {
      * @param {HTMLElement} [button] - The pressed button, for a moment's feedback
      */
     async resetEnhanceSimToProDefaults(button) {
+        // While auto-detect is on, the on-screen inputs show *detected* values,
+        // not the stored bench — writing defaults into them would make the
+        // display lie about what was detected. The stored values still reset;
+        // the saved-values map (what toggling auto-detect off restores to the
+        // screen) is updated instead, so the panel shows the defaults then.
+        const autoDetectOn = this.config.settingsMap['enhanceSim_autoDetect']?.isTrue ?? false;
+        const savedValues = autoDetectOn ? this._enhanceSimSavedValues : null;
+
         for (const group of Object.values(settingsGroups)) {
             for (const [settingId, def] of Object.entries(group.settings)) {
                 if (def.disabledBy !== 'enhanceSim_autoDetect') continue;
@@ -1468,6 +1476,23 @@ class SettingsUI {
                     this.config.setSettingValue(settingId, value);
                 }
 
+                if (savedValues) {
+                    // Same shapes populateEnhanceSimFromDetection saves and
+                    // restoreEnhanceSimSavedValues reads back
+                    if (def.type === 'enhanceGear') {
+                        savedValues[settingId] = {
+                            enabled: value?.enabled ?? true,
+                            tier: value?.tier || '',
+                            level: String(value?.level ?? 0),
+                        };
+                    } else if (def.type === 'checkbox') {
+                        savedValues[settingId] = !!value;
+                    } else {
+                        savedValues[settingId] = String(value);
+                    }
+                    continue;
+                }
+
                 // Mirror the stored value into whatever inputs are on screen
                 if (def.type === 'enhanceGear') {
                     const enabledEl = document.getElementById(`${settingId}_enabled`);
@@ -1476,6 +1501,19 @@ class SettingsUI {
                     if (enabledEl) enabledEl.checked = value?.enabled ?? true;
                     if (tierEl && value?.tier) tierEl.value = value.tier;
                     if (levelEl) levelEl.value = String(value?.level ?? 0);
+
+                    // The sub-inputs' enabled/disabled look follows the checkbox
+                    // (inverted for checkedMeansAuto rows) — a hand edit keeps it
+                    // current in handleSettingChange, and a reset that flips the
+                    // checkbox without it leaves tier/level greyed and unclickable
+                    const enabled = value?.enabled ?? true;
+                    const inputsDisabled = def.checkedMeansAuto ? enabled : !enabled;
+                    const style = inputsDisabled ? 'opacity:0.4; pointer-events:none;' : '';
+                    for (const el of [tierEl, levelEl]) {
+                        if (!el) continue;
+                        el.style.cssText =
+                            el.style.cssText.replace(/opacity:[^;]*;?\s*pointer-events:[^;]*;?/g, '') + style;
+                    }
                 } else {
                     const input = document.getElementById(settingId);
                     if (input) {
@@ -1955,11 +1993,13 @@ class SettingsUI {
             const tierEl = document.getElementById(`${settingId}_tier`);
             const levelEl = document.getElementById(`${settingId}_level`);
 
-            const value = {
-                enabled: enabledEl?.checked ?? true,
-                tier: tierEl?.value || '',
-                level: parseInt(levelEl?.value, 10) || 0,
-            };
+            // Built in the schema's key order, and `tier` only when the row has
+            // a tier select: the "Changed only" filter compares this object to
+            // the schema default by JSON text, and a `tier: ''` a tierless
+            // row's default never had would flag the row as changed forever
+            const value = { enabled: enabledEl?.checked ?? true };
+            if (tierEl) value.tier = tierEl.value || '';
+            value.level = parseInt(levelEl?.value, 10) || 0;
 
             // Update disabled state on sub-inputs
             const container = enabledEl?.parentElement;

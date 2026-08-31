@@ -123,3 +123,20 @@ describe('the settings that honestly need a reload', () => {
         expect(refreshRequiredIds().length).toBeLessThan(total / 10);
     });
 });
+
+describe('object values compare by structure, not construction detail', () => {
+    test('key order does not make a value read as changed', () => {
+        const definition = { type: 'enhanceGear', default: { enabled: true, level: 12 } };
+        expect(isSettingChanged(definition, { value: { level: 12, enabled: true } })).toBe(false);
+    });
+
+    test('a genuinely different member still reads as changed', () => {
+        const definition = { type: 'enhanceGear', default: { enabled: true, level: 12 } };
+        expect(isSettingChanged(definition, { value: { level: 13, enabled: true } })).toBe(true);
+    });
+
+    test('nested objects and arrays are ordered too', () => {
+        const definition = { type: 'text', default: { a: [{ x: 1, y: 2 }], b: 'z' } };
+        expect(isSettingChanged(definition, { value: { b: 'z', a: [{ y: 2, x: 1 }] } })).toBe(false);
+    });
+});

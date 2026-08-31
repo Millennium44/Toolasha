@@ -26,6 +26,26 @@ function isBooleanType(type) {
 }
 
 /**
+ * JSON text with every object's keys in sorted order, arrays left in theirs.
+ * @param {*} value
+ * @returns {string}
+ */
+function stableStringify(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map(stableStringify).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        const body = Object.keys(value)
+            .sort()
+            .filter((key) => value[key] !== undefined)
+            .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+            .join(',');
+        return `{${body}}`;
+    }
+    return JSON.stringify(value) ?? 'undefined';
+}
+
+/**
  * Whether two setting values are the same.
  *
  * Compared as text for scalars, because a number typed into an input comes back
@@ -43,7 +63,11 @@ function valuesMatch(a, b) {
     }
     if (typeof a === 'object' || typeof b === 'object') {
         try {
-            return JSON.stringify(a) === JSON.stringify(b);
+            // Key order is a construction detail, not a difference: the stored
+            // copy of a compound value and its schema default are built by
+            // different code paths, and `{enabled, level}` must not read as
+            // changed against `{level, enabled}`
+            return stableStringify(a) === stableStringify(b);
         } catch {
             return false;
         }

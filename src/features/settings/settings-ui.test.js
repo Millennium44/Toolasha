@@ -83,6 +83,51 @@ const schema = {
             },
         },
     },
+    enhanceBench: {
+        title: 'Enhancement Bench',
+        icon: '🔧',
+        settings: {
+            enhanceSim_autoDetect: {
+                id: 'enhanceSim_autoDetect',
+                label: 'Auto-detect bench',
+                type: 'checkbox',
+                default: false,
+            },
+            enhanceSim_resetProDefaults: {
+                id: 'enhanceSim_resetProDefaults',
+                label: 'Reset the bench below',
+                type: 'button',
+                buttonLabel: 'Reset to pro defaults',
+            },
+            enhanceSim_enhancingLevel: {
+                id: 'enhanceSim_enhancingLevel',
+                label: 'Enhancing skill level',
+                type: 'number',
+                default: 140,
+                min: 1,
+                max: 200,
+                disabledBy: 'enhanceSim_autoDetect',
+            },
+            enhanceSim_gear_enhancer: {
+                id: 'enhanceSim_gear_enhancer',
+                label: 'Enhancer tool',
+                type: 'enhanceGear',
+                default: { enabled: true, tier: 'celestial', level: 15 },
+                tiers: [
+                    { value: 'holy', label: 'Holy' },
+                    { value: 'celestial', label: 'Celestial' },
+                ],
+                disabledBy: 'enhanceSim_autoDetect',
+            },
+            enhanceSim_gear_gloves: {
+                id: 'enhanceSim_gear_gloves',
+                label: 'Gloves slot',
+                type: 'enhanceGear',
+                default: { enabled: true, level: 12 },
+                disabledBy: 'enhanceSim_autoDetect',
+            },
+        },
+    },
     market: {
         title: 'Market',
         icon: '💰',
@@ -896,5 +941,128 @@ describe('restoring a backup says whether it worked', () => {
         const said = globalThis.alert.mock.calls.at(-1)[0];
         expect(said).toContain('Restored 12 entries');
         expect(said).toContain('changes made before reloading will not be kept');
+    });
+});
+
+describe('the pro-defaults reset button', () => {
+    /** @returns {HTMLElement} The reset button the schema's `button` row renders */
+    function resetButton() {
+        return document.querySelector('.toolasha-setting-action-btn[data-setting-id="enhanceSim_resetProDefaults"]');
+    }
+
+    /** @param {string} id @returns {{enabled: HTMLInputElement, tier: HTMLSelectElement|null, level: HTMLInputElement}} */
+    function gearInputs(id) {
+        return {
+            enabled: document.getElementById(`${id}_enabled`),
+            tier: document.getElementById(`${id}_tier`),
+            level: document.getElementById(`${id}_level`),
+        };
+    }
+
+    test('a button row renders a real button and stores nothing', () => {
+        drawPanel();
+        const button = resetButton();
+        expect(button).not.toBe(null);
+        expect(button.textContent.trim()).toBe('Reset to pro defaults');
+        // Nothing was written just by drawing it
+        expect(mocks.written.filter(([id]) => id === 'enhanceSim_resetProDefaults')).toEqual([]);
+    });
+
+    test('pressing it writes every governed default through the same stores a hand edit uses', async () => {
+        drawPanel();
+        document.getElementById('enhanceSim_enhancingLevel').value = '5';
+
+        resetButton().click();
+        await settle();
+
+        expect(mocks.written).toContainEqual(['enhanceSim_enhancingLevel', 140]);
+        expect(mocks.written).toContainEqual(['enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 15 }]);
+        expect(mocks.written).toContainEqual(['enhanceSim_gear_gloves', { enabled: true, level: 12 }]);
+        // The setting the button does not govern is untouched
+        expect(mocks.written.map(([id]) => id)).not.toContain('enhanceSim_autoDetect');
+        // And the visible inputs now show what was stored
+        expect(document.getElementById('enhanceSim_enhancingLevel').value).toBe('140');
+        const enhancer = gearInputs('enhanceSim_gear_enhancer');
+        expect(enhancer.enabled.checked).toBe(true);
+        expect(enhancer.tier.value).toBe('celestial');
+        expect(enhancer.level.value).toBe('15');
+    });
+
+    test('a gear row a hand edit disabled comes back clickable, not greyed with its box checked', async () => {
+        drawPanel();
+        const enhancer = gearInputs('enhanceSim_gear_enhancer');
+
+        // Uncheck through the real change path, which greys tier and level out
+        enhancer.enabled.checked = false;
+        enhancer.enabled.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
+        expect(enhancer.tier.style.cssText).toContain('pointer-events');
+
+        resetButton().click();
+        await settle();
+
+        expect(enhancer.enabled.checked).toBe(true);
+        expect(enhancer.tier.style.cssText).not.toContain('pointer-events');
+        expect(enhancer.level.style.cssText).not.toContain('pointer-events');
+    });
+
+    test('while auto-detect is on, the detected display is left alone and the saved values take the defaults', async () => {
+        drawPanel();
+        mocks.settingsMap['enhanceSim_autoDetect'].isTrue = true;
+
+        // The screen is showing detected values, and the saved map holds what
+        // toggling auto-detect off will put back
+        const enhancer = gearInputs('enhanceSim_gear_enhancer');
+        enhancer.enabled.checked = false;
+        enhancer.tier.value = 'holy';
+        enhancer.level.value = '3';
+        settingsUI._enhanceSimSavedValues = {
+            enhanceSim_gear_enhancer: { enabled: false, tier: 'holy', level: '1' },
+            enhanceSim_enhancingLevel: '7',
+        };
+
+        resetButton().click();
+        await settle();
+
+        // Stored values reset all the same
+        expect(mocks.written).toContainEqual(['enhanceSim_gear_enhancer', { enabled: true, tier: 'celestial', level: 15 }]);
+        // The detected display did not get clobbered
+        expect(enhancer.enabled.checked).toBe(false);
+        expect(enhancer.tier.value).toBe('holy');
+        expect(enhancer.level.value).toBe('3');
+        // But what toggling auto-detect off restores is now the defaults
+        expect(settingsUI._enhanceSimSavedValues['enhanceSim_gear_enhancer']).toEqual({
+            enabled: true,
+            tier: 'celestial',
+            level: '15',
+        });
+        expect(settingsUI._enhanceSimSavedValues['enhanceSim_enhancingLevel']).toBe('140');
+
+        settingsUI._enhanceSimSavedValues = null;
+    });
+});
+
+describe('editing a gear row', () => {
+    test('a tierless row stores no tier key, so it can ever match its schema default again', async () => {
+        drawPanel();
+        const level = document.getElementById('enhanceSim_gear_gloves_level');
+        level.value = '12';
+        level.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const stored = mocks.written.findLast(([id]) => id === 'enhanceSim_gear_gloves')[1];
+        expect(stored).toEqual({ enabled: true, level: 12 });
+        expect('tier' in stored).toBe(false);
+    });
+
+    test('a tiered row still stores its tier', async () => {
+        drawPanel();
+        const tier = document.getElementById('enhanceSim_gear_enhancer_tier');
+        tier.value = 'holy';
+        tier.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const stored = mocks.written.findLast(([id]) => id === 'enhanceSim_gear_enhancer')[1];
+        expect(stored).toEqual({ enabled: true, tier: 'holy', level: 15 });
     });
 });
