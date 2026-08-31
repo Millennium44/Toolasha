@@ -6009,6 +6009,39 @@ export function generateLabyrinthBuffCandidatesFromEditor(tokenUpgrades) {
     return candidates;
 }
 
+/** Noncombat stat keys the skilling clear-rate model reads, by suffix. */
+const CLEAR_RATE_STAT_SUFFIX = /(Speed|Efficiency|Success)$/;
+
+/**
+ * Whether enhancing this item can move the skilling clear-rate metric at all.
+ *
+ * The escalation loop in `runSkillingUpgradeAnalysis` raises a candidate's
+ * target level one step at a time until the clear rate moves, which assumes the
+ * item carries a stat the clear-rate model can see — speed, efficiency, success
+ * or gathering quantity (see `skilling-sim-helpers.js`, which builds the metric
+ * from exactly those four equipment parses). An item whose noncombat stats are
+ * all invisible to that model — a Philosopher's accessory carries only
+ * experience — can never move it at any level, and the loop walked such
+ * candidates all the way to +20, requoting the row at a cost twenty levels
+ * deep for a delta that stayed zero.
+ *
+ * Base stats and enhancement bonuses both count: a piece whose base is zero can
+ * still grow a measurable stat as it is enhanced.
+ *
+ * @param {Object} itemDetails - `itemDetailMap` entry for the candidate's upgrade item
+ * @returns {boolean} Whether raising its enhancement level could change clear rate
+ */
+export function canMoveSkillingClearRate(itemDetails) {
+    const detail = itemDetails?.equipmentDetail;
+    for (const stats of [detail?.noncombatStats, detail?.noncombatEnhancementBonuses]) {
+        for (const [key, value] of Object.entries(stats || {})) {
+            if (!(value > 0)) continue;
+            if (CLEAR_RATE_STAT_SUFFIX.test(key) || key === 'gatheringQuantity') return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Generate skilling equipment enhancement candidates from editor equipment.
  * Considers per-skill equipment overrides to find all unique items that need
@@ -6662,9 +6695,18 @@ export async function runSkillingUpgradeAnalysis(params, onProgress, options = {
 
         // A breakpoint jump sometimes lands between improvement thresholds —
         // keep raising the target one level at a time until the clear rate
-        // actually moves (skip when the baseline is already maxed)
+        // actually moves (skip when the baseline is already maxed). Only for
+        // items the clear-rate model can see at all: an experience-only piece
+        // (a Philosopher's accessory) never moves it at any level, and walking
+        // it upward requoted the row at +20 for a delta that stayed zero.
         const MAX_ENHANCEMENT = 20;
-        while (clearRateDelta <= 1e-9 && baselineClearRate < 0.999999 && evalCandidate.upgradeLevel < MAX_ENHANCEMENT) {
+        const escalatable = canMoveSkillingClearRate(gameData.itemDetailMap?.[candidate.upgradeHrid]);
+        while (
+            escalatable &&
+            clearRateDelta <= 1e-9 &&
+            baselineClearRate < 0.999999 &&
+            evalCandidate.upgradeLevel < MAX_ENHANCEMENT
+        ) {
             await new Promise((resolve) => setTimeout(resolve, 0));
             if (abortSignal?.()) break;
             const nextLevel = evalCandidate.upgradeLevel + 1;

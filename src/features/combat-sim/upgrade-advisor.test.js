@@ -171,6 +171,7 @@ const {
     ALL_FIGHTS_SIM_BUDGET,
     MIN_TRIAL_FRACTION,
     generateSkillingEquipmentCandidates,
+    canMoveSkillingClearRate,
     runSkillingUpgradeAnalysis,
     generateLabyrinthBuffCandidates,
     generateLabyrinthBuffCandidatesFromEditor,
@@ -5716,5 +5717,89 @@ describe('the gold-per-percent figure a lab table sorts on', () => {
 
         expect(great).toBeLessThan(feeble);
         expect(feeble).toBeLessThan(goldPerPercent(0, 2));
+    });
+});
+
+describe('the skilling escalation walk only climbs items the clear-rate model can see', () => {
+    const NECK = '/equipment_types/neck';
+
+    beforeEach(() => {
+        clearRate.impl = {
+            getSkillingMetricsFromOverrides: (skillId) => ({ skillId }),
+            computeSkillingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+            computeEnhancingClearWithParams: () => ({ clearChance: 0.5, xpPerRoom: 1000 }),
+        };
+        resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+        getItemPrices.mockReturnValue(null);
+    });
+
+    test('reads only the stats the model is built from, base and enhancement bonuses alike', () => {
+        const item = (noncombatStats, noncombatEnhancementBonuses) => ({
+            equipmentDetail: { noncombatStats, noncombatEnhancementBonuses },
+        });
+
+        expect(canMoveSkillingClearRate(item({ skillingSpeed: 0.05 }))).toBe(true);
+        expect(canMoveSkillingClearRate(item({ brewingEfficiency: 0.03 }))).toBe(true);
+        expect(canMoveSkillingClearRate(item({ alchemySuccess: 0.02 }))).toBe(true);
+        expect(canMoveSkillingClearRate(item({ gatheringQuantity: 0.04 }))).toBe(true);
+        // Zero base, growing with enhancement: still measurable
+        expect(canMoveSkillingClearRate(item({}, { skillingSpeed: 0.002 }))).toBe(true);
+
+        // Experience feeds xpPerRoom, never the clear rate; rare find feeds nothing here
+        expect(canMoveSkillingClearRate(item({ skillingExperience: 0.05 }))).toBe(false);
+        expect(canMoveSkillingClearRate(item({ skillingRareFind: 0.05 }))).toBe(false);
+        expect(canMoveSkillingClearRate(item({}))).toBe(false);
+        expect(canMoveSkillingClearRate(null)).toBe(false);
+    });
+
+    test('an experience-only Philosopher swap keeps its +5 instead of being requoted at +20', async () => {
+        // The walk exists for breakpoint jumps that land between improvement
+        // thresholds. A Philosopher's accessory carries no stat the clear-rate
+        // model reads, so its delta stays zero at EVERY level - and the walk
+        // used to climb it to +20 anyway, quoting a cost twenty levels deep on
+        // a row whose payoff never moved
+        buildGameDataPayload.mockReturnValue({
+            actionDetailMap: {},
+            itemDetailMap: {
+                '/items/necklace_of_speed': {
+                    name: 'Necklace Of Speed',
+                    itemLevel: 60,
+                    equipmentDetail: { type: NECK, noncombatStats: { skillingSpeed: 0.05 } },
+                },
+                '/items/philosophers_necklace': {
+                    name: "Philosopher's Necklace",
+                    itemLevel: 90,
+                    equipmentDetail: {
+                        type: NECK,
+                        combatStats: { stabDamage: 0.05 },
+                        noncombatStats: { skillingExperience: 0.05 },
+                    },
+                },
+            },
+        });
+
+        const { results } = await runSkillingUpgradeAnalysis({
+            editorDTO: {
+                equipment: { [NECK]: { hrid: '/items/necklace_of_speed', enhancementLevel: 12 } },
+                houseRooms: {},
+                tokenUpgrades: {},
+                communityBuffLevels: {},
+            },
+            roomLevel: 100,
+            crateHrids: [],
+        });
+
+        const philo = results.find((r) => r.candidate.upgradeHrid === '/items/philosophers_necklace');
+        expect(philo).toBeDefined();
+        expect(philo.candidate.upgradeLevel).toBe(5);
+        expect(philo.clearRateDelta).toBe(0);
+
+        // The worn speed necklace CAN move the clear rate, so under the same
+        // flat mock its walk runs to the cap - proof the gate discriminates
+        // rather than switching the escalation off for everybody
+        const speed = results.find(
+            (r) => r.candidate.type === 'enhancement' && r.candidate.currentHrid === '/items/necklace_of_speed'
+        );
+        expect(speed.candidate.upgradeLevel).toBe(20);
     });
 });
