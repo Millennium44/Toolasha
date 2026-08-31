@@ -10,9 +10,15 @@
  * performs exactly one click on exactly one of the game's own buttons and then
  * stops and tells you what the next press would do. Nothing is chained, nothing
  * is queued, nothing fires on a timer or off a websocket message: opening a
- * card's chooser is one press, paying for the reroll is the next, closing the
- * chooser is another. The only work this module does between presses is reading
- * the board and writing a label.
+ * card's chooser is one press, closing it is another. The only work this module
+ * does between presses is reading the board and writing a label.
+ *
+ * The presses that spend — a reroll payment, the free reroll, a discard
+ * confirm — the game accepts only from the player's own hand (it checks
+ * `event.isTrusted`, which no script can fake). Those steps are therefore
+ * *asked for* rather than made: the walk highlights the exact button, the chip
+ * points at it, and a capture listener does the bookkeeping when the player's
+ * real press lands.
  *
  * The rules come from what the player has already configured elsewhere:
  *
@@ -56,8 +62,9 @@
  * Before every click the board is re-read and compared against what was
  * planned. If the card in that slot is not the card the label is about — the
  * game re-ordered the board, a task completed, a reroll landed differently than
- * expected — the walk stops and says so rather than clicking something the
- * player did not agree to.
+ * expected — the walk clicks nothing and plans again from what is actually
+ * there, so a board the combat ticks redraw constantly never turns one walk
+ * into a string of restarts.
  */
 
 import config from '../../core/config.js';
