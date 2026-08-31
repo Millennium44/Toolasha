@@ -493,7 +493,13 @@ class TaskRerollWalk {
      * @private
      */
     _liveCapBlock() {
-        const live = taskRerollProtection?.isInitialized ? taskRerollProtection : this;
+        // The import is the feature's export wrapper; the object the popup's
+        // selects actually write is the instance it exposes as `.protection`.
+        // The wrapper never carries `isInitialized`, so reading it here fell
+        // back to the stored copy on every call — the reload-to-apply bug this
+        // method exists to fix.
+        const instance = taskRerollProtection?.protection;
+        const live = instance?.isInitialized ? instance : this;
         return {
             enabled: Boolean(live.capProtectionEnabled),
             coin: Number(live.coinThreshold) || DEFAULT_COIN_THRESHOLD,

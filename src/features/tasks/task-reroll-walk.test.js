@@ -303,10 +303,10 @@ beforeEach(() => {
     walk.planCap = '';
     // The shield popup's module is the live source; left uninitialised it says
     // nothing and the walk falls back to its own stored copy above
-    taskRerollProtection.isInitialized = false;
-    taskRerollProtection.capProtectionEnabled = true;
-    taskRerollProtection.coinThreshold = 320000;
-    taskRerollProtection.cowbellThreshold = 32;
+    taskRerollProtection.protection.isInitialized = false;
+    taskRerollProtection.protection.capProtectionEnabled = true;
+    taskRerollProtection.protection.coinThreshold = 320000;
+    taskRerollProtection.protection.cowbellThreshold = 32;
     ws.handlers = {};
     // The walk is a singleton, and the spend readout now outlives one walk
     walk.tally = { kept: 0, rerolled: 0, trashed: 0, goldSpent: 0, cowbellsSpent: 0 };
@@ -588,9 +588,9 @@ describe('planning a walk down the board', () => {
         settings.values.tasks_rerollWalkTrashAtLimit = false;
         stored.values.taskCapCoinThreshold_7 = 20000;
         stored.values.taskCapCowbellThreshold_7 = 1;
-        taskRerollProtection.isInitialized = true;
-        taskRerollProtection.coinThreshold = 20000;
-        taskRerollProtection.cowbellThreshold = 1;
+        taskRerollProtection.protection.isInitialized = true;
+        taskRerollProtection.protection.coinThreshold = 20000;
+        taskRerollProtection.protection.cowbellThreshold = 1;
         // The ladder predicts 10K for a never-rerolled task; the chooser knows better
         const list = board([
             { name: 'Milking - Cow', buttons: ['Back', 'Pay 40,000'], quest: quest(MILKING) },
@@ -616,9 +616,9 @@ describe('planning a walk down the board', () => {
         // the walk offered to trash tasks it had never priced. The memory keys
         // on the quest id now, which each slot owns alone.
         settings.values.tasks_rerollWalkTrashAtLimit = false;
-        taskRerollProtection.isInitialized = true;
-        taskRerollProtection.coinThreshold = 20000;
-        taskRerollProtection.cowbellThreshold = 1;
+        taskRerollProtection.protection.isInitialized = true;
+        taskRerollProtection.protection.coinThreshold = 20000;
+        taskRerollProtection.protection.cowbellThreshold = 1;
         const list = board([
             { name: 'Defeat - Stabby', buttons: ['Back', 'Pay 40,000'], quest: quest(MILKING, 2, 0) },
             { name: 'Defeat - Stabby', buttons: AT_REST, quest: quest(MILKING) },
@@ -1302,9 +1302,9 @@ describe('the cap the walk obeys is the cap as it stands now', () => {
         // retired with a Back press.
         stored.values.taskCapCoinThreshold_7 = 40000;
         stored.values.taskCapCowbellThreshold_7 = 1;
-        taskRerollProtection.isInitialized = true;
-        taskRerollProtection.coinThreshold = 40000;
-        taskRerollProtection.cowbellThreshold = 1;
+        taskRerollProtection.protection.isInitialized = true;
+        taskRerollProtection.protection.coinThreshold = 40000;
+        taskRerollProtection.protection.cowbellThreshold = 1;
         const list = board([
             { name: 'Milking - Cow', buttons: ['Back', 'Pay 1', 'Pay 40,000'], quest: quest(MILKING, 2, 0) },
         ]);
@@ -1314,7 +1314,7 @@ describe('the cap the walk obeys is the cap as it stands now', () => {
 
         // The player opens the shield popup and raises the cap. The popup's
         // select writes its module before the storage round-trip resolves.
-        taskRerollProtection.coinThreshold = 320000;
+        taskRerollProtection.protection.coinThreshold = 320000;
         // Any board mutation is what wakes the widget in production
         walk._syncWidget();
 
@@ -1326,28 +1326,28 @@ describe('the cap the walk obeys is the cap as it stands now', () => {
     test('the cap block being switched off mid-walk unblocks the card too', async () => {
         stored.values.taskCapCoinThreshold_7 = 40000;
         stored.values.taskCapCowbellThreshold_7 = 1;
-        taskRerollProtection.isInitialized = true;
-        taskRerollProtection.coinThreshold = 40000;
-        taskRerollProtection.cowbellThreshold = 1;
+        taskRerollProtection.protection.isInitialized = true;
+        taskRerollProtection.protection.coinThreshold = 40000;
+        taskRerollProtection.protection.cowbellThreshold = 1;
         board([{ name: 'Milking - Cow', buttons: ['Back', 'Pay 1', 'Pay 40,000'], quest: quest(MILKING, 2, 0) }]);
 
         await walk.start();
         expect(chipText()).toBe('▶ Close the menu on #1');
 
-        taskRerollProtection.capProtectionEnabled = false;
+        taskRerollProtection.protection.capProtectionEnabled = false;
         walk._syncWidget();
 
         expect(chipText()).toContain('Reroll #1');
     });
 
     test('the gear drawer quotes the live cap, not the one the walk started under', async () => {
-        taskRerollProtection.isInitialized = true;
-        taskRerollProtection.coinThreshold = 40000;
+        taskRerollProtection.protection.isInitialized = true;
+        taskRerollProtection.protection.coinThreshold = 40000;
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         await walk.start();
 
         walk.widget.setSettingsOpen(true);
-        taskRerollProtection.coinThreshold = 160000;
+        taskRerollProtection.protection.coinThreshold = 160000;
         walk._renderSettings();
 
         expect(walk.widget.settings.textContent).toContain('160.0K');
