@@ -8,25 +8,38 @@
  * game does not know still named from its hrid.
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
     inventory: [],
     items: {},
     unclaimed: {},
+    // What `calculateMaterialRequirements` hands back to the click handlers —
+    // a test sets this before driving `openMissingMaterials`.
+    actionMaterials: [],
+    autofill: {
+        initialize: vi.fn(),
+        cleanup: vi.fn(),
+        setPendingCalculation: vi.fn(),
+        clearQuantity: vi.fn(),
+    },
+    wsOn: vi.fn(),
+    wsOff: vi.fn(),
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInventory: () => state.inventory,
-        getInitClientData: () => ({ itemDetailMap: state.items }),
+        getInitClientData: () => ({ itemDetailMap: state.items, actionDetailMap: {} }),
         getActionDetails: () => null,
         getItemDetails: (hrid) => state.items[hrid] || null,
     },
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+vi.mock('../../core/websocket.js', () => ({
+    default: { on: (...args) => state.wsOn(...args), off: (...args) => state.wsOff(...args) },
+}));
 vi.mock('../../utils/action-panel-helper.js', () => ({
     findActionInput: () => null,
     attachInputListeners: () => {},
@@ -42,25 +55,18 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
     }),
 }));
 vi.mock('../../utils/material-calculator.js', () => ({
-    calculateMaterialRequirements: () => [],
+    calculateMaterialRequirements: () => state.actionMaterials,
     calculateEnhancementMaterialRequirements: () => [],
     unclaimedBoughtCount: (itemHrid) => state.unclaimed?.[itemHrid] || 0,
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
-    createAutofillManager: () => ({
-        initialize: () => {},
-        cleanup: () => {},
-        setPendingCalculation: () => {},
-        clearQuantity: () => {},
-    }),
+    createAutofillManager: () => state.autofill,
+    findQuantityInput: () => null,
 }));
-vi.mock('../../utils/marketplace-tabs.js', () => ({
-    createMaterialTab: () => document.createElement('button'),
-    removeMaterialTabs: () => {},
-    setupMarketplaceCleanupObserver: () => null,
-    navigateToMarketplace: () => {},
-    visibleTabsContainer: () => null,
-}));
+// marketplace-tabs.js itself is NOT mocked — its tab creation, dismiss button,
+// and clear-all control are exercised for real, the same way lab-sim-ui.test.js
+// drives it, so this file is testing the actual DOM the player sees rather than
+// a stand-in for it.
 vi.mock('./enhancement-display.js', () => ({
     getProtectionItemFromUI: () => null,
     getProtectFromLevelFromUI: () => 0,
@@ -71,7 +77,7 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: (
 vi.mock('../../utils/game-lookups.js', () => ({ getActionHridFromName: () => null }));
 vi.mock('../../utils/react-input.js', () => ({ setReactInputValue: () => {} }));
 
-const { materialsFromList, openMaterialsList } = await import('./missing-materials-button.js');
+const { materialsFromList, openMaterialsList, openMissingMaterials } = await import('./missing-materials-button.js');
 
 describe('a bill of materials against the inventory', () => {
     test('each line is what is needed less the unenhanced copies held', () => {
@@ -145,5 +151,111 @@ describe('a bill of materials against the inventory', () => {
     test('empty or zero lines are dropped, and an empty bill opens nothing', async () => {
         expect(materialsFromList([{ itemHrid: '/items/x', count: 0 }, { count: 3 }, null])).toEqual([]);
         expect(await openMaterialsList([])).toBe(false);
+    });
+});
+
+/**
+ * The "Clear" control on the marketplace tab strip — one click retires every
+ * pinned material tab, the Return tab, and the quantity armed for the buy
+ * dialog, then lands the player back on the plain Market Listings view.
+ *
+ * marketplace-tabs.js is deliberately not mocked here (see the note above the
+ * mocks): this exercises the real tab elements the player sees, the same way
+ * lab-sim-ui.test.js does for the sim's own "clear all" control.
+ */
+describe('the marketplace clear-all control', () => {
+    /** A navbar marketplace button plus a visible tab strip carrying the two
+     * native tabs ("My Listings" is the clone template, "Market Listings" is
+     * where a clear-all should land the player). happy-dom does no real layout,
+     * so `offsetParent`/`getBoundingClientRect` are stubbed the same way
+     * marketplace-tabs.test.js stubs them for `visibleTabsContainer`. */
+    function buildMarketplaceDom() {
+        document.body.innerHTML = '';
+
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__3uuUl';
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('aria-label', 'navigationBar.marketplace');
+        nav.appendChild(svg);
+        document.body.appendChild(nav);
+
+        const container = document.createElement('div');
+        container.className = 'MuiTabs-flexContainer';
+        container.setAttribute('role', 'tablist');
+        const myListings = document.createElement('button');
+        myListings.setAttribute('role', 'tab');
+        myListings.textContent = 'My Listings';
+        const marketListings = document.createElement('button');
+        marketListings.setAttribute('role', 'tab');
+        marketListings.textContent = 'Market Listings';
+        container.append(myListings, marketListings);
+        document.body.appendChild(container);
+        Object.defineProperty(container, 'offsetParent', { get: () => document.body, configurable: true });
+        Object.defineProperty(container, 'getBoundingClientRect', {
+            value: () => ({ width: 100 }),
+            configurable: true,
+        });
+
+        return { container, myListings, marketListings };
+    }
+
+    beforeEach(() => {
+        state.autofill.setPendingCalculation.mockClear();
+        state.autofill.clearQuantity.mockClear();
+        state.wsOn.mockClear();
+        state.wsOff.mockClear();
+        state.actionMaterials = [
+            { itemHrid: '/items/plank', itemName: 'Plank', missing: 40, required: 40, isTradeable: true },
+            { itemHrid: '/items/nail', itemName: 'Nail', missing: 8, required: 8, isTradeable: true },
+        ];
+    });
+
+    test('is absent before any missing-mats tabs are opened', () => {
+        const { container } = buildMarketplaceDom();
+        expect(container.querySelector('[data-mwi-clear-all-tab="true"]')).toBeNull();
+    });
+
+    test('appears once tabs are opened, and one click removes every custom tab, the armed quantity, and the inventory listener — landing on Market Listings', async () => {
+        const { container, marketListings } = buildMarketplaceDom();
+        const onMarketListingsClick = vi.fn();
+        marketListings.addEventListener('click', onMarketListingsClick);
+
+        await openMissingMaterials('/actions/crafting/plank', 5);
+
+        const materialTabs = container.querySelectorAll('[data-item-hrid]');
+        expect(materialTabs.length).toBe(2);
+        const clearAll = container.querySelector('[data-mwi-clear-all-tab="true"]');
+        expect(clearAll).not.toBeNull();
+        // Return tab: a custom tab with no item, distinct from the material tabs and the control
+        const returnTab = Array.from(container.querySelectorAll('[data-mwi-custom-tab="true"]')).find(
+            (el) => !el.hasAttribute('data-item-hrid') && !el.hasAttribute('data-mwi-clear-all-tab')
+        );
+        expect(returnTab).toBeTruthy();
+        expect(state.wsOn).toHaveBeenCalledWith('*', expect.any(Function));
+
+        clearAll.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(container.querySelectorAll('[data-mwi-custom-tab="true"]').length).toBe(0);
+        // Cleared at least once — the click's own teardown, and again (harmlessly)
+        // by the delegated "a different native tab was picked" listener once the
+        // Market Listings tab click below lands.
+        expect(state.autofill.clearQuantity).toHaveBeenCalled();
+        expect(state.wsOff).toHaveBeenCalledWith('*', expect.any(Function));
+        expect(onMarketListingsClick).toHaveBeenCalledTimes(1);
+    });
+
+    test('a single tab can still be dismissed on its own, leaving the rest (including the clear-all control) in place', async () => {
+        const { container } = buildMarketplaceDom();
+
+        await openMissingMaterials('/actions/crafting/plank', 5);
+
+        const [firstTab] = container.querySelectorAll('[data-item-hrid]');
+        firstTab.querySelector('[data-mwi-tab-dismiss="true"]').dispatchEvent(
+            new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+
+        expect(container.contains(firstTab)).toBe(false);
+        expect(container.querySelectorAll('[data-item-hrid]').length).toBe(1);
+        expect(container.querySelector('[data-mwi-clear-all-tab="true"]')).not.toBeNull();
     });
 });

@@ -14,9 +14,11 @@ import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import domObserver from '../../core/dom-observer.js';
 import {
     createMaterialTab,
+    createClearAllTabsControl,
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    navigateToMarketListingsTab,
     visibleTabsContainer,
     attachRegularTabClearListener,
 } from '../../utils/marketplace-tabs.js';
@@ -824,6 +826,22 @@ class HouseCostDisplay {
             tabsContainer.appendChild(tab);
             this.currentMaterialsTabs.push(tab);
         }
+
+        // One click, every pinned tab gone, landing back on the plain Market
+        // Listings view — same control the action-panel button uses
+        const clearAllControl = createClearAllTabsControl(referenceTab, () => this.handleClearAllClick());
+        tabsContainer.appendChild(clearAllControl);
+        this.currentMaterialsTabs.push(clearAllControl);
+    }
+
+    /**
+     * Handle the "× All" control: the same teardown as leaving the marketplace,
+     * plus returning to the native Market Listings tab so the strip that just
+     * lost its selected custom tab does not sit on nothing.
+     */
+    handleClearAllClick() {
+        this.handleMarketplaceCleanup();
+        navigateToMarketListingsTab();
     }
 
     /**

@@ -30,6 +30,7 @@ import {
     removeShrineMarketTabs,
     updateTabBadge,
     navigateToMarketplace,
+    navigateToMarketListingsTab,
     createClearAllTabsControl,
     ensureClearAllTabsControl,
     watchTabForAcquisition,
@@ -408,6 +409,72 @@ describe('attachRegularTabClearListener', () => {
 
     test('does nothing when passed no container', () => {
         expect(() => attachRegularTabClearListener(null, vi.fn())).not.toThrow();
+    });
+});
+
+describe('navigateToMarketListingsTab', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    /** A visible marketplace tab bar carrying both native tabs plus, optionally,
+     * one of our own — so a custom tab whose name happens to contain the phrase
+     * can never be clicked instead of the real thing. */
+    function buildMarketplaceBar({ withCustomTab = false } = {}) {
+        const bar = document.createElement('div');
+        bar.className = 'MuiTabs-flexContainer';
+        bar.setAttribute('role', 'tablist');
+
+        const myListings = document.createElement('button');
+        myListings.setAttribute('role', 'tab');
+        myListings.textContent = 'My Listings';
+
+        const marketListings = document.createElement('button');
+        marketListings.setAttribute('role', 'tab');
+        marketListings.textContent = 'Market Listings';
+
+        bar.append(myListings, marketListings);
+
+        if (withCustomTab) {
+            const fake = document.createElement('button');
+            fake.setAttribute('role', 'tab');
+            fake.setAttribute('data-mwi-custom-tab', 'true');
+            fake.textContent = 'Market Listings (pinned)';
+            bar.appendChild(fake);
+        }
+
+        document.body.appendChild(bar);
+        Object.defineProperty(bar, 'offsetParent', { get: () => document.body });
+        Object.defineProperty(bar, 'getBoundingClientRect', { value: () => ({ width: 100 }) });
+        return { bar, marketListings };
+    }
+
+    test('clicks the native Market Listings tab, skipping our own pinned tabs', () => {
+        const { marketListings } = buildMarketplaceBar({ withCustomTab: true });
+        const onClick = vi.fn();
+        marketListings.addEventListener('click', onClick);
+
+        expect(navigateToMarketListingsTab()).toBe(true);
+        expect(onClick).toHaveBeenCalledTimes(1);
+    });
+
+    test('returns false when no marketplace tab bar is visible', () => {
+        expect(navigateToMarketListingsTab()).toBe(false);
+    });
+
+    test('returns false when the bar has no Market Listings tab', () => {
+        const bar = document.createElement('div');
+        bar.className = 'MuiTabs-flexContainer';
+        bar.setAttribute('role', 'tablist');
+        const myListings = document.createElement('button');
+        myListings.setAttribute('role', 'tab');
+        myListings.textContent = 'My Listings';
+        bar.appendChild(myListings);
+        document.body.appendChild(bar);
+        Object.defineProperty(bar, 'offsetParent', { get: () => document.body });
+        Object.defineProperty(bar, 'getBoundingClientRect', { value: () => ({ width: 100 }) });
+
+        expect(navigateToMarketListingsTab()).toBe(false);
     });
 });
 

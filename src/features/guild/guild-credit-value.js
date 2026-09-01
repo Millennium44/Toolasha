@@ -18,8 +18,10 @@ import webSocketHook from '../../core/websocket.js';
 import {
     navigateToMarketplace,
     createMaterialTab,
+    createClearAllTabsControl,
     removeMaterialTabs,
     removeShrineMarketTabs,
+    navigateToMarketListingsTab,
     updateTabBadge,
     visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
@@ -3307,6 +3309,20 @@ class GuildCreditValue {
                     tabEl = tab;
                     tabsContainer.appendChild(tab);
                 }
+
+                // One click, every shrine tab gone (they opt out of the shared
+                // `removeMaterialTabs()` above, so this control's own internal
+                // call to it only removes itself — the shrine sweep is explicit)
+                const clearAllControl = createClearAllTabsControl(referenceTab, () => {
+                    removeShrineMarketTabs();
+                    if (this._shrineTabCleanup) {
+                        this._shrineTabCleanup();
+                        this._shrineTabCleanup = null;
+                    }
+                    this.autofillManager.clearQuantity();
+                    navigateToMarketListingsTab();
+                });
+                tabsContainer.appendChild(clearAllControl);
 
                 // Watch for inventory/market changes and update shrine tabs accordingly
                 const shrineTabs = Array.from(document.querySelectorAll('[data-mwi-shrine-tab="true"]'));

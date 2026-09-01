@@ -105,7 +105,12 @@ vi.mock('../../utils/market-data.js', () => ({
 // `tabsContainer` is a mutable hook rather than a fixed `null`: the poll tests
 // need to make the marketplace tablist "appear" partway through the handler's
 // polling loop, the way a slow marketplace mount does in the real game.
-const marketplaceTabs = vi.hoisted(() => ({ tabsContainer: null, createdTabs: [], removeShrineCalls: 0 }));
+const marketplaceTabs = vi.hoisted(() => ({
+    tabsContainer: null,
+    createdTabs: [],
+    removeShrineCalls: 0,
+    navigateToMarketListingsCalls: 0,
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: () => {},
     createMaterialTab: (mat, referenceTab, onClick) => {
@@ -114,16 +119,32 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
         btn.addEventListener('click', (e) => onClick(e, mat));
         return btn;
     },
+    // Mirrors the real control closely enough to exercise the shrine "clear
+    // all" wiring: tagged the same way, clicking it fires `onClearAll`.
+    createClearAllTabsControl: (referenceTab, onClearAll) => {
+        const control = document.createElement('button');
+        control.setAttribute('data-mwi-clear-all-tab', 'true');
+        control.addEventListener('click', () => onClearAll());
+        return control;
+    },
     removeMaterialTabs: () => {},
     removeShrineMarketTabs: () => {
         marketplaceTabs.removeShrineCalls += 1;
     },
+    navigateToMarketListingsTab: () => {
+        marketplaceTabs.navigateToMarketListingsCalls += 1;
+    },
     updateTabBadge: () => {},
     visibleTabsContainer: () => marketplaceTabs.tabsContainer,
 }));
-const autofill = vi.hoisted(() => ({ cleanup: vi.fn() }));
+const autofill = vi.hoisted(() => ({ cleanup: vi.fn(), clearQuantity: vi.fn() }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
-    createAutofillManager: () => ({ initialize: () => {}, setPendingCalculation: () => {}, cleanup: autofill.cleanup }),
+    createAutofillManager: () => ({
+        initialize: () => {},
+        setPendingCalculation: () => {},
+        clearQuantity: autofill.clearQuantity,
+        cleanup: autofill.cleanup,
+    }),
 }));
 // The marketplace hand-off. What matters here is which items the planner sends
 // and under what heading, not what the marketplace does when it gets them —
@@ -2983,6 +3004,7 @@ describe('Missing Mats Marketplace click — character switch mid-poll', () => {
         marketplaceTabs.tabsContainer = null;
         marketplaceTabs.createdTabs = [];
         marketplaceTabs.removeShrineCalls = 0;
+        marketplaceTabs.navigateToMarketListingsCalls = 0;
         guildCreditValue.initialize();
         vi.useFakeTimers();
     });
@@ -3051,6 +3073,36 @@ describe('Missing Mats Marketplace click — character switch mid-poll', () => {
         await vi.advanceTimersByTimeAsync(2000);
 
         expect(marketplaceTabs.createdTabs.length).toBeGreaterThan(0);
+    });
+
+    test('the shrine tabs get a clear-all control that sweeps the shrine tabs (opted out of removeMaterialTabs) and lands back on Market Listings', async () => {
+        const modal = buildShrineModal(156_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        const button = missingButton(modal);
+
+        button.click();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(300);
+
+        marketplaceTabs.tabsContainer = marketplaceTabsContainer();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        const container = marketplaceTabs.tabsContainer;
+        const clearAll = container.querySelector('[data-mwi-clear-all-tab="true"]');
+        expect(clearAll).toBeTruthy();
+
+        // Tab creation itself already swept once (clearing whatever a previous
+        // open left); the click below is the count that matters here.
+        const removeShrineCallsBeforeClick = marketplaceTabs.removeShrineCalls;
+        clearAll.click();
+
+        // The shrine sweep is explicit — a shrine tab opts out of the shared
+        // `data-mwi-custom-tab` cleanup precisely so it survives tab-to-tab
+        // navigation, so the clear-all control must call `removeShrineMarketTabs`
+        // itself rather than rely on `removeMaterialTabs`.
+        expect(marketplaceTabs.removeShrineCalls).toBe(removeShrineCallsBeforeClick + 1);
+        expect(marketplaceTabs.navigateToMarketListingsCalls).toBe(1);
+        expect(autofill.clearQuantity).toHaveBeenCalled();
     });
 });
 

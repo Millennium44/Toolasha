@@ -25,9 +25,11 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager, findQuantityInput } from '../../utils/marketplace-autofill.js';
 import {
     createMaterialTab,
+    createClearAllTabsControl,
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
+    navigateToMarketListingsTab,
     visibleTabsContainer,
     attachRegularTabClearListener,
 } from '../../utils/marketplace-tabs.js';
@@ -871,6 +873,12 @@ function createTesterShopTabs(missingMaterials, testerTab) {
     const control = createBuyNextControl();
     tabsContainer.appendChild(control);
     currentMaterialsTabs.push(control);
+
+    // One click, every pinned line gone — already on the Tester tab, which is
+    // its own "normal view", so nothing to navigate back to
+    const clearAllControl = createClearAllTabsControl(testerTab, () => handleClearAllClick(false));
+    tabsContainer.appendChild(clearAllControl);
+    currentMaterialsTabs.push(clearAllControl);
 }
 
 /**
@@ -1297,6 +1305,12 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
         tabsContainer.appendChild(returnTab);
         currentMaterialsTabs.push(returnTab);
     }
+
+    // One click, every pinned tab (material tabs, the strategy indicator, and
+    // Return) gone, landing back on the plain Market Listings view
+    const clearAllControl = createClearAllTabsControl(referenceTab, () => handleClearAllClick(true));
+    tabsContainer.appendChild(clearAllControl);
+    currentMaterialsTabs.push(clearAllControl);
 }
 
 /**
@@ -1437,6 +1451,22 @@ function updateTabBadge(tab, material) {
         tab.style.opacity = '1';
         tab.style.cursor = 'pointer';
         tab.title = '';
+    }
+}
+
+/**
+ * Handle the "× All" control: the same teardown as leaving the marketplace
+ * (every pinned tab and the Return tab gone, the armed quantity cleared, the
+ * inventory listener dropped), triggered by the player instead of by navigation.
+ * @param {boolean} returnToMarketListings - Click the native Market Listings tab
+ *   afterward, so the strip that just lost its selected custom tab does not sit
+ *   on nothing. Skipped for the Tester shop hand-off, which has no such tab —
+ *   the Tester tab itself is already the "normal" view there.
+ */
+function handleClearAllClick(returnToMarketListings) {
+    handleMarketplaceCleanup();
+    if (returnToMarketListings) {
+        navigateToMarketListingsTab();
     }
 }
 

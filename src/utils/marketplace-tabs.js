@@ -692,3 +692,29 @@ export function navigateToMyListings() {
     tab.click();
     return true;
 }
+
+/**
+ * Navigate back to the native "Market Listings" tab — the marketplace's default
+ * item order-book view. Used after a "clear all" wipes every pinned material
+ * tab, so the player is not left looking at a strip that just lost the tab it
+ * was on rather than the ordinary marketplace.
+ *
+ * Same skip rules as `navigateToMyListings`: only the visible tab bar, and only
+ * a real native tab — never one of our own.
+ *
+ * @returns {boolean} True when the tab was found and clicked.
+ */
+export function navigateToMarketListingsTab() {
+    const tabContainer = visibleTabsContainer();
+    if (!tabContainer) return false;
+
+    const tab = Array.from(tabContainer.children).find((el) => {
+        if (el.getAttribute('role') !== 'tab') return false;
+        if (el.hasAttribute('data-mwi-custom-tab') || el.hasAttribute('data-mwi-shrine-tab')) return false;
+        return el.textContent.includes('Market Listings');
+    });
+
+    if (!tab) return false;
+    tab.click();
+    return true;
+}
