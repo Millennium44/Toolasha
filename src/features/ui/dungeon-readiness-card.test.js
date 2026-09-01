@@ -36,6 +36,9 @@ vi.mock('../../core/config.js', () => ({
         setSetting: (key, value) => {
             settings.values[key] = value;
         },
+        // The consumables panel, imported transitively, subscribes at module
+        // scope so a setting flipped on the settings page repaints it
+        onSettingChange: () => () => {},
     },
 }));
 vi.mock('../../core/storage.js', () => ({
