@@ -545,6 +545,16 @@ describe('what the panels add over their tiles', () => {
         expect(text).toContain('Avg/Encounter');
     });
 
+    /**
+     * The "Enemy Damage to Party" heading, found by the arrow it is wearing.
+     * @param {string} arrow - `▼` for open, `▶` for closed
+     * @returns {HTMLElement}
+     */
+    const hurtSectionHeader = (arrow) =>
+        [...deathsPanel.panel.querySelectorAll('div')].find((element) =>
+            element.textContent.startsWith(`${arrow}Enemy Damage to Party:`)
+        );
+
     test('the sections start open, since collapsed there is nothing to read', () => {
         deathsPanel.show();
         expect(deathsPanel.panel.textContent).toContain('▼');
@@ -552,14 +562,16 @@ describe('what the panels add over their tiles', () => {
 
     test('a section closes and stays closed through a repaint', () => {
         deathsPanel.show();
-        const header = [...deathsPanel.panel.querySelectorAll('div')].find((element) =>
-            element.textContent.startsWith('▼Enemy Damage to Party:')
-        );
-        header.click();
+        hurtSectionHeader('▼').click();
 
         expect(deathsPanel.panel.textContent).not.toContain('[66-88]');
         deathsPanel.refresh();
         expect(deathsPanel.panel.textContent).not.toContain('[66-88]');
+
+        // Open again: which sections are open is remembered for the panel's
+        // life, so a test that closes one closes it for every test after it too
+        hurtSectionHeader('▶').click();
+        expect(deathsPanel.panel.textContent).toContain('[66-88]');
     });
 
     test('an unattributed hit is named rather than dropped', () => {
@@ -615,6 +627,30 @@ describe('what the panels add over their tiles', () => {
         expect(deathsPanel.panel.textContent).toContain('Nothing has hit the party yet');
     });
 
+    /**
+     * The profit panel's case-cycling button, labelled with the first word of
+     * whichever of the four cases is in force.
+     * @returns {HTMLElement}
+     */
+    const modeButton = () =>
+        [...profitPanel.panel.querySelectorAll('button')].find((b) =>
+            ['Lazy', 'Mid', 'Patient', 'Ask'].includes(b.textContent.split(' ')[0])
+        );
+
+    /**
+     * Click the case around until it is back on `label`.
+     *
+     * The panel remembers the case for the rest of its life, which is right for
+     * a panel and wrong for a test: left where it landed it becomes the case the
+     * next test starts from, and the panel opens on whichever ran first.
+     *
+     * @param {string} label - The button label to stop on
+     * @returns {void}
+     */
+    const restoreProfitMode = (label) => {
+        for (let laps = 0; laps < 4 && modeButton().textContent !== label; laps++) modeButton().click();
+    };
+
     test('Profit names the three cases HWhat names', () => {
         profitPanel.show();
         const text = profitPanel.panel.textContent;
@@ -657,16 +693,18 @@ describe('what the panels add over their tiles', () => {
         [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Costs Off').click();
     });
 
-    test('the mode button cycles the headline through the three cases', () => {
+    test('the mode button cycles the headline through every case and back', () => {
         profitPanel.show();
-        const mode = () =>
-            [...profitPanel.panel.querySelectorAll('button')].find((b) =>
-                ['Lazy', 'Mid', 'Patient'].includes(b.textContent)
-            );
 
-        const first = mode().textContent;
-        mode().click();
-        expect(mode().textContent).not.toBe(first);
+        // Whichever case the panel happens to be showing, one click moves it on
+        // and a full lap brings it back — which is the whole contract, and the
+        // only reading of it that does not assume a starting case
+        const started = modeButton().textContent;
+        modeButton().click();
+        expect(modeButton().textContent).not.toBe(started);
+
+        restoreProfitMode(started);
+        expect(modeButton().textContent).toBe(started);
     });
 
     test('the fourth corner of the book is there too', () => {
@@ -735,11 +773,13 @@ describe('what the panels add over their tiles', () => {
         const lazy = combatProfitView(state.stats);
         expect(lazy).toBeTruthy();
 
-        [...profitPanel.panel.querySelectorAll('button')]
-            .find((b) => ['Lazy', 'Mid', 'Patient', 'Ask'].includes(b.textContent.split(' ')[0]))
-            .click();
+        const started = modeButton().textContent;
+        modeButton().click();
 
         expect(combatProfitView(state.stats).title).not.toBe(lazy.title);
+
+        // The chosen case is remembered between openings, so it has to go back
+        restoreProfitMode(started);
     });
 
     test('nothing to read from is nothing rather than a row of zeroes', () => {
