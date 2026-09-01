@@ -325,6 +325,24 @@ function resetTrialsSingleton() {
 }
 
 /**
+ * The hoisted `game` object stands in for every module this file mocks, and the
+ * describes below only put back the fields they set themselves. `breakdown` is
+ * the spectator stream's last word, and a pool left in it is fresh-dated
+ * against whatever `now` the next test sets: the Trials-tab describe, which
+ * asserts a barless combat card is never sampled, read a previous describe's
+ * Chameleon pool as its own live reading. Put the whole of it back before every
+ * test — a describe that wants one sets it in its own hook, which runs after
+ * this one.
+ */
+beforeEach(() => {
+    game.breakdown = {};
+    game.scoreboardContext = null;
+    game.skilling = {};
+    game.skillingEnded = {};
+    game.traceStatus = null;
+});
+
+/**
  * A stored tile record.
  * @param {Object} overrides - Fields to override
  * @returns {Object} Record
