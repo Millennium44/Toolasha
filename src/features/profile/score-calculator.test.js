@@ -365,3 +365,46 @@ describe('enhancement worker task parity', () => {
         }
     });
 });
+
+describe('a shrine cost nothing could price', () => {
+    const UNPRICED_CREDIT = '/items/guild_credit_9';
+
+    beforeEach(() => {
+        // One level paid partly in a credit type with no conversion to gold —
+        // `priceGuildCreditCosts` reports that line as `gold: null`
+        mocks.clientData.guildBuffDetailMap['/guild_buffs/force_combat'].levelCosts = {
+            1: {
+                guildTokenCost: 10,
+                creditCosts: [
+                    { itemHrid: CREDIT, count: 10 },
+                    { itemHrid: UNPRICED_CREDIT, count: 5 },
+                ],
+            },
+        };
+    });
+
+    test('the priced side still counts, so one missing rate does not blank the shrine', async () => {
+        const score = await calculateCombatScore(profileWithShrines({ '/guild_buffs/force_combat': 1 }));
+
+        expect(score.guildShrine).toBeCloseTo(7_500 / 1_000_000, 10);
+    });
+
+    test('what could not be priced is counted, not silently dropped', async () => {
+        const score = await calculateCombatScore(profileWithShrines({ '/guild_buffs/force_combat': 1 }));
+
+        // The figure is short by whatever those five credits are worth. Reporting
+        // it as complete is the same failure an unpriced gear piece already
+        // refuses to make.
+        expect(score.guildShrineUnpricedCredits).toBe(1);
+        expect(score.guildShrineCombatUnpricedCredits).toBe(1);
+        expect(score.skillerGuildShrineUnpricedCredits).toBe(0);
+        expect(score.breakdown.guildShrinesCombat[0]).toMatchObject({ unpricedCredits: 1, partial: true });
+    });
+
+    test('a shrine every credit of which could be priced is not flagged', async () => {
+        const score = await calculateCombatScore(profileWithShrines({ '/guild_buffs/scholar_skilling': 1 }));
+
+        expect(score.guildShrineUnpricedCredits).toBe(0);
+        expect(score.skillerBreakdown.guildShrines[0]).toMatchObject({ unpricedCredits: 0, partial: false });
+    });
+});

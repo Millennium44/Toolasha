@@ -155,12 +155,18 @@ export async function calculateCombatScore(profileData) {
             // still show the shrine line and its unpriced token count.
             guildShrine: guildShrineResult.score,
             guildShrineTokens: guildShrineResult.tokens,
+            // Guild credit costs nothing could convert into gold. The shrine
+            // figures above are short by whatever those were worth, so a caller
+            // showing them has to be able to say "at least this much" — the same
+            // service `equipmentUnpriced` does for a piece nothing could price.
+            guildShrineUnpricedCredits: guildShrineResult.unpricedCredits,
             // True whenever the profile carried shrine levels — your own always,
             // and now any shared profile the game exposes them on. False leaves
             // the line out rather than printing a zero for what cannot be seen.
             guildShrineKnown: guildShrineResult.known,
             guildShrineCombat: guildShrineResult.combat.score,
             guildShrineCombatTokens: guildShrineResult.combat.tokens,
+            guildShrineCombatUnpricedCredits: guildShrineResult.combat.unpricedCredits,
             equipmentHidden: profileData.profile?.hideWearableItems || false,
             hasEquipmentData: combatEquipmentResult.hasEquipmentData,
             // How many equipped pieces nothing could put a price on. The score
@@ -180,6 +186,7 @@ export async function calculateCombatScore(profileData) {
             skillerEquipmentUnpriced: skillerEquipmentResult.unpricedItems,
             skillerGuildShrine: guildShrineResult.skilling.score,
             skillerGuildShrineTokens: guildShrineResult.skilling.tokens,
+            skillerGuildShrineUnpricedCredits: guildShrineResult.skilling.unpricedCredits,
             skillerBreakdown: {
                 equipment: skillerEquipmentResult.breakdown,
                 guildShrines: guildShrineResult.skilling.breakdown,
@@ -194,9 +201,11 @@ export async function calculateCombatScore(profileData) {
             equipment: 0,
             guildShrine: 0,
             guildShrineTokens: 0,
+            guildShrineUnpricedCredits: 0,
             guildShrineKnown: false,
             guildShrineCombat: 0,
             guildShrineCombatTokens: 0,
+            guildShrineCombatUnpricedCredits: 0,
             equipmentHidden: false,
             hasEquipmentData: false,
             equipmentUnpriced: 0,
@@ -206,6 +215,7 @@ export async function calculateCombatScore(profileData) {
             skillerEquipmentUnpriced: 0,
             skillerGuildShrine: 0,
             skillerGuildShrineTokens: 0,
+            skillerGuildShrineUnpricedCredits: 0,
             skillerBreakdown: { equipment: [], guildShrines: [] },
         };
     }
@@ -382,12 +392,12 @@ function calculateAbilityScore(profileData) {
  * and a skilling one, and only the flag tells them apart.
  *
  * @param {Object} profileData - Profile data
- * @returns {{known: boolean, score: number, tokens: number, breakdown: Array<Object>,
- *   combat: {score: number, tokens: number, breakdown: Array<Object>},
- *   skilling: {score: number, tokens: number, breakdown: Array<Object>}}}
+ * @returns {{known: boolean, score: number, tokens: number, unpricedCredits: number, breakdown: Array<Object>,
+ *   combat: {score: number, tokens: number, unpricedCredits: number, breakdown: Array<Object>},
+ *   skilling: {score: number, tokens: number, unpricedCredits: number, breakdown: Array<Object>}}}
  */
 function calculateGuildShrineScore(profileData) {
-    const emptyBucket = () => ({ score: 0, tokens: 0, breakdown: [] });
+    const emptyBucket = () => ({ score: 0, tokens: 0, unpricedCredits: 0, breakdown: [] });
     const unknown = { known: false, ...emptyBucket(), combat: emptyBucket(), skilling: emptyBucket() };
 
     // Your own profile carries `characterGuildBuffMap` ({ hrid: { level } }); a
@@ -409,8 +419,9 @@ function calculateGuildShrineScore(profileData) {
     let totalCost = 0;
     let totalTokens = 0;
     const breakdown = [];
-    const combat = { cost: 0, tokens: 0, breakdown: [] };
-    const skilling = { cost: 0, tokens: 0, breakdown: [] };
+    const combat = { cost: 0, tokens: 0, unpricedCredits: 0, breakdown: [] };
+    const skilling = { cost: 0, tokens: 0, unpricedCredits: 0, breakdown: [] };
+    let totalUnpricedCredits = 0;
 
     for (const [buffHrid, entry] of Object.entries(buffMap)) {
         const level = Math.max(0, Math.floor(Number(typeof entry === 'number' ? entry : entry?.level) || 0));
@@ -419,19 +430,28 @@ function calculateGuildShrineScore(profileData) {
 
         let cost = 0;
         let tokens = 0;
+        let unpricedCredits = 0;
         for (let step = 1; step <= level; step++) {
             const levelCost = detail.levelCosts?.[String(step)];
             if (!levelCost) continue;
             tokens += Math.max(0, Math.floor(Number(levelCost.guildTokenCost) || 0));
             // An unpriced credit contributes nothing rather than blocking the
             // whole score: this is a running total of what was invested, and one
-            // credit type without a conversion should not blank the other four
+            // credit type without a conversion should not blank the other four.
+            // It is counted, though — `priceGuildCreditCosts` reports what it
+            // could not price precisely so a caller does not present a short
+            // total as a complete one, the way the gear and ability scores flag
+            // an unpriced piece rather than dropping it.
             const { lines } = priceGuildCreditCosts(levelCost.creditCosts, { goldPerCredit });
-            for (const line of lines) cost += line.gold || 0;
+            for (const line of lines) {
+                if (line.gold === null) unpricedCredits += 1;
+                else cost += line.gold || 0;
+            }
         }
 
         totalCost += cost;
         totalTokens += tokens;
+        totalUnpricedCredits += unpricedCredits;
 
         const name = (detail.shrineHrid || buffHrid)
             .split('/')
@@ -448,12 +468,18 @@ function calculateGuildShrineScore(profileData) {
             // Kept per shrine as well as in the totals: a shrine whose gold value
             // is small may still be where most of the tokens went
             tokens,
+            // How many credit costs on the way to this level nothing could
+            // convert into gold. The row's own figure is short by whatever they
+            // were worth, so it is a floor rather than a price.
+            unpricedCredits,
+            partial: unpricedCredits > 0,
         };
         breakdown.push(row);
 
         const bucket = detail.isCombat ? combat : skilling;
         bucket.cost += cost;
         bucket.tokens += tokens;
+        bucket.unpricedCredits += unpricedCredits;
         bucket.breakdown.push(row);
     }
 
@@ -466,9 +492,20 @@ function calculateGuildShrineScore(profileData) {
         known: true,
         score: totalCost / 1_000_000,
         tokens: totalTokens,
+        unpricedCredits: totalUnpricedCredits,
         breakdown,
-        combat: { score: combat.cost / 1_000_000, tokens: combat.tokens, breakdown: combat.breakdown },
-        skilling: { score: skilling.cost / 1_000_000, tokens: skilling.tokens, breakdown: skilling.breakdown },
+        combat: {
+            score: combat.cost / 1_000_000,
+            tokens: combat.tokens,
+            unpricedCredits: combat.unpricedCredits,
+            breakdown: combat.breakdown,
+        },
+        skilling: {
+            score: skilling.cost / 1_000_000,
+            tokens: skilling.tokens,
+            unpricedCredits: skilling.unpricedCredits,
+            breakdown: skilling.breakdown,
+        },
     };
 }
 

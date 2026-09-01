@@ -270,6 +270,25 @@ function scoreCard(body, title, total, accent) {
 }
 
 /**
+ * The shrine section's footnote: the tokens spent, plus the credit costs nothing
+ * could price. A shrine figure short by an unpriced credit is a floor, and a
+ * floor presented as a price is the one thing the rest of this panel refuses to
+ * do — an unpriced gear piece is drawn as "no price" rather than dropped.
+ *
+ * @param {number} tokens - Guild tokens spent on these shrines
+ * @param {number} unpricedCredits - Credit costs with no gold conversion
+ * @returns {string} The note
+ */
+function shrineNote(tokens, unpricedCredits) {
+    const note = `${formatWithSeparator(tokens || 0)} guild tokens also spent, which have no price.`;
+    if (!(unpricedCredits > 0)) return note;
+    return (
+        `${note} ${unpricedCredits} credit cost${unpricedCredits === 1 ? '' : 's'} could not be priced either, ` +
+        'so this figure is a floor.'
+    );
+}
+
+/**
  * The sections of the combat score, largest first.
  *
  * Ordered by what they are worth rather than by the order the calculator
@@ -310,7 +329,7 @@ function combatSections(score) {
             title: 'Guild shrines',
             score: score.guildShrineCombat,
             rows: score.breakdown?.guildShrinesCombat || [],
-            note: `${formatWithSeparator(score.guildShrineCombatTokens || 0)} guild tokens also spent, which have no price.`,
+            note: shrineNote(score.guildShrineCombatTokens, score.guildShrineCombatUnpricedCredits),
         });
     }
 
@@ -340,7 +359,7 @@ function skillerSections(score) {
             title: 'Guild shrines',
             score: score.skillerGuildShrine,
             rows: score.skillerBreakdown?.guildShrines || [],
-            note: `${formatWithSeparator(score.skillerGuildShrineTokens || 0)} guild tokens also spent, which have no price.`,
+            note: shrineNote(score.skillerGuildShrineTokens, score.skillerGuildShrineUnpricedCredits),
         });
     }
 
