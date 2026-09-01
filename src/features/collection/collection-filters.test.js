@@ -178,6 +178,27 @@ describe('the colon keys becoming underscore keys', () => {
         expect(collectionFilters.favorites).toEqual({});
     });
 
+    test('a switch mid-rename does not move one character’s favourites onto another', async () => {
+        store.collections['favorites:iron456'] = { '/items/log': true };
+
+        // The switch lands while the legacy read is in flight. Every key in the
+        // rename used to be rebuilt from `getCurrentCharacterId()` afterwards,
+        // so the read and the write named different characters.
+        Object.defineProperty(store.collections, 'favorites:market123', {
+            configurable: true,
+            enumerable: true,
+            get() {
+                mockDataManager.characterId = 'iron456';
+                return { '/items/milk': true };
+            },
+        });
+
+        await collectionFilters._renameLegacyKeys();
+
+        expect(store.collections['favorites:iron456']).toEqual({ '/items/log': true });
+        expect(store.collections.favorites_iron456).toBeUndefined();
+    });
+
     test('saving after the rename writes the underscore key', async () => {
         store.collections['favorites:market123'] = { '/items/milk': true };
         await collectionFilters._load();

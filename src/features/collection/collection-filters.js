@@ -665,15 +665,26 @@ class CollectionFilters {
         // per session) that turns five round trips of IndexedDB latency into
         // one; on a first-touch character with keys still to move, five sets
         // of up to three.
+        // Both keys are built from `charId`, captured above, and not from
+        // `characterKey()`/`getCurrentCharacterId()` again after each await.
+        // Rebuilt late, a character switch landing inside either read made the
+        // read and the write name different characters: the departing
+        // character's favourites were written under the ARRIVING character's
+        // key (which is empty for a character whose rename has not run, so the
+        // `current === null` guard waves it through) and the arriving
+        // character's own un-renamed colon key deleted before it was ever
+        // read. `_renamedFor` is already set, so nothing retries it.
         const renameOne = async (key) => {
-            const legacy = await storage.get(this._legacyCharKey(key), 'collections', null);
+            const currentKey = `${key}_${charId}`;
+            const legacyKey = `${key}:${charId}`;
+            const legacy = await storage.get(legacyKey, 'collections', null);
             if (legacy === null) return;
 
-            const current = await storage.get(this._charKey(key), 'collections', null);
-            if (current === null) {
-                await storage.set(this._charKey(key), legacy, 'collections', true);
+            const stored = await storage.get(currentKey, 'collections', null);
+            if (stored === null) {
+                await storage.set(currentKey, legacy, 'collections', true);
             }
-            await storage.delete(this._legacyCharKey(key), 'collections');
+            await storage.delete(legacyKey, 'collections');
         };
 
         try {
