@@ -36,7 +36,7 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
-import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
+import { readScoped } from '../../utils/character-key.js';
 import { timeChunkId, recordKeysFor } from '../../utils/chunked-history.js';
 import { detectFills, trimLedger, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
 
@@ -168,6 +168,20 @@ function ledgerCharId() {
 }
 
 /**
+ * One character's scoped key, built from an id the caller captured.
+ *
+ * Deliberately not `characterKey()`: that reads whoever is current at the
+ * moment it is called, and every key in a load or a save has to belong to the
+ * character the read started under, not to one who arrived during it.
+ * @param {string} base - The unscoped key
+ * @param {string} charId - Whose key, from {@link ledgerCharId}
+ * @returns {string} `base_<charId>`
+ */
+function charKey(base, charId) {
+    return `${base}_${charId}`;
+}
+
+/**
  * @param {string} charId - Whose record
  * @param {string} bucket - Which day
  * @returns {string} The key that day's fills live under
@@ -220,6 +234,13 @@ class TradeLedgerStore {
         this.updateHandler = null;
         this._recordsChain = null;
         this._statesChain = null;
+        /**
+         * Bumped by {@link handleCharacterSwitch}. A load or a save that began
+         * under the departing character finds the number moved and stands
+         * down rather than adopting that character's rows into the arriving
+         * one's memory or writing them under their keys.
+         */
+        this._generation = 0;
         /**
          * Whether the single key is still the record.
          *
@@ -314,28 +335,44 @@ class TradeLedgerStore {
      * a single key that has come back from somewhere.
      */
     async load() {
+        // The character is captured once, before the first read, and every key
+        // below is built from it. `characterKey()` answers with whoever is
+        // current at the moment it is called, so a switch landing between two
+        // of these reads used to give the marker, the day records, the single
+        // key and the baselines different owners — and the migration writes
+        // below then wrote the departing character's split marker over the
+        // arriving character's, and deleted the arriving character's
+        // un-migrated single key, losing their whole ledger.
+        const charId = ledgerCharId();
+        const started = this._generation;
+        /** Whether this load still speaks for the character it began under. */
+        const current = () => this._generation === started && ledgerCharId() === charId;
         try {
-            const charId = ledgerCharId();
-            const markerProbe = await storage.tryGet(characterKey(SPLIT_MARKER_BASE), LEDGER_STORE);
+            const markerProbe = await storage.tryGet(charKey(SPLIT_MARKER_BASE, charId), LEDGER_STORE);
+            if (!current()) return;
             if (markerProbe === null) {
                 console.warn('[TradeLedger] Records could not be read; keeping the in-memory copy');
             } else if (markerProbe.found) {
                 this._legacy = false;
                 let stored = await this._readBuckets(charId);
-                const legacyProbe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+                const legacyProbe = await storage.tryGet(charKey(RECORDS_BASE, charId), LEDGER_STORE);
+                if (!current()) return;
                 if (legacyProbe?.found && Array.isArray(legacyProbe.value)) {
                     stored = mergeRecords(stored, legacyProbe.value);
                     await withTimeout(this._absorbLegacy(charId, legacyProbe.value), MIGRATION_TIMEOUT_MS, undefined);
+                    if (!current()) return;
                 }
                 this.records = mergeRecords(stored, this.records);
             } else {
-                const recordsProbe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+                const recordsProbe = await storage.tryGet(charKey(RECORDS_BASE, charId), LEDGER_STORE);
+                if (!current()) return;
                 if (recordsProbe === null) {
                     console.warn('[TradeLedger] Records could not be read; keeping the in-memory copy');
                 } else {
                     const stored = recordsProbe.found
                         ? recordsProbe.value
                         : (await readScoped(RECORDS_BASE, LEDGER_STORE, [])) || [];
+                    if (!current()) return;
                     // A split that hangs must not hold up the features that
                     // initialize after this one: fall back to the legacy path
                     const split = await withTimeout(
@@ -343,18 +380,21 @@ class TradeLedgerStore {
                         MIGRATION_TIMEOUT_MS,
                         false
                     );
+                    if (!current()) return;
                     this._legacy = !split;
                     this.records = mergeRecords(stored, this.records);
                 }
             }
 
-            const statesProbe = await storage.tryGet(characterKey(STATE_BASE), LEDGER_STORE);
+            const statesProbe = await storage.tryGet(charKey(STATE_BASE, charId), LEDGER_STORE);
+            if (!current()) return;
             if (statesProbe === null) {
                 console.warn('[TradeLedger] Listing baselines could not be read; keeping the in-memory copy');
             } else {
                 const stored = statesProbe.found
                     ? statesProbe.value
                     : (await readScoped(STATE_BASE, LEDGER_STORE, {})) || {};
+                if (!current()) return;
                 this.states = mergeStates(stored, this.states);
             }
         } catch (error) {
@@ -362,6 +402,7 @@ class TradeLedgerStore {
             // Keep whatever is in memory; an empty ledger here would be written
             // back over the stored one by the next fill
         }
+        if (!current()) return;
         this.isLoaded = true;
     }
 
@@ -417,7 +458,7 @@ class TradeLedgerStore {
         }
 
         const marked = await storage.set(
-            characterKey(SPLIT_MARKER_BASE),
+            charKey(SPLIT_MARKER_BASE, charId),
             { at: Date.now(), records: legacy.length },
             LEDGER_STORE,
             true
@@ -430,7 +471,7 @@ class TradeLedgerStore {
         // A delete that fails here is not a problem: the next load finds the
         // marker, folds the single key back into the day records and tries
         // the delete again
-        await storage.delete(characterKey(RECORDS_BASE), LEDGER_STORE);
+        await storage.delete(charKey(RECORDS_BASE, charId), LEDGER_STORE);
         return true;
     }
 
@@ -459,7 +500,7 @@ class TradeLedgerStore {
             console.warn('[TradeLedger] A returned single key could not be folded into the day records; leaving it');
             return;
         }
-        await storage.delete(characterKey(RECORDS_BASE), LEDGER_STORE);
+        await storage.delete(charKey(RECORDS_BASE, charId), LEDGER_STORE);
     }
 
     /**
@@ -553,19 +594,26 @@ class TradeLedgerStore {
     async saveRecords(buckets) {
         const wanted = buckets ? new Set(buckets) : null;
         const run = async () => {
+            // Captured before the first read and used for every key, probe and
+            // write alike: a switch landing in the read-merge-write below made
+            // the probe one character's and the write another's, folding the
+            // departing character's fills into the arriving character's key.
+            const charId = ledgerCharId();
+            const started = this._generation;
+            const current = () => this._generation === started && ledgerCharId() === charId;
             try {
                 if (this._legacy) {
-                    const probe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+                    const probe = await storage.tryGet(charKey(RECORDS_BASE, charId), LEDGER_STORE);
                     if (probe === null) {
                         console.warn('[TradeLedger] Records not saved: storage could not be read first');
                         return false;
                     }
+                    if (!current()) return false;
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
                     this.records = mergeRecords(stored, this.records);
-                    return await writeScoped(RECORDS_BASE, this.records, LEDGER_STORE);
+                    return await storage.set(charKey(RECORDS_BASE, charId), this.records, LEDGER_STORE);
                 }
 
-                const charId = ledgerCharId();
                 const grouped = groupByBucket(this.records);
                 const days = wanted || new Set(grouped.keys());
                 let floorT = -Infinity;
@@ -584,6 +632,7 @@ class TradeLedgerStore {
                         issued = false;
                         continue;
                     }
+                    if (!current()) return false;
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
                     const memory = grouped.get(bucket) || [];
                     const merged = mergeRecords(stored, memory).filter((record) => record.t >= floorT);
@@ -659,15 +708,20 @@ class TradeLedgerStore {
      */
     async saveStates() {
         const run = async () => {
+            // Same capture-before-the-read as saveRecords: the probe and the
+            // write have to name the same character.
+            const charId = ledgerCharId();
+            const started = this._generation;
             try {
-                const probe = await storage.tryGet(characterKey(STATE_BASE), LEDGER_STORE);
+                const probe = await storage.tryGet(charKey(STATE_BASE, charId), LEDGER_STORE);
                 if (probe === null) {
                     console.warn('[TradeLedger] Listing baselines not saved: storage could not be read first');
                     return false;
                 }
+                if (this._generation !== started || ledgerCharId() !== charId) return false;
                 const stored = probe.found ? probe.value : {};
                 this.states = mergeStates(stored, this.states);
-                return await writeScoped(STATE_BASE, this.states, LEDGER_STORE);
+                return await storage.set(charKey(STATE_BASE, charId), this.states, LEDGER_STORE);
             } catch (error) {
                 console.error('[TradeLedger] Failed to save listing states:', error);
                 return false;
@@ -719,6 +773,7 @@ class TradeLedgerStore {
      */
     async handleCharacterSwitch() {
         this.disable();
+        this._generation += 1;
         this.records = [];
         this.states = {};
         this.isLoaded = false;

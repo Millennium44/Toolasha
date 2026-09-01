@@ -618,3 +618,62 @@ describe('a character who has the ledger off stays off across a switch', () => {
         expect(tradeLedgerStore.isInitialized).toBe(true);
     });
 });
+
+describe('a character switch landing inside a load or a save', () => {
+    // Every key in load()/saveStates() used to be rebuilt by characterKey() at
+    // the moment it was needed, so a switch arriving between two reads gave the
+    // marker, the day records, the single key and the baselines different
+    // owners. The keys are built from a character captured before the first
+    // read now, and the work stands down when that character has moved on.
+    const IRON = 'iron456';
+
+    test('the split marks the character it read, not the one who arrived mid-write', async () => {
+        // Both characters are still on the pre-split single key.
+        LEDGER().set(RECORDS_KEY, [fill(1, DAY1)]);
+        LEDGER().set(`tradeLedgerRecords_${IRON}`, [fill(2, DAY2)]);
+
+        const putAll = storageMock.putAll.getMockImplementation();
+        storageMock.putAll.mockImplementationOnce(async (store, entries) => {
+            dataManagerMock.characterId = IRON;
+            return putAll(store, entries);
+        });
+
+        await tradeLedgerStore.load();
+
+        // The iron cow's un-migrated ledger must still be there, and unmarked:
+        // a marker over an empty set of day records loses it for good.
+        expect(LEDGER().get(`tradeLedgerRecords_${IRON}`)).toEqual([fill(2, DAY2)]);
+        expect(LEDGER().has(`tradeLedgerRecordsSplit_${IRON}`)).toBe(false);
+        expect(LEDGER().has(MARKER_KEY)).toBe(true);
+    });
+
+    test('a load that began under one character does not adopt their fills into the arriving one', async () => {
+        seedSplit([fill(1, DAY1)]);
+
+        const getAllKeys = storageMock.getAllKeys.getMockImplementation();
+        storageMock.getAllKeys.mockImplementationOnce(async (store) => {
+            dataManagerMock.characterId = IRON;
+            return getAllKeys(store);
+        });
+
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.records).toEqual([]);
+        expect(tradeLedgerStore.isLoaded).toBe(false);
+    });
+
+    test('a save that began under one character does not write their baselines under another', async () => {
+        memory([], baseline3());
+
+        const tryGet = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementationOnce(async (key, store) => {
+            const probe = await tryGet(key, store);
+            dataManagerMock.characterId = IRON;
+            return probe;
+        });
+
+        await tradeLedgerStore.saveStates();
+
+        expect(LEDGER().has(`tradeLedgerState_${IRON}`)).toBe(false);
+    });
+});
