@@ -5780,7 +5780,10 @@ class CombatSimUI {
         html += '<div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:11px;">';
         html += '<span style="color:#888;">Baseline:</span>';
         html +=
-            '<select class="toolasha-select" id="mwi-csim-baseline-select" style="flex:1; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
+            // min-width:0 so the select can shrink below its widest option: a
+            // select's intrinsic width is its longest label, and one long saved
+            // run pushed the whole row (buttons included) past the panel edge
+            '<select class="toolasha-select" id="mwi-csim-baseline-select" style="flex:1 1 0; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
         for (let i = 0; i < history.length; i++) {
             const sel = i === baseIdx ? ' selected' : '';
             html += '<option value="' + i + '"' + sel + '>' + history[i].label + '</option>';
