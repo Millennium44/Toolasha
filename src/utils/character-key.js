@@ -243,6 +243,16 @@ async function migrateLegacy(base, scopedKey, legacy, storeName, defaultValue, o
         return defaultValue;
     }
 
+    // `scopedKey` was built by the caller before `getAdoptionTargetId()`'s
+    // await; `charId` is read after it. A character switch in between makes
+    // those two different characters, and the adoption would then move the
+    // legacy value under the departing character's key while handing it to the
+    // arriving one — the legacy copy deleted, and neither character holding it
+    // where they will look. Leave it for the next read to claim cleanly.
+    if (scopedKey !== characterKey(base)) {
+        return defaultValue;
+    }
+
     await storage.set(scopedKey, legacy, storeName, true);
     await storage.delete(base, storeName);
     return legacy;

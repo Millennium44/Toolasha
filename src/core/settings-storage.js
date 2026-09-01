@@ -126,6 +126,12 @@ class SettingsStorage {
      */
     async loadSettings() {
         const characterKey = this.getCharacterStorageKey();
+        // Whose key that is, captured with it: the migration below runs after
+        // two awaits and used to read `this.currentCharacterId` afresh, so a
+        // switch in the gap seeded the departing character's key and filed the
+        // arriving character in the known-characters roster off the same load.
+        const characterId = this.currentCharacterId;
+        const characterName = this.currentCharacterName;
         // Probe first: "absent" and "could not be read" must not look alike
         // here, because the migration below treats absent as "first run for
         // this character" and writes, and the caller treats the result as
@@ -146,7 +152,7 @@ class SettingsStorage {
 
             // Migration: If this is a character-specific key and it doesn't exist
             // Copy from global template (old 'script_settingsMap' key)
-            if (this.currentCharacterId && !saved) {
+            if (characterId && !saved) {
                 const globalTemplate = await storage.getJSON(this.storageKey, this.storageArea, null);
                 if (globalTemplate) {
                     // Copy global template to this character
@@ -155,7 +161,7 @@ class SettingsStorage {
                 }
 
                 // Add character to known characters list
-                await this.addToKnownCharacters(this.currentCharacterId, this.currentCharacterName);
+                await this.addToKnownCharacters(characterId, characterName);
             }
 
             saved = await this.applyDefaultRewrites(saved, characterKey);
@@ -451,21 +457,26 @@ class SettingsStorage {
      * @returns {Promise<number>} Number of characters synced
      */
     async syncSettingsToAllCharacters(settings, targetIds) {
+        // The source is whoever was current when the button was pressed — the
+        // character `settings` was read off. Re-reading it after the awaits
+        // below would exclude the wrong character from the targets and copy the
+        // wrong character's task lists.
+        const sourceId = this.currentCharacterId;
         const knownCharacters = await this.getKnownCharacters();
         let syncedCount = 0;
 
         const targets = targetIds
             ? knownCharacters.filter((c) => targetIds.includes(c.id))
-            : knownCharacters.filter((c) => c.id !== this.currentCharacterId);
+            : knownCharacters.filter((c) => c.id !== sourceId);
 
         const taskScopedValues = await Promise.all(
             TASK_CHARACTER_SCOPED_PREFIXES.map((prefix) =>
-                storage.getJSON(`${prefix}_${this.currentCharacterId}`, this.storageArea, null)
+                storage.getJSON(`${prefix}_${sourceId}`, this.storageArea, null)
             )
         );
 
         for (const character of targets) {
-            if (character.id === this.currentCharacterId) continue;
+            if (character.id === sourceId) continue;
             const characterKey = `${this.storageKey}_${character.id}`;
             await storage.setJSON(characterKey, settings, this.storageArea, true);
 
@@ -502,8 +513,13 @@ class SettingsStorage {
         const skipped = [];
         if (ids.length === 0) return { copied, skipped };
 
+        // Fixed for the whole walk: the loop awaits a read and a write per
+        // character, and a switch part way through would start excluding a
+        // different character from "the other characters".
+        const sourceId = String(this.currentCharacterId);
+
         for (const character of await this.getKnownCharacters()) {
-            if (String(character.id) === String(this.currentCharacterId)) continue;
+            if (String(character.id) === sourceId) continue;
             const characterKey = `${this.storageKey}_${character.id}`;
             const stored = await storage.getJSON(characterKey, this.storageArea, null);
             if (!stored || typeof stored !== 'object' || Object.keys(stored).length === 0) {
@@ -534,11 +550,20 @@ class SettingsStorage {
         if (!sourceId || !this.currentCharacterId || String(sourceId) === String(this.currentCharacterId)) {
             return false;
         }
+        // The destination is the character the user was on when they pressed
+        // the button, not whoever is current when the source map comes back —
+        // a switch during the read would otherwise overwrite the arriving
+        // character's settings with a map they never asked for.
+        const destinationKey = this.getCharacterStorageKey();
         const sourceMap = await storage.getJSON(`${this.storageKey}_${sourceId}`, this.storageArea, null);
         if (!sourceMap || typeof sourceMap !== 'object' || Object.keys(sourceMap).length === 0) {
             return false;
         }
-        await storage.setJSON(this.getCharacterStorageKey(), sourceMap, this.storageArea, true);
+        if (this.getCharacterStorageKey() !== destinationKey) {
+            console.warn('[SettingsStorage] Settings not copied: the character changed while the source map loaded');
+            return false;
+        }
+        await storage.setJSON(destinationKey, sourceMap, this.storageArea, true);
         return true;
     }
 
@@ -590,7 +615,19 @@ class SettingsStorage {
      * @returns {Promise<void>}
      */
     async setSetting(settingId, value) {
+        // Captured before the load, checked after it. `loadSettings()` reads
+        // the key that was current when it started, and `saveSettings()` below
+        // asks for the key that is current when it runs — so a character switch
+        // landing in that gap wrote the departing character's whole settings
+        // map, plus this edit, under the arriving character's key.
+        const characterKey = this.getCharacterStorageKey();
         const settings = await this.loadSettings();
+        if (this.getCharacterStorageKey() !== characterKey) {
+            console.warn(
+                `[SettingsStorage] Setting '${settingId}' not saved: the character changed while settings loaded`
+            );
+            return;
+        }
         if (!this.lastLoadReadable) {
             // The map in hand is defaults standing in for settings that could
             // not be read; writing it back would put them over the user's

@@ -198,6 +198,22 @@ describe('SettingsStorage copy-from-character', () => {
         expect(stored.get('json:script_settingsMap_alice')).toBeUndefined();
     });
 
+    test('a character switch mid-copy does not land the source map on the arriving character', async () => {
+        // The destination key used to be asked for after the source read came
+        // back, so the map went to whoever was current *then* — the arriving
+        // character's settings replaced by a map they never asked for.
+        stored.set('json:script_settingsMap_bob', { featureX: { isTrue: true } });
+        storage.getJSON.mockImplementationOnce(async (key, _area, defaultValue) => {
+            settingsStorage.setCharacterId('carol', 'Carol');
+            return stored.get(`json:${key}`) ?? defaultValue;
+        });
+
+        expect(await settingsStorage.copySettingsFromCharacter('bob')).toBe(false);
+        expect(stored.has('json:script_settingsMap_carol')).toBe(false);
+        expect(stored.has('json:script_settingsMap_alice')).toBe(false);
+        settingsStorage.setCharacterId('alice', 'Alice');
+    });
+
     test('lists only other characters that actually have settings', async () => {
         stored.set('json:known_character_ids', [
             { id: 'alice', name: 'Alice' },
@@ -281,6 +297,25 @@ describe('a settings store that cannot be read', () => {
         await settingsStorage.setSetting('whatsNew_newDefaultsOff', true);
         expect(stored.get(`json:${KEY}`).whatsNew_newDefaultsOff.isTrue).toBe(true);
         expect(stored.get(`json:${KEY}`).ironCow_enabled.isTrue).toBe(true);
+    });
+
+    test('setSetting does not file one character’s map under another’s key', async () => {
+        // `loadSettings()` reads the key that was current when it started;
+        // `saveSettings()` used to ask for the key that is current when it
+        // runs. A character switch in that gap wrote the departing character's
+        // whole settings map, plus this edit, over the arriving character's.
+        stored.set(`json:${KEY}`, saved());
+        storage.tryGet.mockImplementationOnce(async (key) => {
+            settingsStorage.setCharacterId('carol', 'Carol');
+            const value = stored.get(`json:${key}`) ?? stored.get(key);
+            return value != null ? { found: true, value } : { found: false, value: null };
+        });
+
+        await settingsStorage.setSetting('whatsNew_newDefaultsOff', true);
+
+        expect(stored.has('json:script_settingsMap_carol')).toBe(false);
+        expect(stored.get(`json:${KEY}`)).toEqual(saved());
+        settingsStorage.setCharacterId('alice', 'Alice');
     });
 
     describe('saveSettingsKeepingStored', () => {

@@ -103,6 +103,28 @@ describe('readScoped', () => {
         expect(mockConsent.requestAdoptionConsent).not.toHaveBeenCalled();
     });
 
+    it('does not adopt under a key the character has moved on from', async () => {
+        // The scoped key is built at the top of `readScoped`, two storage reads
+        // before the adoption decides anything. A switch in between made the
+        // key and the consenting character two different characters: the legacy
+        // value was moved under the DEPARTING character's key and the bare copy
+        // deleted, so neither character had it where they would look for it.
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+        mockConsent.target = 'alt789';
+        // The switch lands while the legacy key is being read
+        mockStorage.get
+            .mockImplementationOnce(async () => null)
+            .mockImplementationOnce(async (key) => {
+                mockDataManager.currentCharacterId = 'alt789';
+                return mockStorage.storeFor('settings').get(key) ?? null;
+            });
+
+        expect(await readScoped('watchlist', 'settings', [])).toEqual([]);
+        expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
+        expect(mockStorage.storeFor('settings').has('watchlist_market123')).toBe(false);
+        expect(mockStorage.storeFor('settings').has('watchlist_alt789')).toBe(false);
+    });
+
     it('leaves the legacy value for the chosen character when someone else was picked', async () => {
         mockConsent.target = 'other456';
         mockStorage.storeFor('settings').set('watchlist', ['legacy']);
