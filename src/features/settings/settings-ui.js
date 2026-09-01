@@ -262,8 +262,19 @@ class SettingsUI {
         this.currentSettings = {};
         this.isInjecting = false;
 
-        // Clear config cache
-        this.config.clearSettingsCache();
+        // The config cache is deliberately NOT cleared here.
+        //
+        // Clearing it is half of a pair — feature-registry clears it on
+        // `character_switching` and reloads it on `character_switched`, and only
+        // that pairing is safe. This method has no reload to follow it, and it
+        // runs on `character_initialized`, which fires on a plain reconnect or
+        // re-login to the *same* character with no switch events at all. The map
+        // was then emptied with nothing to refill it: every `getSetting` fell
+        // through to the shipped schema default for the rest of the session, and
+        // every `setSetting` went to the pending queue that only `loadSettings`
+        // drains — so the panel's switches moved, nothing was stored, and a
+        // refresh showed none of it. Tearing the panel's DOM down is not a
+        // reason to throw away the settings the whole script is running on.
     }
 
     /**

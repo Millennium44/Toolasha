@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => ({
     choiceAnswer: null,
     /** What `importEverything` reports back to the restore flow */
     importResult: { restored: {}, expected: {}, failed: [], complete: true },
+    /** How many times the panel emptied config's settings map */
+    cacheClears: 0,
 }));
 
 vi.mock('../../utils/mobile.js', () => ({
@@ -176,7 +178,9 @@ vi.mock('../../core/config.js', () => ({
             mocks.written.push([id, value]);
             if (mocks.settingsMap[id]) mocks.settingsMap[id].value = value;
         },
-        clearSettingsCache: () => {},
+        clearSettingsCache: () => {
+            mocks.cacheClears += 1;
+        },
         getKnownCharacters: async () => mocks.knownCharacters,
         syncSettingsToAllCharacters: async (ids) => {
             mocks.synced.push(ids);
@@ -328,6 +332,7 @@ beforeEach(() => {
     mocks.toggled = [];
     mocks.coarsePointer = false;
     mocks.loadGate = null;
+    mocks.cacheClears = 0;
     mocks.settingsMap = {};
     for (const group of Object.values(schema)) {
         for (const [id, definition] of Object.entries(group.settings)) {
@@ -867,6 +872,25 @@ describe('injecting the tab into a panel React may take away', () => {
         await settingsUI.injectSettingsTab();
 
         expect(second.tabs.querySelector('#toolasha-settings-tab')).not.toBeNull();
+    });
+});
+
+describe('tearing the panel down leaves the settings alone', () => {
+    // `cleanupDOM` runs on `character_initialized`, which a plain reconnect or
+    // re-login to the same character fires with no switch events behind it —
+    // nothing reloads config afterwards. Emptying the map there left every read
+    // on the shipped default and every write in the queue that only a load
+    // drains: switches moved, nothing was stored, a refresh showed none of it.
+    test('cleanupDOM does not empty the config cache', () => {
+        settingsUI.cleanupDOM();
+
+        expect(mocks.cacheClears).toBe(0);
+    });
+
+    test('the full shutdown does not empty it either', () => {
+        settingsUI.cleanup();
+
+        expect(mocks.cacheClears).toBe(0);
     });
 });
 
