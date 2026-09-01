@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The maintainer's batch: dots obey their switch, and four quality-of-life asks
+
+The watchlist's inventory dots could turn themselves on and refuse both switches — during a settings-cache reload window, reads answered the shipped default while writes were queued silently, so the pill and the checkbox both wrote into the void; a queued write is now answered immediately and the pills repaint on any settings change. The labyrinth path stops detouring to reveal shrouded rooms that provably cannot shorten the route (free reveals along equal-length paths are still taken). The sim's Guild Shrine upgrades gain a default-on "Guild-allowed only" checkbox so a shrine your guild hasn't built stops being recommended, and an explicit 0 in the per-shrine target grid skips that shrine. The sim editor remembers your last loadout selection per character (imported characters are never touched). And the Missing Mats Marketplace gains a clear-all control that removes every material tab, the Return tab, and the armed quantities in one click — on the shrine list's and house rows' tabs too.
+
 ### The shrine planner spends only the tokens it has, and says where they're worth most
 
 The planner's convert steps were scheduled with no token budget at all — it could recommend converting 170K tokens while the shrine levels themselves already needed more than the wallet held. Conversions are now capped to the tokens left after the level costs are reserved, allocated best-value-first, with the uncovered remainder moved onto the shopping list and the step saying so; a colour you ticked yourself keeps its whole exchange, with the tooltip stating how far past spare it reaches. And each cover toggle now carries a gold-saved-per-token figure with a ★ on the best colour, so it's obvious where a token does the most work — honest "unpriced" when a colour's mats have no market price.
