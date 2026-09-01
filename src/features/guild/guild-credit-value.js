@@ -178,6 +178,28 @@ export function splitOwedCredits(owedCredits, pathFor = () => ({ path: 'tokens' 
     return { marketOwed, tokenOwed };
 }
 
+/**
+ * What one token spent on a colour saves against buying its materials.
+ *
+ * A token buys `1 / tokensPerCredit` credits of the colour, and the alternative
+ * to having them is paying `marketGold` per credit for the conversion materials,
+ * so the gold a token displaces here is the one divided by the other. The token's
+ * own worth (`tokenGold`) is deliberately not subtracted: it is the same number
+ * for every colour — the best gold-per-token across all of them — so subtracting
+ * it cannot reorder the list, and leaving it out keeps the figure something the
+ * row can state plainly ("1 tok here saves X gold") rather than a margin over an
+ * average the player never sees.
+ *
+ * @param {Object|null} decision - From {@link chooseCreditPath}/{@link applySpendMode}
+ * @returns {number|null} Gold saved per token, or null when the colour is unpriceable
+ */
+export function goldSavedPerToken(decision) {
+    const perCredit = Number(decision?.tokensPerCredit);
+    const market = Number(decision?.marketGold);
+    if (!(perCredit > 0) || !(market > 0)) return null;
+    return market / perCredit;
+}
+
 /** How long the target inputs sit still before the plan is written */
 const PLAN_SAVE_DEBOUNCE_MS = 400;
 /**
@@ -541,6 +563,106 @@ export function tokensForCredits(credits, rate) {
     const perToken = Number(rate.creditsPerToken);
     if (perToken > 0) return Math.ceil(wanted / perToken);
     return null;
+}
+
+/**
+ * The credits a token budget actually buys, in whole exchanges.
+ *
+ * The inverse of {@link tokensForCredits} and rounded the opposite way for the
+ * same reason: the counter does not make change, so a budget that covers three
+ * and a half exchanges buys three.
+ *
+ * @param {number} tokens - Tokens available to spend
+ * @param {Object|null} rate - The colour's token→credit rate
+ * @returns {number} Credits obtainable, 0 when the budget or the rate buys nothing
+ */
+export function creditsForTokens(tokens, rate) {
+    const budget = Number(tokens) || 0;
+    if (budget <= 0 || !rate) return 0;
+
+    const perExchange = Number(rate.creditsPerExchange);
+    const tokensPer = Number(rate.tokensPerExchange);
+    if (perExchange > 0 && tokensPer > 0) return Math.floor(budget / tokensPer) * perExchange;
+
+    const perToken = Number(rate.creditsPerToken);
+    return perToken > 0 ? Math.floor(budget * perToken) : 0;
+}
+
+/**
+ * Hold the token half of a plan to the tokens the player actually has spare.
+ *
+ * The token bill and the plan's own `guildTokenCost` come out of one pocket, and
+ * nothing was making them share it: the still-needed box would net the level
+ * costs against the balance, then recommend conversions worth multiples of that
+ * same balance on top — a plan unaffordable in tokens before the first exchange.
+ * The budget is therefore what is left *after* the levels take their cut, which
+ * is the `spare` the row notes were already measured against.
+ *
+ * A colour the recommendation chose (`auto`) is advice, and advice that cannot be
+ * taken is worse than none: it is capped to whole exchanges the budget covers and
+ * the remainder goes back to the market side, where the shopping list can price
+ * it. A colour the *player* chose — a ticked cover, or Tokens mode — is not
+ * advice and is not overruled: it keeps its whole exchange, takes the budget
+ * first, and is flagged so the step can say how far past the spare it reaches.
+ *
+ * @param {Object<string, number>} tokenOwed - creditHrid → credits owed on the token path
+ * @param {number} budget - Tokens spare after the plan's own token cost
+ * @param {Object} [options]
+ * @param {Function} [options.rateFor] - creditHrid → token→credit rate
+ * @param {Function} [options.decisionFor] - creditHrid → decision, for the ordering and `mode`
+ * @returns {{tokenOwed: Object<string, number>, marketOwed: Object<string, number>,
+ *   capped: Object<string, {chosen: boolean, tokens: number, credits: number, remainder: number,
+ *   over: number}>}} The two bills and what had to be cut back
+ */
+export function capTokenPlanToBudget(tokenOwed, budget, { rateFor = tokenRateFor, decisionFor = () => null } = {}) {
+    const keptTokenOwed = {};
+    const marketOwed = {};
+    const capped = {};
+    let left = Math.max(0, Number(budget) || 0);
+
+    const chosenHere = (hrid) => (decisionFor(hrid) || {}).mode === 'tokens';
+    // Chosen colours first — they are not competing for the budget, they are
+    // claiming it — then best value per token, then the hrid so the order is
+    // stable when two colours are worth the same
+    const entries = Object.entries(tokenOwed || {}).filter(([, owed]) => Number(owed) > 0);
+    entries.sort(([aHrid], [bHrid]) => {
+        if (chosenHere(aHrid) !== chosenHere(bHrid)) return chosenHere(aHrid) ? -1 : 1;
+        const a = goldSavedPerToken(decisionFor(aHrid));
+        const b = goldSavedPerToken(decisionFor(bHrid));
+        if (a !== b) return (b === null ? -Infinity : b) - (a === null ? -Infinity : a);
+        return aHrid.localeCompare(bHrid);
+    });
+
+    for (const [itemHrid, owed] of entries) {
+        const rate = rateFor(itemHrid);
+        const tokens = tokensForCredits(owed, rate);
+        // No rate to exchange at: there is no token figure to hold to a budget,
+        // and the conversion plan drops it anyway
+        if (!(tokens > 0)) {
+            keptTokenOwed[itemHrid] = owed;
+            continue;
+        }
+        if (chosenHere(itemHrid)) {
+            keptTokenOwed[itemHrid] = owed;
+            if (tokens > left)
+                capped[itemHrid] = { chosen: true, tokens, credits: owed, remainder: 0, over: tokens - left };
+            left = Math.max(0, left - tokens);
+            continue;
+        }
+        if (tokens <= left) {
+            keptTokenOwed[itemHrid] = owed;
+            left -= tokens;
+            continue;
+        }
+        const credits = Math.min(creditsForTokens(left, rate), owed);
+        const spent = credits > 0 ? tokensForCredits(credits, rate) || 0 : 0;
+        if (credits > 0) keptTokenOwed[itemHrid] = credits;
+        marketOwed[itemHrid] = owed - credits;
+        capped[itemHrid] = { chosen: false, tokens: spent, credits, remainder: owed - credits, over: 0 };
+        left = Math.max(0, left - spent);
+    }
+
+    return { tokenOwed: keptTokenOwed, marketOwed, capped };
 }
 
 /**
@@ -1748,7 +1870,18 @@ class GuildCreditValue {
             // different currencies. The token side still gets its exchange
             // listed below, so covering a colour does not make its cost vanish.
             const { marketOwed, tokenOwed } = splitOwedCredits(owedCredits, pathFor);
-            renderPlanFlow(marketOwed, tokenOwed, itemDetailMap, inventory);
+            // The tokens the levels themselves need are already spoken for, so
+            // the conversions get what is left and no more. What the budget will
+            // not stretch to comes back here as materials to buy, which is why
+            // the shopping bill is the sum of the two sides.
+            const budgeted = capTokenPlanToBudget(tokenOwed, spareTokens, {
+                rateFor: tokenRateFor,
+                decisionFor: pathFor,
+            });
+            const shoppingOwed = { ...marketOwed };
+            for (const [itemHrid, owed] of Object.entries(budgeted.marketOwed))
+                shoppingOwed[itemHrid] = (shoppingOwed[itemHrid] || 0) + owed;
+            renderPlanFlow(shoppingOwed, budgeted.tokenOwed, itemDetailMap, inventory, budgeted.capped);
         };
 
         /**
@@ -1774,8 +1907,9 @@ class GuildCreditValue {
          * @param {Object<string, number>} tokenOwed - creditHrid → credits exchanged for tokens
          * @param {Object} itemDetailMap - The game's items
          * @param {Array<Object>} inventory - The character's items
+         * @param {Object} [capped] - From {@link capTokenPlanToBudget}, what the token budget cut back
          */
-        function renderPlanFlow(marketOwed, tokenOwed, itemDetailMap, inventory) {
+        function renderPlanFlow(marketOwed, tokenOwed, itemDetailMap, inventory, capped = {}) {
             // Fresh per recalculation: the ranking is by live ask price, and a
             // cached one would send the user after yesterday's cheapest bar
             const topConversions = buildTopConversions(itemDetailMap, 1);
@@ -1799,9 +1933,20 @@ class GuildCreditValue {
                 line.dataset.creditHrid = step.creditItemHrid;
                 line.style.cssText =
                     'font-size:10px; color:#c4b5fd; white-space:normal; overflow-wrap:anywhere; padding:1px 0;';
-                line.textContent = `convert ${step.tokens.toLocaleString()} tok → ${step.credits.toLocaleString()} ${shortCreditName(step.creditName)}`;
+                const cap = capped?.[step.creditItemHrid];
+                const held = cap && !cap.chosen ? ' (token cap)' : '';
+                line.textContent = `convert ${step.tokens.toLocaleString()} tok → ${step.credits.toLocaleString()} ${shortCreditName(step.creditName)}${held}`;
                 line.title = [
-                    `${step.tokens.toLocaleString()} guild tokens exchange here for ${step.credits.toLocaleString()} ${step.creditName} — the ${step.owed.toLocaleString()} still owed, rounded up to whole exchanges.`,
+                    `${step.tokens.toLocaleString()} guild tokens exchange here for ${step.credits.toLocaleString()} ${step.creditName} — ${
+                        held
+                            ? // `step.owed` is what survived the cap, so the owed figure is put back together here
+                              `as much of the ${(cap.credits + cap.remainder).toLocaleString()} owed as the tokens this plan leaves spare will buy`
+                            : `the ${step.owed.toLocaleString()} still owed, rounded up to whole exchanges`
+                    }.`,
+                    held &&
+                        `The other ${cap.remainder.toLocaleString()} are on the shopping list as materials instead.`,
+                    cap?.chosen &&
+                        `${cap.over.toLocaleString()} tokens more than this plan leaves spare — you picked this colour's exchange, so it stays.`,
                     described?.title,
                 ]
                     .filter(Boolean)

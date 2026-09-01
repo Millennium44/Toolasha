@@ -167,6 +167,9 @@ const {
     SPEND_MODES,
     splitOwedCredits,
     tokenCoveredCredits,
+    creditsForTokens,
+    capTokenPlanToBudget,
+    goldSavedPerToken,
 } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
@@ -2447,6 +2450,162 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             const forceRow = nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
             expect(forceRow.querySelector('.mwi-shrine-next-buy-convert').textContent).toContain('gold of mats');
             expect(modal.querySelector('.mwi-shrine-token-convert-step')).toBeNull();
+        });
+    });
+
+    describe('the conversions never spend tokens the plan does not have', () => {
+        const planTokenSteps = (modal) =>
+            Array.from(modal.querySelectorAll('.mwi-shrine-plan-token-step')).map((el) => el.textContent);
+        const coverBoxFor = (modal, creditHrid) =>
+            modal.querySelector(`.mwi-shrine-token-cover[data-credit-hrid="${creditHrid}"] input`);
+
+        /** Blue's rate: one token buys ten credits */
+        beforeEach(() => {
+            game.rates['/items/guild_credit_1'] = {
+                creditItemHrid: '/items/guild_credit_1',
+                creditsPerToken: 10,
+                tokensPerExchange: 1,
+                creditsPerExchange: 10,
+                capturedAt: 1_700_000_000_000,
+                via: 'arrow',
+            };
+        });
+
+        /** Held tokens and credits, in the order the inventory reports them */
+        const holding = (tokens, credits) => [
+            { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: tokens },
+            { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: credits },
+        ];
+
+        test('the reported plan: 78,495 tokens short, so no conversion is recommended at all', () => {
+            // The maintainer's screenshot, to scale. The level wants 196,100
+            // tokens and 1,852,000 credits; the bag holds 117,605 tokens and
+            // 144,800 credits, so the box shows 78,495 tokens and 1,707,200
+            // credits still needed. The recommendation used to offer to convert
+            // 170,720 tokens for those credits — on top of a token bill it
+            // already could not pay, out of a balance that covers neither.
+            game.clientData.guildBuffDetailMap[FORCE].levelCosts['3'] = {
+                guildTokenCost: 196_100,
+                creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 1_852_000 }],
+            };
+            game.inventory = holding(117_605, 144_800);
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            const totals = modal.querySelector('.mwi-shrine-planner').textContent;
+            expect(totals).toContain('78,495');
+            expect(totals).toContain('own 117,605');
+            expect(totals).toContain('1,707,200');
+            // The chip still quotes what covering the colour would cost — it is a
+            // price, not a plan — but nothing is scheduled against it
+            expect(
+                modal.querySelector('.mwi-shrine-token-cover[data-credit-hrid="/items/guild_credit_1"]').textContent
+            ).toContain('170,720 tok');
+            expect(planTokenSteps(modal)).toEqual([]);
+            // …and the credits it can no longer convert for are bought instead:
+            // 1,707,200 credits at 5 iron bars each
+            matsButton(modal).click();
+            expect(shopping.calls[0].items).toEqual([
+                { itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 8_536_000 },
+            ]);
+        });
+
+        test('a budget that covers part of a colour converts that part and shops for the rest', () => {
+            // 200 tokens for the level, 250 held: 50 spare, which buys 500 of
+            // the 800 credits owed. The other 300 go on the shopping list.
+            game.clientData.guildBuffDetailMap[FORCE].levelCosts['3'] = {
+                guildTokenCost: 200,
+                creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 800 }],
+            };
+            game.inventory = holding(250, 0);
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            expect(planTokenSteps(modal)).toEqual(['convert 50 tok → 500 Trade (token cap)']);
+            const line = modal.querySelector('.mwi-shrine-plan-token-step');
+            expect(line.title).toContain('as much of the 800 owed as the tokens this plan leaves spare will buy');
+            expect(line.title).toContain('The other 300 are on the shopping list');
+
+            matsButton(modal).click();
+            expect(shopping.calls[0].items).toEqual([{ itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 1500 }]);
+        });
+
+        test('a colour the player ticked keeps its exchange, and the step says how far past spare it is', () => {
+            game.clientData.guildBuffDetailMap[FORCE].levelCosts['3'] = {
+                guildTokenCost: 200,
+                creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 800 }],
+            };
+            game.inventory = holding(250, 0);
+            shrinePlanRecord.get().spendMode = 'gold';
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            expect(planTokenSteps(modal)).toEqual([]);
+
+            coverBoxFor(modal, '/items/guild_credit_1').click();
+
+            // A choice is not advice: the whole 80 stays, capped only in the
+            // telling — 50 spare, so 30 of them are not yet in the bag
+            expect(planTokenSteps(modal)).toEqual(['convert 80 tok → 800 Trade']);
+            expect(modal.querySelector('.mwi-shrine-plan-token-step').title).toContain(
+                '30 tokens more than this plan leaves spare'
+            );
+            expect(matsButton(modal)).toBeNull();
+        });
+    });
+
+    describe('the token budget and the value ranking, as arithmetic', () => {
+        const RATE = { tokensPerExchange: 1, creditsPerExchange: 10, creditsPerToken: 10 };
+
+        test('a budget buys whole exchanges and no fraction of one', () => {
+            expect(creditsForTokens(5, RATE)).toBe(50);
+            expect(creditsForTokens(0, RATE)).toBe(0);
+            expect(creditsForTokens(5, { creditsPerToken: 10 })).toBe(50);
+            // Ten tokens per credit: nine buy nothing
+            expect(creditsForTokens(9, { tokensPerExchange: 10, creditsPerExchange: 1 })).toBe(0);
+            expect(creditsForTokens(5, null)).toBe(0);
+        });
+
+        test('the budget is spent on the colours it saves the most gold on first', () => {
+            const rates = { '/items/a': RATE, '/items/b': RATE };
+            // 1 token → 10 credits either way, but b's credits cost 200 gold of
+            // mats against a's 100, so b is where the tokens go
+            const decisions = {
+                '/items/a': { tokensPerCredit: 0.1, marketGold: 100 },
+                '/items/b': { tokensPerCredit: 0.1, marketGold: 200 },
+            };
+            const out = capTokenPlanToBudget({ '/items/a': 500, '/items/b': 500 }, 50, {
+                rateFor: (hrid) => rates[hrid],
+                decisionFor: (hrid) => decisions[hrid],
+            });
+
+            expect(out.tokenOwed).toEqual({ '/items/b': 500 });
+            expect(out.marketOwed).toEqual({ '/items/a': 500 });
+            expect(out.capped['/items/a']).toEqual({
+                chosen: false,
+                tokens: 0,
+                credits: 0,
+                remainder: 500,
+                over: 0,
+            });
+        });
+
+        test('a budget of nothing schedules nothing', () => {
+            const out = capTokenPlanToBudget({ '/items/a': 500 }, 0, { rateFor: () => RATE });
+            expect(out.tokenOwed).toEqual({});
+            expect(out.marketOwed).toEqual({ '/items/a': 500 });
+        });
+
+        test('a colour with no rate is left where it was — there is no token figure to cap', () => {
+            const out = capTokenPlanToBudget({ '/items/a': 500 }, 0, { rateFor: () => null });
+            expect(out.tokenOwed).toEqual({ '/items/a': 500 });
+            expect(out.capped).toEqual({});
+        });
+
+        test('gold saved per token is the mats a token displaces', () => {
+            expect(goldSavedPerToken({ tokensPerCredit: 0.1, marketGold: 150 })).toBe(1500);
+            expect(goldSavedPerToken({ tokensPerCredit: 60, marketGold: 1200 })).toBe(20);
+            expect(goldSavedPerToken({ tokensPerCredit: 0.1, marketGold: null })).toBeNull();
+            expect(goldSavedPerToken(null)).toBeNull();
         });
     });
 });
