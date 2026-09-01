@@ -6351,6 +6351,14 @@ class CombatSimUI {
         this._lastSimHours = null;
         this._lastGameData = null;
         this._lastPartyWarnings = [];
+        // `_restoreUpgradeResults` refuses to draw over a result set that is
+        // already in hand, and a character switch tears the panel down and
+        // rebuilds it. Left set, the departing character's results kept the
+        // arriving character's own remembered analysis from ever restoring —
+        // silently, and for the rest of the session.
+        this._upgradeResultsData = null;
+        this._restoredUpgradeAt = null;
+        this._restoredUpgradeMeta = null;
         this._simHistory = [];
         this._comparisonIndex = null;
         this._comparisonBaseline = null;

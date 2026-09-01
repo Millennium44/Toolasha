@@ -1185,6 +1185,43 @@ describe('results outliving the character they were run for', () => {
     });
 });
 
+describe('the remembered upgrade analysis across a character switch', () => {
+    beforeEach(() => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.characterId = 'char1';
+        vi.restoreAllMocks();
+    });
+
+    test('the arriving character’s own remembered run still restores', async () => {
+        // A switch destroys the panel and builds a new one. `_upgradeResultsData`
+        // outlived that teardown, and `_restoreUpgradeResults` refuses to draw
+        // over a set already in hand — so the arriving character's remembered
+        // analysis silently never came back.
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+        mocks.store.set('combatExport:combatSimUpgradeResults_char2', {
+            data: { baseline: BASELINE, results: [row('The alt’s own run')] },
+            savedAt: 1,
+        });
+        ui.buildPanel();
+        ui._renderUpgradeResults({ baseline: BASELINE, results: [row('The main’s run')], food: null });
+
+        ui.destroy();
+        mocks.characterId = 'char2';
+        ui.buildPanel();
+        await ui._restoreUpgradeResults();
+
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('The alt’s own run');
+    });
+});
+
 describe('all-zones snapshot', () => {
     const HOUR_NS = 3600 * 1e9;
 
