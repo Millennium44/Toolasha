@@ -73,12 +73,46 @@ vi.mock('../../utils/choice-dialog.js', () => ({
     },
 }));
 
-const { registerRow } = await import('../../utils/overlay-rows.js');
+// The real registry is module-level and has no way to take a row back out, so a
+// row registered inside one test is offered to every test after it — which is
+// two extra chips in the popover and a `chipState()` nobody wrote an
+// expectation for. Only the list is stood in for; every rule about rows
+// (`resolveRows`, the empty-tile policy) is the real one.
+const registry = vi.hoisted(() => ({ rows: [] }));
+vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
+    ...(await importActual()),
+    registeredRows: () => [...registry.rows],
+}));
+
 const { registerEscapeClose } = await import('../../utils/panel-escape.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
 
 /** The header band, which is the one part of the panel that must stay clickable */
 const HEADER_HEIGHT = 28;
+
+/**
+ * Offer a row for the length of one test, replacing by key as the real registry does.
+ * @param {Object} row - Row definition, as `registerRow` takes one
+ */
+function offerRow({ key, name, render, ...rest }) {
+    const definition = {
+        key,
+        name: name || key,
+        render,
+        version: null,
+        defaultVisible: true,
+        onOpen: null,
+        defaultSize: null,
+        defaultZoom: null,
+        empty: '',
+        tileClass: '',
+        whenEmpty: '',
+        ...rest,
+    };
+    const existing = registry.rows.findIndex((row) => row.key === key);
+    if (existing >= 0) registry.rows[existing] = definition;
+    else registry.rows.push(definition);
+}
 
 /**
  * State a rectangle for something happy-dom would measure as nothing.
@@ -194,8 +228,9 @@ beforeEach(() => {
     window.innerWidth = 900;
     window.innerHeight = 800;
 
-    registerRow({ key: 'dps', name: 'DPS', render: (el) => (el.textContent = 'dps') });
-    registerRow({ key: 'luck', name: 'Luck', render: (el) => (el.textContent = 'luck') });
+    registry.rows = [];
+    offerRow({ key: 'dps', name: 'DPS', render: (el) => (el.textContent = 'dps') });
+    offerRow({ key: 'luck', name: 'Luck', render: (el) => (el.textContent = 'luck') });
 
     overlayPanel.settings = {
         visible: { dps: true, luck: true },
@@ -472,7 +507,7 @@ describe('resetting to the default tiles', () => {
     test('drops a drifted selection back to the curated set, and can be undone', () => {
         // A character who arranged the overlay under the old every-row-on
         // defaults: an explicit selection, a hand-set order, and no curated flag
-        registerRow({ key: 'houses', name: 'Houses', render: (el) => (el.textContent = 'houses') });
+        offerRow({ key: 'houses', name: 'Houses', render: (el) => (el.textContent = 'houses') });
         overlayPanel.settings.visible = { dps: false, luck: true, houses: true };
         overlayPanel.settings.order = ['houses', 'luck', 'dps'];
         overlayPanel.settings.curatedDefaults = false;

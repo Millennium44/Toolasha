@@ -56,13 +56,18 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
     describeSession: (session) => `run ${session.key}`,
 }));
 
-const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS, buildSummaryText, _partyRuns } =
+const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS, buildSummaryText, _partyRuns, _resetView } =
     await import('./party-loot-panel.js');
 
 const CHEST = { itemHrid: '/items/enchanted_chest', itemName: 'Enchanted Chest', count: 2, totalValue: 7_400_000 };
 const ODDITY = { itemHrid: '/items/nothing', itemName: 'Unpriced Thing', count: 1, totalValue: 0 };
 
 beforeEach(() => {
+    // Which run is being viewed, and the archive read for it, are module state
+    // that deliberately outlives the panel — so a test that picks a run leaves
+    // the next test looking at it, and one that leaves the archive full leaves
+    // the next test's identical read looking unchanged and drawing nothing
+    _resetView();
     game.sessions = [];
     game.combinedResult = undefined;
     game.data = {
@@ -296,6 +301,24 @@ describe('the top bar', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(values()).toContain('a|1');
+    });
+
+    test('a combined view falls back to live once there is nothing left to combine', async () => {
+        // Combined is only offered while there are two runs to combine, so an
+        // archive pruned back below that left the panel viewing a snapshot
+        // `combineSessions` returns nothing for: the picker read "Live Session"
+        // — its first option, with none marked selected — over a body with no
+        // cards in it, and nothing but picking a run put it right
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z'), archived('b|2', '2026-08-02T20:00:00Z')];
+        partyLootPanel.show();
+        await settle();
+        choose('combined');
+
+        game.sessions = [];
+        await settle();
+
+        expect(partyLootPanel.panel.querySelector('select').value).toBe('live');
+        expect(text()).toContain('Briggsy99');
     });
 
     test('a chosen run that has since fallen off the list falls back to live', async () => {

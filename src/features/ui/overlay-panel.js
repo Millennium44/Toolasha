@@ -3632,6 +3632,15 @@ class OverlayPanel {
         this.dockObserver?.disconnect();
         this.dockObserver = null;
         this.lastCanvasWidth = null;
+        // Both are memos about a canvas that is about to stop existing, and the
+        // column count is the dangerous one: `_applyColumns` writes
+        // `--overlay-columns` only when the count *changes*, so a remembered 4
+        // means the freshly built canvas is never told it has four columns and
+        // falls back to the two in its `repeat()`. Reopening a wide panel then
+        // drew it at half its columns until something happened to change the
+        // count. See `_applyColumns`.
+        this.columns = 0;
+        this.lastWidth = 0;
         // Decided from the width at every draw; a stale true would leave the
         // next panel unable to be unlocked
         this.flowing = false;

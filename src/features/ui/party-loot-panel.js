@@ -234,6 +234,19 @@ export function _partyRuns() {
 }
 
 /**
+ * Test-only: forget which run is being viewed and the archive read for it.
+ *
+ * Both are module state on purpose — the chosen run outliving the panel is the
+ * feature — so closing the panel does not clear them and one test's choice is
+ * the next test's starting view. There is nothing here for the running script
+ * to call: a session only ever gains this state.
+ */
+export function _resetView() {
+    viewing = 'live';
+    sessions = [];
+}
+
+/**
  * One drop: what it was, what it is worth, how many came.
  *
  * @param {Object} item - From `formatLootList`
@@ -389,9 +402,18 @@ function drawTopBar(body, party) {
     for (const session of sessions) option(session.key, describeSession(session, shortDuration));
     if (sessions.length > 1) option('combined', `Combined (${sessions.length})`);
 
-    // A stored run that has since fallen off the end of the list would otherwise
-    // leave the picker showing "Live Session" while the body showed nothing
-    if (viewing !== 'live' && viewing !== 'combined' && !sessions.some((session) => session.key === viewing)) {
+    // Anything the picker is no longer offering falls back to the live run,
+    // because the picker would otherwise read "Live Session" — the first option,
+    // since none is marked selected — while the body showed nothing at all, and
+    // there is no gesture that puts that right.
+    //
+    // Asked of the options rather than of `sessions`, which is what this used to
+    // do while excepting `combined` outright. Combined is only offered while
+    // there are two runs to combine, so an archive that has since been pruned
+    // back to one run (or to none, which is every fresh character) left the view
+    // pinned to a snapshot `combineSessions` returns nothing for. `viewing`
+    // survives the panel being closed on purpose, so it survives that too.
+    if (![...picker.options].some((element) => element.value === viewing)) {
         viewing = 'live';
         picker.value = 'live';
     }

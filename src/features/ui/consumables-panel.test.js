@@ -6,7 +6,7 @@
  * and is tested there, because the overlay tile reads the same setting.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({ data: {} }));
 
@@ -137,6 +137,15 @@ beforeEach(async () => {
     consumablesPanel.hide({ remember: false });
     bus.characterId = 'char1';
     _resetCaches();
+});
+
+// `vi.spyOn` on a method that is already spied hands back the *existing* spy
+// rather than wrapping it again, so an unrestored spy is a call history that
+// carries into the next test that asks for one — "not called at all" then reads
+// the calls the previous test made. `document.hidden` is the other half: a
+// getter left stubbed answers for every test after it.
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 describe('whether the panel was open', () => {

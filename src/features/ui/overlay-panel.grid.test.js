@@ -145,7 +145,19 @@ beforeEach(() => {
         textScale: 100,
         curatedDefaults: false,
         emptyTiles: 'auto',
+        // The two the measurement depends on. Importing a nine-column layout
+        // leaves `columns: 9` in the settings, and an authored count can only
+        // raise the answer — so every later test measuring a 464px scroller
+        // read nine columns instead of two.
+        columns: 2,
+        columnsPinned: false,
     };
+    // The brake counts across panels, deliberately: a cooldown a reopen could
+    // clear is not a cooldown. So a test that trips it on purpose would leave
+    // every test after it drawing nothing at all.
+    overlayPanel.drawPausedUntil = 0;
+    overlayPanel.drawsInWindow = 0;
+    overlayPanel.drawWindowAt = 0;
 });
 
 afterEach(() => {
@@ -163,6 +175,29 @@ describe('the canvas', () => {
         expect(overlayPanel.canvasEl.style.display).toBe('grid');
         expect(overlayPanel.canvasEl.style.gridTemplateColumns).toContain('minmax(0, 1fr)');
         expect(overlayPanel.canvasEl.style.getPropertyValue('--overlay-columns')).toBe('2');
+    });
+
+    test('is told its column count again every time it is rebuilt', () => {
+        // The count is memoised so a resize can tell a change from a nudge, and
+        // the memo used to outlive the canvas it described: a panel closed and
+        // reopened at the same width measured the same count, took the "nothing
+        // changed" path, and left the brand-new canvas with no
+        // `--overlay-columns` at all — so it fell back to the two in its
+        // `repeat()` however wide it was. Four columns pinned by hand is the
+        // clearest case, being a count that does not move with the width.
+        registry.rows = [speaking('a')];
+        overlayPanel.settings.visible = { a: true };
+        overlayPanel.settings.order = ['a'];
+        overlayPanel.settings.columns = 4;
+        overlayPanel.settings.columnsPinned = true;
+        overlayPanel.show();
+        expect(overlayPanel.canvasEl.style.getPropertyValue('--overlay-columns')).toBe('4');
+
+        overlayPanel.hide();
+        overlayPanel.show();
+
+        expect(overlayPanel.columns).toBe(4);
+        expect(overlayPanel.canvasEl.style.getPropertyValue('--overlay-columns')).toBe('4');
     });
 
     test('keeps `minmax(0, 1fr)` rather than a bare `1fr`', () => {
