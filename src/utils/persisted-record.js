@@ -42,8 +42,14 @@ import { characterKey, readScoped } from './character-key.js';
  * Merge for arrays of entries that carry an identity: the union, keyed by
  * `idOf`, with memory's copy winning for an id both sides have. Order follows
  * `sort` when given, else stored-then-new.
+ *
+ * A caller that caps the merged pool by age — `slice(-N)` for oldest-first,
+ * `slice(0, N)` for newest-first — MUST pass `sort`. Stored-then-new looks
+ * age-ordered on one device and is not one across two: a device that has been
+ * offline contributes entries older than everything stored, on the new side,
+ * and an untimed cap then keeps those and evicts newer ones.
  * @param {(entry: *) => *} idOf - Identity of an entry; entries whose id is null/undefined are dropped
- * @param {(a: *, b: *) => number} [sort] - Final ordering
+ * @param {(a: *, b: *) => number} [sort] - Final ordering; required when the caller caps by age
  * @returns {(stored: Array, memory: Array) => Array}
  */
 export function mergeById(idOf, sort = null) {

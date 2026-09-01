@@ -54,7 +54,7 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
-import recorder, { attemptIdentity } from './labyrinth-fight-recorder.js';
+import recorder, { attemptIdentity, mergeAttempts, MAX_ATTEMPTS } from './labyrinth-fight-recorder.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 /** The pool as stored under this character's key */
@@ -455,5 +455,43 @@ describe('the pool survives a failed read and a second tab', () => {
         expect(attemptIdentity(legacy)).toBe(attemptIdentity({ ...legacy }));
         expect(attemptIdentity(legacy)).not.toBe(attemptIdentity({ ...legacy, seconds: 11 }));
         expect(attemptIdentity({ ...legacy, recordId: 'x' })).toBe('x');
+    });
+});
+
+describe('the ring cap drops the oldest fight, not the one that arrived last', () => {
+    /** A stored attempt, identified and dated */
+    const dated = (recordId, resolvedAt) => ({ ...attempt(), recordId, resolvedAt });
+
+    test('the merged pool is ordered oldest-first however the two sides were ordered', () => {
+        const mine = [dated('mine-old', 5_000), dated('mine-new', 6_000)];
+        // A device that has been offline for a week: its fights are older than
+        // everything stored here, and they arrive on the *new* side
+        const theirs = [dated('offline', 1_000)];
+
+        expect(mergeAttempts(mine, theirs).map((entry) => entry.recordId)).toEqual(['offline', 'mine-old', 'mine-new']);
+    });
+
+    test('a full pool evicts its oldest, not whichever side the entry arrived on', () => {
+        const mine = Array.from({ length: MAX_ATTEMPTS }, (_, i) => dated(`mine-${i}`, 10_000 + i));
+        const theirs = [dated('offline', 1)];
+
+        const merged = mergeAttempts(mine, theirs);
+
+        expect(merged).toHaveLength(MAX_ATTEMPTS);
+        // The week-old fight is the oldest in the union, so it is the one that
+        // falls off — untimed, it displaced `mine-0`, which is newer than it
+        expect(merged.some((entry) => entry.recordId === 'offline')).toBe(false);
+        expect(merged[0].recordId).toBe('mine-0');
+    });
+
+    test('a record carrying no timestamp sorts oldest, where an undatable record belongs', () => {
+        const undated = { ...attempt(), recordId: 'undated' };
+        delete undated.resolvedAt;
+        delete undated.battleStartedAt;
+
+        expect(mergeAttempts([dated('timed', 5_000)], [undated]).map((entry) => entry.recordId)).toEqual([
+            'undated',
+            'timed',
+        ]);
     });
 });

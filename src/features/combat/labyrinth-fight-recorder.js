@@ -73,7 +73,7 @@ const KEY = 'labyrinthFightRecorder';
  * up to twice this many records at once; raise it only against that figure, not
  * against the steady-state one.
  */
-const MAX_ATTEMPTS = 1000;
+export const MAX_ATTEMPTS = 1000;
 
 /** A fight shorter than this is an abandon, not a fight, and says nothing about a rate */
 const MIN_FIGHT_SECONDS = 3;
@@ -111,11 +111,35 @@ function newRecordId() {
 }
 
 /**
+ * How old a recorded fight is, for the ring cap's ordering.
+ *
+ * `resolvedAt` is when the attempt was filed and is the field the pool is aged
+ * by; `battleStartedAt` stands in for records written before it existed, and a
+ * record carrying neither sorts oldest, which is where an undatable record
+ * belongs in a cap that drops the oldest.
+ * @param {Object} attempt - A recorded attempt
+ * @returns {number} Milliseconds since the epoch, or 0
+ */
+function attemptAge(attempt) {
+    return Number(attempt?.resolvedAt) || Number(attempt?.battleStartedAt) || 0;
+}
+
+/** Oldest first — the order `slice(-MAX_ATTEMPTS)` below depends on */
+const oldestFirst = (a, b) => attemptAge(a) - attemptAge(b);
+
+/**
  * The pool, kept through the shared load/save discipline: a read that could
  * not be made keeps the fights in memory, a save folds in what another tab
  * stored, and the ring cap is applied to the union (oldest fall off first).
+ *
+ * The comparator is what makes "oldest fall off first" true. Without one
+ * `mergeById` returns stored-then-new, which is only *incidentally* age-ordered
+ * — and stops being so exactly when it matters: a device that has been offline
+ * for a week contributes fights that are older than everything stored here but
+ * arrive on the new side, so the untimed cap kept them and evicted genuinely
+ * newer fights instead.
  */
-const mergeAttempts = (base, fresh) => mergeById(attemptIdentity)(base, fresh).slice(-MAX_ATTEMPTS);
+export const mergeAttempts = (base, fresh) => mergeById(attemptIdentity, oldestFirst)(base, fresh).slice(-MAX_ATTEMPTS);
 
 const record = createPersistedRecord({
     base: KEY,
