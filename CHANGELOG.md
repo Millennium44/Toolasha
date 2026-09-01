@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### An armed buy-box quantity dies with its errand, and ability books join the missing-mats tabs
+
+Opening the marketplace from an ability upgrade armed the buy box with the book count — and if that purchase never happened, the count kept landing in every later order modal for any item until a reload. An arming is now scoped to its item: a buy modal for anything else is left untouched and retires the stale arming, and two more surfaces with the same unbounded leak (the shrine plan's marketplace tabs and the crafting plan) were scoped the same way. The sim's ability Market button also now opens the shared missing-mats tabs instead of its own single-item path, arming the shortfall you're actually missing rather than the gross count, like every other shopping surface.
+
 ### The reroll walk is done with a slot once it discards it
 
 The walk billed a discard correctly but never moved past the slot — and the game refills a discarded slot in place with a fresh task, so the walk priced the replacement as if it were the card it had already trashed: reroll to the cap, trash, refill, again, forever on one slot. Its running spend then carried every prior occupant's payments, which is why the chip could claim 70K + 9 bells against a card whose own line honestly said 10K + 3 — pushing the walk over the shield cap and into the close-the-menu treadmill. A settled discard now retires the slot (unless the board shrank, where the next card slides up into it).
