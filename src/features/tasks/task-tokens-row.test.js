@@ -127,18 +127,26 @@ function draw() {
     return container;
 }
 
-describe('the task tokens tile', () => {
-    beforeEach(() => {
-        game.quests = [];
-        game.valuation = { tokenValue: 4000, giftPerTask: 1000, error: null };
-        game.popupOpen = false;
-        game.shown = 0;
-        game.closed = 0;
-        game.showThrows = false;
-        game.rates = null;
-        game.ratesThrows = false;
-    });
+// The whole `game` fixture back at its defaults before every test.
+//
+// The per-describe setups below each reset only the fields they use, so a fault
+// switch left on by one describe ('a tracker that cannot answer' leaves
+// `ratesThrows` true, 'a popup that fails to open' leaves `showThrows` true)
+// silently decided what a test in another describe saw — a version() that never
+// gets a rate line reads as a tile that ignored a rate change. `started` is
+// deliberately not reset: it counts the module's own initialize() at import.
+beforeEach(() => {
+    game.quests = [];
+    game.valuation = { tokenValue: 4000, giftPerTask: 1000, error: null };
+    game.popupOpen = false;
+    game.shown = 0;
+    game.closed = 0;
+    game.showThrows = false;
+    game.rates = null;
+    game.ratesThrows = false;
+});
 
+describe('the task tokens tile', () => {
     test('registers, off by default', () => {
         expect(game.rows.taskTokens).toBeDefined();
         expect(game.rows.taskTokens.defaultVisible).toBe(false);
@@ -301,8 +309,6 @@ describe('the task tokens tile', () => {
 describe('a token valuation that is only a floor', () => {
     beforeEach(() => {
         game.quests = [task(3)];
-        game.popupOpen = false;
-        game.rates = null;
     });
 
     test('the tile marks the figure rather than presenting it as firm', () => {
@@ -341,7 +347,6 @@ describe('the Task Tokens tile summarises its own inputs', () => {
     const version = () => game.rows.taskTokens.version();
 
     beforeEach(() => {
-        game.rates = null;
         game.quests = [
             {
                 category: '/quest_category/random_task',

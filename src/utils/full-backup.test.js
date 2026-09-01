@@ -6,26 +6,42 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 let db = new Map(); // storeName -> Map(key -> value)
 
-vi.mock('../core/storage.js', () => ({
-    default: {
-        listStores: vi.fn(() => Promise.resolve(Array.from(db.keys()))),
-        getAll: vi.fn((storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map()))),
-        beginRestore: vi.fn(() => Promise.resolve()),
-        finishRestore: vi.fn(),
-        endRestore: vi.fn(() => Promise.resolve()),
-        putAll: vi.fn((storeName, entries) => {
+/**
+ * The behaviour every storage method has unless a test deliberately changes it.
+ *
+ * Several tests below replace `putAll` (a shortfall, a rejection) or spy on
+ * `console`, and `mockImplementation` outlives the test that installed it. The
+ * defaults therefore live in one place and are reinstalled before every test,
+ * so a shortfall stubbed in one test cannot decide what the next test's restore
+ * writes. Declared as a hoisted function so the `vi.mock` factory can use it.
+ *
+ * @returns {object} A fresh set of default `storage` method implementations.
+ */
+function storageDefaults() {
+    return {
+        listStores: () => Promise.resolve(Array.from(db.keys())),
+        getAll: (storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map())),
+        beginRestore: () => Promise.resolve(),
+        finishRestore: () => {},
+        endRestore: () => Promise.resolve(),
+        putAll: (storeName, entries) => {
             const store = db.get(storeName) || new Map();
             for (const [key, value] of Object.entries(entries || {})) {
                 store.set(key, value);
             }
             db.set(storeName, store);
             return Promise.resolve(Object.keys(entries || {}).length);
-        }),
-    },
+        },
+    };
+}
+
+vi.mock('../core/storage.js', () => ({
+    default: Object.fromEntries(Object.entries(storageDefaults()).map(([name, impl]) => [name, vi.fn(impl)])),
 }));
 
 const { listBackupStores, exportEverything, exportEverythingJSON, importEverything, stripExcludedKeys } =
     await import('./full-backup.js');
+const storageMock = (await import('../core/storage.js')).default;
 
 /**
  * Reset the fake database to a fixed set of stores/keys.
@@ -43,6 +59,18 @@ function seedDb() {
         ['dungeonRuns', new Map([['run1', { boss: 'X' }]])],
     ]);
 }
+
+// Every test starts from the same database and the same storage behaviour, so
+// no test can inherit a stubbed `putAll`, a leftover call count or a database
+// another test reassigned.
+beforeEach(() => {
+    vi.restoreAllMocks();
+    seedDb();
+    for (const [name, impl] of Object.entries(storageDefaults())) {
+        storageMock[name].mockReset();
+        storageMock[name].mockImplementation(impl);
+    }
+});
 
 describe('listBackupStores', () => {
     beforeEach(seedDb);
@@ -345,22 +373,8 @@ describe('importEverything formatVersion rejection', () => {
 });
 
 describe('importEverything reports what did not land', () => {
-    beforeEach(async () => {
-        seedDb();
-        const storage = (await import('../core/storage.js')).default;
-        // mockImplementation from a previous test outlives mockClear, and these
-        // tests exist to change putAll's answer — so the default is restored
-        storage.putAll.mockReset();
-        storage.putAll.mockImplementation((storeName, entries) => {
-            const store = db.get(storeName) || new Map();
-            for (const [key, value] of Object.entries(entries || {})) store.set(key, value);
-            db.set(storeName, store);
-            return Promise.resolve(Object.keys(entries || {}).length);
-        });
-        storage.beginRestore.mockClear();
-        storage.finishRestore.mockClear();
-        storage.endRestore.mockClear();
-    });
+    // The file-wide beforeEach already reinstalls every storage default and
+    // clears the call records, which is exactly what these tests need.
 
     test('a store whose transaction wrote nothing is reported, not counted as restored', async () => {
         const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

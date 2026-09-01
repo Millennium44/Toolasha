@@ -43,6 +43,25 @@ vi.mock('./data-manager.js', () => ({ default: dataManagerMock }));
 const { default: config } = await import('./config.js');
 const { settingsGroups } = await import('./settings-schema.js');
 
+// `config` is a module singleton, so every test in this file shares one
+// instance. The reload-window describes below leave `_pendingValues` populated
+// (a write taken but not yet stored outranks both the map and the schema in
+// getSetting), leave a watchdog timer armed and leave `characterSettingsLoaded`
+// set — state that decided the answers of whichever test ran next. Wiping the
+// whole of the singleton's cross-test state here means no test inherits it.
+beforeEach(() => {
+    clearTimeout(config._reloadWatchdog);
+    config._reloadWatchdog = null;
+    config._pendingWrites = [];
+    config._pendingValues = Object.create(null);
+    config._loadGeneration = 0;
+    config.settingsMap = {};
+    config.settingsOwner = null;
+    config.characterSettingsLoaded = false;
+    config.settingChangeCallbacks = {};
+    config.settingsLoadedCallbacks = [];
+});
+
 describe('Config.getSetting', () => {
     beforeEach(() => {
         config.settingsMap = {
