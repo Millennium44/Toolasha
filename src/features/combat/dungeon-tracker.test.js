@@ -1635,3 +1635,35 @@ describe('switching characters', () => {
         await tracker.cleanup();
     });
 });
+
+describe('a character switch inside onNewBattle', () => {
+    test('a wave 0 landing across a switch does not start the departing character’s run on the arriving one', async () => {
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
+
+        // The switch lands in `clearInProgressRun`'s round trip, between the
+        // message arriving and `startDungeon` reading it
+        const pending = tracker.onNewBattle({ wave: 0, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        game.characterId = 'iron456';
+        await pending;
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+        expect(mockStorage.storeFor('settings').get('dungeonTracker_inProgress_iron456')).toBeUndefined();
+    });
+
+    test('a mid-dungeon wave landing across a switch starts nothing either', async () => {
+        // The restore stands itself down on a switch and reports false, which
+        // reads as "nothing saved" — the fallback start must not run on it
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, isDone: false }];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
+
+        const pending = tracker.onNewBattle({ wave: 4, battleId: 77, combatStartTime: '2026-08-04T10:05:00.000Z' });
+        game.characterId = 'iron456';
+        await pending;
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+    });
+});

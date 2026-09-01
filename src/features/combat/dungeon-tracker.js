@@ -370,6 +370,7 @@ class DungeonTracker {
             // There is no live battleId on page load, so the record's own is accepted.
             if (!this.canRestoreRecord(saved)) {
                 await this.clearInProgressRun();
+                if (currentOwner() !== owner) return;
                 this.pendingDungeonInfo = {
                     dungeonHrid: dungeonAction.actionHrid,
                     tier: dungeonAction.difficultyTier,
@@ -971,6 +972,16 @@ class DungeonTracker {
         // Capture battleId for persistence
         const battleId = data.battleId;
 
+        // This message describes the fight of whoever is logged in right now.
+        // Both branches below cross an await before calling `startDungeon`, and
+        // `startDungeon` sets `isTracking`, `currentRun` and `waveStartTime`
+        // from this data — so a switch inside either await used to start the
+        // departing character's dungeon on the arriving one. That run is then
+        // saved under the arriving character's key, blocks their own
+        // `checkForActiveDungeon()` (it returns early on `isTracking`), and on
+        // completion lands in their history as a run they never made.
+        const owner = currentOwner();
+
         // Wave 0 = first wave = dungeon start
         if (data.wave === 0) {
             // `new_battle` has no dedupe or replay guard (see websocket.js's
@@ -988,12 +999,18 @@ class DungeonTracker {
 
             // Clear any stale saved state first (in case previous run didn't clear properly)
             await this.clearInProgressRun();
+            if (currentOwner() !== owner) return;
 
             // Start fresh dungeon
             this.startDungeon(data);
         } else if (!this.isTracking) {
             // Mid-dungeon start - try to restore first
             const restored = await this.restoreInProgressRun(battleId);
+            // `restoreInProgressRun` stands itself down on a switch and reports
+            // `false`, which reads here as "nothing to restore" — so without
+            // this check the guard in the callee would *cause* the departing
+            // character's battle to be started on the arriving one
+            if (currentOwner() !== owner) return;
             if (!restored) {
                 // No restore - initialize tracking anyway
                 this.startDungeon(data);
