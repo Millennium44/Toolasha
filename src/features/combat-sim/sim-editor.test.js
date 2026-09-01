@@ -39,7 +39,12 @@ vi.mock('./combat-sim-adapter.js', () => ({
     buildAllPlayerDTOs: async () => game.allPlayers,
     buildPlayerDTO: () => (game.selfDTO ? structuredClone(game.selfDTO) : null),
     parseShykaiImport: () => null,
-    applyLoadoutSnapshotToDTO: () => true,
+    // The real one returns false for a name no snapshot answers to, which is
+    // what the remembered-selection restore leans on
+    applyLoadoutSnapshotToDTO: (dto, name) => {
+        bridge.applied.push(name);
+        return bridge.snapshots.some((snap) => snap.name === name);
+    },
     getGuildBuffDetailMap: () => ({}),
     guildBuffMaxLevel: () => 0,
     applyGuildBuffLevel: (buffs) => buffs,
@@ -51,8 +56,19 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getAllSnapshots: () => [], resolveEquipment: () => [] },
 }));
 
+// Per-character settings, in memory: the loadout the editor last simmed with
+// lives here, and nothing in this suite is about IndexedDB.
+const settings = vi.hoisted(() => ({ values: new Map() }));
+vi.mock('../../utils/character-key.js', () => ({
+    readScoped: async (base, storeName, defaultValue = null) =>
+        settings.values.has(base) ? settings.values.get(base) : defaultValue,
+    writeScoped: async (base, value) => {
+        settings.values.set(base, value);
+    },
+}));
+
 // The fed store lives behind the bundle bridge; the picker must read it there.
-const bridge = vi.hoisted(() => ({ snapshots: [] }));
+const bridge = vi.hoisted(() => ({ snapshots: [], applied: [] }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
 }));
@@ -86,6 +102,8 @@ function editorWithStrangers() {
 
 beforeEach(() => {
     bridge.snapshots = [];
+    bridge.applied = [];
+    settings.values.clear();
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
@@ -319,6 +337,95 @@ describe('loadout picker reads the fed store, not this bundle', () => {
     test('no picker when the fed store has no loadouts at all', () => {
         const { el } = editorWithStrangers();
         expect(el.querySelector('#mwi-csim-loadout-select')).toBeFalsy();
+    });
+});
+
+/**
+ * The Loadout dropdown reset to "Current Gear" every time the panel opened, so a
+ * character who sims one build reselected it on every run. The selection is
+ * remembered per character and re-applied through the same path a manual pick
+ * takes — and only for this character's own DTO.
+ */
+describe('the loadout selection is remembered', () => {
+    const openEditor = async (options = {}) => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el, ...options });
+        await editor.initEditor();
+        return { el, editor };
+    };
+
+    test('picking one stores it, and the next opening applies it', async () => {
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        const first = await openEditor();
+        const select = first.el.querySelector('#mwi-csim-loadout-select');
+        select.value = 'Bruteforce';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        const { el, editor } = await openEditor();
+
+        expect(editor.getSelectedLoadoutName()).toBe('Bruteforce');
+        expect(bridge.applied).toContain('Bruteforce');
+        expect(el.querySelector('#mwi-csim-loadout-select').value).toBe('Bruteforce');
+    });
+
+    test('a loadout that no longer exists falls back to current gear, silently', async () => {
+        settings.values.set('simEditorLoadoutName', 'Deleted');
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+
+        const { editor } = await openEditor();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+
+    test('going back to Current Gear is remembered too', async () => {
+        settings.values.set('simEditorLoadoutName', 'Bruteforce');
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        const { el, editor } = await openEditor();
+        expect(editor.getSelectedLoadoutName()).toBe('Bruteforce');
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        select.value = '';
+        select.dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        expect(settings.values.get('simEditorLoadoutName')).toBe('');
+    });
+
+    test('an imported or profile-simmed stranger keeps their own gear', async () => {
+        // `_selfHrid` is null for an external DTO, which is what says the stored
+        // loadout is not theirs to wear
+        settings.values.set('simEditorLoadoutName', 'Bruteforce');
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        editor.openWithExternalDTO(emptyDTO('them'), 'Stranger');
+
+        await editor._restoreLoadoutMemory();
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(bridge.applied).toEqual([]);
+    });
+
+    test('the lab editor drives the dropdown itself and is left out', async () => {
+        settings.values.set('simEditorLoadoutName', 'Bruteforce');
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+
+        const { editor } = await openEditor({ labMode: true });
+
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(bridge.applied).toEqual([]);
+    });
+
+    test('Reset to Current forgets it, so the next opening is current gear', async () => {
+        settings.values.set('simEditorLoadoutName', 'Bruteforce');
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        const { editor } = await openEditor();
+
+        editor.resetToSelf();
+        await Promise.resolve();
+
+        expect(settings.values.get('simEditorLoadoutName')).toBe('');
     });
 });
 

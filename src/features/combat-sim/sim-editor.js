@@ -20,6 +20,7 @@ import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import { achievementBuffLabel } from '../../utils/achievement-combat-buffs.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -36,6 +37,15 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
  * (`MAX_COMMUNITY_BUFF_LEVEL` in upgrade-advisor.js, the same 20).
  */
 const MAX_COMMUNITY_BUFF_LEVEL = 20;
+
+/**
+ * Where the last Loadout dropdown selection is remembered, per character.
+ *
+ * Only the combat sim's own Configure tab uses it: the lab editor drives the
+ * dropdown itself, one loadout per fight, and the skilling editor has no
+ * dropdown at all.
+ */
+const LOADOUT_MEMORY_KEY = 'simEditorLoadoutName';
 
 export class SimEditor {
     /**
@@ -115,19 +125,80 @@ export class SimEditor {
 
     /**
      * Apply a named loadout to the active player DTO and re-render.
+     *
+     * A name no snapshot answers to leaves the editor exactly as it was — the
+     * remembered selection below is restored through here, and a loadout the
+     * user has since deleted must fall back to current gear rather than half-
+     * applying anything.
+     *
      * @param {string} loadoutName - Snapshot name to apply
+     * @returns {boolean} True when a snapshot of that name was applied
      */
     applyLoadoutByName(loadoutName) {
-        if (!loadoutName || !this._editedDTOs) return;
+        if (!loadoutName || !this._editedDTOs) return false;
+        if (!this._applyLoadoutToDTO(loadoutName)) return false;
         this._selectedLoadoutName = loadoutName;
-        this._applyLoadoutToDTO(loadoutName);
+        this._saveLoadoutMemory();
         this.renderEditor();
+        return true;
+    }
+
+    /**
+     * Whether this editor remembers its Loadout selection between openings.
+     *
+     * Only the combat sim's Configure tab does: the lab editor drives the
+     * dropdown itself (one loadout per fight), the skilling editor has no
+     * dropdown, and a DTO that is not this character's — an imported export, a
+     * party member, a profile-simmed stranger, all of which carry a null
+     * `_selfHrid` — keeps the gear it arrived with.
+     *
+     * @returns {boolean} True when the selection may be saved and restored
+     * @private
+     */
+    _remembersLoadout() {
+        if (this.labMode || this.skillingMode) return false;
+        return Boolean(this._selfHrid) && this._activeEditPlayer === this._selfHrid;
+    }
+
+    /**
+     * Persist the current Loadout selection for this character.
+     * @private
+     */
+    async _saveLoadoutMemory() {
+        if (!this._remembersLoadout()) return;
+        try {
+            await writeScoped(LOADOUT_MEMORY_KEY, this._selectedLoadoutName || '');
+        } catch (error) {
+            console.error('[SimEditor] Failed to save the loadout selection:', error);
+        }
+    }
+
+    /**
+     * Re-apply the loadout this character last simmed with.
+     *
+     * Goes through `applyLoadoutByName` rather than reaching into the DTO, so a
+     * restored selection is the same state a manual pick leaves behind — and a
+     * snapshot that no longer exists silently leaves current gear in place.
+     * @private
+     */
+    async _restoreLoadoutMemory() {
+        if (!this._remembersLoadout()) return;
+        try {
+            const saved = await readScoped(LOADOUT_MEMORY_KEY, 'settings', '');
+            if (typeof saved !== 'string' || !saved) return;
+            this.applyLoadoutByName(saved);
+        } catch (error) {
+            console.error('[SimEditor] Failed to restore the loadout selection:', error);
+        }
     }
 
     /**
      * Load DTOs from live character data.
+     * @param {Object} [options]
+     * @param {boolean} [options.restoreLoadout=true] - Re-apply the remembered Loadout
+     *   selection; false for the explicit resets, whose whole point is current gear
      */
-    async initEditor() {
+    async initEditor({ restoreLoadout = true } = {}) {
         const editorArea = this._editorEl;
         if (!editorArea) return;
 
@@ -153,6 +224,7 @@ export class SimEditor {
             this._editorInitialized = true;
 
             this.renderEditor();
+            if (restoreLoadout) await this._restoreLoadoutMemory();
         } catch (error) {
             console.error('[SimEditor] Failed to init editor:', error);
             editorArea.innerHTML =
@@ -264,6 +336,7 @@ export class SimEditor {
         this._editorInitialized = true;
 
         this.renderEditor();
+        this._saveLoadoutMemory();
         return true;
     }
 
@@ -284,7 +357,8 @@ export class SimEditor {
     async resetToParty() {
         this._selectedLoadoutName = '';
         this._editorInitialized = false;
-        await this.initEditor();
+        await this.initEditor({ restoreLoadout: false });
+        this._saveLoadoutMemory();
     }
 
     /**
@@ -2079,6 +2153,7 @@ export class SimEditor {
                 } else {
                     this._applyLoadoutToDTO(selectedName);
                 }
+                this._saveLoadoutMemory();
                 this.renderEditor();
             });
         }
@@ -2243,12 +2318,16 @@ export class SimEditor {
         return loadoutPrefix ? loadoutPrefix + ': ' + changesStr : changesStr;
     }
 
-    /** @private */
+    /**
+     * @param {string} loadoutName - Snapshot name
+     * @returns {boolean} True when a snapshot of that name was found and applied
+     * @private
+     */
     _applyLoadoutToDTO(loadoutName) {
         const gameData = buildGameDataPayload();
-        if (!gameData) return;
-        const dto = this._editedDTOs[this._activeEditPlayer];
-        if (!dto) return;
-        applyLoadoutSnapshotToDTO(dto, loadoutName, gameData);
+        if (!gameData) return false;
+        const dto = this._editedDTOs?.[this._activeEditPlayer];
+        if (!dto) return false;
+        return applyLoadoutSnapshotToDTO(dto, loadoutName, gameData) !== false;
     }
 }
