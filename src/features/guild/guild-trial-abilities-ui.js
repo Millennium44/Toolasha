@@ -818,8 +818,9 @@ export function offPlanExportText(state, now = Date.now()) {
  * The Plan heading's export button: the off-plan list onto the clipboard.
  *
  * Lives in the heading row so it is reachable with the card folded — the
- * status line is, and this is that line made pasteable. With everyone on plan
- * (or no plan at all) the press says so instead of copying an empty list.
+ * status line is, and this is that line made pasteable. With everyone on plan,
+ * with no plan at all, or with a plan that names nobody who turned up, the
+ * press says which of those it is instead of copying an empty list.
  *
  * @param {Object} state - From `guildTrialAbilities.state()`
  * @returns {HTMLElement} The button
@@ -839,7 +840,18 @@ function offPlanExportButton(state) {
             };
             const exportText = offPlanExportText(state);
             if (!exportText) {
-                flash(state?.planCompare?.summary?.planLines ? 'All on plan ✓' : 'No plan saved');
+                // Three different nothings, and only one of them is good news.
+                // A plan whose every line names somebody not in this trial
+                // compares nobody, and calling that "All on plan" is the one
+                // claim this button must never make
+                const summary = state?.planCompare?.summary;
+                flash(
+                    !summary?.planLines
+                        ? 'No plan saved'
+                        : summary.plannedPlayers
+                          ? 'All on plan ✓'
+                          : 'Nobody planned is here'
+                );
                 return;
             }
             try {

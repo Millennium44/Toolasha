@@ -873,6 +873,29 @@ describe('trial abilities panel', () => {
         expect(writeText).not.toHaveBeenCalled();
     });
 
+    test('a plan naming nobody who turned up does not report everyone on plan', async () => {
+        // The lead wrote the plan for last week's roster: every line matches a
+        // name not in this trial, so nothing was compared. "All on plan ✓" is
+        // the one thing that must not be said about it
+        const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+        guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 200 }]));
+        await guildTrialPlan.setText('Zed: Fierce Aura');
+
+        openTrialAbilitiesPanel();
+        button('Export off-plan').click();
+        await vi.waitFor(() =>
+            expect(
+                [...guildTrialAbilitiesPanel.panel.querySelectorAll('button')].some(
+                    (el) => el.textContent === 'Nobody planned is here'
+                )
+            ).toBe(true)
+        );
+        expect(writeText).not.toHaveBeenCalled();
+    });
+
     test('a guild switch drops an unsaved plan draft instead of leaking it onto the new guild', async () => {
         // One account running a main plus alts sees this mid-session: the lead
         // starts typing a plan, then the trial's guild name resolves to (or the
