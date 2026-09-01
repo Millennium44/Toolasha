@@ -11,6 +11,39 @@ import dataManager from '../../core/data-manager.js';
 /** How often the countdown redraws. The readout only shows tenths. */
 const TICK_MS = 100;
 
+/**
+ * Sanity bounds on the bar's `--duration`, in seconds.
+ *
+ * The game's own floor is MIN_ACTION_TIME_SECONDS (3s) and no single action
+ * runs for ten minutes, so a value outside this window is a corrupt custom
+ * property rather than a slow craft. The floor sits well below the game's own
+ * so a future balance change cannot make an honest bar look broken.
+ */
+const MIN_DURATION_SECONDS = 0.5;
+const MAX_DURATION_SECONDS = 600;
+
+/**
+ * How far `--duration` may sit from the total the game printed on the bar
+ * before the animation stops being believed. The larger of the two applies.
+ *
+ * 0.06s covers half a step of a one-decimal readout plus float slop, so a bar
+ * rendered "8.5s" against a duration of 8.51764572272224 still agrees. The 5%
+ * ratio absorbs a coarser rendering on a long action, and is still an order of
+ * magnitude below the reported failure — a three-second animation sitting on a
+ * twenty-eight-second action.
+ */
+const DURATION_TOLERANCE_SECONDS = 0.06;
+const DURATION_TOLERANCE_RATIO = 0.05;
+
+/**
+ * Whether a `--duration` reading is a number an action could plausibly take.
+ * @param {number} duration - Seconds, as parsed from the custom property
+ * @returns {boolean} True when finite and inside the sanity bounds
+ */
+function isPlausibleDuration(duration) {
+    return Number.isFinite(duration) && duration >= MIN_DURATION_SECONDS && duration <= MAX_DURATION_SECONDS;
+}
+
 class ActionCountdown {
     constructor() {
         this.initialized = false;
@@ -24,6 +57,13 @@ class ActionCountdown {
         this.lastCompletedAt = null;
         this.settingChangeHandler = null;
         this.cachedDuration = null;
+        /**
+         * The total the game itself printed on the bar, kept apart from
+         * `totalTime` so the animation's `--duration` can be cross-checked
+         * against a number the animation did not produce.
+         * @type {number|null}
+         */
+        this.textTotalTime = null;
     }
 
     initialize() {
@@ -75,17 +115,30 @@ class ActionCountdown {
         this.textEl = textEl;
         this.fillBar = null;
         this.cachedDuration = null;
+        this.textTotalTime = null;
         this._parseTotalTime();
         this._startLoop();
     }
 
+    /**
+     * Re-read the total the game printed on the bar.
+     *
+     * Our own readout is "3.2s / 8.5s", whose leading number is the time
+     * REMAINING. Parsing that back walks the total down towards zero every time
+     * this runs, and only `--duration` overwriting it on the next tick hid the
+     * damage — the very crutch the cross-check below takes away. The game's own
+     * text carries a single number; anything with a separator in it is ours.
+     */
     _parseTotalTime() {
         if (!this.textEl) return;
         const span = this.textEl.querySelector('span');
         if (!span) return;
-        const val = parseFloat(span.textContent);
+        const text = span.textContent || '';
+        if (text.includes('/')) return;
+        const val = parseFloat(text);
         if (!isNaN(val) && val > 0) {
             this.totalTime = val;
+            this.textTotalTime = val;
         }
     }
 
@@ -170,7 +223,7 @@ class ActionCountdown {
                 if (match) {
                     const scaleX = parseFloat(match[1]);
                     const duration = this._readDuration();
-                    if (duration > 0) {
+                    if (this._durationTrusted(duration)) {
                         this.totalTime = duration;
                         remaining = duration * (1 - scaleX);
                     }
@@ -190,8 +243,12 @@ class ActionCountdown {
     }
 
     /**
-     * The bar's `--duration`, cached per action.
-     * @returns {number} Seconds, or NaN when the bar has none
+     * The bar's `--duration`, cached per action, refused when implausible.
+     *
+     * A NaN, zero, negative or absurd value is neither cached nor returned: the
+     * caller falls through to the wall-clock countdown rather than dividing the
+     * readout by nonsense.
+     * @returns {number} Seconds, or NaN when the bar has none worth using
      */
     _readDuration() {
         if (this.cachedDuration !== null) return this.cachedDuration;
@@ -199,10 +256,37 @@ class ActionCountdown {
         const duration = progressBar
             ? parseFloat(getComputedStyle(progressBar).getPropertyValue('--duration'))
             : this.totalTime;
-        if (duration > 0) {
-            this.cachedDuration = duration;
-        }
+        if (!isPlausibleDuration(duration)) return NaN;
+        this.cachedDuration = duration;
         return duration;
+    }
+
+    /**
+     * Whether the animation's own duration may drive the readout.
+     *
+     * `--duration` is the game's number, not ours, and it has been seen to
+     * disagree with the action the server is actually running: a bar that fills
+     * in three seconds and then holds full for twenty-five, because
+     * `fill: forwards` parks it there until something restarts it. Adopting the
+     * animation's total in that state made our readout repeat the wrong number,
+     * and `duration * (1 - scaleX)` doubly wrong — scaleX races the same bad
+     * clock.
+     *
+     * The total the game printed on the bar is the cross-check, because none of
+     * it comes from the animation. Past the tolerance the animation is refused
+     * and the caller falls back to the wall-clock countdown from that printed
+     * total, which needs no animation at all. With no printed total on hand
+     * there is nothing to cross-check against, and a plausible duration is
+     * accepted exactly as before.
+     *
+     * @param {number} duration - What `_readDuration()` returned
+     * @returns {boolean} True when the animation may be believed
+     */
+    _durationTrusted(duration) {
+        if (!isPlausibleDuration(duration)) return false;
+        if (!(this.textTotalTime > 0)) return true;
+        const tolerance = Math.max(DURATION_TOLERANCE_SECONDS, this.textTotalTime * DURATION_TOLERANCE_RATIO);
+        return Math.abs(duration - this.textTotalTime) <= tolerance;
     }
 
     disable() {
@@ -229,6 +313,7 @@ class ActionCountdown {
             this.textEl = null;
             this.fillBar = null;
             this.totalTime = null;
+            this.textTotalTime = null;
             this.cachedDuration = null;
             this.lastCompletedAt = null;
             this.initialized = false;

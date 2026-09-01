@@ -159,3 +159,85 @@ describe('tick loop lifetime', () => {
         expect(domObserver.onReady.mock.calls.length).toBe(onReadyCallsAfterInit);
     });
 });
+
+/**
+ * A bar with an animated inner bar, whose computed style reports whatever the
+ * test wants `transform` and `--duration` to say. The real DOM shape is
+ * progressBar > (innerBarContainer > innerBar, text), which is what
+ * `_findFillBar` walks.
+ *
+ * @param {{text: string, scaleX: number, duration: string|number}} options - Bar state
+ * @returns {HTMLElement} The progress-bar text element
+ */
+function mountAnimatedBar({ text, scaleX, duration }) {
+    document.body.innerHTML =
+        '<div class="ProgressBar_progressBar__abc">' +
+        '<div class="ProgressBar_innerBarContainer__def"><div class="ProgressBar_innerBar__ghi"></div></div>' +
+        `<div class="ProgressBar_text__jkl"><span>${text}</span></div>` +
+        '</div>';
+
+    vi.stubGlobal('getComputedStyle', (el) => ({
+        transform: `matrix(${scaleX}, 0, 0, 1, 0, 0)`,
+        getPropertyValue: () => (el.className.includes('progressBar') ? String(duration) : ''),
+    }));
+
+    return document.querySelector('[class*="ProgressBar_text"]');
+}
+
+describe('trusting the animation', () => {
+    test("a --duration that agrees with the bar's text drives the readout", () => {
+        mountAnimatedBar({ text: '8.5s', scaleX: 0.5, duration: 8.51764572272224 });
+        actionCountdown.initialize();
+
+        const span = document.querySelector('[class*="ProgressBar_text"] span');
+        expect(span.textContent).toBe('4.3s / 8.5s');
+        expect(actionCountdown.totalTime).toBeCloseTo(8.51764572272224, 6);
+    });
+
+    // The reported bug: the bar animates a three-second action, finishes, and
+    // `fill: forwards` parks it at full for the twenty-five seconds the server
+    // is still working. Believing `--duration` there printed "0.0s / 3.0s" for
+    // the whole of it.
+    test('a --duration that disagrees is refused, and the wall clock answers instead', () => {
+        mountAnimatedBar({ text: '28.0s', scaleX: 1, duration: 3 });
+        actionCountdown.initialize();
+
+        actionCountdown.lastCompletedAt = Date.now() - 5000;
+        actionCountdown._tick();
+
+        const span = document.querySelector('[class*="ProgressBar_text"] span');
+        expect(span.textContent).toBe('23.0s / 28.0s');
+        expect(actionCountdown.totalTime).toBe(28);
+    });
+
+    test.each([['NaN'], ['0'], ['-4'], ['99999'], ['']])('a --duration of %s is rejected outright', (duration) => {
+        mountAnimatedBar({ text: '28.0s', scaleX: 0.9, duration });
+        actionCountdown.initialize();
+
+        actionCountdown.lastCompletedAt = Date.now() - 5000;
+        actionCountdown._tick();
+
+        const span = document.querySelector('[class*="ProgressBar_text"] span');
+        expect(span.textContent).toBe('23.0s / 28.0s');
+        expect(actionCountdown.cachedDuration).toBeNull();
+    });
+
+    test('display rounding on its own is not a disagreement', () => {
+        mountAnimatedBar({ text: '8.5s', scaleX: 0, duration: 8.549 });
+        actionCountdown.initialize();
+        expect(actionCountdown._durationTrusted(8.549)).toBe(true);
+        expect(actionCountdown._durationTrusted(3)).toBe(false);
+    });
+
+    // Our own readout is "3.2s / 8.5s"; re-parsing it took the time REMAINING
+    // for the total, and only `--duration` overwriting it hid the damage.
+    test("our own composite readout is never mistaken for the game's total", () => {
+        const textEl = mountAnimatedBar({ text: '28.0s', scaleX: 1, duration: 3 });
+        actionCountdown.initialize();
+        expect(actionCountdown.textTotalTime).toBe(28);
+
+        textEl.querySelector('span').textContent = '4.0s / 28.0s';
+        actionCountdown._parseTotalTime();
+        expect(actionCountdown.textTotalTime).toBe(28);
+    });
+});
