@@ -3321,6 +3321,37 @@ describe('the guild shrine per-shrine targets grid', () => {
         expect(seen.guildShrineTargetLevel).toBe(6);
     });
 
+    test('an explicit 0 asks the advisor to skip that shrine, a blank box for one level up', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+
+        ui.panel.querySelector('#mwi-csim-shrine-targets-toggle').click();
+        const grid = ui.panel.querySelector('#mwi-csim-shrine-targets');
+        grid.querySelector('[data-shrine-target="/guild_buffs/force_combat"]').value = '0';
+        grid.querySelector('[data-shrine-target="/guild_buffs/aegis_combat"]').value = '';
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineTargets).toEqual({
+            '/guild_buffs/force_combat': 0,
+            '/guild_buffs/aegis_combat': -1,
+        });
+        expect(grid.textContent).toContain('0 skips the shrine');
+    });
+
+    test('the boxes accept a 0, which the number input used to refuse', () => {
+        ui.panel.querySelector('#mwi-csim-shrine-targets-toggle').click();
+        const input = ui.panel.querySelector('[data-shrine-target="/guild_buffs/force_combat"]');
+
+        expect(input.getAttribute('min')).toBe('0');
+    });
+
     test('a closed grid leaves the uniform Lv in charge', async () => {
         const zone = ui.panel.querySelector('#mwi-csim-zone');
         zone.innerHTML = '<option value="/zones/a">A</option>';
@@ -3336,6 +3367,75 @@ describe('the guild shrine per-shrine targets grid', () => {
 
         expect(seen.guildShrineTargets).toBeNull();
         expect(seen.guildShrineTargetLevel).toBe(6);
+    });
+});
+
+/**
+ * The Guild-allowed only checkbox: the guild's shrine buildings are what a member
+ * can actually buy levels from, and the tab used to rank levels no shrine could
+ * sell — a Spirit Shrine the guild has never built included.
+ */
+describe('the guild shrine guild-allowed cap', () => {
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.onRun = null;
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test('defaults on and rides along with the analysis', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+
+        expect(ui.panel.querySelector('#mwi-csim-shrine-cap-guild').checked).toBe(true);
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineCapToGuild).toBe(true);
+    });
+
+    test('unchecking it asks for the dream plan instead, and is remembered', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = true;
+
+        const box = ui.panel.querySelector('#mwi-csim-shrine-cap-guild');
+        box.checked = false;
+        box.dispatchEvent(new Event('change'));
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineCapToGuild).toBe(false);
+        expect(await readScoped('combatSimShrineCapToGuild', 'settings', true)).toBe(false);
+    });
+
+    test('and the shrine set being off leaves the flag off too', async () => {
+        const zone = ui.panel.querySelector('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = false;
+
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+
+        expect(seen.guildShrineCapToGuild).toBe(false);
     });
 });
 

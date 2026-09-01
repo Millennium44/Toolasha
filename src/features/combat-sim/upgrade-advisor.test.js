@@ -4422,6 +4422,26 @@ describe('guild shrine candidates', () => {
             expect(hrids).toEqual(['/guild_buffs/aegis_combat']);
         });
 
+        test('an explicit 0 drops that shrine from the run', () => {
+            const hrids = generateGuildShrineCandidates(dto(), {
+                perBuffTargets: { '/guild_buffs/force_combat': 0, '/guild_buffs/aegis_combat': 3 },
+            }).map((candidate) => candidate.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/aegis_combat']);
+        });
+
+        test('a negative target — a blank box in the grid — steps that shrine one level', () => {
+            const byHrid = Object.fromEntries(
+                generateGuildShrineCandidates(dto(), {
+                    perBuffTargets: { '/guild_buffs/force_combat': -1, '/guild_buffs/aegis_combat': 3 },
+                }).map((candidate) => [candidate.buffHrid, candidate])
+            );
+
+            expect(byHrid['/guild_buffs/force_combat'].upgradeLevel).toBe(4);
+            expect(byHrid['/guild_buffs/force_combat'].levelsBought).toBe(1);
+            expect(byHrid['/guild_buffs/aegis_combat'].upgradeLevel).toBe(3);
+        });
+
         test('a target past the cost table is clamped rather than priced off the end', () => {
             const [candidate] = generateGuildShrineCandidates(dto(), {
                 perBuffTargets: { '/guild_buffs/aegis_combat': 40 },
@@ -4448,6 +4468,98 @@ describe('guild shrine candidates', () => {
             ).map((candidate) => candidate.buffHrid);
 
             expect(hrids).toEqual(['/guild_buffs/aegis_combat']);
+        });
+    });
+
+    describe('capped to what the guild built', () => {
+        const AEGIS = {
+            hrid: '/guild_buffs/aegis_combat',
+            shrineHrid: '/guild_shrines/aegis',
+            isCombat: true,
+            buffs: [{ typeHrid: '/buff_types/armor', flatBoost: 1, flatBoostLevelBonus: 1 }],
+            levelCosts: {
+                1: { guildTokenCost: 10, creditCosts: [] },
+                2: { guildTokenCost: 20, creditCosts: [] },
+                3: { guildTokenCost: 30, creditCosts: [] },
+            },
+        };
+
+        beforeEach(() => {
+            guild.detailMap['/guild_buffs/aegis_combat'] = AEGIS;
+        });
+
+        const dto = () => ({
+            guildShrineLevels: { '/guild_buffs/force_combat': 3, '/guild_buffs/aegis_combat': 0 },
+        });
+
+        test('a shrine the guild has not built at all is left out', () => {
+            guild.shrineLevels['/guild_shrines/force'] = 5;
+
+            const hrids = generateGuildShrineCandidates(dto(), { capToGuildLevel: true }).map((c) => c.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/force_combat']);
+        });
+
+        test('and a target above the building level stops at it', () => {
+            guild.shrineLevels['/guild_shrines/force'] = 4;
+
+            const [candidate] = generateGuildShrineCandidates(dto(), {
+                capToGuildLevel: true,
+                perBuffTargets: { '/guild_buffs/force_combat': 5 },
+            });
+
+            expect(candidate.upgradeLevel).toBe(4);
+            expect(candidate.needsShrineLevel).toBeNull();
+        });
+
+        test('a shrine already at its guild-allowed level offers nothing', () => {
+            guild.shrineLevels['/guild_shrines/force'] = 3;
+            guild.shrineLevels['/guild_shrines/aegis'] = 2;
+
+            const hrids = generateGuildShrineCandidates(dto(), { capToGuildLevel: true }).map((c) => c.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/aegis_combat']);
+        });
+
+        test('unchecked, the unbuilt shrine comes back with its needs-a-level note', () => {
+            guild.shrineLevels['/guild_shrines/force'] = 3;
+
+            const byHrid = Object.fromEntries(
+                generateGuildShrineCandidates(dto()).map((candidate) => [candidate.buffHrid, candidate])
+            );
+
+            expect(byHrid['/guild_buffs/aegis_combat']).toBeDefined();
+            expect(byHrid['/guild_buffs/force_combat'].needsShrineLevel).toBe(4);
+        });
+
+        test('no guild building data at all is unknown, not a cap that empties the table', () => {
+            // Every shrine reads 0 when nothing reached the client; capping on
+            // that would silently drop every row
+            const hrids = generateGuildShrineCandidates(dto(), { capToGuildLevel: true }).map((c) => c.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/force_combat', '/guild_buffs/aegis_combat']);
+        });
+
+        test('and the flag reaches the set through generateCandidates', () => {
+            guild.shrineLevels['/guild_shrines/force'] = 5;
+
+            const hrids = generateCandidates(
+                { equipment: {}, ...dto() },
+                buildGameData(),
+                'guild_shrine',
+                0,
+                'increment',
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                0,
+                { guildShrineCapToGuild: true }
+            ).map((candidate) => candidate.buffHrid);
+
+            expect(hrids).toEqual(['/guild_buffs/force_combat']);
         });
     });
 

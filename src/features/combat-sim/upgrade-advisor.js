@@ -1087,7 +1087,8 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates, isS
  *   guildShrineTargets, isSelf }`. `houseWinRateOnly` narrows the house set to rooms that can move
  *   a fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
  *   several buff levels at once; `guildShrineTargets` is a per-shrine target map that takes
- *   precedence over `guildShrineTargetLevel`, skipping any shrine it does not name. `isSelf`
+ *   precedence over `guildShrineTargetLevel`, skipping any shrine it does not name;
+ *   `guildShrineCapToGuild` limits shrine targets to the guild's own shrine building levels. `isSelf`
  *   (default true) gates the guide's empty-slot fill level off the live character's own book
  *   bag — false for an imported profile or party member, who the sim has no book bag for.
  * @returns {Array} Candidates: [{slot, currentHrid, currentLevel, upgradeHrid, upgradeLevel, description, type}]
@@ -1580,6 +1581,7 @@ export function generateCandidates(
                 combat: true,
                 targetLevel: guildShrineTargetLevel,
                 perBuffTargets: options?.guildShrineTargets || null,
+                capToGuildLevel: Boolean(options?.guildShrineCapToGuild),
             })
         );
     }
@@ -1965,10 +1967,27 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * cost table holds is clamped to the top of it — so one number can be typed once
  * and applied to five shrines sitting at five different levels.
  *
- * A `perBuffTargets` map takes precedence over the single number, on the same
- * terms the House grid set: a shrine absent from it — the input left blank — is
- * deliberately skipped rather than falling back to one level up, because a grid
- * of boxes is a list of what to buy and an empty box means "not this one".
+ * A `perBuffTargets` map takes precedence over the single number, and its three
+ * cases are distinct: a positive level is bought up to, a **0 means "do not
+ * calculate this shrine"**, and a negative value means "one level up from
+ * wherever this buff is". A buff absent from the map is skipped, as the House
+ * grid's absent rooms are. The grid sends 0 for a box the user zeroed and -1
+ * for one left blank, so an empty box keeps its old "step it once" reading
+ * while there is still a way to say "not this one" without closing the grid.
+ *
+ * ## Capping to what the guild actually built
+ *
+ * `capToGuildLevel` turns the shrine building level from an annotation into a
+ * filter: a shrine the guild has not built at all is dropped, and one built to
+ * Lv4 stops offering Lv5. Without it the tab recommended "Spirit Shrine Lv0 →
+ * Lv1" to a guild with no Spirit Shrine, which is a purchase that cannot be
+ * made. Off, the old dream-planning behaviour and its `needsShrineLevel`
+ * annotation are unchanged.
+ *
+ * The cap is only applied when at least one shrine in scope has a readable
+ * building level. A client that never received guild building data reports 0
+ * for every shrine, which is "unknown" rather than "unbuilt" — capping on it
+ * would silently empty the table.
  *
  * Cost is cumulative over every level crossed; the benefit is measured at the
  * target, because that is the loadout the sim runs.
@@ -1978,12 +1997,15 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * @param {boolean} [options.combat=true] - Combat shrines when true, skilling when false
  * @param {number} [options.targetLevel=0] - Absolute level to buy up to; 0/unset means one level up
  * @param {Object|null} [options.perBuffTargets=null] - buffHrid → target level; takes precedence
- *   over targetLevel, and a buff absent from it is skipped
+ *   over targetLevel. Positive buys up to that level, 0 skips the shrine, negative means one
+ *   level up, and a buff absent from the map is skipped
+ * @param {boolean} [options.capToGuildLevel=false] - Limit targets to the guild's own shrine
+ *   building level, dropping shrines the guild has not built
  * @returns {Array<Object>} Candidates of type 'guild_shrine'
  */
 export function generateGuildShrineCandidates(
     playerDTO,
-    { combat = true, targetLevel = 0, perBuffTargets = null } = {}
+    { combat = true, targetLevel = 0, perBuffTargets = null, capToGuildLevel = false } = {}
 ) {
     const detailMap = getGuildBuffDetailMap();
     const levels = playerDTO?.guildShrineLevels;
@@ -1995,22 +2017,35 @@ export function generateGuildShrineCandidates(
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
     const explicit = perBuffTargets && typeof perBuffTargets === 'object' ? perBuffTargets : null;
 
+    /**
+     * The guild's own level in a shrine building, 0 when nothing was read.
+     * @param {string} shrineHrid - Shrine building hrid
+     * @returns {number} Building level
+     */
+    const buildingLevel = (shrineHrid) =>
+        Math.max(0, Math.floor(Number(dataManager.getGuildBuildingLevel?.(shrineHrid)) || 0));
+
+    const inScope = Object.entries(detailMap).filter(([, detail]) => Boolean(detail.isCombat) === combat);
+    // See the cap note above: all-zero building levels mean the data never
+    // arrived, so there is nothing to cap against
+    const capping = capToGuildLevel && inScope.some(([, detail]) => buildingLevel(detail.shrineHrid) > 0);
+
     const candidates = [];
-    for (const [buffHrid, detail] of Object.entries(detailMap)) {
-        if (Boolean(detail.isCombat) !== combat) continue;
+    for (const [buffHrid, detail] of inScope) {
         if (!combat && !(detail.buffs || []).some((buff) => SKILLING_METRIC_BUFF_TYPES.has(buff?.typeHrid))) continue;
 
         const maxLevel = guildBuffMaxLevel(detail);
         const currentLevel = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
-        const wanted = explicit ? Math.floor(Number(explicit[buffHrid]) || 0) : target > 0 ? target : currentLevel + 1;
-        const upgradeLevel = Math.min(maxLevel, wanted);
+        const asked = explicit ? Math.floor(Number(explicit[buffHrid]) || 0) : NaN;
+        // A negative per-buff target is the grid's blank box: step this one once
+        const wanted = explicit ? (asked < 0 ? currentLevel + 1 : asked) : target > 0 ? target : currentLevel + 1;
+        const shrineLevel = buildingLevel(detail.shrineHrid);
+        if (capping && shrineLevel <= 0) continue;
+        const ceiling = capping ? Math.min(maxLevel, shrineLevel) : maxLevel;
+        const upgradeLevel = Math.min(ceiling, wanted);
         if (maxLevel <= 0 || upgradeLevel <= currentLevel) continue;
 
         const { guildTokenCost, creditCosts } = sumGuildShrineLevelCosts(detail, currentLevel, upgradeLevel);
-        const shrineLevel = Math.max(
-            0,
-            Math.floor(Number(dataManager.getGuildBuildingLevel?.(detail.shrineHrid)) || 0)
-        );
         const label = shrineName(detail.shrineHrid);
 
         candidates.push({
@@ -3131,7 +3166,8 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, selfHrid, zoneHrid, difficultyTier, hours, communityBuffs,
  *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, auraSwapsOnly }
+ *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
+ *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -3159,6 +3195,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         houseTargets = null,
         guildShrineTargetLevel = 0,
         guildShrineTargets = null,
+        guildShrineCapToGuild = false,
         communityBuffTargetLevel = 0,
         optimizeFood = false,
         auraSwapsOnly = false,
@@ -3196,7 +3233,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             houseTargets,
             communityBuffs,
             guildShrineTargetLevel,
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, isSelf }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode

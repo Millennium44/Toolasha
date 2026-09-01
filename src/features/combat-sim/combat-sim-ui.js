@@ -116,6 +116,7 @@ const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
  * as much.
  */
 const SWAP_AURA_ONLY_KEY = 'combatSimSwapAuraOnly';
+const SHRINE_CAP_GUILD_KEY = 'combatSimShrineCapToGuild';
 
 /**
  * Storage key for the all-zones Max-tier Food toggle.
@@ -1499,6 +1500,10 @@ const MODE_OPTIONS = {
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up.">
             <button id="mwi-csim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
+            <label id="mwi-csim-shrine-cap-label" title="Only rank shrine levels your guild's shrine buildings can actually sell you: a shrine the guild has not built is left out entirely, and one built to Lv4 stops at Lv4. Uncheck to plan against shrines the guild would have to upgrade first — those rows say so." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
+                Guild-allowed only
+            </label>
         </span>`,
     community_buff: `
         <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
@@ -2225,6 +2230,7 @@ class CombatSimUI {
         });
         this._restoreUpgradeModes();
         this._restoreSwapAuraOnly();
+        this._restoreShrineCapToGuild();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
         this._loadBestiaryPlanPrefs();
@@ -2253,6 +2259,9 @@ class CombatSimUI {
             if (opening) {
                 this._buildHouseTargets();
             }
+        });
+        this.panel.querySelector('#mwi-csim-shrine-cap-guild')?.addEventListener('change', () => {
+            this._saveShrineCapToGuild();
         });
         this.panel.querySelector('#mwi-csim-shrine-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-shrine-targets');
@@ -6695,13 +6704,14 @@ class CombatSimUI {
 
         grid.innerHTML =
             '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
-            'or ≤ current level skips the shrine; used instead of the Lv value while open):</span>' +
+            'or ≤ current level evaluates one level up; <b>0 skips the shrine</b>; used instead of the Lv ' +
+            'value while open):</span>' +
             shrines
                 .map(
                     (shrine) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${shrine.name} (${shrine.level})</label>
-                    <input type="number" min="1" max="${shrine.maxLevel}" data-shrine-target="${shrine.buffHrid}"
+                    <input type="number" min="0" max="${shrine.maxLevel}" data-shrine-target="${shrine.buffHrid}"
                         value="${
                             shrine.level >= shrine.maxLevel
                                 ? ''
@@ -6717,6 +6727,16 @@ class CombatSimUI {
 
     /**
      * Per-shrine target levels, or null when the grid is closed.
+     *
+     * Three readings, matching what `generateGuildShrineCandidates` documents:
+     * a level buys up to it, an explicit **0 drops that shrine** from the run,
+     * and a blank box sends -1 for "one level up" — blank used to drop the
+     * shrine too, which left no way to say "not this one" that a habit of
+     * clearing boxes could not trip over.
+     *
+     * A box disabled because the buff is already maxed is left out of the map
+     * entirely, which the advisor also reads as a skip.
+     *
      * @returns {Object|null} buffHrid → target level
      * @private
      */
@@ -6725,8 +6745,13 @@ class CombatSimUI {
         if (!grid || grid.style.display === 'none') return null;
         const targets = {};
         grid.querySelectorAll('[data-shrine-target]').forEach((input) => {
+            if (input.disabled) return;
             const value = parseInt(input.value);
-            if (Number.isFinite(value) && value > 0) {
+            if (!Number.isFinite(value)) {
+                targets[input.dataset.shrineTarget] = -1;
+            } else if (value <= 0) {
+                targets[input.dataset.shrineTarget] = 0;
+            } else {
                 targets[input.dataset.shrineTarget] = Math.min(MAX_GUILD_SHRINE_LEVEL, value);
             }
         });
@@ -6789,6 +6814,34 @@ class CombatSimUI {
             if (box) box.checked = Boolean(saved);
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore the signature-swap option:', error);
+        }
+    }
+
+    /**
+     * Persist the Guild Shrine "Guild-allowed only" sub-option.
+     * @private
+     */
+    async _saveShrineCapToGuild() {
+        try {
+            const box = this.panel?.querySelector('#mwi-csim-shrine-cap-guild');
+            await writeScoped(SHRINE_CAP_GUILD_KEY, Boolean(box?.checked));
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the shrine cap option:', error);
+        }
+    }
+
+    /**
+     * Restore the remembered "Guild-allowed only" sub-option, which defaults on:
+     * a shrine level the guild cannot sell is not an upgrade anyone can buy.
+     * @private
+     */
+    async _restoreShrineCapToGuild() {
+        try {
+            const saved = await readScoped(SHRINE_CAP_GUILD_KEY, 'settings', true);
+            const box = this.panel?.querySelector('#mwi-csim-shrine-cap-guild');
+            if (box) box.checked = Boolean(saved);
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore the shrine cap option:', error);
         }
     }
 
@@ -6893,6 +6946,11 @@ class CombatSimUI {
             // advisor's `guildShrineTargets` takes precedence over the single
             // number, exactly as the House grid overrides the House Lv value
             const guildShrineTargets = upgradeModes.includes('guild_shrine') ? this._getShrineTargets() : null;
+            // Default on: a level the guild's shrine building cannot sell is not
+            // an upgrade the character can buy, however well it would rank
+            const guildShrineCapToGuild =
+                upgradeModes.includes('guild_shrine') &&
+                Boolean(this.panel.querySelector('#mwi-csim-shrine-cap-guild')?.checked);
             // Blank means one level up here too — and a level is not a purchase
             // either way, so this only changes what gets simulated
             const communityBuffTargetLevel = upgradeModes.includes('community_buff')
@@ -6930,6 +6988,7 @@ class CombatSimUI {
                     houseTargets,
                     guildShrineTargetLevel,
                     guildShrineTargets,
+                    guildShrineCapToGuild,
                     communityBuffTargetLevel,
                     auraSwapsOnly,
                 },
