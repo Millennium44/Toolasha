@@ -241,3 +241,72 @@ describe('trusting the animation', () => {
         expect(actionCountdown.textTotalTime).toBe(28);
     });
 });
+
+/**
+ * A bar whose `--duration` and printed text the test can change between ticks,
+ * the way the game does when the next action is a different length.
+ *
+ * @param {{text: string, scaleX: number, duration: number}} initial - Bar state
+ * @returns {{span: HTMLElement, set: (next: Object) => void}} The readout, and a setter
+ */
+function mountChangeableBar(initial) {
+    const state = { ...initial };
+    document.body.innerHTML =
+        '<div class="ProgressBar_progressBar__abc">' +
+        '<div class="ProgressBar_innerBarContainer__def"><div class="ProgressBar_innerBar__ghi"></div></div>' +
+        `<div class="ProgressBar_text__jkl"><span>${state.text}</span></div>` +
+        '</div>';
+    const span = document.querySelector('[class*="ProgressBar_text"] span');
+
+    vi.stubGlobal('getComputedStyle', (el) => ({
+        transform: `matrix(${state.scaleX}, 0, 0, 1, 0, 0)`,
+        getPropertyValue: () => (el.className.includes('progressBar') ? String(state.duration) : ''),
+    }));
+
+    return {
+        span,
+        set(next) {
+            Object.assign(state, next);
+            if (next.text !== undefined) span.textContent = next.text;
+        },
+    };
+}
+
+describe('a total that legitimately changes', () => {
+    // The cross-check refuses a `--duration` that disagrees with the printed
+    // total, so the printed total has to keep up when the action changes
+    // length — a different action, or a speed drink landing or expiring. The
+    // readout overwrites the game's own text every tick, so re-reading it has
+    // to happen before that write, not on a timer racing it.
+    test('a longer next action is followed, not frozen at the previous total', () => {
+        const bar = mountChangeableBar({ text: '8.5s', scaleX: 0.5, duration: 8.5 });
+        actionCountdown.initialize();
+        expect(bar.span.textContent).toBe('4.3s / 8.5s');
+
+        // The action completes 80 ms into a tick period and the game renders
+        // the next one, which is twenty seconds rather than eight and a half.
+        // Our own tick at +100 ms lands first and writes the composite over the
+        // printed total, so the completion handler's re-read at +130 ms finds
+        // only our own text and gives up.
+        vi.advanceTimersByTime(80);
+        handlers.actionCompleted();
+        bar.set({ text: '20.0s', scaleX: 0, duration: 20 });
+        vi.advanceTimersByTime(120);
+
+        expect(actionCountdown.textTotalTime).toBe(20);
+        expect(bar.span.textContent).toBe('20.0s / 20.0s');
+    });
+
+    test('a mid-action speed change is followed once the game reprints the bar', () => {
+        const bar = mountChangeableBar({ text: '30.0s', scaleX: 0, duration: 30 });
+        actionCountdown.initialize();
+        expect(bar.span.textContent).toBe('30.0s / 30.0s');
+
+        // A drink lands: same action, half the time, and the game reprints
+        bar.set({ text: '15.0s', scaleX: 0, duration: 15 });
+        vi.advanceTimersByTime(100);
+
+        expect(actionCountdown.textTotalTime).toBe(15);
+        expect(bar.span.textContent).toBe('15.0s / 15.0s');
+    });
+});

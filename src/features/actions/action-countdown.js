@@ -128,15 +128,19 @@ class ActionCountdown {
      * this runs, and only `--duration` overwriting it on the next tick hid the
      * damage — the very crutch the cross-check below takes away. The game's own
      * text carries a single number; anything with a separator in it is ours.
+     *
+     * @param {HTMLElement} [span] - The readout, when the caller already has it
      */
-    _parseTotalTime() {
-        if (!this.textEl) return;
-        const span = this.textEl.querySelector('span');
+    _parseTotalTime(span = this.textEl?.querySelector('span')) {
         if (!span) return;
         const text = span.textContent || '';
         if (text.includes('/')) return;
         const val = parseFloat(text);
         if (!isNaN(val) && val > 0) {
+            // A new printed total means a new action, or the same one at a new
+            // speed. Either way the cached `--duration` belongs to the old one,
+            // and the cross-check would compare the new total against it.
+            if (val !== this.textTotalTime) this.cachedDuration = null;
             this.totalTime = val;
             this.textTotalTime = val;
         }
@@ -209,6 +213,18 @@ class ActionCountdown {
 
         const span = this.textEl.querySelector('span');
         if (!span) return;
+
+        // Before the write below clobbers it. The printed total is what
+        // `_durationTrusted` cross-checks the animation against, and it changes
+        // whenever the action does — a different action, a speed drink landing
+        // or expiring. `_onActionCompleted`'s 50 ms re-read races this tick and
+        // loses about half the time, and once our own composite is in the span
+        // there is nothing left to re-read: the total stayed at the previous
+        // action's, the new `--duration` was refused for disagreeing with it,
+        // and the readout froze at "0.0s / <old total>s" — the very symptom the
+        // cross-check exists to stop. Reading here cannot race anything,
+        // because this is the only thing that overwrites the span.
+        this._parseTotalTime(span);
 
         if (!this.fillBar || !this.fillBar.isConnected) {
             this.fillBar = this._findFillBar();
