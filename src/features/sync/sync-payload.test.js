@@ -167,6 +167,49 @@ describe('applyPayload', () => {
         expect(written.chatCommands).toEqual({ isTrue: false });
     });
 
+    test('keeps settings the incoming map has never heard of', async () => {
+        // The settings map is a per-setting structure, and the two devices are
+        // routinely on different builds — the older one's saved map simply has
+        // no entry for a setting the newer one added. Taking the incoming map
+        // whole erased those, and the next load handed the player the shipped
+        // default back, so a setting they had turned off turned itself on.
+        storeState.stores.settings.script_settingsMap_abc = {
+            sync_token: { value: 'ghp_secret' },
+            chatCommands: { isTrue: true },
+            onlyOnThisBuild: { isTrue: false },
+        };
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: { settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } } },
+        });
+
+        await applyPayload(json);
+
+        const written = importedPayloads[0].stores.settings.script_settingsMap_abc;
+        // The setting the payload spoke about still takes the incoming value
+        expect(written.chatCommands).toEqual({ isTrue: false });
+        // The one it said nothing about survives instead of reverting
+        expect(written.onlyOnThisBuild).toEqual({ isTrue: false });
+    });
+
+    test('keeps a string-encoded map’s local-only settings too', async () => {
+        storeState.stores.settings.script_settingsMap_abc = JSON.stringify({
+            chatCommands: { isTrue: true },
+            onlyOnThisBuild: { value: 'kept' },
+        });
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: { settings: { script_settingsMap_abc: JSON.stringify({ chatCommands: { isTrue: false } }) } },
+        });
+
+        await applyPayload(json);
+
+        const written = JSON.parse(importedPayloads[0].stores.settings.script_settingsMap_abc);
+        expect(written).toEqual({ chatCommands: { isTrue: false }, onlyOnThisBuild: { value: 'kept' } });
+    });
+
     test('never restores sync bookkeeping from a payload', async () => {
         const json = JSON.stringify({
             formatVersion: 1,

@@ -255,7 +255,26 @@ export async function applyPayload(json) {
 }
 
 /**
- * Put this device's redacted settings back into an incoming settings map.
+ * Fold an incoming settings map onto this device's, entry by entry.
+ *
+ * A settings map is a per-setting structure, not one record: taking the
+ * incoming map whole meant every setting the *local* map had and the incoming
+ * one did not was erased. That is not "the remote's choice wins" — the remote
+ * expressed no choice. It happens whenever the two devices are on different
+ * builds (the newer one's settings are simply absent from the older one's
+ * saved map, which is written whole from whatever schema wrote it), and the
+ * erased entries came back as shipped defaults on the next load, so settings
+ * the player had turned off turned themselves back on after a pull.
+ *
+ * Per setting the incoming value still wins outright, which is the whole of
+ * what the conflict dialog promises about settings. Only the entries the
+ * payload says nothing about are kept.
+ *
+ * The redacted ids are the one exception in the other direction: they were
+ * stripped before upload, so an incoming map either lacks them or carries some
+ * other device's copy, and this device's own token and passphrase must survive
+ * either way.
+ *
  * @param {*} localValue - The settings map already on this device
  * @param {*} incomingValue - The settings map from the payload
  * @returns {*} Merged map, in whatever form the incoming value used
@@ -275,7 +294,7 @@ function preserveLocalSecrets(localValue, incomingValue) {
     const local = parse(localValue);
     if (!incoming || typeof incoming !== 'object') return incomingValue;
 
-    const merged = { ...incoming };
+    const merged = local && typeof local === 'object' ? { ...local, ...incoming } : { ...incoming };
     for (const settingId of REDACTED_SETTING_IDS) {
         if (local && typeof local === 'object' && local[settingId] !== undefined) {
             merged[settingId] = local[settingId];
