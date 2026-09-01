@@ -298,7 +298,8 @@ export function preferredRerollOption(options, currency = null) {
  * @param {boolean} params.isProtected - Is it on the protected list?
  * @param {Object|null} params.choice - From `chooseReroll`, or null when unreadable
  * @param {boolean} params.trashAtLimit - Discard a task whose options are both blocked?
- * @returns {{action: string, reason: string}} 'reroll', 'trash' or 'skip', and why
+ * @returns {{action: string, reason: string, retryable?: boolean}} 'reroll', 'trash' or
+ *   'skip', why, and whether the skip is a moment's state rather than a fact about the task
  */
 export function verdictForCard({ completed, isProtected, choice, trashAtLimit }) {
     if (completed) return { action: 'skip', reason: 'ready to claim' };
@@ -310,9 +311,12 @@ export function verdictForCard({ completed, isProtected, choice, trashAtLimit })
         // Only `atCap` — both options priced, both at or over the player's own
         // ceiling — may end a task. Nothing to press is a card to come back to,
         // not a card to destroy.
-        return trashAtLimit && choice.atCap
-            ? { action: 'trash', reason: choice.why || 'blocked' }
-            : { action: 'skip', reason: choice.why || 'blocked' };
+        if (trashAtLimit && choice.atCap) return { action: 'trash', reason: choice.why || 'blocked' };
+        // Not at cap means the walk could not *see* a buyable option, which is
+        // what an open chooser looks like for the moment the game spends
+        // answering the last payment. That is a wait, not a verdict about the
+        // task — see the retry in `_plan`.
+        return { action: 'skip', reason: choice.why || 'blocked', retryable: !choice.atCap };
     }
     return { action: 'reroll', reason: choice.costLabel + (choice.why ? ` (${choice.why})` : '') };
 }
@@ -525,7 +529,7 @@ class TaskRerollWalk {
      * was reloaded — the walk went on blocking at the old ceiling, decided
      * "both reroll options blocked" on a card whose chooser was quoting prices
      * the player had just allowed, and retired the card with a Back press
-     * labelled "Close the menu on #N".
+     * labelled "Close the menu on #N (both reroll options blocked)".
      *
      * The popup's own module is the live copy: its selects write to it the
      * instant they change, before the storage round-trip even resolves. The
@@ -876,7 +880,22 @@ class TaskRerollWalk {
                 // A card being left behind with its menu still open is tidied
                 // first — one press, and it is the same press a person makes
                 const back = chooser.length || discardOpen ? this._backButton(card) : null;
-                if (back) return this._step('back', card, slot, `Close the menu on #${slot}`);
+                // An open chooser refusing the one currency the cap allows is
+                // not a card to retire: it is how the chooser looks while the
+                // game answers the payment just made on it, and the button
+                // comes back a moment later. Retiring it there cost a Back and
+                // a Reroll press per cycle and put "Close the menu on #1" in
+                // front of a player whose 20K reroll was well under their 80K
+                // cap. The same refusal inside the reroll branch has always
+                // been waited out; this is that wait, on the other verdict.
+                // Protected, completed and unreadable are facts about the card,
+                // and they close the menu at once as before.
+                if (back && chooser.length && verdict.retryable && this.pendingRetries < PENDING_RETRY_LIMIT) {
+                    this.pendingRetries += 1;
+                    this.pending = true;
+                    return null;
+                }
+                if (back) return this._step('back', card, slot, `Close the menu on #${slot} (${verdict.reason})`);
                 this.tally.kept += 1;
                 this.index += 1;
                 continue;
@@ -910,7 +929,7 @@ class TaskRerollWalk {
                 }
                 if (chooser.length) {
                     const back = this._backButton(card);
-                    if (back) return this._step('back', card, slot, `Close the menu on #${slot}`);
+                    if (back) return this._step('back', card, slot, `Close the menu on #${slot} (${verdict.reason})`);
                 }
                 if (!this._trashButton(card)) {
                     this.message = `Slot ${slot} has no discard button — walk stopped.`;

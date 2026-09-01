@@ -449,6 +449,17 @@ describe('what the walk decides about one card', () => {
         // is a task destroyed on a reading that was never made.
         const unoffered = { currency: null, costLabel: '', why: 'no reroll on offer', atCap: false };
         expect(verdictForCard({ ...base, choice: unoffered }).action).toBe('skip');
+        // ...and it is a wait, not a fact about the task: the plan retries it
+        // rather than sending the player to close the menu
+        expect(verdictForCard({ ...base, choice: unoffered }).retryable).toBe(true);
+    });
+
+    test('a skip the walk is sure of is not retried', () => {
+        const blocked = { currency: null, costLabel: '', why: 'both reroll options blocked', atCap: true };
+        expect(verdictForCard({ ...base, completed: true }).retryable).toBeFalsy();
+        expect(verdictForCard({ ...base, isProtected: true }).retryable).toBeFalsy();
+        expect(verdictForCard({ ...base, choice: null }).retryable).toBeFalsy();
+        expect(verdictForCard({ ...base, choice: blocked, trashAtLimit: false }).retryable).toBeFalsy();
     });
 
     test('a card whose price cannot be read is left alone rather than guessed at', () => {
@@ -676,29 +687,48 @@ describe('planning a walk down the board', () => {
         expect(chipText()).toContain('Reroll #2 — 10.0K🪙');
     });
 
-    test('a card the chooser priced in one currency only is rerolled, not trashed', async () => {
+    test('a card the chooser priced in one currency only is waited out, not trashed or retired', async () => {
         // The reported walk, exactly: 10.0K spent on card #1, so the next coin
         // reroll is 20K under an 80K cap, and the 1🔔 cap blocks every cowbell
         // reroll. The chooser was showing its coin option unpressable — which is
         // what it looks like for the moment after a payment — and the walk read
         // "no coin price" as "coins are over the cap", called the pair of them
         // blocked, remembered that quote, and offered to discard a task it could
-        // have rerolled for 20K.
+        // have rerolled for 20K. Not trashing it was half the fix: the other
+        // half is that a refusal this brief is not a card to retire either, and
+        // "close the reroll list" is what the player was asked for instead.
+        stored.values.taskCapCoinThreshold_7 = 80000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        const list = board([{ name: 'Milking - Cow', buttons: ['Back', '20,000', '1'], quest: quest(MILKING, 1, 0) }]);
+        const coinButton = [...list.querySelectorAll('button')].find((b) => b.textContent === '20,000');
+        coinButton.disabled = true;
+
+        await walk.start();
+        expect(chipText()).not.toContain('Trash');
+        expect(chipText()).not.toContain('Close the menu');
+
+        // The game answers, the button comes back, and the walk pays the price
+        // it could see all along
+        coinButton.disabled = false;
+        vi.advanceTimersByTime(500);
+
+        expect(chipText()).toContain('Reroll #1 — 20.0K🪙');
+        expect(chipText()).not.toContain('Trash');
+        expect(clicks).toEqual([]);
+    });
+
+    test('a chooser that stays refused is given up on eventually, with its reason', async () => {
+        // The wait above cannot become a wedge: a chooser that never comes back
+        // is tidied away the way it always was, and the card is kept.
         stored.values.taskCapCoinThreshold_7 = 80000;
         stored.values.taskCapCowbellThreshold_7 = 1;
         const list = board([{ name: 'Milking - Cow', buttons: ['Back', '20,000', '1'], quest: quest(MILKING, 1, 0) }]);
         [...list.querySelectorAll('button')].find((b) => b.textContent === '20,000').disabled = true;
 
         await walk.start();
-        expect(chipText()).not.toContain('Trash');
-        expect(chipText()).toContain('Close the menu on #1');
+        vi.advanceTimersByTime(5000);
 
-        walk.advance();
-        setButtons(list, 1, AT_REST);
-        vi.advanceTimersByTime(500);
-
-        expect(chipText()).toContain('Reroll #1 — 20.0K🪙');
-        expect(chipText()).not.toContain('Trash');
+        expect(chipText()).toContain('Close the menu on #1 (no reroll on offer)');
     });
 
     test('a card that has already paid one 10K reroll rerolls again under an 80K cap', async () => {
@@ -1027,7 +1057,7 @@ describe('one press, one game click', () => {
         board([{ name: 'Brewing - Coffee', buttons: CHOOSER, quest: quest(KEEPER) }]);
 
         await walk.start();
-        expect(chipText()).toBe('▶ Close the menu on #1');
+        expect(chipText()).toBe('▶ Close the menu on #1 (protected)');
 
         walk.advance();
         expect(clicks).toEqual(['Brewing - Coffee:Back']);
@@ -1056,7 +1086,7 @@ describe('one press, one game click', () => {
         questFiber.memoizedProps.characterQuest = quest(KEEPER);
         vi.advanceTimersByTime(3000);
 
-        expect(chipText()).toBe('▶ Close the menu on #1');
+        expect(chipText()).toBe('▶ Close the menu on #1 (protected)');
     });
 });
 
@@ -1546,7 +1576,7 @@ describe('the cap the walk obeys is the cap as it stands now', () => {
         ]);
 
         await walk.start();
-        expect(chipText()).toBe('▶ Close the menu on #1');
+        expect(chipText()).toBe('▶ Close the menu on #1 (both reroll options blocked)');
 
         // The player opens the shield popup and raises the cap. The popup's
         // select writes its module before the storage round-trip resolves.
@@ -1568,7 +1598,7 @@ describe('the cap the walk obeys is the cap as it stands now', () => {
         board([{ name: 'Milking - Cow', buttons: ['Back', 'Pay 1', 'Pay 40,000'], quest: quest(MILKING, 2, 0) }]);
 
         await walk.start();
-        expect(chipText()).toBe('▶ Close the menu on #1');
+        expect(chipText()).toBe('▶ Close the menu on #1 (both reroll options blocked)');
 
         taskRerollProtection.protection.capProtectionEnabled = false;
         walk._syncWidget();
@@ -1588,6 +1618,53 @@ describe('the cap the walk obeys is the cap as it stands now', () => {
 
         expect(walk.widget.settings.textContent).toContain('160.0K');
         expect(walk.widget.settings.textContent).not.toContain('40.0K');
+    });
+
+    test('a paid reroll whose chooser comes back refusing the coin button is waited out', async () => {
+        // The maintainer's screenshot, end to end: card #1 "Crafting - Lumber",
+        // 10.0K already spent on it this walk, an 80K/1🔔 cap, and the chooser
+        // still open on its next prices — "Pay 1🔔" and "Pay 20,000🪙". The chip
+        // read "▶ Close the menu on #1 · spent 10.0K🪙", so the walk was asking
+        // for a Back press on a card it had every reason to reroll for 20K. The
+        // one thing the screenshot could not show is that the coin button was
+        // not pressable for that moment — which is exactly how the chooser looks
+        // while the game answers the payment just made through it. Every cycle
+        // cost a Back and a Reroll press, which is why the player kept being
+        // asked to close the same list.
+        stored.values.taskCapCoinThreshold_7 = 80000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        taskRerollProtection.protection.isInitialized = true;
+        taskRerollProtection.protection.coinThreshold = 80000;
+        taskRerollProtection.protection.cowbellThreshold = 1;
+        const lumber = quest('/actions/crafting/lumber', 0, 0);
+        const list = board([{ name: 'Crafting - Lumber', buttons: ['Back', 'Pay 1', 'Pay 10,000'], quest: lumber }]);
+
+        await walk.start();
+        expect(chipText()).toContain('Reroll #1 — 10.0K🪙 (cowbells blocked)');
+        walk.advance();
+        expect(clicks).toEqual(['Crafting - Lumber:Pay 10,000']);
+
+        // The game answers: the coin count moves, the chooser redraws its new
+        // prices, and its coin button is refused for the moment
+        const questFiber = document.getElementById('root')._reactRootContainer.current.child;
+        questFiber.memoizedProps.characterQuest = { ...lumber, coinRerollCount: 1 };
+        setButtons(list, 1, ['Back', 'Pay 1', 'Pay 20,000']);
+        const coinButton = [...list.querySelectorAll('button')].find((b) => b.textContent === 'Pay 20,000');
+        coinButton.disabled = true;
+        emit('quests_updated');
+        // Past the walk's own server-settle wait, so the plan this asserts on is
+        // one drawn from the answered board rather than the pre-payment one
+        vi.advanceTimersByTime(3000);
+
+        expect(chipText()).not.toContain('Close the menu');
+
+        // The button comes back and the next press is the next payment
+        coinButton.disabled = false;
+        vi.advanceTimersByTime(3000);
+
+        expect(walk.tally.goldSpent).toBe(10000);
+        expect(chipText()).toContain('Reroll #1 — 20.0K🪙 (cowbells blocked)');
+        expect(clicks).toEqual(['Crafting - Lumber:Pay 10,000']);
     });
 
     test('a reroll that lands with the chooser still open is offered the next payment', async () => {
