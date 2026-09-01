@@ -161,6 +161,42 @@ describe('foldSighting', () => {
         expect(observedUse([{ left: { torch: 10 } }], 'torch')).toEqual([]);
     });
 
+    test('a reconnect mid-run closes the old run out instead of dropping it', () => {
+        // Socket drops after floor 3; by the time it is back, the next run has
+        // started. The old run's 60 torches used to vanish with it.
+        let s = foldSighting(start, active({ currentFloor: 1, torchCount: 100 }), 1000).state;
+        s = foldSighting(s, active({ currentFloor: 3, torchCount: 40 }), 2000).state;
+        const next = foldSighting(s, active({ startedAt: '2026-08-18T04:00:00Z', currentFloor: 1 }), 9000);
+
+        expect(next.ended).toBeTruthy();
+        expect(next.ended.key).toBe('2026-08-18T00:00:00Z');
+        expect(next.ended.spent.torch).toBe(60);
+        expect(next.ended.endedAt).toBe(9000);
+        expect(next.ended.endedByInference).toBe(true);
+        // …and the new run is what the state now follows
+        expect(next.state.run.key).toBe('2026-08-18T04:00:00Z');
+    });
+
+    test('a run closed by inference is kept but never averaged', () => {
+        let s = foldSighting(start, active({ currentFloor: 1, torchCount: 100 }), 1000).state;
+        s = foldSighting(s, active({ currentFloor: 3, torchCount: 40 }), 2000).state;
+        const { ended } = foldSighting(s, active({ startedAt: '2026-08-18T04:00:00Z', currentFloor: 1 }), 9000);
+
+        // Its spend is a lower bound — whatever it burned after the last
+        // sighting went unseen — so it must not be presented as measured
+        expect(ended.startTrusted).toBe(true);
+        expect(observedUse([ended], 'torch')).toEqual([]);
+        expect(burnSummary([ended], 'torch')).toBeNull();
+        expect(torchesPerFloor([ended])).toEqual([]);
+    });
+
+    test('a run seen to its end is not marked as inferred', () => {
+        let s = foldSighting(start, active({ currentFloor: 1, torchCount: 100 }), 1000).state;
+        const { ended } = foldSighting(s, { isActive: false }, 2000);
+        expect(ended.endedByInference).toBeUndefined();
+        expect(observedUse([ended], 'torch')).toEqual([0]);
+    });
+
     test('a mid-run shop top-up does not net against earlier spending', () => {
         // Start with 100, spend down to 40 by floor 3, buy back up to 150 with
         // earned points, then spend down to 40 by the exit. start - left would

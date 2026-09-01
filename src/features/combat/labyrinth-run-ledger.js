@@ -18,6 +18,17 @@
  * ended, and the server re-sends labyrinth messages after a run ends, so each
  * ending is keyed by the run's own start stamp and recorded once.
  *
+ * ## Endings nobody watched
+ *
+ * A socket that drops mid-run and reconnects after the next run has started
+ * shows a new `startedAt` with no `ended` sighting in between. The run in hand
+ * did end — so it is closed out on the last counts seen and marked
+ * `endedByInference`, rather than dropped, which used to lose that run's whole
+ * torch/shroud/beacon spend. The mark is load-bearing: those counts are a lower
+ * bound (whatever the run spent after the last sighting went unseen), so an
+ * inferred close is kept as a record but excluded from every average, on the
+ * same grounds as a run joined mid-way.
+ *
  * ## The grid arithmetic
  *
  * From the game's own guide: floor 1 is a 4×4 grid, each floor one wider, to
@@ -194,8 +205,13 @@ export function observedUse(runs, kind) {
         // "start" set to wherever it was seen, so its spend is a floor, not a
         // measurement — averaging those in is how 350-torch runs read as 106.
         // Only runs watched from the door count. Records from before the flag
-        // existed cannot say which they were, so they do not count either.
+        // existed cannot say which they were, so they do not count either. A
+        // run closed by inference is excluded for the mirror-image reason: its
+        // end was never seen, so its spend is a floor at the other end.
         if (run?.startTrusted !== true) continue;
+        // A run closed by inference was never watched to its end, so its spend
+        // is a lower bound in the same way an untrusted start is
+        if (run?.endedByInference === true) continue;
         const spent = Number(run?.spent?.[kind]);
         if (Number.isFinite(spent)) {
             out.push(Math.max(0, spent));
@@ -248,9 +264,11 @@ export function burnSummary(runs, kind) {
  * of the figure and leaves the thing worth watching — whether a floor is
  * getting cheaper or dearer to cross.
  *
- * Only runs watched from the door count, for the reason `observedUse` gives:
- * a run first seen mid-way has a start of "wherever we came in", so both its
- * spend and its per-floor rate are floors rather than measurements.
+ * Only runs watched from the door *and* seen to end count, for the reason
+ * `observedUse` gives: a run first seen mid-way has a start of "wherever we
+ * came in", and a run closed by inference has an end of "wherever we last
+ * looked", so both its spend and its per-floor rate are floors rather than
+ * measurements.
  *
  * @param {Array<Object>} runs - Ledger records, newest first as the ledger keeps them
  * @returns {Array<{perFloor: number, torches: number, floor: number, endedAt: number}>}
@@ -260,6 +278,7 @@ export function torchesPerFloor(runs) {
     const out = [];
     for (const run of runs || []) {
         if (run?.startTrusted !== true) continue;
+        if (run?.endedByInference === true) continue;
         const floor = Math.floor(Number(run?.floor) || 0);
         if (floor < 1) continue;
         const spent = Number(run?.spent?.torch);
@@ -326,6 +345,16 @@ export function foldSighting(state, labyrinth, nowMs) {
     if (phase === 'active') {
         const key = labyrinth?.startedAt ? String(labyrinth.startedAt) : (state.run?.key ?? `run-${nowMs}`);
         const previous = state.run?.key === key ? state.run : null;
+        // A different run arriving with no `ended` sighting between them — the
+        // socket dropped mid-run and reconnected after the next run had begun.
+        // The run in hand did end; nothing was here to watch it. Closing it on
+        // the last counts seen keeps its spend, where discarding it lost the
+        // whole run. Marked, because those counts are a lower bound: whatever
+        // the run spent after the last sighting is unrecorded.
+        const inferred =
+            state.phase === 'active' && state.run && state.run.key !== key
+                ? { ...state.run, endedAt: nowMs, endedByInference: true }
+                : null;
         const count = (field) => {
             const n = Number(labyrinth?.[field]);
             return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : (previous?.left?.[field] ?? null);
@@ -378,7 +407,7 @@ export function foldSighting(state, labyrinth, nowMs) {
                     },
                 },
             },
-            ended: null,
+            ended: inferred,
         };
     }
 
