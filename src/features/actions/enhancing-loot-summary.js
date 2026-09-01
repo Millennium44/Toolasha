@@ -147,9 +147,16 @@ export function computeEnhancingSummary(run, deps) {
 
     // Per-attempt material cost (buy side), priced exactly as the live tracker
     // does — materialPrice handles coins (1) and the unlisted-material fallbacks.
+    // A material that still comes back at zero after those fallbacks is unknown,
+    // not free: every cost figure below is then an understatement, and the caller
+    // is told so rather than being handed a confident-looking number.
     let perAttempt = 0;
+    let materialsUnpriced = false;
     for (const material of enhancementCosts) {
-        perAttempt += (materialPrice(material.itemHrid) || 0) * (material.count || 0);
+        const count = material.count || 0;
+        const price = materialPrice(material.itemHrid) || 0;
+        if (count > 0 && price <= 0) materialsUnpriced = true;
+        perAttempt += price * count;
     }
 
     const protUnit = protectionPrice(run.baseHrid) || 0;
@@ -219,6 +226,7 @@ export function computeEnhancingSummary(run, deps) {
         profit,
         success: run.success,
         targetLevel: run.targetLevel,
+        materialsUnpriced,
     };
 }
 
@@ -231,7 +239,7 @@ export function computeEnhancingSummary(run, deps) {
  *   materialExpected:number, protectActual:number, protectExpected:number,
  *   totalActual:number, totalExpected:number, actualAttempts:number,
  *   expectedAttempts:number, actualProtects:number, expectedProtects:number,
- *   diff:number, profit:number|null}|null}
+ *   diff:number, profit:number|null, materialsUnpriced:boolean}|null}
  */
 export function mergeEnhancingSummaries(summaries) {
     if (!Array.isArray(summaries) || summaries.length === 0) return null;
@@ -250,6 +258,7 @@ export function mergeEnhancingSummaries(summaries) {
         actualProtects: 0,
         expectedProtects: 0,
         profit: 0,
+        materialsUnpriced: false,
     };
     let profitKnown = true;
 
@@ -267,6 +276,8 @@ export function mergeEnhancingSummaries(summaries) {
         merged.expectedAttempts += s.expectedAttempts || 0;
         merged.actualProtects += s.actualProtects || 0;
         merged.expectedProtects += s.expectedProtects || 0;
+        // One understated run understates the total, so the marker carries over.
+        if (s.materialsUnpriced) merged.materialsUnpriced = true;
         // One un-priced run makes the merged profit unknowable rather than wrong.
         if (s.profit == null) profitKnown = false;
         else merged.profit += s.profit;

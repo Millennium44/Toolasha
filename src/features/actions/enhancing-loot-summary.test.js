@@ -127,6 +127,50 @@ describe('computeEnhancingSummary', () => {
         expect(computeEnhancingSummary(run, { params: {}, ...deps, itemDetails })).toBeNull();
         expect(computeEnhancingSummary(null, { calculateEnhancement, params: {}, ...deps, itemDetails })).toBeNull();
     });
+
+    test('says so when a material has no price, instead of costing it at zero', () => {
+        // materialPrice falls back through market, production cost and NPC; a
+        // zero after all that is unknown, not free, and every cost below is
+        // then an understatement the reader has to be told about.
+        const withUnpriced = {
+            ...itemDetails,
+            enhancementCosts: [
+                { itemHrid: '/items/prime_catalyst', count: 1 },
+                { itemHrid: '/items/unlisted_thing', count: 2 },
+            ],
+        };
+        const s = computeEnhancingSummary(run, {
+            calculateEnhancement,
+            params: {},
+            ...deps,
+            itemDetails: withUnpriced,
+        });
+        expect(s.materialsUnpriced).toBe(true);
+        // Still the priced part only — the marker is the honest half, not a guess
+        expect(s.materialActual).toBe(19 * 1000);
+    });
+
+    test('a fully priced run carries no understatement marker', () => {
+        const s = computeEnhancingSummary(run, { calculateEnhancement, params: {}, ...deps, itemDetails });
+        expect(s.materialsUnpriced).toBe(false);
+    });
+
+    test('a zero-count material is not an unpriced one', () => {
+        const withZeroCount = {
+            ...itemDetails,
+            enhancementCosts: [
+                { itemHrid: '/items/prime_catalyst', count: 1 },
+                { itemHrid: '/items/unlisted_thing', count: 0 },
+            ],
+        };
+        const s = computeEnhancingSummary(run, {
+            calculateEnhancement,
+            params: {},
+            ...deps,
+            itemDetails: withZeroCount,
+        });
+        expect(s.materialsUnpriced).toBe(false);
+    });
 });
 
 describe('mergeEnhancingSummaries', () => {
@@ -160,6 +204,11 @@ describe('mergeEnhancingSummaries', () => {
     test('one un-priced run makes the merged profit unknown', () => {
         const m = mergeEnhancingSummaries([s(), s({ profit: null })]);
         expect(m.profit).toBeNull();
+    });
+
+    test('one understated run understates the merged total, and says so', () => {
+        expect(mergeEnhancingSummaries([s(), s()]).materialsUnpriced).toBe(false);
+        expect(mergeEnhancingSummaries([s(), s({ materialsUnpriced: true })]).materialsUnpriced).toBe(true);
     });
 
     test('returns null for an empty list', () => {

@@ -26,6 +26,22 @@ import { reconstructEnhancingRun, computeEnhancingSummary, mergeEnhancingSummari
 import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
 import { getEnhancementMaterialPrice, getCheapestProtectionPrice } from '../enhancement/tooltip-enhancement.js';
 
+/**
+ * Why the protection figures on an enhancing run are not measurements.
+ *
+ * The loot log records what came out, not what the protect-from box was set to,
+ * so the summary assumes the cost-optimal choice and counts protections off the
+ * parity of the drops at that level. Both the actual and the expected column
+ * move with that assumption, and a player who protected from somewhere else
+ * would see different numbers for the same run.
+ */
+const PROTECT_ASSUMED_NOTE =
+    'Protect-from is not recorded in the loot log: both columns assume the cost-optimal ' +
+    'protect-from for this item and target, and count protections from the parity of the drops.';
+
+/** Costs are understated when a per-attempt material has no price at all. */
+const UNPRICED_NOTE = 'a material has no price; costs are understated';
+
 /** The loot log export, one row per item per logged session */
 export const LOOT_LOG_CSV_COLUMNS = [
     { key: 'sessionStart', label: 'Session Start' },
@@ -437,6 +453,9 @@ class LootLogStats {
         } else {
             html += ` · <span style="color:rgba(232,236,245,0.6);">Profit: a run has no resale price</span>`;
         }
+        if (m.materialsUnpriced) {
+            html += ` · <span style="color:rgba(232,236,245,0.6);">${UNPRICED_NOTE}</span>`;
+        }
         return html;
     }
 
@@ -472,7 +491,7 @@ class LootLogStats {
         if (s.protectExpected > 0 || s.protectActual > 0) {
             const protColor = s.protectActual <= s.protectExpected ? GOOD : BAD;
             html +=
-                ` · <span style="color:${protColor};">Prot ${fmt(s.protectActual)} ` +
+                ` · <span style="color:${protColor};" title="${PROTECT_ASSUMED_NOTE}">Prot ${fmt(s.protectActual)} ` +
                 `(${factor(s.protectActual, s.protectExpected)} exp ${fmt(s.protectExpected)})</span>`;
         }
         html +=
@@ -485,6 +504,7 @@ class LootLogStats {
         } else {
             html += ` · <span style="color:${DIM};">Profit: no +${s.targetLevel} price</span>`;
         }
+        if (s.materialsUnpriced) html += ` · <span style="color:${DIM};">${UNPRICED_NOTE}</span>`;
         return html;
     }
 
