@@ -854,8 +854,14 @@ function createTesterShopTabs(missingMaterials, testerTab) {
                   // clears an armed quantity (the strip's own listener)
                   findTesterTab()?.click();
                   setShopFilter(mat.itemName);
-                  autofillManager.setPendingCalculation(() =>
-                      parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10)
+                  // Armed for this line's item, as the marketplace strip's tabs
+                  // are: the calculation persists on purpose, so unscoped it
+                  // went on filling every later buy box, for any item. A dialog
+                  // that names no item (the Shop's own, when it draws no item
+                  // icon) still fills — see modalItemHrid.
+                  autofillManager.setPendingCalculation(
+                      () => parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10),
+                      { itemHrid: mat.itemHrid }
                   );
               }
             : makeMaterialClickHandler(tabRef);
@@ -945,6 +951,12 @@ function createBuyNextControl() {
             note.textContent = `${name}: failed`;
         } finally {
             busy = false;
+            // The arming buyOneFromTesterShop sets is a bare constant, for the
+            // one dialog this press opens. Left standing it filled that count
+            // into every later buy box, for any item — it cannot be scoped to
+            // the item (the flow has only the shop's display name), so it ends
+            // with the press.
+            autofillManager.clearQuantity();
             timerRegistry.registerTimeout(setTimeout(refreshNote, 1500));
         }
     });

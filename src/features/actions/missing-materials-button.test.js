@@ -25,6 +25,8 @@ const state = vi.hoisted(() => ({
     },
     wsOn: vi.fn(),
     wsOff: vi.fn(),
+    // Off unless a test asks for the Tester shop hand-off
+    testerShop: false,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -75,6 +77,11 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPa
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => ({}) }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => ({ disconnect: () => {} }) }));
 vi.mock('../../utils/game-lookups.js', () => ({ getActionHridFromName: () => null }));
+vi.mock('../../utils/tester-shop.js', () => ({
+    testerShopEnabled: () => state.testerShop,
+    // Every line of the test bill is sold, so the whole bill takes the shop path
+    testerShopCoinCost: () => (state.testerShop ? 100 : 0),
+}));
 vi.mock('../../utils/react-input.js', () => ({ setReactInputValue: () => {} }));
 
 const { materialsFromList, openMaterialsList, openMissingMaterials } = await import('./missing-materials-button.js');
@@ -257,5 +264,59 @@ describe('the marketplace clear-all control', () => {
         expect(container.contains(firstTab)).toBe(false);
         expect(container.querySelectorAll('[data-item-hrid]').length).toBe(1);
         expect(container.querySelector('[data-mwi-clear-all-tab="true"]')).not.toBeNull();
+    });
+});
+
+/**
+ * The Tester shop hand-off pins the same lines into the shop's own strip. Its
+ * armings are the same kind the marketplace tabs set — persistent, recomputed
+ * on every buy box — so they need the same scope, or they go on filling every
+ * later buy box for any item.
+ */
+describe('the Tester shop strip', () => {
+    /** A shop navbar button and a visible strip holding the Tester tab */
+    function buildShopDom() {
+        document.body.innerHTML = '';
+
+        const nav = document.createElement('div');
+        nav.className = 'NavigationBar_nav__3uuUl';
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('aria-label', 'navigationBar.shop');
+        nav.appendChild(svg);
+        document.body.appendChild(nav);
+
+        const container = document.createElement('div');
+        container.className = 'MuiTabs-flexContainer';
+        container.setAttribute('role', 'tablist');
+        const tester = document.createElement('button');
+        tester.setAttribute('role', 'tab');
+        tester.textContent = 'Tester';
+        container.appendChild(tester);
+        document.body.appendChild(container);
+        Object.defineProperty(container, 'offsetParent', { get: () => document.body, configurable: true });
+
+        return { container, tester };
+    }
+
+    beforeEach(() => {
+        state.autofill.setPendingCalculation.mockClear();
+        state.testerShop = true;
+        state.actionMaterials = [
+            { itemHrid: '/items/plank', itemName: 'Plank', missing: 40, required: 40, isTradeable: true },
+        ];
+    });
+
+    test('clicking a pinned line arms the quantity for that line’s item, not for any buy box', async () => {
+        const { container } = buildShopDom();
+
+        await openMissingMaterials('/actions/crafting/plank', 5);
+
+        const tab = container.querySelector('[data-item-hrid="/items/plank"]');
+        expect(tab).not.toBeNull();
+        tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(state.autofill.setPendingCalculation).toHaveBeenCalledWith(expect.any(Function), {
+            itemHrid: '/items/plank',
+        });
     });
 });
