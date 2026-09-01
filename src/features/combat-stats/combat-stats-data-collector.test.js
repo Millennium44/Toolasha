@@ -101,8 +101,13 @@ beforeEach(() => {
     store.onProbe = null;
     _resetReadProbe();
     collector.isInitialized = false;
-    collector.latestCombatData = null;
-    collector.sessionKey = null;
+    // The collector is a singleton, so the trackers, `currentBattleId` and the
+    // tracking start time all carry over. `onNewBattle` reads all three to
+    // decide whether the run it is seeing is a new session: left alone, a wave
+    // in one test looks like a restart because of what an earlier test set, and
+    // the reset it triggers writes each tracker key a second time. This is the
+    // collector's own forget-everything hook.
+    collector.onCharacterSwitching();
     archiveSession.mockClear();
 });
 

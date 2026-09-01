@@ -60,8 +60,11 @@ const recordWrites = () => storageMock.set.mock.calls.filter(([key]) => String(k
 beforeEach(() => {
     character.id = 'char-1';
     storageMock.store.clear();
-    for (const fn of Object.values(storageMock)) fn.mockClear?.();
-    storageMock.isQuotaExceeded.mockImplementation(() => false);
+    // mockReset, not mockClear: `a split that cannot be written` swaps in a
+    // putAll that lands nothing, and mockClear only forgets the calls — the
+    // implementation stayed, so every later split in the file "stalled", kept
+    // the legacy key and re-ran on the next read.
+    for (const fn of Object.values(storageMock)) fn.mockReset?.();
     lootLogHistory._store.forget();
 });
 

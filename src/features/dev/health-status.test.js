@@ -204,12 +204,18 @@ describe('a full database reaching the player', () => {
         storageMock.diag.quotaExceeded = true;
         healthStatusPanel.show([]);
 
+        // The quota warning is drawn in the first, synchronous pass, so waiting
+        // on it waits for nothing: the budget line only appears once `show()`'s
+        // background refresh has landed. Waiting on the quota element instead
+        // meant this test passed only when an earlier test had already left
+        // budget rows in the panel module's cache.
         await vi.waitFor(() => {
-            expect(document.querySelector('.toolasha-health-quota')).toBeTruthy();
+            const pending = document.querySelector('.toolasha-health-storage');
+            expect(pending.textContent).toContain('Over soft budget: lootLogHistory (41)');
         });
         const block = document.querySelector('.toolasha-health-storage');
         expect(block.textContent).toContain('Storage: 23.8 MB of 95.4 MB');
-        expect(block.textContent).toContain('Over soft budget: lootLogHistory (41)');
+        expect(document.querySelector('.toolasha-health-quota')).toBeTruthy();
     });
 });
 

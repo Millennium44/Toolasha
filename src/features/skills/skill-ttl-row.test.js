@@ -106,6 +106,11 @@ beforeEach(() => {
     game.actions = [];
     game.actionDetails = {};
     clearSelection();
+    // The row's experience samples live in a module-level history, and `train()`
+    // pushes the clock five minutes forward — so the next test, which resets the
+    // clock, starts with readings stamped in its own future and measures no rate
+    // at all. character_switching is the row's own hook for dropping them.
+    game.dmHandlers.character_switching?.();
 });
 
 afterEach(() => {

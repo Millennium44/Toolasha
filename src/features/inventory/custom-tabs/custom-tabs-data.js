@@ -490,6 +490,19 @@ export function sanitizeImportedConfig(parsed, now = Date.now()) {
     return { ...defaultConfig(), ...rest, tabs, selectedTabId, orderUpdatedAt: now };
 }
 
+/**
+ * Test-only: drop every per-character record held here.
+ *
+ * The records are keyed by character id and deliberately outlive any one panel,
+ * so in a test file they also outlive the test that created them: a record that
+ * has already read a character's config folds the next save against what it
+ * holds rather than against what the (by then re-seeded) store says.
+ * @returns {void}
+ */
+export function _resetConfigRecords() {
+    records.clear();
+}
+
 /** @returns {Promise<*>} The pending writes, for tests and shutdown */
 export function flushConfigWrites() {
     return Promise.all([...records.values()].map((record) => record.flushed()));

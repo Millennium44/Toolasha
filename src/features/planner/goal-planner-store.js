@@ -142,6 +142,20 @@ function claimGoals() {
 }
 
 /**
+ * Test-only: drop the goal list held in memory and forget whose it was.
+ *
+ * `claimGoals()` only resets the record when the character id changes, which is
+ * right in the app but leaves the list standing between tests that all run as
+ * the same character — the next `loadGoals()` over an unreadable store then
+ * answers with the previous test's goals.
+ * @returns {void}
+ */
+export function _resetGoalsRecord() {
+    goalsRecord.reset();
+    goalsOwner = null;
+}
+
+/**
  * Who the goals, the snapshot and the gear record belong to.
  * @returns {string|null} Character id, or null before login
  */

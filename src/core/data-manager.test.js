@@ -67,6 +67,19 @@ beforeEach(() => {
     storageMock.flushAll = vi.fn(async () => {});
 });
 
+// The DataManager under test is a singleton shared by every test in this file, so
+// whatever one test leaves on it is what the next one starts from. The one that
+// bites is `activeSocket`: the stale-socket tests bind a socket to it, and every
+// character-scoped handler afterwards rejects messages that arrive with no socket
+// context — which is how the rest of the file drives them — so the handler silently
+// does nothing and the assertion reads the untouched state. Fake timers are the
+// same story from the other direction.
+beforeEach(async () => {
+    vi.useRealTimers();
+    const { default: dataManager } = await import('./data-manager.js');
+    resetCharacter(dataManager);
+});
+
 /** A minimal init_character_data payload. */
 const initPayload = (overrides = {}) => ({
     character: { id: 'char-1', name: 'Tester' },

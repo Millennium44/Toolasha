@@ -70,6 +70,7 @@ const {
     saveCombatGear,
     flushGoalWrites,
     mergeGoalLists,
+    _resetGoalsRecord,
     GOALS_KEY,
     SNAPSHOT_KEY,
     COMBAT_GEAR_KEY,
@@ -83,6 +84,10 @@ beforeEach(() => {
     mockDataManager.currentCharacterId = 'market123';
     mockDataManager.currentGameMode = 'standard';
     _resetAdoptionCache();
+    // Every test here runs as market123, so the record's own "did the character
+    // change?" reset never fires between them and the goal list stays in
+    // memory. Clearing it is what makes each test start from storage alone.
+    _resetGoalsRecord();
 });
 
 describe('where goals are written', () => {

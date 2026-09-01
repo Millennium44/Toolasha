@@ -97,6 +97,11 @@ beforeEach(() => {
     collector.data = null;
     game.actions = [];
     game.profitView = null;
+    // partyStats() and the consumable forecast both cache at module level for
+    // CACHE_MS of real time, so whatever the previous test rendered is still
+    // the answer when the next one asks. character_switching is the module's
+    // own reset hook for exactly that state — use it rather than reaching in.
+    game.dmHandlers.character_switching();
 });
 
 describe('the party-stats cache clears on a character switch', () => {

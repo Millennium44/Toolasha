@@ -115,7 +115,8 @@ vi.mock('../../../utils/adoption-consent.js', () => ({
 }));
 
 const { default: CustomTabsUI } = await import('./custom-tabs-ui.js');
-const { addItem, removeTab, flushConfigWrites, saveConfig } = await import('./custom-tabs-data.js');
+const { addItem, removeTab, flushConfigWrites, saveConfig, _resetConfigRecords } =
+    await import('./custom-tabs-data.js');
 
 const KEY = (charId) => `${charId}_inventoryTabs_config`;
 
@@ -155,6 +156,10 @@ let ui;
 
 beforeEach(async () => {
     storageMock.reset();
+    // The per-character config records live in module state, so a record left
+    // holding a character's config by one test folds the next test's save
+    // against that instead of against the store this beforeEach just cleared
+    _resetConfigRecords();
     dm.listeners.clear();
     dm.charId = 'ironChar';
     dm.characterName = null;
