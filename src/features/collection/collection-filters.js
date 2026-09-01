@@ -1204,7 +1204,13 @@ class CollectionFilters {
             let outputCount;
             if (source === 'dropTable') {
                 const drop = actionDetails.dropTable[outputIndex];
-                outputCount = (drop.count ?? 1) * (drop.dropRate ?? 1);
+                // A gathering drop pays a range per action: the game's dropTable
+                // carries minCount/maxCount and has no `count` at all, so reading
+                // `count` valued every drop at a single item — a 2-6 drop was
+                // understated fourfold, and "time to next tier" with it.
+                const min = Number.isFinite(drop.minCount) ? drop.minCount : (drop.count ?? 1);
+                const max = Number.isFinite(drop.maxCount) ? drop.maxCount : min;
+                outputCount = ((min + max) / 2) * (drop.dropRate ?? 1);
             } else {
                 outputCount = actionDetails.outputItems[outputIndex].count ?? 1;
             }

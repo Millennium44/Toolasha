@@ -722,6 +722,26 @@ describe('sorting the tiles', () => {
         expect(tileFor(catsEl, 'milk').querySelector('.time-to-tier').textContent).toBe('15m');
     });
 
+    test('a gathering drop pays its min/max range, not one item an action', () => {
+        // The game's dropTable carries minCount/maxCount and no `count` at all.
+        // Read as one item an action, a 2-6 drop overstated the wait fourfold.
+        mockDataManager.clientData = {
+            actionDetailMap: {
+                '/actions/milking/cow': {
+                    dropTable: [{ itemHrid: '/items/milk', minCount: 2, maxCount: 6, dropRate: 1 }],
+                },
+            },
+        };
+        // 720 short, at 360 actions/hour × 4 milk each = 1440/h, so half an hour
+        const { catsEl } = buildPanel([{ itemId: 'milk', count: '9280' }]);
+        collectionFilters.collections = { milk: 9280 };
+        collectionFilters.sortMode = 'time-to-next-tier';
+
+        collectionFilters._applySorting(catsEl);
+
+        expect(tileFor(catsEl, 'milk').querySelector('.time-to-tier').textContent).toBe('30m');
+    });
+
     test('switching back to the default clears the time badges', () => {
         mockDataManager.clientData = {
             actionDetailMap: {
