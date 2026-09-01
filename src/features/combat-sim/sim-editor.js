@@ -183,8 +183,17 @@ export class SimEditor {
      */
     async _restoreLoadoutMemory() {
         if (!this._remembersLoadout()) return;
+        // Fixed before the read: `applyLoadoutByName` writes the name straight
+        // back through `_saveLoadoutMemory`, whose key is resolved when the
+        // write runs. A switch inside the read applied the departing
+        // character's remembered loadout to the arriving character's editor —
+        // and, where both characters have a loadout of that name, silently
+        // simmed them in the wrong gear — then stored that name as the arriving
+        // character's own memory.
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
         try {
             const saved = await readScoped(LOADOUT_MEMORY_KEY, 'settings', '');
+            if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) return;
             if (typeof saved !== 'string' || !saved) return;
             this.applyLoadoutByName(saved);
         } catch (error) {

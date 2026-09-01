@@ -16,6 +16,7 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
+    charId: 'me',
     characterData: { character: { id: 'me', name: 'Milkman' } },
     selfDTO: null,
     allPlayers: null,
@@ -28,6 +29,7 @@ vi.mock('../../core/data-manager.js', () => ({
         get characterData() {
             return game.characterData;
         },
+        getCurrentCharacterId: () => game.charId,
         getInitClientData: () => ({ itemDetailMap: {}, abilityDetailMap: {} }),
         getItemDetails: () => null,
         getHouseRooms: () => game.houseRooms,
@@ -58,10 +60,13 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
 
 // Per-character settings, in memory: the loadout the editor last simmed with
 // lives here, and nothing in this suite is about IndexedDB.
-const settings = vi.hoisted(() => ({ values: new Map() }));
+const settings = vi.hoisted(() => ({ values: new Map(), hold: null }));
 vi.mock('../../utils/character-key.js', () => ({
-    readScoped: async (base, storeName, defaultValue = null) =>
-        settings.values.has(base) ? settings.values.get(base) : defaultValue,
+    readScoped: async (base, storeName, defaultValue = null) => {
+        // A read left open, so a test can land a character switch inside one
+        if (settings.hold) await settings.hold;
+        return settings.values.has(base) ? settings.values.get(base) : defaultValue;
+    },
     writeScoped: async (base, value) => {
         settings.values.set(base, value);
     },
@@ -104,6 +109,8 @@ beforeEach(() => {
     bridge.snapshots = [];
     bridge.applied = [];
     settings.values.clear();
+    settings.hold = null;
+    game.charId = 'me';
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
@@ -403,6 +410,29 @@ describe('the loadout selection is remembered', () => {
 
         await editor._restoreLoadoutMemory();
 
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(bridge.applied).toEqual([]);
+    });
+
+    test('a switch inside the read leaves the arriving character’s editor alone', async () => {
+        settings.values.set('simEditorLoadoutName', 'Bruteforce');
+        bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor({ restoreLoadout: false });
+
+        let release;
+        settings.hold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const restoring = editor._restoreLoadoutMemory();
+        game.charId = 'iron';
+        settings.hold = null;
+        release();
+        await restoring;
+
+        // Applying it would have simmed the arriving character in the departing
+        // one's gear, and stored that name as the arriving character's memory
         expect(editor.getSelectedLoadoutName()).toBe('');
         expect(bridge.applied).toEqual([]);
     });
