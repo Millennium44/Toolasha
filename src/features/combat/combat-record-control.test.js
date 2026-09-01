@@ -389,6 +389,44 @@ describe('remembering the target', () => {
         expect(recordTarget()).toEqual({ value: 500, unit: 'fights' });
     });
 
+    test("a load in the air when the switch lands leaves the new character's own load to run", async () => {
+        // The stale read used to set `targetLoaded` before checking anything,
+        // and nothing clears that flag again until the *next* switch — so the
+        // arriving character's target was never restored at all
+        store.data.set('combatRecordControl_target', { value: 12, unit: 'fights' });
+        const inFlight = loadRecordTarget();
+        resetRecordTargetCache();
+        await inFlight;
+
+        store.data.set('combatRecordControl_target', { value: 500, unit: 'fights' });
+        await loadRecordTarget();
+
+        expect(recordTarget()).toEqual({ value: 500, unit: 'fights' });
+    });
+
+    test("a stale read is not stashed for the new character's recorder either", async () => {
+        store.data.set('combatRecordControl_target', { value: 12, unit: 'fights' });
+        shared.isRecording = () => true;
+        try {
+            const inFlight = loadRecordTarget();
+            resetRecordTargetCache();
+            await inFlight;
+
+            shared.isRecording = () => false;
+            // The arriving character has no stored target
+            store.data.delete('combatRecordControl_target');
+            shared.setRecordTarget.mockClear();
+            primeRecordTarget();
+            await settle();
+
+            // A target the other character set must not stop this character's
+            // recording the moment it starts
+            expect(shared.setRecordTarget).not.toHaveBeenCalledWith({ value: 12, unit: 'fights' });
+        } finally {
+            shared.isRecording = () => false;
+        }
+    });
+
     test('a failed write still sets the target, since the recording is what matters', async () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         store.fail = true;

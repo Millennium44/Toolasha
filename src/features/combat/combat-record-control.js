@@ -80,6 +80,17 @@ let targetLoaded = false;
 let targetLoading = null;
 
 /**
+ * Bumped only by {@link resetRecordTargetCache}, i.e. only by a character
+ * switch.
+ *
+ * Deliberately not `targetGeneration`, which is also bumped when the player
+ * types a target into the box. Those are two different reasons to ignore a read
+ * in flight and they want two different responses, and folding them into one
+ * counter is how a guard becomes the too-strict kind.
+ */
+let resetGeneration = 0;
+
+/**
  * Bumped whenever the target is set from outside a load.
  *
  * The read is fired off from the panel's redraw and lands whenever storage gets
@@ -142,8 +153,18 @@ export async function loadRecordTarget() {
 
     targetLoading = (async () => {
         const generation = targetGeneration;
+        const reset = resetGeneration;
         try {
             const stored = await readScoped(TARGET_KEY, 'settings', null, DISCARD_LEGACY);
+            // A switch landed inside the read, so this answer is the departing
+            // character's. Both side effects below had to move behind this
+            // check: `targetLoaded = true` would set the flag
+            // `resetRecordTargetCache()` had just cleared for the arriving
+            // character, short-circuiting their own load — and nothing clears
+            // it again until the *next* switch, so their target is simply never
+            // remembered; and the `pending` stash would hand one character's
+            // target to the other's recorder on the next prime.
+            if (reset !== resetGeneration) return recordTarget();
             // A recording started before this landed is already running to
             // whatever it was started with, and a target restored underneath it
             // is a rule changed mid-run — at best a surprise, at worst a stop,
@@ -216,6 +237,7 @@ export function resetRecordTargetCache() {
     pending = null;
     // A read still in the air belongs to the character being switched away from
     targetGeneration += 1;
+    resetGeneration += 1;
 }
 
 /**
