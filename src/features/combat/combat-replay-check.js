@@ -1833,10 +1833,44 @@ class ReplayCheck {
         }
     }
 
-    /** Forget the in-progress recording, because it is no longer in progress */
-    async clearCheckpoint() {
+    /**
+     * A ticket saying whose observations the work about to suspend is holding.
+     * @returns {{generation: number, charId: string|null}} Pass to {@link _stillOurs}
+     */
+    _owner() {
+        return { generation: this.generation, charId: dataManager.getCurrentCharacterId?.() ?? null };
+    }
+
+    /**
+     * @param {{generation: number, charId: string|null}} owner - From {@link _owner}
+     * @returns {boolean} Whether the character it was taken under is still the one in hand
+     */
+    _stillOurs(owner) {
+        return (
+            this.generation === owner.generation && (dataManager.getCurrentCharacterId?.() ?? null) === owner.charId
+        );
+    }
+
+    /**
+     * One character's checkpoint key, built from an id the caller captured.
+     * @param {{charId: string|null}} owner - From {@link _owner}
+     * @returns {string} The scoped key
+     */
+    _checkpointKey(owner) {
+        return `${CHECKPOINT_KEY}_${owner.charId || 'default'}`;
+    }
+
+    /**
+     * Forget the in-progress recording, because it is no longer in progress.
+     * @param {{charId: string|null}} [owner] - Whose checkpoint; defaults to the
+     *   character in hand. `recover()` passes the one it read under, because the
+     *   clear is a write of `null` and filing it under whoever happens to be
+     *   current destroys a third character's interrupted recording.
+     * @returns {Promise<void>}
+     */
+    async clearCheckpoint(owner = this._owner()) {
         try {
-            await writeScoped(CHECKPOINT_KEY, null, 'settings');
+            await storage.set(this._checkpointKey(owner), null, 'settings');
         } catch (error) {
             console.error('[ReplayCheck] Clearing the checkpoint failed:', error);
         }
@@ -1850,11 +1884,19 @@ class ReplayCheck {
      * left — is not worth recovering on every load for the rest of time.
      */
     async recover() {
+        // Captured before the read. The clear below is a write of `null`, and
+        // its key used to be resolved when it ran: a switch inside the read
+        // therefore erased the ARRIVING character's interrupted recording, and
+        // the fold that follows put the departing character's fights into their
+        // observations — which the save then wrote under their key.
+        const owner = this._owner();
         try {
             const checkpoint = await readScoped(CHECKPOINT_KEY, 'settings', null, DISCARD_LEGACY);
+            if (!this._stillOurs(owner)) return;
             if (!checkpoint?.fights?.length) return;
 
-            await this.clearCheckpoint();
+            await this.clearCheckpoint(owner);
+            if (!this._stillOurs(owner)) return;
             if (!this.remember(checkpoint)) return;
 
             const count = checkpoint.fights.length;
@@ -2113,6 +2155,10 @@ class ReplayCheck {
      * a button that did not work.
      */
     async forget() {
+        // Three writes, each one meant to lose entries, with two suspensions
+        // between them. A switch landing in either handed the rest of them the
+        // arriving character's records to empty instead.
+        const owner = this._owner();
         this.observations = [];
         this.history = [];
         this.comparison = null;
@@ -2121,8 +2167,10 @@ class ReplayCheck {
         this.error = null;
         // The one write meant to lose entries
         await observationRecord.clear();
+        if (!this._stillOurs(owner)) return;
         await historyRecord.clear();
-        await this.clearCheckpoint();
+        if (!this._stillOurs(owner)) return;
+        await this.clearCheckpoint(owner);
     }
 
     disable() {

@@ -33,17 +33,23 @@ const game = vi.hoisted(() => ({
     runGate: null,
     /** data-manager event → handlers, so a test can fire a character switch */
     characterHandlers: new Map(),
+    /** Whoever the data manager is pretending to be */
+    characterId: 'char1',
 }));
 
 /** Storage, as a map, with the quota switch the recorders stand down on */
-const store = vi.hoisted(() => ({ data: new Map(), quota: false }));
+const store = vi.hoisted(() => ({ data: new Map(), quota: false, holds: new Map() }));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: (_key, fallback) => fallback, Z_FLOATING_PANEL: 100 },
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async (key, _store, fallback) => (store.data.has(key) ? store.data.get(key) : fallback),
+        get: async (key, _store, fallback) => {
+            // A read a test can hold open, for the switch-mid-read cases
+            if (store.holds.has(key)) await store.holds.get(key);
+            return store.data.has(key) ? store.data.get(key) : fallback;
+        },
         tryGet: async (key) => {
             if (store.unavailable) return null;
             return store.data.has(key) && store.data.get(key) != null
@@ -71,7 +77,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ actionDetailMap: { '/actions/combat/fly': { name: 'Fly' } } }),
         // The panel's draw reaches storage through the character key
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterGameMode: () => 'standard',
         // Captured so a test can fire a character switch at whatever the
         // module subscribed at import time
@@ -194,6 +200,8 @@ const emitCharacter = (event, data) => (game.characterHandlers.get(event) || [])
 
 beforeEach(() => {
     store.data.clear();
+    store.holds.clear();
+    game.characterId = 'char1';
     store.quota = false;
     store.unavailable = false;
     game.dto = loadout();
@@ -1124,6 +1132,39 @@ describe('surviving a refresh', () => {
 
         expect(log).not.toHaveBeenCalled();
         log.mockRestore();
+    });
+
+    test('a character switch during the recovery does not erase the arriving character’s', async () => {
+        // The clear is a write of `null` and its key used to be resolved when
+        // it ran, so a switch inside the read wrote that `null` over whoever
+        // arrived — destroying an interrupted recording that was never this
+        // character's to clear, and folding the departing character's fights
+        // into the arriving character's observations on the way.
+        const THEIRS = 'combatReplayCheck_recordingCheckpoint_char2';
+        const mine = observeRecording(recording, { zoneHrid: '/actions/combat/fly', recordedAt: 1_000 });
+        const theirs = observeRecording(recording, { zoneHrid: '/actions/combat/fly', recordedAt: 2_000 });
+        store.data.set(CHECKPOINT_KEY, mine);
+        store.data.set(THEIRS, theirs);
+
+        let release;
+        store.holds.set(
+            CHECKPOINT_KEY,
+            new Promise((resolve) => {
+                release = resolve;
+            })
+        );
+
+        const recovering = replayCheck.recover();
+        await Promise.resolve();
+
+        game.characterId = 'char2';
+        replayCheck.disable();
+
+        release();
+        await recovering;
+
+        expect(store.data.get(THEIRS)).toEqual(theirs);
+        expect(replayCheck.observations).toEqual([]);
     });
 
     test('a clean stop clears it, so the next session recovers nothing', async () => {
