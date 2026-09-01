@@ -460,6 +460,15 @@ class DungeonTrackerStorage {
      * @returns {Promise<boolean>} Success status
      */
     async saveTeamRun(teamKey, run) {
+        // Who saw this run — read before the load, not after it. The load is a
+        // real IndexedDB round trip on the first save of a session, and the
+        // caller reaches here after awaits of its own, so a character switch
+        // landing in between stamped this character's run with the arriving
+        // character's name. `runMatchesCharacter` trusts the stamp absolutely,
+        // so the run then disappears from the character who actually ran it and
+        // shows up under one who was never in it — permanently, and skewing
+        // every per-character average built off that view.
+        const recorder = currentCharacter();
         const allRuns = await this._loadRuns();
         if (!allRuns) {
             console.warn('[DungeonTrackerStorage] Run not saved: the stored history could not be read first');
@@ -495,9 +504,6 @@ class DungeonTrackerStorage {
         if (!isDuplicate) {
             // Create unified format run
             const team = teamKey.split(',').sort();
-            // Who saw this run. Read here rather than at module load, since the
-            // user switches characters without reloading the page.
-            const recorder = currentCharacter();
             const unifiedRun = {
                 recordedBy: recorder.id,
                 recordedByName: recorder.name,

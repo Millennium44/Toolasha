@@ -17,11 +17,14 @@ const game = vi.hoisted(() => ({
     writes: [],
     // event name → handlers the store registered on the data manager
     listeners: {},
+    /** Fired once inside the next read — lets a test land a switch inside it */
+    onRead: null,
 }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
         tryGet: async (key, storeName) => {
+            game.onRead?.();
             if (game.unreadable) return null;
             const value = game.saved[storeName]?.[key];
             return value == null ? { found: false, value: null } : { found: true, value };
@@ -61,6 +64,7 @@ function seedRuns(runs) {
 }
 
 beforeEach(() => {
+    game.onRead = null;
     game.unreadable = false;
     game.writes = [];
     dungeonTrackerStorage._resetCache();
@@ -667,6 +671,33 @@ describe('who recorded a run', () => {
         await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns.map((run) => run.recordedBy)).toEqual(['iron456', 'market123']);
+    });
+});
+
+describe('a character switch landing inside the run history read', () => {
+    test('the run is stamped with the character that recorded it, not the one who arrived', async () => {
+        game.saved = {};
+        game.characterId = 'market123';
+        game.characterName = 'MarketCow';
+        // The first save of a session reads the whole history first, and the
+        // caller reaches here after awaits of its own
+        game.onRead = () => {
+            game.onRead = null;
+            game.characterId = 'iron456';
+            game.characterName = 'IronCow';
+        };
+
+        await dungeonTrackerStorage.saveTeamRun('MarketCow,Friend', {
+            timestamp: '2026-01-02T00:00:00Z',
+            duration: 700,
+            dungeonName: 'Chimerical Den',
+        });
+        await dungeonTrackerStorage.flushPendingSave();
+
+        expect(game.saved.unifiedRuns.allRuns[0]).toMatchObject({
+            recordedBy: 'market123',
+            recordedByName: 'MarketCow',
+        });
     });
 });
 
