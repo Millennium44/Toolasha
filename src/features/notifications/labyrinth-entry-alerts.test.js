@@ -118,6 +118,40 @@ describe('labyrinth entry alerts', () => {
         expect(game.notified.length).toBe(after);
     });
 
+    test('the projection and the server’s own edge are one regeneration, not two', () => {
+        // Projected first on an idle tab: due an hour ago, count not moved yet.
+        stock({ entries: 1, lastHoursAgo: 49 });
+        labyrinthEntryAlerts.check({ seed: true });
+        expect(labyrinthEntryAlerts.check()?.fired).toBe(true);
+
+        // Then the server pushes the regeneration it had already made: the count
+        // rises and lastLabyrinthTimestamp moves to that same instant.
+        stock({ entries: 2, lastHoursAgo: 1 });
+        expect(labyrinthEntryAlerts.check()).toBeNull();
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('a server stamp a few seconds off the projected deadline is still one event', () => {
+        stock({ entries: 1, lastHoursAgo: 49 });
+        labyrinthEntryAlerts.check({ seed: true });
+        labyrinthEntryAlerts.check();
+        game.characterData.characterInfo = {
+            labyrinthEntries: 2,
+            labyrinthCooldownHours: 48,
+            lastLabyrinthTimestamp: new Date(NOW - HOUR + 3000).toISOString(),
+        };
+        expect(labyrinthEntryAlerts.check()).toBeNull();
+        expect(game.notified).toHaveLength(1);
+    });
+
+    test('the projected alert quotes the stock the regeneration produced, not the stale one', () => {
+        stock({ entries: 1, lastHoursAgo: 49 });
+        labyrinthEntryAlerts.check({ seed: true });
+        labyrinthEntryAlerts.check();
+        expect(game.notified.at(-1).message).toContain('2/5');
+        expect(game.notified.at(-1).message).not.toContain('1/5');
+    });
+
     test('a full stock is announced but never projects a next entry', () => {
         stock({ entries: 4, lastHoursAgo: 0.3 });
         labyrinthEntryAlerts.check({ seed: true });

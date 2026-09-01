@@ -22,10 +22,19 @@
  *
  * ## Re-arming
  *
- * Keyed on the regeneration instant (rounded to the minute), so the same
- * deadline re-derived a few hundred milliseconds later is one alert, and the
- * next regeneration — a cooldown later, a different instant — re-arms by itself.
- * Spending an entry moves `lastLabyrinthTimestamp`, which moves the instant.
+ * Keyed on the regeneration instant alone, because one regeneration is one
+ * event however it was noticed: the projection names it as the deadline just
+ * crossed (`nextEntryAt` now in the past) and the server names the same instant
+ * as the new `lastLabyrinthTimestamp` once the count moves, so both signals
+ * resolve to the same identity and only the first of them speaks. The stock
+ * count is deliberately *not* part of the key — it differs between those two
+ * sightings of one event, which is exactly how the same regeneration used to be
+ * announced twice.
+ *
+ * Instants within `SAME_EVENT_TOLERANCE_MS` are the same event, so a server
+ * that stamps the regeneration a second or two after the projected deadline
+ * cannot split one event in two. Genuine regenerations are a cooldown (hours)
+ * apart, so the tolerance can never merge two of them.
  */
 
 import config from '../../core/config.js';
@@ -45,22 +54,40 @@ export const CHECK_INTERVAL_MS = 60 * 1000;
 const EVENT_KEY_PREFIX = 'labyrinth-entry';
 
 /**
+ * Two regeneration instants this close together are one event.
+ *
+ * The projected deadline and the server's own stamp for the same regeneration
+ * can disagree by the time the server took to process it; a real gap between
+ * regenerations is a cooldown, measured in hours.
+ */
+export const SAME_EVENT_TOLERANCE_MS = 60 * 1000;
+
+/**
  * What the alert says.
+ *
+ * `entries` on the forecast is the count *as last pushed*, which on the
+ * projected trigger is still the pre-regeneration one — the deadline passed but
+ * the quiet tab has had no `character_info_updated` yet. Quoting it there would
+ * print a number already stale at the moment it is shown, so the caller passes
+ * the stock as of the event being announced.
+ *
  * @param {Object} forecast - From forecastLabyrinthEntries
+ * @param {Object} [options]
+ * @param {number} [options.stock=forecast.entries] - Entries in stock as of the event
  * @returns {string}
  */
-export function entryMessage(forecast) {
-    const stock = `${forecast.entries}/${forecast.maxEntries}`;
-    return forecast.entries >= forecast.maxEntries
-        ? `Labyrinth entries are full (${stock}) — spend one before the next regenerates and is wasted.`
-        : `A Labyrinth entry has regenerated (${stock} in stock).`;
+export function entryMessage(forecast, { stock = forecast.entries } = {}) {
+    const held = `${stock}/${forecast.maxEntries}`;
+    return stock >= forecast.maxEntries
+        ? `Labyrinth entries are full (${held}) — spend one before the next regenerates and is wasted.`
+        : `A Labyrinth entry has regenerated (${held} in stock).`;
 }
 
 class LabyrinthEntryAlerts {
     constructor() {
         /** The stock last seen, so a rise can be told from a redraw */
         this.lastEntries = null;
-        /** The regeneration instant already announced */
+        /** The regeneration instant already announced, in ms */
         this.announcedAt = null;
         this.timers = createTimerRegistry();
         this.unregisterHandlers = [];
@@ -124,15 +151,22 @@ class LabyrinthEntryAlerts {
         if (seed) return null;
         if (!rose && !projectedDue) return null;
 
-        // Keyed on the regeneration instant so a redraw does not repeat it. When
-        // the count rose without a projected instant (already at cap, or a stale
-        // timestamp), the stock count keys it instead.
-        const instant = forecast.nextEntryAt ?? forecast.lastEntryAt ?? now;
-        const key = `${EVENT_KEY_PREFIX}:${Math.round(instant / 60_000)}:${forecast.entries}`;
-        if (this.announcedAt === key) return null;
+        // The instant the regeneration happened, named the same way by either
+        // signal: a projected deadline already in the past is that instant, and
+        // once the server has moved `lastLabyrinthTimestamp` the projection has
+        // run on to the *next* deadline and the moved stamp is the instant.
+        const due = forecast.nextEntryAt != null && now >= forecast.nextEntryAt;
+        const instant = due ? forecast.nextEntryAt : (forecast.lastEntryAt ?? now);
+        if (this.announcedAt != null && Math.abs(instant - this.announcedAt) < SAME_EVENT_TOLERANCE_MS) return null;
 
-        const result = notificationService.notify(key, entryMessage(forecast), { title: 'Labyrinth entry ready' });
-        if (result?.fired) this.announcedAt = key;
+        // The projection fires before the count has moved, so the entry it is
+        // announcing is not in `forecast.entries` yet.
+        const stock = rose ? forecast.entries : Math.min(forecast.maxEntries, forecast.entries + 1);
+        const key = `${EVENT_KEY_PREFIX}:${Math.round(instant / 60_000)}`;
+        const result = notificationService.notify(key, entryMessage(forecast, { stock }), {
+            title: 'Labyrinth entry ready',
+        });
+        if (result?.fired) this.announcedAt = instant;
         return result;
     }
 
