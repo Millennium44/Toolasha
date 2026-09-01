@@ -30,14 +30,19 @@ const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
 const REROLL_BASE_COIN_COST = 10000;
 const REROLL_MAX_COIN_COST = 320000;
 
-function getStorageKey() {
-    const charId = dataManager.getCurrentCharacterId() || 'default';
-    return `${STORAGE_KEY_PREFIX}_${charId}`;
+/** Whoever is logged in, or `'default'` before login */
+function currentCharId() {
+    return dataManager.getCurrentCharacterId() || 'default';
 }
 
-function getProtectedStorageKey() {
-    const charId = dataManager.getCurrentCharacterId() || 'default';
-    return `${PROTECTED_KEY_PREFIX}_${charId}`;
+/**
+ * Both lists' keys, built from an id the caller captured rather than from
+ * whoever is current when the key happens to be needed.
+ * @param {string} charId - Whose lists
+ * @returns {{list: string, protected: string}}
+ */
+function storageKeys(charId) {
+    return { list: `${STORAGE_KEY_PREFIX}_${charId}`, protected: `${PROTECTED_KEY_PREFIX}_${charId}` };
 }
 
 /**
@@ -94,6 +99,18 @@ class TaskAutoReroll {
         this.autoRerollHrids = new Set();
         this.protectedHrids = new Set();
         this.unregisterHandlers = [];
+        /**
+         * Whose lists `autoRerollHrids` and `protectedHrids` hold, or null when
+         * nothing has been loaded. `_save()` refuses to write anything else's.
+         */
+        this._listOwner = null;
+        /**
+         * Bumped by {@link disable}. A load that began under the departing
+         * character finds the number moved and drops its result rather than
+         * putting the departing character's blacklist into the arriving
+         * character's memory.
+         */
+        this._generation = 0;
     }
 
     async initialize() {
@@ -102,9 +119,22 @@ class TaskAutoReroll {
 
         this.isInitialized = true;
 
-        const saved = await storage.getJSON(getStorageKey(), 'settings', []);
+        // Captured before the read. Both lists are per-character, and the read
+        // that settles last is the one that ends up in memory: an init still in
+        // flight when the player switches used to land the departing
+        // character's blacklist in the arriving character's `autoRerollHrids`,
+        // where the next toggle wrote it — whole — over the arriving
+        // character's own stored list.
+        const charId = currentCharId();
+        const started = this._generation;
+        const current = () => this._generation === started && currentCharId() === charId;
+
+        const saved = await storage.getJSON(storageKeys(charId).list, 'settings', []);
+        if (!current()) return;
         this.autoRerollHrids = new Set(saved);
-        await this._loadProtectedHrids();
+        this._listOwner = charId;
+        await this._loadProtectedHrids(charId);
+        if (!current()) return;
 
         const unregister = domObserver.onClass('TaskAutoReroll', 'RandomTask_randomTask', () => {
             // Always re-read the whole board: the rating rule is relative, so a
@@ -136,9 +166,13 @@ class TaskAutoReroll {
      * detected from the data rather than from paint that may be hidden.
      * @private
      */
-    async _loadProtectedHrids() {
+    async _loadProtectedHrids(charId = currentCharId()) {
+        const started = this._generation;
         try {
-            const saved = await storage.getJSON(getProtectedStorageKey(), 'settings', []);
+            const saved = await storage.getJSON(storageKeys(charId).protected, 'settings', []);
+            // Same reasoning as initialize(): a read that no longer speaks for
+            // the character it was made for is dropped, not adopted
+            if (this._generation !== started || currentCharId() !== charId) return;
             this.protectedHrids = new Set(saved);
         } catch (error) {
             console.error('[TaskAutoReroll] Failed to load protected task list:', error);
@@ -341,7 +375,19 @@ class TaskAutoReroll {
     }
 
     async _save() {
-        await storage.setJSON(getStorageKey(), Array.from(this.autoRerollHrids), 'settings', true);
+        const charId = currentCharId();
+        // The write is the damaging end of the race, so it checks too: the list
+        // in memory belongs to whoever loaded it, and writing one character's
+        // blacklist under another's key replaces theirs entirely. Refusing
+        // costs the toggle; writing costs the list.
+        if (this._listOwner !== charId) {
+            console.warn(
+                `[TaskAutoReroll] Not saving the auto-reroll list: it belongs to ${this._listOwner ?? 'no character yet'}, ` +
+                    `not to ${charId}`
+            );
+            return;
+        }
+        await storage.setJSON(storageKeys(charId).list, Array.from(this.autoRerollHrids), 'settings', true);
     }
 
     openConfigPopup() {
@@ -566,6 +612,14 @@ class TaskAutoReroll {
         }
         this.unregisterHandlers = [];
 
+        // The lists are one character's. Left in place they badge the arriving
+        // character's board off the departing character's blacklist until the
+        // new init's read lands, and a read still in flight is stood down.
+        this._generation += 1;
+        this.autoRerollHrids = new Set();
+        this.protectedHrids = new Set();
+        this._listOwner = null;
+
         const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
         for (const card of cards) {
             if (card.querySelector('.mwi-autoreroll-badge')) {
@@ -600,3 +654,5 @@ export default {
         }
     },
 };
+
+export { taskAutoReroll };

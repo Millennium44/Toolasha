@@ -1,3 +1,5 @@
+/** @vitest-environment happy-dom */
+
 /**
  * Tests for the Task Auto-Reroll Reminder's decision rule.
  *
@@ -8,17 +10,37 @@
  * direction costs real coins — badging good tasks, or staying quiet on bad ones.
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false, getSettingValue: (_k, d) => d } }));
+/** Who is logged in, and whether the feature's own setting is on */
+const world = vi.hoisted(() => ({ charId: 'test', enabled: false }));
+/** The settings store the two per-character lists live in: key -> array */
+const db = vi.hoisted(() => ({ map: new Map(), hold: null }));
+
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: () => world.enabled, getSettingValue: (_k, d) => d },
+}));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
-vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => [], setJSON: async () => {} } }));
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        getJSON: async (key, _store, fallback = []) => {
+            // A read left open, so a test can land a character switch inside one
+            if (db.hold) await db.hold;
+            return db.map.has(key) ? db.map.get(key) : fallback;
+        },
+        setJSON: async (key, value) => {
+            db.map.set(key, value);
+            return true;
+        },
+    },
+}));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'test' } }));
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => world.charId } }));
 vi.mock('./task-profit-calculator.js', () => ({ calculateTaskTokenValue: () => ({ tokenValue: 2000 }) }));
 vi.mock('./task-profit-display.js', () => ({ readVisibleTaskRatings: () => ({}) }));
 
 const { nextRerollCostInRatingUnits, ratesBelowBoard } = await import('./task-auto-reroll.js');
+const { taskAutoReroll } = await import('./task-auto-reroll.js');
 
 describe('nextRerollCostInRatingUnits', () => {
     test('doubles with each coin reroll already spent, up to the cap', () => {
@@ -79,5 +101,72 @@ describe('ratesBelowBoard', () => {
         const gap = { value: 90000, hours: 0.1 };
         // 10K spread over 6 minutes is 100K/hr, far more than the 10K/hr gap
         expect(ratesBelowBoard(gap, 100000, 10000)).toBe(false);
+    });
+});
+
+describe('the per-character lists across a switch', () => {
+    beforeEach(() => {
+        world.charId = 'market';
+        world.enabled = true;
+        db.map.clear();
+        db.hold = null;
+        taskAutoReroll.disable();
+    });
+
+    test('an init still in flight does not hand its blacklist to the arriving character', async () => {
+        db.map.set('taskAutoRerollHrids_market', ['/monsters/imp']);
+        db.map.set('taskAutoRerollHrids_iron', ['/monsters/rat']);
+
+        let release;
+        db.hold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const marketInit = taskAutoReroll.initialize();
+
+        // The switch: the feature layer is torn down and brought back up for
+        // the arriving character, whose own read lands first
+        taskAutoReroll.disable();
+        world.charId = 'iron';
+        db.hold = null;
+        await taskAutoReroll.initialize();
+        release();
+        await marketInit;
+
+        expect([...taskAutoReroll.autoRerollHrids]).toEqual(['/monsters/rat']);
+
+        // and the toggle that follows writes the arriving character's list,
+        // under the arriving character's key
+        await taskAutoReroll.toggleHrid('/monsters/cow');
+        expect(db.map.get('taskAutoRerollHrids_iron')).toEqual(['/monsters/rat', '/monsters/cow']);
+        expect(db.map.get('taskAutoRerollHrids_market')).toEqual(['/monsters/imp']);
+    });
+
+    test('a teardown drops the lists, so nothing is badged off the departing character’s', async () => {
+        db.map.set('taskAutoRerollHrids_market', ['/monsters/imp']);
+        db.map.set('taskProtectedHrids_market', ['/monsters/goblin']);
+        await taskAutoReroll.initialize();
+        expect(taskAutoReroll.autoRerollHrids.size).toBe(1);
+
+        taskAutoReroll.disable();
+
+        expect(taskAutoReroll.autoRerollHrids.size).toBe(0);
+        expect(taskAutoReroll.protectedHrids.size).toBe(0);
+    });
+
+    test('a save is refused outright when the list in memory is not this character’s', async () => {
+        db.map.set('taskAutoRerollHrids_market', ['/monsters/imp']);
+        db.map.set('taskAutoRerollHrids_iron', ['/monsters/rat']);
+        await taskAutoReroll.initialize();
+
+        // No teardown at all — the pointer simply moved
+        world.charId = 'iron';
+        const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await taskAutoReroll.toggleHrid('/monsters/cow');
+        } finally {
+            warned.mockRestore();
+        }
+
+        expect(db.map.get('taskAutoRerollHrids_iron')).toEqual(['/monsters/rat']);
     });
 });
