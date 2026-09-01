@@ -1450,6 +1450,51 @@ describe('teardown is awaitable, so the switch waits for the listing log to land
     });
 });
 
+describe('a character switch landing inside a delete', () => {
+    test('the arriving character’s listing log is not overwritten by it', async () => {
+        // `deleteListing` re-syncs from storage first — several storage hops —
+        // and then writes with `overwrite: true`, which is a full replacement.
+        // The key used to be resolved at the write, so a switch inside the
+        // re-sync filed the departing character's log (or the empty one
+        // `disable()` leaves behind) under the ARRIVING character's key, wiping
+        // a listing history that nothing can rebuild.
+        const A_KEY = 'marketListingTimestamps_charA';
+        const B_KEY = 'marketListingTimestamps_charB';
+        dataManagerMock.characterId = 'charA';
+        estimatedListingAge.anchorsLoaded = true;
+        storageMock.storeFor('marketListings').set(A_KEY, [
+            { id: 1, timestamp: 1000, itemHrid: '/items/a', status: 'active' },
+            { id: 2, timestamp: 2000, itemHrid: '/items/a', status: 'active' },
+        ]);
+        storageMock
+            .storeFor('marketListings')
+            .set(B_KEY, [{ id: 9, timestamp: 9000, itemHrid: '/items/b', status: 'active' }]);
+
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        const read = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementationOnce(async (...args) => {
+            await held;
+            return read(...args);
+        });
+
+        const deleting = estimatedListingAge.deleteListing(2);
+        await Promise.resolve();
+
+        await estimatedListingAge.disable();
+        dataManagerMock.characterId = 'charB';
+
+        release();
+        await deleting;
+
+        expect(storageMock.storeFor('marketListings').get(B_KEY)).toEqual([
+            { id: 9, timestamp: 9000, itemHrid: '/items/b', status: 'active' },
+        ]);
+    });
+});
+
 describe('cachedTopOfBook', () => {
     beforeEach(() => {
         estimatedListingAge.orderBooksCache = {};

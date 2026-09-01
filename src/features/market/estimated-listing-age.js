@@ -14,7 +14,7 @@ import storage from '../../core/storage.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatRelativeTime, formatDateTime } from '../../utils/formatters.js';
-import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
+import { readScoped } from '../../utils/character-key.js';
 import { GAME } from '../../utils/selectors.js';
 
 /** Store both halves of the old shared key live in */
@@ -336,6 +336,53 @@ class EstimatedListingAge {
         this._pageHideHandler = null;
         /** Listings recorded since the last retention pass, for the gate */
         this._recordedSinceRetention = 0;
+        /**
+         * Bumped when {@link disable} drops the in-memory log. Work that
+         * suspended holding that log — a delete or a clear waiting out its
+         * re-sync — finds the number moved and stands down rather than writing
+         * an emptied log over the arriving character's.
+         */
+        this._generation = 0;
+    }
+
+    /**
+     * A ticket saying whose listing log the work about to suspend is holding.
+     *
+     * Both halves are needed. The character id is what the storage key has to
+     * be built from — `characterKey()` answers with whoever is current at the
+     * moment it is called, and the switch moves that the instant it settles,
+     * before `disable()` has had a turn — and the generation is what says
+     * whether `this.knownListings` is still the log this work was about.
+     * @returns {{generation: number, charId: string}} Pass to the two checks below
+     */
+    _owner() {
+        return { generation: this._generation, charId: dataManager.getCurrentCharacterId() || 'default' };
+    }
+
+    /**
+     * @param {{generation: number}} owner - From {@link _owner}
+     * @returns {boolean} Whether `this.knownListings` is still the log it was taken over
+     */
+    _ownsMemory(owner) {
+        return this._generation === owner.generation;
+    }
+
+    /**
+     * @param {{generation: number, charId: string}} owner - From {@link _owner}
+     * @returns {boolean} Whether the character it was taken under is also still the one in hand
+     */
+    _stillOurs(owner) {
+        return this._ownsMemory(owner) && (dataManager.getCurrentCharacterId() || 'default') === owner.charId;
+    }
+
+    /**
+     * One character's listing-log key, built from an id the caller captured
+     * rather than from whoever happens to be current at the write.
+     * @param {{charId: string}} owner - From {@link _owner}
+     * @returns {string} The scoped key
+     */
+    _listingsKey(owner) {
+        return `${LISTINGS_BASE}_${owner.charId}`;
     }
 
     /**
@@ -444,10 +491,16 @@ class EstimatedListingAge {
      * Load this character's listing log from IndexedDB
      */
     async loadHistoricalData() {
+        // Captured before the first read: every key below is built from it, and
+        // a load that settles under a different character folds one character's
+        // listings into the other's memory — which the next save then writes
+        // under the other's key
+        const owner = this._owner();
         try {
             if (!this.anchorsLoaded) {
                 await this.loadAnchors();
             }
+            if (!this._ownsMemory(owner)) return;
 
             // A read that could not be made is not an empty log. `readScoped`
             // folds the two together, so the scoped key is checked first with a
@@ -455,15 +508,22 @@ class EstimatedListingAge {
             // the legacy-adoption path. On failure the in-memory log stands —
             // taking a failed read for an empty one, and then writing it back,
             // is how a whole history used to vanish.
-            const probe = await storage.tryGet(characterKey(LISTINGS_BASE), LISTINGS_STORE);
+            const probe = await storage.tryGet(this._listingsKey(owner), LISTINGS_STORE);
             if (probe === null) {
                 console.warn('[EstimatedListingAge] Listing log could not be read; keeping the in-memory copy');
                 this.rebuildEstimationPoints();
                 return;
             }
-            const stored = probe.found
-                ? probe.value
-                : (await readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
+            if (!this._ownsMemory(owner)) return;
+            // `readScoped` builds its own key from whoever is current, and its
+            // adoption deletes the legacy copy — so it is only reached while
+            // this load still speaks for the character it began under
+            let stored = probe.value;
+            if (!probe.found) {
+                if (!this._stillOurs(owner)) return;
+                stored = (await readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
+                if (!this._ownsMemory(owner)) return;
+            }
 
             // Load all historical data (no time-based filtering). Entries without
             // an itemHrid are anchors, which now live in their own global key.
@@ -478,7 +538,7 @@ class EstimatedListingAge {
             // half; drop it now rather than re-filtering it on every read. A log
             // that retention just trimmed is written back for the same reason
             if (personal.length !== stored.length || this.knownListings.length !== merged.length) {
-                await this.saveHistoricalData();
+                await this.saveHistoricalData({ owner });
             }
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to load historical data:', error);
@@ -649,13 +709,25 @@ class EstimatedListingAge {
      * @param {boolean} [options.overwrite=false] - Write the in-memory log as-is.
      *   For deletions and clears, whose whole point is that the stored copy
      *   loses entries; callers re-sync from storage immediately before.
+     * @param {{generation: number, charId: string}} [options.owner] - From
+     *   {@link _owner}, taken when the operation this save belongs to began.
+     *   The key is built from it, so the write is always correctly filed; and
+     *   the save stands down when the in-memory log has since been dropped for
+     *   another character's, which is what stopped a delete or a clear from
+     *   emptying the wrong character's log.
      * @returns {Promise<boolean>} Whether a write landed
      */
-    async saveHistoricalData({ overwrite = false } = {}) {
+    async saveHistoricalData({ overwrite = false, owner = this._owner() } = {}) {
         const run = async () => {
+            // The log in memory is no longer the one this save was about: a
+            // switch has landed and `disable()` has emptied it. Writing it now
+            // would put an empty (or the wrong character's) log under a key,
+            // and for an `overwrite` save that is a full replacement.
+            if (!this._ownsMemory(owner)) return false;
+            const writeKey = this._listingsKey(owner);
             try {
                 if (!overwrite) {
-                    const probe = await storage.tryGet(characterKey(LISTINGS_BASE), LISTINGS_STORE);
+                    const probe = await storage.tryGet(writeKey, LISTINGS_STORE);
                     if (probe === null) {
                         console.warn('[EstimatedListingAge] Listing log not saved: storage could not be read first');
                         return false;
@@ -665,12 +737,13 @@ class EstimatedListingAge {
                     // Retention again over the fold, or rows the log had already
                     // let go of would come back from storage on every save
                     const merged = applyListingRetention(this._mergeListings(personal, this.knownListings));
+                    if (!this._ownsMemory(owner)) return false;
                     if (merged.length !== this.knownListings.length) {
                         this.knownListings = merged;
                         this.rebuildEstimationPoints();
                     }
                 }
-                return await writeScoped(LISTINGS_BASE, this.knownListings, LISTINGS_STORE, true);
+                return await storage.set(writeKey, this.knownListings, LISTINGS_STORE, true);
             } catch (error) {
                 console.error('[EstimatedListingAge] Failed to save historical data:', error);
                 return false;
@@ -689,10 +762,16 @@ class EstimatedListingAge {
      * @param {number} listingId - Listing ID to delete
      */
     async deleteListing(listingId) {
+        // The re-sync is several storage hops, and the write that follows is a
+        // full overwrite: a switch landing in between left the delete holding
+        // the arriving character's log (or the empty one `disable()` leaves) and
+        // writing it under their key, wiping their whole listing history
+        const owner = this._owner();
         await this.loadHistoricalData();
+        if (!this._ownsMemory(owner)) return;
         this.knownListings = this.knownListings.filter((l) => l.id !== listingId);
         this.rebuildEstimationPoints();
-        await this.saveHistoricalData({ overwrite: true });
+        await this.saveHistoricalData({ overwrite: true, owner });
     }
 
     /**
@@ -727,7 +806,11 @@ class EstimatedListingAge {
      * @param {Set<number>} activeListingIds - IDs of currently active listings
      */
     async markActiveListings(activeListingIds) {
+        const owner = this._owner();
         await this.loadHistoricalData();
+        // The ids are one character's "my listings"; marking them against
+        // another character's log makes their listings look active
+        if (!this._ownsMemory(owner)) return;
         let changed = false;
         for (const listing of this.knownListings) {
             if (activeListingIds.has(listing.id) && (!listing.status || listing.status === 'unknown')) {
@@ -736,7 +819,7 @@ class EstimatedListingAge {
             }
         }
         if (changed) {
-            await this.saveHistoricalData();
+            await this.saveHistoricalData({ owner });
         }
     }
 
@@ -1919,11 +2002,10 @@ class EstimatedListingAge {
             // `saveHistoricalData` is a read-merge-write: it reads
             // `this.knownListings` again after its probe resumes, so without
             // this await the `finally` below emptied the log first and the
-            // flush wrote `[]` over it. On a character switch the same await
-            // decides *whose* key it lands under, because the probe and the
-            // write both evaluate `characterKey()` when they run — and the
-            // registry can only hold the switch back for a teardown that hands
-            // it a promise.
+            // flush wrote `[]` over it. The key it lands under is the one the
+            // save captured when it was asked for, not whoever is current when
+            // it runs — and the registry can only hold the switch back for a
+            // teardown that hands it a promise.
             await this.flushPendingSave();
 
             this.clearDisplays();
@@ -1941,6 +2023,12 @@ class EstimatedListingAge {
             // That is a permanent cross-character pollution no later correct
             // load can undo. The anchor pool is deliberately kept: it is shared
             // calibration data, keyed globally rather than per character.
+            //
+            // Bumped here rather than at the top of `disable()` so the flush
+            // above still counts as this character's: from this point on, work
+            // that suspended holding the old log stands down instead of writing
+            // the emptiness under whoever's key is current.
+            this._generation += 1;
             this.knownListings = [];
             this.estimationPoints = [];
             this.orderBooksCache = {};
