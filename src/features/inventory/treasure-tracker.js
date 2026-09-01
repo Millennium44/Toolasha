@@ -417,13 +417,23 @@ class TreasureTracker {
      * can be a different one by the time it does, and every one of these
      * answers ends in a `replace: true` write, which is a full overwrite of
      * whoever's ledger is current. Refusing silently would read as the button
-     * being broken, so it says why.
+     * being broken, so it says why — and says which of the two it was. A
+     * character switch is the usual reason, but `disable()` also bumps the
+     * generation when the tracker's own setting is turned off, and telling
+     * somebody who did that they switched characters sends them looking for a
+     * switch that never happened.
      * @param {{generation: number, charId: string|null}} owner - Taken before the dialog opened
      * @returns {boolean} Whether to go ahead
      */
     _answerStillApplies(owner) {
         if (this._stillOurs(owner)) return true;
-        window.alert('You switched characters while that was open, so your chest history was left alone.');
+        const switched = (dataManager.getCurrentCharacterId?.() ?? null) !== owner.charId;
+        window.alert(
+            switched
+                ? 'You switched characters while that was open, so your chest history was left alone.'
+                : 'The treasure tracker was turned off and on again while that was open, so your chest ' +
+                      'history was left alone.'
+        );
         return false;
     }
 

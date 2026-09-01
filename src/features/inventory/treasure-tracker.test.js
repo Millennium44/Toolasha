@@ -950,7 +950,34 @@ describe('a character switch landing in the middle of something', () => {
         // `replace: true` is a full overwrite, so the arriving character's whole
         // chest history went, with nothing left to recover it from
         expect(tallyOf('char-2')[CHEST].opened).toBe(12);
-        expect(window.alert).toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('switched characters'));
+    });
+
+    // `disable()` bumps the generation for the tracker's own setting too, and
+    // sending somebody who turned it off looking for a character switch that
+    // never happened is its own bug.
+    test('turning the tracker off behind the dialog is not reported as a character switch', async () => {
+        window.alert = vi.fn();
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set('treasureTally_char-1', { [CHEST]: { opened: 3, loot: {} } });
+        await treasureTracker.initialize();
+
+        const wipe = [...treasureTracker._configSection().querySelectorAll('button')].find(
+            (button) => button.textContent === 'Delete all history'
+        );
+        wipe.click();
+        expect(choice.answer).toBeTypeOf('function');
+
+        // Same character throughout; only the feature went down and came back
+        treasureTracker.disable();
+        await treasureTracker.initialize();
+
+        choice.answer('delete');
+        await treasureTracker.ledger.flushed();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(tallyOf('char-1')[CHEST].opened).toBe(3);
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('turned off and on again'));
     });
 
     test('an initialize parked in its loads neither leaks a handler nor adopts the departing settings', async () => {
