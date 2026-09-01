@@ -11,6 +11,14 @@ import dataManager from '../../core/data-manager.js';
 import { dismissTooltips } from '../../utils/dom.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
+/**
+ * Who the pins and the sort mode belong to.
+ * @returns {string} Character id, or `'default'` before login
+ */
+function currentOwner() {
+    return dataManager.getCurrentCharacterId() || 'default';
+}
+
 class ActionPanelSort {
     constructor() {
         this.panels = new Map(); // actionPanel → {actionHrid, profitPerHour, expPerHour}
@@ -31,18 +39,46 @@ class ActionPanelSort {
      * Get character-scoped storage key for sort mode.
      * @returns {string}
      */
-    _getSortStorageKey() {
-        const charId = dataManager.getCurrentCharacterId() || 'default';
-        return `actionSortMode_${charId}`;
+    _getSortStorageKey(owner = currentOwner()) {
+        return `actionSortMode_${owner}`;
     }
 
     /**
      * Get character-scoped storage key for pinned actions.
      * @returns {string}
      */
-    _getPinnedStorageKey() {
-        const charId = dataManager.getCurrentCharacterId() || 'default';
-        return `pinnedActions_${charId}`;
+    _getPinnedStorageKey(owner = currentOwner()) {
+        return `pinnedActions_${owner}`;
+    }
+
+    /**
+     * Read one character's pins and sort mode, refusing to adopt another's.
+     *
+     * Both keys used to be resolved separately, each at the moment its own read
+     * started, and both results were adopted with no re-check. This module holds
+     * its own `character_switching` / `character_initialized` listeners, and
+     * `character_initialized` is a deferred fire-and-forget macrotask, so
+     * neither path is serialised by the feature registry's switch chain: two of
+     * these could be in flight at once. A switch inside the first read produced
+     * a spliced state — one character's pins beside another's sort mode — and
+     * `togglePin()` writes `pinnedActions_<current>` whole and immediately, so
+     * the player's very next pin click filed the departing character's pins over
+     * the arriving character's stored list.
+     *
+     * @param {string} owner - Whose pins and sort mode to read
+     * @returns {Promise<boolean>} Whether the result was adopted
+     * @private
+     */
+    async _loadFor(owner) {
+        const pinnedData = await storage.getJSON(this._getPinnedStorageKey(owner), 'settings', []);
+        const sortMode = await storage.get(this._getSortStorageKey(owner), 'settings', 'default');
+        if (currentOwner() !== owner) return false;
+
+        this.pinnedActions = new Set(pinnedData);
+        this.sortMode = sortMode;
+        this.initialized = true;
+        this._notifySortModeListeners();
+        return true;
     }
 
     /**
@@ -62,12 +98,12 @@ class ActionPanelSort {
         if (this._loading) return this._loading;
 
         this._loading = (async () => {
-            const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
-            this.pinnedActions = new Set(pinnedData);
-            this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
-            this.initialized = true;
-            this._notifySortModeListeners();
+            await this._loadFor(currentOwner());
 
+            // Registered whether or not the read was adopted: a refused read
+            // means a switch landed inside it, and the arriving character's
+            // `character_initialized` is the only thing that will load their
+            // pins — it has to have something to arrive at.
             // Listen for character switch to clear character-specific data
             if (!this.handlers.characterSwitch) {
                 this.handlers.characterSwitch = () => this.onCharacterSwitching();
@@ -105,11 +141,7 @@ class ActionPanelSort {
      * Handle character initialized - reload pins for the new character
      */
     async onCharacterInitialized() {
-        const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
-        this.pinnedActions = new Set(pinnedData);
-        this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
-        this.initialized = true;
-        this._notifySortModeListeners();
+        await this._loadFor(currentOwner());
     }
 
     /**
