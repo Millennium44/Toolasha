@@ -2719,6 +2719,25 @@ describe('clearing the comparison history', () => {
         expect(text()).toContain('Cleared all saved runs.');
     });
 
+    test('a long run label shrinks the baseline select rather than the row', () => {
+        // A flex child's min-width defaults to its content, and a select's
+        // content width is its widest option: without min-width:0 one long
+        // saved run stretched the row until Export CSV and Clear all sat past
+        // the panel edge. The buttons stay unshrinkable, so the select is the
+        // one that gives.
+        pushHistory('Current Gear');
+        pushHistory('New Chest with a saved run label long enough to stretch the whole row past the panel edge');
+        ui._comparisonBaseline = 0;
+        const results = showFight();
+
+        const select = results.querySelector('#mwi-csim-baseline-select');
+        expect(select.getAttribute('style')).toMatch(/min-width:\s*0/);
+        expect(select.getAttribute('style')).toMatch(/flex:\s*1 1 0/);
+        for (const id of ['#mwi-csim-history-csv', '#mwi-csim-history-clear']) {
+            expect(results.querySelector(id).getAttribute('style')).toMatch(/flex-shrink:\s*0/);
+        }
+    });
+
     test('the per-run ✕ still removes only that run', () => {
         pushHistory('Current Gear');
         pushHistory('New Chest');
