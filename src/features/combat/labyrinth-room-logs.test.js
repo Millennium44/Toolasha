@@ -688,7 +688,12 @@ describe('marking a point to measure from', () => {
         expect(text()).toContain('show everything');
     });
 
-    test('and Reset is still there, because it answers a different question', () => {
+    test('and Reset is still there, because it answers a different question', async () => {
+        // Its own setup, not a previous test's: the label is only 'Reset' while
+        // the accuracy tab is the one on screen, and the panel that carries the
+        // button has to have been drawn at all
+        await setup(snapshot({ baselineAt: Date.now() }));
+
         expect(labyrinthRoomLogs.clearButton.textContent).toBe('Reset');
     });
 });
