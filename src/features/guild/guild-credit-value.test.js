@@ -195,6 +195,28 @@ const {
 } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
+/**
+ * The listeners `guild-credit-value.js` registers at import time, snapshotted
+ * before any test has run.
+ *
+ * The module subscribes to `character_switching` at top level, once, for the
+ * whole file. A block that tore its own registrations down with a wholesale
+ * `game.listeners = {}` therefore dropped that one too — permanently, since
+ * nothing re-imports the module — and every later test that fires the switch
+ * handler found an empty registry. Which tests those are depends on the order
+ * the blocks run in, so the wipe has to keep what import time put there.
+ */
+const importTimeListeners = Object.fromEntries(
+    Object.entries(game.listeners).map(([event, handlers]) => [event, [...handlers]])
+);
+
+/** Drop every listener registered by a test, keeping the import-time ones. */
+function resetListeners() {
+    game.listeners = Object.fromEntries(
+        Object.entries(importTimeListeners).map(([event, handlers]) => [event, [...handlers]])
+    );
+}
+
 function buildExchangeModal(creditName) {
     document.body.innerHTML = '';
     const modal = document.createElement('div');
@@ -783,7 +805,14 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         game.writes = 0;
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // A test that types into an input and stops leaves 400 ms of debounce
+        // on the clock. `cleanup()` flushes it, but the write it starts is a
+        // promise: unawaited, it settles inside the NEXT test — where it counts
+        // as that test's write and puts this test's plan under its key. Awaited
+        // here, while this test's storage is still the one it belongs in.
+        guildCreditValue.cleanup();
+        await shrinePlanRecord.flushed();
         vi.useRealTimers();
         shrinePlanRecord.reset();
         game.storage = {};
@@ -2805,12 +2834,19 @@ describe('the shrine cost block keeps up with the modal', () => {
             },
         };
         hold(244_000);
+        // `initialize()` is a no-op while the feature is still up, so a block
+        // that ran before this one and left it initialized also left its shrine
+        // re-render triggers armed on ITS modal — and those share one timer and
+        // one `items_updated` handler with this block's. Firing `items_updated`
+        // then schedules a redraw of a modal that is no longer connected, which
+        // disconnects the observer watching the live one.
+        guildCreditValue.cleanup();
         guildCreditValue.initialize();
     });
 
     afterEach(() => {
         guildCreditValue.cleanup();
-        game.listeners = {};
+        resetListeners();
         document.body.innerHTML = '';
     });
 
@@ -3012,7 +3048,7 @@ describe('Missing Mats Marketplace click — character switch mid-poll', () => {
     afterEach(() => {
         vi.useRealTimers();
         guildCreditValue.cleanup();
-        game.listeners = {};
+        resetListeners();
         document.body.innerHTML = '';
     });
 

@@ -790,6 +790,22 @@ describe('trialExportIsEmpty', () => {
 });
 
 describe('downloadTrialExport', () => {
+    // A real browser treats a click on `<a download>` as a save, not a
+    // navigation. happy-dom navigates: the click left the document sitting on
+    // `blob:trial`, whose hostname is the empty string, and every later test
+    // that asked what host it was running on — the export bundle's `host` and
+    // `isTestServer` — read that instead of the page's own. Stubbed rather than
+    // restored afterwards, because the navigation is the environment's
+    // artefact and nothing here is testing it.
+    let clicks;
+    beforeEach(() => {
+        clicks = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        clicks.mockRestore();
+    });
+
     test('it answers with the name it saved under, which the caller cannot recompute', () => {
         const created = [];
         const originalCreate = URL.createObjectURL;

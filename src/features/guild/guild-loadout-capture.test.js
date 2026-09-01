@@ -411,6 +411,13 @@ describe('guild scoping', () => {
         guildLoadoutCapture.record = { players: {}, updatedAt: 0 };
         guildLoadoutCapture.guildName = null;
         guildLoadoutCapture.lastSocketAt = 0;
+        // The one piece of the singleton `initialize()` does not recompute. In
+        // the game it only ever moves forward, but every test here rewinds the
+        // clock to the same instant — so an epoch left by a test that advanced
+        // its timers sits in the FUTURE of the next test's sightings, and the
+        // adoption rule (`at >= max(startedAt, guildEpochAt)`) then refuses to
+        // carry them onto the guild key.
+        guildLoadoutCapture.guildEpochAt = 0;
         await guildLoadoutCapture.initialize();
     });
 

@@ -78,7 +78,19 @@ vi.mock('./guild-xp-tracker.js', () => ({
     },
 }));
 
-const { guildXPDisplay } = await import('./guild-xp-display.js');
+/**
+ * Re-imported per test, not held from module load.
+ *
+ * The remembered fold lives in two module-level bindings — the boolean and the
+ * memoised promise that hydrates it once per page load. Memoising is right for
+ * the page (the first render has to have something to await, and a boolean
+ * latch left the fold unapplied on every reload), but it means the FIRST test
+ * to draw the block fixes the answer for the whole file: a later test that puts
+ * `guildTrialSignupsCollapsed: true` in storage gets the earlier test's `false`
+ * back, because nothing reads storage a second time. A fresh module per test is
+ * a fresh page load, which is what each test is written as.
+ */
+let guildXPDisplay;
 
 /**
  * A member who has signed up for neither trial this week.
@@ -136,7 +148,9 @@ function buildTab({ container = 'GuildPanel_trialsContent__a', statusRow = true 
 /** The injected block, if it is there. @returns {Element|null} */
 const block = () => document.querySelector('.mwi-trial-signups');
 
-beforeEach(() => {
+beforeEach(async () => {
+    vi.resetModules();
+    ({ guildXPDisplay } = await import('./guild-xp-display.js'));
     game.settings = { guildXPDisplay: true, guildTrialSignupDisplay: true };
     game.observers = {};
     game.wsHandlers = {};

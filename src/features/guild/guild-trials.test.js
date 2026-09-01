@@ -287,6 +287,44 @@ const { saveTrialRecord, tilePersonalStats } = await import('./guild-trials-stor
 const now = Date.parse('2026-08-04T12:00:00Z');
 
 /**
+ * Put the feature's singleton back to what a page load hands it.
+ *
+ * `cleanup()` deliberately keeps most of this — disabling the feature from the
+ * settings and enabling it again must not lose the week's record, the guild the
+ * record is keyed by, or the save cadence — and `initialize()` recomputes only
+ * some of it. That is right in the browser, where the alternative to `cleanup()`
+ * is a reload; in one test process it means the previous test decides this one.
+ *
+ * Three of these have been caught doing exactly that: `lastRecordSaveAt` left a
+ * few seconds in the past throttles the save this test is about into never
+ * happening; `awaitingCharacter` left `true` by a switch test makes
+ * `_resolveGuildName()` answer null forever, so no guild name is ever adopted;
+ * and a `record` left in hand is read as this test's own.
+ */
+function resetTrialsSingleton() {
+    guildTrials.record = null;
+    guildTrials.recordUnread = false;
+    guildTrials.rereading = false;
+    guildTrials.lastRecordSaveAt = 0;
+    guildTrials.guildName = null;
+    guildTrials.socketGuildName = null;
+    guildTrials.characterId = null;
+    guildTrials.awaitingCharacter = false;
+    guildTrials.adopting = false;
+    guildTrials.currentTrials = null;
+    guildTrials.socketPhase = null;
+    guildTrials.phase = null;
+    guildTrials.lastForecast = null;
+    guildTrials.workBases = {};
+    guildTrials.watchedPool = null;
+    guildTrials.contextRank = 0;
+    guildTrials.lastTickAt = 0;
+    guildTrials.lastSession = null;
+    guildTrials.lastSessionChecked = false;
+    guildTrials.blockHtml.clear();
+}
+
+/**
  * A stored tile record.
  * @param {Object} overrides - Fields to override
  * @returns {Object} Record
@@ -1468,6 +1506,7 @@ describe('the panel, end to end', () => {
         game.scoreboardContext = null;
         game.skilling = {};
         game.skillingEnded = {};
+        resetTrialsSingleton();
         await trialsFeature.initialize();
     });
 
@@ -2195,6 +2234,7 @@ describe('the panel, end to end', () => {
             trialsFeature.cleanup();
             game.guildName = 'Milky Way';
             game.characterId = null;
+            resetTrialsSingleton();
             await trialsFeature.initialize();
         });
 
@@ -3508,8 +3548,7 @@ describe('the two trial tabs, as the game draws them', () => {
             endedBy: null,
         };
         game.scoreboardToggles = 0;
-        guildTrials.record = null;
-        guildTrials.guildName = null;
+        resetTrialsSingleton();
         await trialsFeature.initialize();
     });
 
@@ -5301,6 +5340,7 @@ describe('the payout block, audited', () => {
         game.scoreboardContext = null;
         game.skilling = {};
         game.skillingEnded = {};
+        resetTrialsSingleton();
         await trialsFeature.initialize();
     });
 
@@ -5648,6 +5688,7 @@ describe('the trial palette verbs', () => {
             endedBy: null,
         };
         trialsFeature.cleanup();
+        resetTrialsSingleton();
         await trialsFeature.initialize();
     });
 
