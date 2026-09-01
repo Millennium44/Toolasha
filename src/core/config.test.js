@@ -60,6 +60,22 @@ beforeEach(() => {
     config.characterSettingsLoaded = false;
     config.settingChangeCallbacks = {};
     config.settingsLoadedCallbacks = [];
+
+    // The hoisted mocks are shared by the whole file too, and the describes
+    // below reach into them: one clears the character id (which makes
+    // loadSettings return before it ever reaches storage or the loaded
+    // callbacks), others `mockReset()` loadSettings (leaving it with no
+    // implementation at all) or leave `lastLoadReadable`/`restorePending`
+    // flipped. Put every one of them back to the declared default so a test
+    // gets the mock it was written against whatever ran before it.
+    dataManagerMock.characterId = 'char-1';
+    storageMock.restorePending = false;
+    settingsStorageMock.lastLoadReadable = true;
+    settingsStorageMock.loadSettings.mockReset().mockImplementation(() => Promise.resolve({}));
+    settingsStorageMock.saveSettings.mockReset().mockImplementation(() => Promise.resolve());
+    settingsStorageMock.saveSettingsKeepingStored.mockReset().mockImplementation(() => Promise.resolve(true));
+    settingsStorageMock.buildDefaults.mockReset().mockImplementation(() => ({}));
+    settingsStorageMock.setCharacterId.mockReset();
 });
 
 describe('Config.getSetting', () => {

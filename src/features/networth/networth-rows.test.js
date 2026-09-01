@@ -10,7 +10,7 @@
  * the panel just stops giving the tile a pointer cursor.
  */
 
-import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     rows: {},
@@ -72,14 +72,18 @@ function draw(key) {
     return container;
 }
 
-describe('net worth tiles', () => {
-    beforeEach(() => {
-        game.currentData = null;
-        game.chartToggles = 0;
-        game.chartRejects = false;
-        game.bookPanelToggles = 0;
-    });
+// One hoisted `game` object stands in for every module this file mocks, so its
+// counters carry from test to test. Clear them all before each test rather than
+// per describe: the skill-books tile asserts the chart was *not* opened, which
+// only holds if the count another describe left behind has been cleared.
+beforeEach(() => {
+    game.currentData = null;
+    game.chartToggles = 0;
+    game.chartRejects = false;
+    game.bookPanelToggles = 0;
+});
 
+describe('net worth tiles', () => {
     test('every field tile registers', () => {
         for (const key of CHART_TILES) expect(game.rows[key]).toBeDefined();
     });
@@ -110,8 +114,6 @@ describe('net worth tiles', () => {
 describe('opening the history chart', () => {
     beforeEach(() => {
         game.currentData = { coins: 1, currentAssets: { listings: { value: 1 }, inventory: { value: 1 } } };
-        game.chartToggles = 0;
-        game.chartRejects = false;
     });
 
     test.each(CHART_TILES)('%s is registered with a way to open the chart', (key) => {
@@ -146,10 +148,6 @@ describe('opening the history chart', () => {
 });
 
 describe('the skill books tile', () => {
-    afterEach(() => {
-        game.bookPanelToggles = 0;
-    });
-
     test('still opens the ability book panel, not the chart', () => {
         game.rows.skillBooks.onOpen();
 
