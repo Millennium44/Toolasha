@@ -141,3 +141,40 @@ describe('the run ending in the queue', () => {
         expect(state.calls).toContainEqual(['pendingStart']);
     });
 });
+
+describe('two attempts landing before the first has finished writing', () => {
+    // websocket.js calls handlers fire-and-forget — it never awaits the promise
+    // an async handler returns — so a second action_completed starts running
+    // while the first is still suspended on its cost writes. The level the
+    // attempt started from and the level it ended at have to be claimed in one
+    // synchronous step, or the second handler reads the first handler's
+    // pre-attempt level as its own baseline.
+    test('each attempt is scored against the level it actually started from', async () => {
+        // Baseline: a mid-run pickup, so lastAttempt is level 5
+        await state.handlers.action_completed(attempt(5, 78));
+        expect(state.calls).toEqual([['start', '/items/enchanted_cloak_refined', 5, 15, 2]]);
+
+        // A protected failure (5 → 5) and the success after it (5 → 6),
+        // dispatched back to back the way the socket does. The failure buys a
+        // protection, which is one more write to suspend on than the success has.
+        const failure = state.handlers.action_completed(attempt(5, 79));
+        const success = state.handlers.action_completed(attempt(6, 80));
+        await Promise.all([failure, success]);
+
+        // The next attempt has to see level 6, not the level the slower handler
+        // finished writing afterwards
+        await state.handlers.action_completed(attempt(7, 81));
+
+        // Order is not asserted: the failure buys a protection first, so it
+        // finishes writing after the success it preceded. What each attempt was
+        // scored against is the thing that has to survive the interleaving.
+        const results = state.calls.filter(([kind]) => kind === 'success' || kind === 'failure');
+        expect(results).toHaveLength(3);
+        expect(results).toContainEqual(['failure', 5, 5]);
+        expect(results).toContainEqual(['success', 5, 6, false]);
+        expect(results).toContainEqual(['success', 6, 7, false]);
+        // The failure mode this guards: 6 → 7 scored from a stale level 5,
+        // reported as a Blessed double jump that never happened
+        expect(results).not.toContainEqual(['success', 5, 7, true]);
+    });
+});

@@ -320,11 +320,24 @@ async function handleEnhancementResult(action, _data) {
         // Calculate adjusted attempt count (resume-proof)
         const adjustedCount = calculateAdjustedAttemptCount(currentSession);
 
+        // Claim the level baseline and hand it on in one synchronous step.
+        //
+        // websocket.js calls handlers fire-and-forget — it never awaits the
+        // promise an async handler returns — so a second action_completed runs
+        // while the first is still suspended on the cost writes below. Reading
+        // lastAttempt after those awaits, and writing it after them too, let a
+        // slower handler stamp its own older level over a newer one: the next
+        // attempt then scored 6 → 7 as a 5 → 7 Blessed double jump that never
+        // happened, and mis-attributed the success to level 5's tally.
+        const previousLevel = currentSession.lastAttempt?.level ?? currentSession.startLevel;
+        currentSession.lastAttempt = {
+            attemptNumber: adjustedCount,
+            level: newLevel,
+            timestamp: Date.now(),
+        };
+
         // Track costs for EVERY attempt (including first)
         const { materialCost: _materialCost, coinCost: _coinCost } = await trackMaterialCosts(itemHrid);
-
-        // Get previous level from lastAttempt
-        const previousLevel = currentSession.lastAttempt?.level ?? currentSession.startLevel;
 
         // Check protection item usage BEFORE recording attempt
         // Track protection cost if protection item exists in action data
@@ -375,13 +388,6 @@ async function handleEnhancementResult(action, _data) {
         const wasFailure = levelDecreased || failedAtZero || protectedFailure;
 
         const wasBlessed = wasSuccess && newLevel - previousLevel >= 2; // Blessed tea detection
-
-        // Update lastAttempt BEFORE recording (so next attempt compares correctly)
-        currentSession.lastAttempt = {
-            attemptNumber: adjustedCount,
-            level: newLevel,
-            timestamp: Date.now(),
-        };
 
         // Record the result and track XP
         // Skip on the first attempt of a newly created session — we don't have a reliable
