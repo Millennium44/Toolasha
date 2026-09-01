@@ -200,6 +200,44 @@ export function goldSavedPerToken(decision) {
     return market / perCredit;
 }
 
+/** How close two gold-per-token figures have to be to share the crown */
+const TOKEN_VALUE_TIE_TOLERANCE = 1e-9;
+
+/**
+ * Rank the colours by how well a token is spent on each.
+ *
+ * The question the per-colour token toggles raise and never answered: tokens are
+ * finite, every colour will take them, and the exchange rates are asymmetric
+ * enough that the same token buys ten blue credits or a sixtieth of a gold one.
+ * Ranking by {@link goldSavedPerToken} answers it in the only currency both sides
+ * share.
+ *
+ * A colour whose materials have no market price is not ranked last — it is not
+ * ranked at all (`unpriced`), because "no price seen" is not "worth nothing" and
+ * guessing one would be the same invention the rest of this file refuses.
+ *
+ * @param {Array<string>} creditHrids - The colours to rank
+ * @param {Function} decisionFor - creditHrid → decision from {@link chooseCreditPath}
+ * @returns {Array<{itemHrid: string, goldPerToken: number|null, unpriced: boolean, best: boolean}>}
+ *   Best first, unpriced colours last
+ */
+export function rankTokenCoverValue(creditHrids, decisionFor = () => null) {
+    const rows = (Array.isArray(creditHrids) ? creditHrids : []).map((itemHrid) => {
+        const value = goldSavedPerToken(decisionFor(itemHrid));
+        return { itemHrid, goldPerToken: value, unpriced: value === null, best: false };
+    });
+    rows.sort((a, b) => {
+        if (a.unpriced !== b.unpriced) return a.unpriced ? 1 : -1;
+        if (!a.unpriced && a.goldPerToken !== b.goldPerToken) return b.goldPerToken - a.goldPerToken;
+        return a.itemHrid.localeCompare(b.itemHrid);
+    });
+    const top = rows.find((row) => !row.unpriced)?.goldPerToken;
+    if (top > 0)
+        for (const row of rows)
+            if (!row.unpriced && row.goldPerToken >= top * (1 - TOKEN_VALUE_TIE_TOLERANCE)) row.best = true;
+    return rows;
+}
+
 /** How long the target inputs sit still before the plan is written */
 const PLAN_SAVE_DEBOUNCE_MS = 400;
 /**
@@ -1751,11 +1789,21 @@ class GuildCreditValue {
                     covered.has(creditHrid) ? 'tokens' : mode
                 );
 
-            // Credit costs
+            // Credit costs. Netted first, then drawn: the value ranking beside
+            // the toggles compares the colours this plan still owes, so it has
+            // to see all of them before the first row is written.
             const owedCredits = {};
+            for (const [itemHrid, count] of Object.entries(credits))
+                owedCredits[itemHrid] = owedRow(itemHrid, count).owed;
+            const ranked = rankTokenCoverValue(
+                Object.keys(owedCredits).filter((itemHrid) => owedCredits[itemHrid] > 0),
+                pathFor
+            );
+            const valueByHrid = new Map(ranked.map((row) => [row.itemHrid, row]));
+            const bestValue = ranked.find((row) => row.best) || null;
+
             for (const [itemHrid, count] of Object.entries(credits)) {
                 const { owed, owned } = owedRow(itemHrid, count);
-                owedCredits[itemHrid] = owed;
                 if (owed <= 0) continue;
                 const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop();
                 const price = getItemPrice(itemHrid, { mode: 'ask' });
@@ -1815,6 +1863,38 @@ class GuildCreditValue {
                     renderSuggestions();
                 });
                 row.querySelector('span').appendChild(cover);
+
+                // Which colours are worth the tokens. The toggles above made
+                // every colour equally tickable and said nothing about which
+                // tick is a good idea; this is the comparison, in gold, next to
+                // the switch it applies to. A sibling of the label rather than a
+                // child of it, so reading the number does not toggle the box.
+                if (described) {
+                    const value = valueByHrid.get(itemHrid);
+                    const worth = document.createElement('span');
+                    worth.className = 'mwi-shrine-token-worth';
+                    worth.dataset.creditHrid = itemHrid;
+                    if (!value || value.unpriced) {
+                        worth.textContent = 'unpriced';
+                        worth.style.cssText = 'margin-left:4px; font-size:10px; color:#4b5563;';
+                        worth.title =
+                            `Nothing on the market converts into ${shortCreditName(name)} at a known price, so ` +
+                            'there is nothing to weigh a token against here. Unpriced rather than guessed.';
+                    } else {
+                        const saved = formatKMB(value.goldPerToken);
+                        worth.textContent = `${value.best ? '★ ' : ''}${saved}/tok`;
+                        worth.style.cssText =
+                            `margin-left:4px; font-size:10px; color:${value.best ? '#4ade80' : '#6b7280'};` +
+                            (value.best ? ' font-weight:600;' : '');
+                        const lead = `1 tok here saves ${saved} gold vs buying ${shortCreditName(name)}'s mats.`;
+                        worth.title = value.best
+                            ? `${lead} Best use of your tokens on this plan.`
+                            : `${lead} Best here is ${shortCreditName(
+                                  itemDetailMap[bestValue.itemHrid]?.name || bestValue.itemHrid
+                              )} at ${formatKMB(bestValue.goldPerToken)}/tok.`;
+                    }
+                    row.querySelector('span').appendChild(worth);
+                }
 
                 // The other way to settle this row: the guild shop sells credits
                 // for tokens. Only said where that is the *cheaper* way — a gold

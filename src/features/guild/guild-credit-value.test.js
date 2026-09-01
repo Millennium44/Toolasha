@@ -170,6 +170,7 @@ const {
     creditsForTokens,
     capTokenPlanToBudget,
     goldSavedPerToken,
+    rankTokenCoverValue,
 } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
@@ -2432,6 +2433,36 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(tokenCoveredCredits(null)).toEqual(new Set());
         });
 
+        test('the ranking indicator marks the best colour to spend tokens on, and says so', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            const worth = modal.querySelector('.mwi-shrine-token-worth[data-credit-hrid="/items/guild_credit_1"]');
+            // 1 token → 1 Trade Credit, and a credit's mats cost 150 gold
+            expect(worth.textContent).toBe('★ 150/tok');
+            expect(worth.title).toContain('1 tok here saves 150 gold');
+            expect(worth.title).toContain('Best use of your tokens');
+        });
+
+        test('a colour whose mats have no price is called unpriced, not ranked last', () => {
+            game.rates['/items/guild_credit_2'] = {
+                creditItemHrid: '/items/guild_credit_2',
+                creditsPerToken: 1,
+                tokensPerExchange: 1,
+                creditsPerExchange: 1,
+                capturedAt: 1_700_000_000_000,
+                via: 'arrow',
+            };
+            const modal = openModal();
+            // Level 4 costs Craft Credit, which nothing on the market converts into
+            setTarget(modal, FORCE, 4);
+
+            const worth = modal.querySelector('.mwi-shrine-token-worth[data-credit-hrid="/items/guild_credit_2"]');
+            expect(worth.textContent).toBe('unpriced');
+            expect(worth.title).toContain('Unpriced rather than guessed');
+            expect(worth.textContent).not.toContain('/tok');
+        });
+
         test('a plan that lands after the modal opened routes the suggestions too, not just the totals', async () => {
             // The record's read had not finished when the planner was drawn, so
             // both halves were drawn from an empty plan. When it lands, both
@@ -2606,6 +2637,20 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(goldSavedPerToken({ tokensPerCredit: 60, marketGold: 1200 })).toBe(20);
             expect(goldSavedPerToken({ tokensPerCredit: 0.1, marketGold: null })).toBeNull();
             expect(goldSavedPerToken(null)).toBeNull();
+        });
+
+        test('the ranking crowns the best, ties included, and sets the unpriced aside', () => {
+            const decisions = {
+                cheap: { tokensPerCredit: 60, marketGold: 1200 },
+                best: { tokensPerCredit: 0.1, marketGold: 150 },
+                tied: { tokensPerCredit: 1, marketGold: 1500 },
+                blind: { tokensPerCredit: 0.1, marketGold: null },
+            };
+            const ranked = rankTokenCoverValue(['cheap', 'blind', 'best', 'tied'], (hrid) => decisions[hrid]);
+
+            expect(ranked.map((row) => row.itemHrid)).toEqual(['best', 'tied', 'cheap', 'blind']);
+            expect(ranked.filter((row) => row.best).map((row) => row.itemHrid)).toEqual(['best', 'tied']);
+            expect(ranked.at(-1)).toEqual({ itemHrid: 'blind', goldPerToken: null, unpriced: true, best: false });
         });
     });
 });
