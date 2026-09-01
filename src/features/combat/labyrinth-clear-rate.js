@@ -532,6 +532,16 @@ class LabyrinthClearRate {
             this.recommendRunning = false;
             this._settingsFingerprint = null;
             this._snapshotFingerprint = null;
+            // One character's sim results and the fingerprint that says they
+            // are still current. Nothing reuses them across a switch today —
+            // the fingerprint folds in the gear snapshot, which differs — but
+            // that is incidental, and it is what stands between a stale
+            // `_autoCalcFingerprint` and an auto pass drawing the departing
+            // character's clear chances onto the arriving character's grid from
+            // `restoreTileBadgesFromCache()`. Safety should not rest on two
+            // characters happening to be geared differently.
+            this._tileResults?.clear();
+            this._autoCalcFingerprint = null;
             this.isInitialized = false;
         } catch (error) {
             console.error('[Labyrinth Clear Rate] Disable failed part-way:', error);

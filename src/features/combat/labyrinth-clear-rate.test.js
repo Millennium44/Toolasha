@@ -4118,6 +4118,21 @@ describe('a teardown mid-sim', () => {
         expect(labyrinthClearRate.tileCalcRunning).toBe(false);
     });
 
+    test('teardown drops the cached tile results and the fingerprint that revives them', () => {
+        // `_autoCalcFingerprint` is what makes an auto pass skip the sims and
+        // redraw badges from `_tileResults` instead. Left standing across a
+        // switch, it is one matching fingerprint away from painting the
+        // departing character's clear chances onto the arriving character's
+        // grid — today only the gear snapshot in the fingerprint prevents it.
+        labyrinthClearRate._tileResults = new Map([['0,0', { clearChance: 0.9 }]]);
+        labyrinthClearRate._autoCalcFingerprint = 'departing-character';
+
+        labyrinthClearRate.disable();
+
+        expect(labyrinthClearRate._tileResults.size).toBe(0);
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+    });
+
     test('teardown stops the sim in flight, not just the queue behind it', () => {
         labyrinthClearRate.simQueue = [{ monsterHrid: '/monsters/imp', roomLevel: 200, badge: null }];
 
