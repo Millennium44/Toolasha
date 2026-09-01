@@ -236,7 +236,14 @@ class NotificationService {
 
         const now = Date.now();
         const last = this.lastFired.get(eventKey);
-        if (last !== undefined && now - last < cooldownMs) {
+        // `now < last` means the wall clock has been set backwards since the
+        // last firing — a sleeping machine catching up to NTP, a manual clock
+        // change — and not that the event is somehow still within its window.
+        // Treating a negative gap as "inside the cooldown" would silence a
+        // fresh event for as long as it takes the clock to catch back up to
+        // where it was, which for a critical category is a real notification
+        // lost. Only a *forward* gap smaller than the window is a duplicate.
+        if (last !== undefined && now >= last && now - last < cooldownMs) {
             return { fired: false, channels: [], reason: 'cooldown', category: resolved, urgency };
         }
 

@@ -192,6 +192,26 @@ describe('de-duplication', () => {
         }
     });
 
+    test('a clock set backwards does not silence a fresh event indefinitely', () => {
+        // A sleeping machine catching up to NTP, or a manual clock change, can
+        // move Date.now() backwards. The gap it produces is negative, and a
+        // negative gap must not read as "still inside the cooldown window" —
+        // that would silence the very next real event until the clock caught
+        // back up to where it had been, which for a critical category is a
+        // notification lost outright rather than merely delayed.
+        setHidden(false);
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-01-01T12:00:00Z'));
+            notificationService.notify('market-listing-filled', 'One finished');
+
+            vi.setSystemTime(new Date('2026-01-01T11:00:00Z'));
+            expect(notificationService.notify('market-listing-filled', 'Two finished').fired).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     test('a message that reached nobody does not burn the cooldown', () => {
         // A message that could not be delivered must not silence the next
         // attempt, which is the one that might get through
