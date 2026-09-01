@@ -10,7 +10,10 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ items: [] }));
+const game = vi.hoisted(() => ({ items: [], characterId: 'char1' }));
+
+/** The store, with `getJSON` swappable so a test can land a switch inside a read */
+const store = vi.hoisted(() => ({ getJSON: async () => null }));
 
 // Records every subscription so the tests can see *when* the module attaches
 // its handler — the point of the lazy hookup is that importing costs nothing.
@@ -23,13 +26,15 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
-vi.mock('../../core/storage.js', () => ({ default: { setJSON: () => {}, getJSON: async () => null } }));
+vi.mock('../../core/storage.js', () => ({
+    default: { setJSON: () => {}, getJSON: (...args) => store.getJSON(...args) },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         get characterItems() {
             return game.items;
         },
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => game.characterId,
         // initialize() re-reads under the character-scoped key when this fires
         on: () => {},
         off: () => {},
@@ -50,6 +55,8 @@ const owned = (hrid, enhancementLevel, count = 1) => ({ itemHrid: hrid, enhancem
 
 beforeEach(() => {
     game.items = [];
+    game.characterId = 'char1';
+    store.getJSON = async () => null;
 });
 
 describe('the best copy owned', () => {
@@ -312,6 +319,24 @@ describe('switching characters', () => {
         store.disable();
 
         expect(store.snapshotsReady).toBe(false);
+    });
+
+    test('a load that lands after the switch does not put the departing character’s gear back', async () => {
+        const snapshots = new loadoutSnapshot.constructor();
+        // The read was issued under char1 and answers with char1's loadouts,
+        // but the player is on char2 by the time it lands
+        store.getJSON = async () => {
+            game.characterId = 'char2';
+            return { 1: { name: 'Fighting', wearableHash: '' } };
+        };
+
+        await snapshots.initialize();
+
+        // Adopting them would make the "already loaded" guard skip char2's own
+        // read, and every write below would then file char1's loadouts under
+        // char2's key
+        expect(snapshots.getAllSnapshots()).toHaveLength(0);
+        expect(snapshots.snapshots).toEqual({});
     });
 
     test('initialize after disable loads again instead of keeping the old character’s cache', async () => {

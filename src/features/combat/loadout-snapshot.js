@@ -278,7 +278,18 @@ class LoadoutSnapshot {
             // handler — so the key here is already character-scoped. The listener
             // below cannot correct it if it ever were not: that event has already
             // fired and will only come again on a character switch.
-            this.snapshots = (await storage.getJSON(storageKey, 'settings', null)) || {};
+            const loaded = (await storage.getJSON(storageKey, 'settings', null)) || {};
+            // The key was right when the read started; the adopt is a storage
+            // round trip later. `initializeFeatures()` at boot is not on the
+            // switch chain, so a switch landing inside this read resumes here
+            // with another character current — and `disable()` clears
+            // `snapshots` precisely so the arriving character's initialize will
+            // read its own key. Adopting now puts the departing character's
+            // gear back, which makes that guard see a full cache and skip the
+            // read, and every write path below then files the departing
+            // character's loadouts under the arriving character's key.
+            if (getStorageKey() !== storageKey) return;
+            this.snapshots = loaded;
 
             // Fallback for Steam users: if storage is also empty, bootstrap from
             // the characterLoadoutMap embedded in init_character_data (already in dataManager).
@@ -298,6 +309,10 @@ class LoadoutSnapshot {
         this.characterInitializedHandler = async () => {
             const storageKey = getStorageKey();
             const fresh = (await storage.getJSON(storageKey, 'settings', null)) || {};
+            // `character_initialized` is a deferred macrotask and this listener
+            // is the module's own, so nothing serialises it against a further
+            // switch — same reason as the read above
+            if (getStorageKey() !== storageKey) return;
             if (Object.keys(fresh).length > 0) {
                 this.snapshots = fresh;
                 this._emitUpdate();
