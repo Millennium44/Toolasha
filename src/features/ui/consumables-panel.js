@@ -2520,6 +2520,19 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         return cell;
     }
 
+    /**
+     * Repaint because a setting the body reads was changed somewhere else.
+     *
+     * Through the tick rather than straight into `_render`, so it keeps the
+     * tick's manners: a folded panel and a control somebody is in the middle of
+     * are left alone.
+     * @returns {void}
+     */
+    refreshFromSettings() {
+        if (!this.panel) return;
+        this._tick();
+    }
+
     _remove() {
         clearInterval(this.refreshId);
         this.refreshId = null;
@@ -2547,6 +2560,23 @@ export const consumablesPanel = new ConsumablesPanel();
 // has to reopen if the page was left with it up.
 consumablesPanel.loadSettings();
 consumablesPanel.restore();
+
+// Every setting the body reads while it draws. The body is only ever rebuilt by
+// the five-second tick, so a flip made on the settings page used to leave the
+// panel quoting the old answer until the tick came round — the comment beside
+// the buy thresholds claimed "this panel and the settings page can never
+// disagree", which was true only between ticks. Subscribed at module scope with
+// the rest of this panel's wiring, since it has no feature-registry lifecycle.
+for (const key of [
+    'consumables_idleLoadoutPlan',
+    'consumables_labPerRunBasis',
+    'market_consumableBuyOpenRecommended',
+    'market_consumableBuyMaxSpreadPct',
+    'market_consumableBuyMinSaving',
+    'market_consumableBuyMinOrderValue',
+]) {
+    config.onSettingChange(key, () => consumablesPanel.refreshFromSettings());
+}
 
 // At module scope with the rest, because the panel has no feature-registry
 // lifecycle to hang it off: it starts itself here and there is no setting

@@ -27,7 +27,7 @@ const game = vi.hoisted(() => ({
     clientData: null,
 }));
 
-const settings = vi.hoisted(() => ({ values: {} }));
+const settings = vi.hoisted(() => ({ values: {}, listeners: {} }));
 
 /** Who is logged in, and the data manager's event bus */
 const bus = vi.hoisted(() => ({ characterId: 'char1', handlers: {} }));
@@ -41,6 +41,13 @@ vi.mock('../../core/config.js', () => ({
             settings.values[key] ?? (String(key).startsWith('market_') ? fallback : 'compact'),
         setSetting: (key, value) => {
             settings.values[key] = value;
+            for (const callback of settings.listeners[key] || []) callback(value);
+        },
+        onSettingChange: (key, callback) => {
+            (settings.listeners[key] ||= []).push(callback);
+            return () => {
+                settings.listeners[key] = (settings.listeners[key] || []).filter((cb) => cb !== callback);
+            };
         },
     },
 }));
@@ -537,6 +544,21 @@ describe('the five-second redraw', () => {
 
         hidden.mockReturnValue(false);
         vi.advanceTimersByTime(REFRESH_MS);
+        expect(render).toHaveBeenCalled();
+    });
+
+    test('a setting flipped elsewhere repaints the panel now, not at the next tick', async () => {
+        const { default: mockedConfig } = await import('../../core/config.js');
+        consumablesPanel.show({ remember: false });
+        const render = vi.spyOn(consumablesPanel, '_render');
+        await vi.advanceTimersByTimeAsync(0);
+        render.mockClear();
+
+        // The body reads this while it draws, and the redraw used to be the
+        // five-second tick and nothing else — so the settings page and the open
+        // panel disagreed until it came round
+        mockedConfig.setSetting('consumables_idleLoadoutPlan', false);
+
         expect(render).toHaveBeenCalled();
     });
 
