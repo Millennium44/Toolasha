@@ -85,6 +85,12 @@ afterEach(() => {
     enhancementUI.cleanup();
     document.body.innerHTML = '';
     game.sessions = {};
+    // enhancementUI is a module-level singleton, so mergeMode/mergeSelected
+    // set directly on it by one test (below) survive into whichever test
+    // happens to run next - cleanup() does not touch them, since leaving
+    // merge mode on between real panel opens is correct behaviour, not a bug.
+    enhancementUI.mergeMode = false;
+    enhancementUI.mergeSelected = new Set();
 });
 
 describe('header layout', () => {
