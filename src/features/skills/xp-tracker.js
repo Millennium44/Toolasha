@@ -329,7 +329,17 @@ class XPTracker {
         // belong on the same series — `pushXP`'s "XP never falls" rule reads
         // one of them as the other going backwards and silently drops it, so
         // this does not just mislabel data, it deletes some of it.
-        if (this.characterId !== charId) return;
+        //
+        // Asked of the data manager rather than of `this.characterId`. The
+        // record's key comes from `characterKey()`, which reads
+        // `getCurrentCharacterId()` — and that moves the moment the switch
+        // settles, whereas `this.characterId` only moves when the ARRIVING
+        // character's own `_onCharacterInit` gets a turn. Between those two
+        // points the two disagree, and a load that resumes there (a reconnect
+        // init for the same character, which takes neither reset branch above,
+        // so nothing bumps the record's generation either) passed the old check
+        // and saved this character's series under the other one's key.
+        if (dataManager.getCurrentCharacterId() !== charId) return;
 
         const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
 

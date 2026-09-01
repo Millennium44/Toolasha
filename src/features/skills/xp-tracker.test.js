@@ -207,6 +207,30 @@ describe('the XP history survives', () => {
     });
 });
 
+describe('a reconnect init parked across a switch', () => {
+    test('does not save the character it was for under the arriving one', async () => {
+        // A reconnect init for the character already in hand takes neither
+        // reset branch, so nothing bumps the record's generation and
+        // `this.characterId` never moves. `getCurrentCharacterId()` — which is
+        // what `characterKey()` builds the write key from — has already moved,
+        // so the two disagree for as long as the arriving character's own init
+        // has not had a turn.
+        storageMock.storeFor('xpHistory').set('xpHistory_char2', { milking: [{ t: 1000, xp: 5 }] });
+        xpTracker.characterId = 'char1';
+
+        storageMock.delays.set(KEY, new Promise((resolve) => setTimeout(resolve, 20)));
+        const reconnect = xpTracker._onCharacterInit(init('char1', 2 * HOUR, 20));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        game.characterId = 'char2';
+        await reconnect;
+        await xpTracker.history.flushed();
+
+        const theirs = storageMock.storeFor('xpHistory').get('xpHistory_char2');
+        expect(theirs.milking.map((sample) => sample.xp)).toEqual([5]);
+    });
+});
+
 describe('inLastInterval', () => {
     const HALF_HOUR = 1800_000;
 
