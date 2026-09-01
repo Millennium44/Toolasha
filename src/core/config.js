@@ -843,7 +843,14 @@ class Config {
     _deferWriteDuringReload(method, key, value) {
         if (Object.keys(this.settingsMap).length > 0) return false;
         this._pendingWrites = this._pendingWrites.filter((write) => write.key !== key);
-        this._pendingWrites.push({ method, key, value });
+        // Stamped with whoever the write was made for. The reload window this
+        // queue exists for is normally one character's own — but
+        // `clearSettingsCache()` fires on `character_switching`, so the window
+        // routinely spans a switch, and the load that drains the queue is then
+        // the ARRIVING character's. Unstamped, a toggle flipped on the way out
+        // of one character was replayed into the other's map and saved under
+        // their key: a setting they never touched, changed for them, live.
+        this._pendingWrites.push({ method, key, value, characterId: dataManager.getCurrentCharacterId() ?? null });
         // Queued for storage, but answered now. The read side never deferred:
         // with the map empty, getSetting answers every key from SCHEMA_DEFAULTS,
         // so a queued write left the reader on the shipped default while the
@@ -878,8 +885,16 @@ class Config {
         const pending = this._pendingWrites;
         this._pendingWrites = [];
         this._pendingValues = Object.create(null);
-        for (const { method, key, value } of pending) {
+        const current = dataManager.getCurrentCharacterId() ?? null;
+        for (const { method, key, value, characterId } of pending) {
             try {
+                if (characterId !== null && characterId !== current) {
+                    console.warn(
+                        `[Config] Held write of '${key}' dropped: it was made on another character, ` +
+                            'and replaying it here would change a setting this character never touched'
+                    );
+                    continue;
+                }
                 if (!this.settingsMap[key]) {
                     console.warn(
                         `[Config] Held write of '${key}' cannot be applied: the loaded settings have no such key`

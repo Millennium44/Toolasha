@@ -673,6 +673,29 @@ describe('Config — two settings loads in flight across a character switch', ()
         }
     });
 
+    test('a write made on the departing character is not replayed onto the arriving one', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            // `clearSettingsCache()` fires on `character_switching`, which is
+            // before `currentCharacterId` moves — so the reload window this
+            // queue exists for routinely spans a switch, and the load that
+            // drains it is the arriving character's.
+            config.clearSettingsCache();
+            config.setSetting('checkbox', true);
+            expect(config._pendingWrites).toHaveLength(1);
+
+            dataManagerMock.characterId = 'char-B';
+            settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+            await config.loadSettings();
+
+            // char-B never touched this setting
+            expect(config.settingsMap.checkbox.isTrue).toBe(false);
+            expect(config.getSetting('checkbox')).toBe(false);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
     test('a discarded load leaves its queued writes for the load that wins', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         try {
