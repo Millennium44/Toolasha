@@ -6571,9 +6571,16 @@ class CombatSimUI {
             .map(([hrid, detail]) => ({
                 hrid,
                 name: detail.name || hrid.split('/').pop().replace(/_/g, ' '),
+                // A loaded DTO's house rooms are sparse — only rooms actually built
+                // appear in it — so a missing key here means level 0, not "look it
+                // up". Falling through to dataManager for a missing key would read
+                // the *live* character's own room level onto whichever player is
+                // selected, which is wrong for anyone but them (an imported profile,
+                // a party member). dataManager is only consulted before any DTO has
+                // loaded at all, when there is nothing else to show.
                 level: Math.max(
                     0,
-                    Math.floor(Number(dto?.houseRooms?.[hrid] ?? dataManager.getHouseRoomLevel?.(hrid)) || 0)
+                    Math.floor(Number(dto ? dto.houseRooms?.[hrid] || 0 : dataManager.getHouseRoomLevel?.(hrid)) || 0)
                 ),
             }))
             .sort((a, b) => a.name.localeCompare(b.name));

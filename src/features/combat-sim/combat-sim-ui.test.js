@@ -43,6 +43,10 @@ const mocks = vi.hoisted(() => ({
     playerDTOs: [{ hrid: 'player1', equipment: {} }],
     /** buffHrid → detail, what `getGuildBuffDetailMap` hands the shrine grid */
     guildBuffDetailMap: {},
+    /** hrid → detail, what `dataManager.getInitClientData().houseRoomDetailMap` hands the house grid */
+    houseRoomDetailMap: {},
+    /** hrid → level, what `dataManager.getHouseRoomLevel` answers with (the live character's own) */
+    houseRoomLevels: {},
     /** The params the last all-zones run was started with */
     allZonesArgs: null,
     /** What `runAllZonesSimulation` resolves with — one entry per selected zone/tier */
@@ -158,7 +162,14 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => 'char1',
         getCurrentCharacterGameMode: () => 'standard',
         getLearnedAbilities: () => mocks.learned || [],
-        getInitClientData: () => ({ levelExperienceTable: Array.from({ length: 201 }, (_, level) => 1000 * level) }),
+        getInitClientData: () => ({
+            levelExperienceTable: Array.from({ length: 201 }, (_, level) => 1000 * level),
+            houseRoomDetailMap: mocks.houseRoomDetailMap || {},
+        }),
+        // The live character's own house room level — used only as a display
+        // fallback before any DTO has loaded; a loaded DTO (self, imported, or a
+        // party member's) must never fall through to this for a room it lacks
+        getHouseRoomLevel: (hrid) => mocks.houseRoomLevels?.[hrid] || 0,
         getCharacterMonsters: () => mocks.monsters,
         on: () => {},
         off: () => {},
@@ -3239,6 +3250,71 @@ describe('the guild shrine per-shrine targets grid', () => {
 
         expect(seen.guildShrineTargets).toBeNull();
         expect(seen.guildShrineTargetLevel).toBe(6);
+    });
+});
+
+/**
+ * The House-targets grid: what it shows for a room a loaded player's DTO does
+ * not carry.
+ *
+ * `characterHouseRoomMap` (and the DTO built from it) only lists rooms that
+ * have actually been built, so a room nobody has bought is simply missing from
+ * `dto.houseRooms` — for the live character as much as for an imported profile
+ * or a party member. The grid used to read a missing key through to
+ * `dataManager.getHouseRoomLevel`, which only ever knows the *live* character's
+ * own rooms — so an imported stranger's unbuilt Dojo silently displayed and
+ * prefilled targets from the live character's own Dojo level.
+ */
+describe('the House-targets grid and a room a loaded DTO does not carry', () => {
+    beforeEach(() => {
+        mocks.houseRoomDetailMap = {
+            '/house_rooms/dojo': {
+                name: 'Dojo',
+                usableInActionTypeMap: { '/action_types/combat': true },
+                actionBuffs: [{ typeHrid: '/buff_types/attack' }],
+            },
+            '/house_rooms/garden': {
+                name: 'Garden',
+                usableInActionTypeMap: { '/action_types/combat': true },
+                actionBuffs: [{ typeHrid: '/buff_types/attack' }],
+            },
+        };
+        // The live character's own Dojo — not the imported player's
+        mocks.houseRoomLevels = { '/house_rooms/dojo': 6 };
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        mocks.houseRoomDetailMap = {};
+        mocks.houseRoomLevels = {};
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        ui.destroy();
+    });
+
+    test("an imported player's unbuilt room shows level 0, not the live character's", () => {
+        // Imported via "Sim Character": not self, and their DTO only carries
+        // Garden — Dojo was never part of their profile
+        mocks.editorSelfHrid = null;
+        mocks.editedDTOs = { player1: { hrid: 'player1', houseRooms: { '/house_rooms/garden': 2 } } };
+
+        ui.panel.querySelector('#mwi-csim-house-targets-toggle').click();
+        const grid = ui.panel.querySelector('#mwi-csim-house-targets');
+
+        expect(grid.textContent).toContain('Dojo (0)');
+        expect(grid.textContent).not.toContain('Dojo (6)');
+        expect(grid.textContent).toContain('Garden (2)');
+    });
+
+    test('with no DTO loaded at all, the grid still has something to show', () => {
+        // Before the editor has ever initialized there is no player to read a
+        // level off, so falling back to the live character is the only option
+        mocks.editedDTOs = null;
+
+        ui.panel.querySelector('#mwi-csim-house-targets-toggle').click();
+        const grid = ui.panel.querySelector('#mwi-csim-house-targets');
+
+        expect(grid.textContent).toContain('Dojo (6)');
     });
 });
 
