@@ -9,6 +9,7 @@
 import { initActionPanelObserver } from '../features/actions/panel-observer.js';
 import actionTimeDisplay from '../features/actions/action-time-display.js';
 import actionCountdown from '../features/actions/action-countdown.js';
+import actionTimingMonitor from '../features/actions/action-timing-monitor.js';
 import quickInputButtons from '../features/actions/quick-input-buttons.js';
 import outputTotals from '../features/actions/output-totals.js';
 import maxProduceable from '../features/actions/max-produceable.js';
@@ -68,6 +69,7 @@ toolashaRoot.Actions = {
     initActionPanelObserver,
     actionTimeDisplay,
     actionCountdown,
+    actionTimingMonitor,
     quickInputButtons,
     outputTotals,
     maxProduceable,
@@ -109,6 +111,9 @@ toolashaRoot.Actions = {
 toolashaRoot.Debug = {
     ...(toolashaRoot.Debug || {}),
     alchemyMenu: () => describeAlchemyMenus(),
+    // Recent actions whose progress bar finished early and then sat full, with the
+    // buff snapshot for each. Needs the 'Action bar: Timing diagnostic' setting on.
+    actionTimingReport: () => actionTimingMonitor.report(),
 };
 
 console.log('[Toolasha] Actions library loaded');

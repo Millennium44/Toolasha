@@ -192,6 +192,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Replaces the static time display on the action progress bar with a live countdown in seconds',
             },
+            actionTiming_monitor: {
+                id: 'actionTiming_monitor',
+                label: 'Action bar: Timing diagnostic',
+                type: 'checkbox',
+                default: false,
+                help: 'Diagnostic. Measures how long each action really takes from the progress bar animation and records the ones where the bar finishes early and then sits full. Read the results with Toolasha.Debug.actionTimingReport() in the browser console.',
+            },
         },
     },
 

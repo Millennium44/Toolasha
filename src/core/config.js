@@ -236,6 +236,13 @@ class Config {
                 category: 'Actions',
                 description: 'Live countdown timer on the action progress bar',
             },
+            actionTimingMonitor: {
+                enabled: true,
+                name: 'Action Timing Monitor',
+                category: 'Actions',
+                description: 'Diagnostic: records actions whose progress bar finishes early and then sits full',
+                settingKey: 'actionTiming_monitor',
+            },
             quickInputButtons: {
                 enabled: true,
                 name: 'Quick Input Buttons',

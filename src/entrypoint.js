@@ -902,6 +902,17 @@ function registerFeatures() {
             async: false,
         },
         {
+            // Off by default: a diagnostic that measures rather than draws, and one
+            // the maintainer turns on to chase a report. Its storage read is its own
+            // and nothing downstream is ordered against it.
+            key: 'actionTimingMonitor',
+            name: 'Action Timing Monitor',
+            category: 'Actions',
+            module: Actions.actionTimingMonitor,
+            async: true,
+            concurrent: true,
+        },
+        {
             key: 'actionPanelLayout',
             name: 'Action Panel Layout',
             category: 'Actions',
