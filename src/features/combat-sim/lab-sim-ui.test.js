@@ -1537,6 +1537,31 @@ describe('the skilling crate dropdowns follow the equipped crates', () => {
         expect(text).toContain('Crates: Expert tea · Expert coffee');
     });
 
+    test('tearing the panel down forgets the manual pick, so the next character is read afresh', async () => {
+        // destroy() runs on a character switch — the feature is disabled and
+        // re-initialised around it. An opt-out that outlives the panel leaves
+        // the arriving character's dropdowns on the markup's hardcoded Expert.
+        game.characterLabyrinth = { teaCrateItemHrid: '/items/advanced_tea_crate' };
+        ui.buildPanel();
+        await Promise.resolve();
+        const tea = ui.panel.querySelector('#mwi-labsim-skilling-tea');
+        tea.value = '/items/expert_tea_crate';
+        tea.dispatchEvent(new Event('change'));
+        expect(ui._skillingCratesUserSet).toBe(true);
+
+        ui.destroy();
+
+        expect(ui._skillingCratesUserSet).toBe(false);
+        expect(ui._combatCratesUserSet).toBe(false);
+
+        // The arriving character's crates, not the departing one's pick
+        game.characterLabyrinth = { teaCrateItemHrid: '/items/basic_tea_crate' };
+        ui.buildPanel();
+        await Promise.resolve();
+
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-tea').value).toBe('/items/basic_tea_crate');
+    });
+
     test('combat crate dropdowns also default to the equipped crates', async () => {
         game.characterLabyrinth = {
             teaCrateItemHrid: '/items/advanced_tea_crate',

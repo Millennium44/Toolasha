@@ -6030,6 +6030,15 @@ class LabSimUI {
         this._maxLevel = null;
         this._labyResults = null;
         this._upgradeTargetHrids = null;
+        // "I picked a crate by hand" is a choice about the panel that is being
+        // torn down here, not a standing preference. destroy() runs on a
+        // character switch (the feature is disabled and re-initialised around
+        // it), so leaving these set means the arriving character's freshly
+        // built dropdowns skip _applyEquippedCratesTo and sit on the markup's
+        // hardcoded Expert — scoring their fight against crates they may not
+        // own, silently, until they notice and touch the dropdown themselves.
+        this._skillingCratesUserSet = false;
+        this._combatCratesUserSet = false;
         // A fresh store rather than a cleared one: the runs live in storage, and
         // the next panel should read them back rather than start empty
         this._comparison = new LabComparisonStore();
