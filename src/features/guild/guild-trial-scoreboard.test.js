@@ -392,6 +392,33 @@ describe('the panel', () => {
         expect(text()).not.toContain('two healers on one tick');
     });
 
+    test('a player name reaches the mana line as text, not as markup', () => {
+        // Every name this panel interpolates goes through `escapeText` — except
+        // the mana line and the unestimated list, which built their strings by
+        // hand and dropped a wire-supplied name straight into `innerHTML`.
+        game.breakdown = breakdown({
+            support: {
+                players: [{ index: '0', name: '<img src=x onerror=alert(1)>', healingDone: 0, manaOuts: 2 }],
+            },
+        });
+        guildTrialScoreboard.open();
+
+        const panel = document.querySelector(`.${PANEL_CLASS}`);
+        expect(panel.querySelector('img')).toBeNull();
+        expect(text()).toContain('<img src=x onerror=alert(1)> 2×');
+    });
+
+    test('an unestimated member reaches the no-build line as text too', () => {
+        game.breakdown = { measured: false, reason: 'nothing watched', players: [], seconds: 0 };
+        game.seen = [{ name: 'Tib', at: 1, stats: { autoAttackDamage: 300, attackInterval: 3e9 } }];
+        guildTrialScoreboard.noteContext({ members: ['Tib', '<img src=x onerror=alert(1)>'] });
+        guildTrialScoreboard.open();
+
+        const panel = document.querySelector(`.${PANEL_CLASS}`);
+        expect(panel.querySelector('img')).toBeNull();
+        expect(text()).toContain('<img src=x onerror=alert(1)>');
+    });
+
     test('it says why it is empty rather than drawing zeroes', () => {
         game.breakdown = {
             measured: false,

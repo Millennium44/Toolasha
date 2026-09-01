@@ -871,7 +871,7 @@ class GuildTrialScoreboard {
         const unestimated =
             estimated && estimate.unestimated.length
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">No build captured, so not ` +
-                  `estimated: ${estimate.unestimated.slice(0, 8).join(', ')}` +
+                  `estimated: ${estimate.unestimated.slice(0, 8).map(escapeText).join(', ')}` +
                   `${estimate.unestimated.length > 8 ? `, +${estimate.unestimated.length - 8} more` : ''}.</div>`
                 : '';
 
@@ -984,11 +984,14 @@ class GuildTrialScoreboard {
         // One line rather than a tab of its own: running dry is worth knowing
         // and is not worth a page
         const supportRows = breakdown?.support?.players || [];
+        // Escaped like every other name this file interpolates: these come off
+        // the wire through the support rows, and the mana line was the one
+        // place a name reached `innerHTML` raw
         const nameList = (rows, field) =>
             rows
                 .sort((a, b) => (b[field] || 0) - (a[field] || 0))
                 .slice(0, 4)
-                .map((row) => `${row.name} ${row[field]}×`)
+                .map((row) => `${escapeText(row.name)} ${Number(row[field]) || 0}×`)
                 .join(', ');
         const dry = supportRows.filter((row) => row.manaOuts > 0);
         const starvedRows = supportRows.filter((row) => row.starvedOuts > 0);
