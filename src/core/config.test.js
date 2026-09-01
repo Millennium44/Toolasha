@@ -4,8 +4,12 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
+/** The sync-pull restore latch, which refuses writes to a store until a reload */
+const storageMock = vi.hoisted(() => ({ restorePending: false }));
 vi.mock('./storage.js', () => ({
-    default: {},
+    default: {
+        isRestorePending: (storeName) => storageMock.restorePending && storeName === 'settings',
+    },
 }));
 
 vi.mock('./websocket.js', () => ({
@@ -538,6 +542,54 @@ describe('Config — a write during the settings-reload window', () => {
         await config.loadSettings();
 
         expect(config.getSetting('checkbox')).toBe(false);
+    });
+});
+
+describe('Config — a held write a restore has latched the store against', () => {
+    beforeEach(() => {
+        config.settingsLoadedCallbacks = [];
+        config.settingChangeCallbacks = {};
+        config._pendingWrites = [];
+        config._pendingValues = Object.create(null);
+        settingsStorageMock.lastLoadReadable = true;
+        storageMock.restorePending = false;
+        dataManagerMock.characterId = 'char-1';
+    });
+
+    test('is dropped by name rather than applied to a map that cannot be saved', async () => {
+        // A sync pull refuses every write to the settings store until the page
+        // reloads, so nothing from before the restore lands on top of it — and
+        // a write queued during the reload window is from before it. Replaying
+        // it changed the map and the UI and then had the save refused down in
+        // storage: a value on screen that was never stored and will not survive
+        // the reload the user has already been told to do.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            config.clearSettingsCache();
+            config.setSetting('checkbox', true);
+
+            storageMock.restorePending = true;
+            settingsStorageMock.saveSettings.mockClear();
+            settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+            await config.loadSettings();
+
+            expect(config.getSetting('checkbox')).toBe(false);
+            expect(settingsStorageMock.saveSettings).not.toHaveBeenCalled();
+            expect(warn.mock.calls.some((call) => String(call[0]).includes('checkbox'))).toBe(true);
+            expect(warn.mock.calls.some((call) => String(call[0]).includes('reload'))).toBe(true);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    test('an unlatched store still replays the write as before', async () => {
+        config.clearSettingsCache();
+        config.setSetting('checkbox', true);
+
+        settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+        await config.loadSettings();
+
+        expect(config.getSetting('checkbox')).toBe(true);
     });
 });
 

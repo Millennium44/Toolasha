@@ -6,6 +6,7 @@
 import settingsStorage from './settings-storage.js';
 import { settingsGroups } from './settings-schema.js';
 import dataManager from './data-manager.js';
+import storage from './storage.js';
 
 /**
  * Every setting key in the schema mapped to its declared default.
@@ -884,6 +885,15 @@ class Config {
      * dropped after `getSetting` has been answering it since it was queued — so
      * it says so rather than going quiet, which is the whole failure mode the
      * queue exists to end.
+     *
+     * A sync pull's restore latch is the other way a replay cannot land. The
+     * latch refuses every write to the settings store until the page reloads,
+     * precisely so nothing from before the restore is put back on top of it —
+     * and a write queued during the reload window is from before it. Replaying
+     * it anyway changed the map, fired the change callbacks and then had the
+     * save refused down in storage, leaving the running page showing a value
+     * that was not stored and will not survive the reload. It is dropped here,
+     * by name, instead.
      * @returns {void}
      * @private
      */
@@ -893,8 +903,16 @@ class Config {
         this._pendingWrites = [];
         this._pendingValues = Object.create(null);
         const current = dataManager.getCurrentCharacterId() ?? null;
+        const latched = storage.isRestorePending?.('settings') === true;
         for (const { method, key, value, characterId } of pending) {
             try {
+                if (latched) {
+                    console.warn(
+                        `[Config] Held write of '${key}' dropped: a restore replaced the settings store and the ` +
+                            'page has not reloaded yet. Reload and set it again.'
+                    );
+                    continue;
+                }
                 if (characterId !== null && characterId !== current) {
                     console.warn(
                         `[Config] Held write of '${key}' dropped: it was made on another character, ` +
