@@ -61,6 +61,8 @@ const mocks = vi.hoisted(() => ({
     editedDTOs: null,
     /** What SimEditor#getSelfHrid() hands back */
     editorSelfHrid: null,
+    /** What runSimulation() resolves with; null falls back to `{}` */
+    simResult: null,
     /** playerHrid each calculateSimRevenue() call was made with, in order */
     revenueCalls: [],
 }));
@@ -245,7 +247,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
-    runSimulation: async () => ({}),
+    runSimulation: async () => mocks.simResult || {},
     runLabyrinthSimulation: async () => ({}),
     cancelSimulation: () => {},
     getMaxWorkers: () => 4,
@@ -326,6 +328,14 @@ vi.mock('./sim-editor.js', () => ({
         }
         getSelfHrid() {
             return mocks.editorSelfHrid;
+        }
+        getPlayerInfo() {
+            return mocks.editedDTOs
+                ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid }))
+                : [];
+        }
+        getMissingMembers() {
+            return [];
         }
         isInitialized() {
             return true;
@@ -1006,6 +1016,14 @@ describe('persisted consumable rates name the character explicitly', () => {
         mocks.store.clear();
     });
 
+    afterEach(() => {
+        ui.destroy();
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.simResult = null;
+        mocks.zones = [];
+    });
+
     test('the rate is filed under the hrid the caller names, not the first key in consumablesUsed', async () => {
         const simResult = {
             simulatedTime: 3600 * 1e9,
@@ -1026,6 +1044,50 @@ describe('persisted consumable rates name the character explicitly', () => {
 
         const stored = await readScoped('simConsumableRates', 'combatExport', null);
         expect(stored.perHour).toEqual({ '/items/cheese': 5 });
+    });
+
+    test('a null selfHrid — an imported profile simmed alone — persists nothing', async () => {
+        // openWithExternalDTO leaves the editor's selfHrid null: nobody in this
+        // run is the live character. Falling back to the first key (the old
+        // behaviour this describe block is about) would file the imported
+        // stranger's own consumption under the live character's saved rate
+        const simResult = {
+            simulatedTime: 3600 * 1e9,
+            zoneName: '/actions/combat/fly',
+            difficultyTier: 0,
+            consumablesUsed: { player1: { '/items/mystery_stew': 100 } },
+        };
+
+        ui._persistConsumableRates(simResult, null);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const stored = await readScoped('simConsumableRates', 'combatExport', null);
+        expect(stored).toBeNull();
+    });
+
+    test('running a simmed-from-profile import end to end persists nothing', async () => {
+        // openWithExternalDTO: one player, and getSelfHrid() null — the wiring
+        // in _onSimulate must carry that null through as the *true* self
+        // rather than defaulting to the only loaded player, which is what
+        // `selfHrid` (used for the results tab) is allowed to do
+        mocks.editedDTOs = { player1: { hrid: 'player1', equipment: {}, food: [null, null, null] } };
+        mocks.editorSelfHrid = null;
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.simResult = {
+            simulatedTime: 3600 * 1e9,
+            zoneName: '/actions/combat/fly',
+            difficultyTier: 0,
+            consumablesUsed: { player1: { '/items/mystery_stew': 100 } },
+            experienceGained: { player1: {} },
+        };
+        ui.buildPanel();
+        selectZone();
+
+        await ui._onSimulate();
+
+        const stored = await readScoped('simConsumableRates', 'combatExport', null);
+        expect(stored).toBeNull();
     });
 });
 

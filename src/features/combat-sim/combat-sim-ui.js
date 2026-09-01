@@ -4055,18 +4055,26 @@ class CombatSimUI {
         let playerDTOs;
         let playerInfo;
         let selfHrid;
+        // The real answer to "which loaded player is the live character", not
+        // the "pick someone to show" fallback below `selfHrid` carries — an
+        // imported profile (openWithExternalDTO) is nobody's self, and
+        // `_persistConsumableRates` must not mistake their consumption for the
+        // live character's own and overwrite it in storage
+        let trueSelfHrid;
         let missingMembers;
 
         const editedDTOs = this._editor?.getEditedDTOs();
         if (editedDTOs) {
             playerDTOs = Object.values(editedDTOs);
             playerInfo = this._editor?.getPlayerInfo() || [];
-            selfHrid = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
+            trueSelfHrid = this._editor?.getSelfHrid() || null;
+            selfHrid = trueSelfHrid || playerDTOs[0]?.hrid || 'player1';
             missingMembers = this._editor?.getMissingMembers() || [];
         } else {
             const result = await buildAllPlayerDTOs();
             playerDTOs = result.players;
             playerInfo = result.playerInfo;
+            trueSelfHrid = result.selfHrid;
             selfHrid = result.selfHrid;
             missingMembers = result.missingMembers;
         }
@@ -4155,7 +4163,7 @@ class CombatSimUI {
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
-            this._persistConsumableRates(simResult, selfHrid);
+            this._persistConsumableRates(simResult, trueSelfHrid);
 
             // Generate label before displaying (display may re-render)
             const historyLabel = this._editor?.generateSimLabel() || 'Current Gear';
@@ -4421,16 +4429,20 @@ class CombatSimUI {
      * caller rather than guessed from key order: `consumablesUsed`'s keys
      * mirror party-slot order, and self is not always `player1` or first in
      * that order (a character who joined a party after others sits at
-     * whatever slot the game gave them) — as per-hour counts keyed by item,
-     * stamped with the zone they were simmed in.
+     * whatever slot the game gave them). A falsy `selfHrid` means the run had
+     * no self at all — an imported profile simmed on its own — and must return
+     * without persisting anything: guessing the first key back would file a
+     * stranger's consumption under the live character's own saved rate, in
+     * storage scoped to the live character.
      *
      * @param {Object} simResult - The finished SimResult
-     * @param {string} selfHrid - The character's own hrid in this run's DTOs
+     * @param {string|null} selfHrid - The character's own hrid in this run's DTOs, or null
+     *   when nothing in the run is the live character
      */
     _persistConsumableRates(simResult, selfHrid) {
         try {
-            const playerHrid = selfHrid || Object.keys(simResult?.consumablesUsed || {})[0];
-            const used = playerHrid ? simResult.consumablesUsed[playerHrid] : null;
+            if (!selfHrid) return;
+            const used = simResult?.consumablesUsed?.[selfHrid];
             if (!used) return;
             const simHours = (Number(simResult.simulatedTime) || 0) / (3600 * 1e9) || 1;
             const perHour = {};
