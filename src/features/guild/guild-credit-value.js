@@ -2392,10 +2392,18 @@ class GuildCreditValue {
 
         // A modal opened before the record's initial read landed shows the
         // defaults; when the read finishes, the inputs it belongs in are filled.
+        //
+        // Both halves, like the spend-mode buttons and the token covers: the
+        // plan carries the spend mode and the per-colour covers, and
+        // `restorePlan` only redraws the still-needed box. Redrawing that alone
+        // left the suggestions still routing a colour the box above them had
+        // just been told to settle the other way.
         if (!shrinePlanRecord.isLoaded()) {
             (async () => {
                 const readable = await shrinePlanRecord.load();
-                if (readable && wrapper.isConnected) restorePlan();
+                if (!readable || !wrapper.isConnected) return;
+                restorePlan();
+                renderSuggestions();
             })();
         }
 

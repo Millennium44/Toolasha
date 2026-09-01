@@ -2267,6 +2267,23 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             guildCreditValue.cleanup();
             expect(game.listeners['items_updated']).toHaveLength(0);
         });
+
+        test('reopening the modal does not stack a second hook', () => {
+            // Each render arms one and releases the last, so a modal opened and
+            // closed all evening refreshes once per delta rather than N times
+            openModal();
+            openModal();
+            const latest = openModal();
+            expect(game.listeners['items_updated']).toHaveLength(1);
+
+            // And the one still armed is the newest planner's, not a stale closure
+            setTarget(latest, FORCE, 3);
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 50 },
+            ];
+            purchaseLands();
+            expect(matsButton(latest)).toBeNull();
+        });
     });
 
     describe('the plan lists the conversions after the shopping trip', () => {
@@ -2411,6 +2428,26 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(tokenCoveredCredits({})).toEqual(new Set());
             expect(tokenCoveredCredits(null)).toEqual(new Set());
         });
+
+        test('a plan that lands after the modal opened routes the suggestions too, not just the totals', async () => {
+            // The record's read had not finished when the planner was drawn, so
+            // both halves were drawn from an empty plan. When it lands, both
+            // have to be redrawn from it — the plan carries the spend mode and
+            // the per-colour covers alike, and redrawing the totals alone left
+            // the suggestions settling a colour the way the box above them no
+            // longer does. Gold with no cover ticked is the discriminating
+            // case: the recommendation on its own would exchange tokens here,
+            // so only the saved plan sends this colour shopping.
+            game.storage['settings:guildShrinePlan_char1'] = { spendMode: 'gold' };
+            document.body.innerHTML = '';
+            shrinePlanRecord.reset();
+            const modal = openModal();
+            await vi.advanceTimersByTimeAsync(0);
+
+            const forceRow = nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
+            expect(forceRow.querySelector('.mwi-shrine-next-buy-convert').textContent).toContain('gold of mats');
+            expect(modal.querySelector('.mwi-shrine-token-convert-step')).toBeNull();
+        });
     });
 });
 
@@ -2439,7 +2476,11 @@ describe('guild credit value — shrine plan record on a character switch', () =
     test('character_switching clears the in-memory plan so the next load cannot merge it over the arriving character', async () => {
         // Character 1 has a saved shrine target in storage, and it is read
         // into memory the way opening the exchange modal would do it.
-        game.storage['settings:guildShrinePlan_char1'] = { targets: { forceBuff: 5 }, spendMode: 'tokens' };
+        game.storage['settings:guildShrinePlan_char1'] = {
+            targets: { forceBuff: 5 },
+            spendMode: 'tokens',
+            tokenCredits: { '/items/blue_guild_credit': true },
+        };
         await shrinePlanRecord.load();
         expect(shrinePlanRecord.get().targets).toEqual({ forceBuff: 5 });
 
@@ -2460,6 +2501,9 @@ describe('guild credit value — shrine plan record on a character switch', () =
         await shrinePlanRecord.load();
 
         expect(shrinePlanRecord.get().targets ?? {}).toEqual({});
+        // The per-colour token covers ride the same record and must not follow
+        // the departing character either
+        expect(shrinePlanRecord.get().tokenCredits ?? {}).toEqual({});
     });
 
     test('a switch does not block the arriving character from seeing its own saved plan', async () => {
