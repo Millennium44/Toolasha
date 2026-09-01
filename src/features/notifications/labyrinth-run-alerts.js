@@ -29,6 +29,13 @@
  * Keyed on the transition, not the state: a character who is not in the
  * labyrinth is the resting case and is never news. Each stop announces once;
  * queuing the labyrinth again re-arms it.
+ *
+ * The counter behind that key never restarts, and the key names the character
+ * as well. The service's de-duplication window is ten minutes and its map is
+ * shared across bundles and outlives a character switch, so a counter that went
+ * back to zero on teardown handed the arriving character a key the departing
+ * one had just used — and the first stop after every switch was silently
+ * swallowed as a duplicate.
  */
 
 import config from '../../core/config.js';
@@ -68,7 +75,11 @@ class LabyrinthRunAlerts {
         this.doingLab = false;
         /** The deepest floor the current run has reported, for the message */
         this.floor = 0;
-        /** Stops already told, keyed by a counter, so a repeat update cannot repeat one */
+        /**
+         * Stops already told, keyed by a counter, so a repeat update cannot
+         * repeat one. Never reset: see the module comment — a restarted counter
+         * collides with keys still inside the service's cooldown.
+         */
         this.stopSeq = 0;
         this.unregisterHandlers = [];
         this.characterSwitchingHandler = null;
@@ -160,7 +171,8 @@ class LabyrinthRunAlerts {
 
         const where = this.floor > 0 ? ` It reached floor ${this.floor}.` : '';
         const now = name ? ` The character is now on ${name}.` : ' The queue is empty.';
-        const key = `${EVENT_KEY_PREFIX}:${++this.stopSeq}`;
+        const who = dataManager.getCurrentCharacterId?.() || 'unknown';
+        const key = `${EVENT_KEY_PREFIX}:${who}:${++this.stopSeq}`;
         notificationService.notify(
             key,
             `Your labyrinth run has stopped — queue more rooms if you want to keep going.${where}${now}`,
@@ -182,7 +194,6 @@ class LabyrinthRunAlerts {
         this.unregisterHandlers = [];
         this.doingLab = false;
         this.floor = 0;
-        this.stopSeq = 0;
     }
 }
 

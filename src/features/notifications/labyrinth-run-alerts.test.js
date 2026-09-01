@@ -14,6 +14,7 @@ import { getSettingDefinition } from '../../core/settings-schema.js';
 const game = vi.hoisted(() => ({
     settings: {},
     characterData: null,
+    characterId: 'char-1',
     actions: [],
     actionDetails: {},
     wsHandlers: {},
@@ -33,6 +34,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.characterData;
         },
         getCurrentActions: () => game.actions,
+        getCurrentCharacterId: () => game.characterId,
         getActionDetails: (hrid) => game.actionDetails[hrid] || null,
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
@@ -69,6 +71,7 @@ const CHEESE = { actionHrid: '/actions/cheesesmithing/cheese', id: 2 };
 beforeEach(() => {
     game.settings = { [MASTER_SETTING]: true };
     game.characterData = null;
+    game.characterId = 'char-1';
     game.actions = [];
     game.actionDetails = {
         '/actions/labyrinth/floor': { type: '/action_types/labyrinth', name: 'Labyrinth' },
@@ -178,6 +181,26 @@ describe('the stop', () => {
         game.actions = [LAB];
         await labyrinthRunAlerts.initialize();
         expect(game.wsHandlers.actions_updated).toBeUndefined();
+    });
+
+    test('the first stop after a character switch is not swallowed as a duplicate', async () => {
+        game.actions = [LAB];
+        await labyrinthRunAlerts.initialize();
+        game.actions = [CHEESE];
+        game.wsHandlers.actions_updated();
+        const first = game.notified.at(-1).key;
+
+        game.dmHandlers.character_switching();
+        game.characterId = 'char-2';
+        game.actions = [LAB];
+        await labyrinthRunAlerts.initialize();
+        game.actions = [CHEESE];
+        game.wsHandlers.actions_updated();
+
+        // The service's cooldown map outlives the switch, so re-using the
+        // departing character's key would drop this one on the floor.
+        expect(game.notified).toHaveLength(2);
+        expect(game.notified.at(-1).key).not.toBe(first);
     });
 
     test('switching character stands everything down', async () => {
