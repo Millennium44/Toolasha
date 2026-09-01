@@ -64,6 +64,16 @@ const { default: dataManager } = await import('../core/data-manager.js');
 
 const SIZE = { width: 300, height: 200 };
 
+// `minimize` is one hoisted object shared by every panel the file builds, and
+// the fold state is read live through a getter — so a test that folds a panel
+// and ends there leaves every later panel folded, and `refresh()` skips a body
+// it thinks nobody can see. Put it back before each test rather than in the one
+// block that happens to fold.
+beforeEach(() => {
+    minimize.collapsed = false;
+    minimize.onToggle = null;
+});
+
 describe('createPanel', () => {
     beforeEach(() => {
         vi.useFakeTimers();
