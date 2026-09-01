@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Levelling up no longer looks like the sim getting worse
+
+The labyrinth replay check compares recorded fights against what the sim predicted, grouped by a fingerprint of your build — but that fingerprint covered only equipment and enhancement levels, not your combat levels. Level up and yesterday's fights were pooled with today's, so the panel reported the sim over-crediting your damage when what had actually changed was you. The fingerprint now covers the seven combat levels the sim genuinely reads (stamina, intelligence, attack, defense, melee, ranged and magic — skilling levels are deliberately left out, since the combat sim never reads one and hashing them would throw the cache away on every woodcutting level). It also carries a version now, so records made before this change are kept and still shown in the browse pool and the export, but are never pooled into a rate, a cohort or a reliability reading with records made after it — and a card with too few current fights says "too few to call" rather than reaching for the older ones.
+
 ### Audit round: the countdown fix undone, a free material, and readings that could not fail
 
 The action countdown's new sanity check needed the time the bar prints as its reference, but the countdown overwrites that text with its own readout — so half the time the reference was still the _previous_ action's total, the new action's honest duration was refused for disagreeing with it, and the readout parked at zero for the rest of the action. The fix released a few hours ago could therefore produce the very symptom it was written to prevent; it now re-reads the total immediately before overwriting it. The new timing diagnostic could also invent evidence three ways — a bar torn out mid-fill left a stale reference that reported a phantom stall on the next action, an unbounded idle stretch was filed as a ten-minute stall, and a throw while recording corrupted the following measurement.
