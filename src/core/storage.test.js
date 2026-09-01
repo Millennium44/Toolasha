@@ -1161,6 +1161,67 @@ describe('Storage restore quiescing', () => {
         expect(dataByStore.get('settings').has('watchlist')).toBe(false);
     });
 
+    test('a write already in flight when a restore lands is dropped, not requeued past the latch', async () => {
+        // The hole `finishRestore`'s queue purge cannot see: a timer that has
+        // already fired took its entry OUT of `pendingWrites` before awaiting
+        // IndexedDB, so there is nothing there to purge. When that write then
+        // failed, the requeue put the pre-restore value back — behind the
+        // latch, where `endRestore`'s own flush wrote it straight over the
+        // record the pull had just merged.
+        let failTheWrite;
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    failTheWrite = () => resolve(false);
+                })
+        );
+
+        const write = storage.set('networthSeries_char_2026-08', ['pre-restore'], 'networthHistory');
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+        // The timer has fired and the transaction is in flight: in neither place
+        expect(storage.pendingWrites.size).toBe(0);
+
+        // A pull merges and writes the store while that transaction is out
+        storage.finishRestore(['networthHistory']);
+
+        failTheWrite();
+        expect(await write).toBe(false);
+        expect(storage.pendingWrites.has('networthHistory:networthSeries_char_2026-08')).toBe(false);
+    });
+
+    test('flushAll waits for a write whose timer has already fired', async () => {
+        // Every caller that treats `flushAll()` as "nothing of mine is still in
+        // flight" — the character-switch drain, the handoff push, this file's
+        // own `beginRestore` — was told a lie by a write in exactly this state.
+        const { db, dataByStore } = createFakeDb(['settings']);
+        storage.db = db;
+        let landTheWrite;
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(
+            (key, value, storeName) =>
+                new Promise((resolve) => {
+                    landTheWrite = async () => {
+                        await storage._putAllWritten(storeName, { [key]: value });
+                        resolve(true);
+                    };
+                })
+        );
+
+        storage.set('watchlist', 'last words', 'settings');
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+        expect(storage.pendingWrites.size).toBe(0);
+
+        let flushed = false;
+        const flush = storage.flushAll().then(() => {
+            flushed = true;
+        });
+        await Promise.resolve();
+        expect(flushed).toBe(false);
+
+        await landTheWrite();
+        await flush;
+        expect(dataByStore.get('settings').get('watchlist')).toBe('last words');
+    });
+
     test('ending a restore that never began does nothing', async () => {
         const flushSpy = vi.spyOn(storage, 'flushAll');
         await storage.endRestore();

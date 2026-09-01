@@ -71,6 +71,21 @@ class Storage {
         // (un-cloneable, or bigger than the space that will ever be free) is requeued by
         // flushAll with no timer, so without a cap it comes back every flush forever.
         this._flushFailures = new Map();
+        /**
+         * Debounced writes whose timer has already fired and whose transaction
+         * is still in flight.
+         *
+         * A firing timer takes its entry out of `pendingWrites` *before* it
+         * awaits IndexedDB, so from that moment until the write settles the
+         * value is in neither place. `flushAll()` snapshots `pendingWrites`, so
+         * without this it returned while such a write was still travelling —
+         * and every caller that treats `flushAll()` as "nothing of mine is
+         * still in flight" (the character-switch drain in `data-manager.js`,
+         * the handoff and on-switch sync pushes, `beginRestore`) was told a
+         * lie. `flushAll` awaits these first, which also brings a failure's
+         * requeue back into the queue in time to be part of the same flush.
+         */
+        this._inFlightWrites = new Set();
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
 
         /**
@@ -819,9 +834,39 @@ class Storage {
                 // concurrent newer write can claim the slot cleanly.
                 this.pendingWrites.delete(timerKey);
 
-                const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
+                // Tracked from here until it settles: between the delete above
+                // and the await below this write exists nowhere a `flushAll()`
+                // can see it (see `_inFlightWrites`).
+                const inFlight = this._saveToIndexedDB(key, pending.value, pending.storeName);
+                this._inFlightWrites.add(inFlight);
+                let success;
+                try {
+                    success = await inFlight;
+                } finally {
+                    this._inFlightWrites.delete(inFlight);
+                }
 
                 if (!success) {
+                    // A restore landed while this transaction was in flight, so
+                    // the value in hand is pre-restore state. `finishRestore`
+                    // purged the queue, but this entry was not in it to purge —
+                    // it had already been taken out for the write. Requeueing
+                    // now would put it back *behind* the latch, where
+                    // `endRestore`'s own flush writes it straight over the
+                    // restore, which is the one thing the latch exists to stop.
+                    // Same reasoning as the pre-write check above; this is the
+                    // other side of the same await.
+                    if (this._restoreGeneration !== restoreGeneration || this._restorePendingStores.has(storeName)) {
+                        console.warn(
+                            `[Storage] Dropping a failed write to ${storeName}/${key} — it predates a restore. ` +
+                                'Reload the page; changes made before reloading are not kept.'
+                        );
+                        this._writeGeneration.delete(timerKey);
+                        this._flushFailures.delete(timerKey);
+                        for (const r of pending.resolvers) r(false);
+                        return;
+                    }
+
                     // `_writeGeneration` still naming this write is what says nothing
                     // newer has spoken for the key. An immediate set or a delete that
                     // landed while this transaction was in flight bumps it, and
@@ -1220,6 +1265,21 @@ class Storage {
             }
         }
         this.saveDebounceTimers.clear();
+
+        // Then wait out the writes a timer already started. Their entries are
+        // out of `pendingWrites` for the duration, so the snapshot below cannot
+        // see them and this method would otherwise report "everything is
+        // written" while they were still travelling — the guarantee the
+        // character-switch drain, the handoff push and `beginRestore` all rest
+        // on. Settled rather than resolved: a failure requeues its value, and
+        // the requeue must be in the map before the snapshot is taken so this
+        // same flush retries it. That ordering holds because the timer's own
+        // `await` on the same promise was registered first and its continuation
+        // runs to the requeue without another await, so it is ahead of this one
+        // in the microtask queue.
+        if (this._inFlightWrites.size > 0) {
+            await Promise.allSettled(Array.from(this._inFlightWrites));
+        }
 
         // Snapshot the pending writes rather than clearing the map upfront: an entry is
         // only removed once its write is confirmed, so a failure here leaves the value
