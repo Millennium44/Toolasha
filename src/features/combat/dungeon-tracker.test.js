@@ -1570,6 +1570,63 @@ describe('switching characters', () => {
         expect(stored()).toBeUndefined();
     });
 
+    test('a record read that lands after the switch is not restored', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 42,
+            dungeonHrid: DEN,
+            tier: 0,
+            startTime: 1000,
+            currentWave: 5,
+            maxWaves: 10,
+            wavesCompleted: 4,
+            waveTimes: [3000],
+            lastUpdateTime: Date.now(),
+        });
+
+        // The read was issued for market123; the player is on the alt by the
+        // time it lands. Restoring now would leave the alt tracking the main's
+        // run — and the run that eventually completes is written into the alt's
+        // history with the main's start time and wave times.
+        mockStorage.get.mockImplementationOnce(async (key, storeName = 'settings', fallback = null) => {
+            game.characterId = 'alt456';
+            const store = mockStorage.storeFor(storeName);
+            return store.has(key) && store.get(key) != null ? store.get(key) : fallback;
+        });
+
+        await tracker.checkForActiveDungeon();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+    });
+
+    test('a mid-run restore that lands after the switch is refused', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 42,
+            dungeonHrid: DEN,
+            tier: 0,
+            startTime: 1000,
+            currentWave: 5,
+            maxWaves: 10,
+            wavesCompleted: 4,
+            waveTimes: [3000],
+            lastUpdateTime: Date.now(),
+        });
+
+        mockStorage.get.mockImplementationOnce(async (key, storeName = 'settings', fallback = null) => {
+            game.characterId = 'alt456';
+            const store = mockStorage.storeFor(storeName);
+            return store.has(key) && store.get(key) != null ? store.get(key) : fallback;
+        });
+
+        expect(await tracker.restoreInProgressRun(42)).toBe(false);
+        expect(tracker.isTracking).toBe(false);
+        // Refused, not cleared: the record still belongs to the character who
+        // is mid-run in it
+        expect(mockStorage.storeFor('settings').has(`${IN_PROGRESS}_market123`)).toBe(true);
+    });
+
     test('initialising twice hooks the websocket once', async () => {
         await tracker.initialize();
         const first = game.wsHandlers.new_battle;

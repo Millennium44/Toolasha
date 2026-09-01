@@ -27,6 +27,14 @@ import { characterKey, readScoped, writeScoped } from '../../utils/character-key
 const IN_PROGRESS_KEY = 'dungeonTracker_inProgressRun';
 const DISCARD_LEGACY = { migrate: 'discard' };
 
+/**
+ * Who the in-progress record belongs to.
+ * @returns {string|null} Character id, or null before login
+ */
+function currentOwner() {
+    return dataManager.getCurrentCharacterId?.() ?? null;
+}
+
 class DungeonTracker {
     constructor() {
         this.isTracking = false;
@@ -184,7 +192,19 @@ class DungeonTracker {
      * @returns {Promise<boolean>} True if restored successfully
      */
     async restoreInProgressRun(currentBattleId) {
+        // Whose record this is, fixed before the read. `readScoped` builds the
+        // key now but the restore happens a storage round trip later, and the
+        // feature's own `character_switching` → `cleanup()` cannot cancel a read
+        // already running: it zeroes `isTracking` and `currentRun`, and this
+        // continuation would set them straight back. The arriving character then
+        // finds `checkForActiveDungeon()` returning early on `isTracking`, so
+        // they never get their own restore, and the run that eventually
+        // completes is written into *their* history with the departing
+        // character's start time, wave times and key counts — a clear time they
+        // never ran, permanently in the chart and the ROI board.
+        const owner = currentOwner();
         const saved = await readScoped(IN_PROGRESS_KEY, 'settings', null, DISCARD_LEGACY);
+        if (currentOwner() !== owner) return false;
 
         if (!saved) {
             return false; // No saved state
@@ -325,6 +345,10 @@ class DungeonTracker {
             return;
         }
 
+        // Both halves — the actions read below and the record read after the
+        // await — have to be one character's; see `restoreInProgressRun`
+        const owner = currentOwner();
+
         // Get current actions from dataManager
         const currentActions = dataManager.getCurrentActions();
 
@@ -337,6 +361,7 @@ class DungeonTracker {
 
         // Try to restore saved state from IndexedDB
         const saved = await readScoped(IN_PROGRESS_KEY, 'settings', null, DISCARD_LEGACY);
+        if (currentOwner() !== owner) return;
 
         if (saved && saved.dungeonHrid === dungeonAction.actionHrid) {
             // Apply the same guards as restoreInProgressRun — a completion moments ago, a
