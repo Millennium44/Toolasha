@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The reroll walk is done with a slot once it discards it
+
+The walk billed a discard correctly but never moved past the slot — and the game refills a discarded slot in place with a fresh task, so the walk priced the replacement as if it were the card it had already trashed: reroll to the cap, trash, refill, again, forever on one slot. Its running spend then carried every prior occupant's payments, which is why the chip could claim 70K + 9 bells against a card whose own line honestly said 10K + 3 — pushing the walk over the shield cap and into the close-the-menu treadmill. A settled discard now retires the slot (unless the board shrank, where the next card slides up into it).
+
 ### The rest of the you-vs-them class: a simmed character is theirs everywhere
 
 A sweep for the house-rooms bug's siblings found three more: the Upgrade tab's ability candidates priced another player's abilities off your own book bag ("already owned from LvN" for a stranger who owns nothing), the House-targets grid filled an imported character's unbuilt rooms with your own room levels, and simming a profile import persisted the stranger's consumable usage as your own saved auto-rate, quietly corrupting the Consumables panel. All three now keep the analyzed player's own data on their side of the line.
