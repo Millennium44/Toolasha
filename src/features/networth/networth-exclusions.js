@@ -97,12 +97,23 @@ export function isExcluded(type, value) {
  * @returns {Promise<void>}
  */
 export async function addExclusion(type, value) {
+    // Captured before the load, checked after it. `getStorageKey()` answers
+    // with whoever is current at the moment it is called, and the write below
+    // is a full overwrite with no merge — so a character switch landing inside
+    // a cold read wrote this character's whole exclusion list over the
+    // arriving character's, deleting theirs outright and quietly dropping the
+    // items they had taken out of their net worth.
+    const key = getStorageKey();
     const list = await loadExclusions();
+    if (key !== getStorageKey()) {
+        console.warn('[NetworthExclusions] Exclusion not saved: the character changed while the list loaded');
+        return;
+    }
     if (!list.some((e) => e.type === type && e.value === value)) {
         list.push({ type, value });
         cache = list;
         // Fire-and-forget: persist in background so the UI updates instantly
-        storage.setJSON(getStorageKey(), list, 'settings');
+        storage.setJSON(key, list, 'settings');
     }
 }
 
@@ -113,13 +124,19 @@ export async function addExclusion(type, value) {
  * @returns {Promise<void>}
  */
 export async function removeExclusion(type, value) {
+    // Same capture-and-check as addExclusion
+    const key = getStorageKey();
     const list = await loadExclusions();
+    if (key !== getStorageKey()) {
+        console.warn('[NetworthExclusions] Exclusion not removed: the character changed while the list loaded');
+        return;
+    }
     const idx = list.findIndex((e) => e.type === type && e.value === value);
     if (idx !== -1) {
         list.splice(idx, 1);
         cache = list;
         // Fire-and-forget: persist in background so the UI updates instantly
-        storage.setJSON(getStorageKey(), list, 'settings');
+        storage.setJSON(key, list, 'settings');
     }
 }
 

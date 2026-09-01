@@ -15,11 +15,17 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const state = vi.hoisted(() => ({
     charId: 'main',
     stored: {},
+    /** Fired once per read, after the value is in hand — lets a test land a switch inside one */
+    onRead: null,
 }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key, _store, fallback) => (key in state.stored ? state.stored[key] : fallback),
+        getJSON: async (key, _store, fallback) => {
+            const value = key in state.stored ? state.stored[key] : fallback;
+            state.onRead?.();
+            return value;
+        },
         setJSON: async (key, value) => {
             state.stored[key] = value;
         },
@@ -34,6 +40,7 @@ const { initExclusions, getExclusions, isExcluded, addExclusion, removeExclusion
 
 beforeEach(() => {
     state.charId = 'main';
+    state.onRead = null;
     state.stored = {
         networth_exclusions_main: [{ type: 'assetType', value: 'houses' }],
         networth_exclusions_iron1: [],
@@ -91,6 +98,24 @@ describe('per-character caching', () => {
         await initExclusions();
 
         await clearExclusions();
+
+        expect(state.stored.networth_exclusions_iron1).toEqual([]);
+        expect(state.stored.networth_exclusions_main).toEqual([{ type: 'assetType', value: 'houses' }]);
+    });
+});
+
+describe('a character switch landing inside the load', () => {
+    test('the exclusion is not written over the arriving character’s list', async () => {
+        // A cold read — the cache is empty or belongs to somebody else — is a
+        // real IndexedDB round trip, and the write that follows it is a full
+        // overwrite with no merge, so the arriving character's list would be
+        // replaced rather than added to.
+        state.onRead = () => {
+            state.onRead = null;
+            state.charId = 'iron1';
+        };
+
+        await addExclusion('item', '/items/cheese');
 
         expect(state.stored.networth_exclusions_iron1).toEqual([]);
         expect(state.stored.networth_exclusions_main).toEqual([{ type: 'assetType', value: 'houses' }]);
