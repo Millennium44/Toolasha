@@ -141,8 +141,9 @@ toolashaRoot.Market = {
     watchlist,
     watchlistPanel,
     // The combat sim's Watch/Save buttons run in the sim bundle, which loads
-    // before this one and so carries dead inline copies of these modules; it
-    // reaches the live write paths through these two at call time instead
+    // before this one and so cannot import these at all; it reaches the live
+    // write paths through these two at call time instead. It no longer carries
+    // inline copies as a fallback — see check-bundle-sharing's single-copy list.
     watchItem,
     watchTarget,
     autoAllButton,
