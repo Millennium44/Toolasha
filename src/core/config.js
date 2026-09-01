@@ -830,6 +830,13 @@ class Config {
      *
      * Taken and cleared before replaying, so a setter that queues again (the
      * map is populated by now, so it should not) cannot loop.
+     *
+     * A key the refilled map has no entry for cannot be replayed: both setters
+     * key off `settingsMap[key]` and fall out of their `if`. That is the right
+     * outcome for a key the schema no longer has, but it is a write being
+     * dropped after `getSetting` has been answering it since it was queued — so
+     * it says so rather than going quiet, which is the whole failure mode the
+     * queue exists to end.
      * @returns {void}
      * @private
      */
@@ -840,6 +847,11 @@ class Config {
         this._pendingValues = Object.create(null);
         for (const { method, key, value } of pending) {
             try {
+                if (!this.settingsMap[key]) {
+                    console.warn(
+                        `[Config] Held write of '${key}' cannot be applied: the loaded settings have no such key`
+                    );
+                }
                 this[method](key, value);
             } catch (error) {
                 console.error(`[Config] Deferred write of '${key}' failed:`, error);

@@ -541,6 +541,36 @@ describe('Config — a write during the settings-reload window', () => {
     });
 });
 
+describe('Config — a held write the loaded map has no key for', () => {
+    beforeEach(() => {
+        config.settingsLoadedCallbacks = [];
+        config.settingChangeCallbacks = {};
+        config._pendingWrites = [];
+        config._pendingValues = Object.create(null);
+        settingsStorageMock.lastLoadReadable = true;
+        dataManagerMock.characterId = 'char-1';
+    });
+
+    test('says so rather than dropping it in silence', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            config.clearSettingsCache();
+            config.setSetting('goneFromTheSchema', true);
+            // Answered while it is held — which is exactly why losing it later
+            // has to be audible
+            expect(config.getSetting('goneFromTheSchema')).toBe(true);
+
+            settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+            await config.loadSettings();
+
+            expect(config.getSetting('goneFromTheSchema')).toBe(false);
+            expect(warn.mock.calls.some((call) => String(call[0]).includes('goneFromTheSchema'))).toBe(true);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+});
+
 /**
  * Clearing the map is only ever half of a pair, and nothing enforces the other
  * half: the character-switch chain's re-init returns early when a newer switch
