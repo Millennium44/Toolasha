@@ -2263,6 +2263,8 @@ export function blockNearAnchor(block, anchor, root = null) {
 class GuildTrials {
     constructor() {
         this.initialized = false;
+        /** Unregisters the `guildTrialsInfo` listener that outlives cleanup — see _watchInfoSetting() */
+        this.unwatchInfoSetting = null;
         this.unregister = [];
         this.timers = createTimerRegistry();
         this.record = null;
@@ -2323,6 +2325,13 @@ class GuildTrials {
 
     async initialize() {
         if (this.initialized) return;
+        // Watched before the gate below, and never unregistered: the setting is
+        // the gate, so a listener that only exists once the gate has opened can
+        // never see it being opened. Turning it off used to leave every block
+        // already drawn sitting on the page — `_render` returns early and takes
+        // nothing down — so the overlay stayed on over a settings checkbox that
+        // said it was off, with no redraw to correct it.
+        this._watchInfoSetting();
         if (!config.getSetting('guildTrialsInfo', true)) return;
 
         registerCommand({
@@ -2471,6 +2480,43 @@ class GuildTrials {
         // Merged under whatever a tick learned while the read was in flight, so
         // a base observed seconds after startup is not thrown away by the load
         this.workBases = { ...storedBases, ...this.workBases };
+    }
+
+    /**
+     * Follow `guildTrialsInfo` for as long as the page lives.
+     *
+     * Kept outside `this.unregister` because it has to outlive the cleanup that
+     * would take it away: with the feature down, this listener is the only path
+     * by which the setting can be turned back on without a reload. Registered
+     * before the gate in `initialize` for the same reason, and the previous one
+     * is dropped first so re-initialising cannot stack them.
+     *
+     * Turning it off takes the blocks down rather than merely stopping their
+     * refresh: `_render` returns early on the same setting, so what was already
+     * injected would otherwise stay on screen indefinitely, contradicting the
+     * checkbox that turned it off.
+     * @returns {void}
+     * @private
+     */
+    _watchInfoSetting() {
+        this.unwatchInfoSetting?.();
+        this.unwatchInfoSetting = config.onSettingChange('guildTrialsInfo', (enabled) => {
+            if (enabled) {
+                this.initialize().catch((error) => {
+                    console.error('[GuildTrials] Starting up after the setting was turned on failed:', error);
+                });
+                return;
+            }
+            try {
+                document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+                document.querySelectorAll(`.${BOX_ROW_CLASS}`).forEach((row) => {
+                    if (!row.querySelector(`.${CSS_CLASS}`)) row.remove();
+                });
+                this.blockHtml.clear();
+            } catch (error) {
+                console.error('[GuildTrials] Taking the trial blocks down failed:', error);
+            }
+        });
     }
 
     /**

@@ -19,6 +19,8 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     settings: { guildTrialsInfo: true },
+    /** Listeners registered through `config.onSettingChange`, by key */
+    settingListeners: {},
     settingValues: {},
     clientData: {},
     prices: {},
@@ -48,8 +50,25 @@ vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key, fallback) => (key in game.settings ? game.settings[key] : fallback),
         getSettingValue: (key, fallback) => (key in game.settingValues ? game.settingValues[key] : fallback),
+        onSettingChange: (key, callback) => {
+            (game.settingListeners[key] ||= []).push(callback);
+            return () => {
+                game.settingListeners[key] = (game.settingListeners[key] || []).filter((cb) => cb !== callback);
+            };
+        },
     },
 }));
+
+/**
+ * Flip a setting the way `config.setSetting` does: the value changes and
+ * everyone watching that key hears about it.
+ * @param {string} key - Setting key
+ * @param {*} value - Its new value
+ */
+function flipSetting(key, value) {
+    game.settings[key] = value;
+    for (const callback of game.settingListeners[key] || []) callback(value);
+}
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
         // The feature watches several class names now, because the trials tab's
@@ -1418,6 +1437,7 @@ describe('the panel, end to end', () => {
         vi.useFakeTimers();
         vi.setSystemTime(now);
         game.settings = { guildTrialsInfo: true };
+        game.settingListeners = {};
         game.settingValues = {};
         game.clientData = {};
         game.prices = {};
@@ -1735,6 +1755,27 @@ describe('the panel, end to end', () => {
         expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
         expect(game.observers['GuildPanel_trialsContent']).toBeUndefined();
         expect(game.wsHandlers['guild_trial_signup_updated']).toBeUndefined();
+    });
+
+    test('switching it off mid-session takes what it drew off the page', () => {
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
+
+        // `_render` returns early on this setting and takes nothing down, so
+        // without a listener the blocks sat there over a checkbox saying off
+        flipSetting('guildTrialsInfo', false);
+
+        expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+    });
+
+    test('switching it back on draws again without a reload', () => {
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        flipSetting('guildTrialsInfo', false);
+
+        flipSetting('guildTrialsInfo', true);
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+
+        expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
     });
 
     test('the feature stays out of the way when it is switched off', async () => {
@@ -3399,6 +3440,7 @@ describe('the two trial tabs, as the game draws them', () => {
         vi.useFakeTimers();
         vi.setSystemTime(now);
         game.settings = { guildTrialsInfo: true };
+        game.settingListeners = {};
         game.settingValues = {};
         game.clientData = {};
         game.prices = {};
@@ -5186,6 +5228,7 @@ describe('the payout block, audited', () => {
         vi.useFakeTimers();
         vi.setSystemTime(now);
         game.settings = { guildTrialsInfo: true };
+        game.settingListeners = {};
         game.settingValues = {};
         game.clientData = {};
         game.prices = {};
