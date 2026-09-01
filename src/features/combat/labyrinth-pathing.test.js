@@ -210,6 +210,94 @@ describe('computeLabyrinthPath', () => {
         expect(path.route.has(1)).toBe(false); // the cleared S is free, not a costed room
         expect(path.torches).toBe(3); // rooms 2, 3 and the exit
     });
+
+    /**
+     * The reveal-detour economy walks past a reveal it can prove useless. Two
+     * things it must never do while pruning: cost a shroud, or leave the plan
+     * with no way out at all. Both are properties of every floor rather than of
+     * a chosen one, so this sweeps every 3x3 floor whose middle rooms are each
+     * plain, known-unclearable, or unrevealed-and-costed-as-a-shroud — the
+     * pessimistic posture, the only one where a reveal can buy anything.
+     *
+     * (The bound's admissibility itself — that no content behind a pruned
+     * reveal could ever have beaten the route on hand — follows from a reveal
+     * only ever dropping a shroud: it cannot make a room free, since only
+     * walking it clears it, and cannot take a room off the grid. Pricing the
+     * uncovered rooms shroud-free is therefore the best case, and the best case
+     * is what `couldShorten` re-routes through.)
+     */
+    test('pruning a reveal detour never costs a shroud and never loses the exit', () => {
+        const N = 9;
+        const cols = 3;
+        const exitIdx = N - 1;
+        const neighbors = (i) => {
+            const out = [];
+            if (i % cols > 0) out.push(i - 1);
+            if (i % cols < cols - 1) out.push(i + 1);
+            if (i - cols >= 0) out.push(i - cols);
+            if (i + cols < N) out.push(i + cols);
+            return out;
+        };
+        // Fewest shrouds any entrance→exit walk can manage, by exhaustive search
+        // rather than by the planner's own routing — an oracle that shared the
+        // implementation would prove nothing
+        const minShroudsTo = (tiles) => {
+            let best = Infinity;
+            const walk = (at, visited, shrouds) => {
+                if (shrouds >= best) return;
+                if (at === exitIdx) {
+                    best = shrouds;
+                    return;
+                }
+                for (const nb of neighbors(at)) {
+                    if (visited.has(nb)) continue;
+                    visited.add(nb);
+                    walk(nb, visited, shrouds + (tiles[nb].needsShroud ? 1 : 0));
+                    visited.delete(nb);
+                }
+            };
+            walk(0, new Set([0]), 0);
+            return best;
+        };
+
+        let floors = 0;
+        for (let code = 0; code < 3 ** 7; code++) {
+            const tiles = [];
+            let digits = code;
+            for (let i = 0; i < N; i++) {
+                if (i === 0 || i === exitIdx) {
+                    tiles.push({
+                        cleared: false,
+                        isEntrance: i === 0,
+                        isExit: i === exitIdx,
+                        isTreasure: false,
+                        needsShroud: false,
+                        isUnknown: false,
+                    });
+                    continue;
+                }
+                const kind = digits % 3;
+                digits = Math.floor(digits / 3);
+                tiles.push({
+                    cleared: false,
+                    isEntrance: false,
+                    isExit: false,
+                    isTreasure: false,
+                    needsShroud: kind !== 0,
+                    isUnknown: kind === 2,
+                });
+            }
+            if (!tiles.some((t) => t.isUnknown)) continue;
+            floors++;
+
+            const path = computeLabyrinthPath(tiles, cols);
+            // A floor with no walls always has a way out, whatever it costs, so
+            // pruning must never turn a plan into "no route to the floor exit"
+            expect({ code, path: path === null }).toEqual({ code, path: false });
+            expect({ code, shrouds: path.shrouds }).toEqual({ code, shrouds: minShroudsTo(tiles) });
+        }
+        expect(floors).toBeGreaterThan(1000);
+    });
 });
 
 /**

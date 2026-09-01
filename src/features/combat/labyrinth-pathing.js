@@ -51,10 +51,10 @@ const PATH_SHROUD_WEIGHT = 1e6;
  * over a flat labyrinth grid. Priorities, lexicographic: fewest shrouds (a
  * shroud instantly clears a room, spent on uncleared tiles below the clearable
  * threshold), then the most unknown rooms uncovered, then fewest torches
- * (uncleared tiles walked). Revealing more of the floor ranks above torches
- * because an unknown room may hide a chest the planner cannot yet see — so the
- * plan will step aside to uncover more rooms, but never spends an extra shroud
- * to do it. Treasure rooms are then grafted on greedily whenever they can be
+ * (uncleared tiles walked). Revealing more of the floor ranks above torches, so
+ * the plan will step aside to uncover more rooms — but only a step that pays for
+ * itself (see the detour economy below), and never an extra shroud. Treasure
+ * rooms are then grafted on greedily whenever they can be
  * reached without an extra shroud — a chest is always worth extra torches,
  * never an extra shroud.
  *
@@ -74,6 +74,15 @@ const PATH_SHROUD_WEIGHT = 1e6;
  * possibly turn out to be, which lower-bounds what the detour could ever buy:
  * if even the best case cannot beat the base route, the reveal is provably
  * useless and the plan walks past it instead of stepping aside for it.
+ *
+ * The economy prices route COST — shrouds, then torches — and nothing else. It
+ * therefore prunes a detour whose only possible payoff is a chest behind the
+ * rooms it would uncover, and in the optimistic posture (nothing hidden costed
+ * as a shroud) a reveal cannot make a route cheaper at all, so every
+ * torch-costing reveal detour is pruned there. That is the intended trade: on a
+ * 23-room floor, stepping aside on the chance of a chest is several rooms spent
+ * to learn nothing, and the chest graft below still collects every treasure the
+ * floor has actually shown.
  *
  * Pure function so the routing logic is testable without DOM or sims.
  * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
@@ -229,8 +238,9 @@ export function computeLabyrinthPath(tiles, cols) {
     // then compare it against routes that detour through one revealing room and
     // take whichever uncovers the most *unique* unknown rooms, then the fewest
     // torches. One detour at a time bounds it — the plan will step aside to
-    // reveal more of the floor (which may hide a chest the planner cannot yet
-    // see), but never carpet-reveals. Reveals rank above torches, never a shroud.
+    // reveal more of the floor, but never carpet-reveals, and a step that costs
+    // torches has to clear the detour economy below. Reveals rank above torches,
+    // never a shroud.
     const routeTiles = (set) => [...set].filter((i) => tiles[i] && !tiles[i].cleared && !tiles[i].isEntrance);
     const shroudsOf = (set, bestCase) =>
         routeTiles(set).filter((i) => tiles[i].needsShroud && !bestCase?.has(i)).length;
