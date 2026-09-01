@@ -174,6 +174,14 @@ const COLORS = {
     accent: '#7fd6a3',
 };
 
+/**
+ * Who is logged in, for the reads whose answers must not outlive them.
+ * @returns {string|null} The character id, or null before login
+ */
+function currentCharacterId() {
+    return dataManager.getCurrentCharacterId?.() ?? null;
+}
+
 class ConsumablesPanel {
     constructor() {
         this.panel = null;
@@ -200,6 +208,13 @@ class ConsumablesPanel {
          * character's name. Mirrors `consumable-target.js`'s `loadTarget`.
          */
         this._idlePinsGeneration = 0;
+        /**
+         * Whose `_labFightAttempts` pool is in hand.
+         *
+         * The pool is read lazily on the first rush-floor draw and nothing
+         * re-reads it, so it has to say who it belongs to or it outlives them.
+         */
+        this._labFightAttemptsOwner = null;
         /** Same purpose as `_idlePinsGeneration`, for `_refreshStoredReadings()` */
         this._storedReadingsGeneration = 0;
         // The same mechanism the missing-materials features use: park a quantity,
@@ -1990,9 +2005,14 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         try {
             const runs = this._ledgerRuns || [];
             const attempts = this._labFightAttempts;
-            // The read has not landed yet (or has never been started): kick it
-            // off and say nothing this draw rather than refusing on absence
-            if (!Array.isArray(attempts)) {
+            // The read has not landed yet (or has never been started), or the
+            // pool in hand belongs to a character the panel has since left:
+            // kick a read off and say nothing this draw rather than refusing on
+            // absence. `_refreshStoredReadings()` re-reads everything else the
+            // lab section draws on a switch but not this pool, so without the
+            // owner check the verdict went on judging the arriving character's
+            // ledger against the departing character's fights.
+            if (!Array.isArray(attempts) || this._labFightAttemptsOwner !== currentCharacterId()) {
                 this._loadLabFightAttempts();
                 return null;
             }
@@ -2034,12 +2054,20 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
     async _loadLabFightAttempts() {
         if (this._labFightAttemptsLoading) return;
         this._labFightAttemptsLoading = true;
+        // Whose pool this read is for, decided before the await: `readScoped`
+        // builds its key now, and adopting the answer under whoever is current
+        // when it lands would file one character's fights under another
+        const owner = currentCharacterId();
         try {
             const stored = await readScoped('labyrinthFightRecorder', 'labyrinth', []);
+            if (currentCharacterId() !== owner) return;
             this._labFightAttempts = Array.isArray(stored) ? stored : [];
+            this._labFightAttemptsOwner = owner;
         } catch (error) {
             console.error('[ConsumablesPanel] Reading the labyrinth fight pool failed:', error);
+            if (currentCharacterId() !== owner) return;
             this._labFightAttempts = [];
+            this._labFightAttemptsOwner = owner;
         } finally {
             this._labFightAttemptsLoading = false;
         }

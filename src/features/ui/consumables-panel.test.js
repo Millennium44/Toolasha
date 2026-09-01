@@ -904,4 +904,29 @@ describe('the labyrinth burn trend', () => {
         expect(text).not.toContain('Burn per run:');
         expect(text).not.toContain('Torches per floor:');
     });
+
+    test('the rush-floor verdict is dropped on a switch rather than judging the new character', async () => {
+        // char1 has a pool of recorded fights; char2 has never recorded one, so
+        // the verdict has nothing to speak from and must say nothing
+        store.data.labyrinthFightRecorder_char1 = [
+            { outcome: 'loss', remainderFraction: 0.08, fingerprint: 'g1' },
+            { outcome: 'loss', remainderFraction: 0.1, fingerprint: 'g1' },
+        ];
+        consumablesPanel._labFightAttempts = null;
+        consumablesPanel._labFightAttemptsOwner = null;
+
+        await draw([ledgerRun({ key: 'a' })]);
+        // The pool is read lazily on the first draw; the line lands on the next
+        await settled();
+        consumablesPanel._render();
+        expect(consumablesPanel.bodyEl.textContent).toContain('Rush floor:');
+
+        bus.characterId = 'char2';
+        consumablesPanel._ledgerRuns = [];
+        consumablesPanel._render();
+        await settled();
+        consumablesPanel._render();
+
+        expect(consumablesPanel.bodyEl.textContent).not.toContain('Rush floor:');
+    });
 });
