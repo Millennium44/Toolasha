@@ -535,6 +535,59 @@ describe('the panel', () => {
         expect(text()).not.toContain('Nothing to show yet');
     });
 
+    test('a damage row opens to its per-ability breakdown, and shuts again', () => {
+        game.breakdown = breakdown({
+            players: [
+                {
+                    index: '0',
+                    name: 'Tib',
+                    damage: 600_000,
+                    deaths: 0,
+                    abilities: [
+                        { action: '/abilities/fireball', damage: 400_000, hits: 10, crits: 2, misses: 1 },
+                        { action: 'auto', damage: 200_000, hits: 50, crits: 5, misses: 5 },
+                    ],
+                },
+                { index: '1', name: 'Moo', damage: 400_000, deaths: 1, abilities: [] },
+            ],
+        });
+        guildTrialScoreboard.open();
+
+        // Collapsed: the affordance is there, the abilities are not
+        expect(text()).toContain('▸');
+        expect(text()).not.toContain('fireball');
+
+        document.querySelector('[data-player="tib"]').click();
+
+        // The same figures the DPS panel's breakdown prints, ranked, with the
+        // share of Tib's own total — no client data in the test, so the label
+        // falls back to the hrid's slug
+        expect(text()).toContain('▾');
+        expect(text()).toContain('fireball');
+        expect(text()).toContain('400.0K (66.7%)');
+        expect(text()).toContain('4000.0/s'); // 400K over the 100s watched
+        expect(text()).toContain('Auto attack');
+
+        document.querySelector('[data-player="tib"]').click();
+        expect(text()).not.toContain('fireball');
+    });
+
+    test('a player the stream never split says so instead of an empty box', () => {
+        guildTrialScoreboard.open();
+        document.querySelector('[data-player="moo"]').click();
+
+        expect(text()).toContain('No breakdown captured for Moo');
+        expect(text()).not.toContain('undefined');
+    });
+
+    test('the breakdown is the damage tab’s — the other tabs have no split to open', () => {
+        guildTrialScoreboard.open();
+        document.querySelector('[data-tab="healing"]').click();
+
+        expect(document.querySelector('[data-player]')).toBeNull();
+        expect(text()).not.toContain('▸');
+    });
+
     test('“end and start new” goes through the recorder, not a second mechanism', () => {
         guildTrialScoreboard.open();
         document.querySelector('[data-action="restart"]').click();

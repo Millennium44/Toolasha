@@ -514,6 +514,13 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
             critRate: entry.hits > 0 ? entry.crits / entry.hits : null,
             dps: measurable ? (entry.damage || 0) / seconds : null,
             share: totalDamage > 0 ? ((entry.damage || 0) / totalDamage) * 100 : null,
+            // The per-ability split the attribution already keeps (`foldEvents`'
+            // `byAbility`, folded across waves by `foldTallyRow`), surfaced in
+            // the same shape the run-side tracker uses so the scoreboard's
+            // expandable rows and the DPS panel's draw from one shape
+            abilities: Object.entries(entry.byAbility || {})
+                .map(([action, stats]) => ({ action, ...stats }))
+                .sort((a, b) => (b.damage || 0) - (a.damage || 0)),
         };
     });
 

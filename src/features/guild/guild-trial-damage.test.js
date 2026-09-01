@@ -352,6 +352,38 @@ describe('summariseTrialDamage', () => {
         expect(summary.players[0].accuracy).toBeNull();
         expect(summary.players[0].critRate).toBeNull();
     });
+
+    test('the per-ability split the tally already keeps is surfaced on the row', () => {
+        // `foldEvents` files every attributed event under `byAbility`; the
+        // scoreboard's expandable rows read it off the player row in the same
+        // shape the run-side tracker uses — biggest first, action named
+        const summary = summariseTrialDamage({
+            tally: {
+                0: {
+                    damage: 600,
+                    hits: 12,
+                    crits: 2,
+                    misses: 1,
+                    byAbility: {
+                        auto: { damage: 200, hits: 8, crits: 1, misses: 1 },
+                        '/abilities/fireball': { damage: 400, hits: 4, crits: 1, misses: 0 },
+                    },
+                },
+            },
+            names: { 0: 'Tib' },
+            seconds: 100,
+        });
+
+        expect(summary.players[0].abilities).toEqual([
+            { action: '/abilities/fireball', damage: 400, hits: 4, crits: 1, misses: 0 },
+            { action: 'auto', damage: 200, hits: 8, crits: 1, misses: 1 },
+        ]);
+    });
+
+    test('a tally row with no per-ability map carries an empty list, not a crash', () => {
+        const summary = summariseTrialDamage({ tally: { 0: { damage: 10, hits: 1, crits: 0, misses: 0 } } });
+        expect(summary.players[0].abilities).toEqual([]);
+    });
 });
 
 describe('attributionCoverage', () => {

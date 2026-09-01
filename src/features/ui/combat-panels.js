@@ -50,6 +50,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
 import { loadAllZonesSnapshot, bestSoloZone, zoneFromSnapshot } from '../../utils/all-zones-snapshot.js';
 import { partyLintWarnings, battleLintInputs } from '../../utils/party-lint.js';
+import { abilityBreakdownRows, abilityDamageText, abilityRateText } from '../../utils/damage-board.js';
 
 const REFRESH_MS = 2000;
 
@@ -1072,21 +1073,19 @@ export const dpsPanel = new CombatPanel({
 
             if (!open) continue;
 
-            for (const ability of player.abilities) {
+            // Ranked and shared out by the same builder the trial scoreboard's
+            // expandable rows use, so the two breakdowns cannot drift apart
+            for (const ability of abilityBreakdownRows(player.abilities, {
+                total: player.damage,
+                seconds: breakdown.seconds,
+            })) {
                 const attempts = ability.hits + ability.misses;
-                const abilityShare = player.damage > 0 ? (ability.damage / player.damage) * 100 : 0;
                 body.appendChild(
                     dpsRow(
                         [
                             { text: `• ${actionLabel(ability.action)}` },
-                            {
-                                text: breakdown.seconds > 0 ? (ability.damage / breakdown.seconds).toFixed(1) : '—',
-                                color: ROW_COLORS.good,
-                            },
-                            {
-                                text: `${formatKMB(ability.damage)} (${abilityShare.toFixed(1)}%)`,
-                                color: ROW_COLORS.good,
-                            },
+                            { text: abilityRateText(ability), color: ROW_COLORS.good },
+                            { text: abilityDamageText(ability), color: ROW_COLORS.good },
                             { text: formatWithSeparator(attempts) },
                             { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
                             { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },
@@ -1131,21 +1130,17 @@ export const dpsPanel = new CombatPanel({
 
                 // The question an enemy row raises: is it tanky, or is the
                 // wrong thing being pointed at it
-                for (const ability of enemy.abilities || []) {
+                for (const ability of abilityBreakdownRows(enemy.abilities, {
+                    total: enemy.damage,
+                    seconds: breakdown.seconds,
+                })) {
                     const attempts = ability.hits + ability.misses;
-                    const abilityShare = enemy.damage > 0 ? (ability.damage / enemy.damage) * 100 : 0;
                     body.appendChild(
                         dpsRow(
                             [
                                 { text: `• ${actionLabel(ability.action)}` },
-                                {
-                                    text: breakdown.seconds > 0 ? (ability.damage / breakdown.seconds).toFixed(1) : '—',
-                                    color: ROW_COLORS.good,
-                                },
-                                {
-                                    text: `${formatKMB(ability.damage)} (${abilityShare.toFixed(1)}%)`,
-                                    color: ROW_COLORS.good,
-                                },
+                                { text: abilityRateText(ability), color: ROW_COLORS.good },
+                                { text: abilityDamageText(ability), color: ROW_COLORS.good },
                                 { text: formatWithSeparator(attempts) },
                                 { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
                                 { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },

@@ -9,7 +9,19 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { rankRows, boardRowHTML, boardTabsHTML, boardHeadHTML, boardLines, escapeText } from './damage-board.js';
+import {
+    abilityActionLabel,
+    abilityBreakdownRows,
+    abilityDamageText,
+    abilityLineHTML,
+    abilityRateText,
+    rankRows,
+    boardRowHTML,
+    boardTabsHTML,
+    boardHeadHTML,
+    boardLines,
+    escapeText,
+} from './damage-board.js';
 
 describe('ranking a tab', () => {
     test('biggest first, ranked from one, shares over the rows shown', () => {
@@ -117,6 +129,80 @@ describe('one row', () => {
 
     test('a share of nothing dashes rather than drawing a zero bar as a figure', () => {
         expect(boardRowHTML({ name: 'Alice', value: 1, share: null, rank: 1 })).toContain('>—<');
+    });
+});
+
+describe('a player’s per-ability breakdown', () => {
+    const abilities = [
+        { action: 'auto', damage: 200_000, hits: 50, crits: 5, misses: 5 },
+        { action: '/abilities/fireball', damage: 400_000, hits: 10, crits: 2, misses: 1 },
+    ];
+
+    test('ranked by damage with a rate and a share of the player’s own total', () => {
+        // The shape both panels draw from — the DPS panel's expandable rows
+        // and the trial scoreboard's — pinned here so neither can drift
+        const rows = abilityBreakdownRows(abilities, { total: 600_000, seconds: 100 });
+
+        expect(rows.map((row) => row.action)).toEqual(['/abilities/fireball', 'auto']);
+        expect(rows.map((row) => row.rank)).toEqual([1, 2]);
+        expect(rows[0]).toMatchObject({ damage: 400_000, hits: 10, crits: 2, misses: 1 });
+        expect(rows[0].perSecond).toBeCloseTo(4000, 6);
+        expect(rows[0].share).toBeCloseTo(66.6667, 3);
+    });
+
+    test('no window is no rate, and no total is no share — not zeroes', () => {
+        const [row] = abilityBreakdownRows([{ action: 'auto', damage: 10 }], { total: 0, seconds: 0 });
+        expect(row.perSecond).toBeNull();
+        expect(row.share).toBeNull();
+        expect(abilityRateText(row)).toBe('—');
+        expect(abilityDamageText(row)).toBe('10');
+    });
+
+    test('the figures print as the DPS panel always has', () => {
+        const [row] = abilityBreakdownRows([{ action: 'auto', damage: 208_400 }], { total: 587_000, seconds: 3070 });
+        expect(abilityRateText(row)).toBe('67.9');
+        expect(abilityDamageText(row)).toBe('208.4K (35.5%)');
+    });
+
+    test('nothing at all is an empty list, not a crash', () => {
+        expect(abilityBreakdownRows(null)).toEqual([]);
+        expect(abilityBreakdownRows(undefined, { total: 1, seconds: 1 })).toEqual([]);
+    });
+
+    test('a zero-damage ability keeps its row — a miss is a fact about the rotation', () => {
+        const rows = abilityBreakdownRows([{ action: '/abilities/poke', damage: 0, misses: 3 }], {
+            total: 100,
+            seconds: 10,
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0].misses).toBe(3);
+    });
+
+    test('the line carries the shared figures and escapes the label', () => {
+        const [row] = abilityBreakdownRows([{ action: '/abilities/fireball', damage: 208_400 }], {
+            total: 587_000,
+            seconds: 3070,
+        });
+        const html = abilityLineHTML(row, { label: 'Fireball <img>' });
+
+        expect(html).toContain('1.');
+        expect(html).toContain('Fireball &lt;img&gt;');
+        expect(html).toContain('208.4K (35.5%)');
+        expect(html).toContain('67.9/s');
+        expect(html).not.toContain('<img');
+    });
+
+    test('with no label the raw action is shown rather than nothing', () => {
+        expect(abilityLineHTML({ action: '/abilities/poke', damage: 1, rank: 1 })).toContain('/abilities/poke');
+    });
+
+    test('action names resolve through one rule: markers, game data, then slug', () => {
+        expect(abilityActionLabel('auto')).toBe('Auto attack');
+        expect(abilityActionLabel('idle')).toBe('No ability');
+        expect(abilityActionLabel('/abilities/fireball', { '/abilities/fireball': { name: 'Fireball' } })).toBe(
+            'Fireball'
+        );
+        expect(abilityActionLabel('/abilities/frost_surge')).toBe('frost surge');
     });
 });
 

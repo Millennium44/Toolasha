@@ -252,6 +252,110 @@ export function boardLines(heading, rows) {
 }
 
 /**
+ * One player's per-ability split, ranked — the arithmetic behind the DPS
+ * panel's "Click for the per-ability breakdown" rows and the trial
+ * scoreboard's expandable rows, so the two draw the same figures from the
+ * same rule.
+ *
+ * `share` is of the **player's own total** rather than the party's: the
+ * question a breakdown answers is what this player's damage was made of.
+ * Rows are kept even at zero damage — an ability that only ever missed is a
+ * fact about the rotation, and dropping it would hide the miss column's
+ * reason for existing.
+ *
+ * @param {Array<{action: string, damage: number}>} abilities - One player's
+ *   per-ability tallies, as `damage-tracker.js` and `guild-trial-damage.js`
+ *   both shape them
+ * @param {Object} [context] - What to divide by
+ * @param {number} [context.total] - The player's own damage total
+ * @param {number} [context.seconds] - The measurement window
+ * @returns {Array<Object>} Ranked rows carrying `rank`, `perSecond`, `share`
+ */
+export function abilityBreakdownRows(abilities, { total = 0, seconds = 0 } = {}) {
+    return [...(abilities || [])]
+        .sort((a, b) => (Number(b?.damage) || 0) - (Number(a?.damage) || 0))
+        .map((ability, position) => {
+            const damage = Number(ability?.damage) || 0;
+            return {
+                ...ability,
+                damage,
+                rank: position + 1,
+                perSecond: seconds > 0 ? damage / seconds : null,
+                share: total > 0 ? (damage / total) * 100 : null,
+            };
+        });
+}
+
+/**
+ * An ability row's rate, as the DPS panel prints it: tenths, because at
+ * per-ability magnitudes the tenth is a real distinction, or a dash when
+ * there is no window to divide by.
+ *
+ * @param {Object} row - From {@link abilityBreakdownRows}
+ * @returns {string}
+ */
+export function abilityRateText(row) {
+    return row?.perSecond === null || row?.perSecond === undefined ? '—' : row.perSecond.toFixed(1);
+}
+
+/**
+ * An ability row's damage with its share of the player's own total, as the
+ * DPS panel prints it: `208.4K (35.5%)`. The share is omitted rather than
+ * shown as a made-up 0% when the player's total is nothing to divide by.
+ *
+ * @param {Object} row - From {@link abilityBreakdownRows}
+ * @returns {string}
+ */
+export function abilityDamageText(row) {
+    const figure = formatKMB(Math.round(row?.damage || 0));
+    return row?.share === null || row?.share === undefined ? figure : `${figure} (${row.share.toFixed(1)}%)`;
+}
+
+/**
+ * What an action key is called on screen.
+ *
+ * `auto` and `idle` are this codebase's own markers, not hrids, so they get
+ * words; anything else is looked up in the game data the caller passes and
+ * falls back to its slug. The map is a parameter rather than read here so the
+ * function stays pure and both panels resolve names through one rule.
+ *
+ * @param {string} action - `auto`, `idle`, or an ability hrid
+ * @param {Object} [detailMap] - The game's `abilityDetailMap`
+ * @returns {string} Something readable
+ */
+export function abilityActionLabel(action, detailMap) {
+    if (action === 'auto') return 'Auto attack';
+    if (action === 'idle') return 'No ability';
+    return detailMap?.[action]?.name || String(action).split('/').pop().replace(/_/g, ' ');
+}
+
+/**
+ * One breakdown line for a string-built board, indented under its player row.
+ *
+ * The figures come from {@link abilityDamageText} and {@link abilityRateText}
+ * so this line and the DPS panel's grid cells cannot drift apart; what is
+ * this function's own is only the compact single-line layout a 320px panel
+ * has room for.
+ *
+ * @param {Object} row - From {@link abilityBreakdownRows}
+ * @param {Object} [options] - Drawing options
+ * @param {string} [options.label] - The readable name; the raw action otherwise
+ * @param {string} [options.color] - Ink for the figures
+ * @returns {string} HTML
+ */
+export function abilityLineHTML(row, { label, color = BOARD_COLORS.dim } = {}) {
+    const rate = abilityRateText(row);
+    return (
+        `<div style="display:flex; gap:6px; align-items:baseline; padding:1px 6px 1px 26px; font-size:10.5px;">` +
+        `<span style="color:${color}; min-width:12px;">${row?.rank ?? ''}.</span>` +
+        `<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">` +
+        `${escapeText(label || row?.action || '')}</span>` +
+        `<span style="margin-left:auto; color:${color}; white-space:nowrap;">${abilityDamageText(row)}` +
+        `${rate === '—' ? '' : ` · ${rate}/s`}</span></div>`
+    );
+}
+
+/**
  * Markup-safe text. A player name is the one field here that comes off the wire.
  * @param {string} value - Anything
  * @returns {string}

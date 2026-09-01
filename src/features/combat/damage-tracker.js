@@ -44,6 +44,7 @@ import { pushManaSample } from './combat-estimates.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
 import { ownWeaponHrid } from '../../utils/class-weapon.js';
+import { abilityActionLabel } from '../../utils/damage-board.js';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
@@ -432,13 +433,9 @@ function noteMonsterHealth(mMap) {
  * @returns {string} Something readable
  */
 export function actionLabel(action) {
-    if (action === 'auto') return 'Auto attack';
-    if (action === 'idle') return 'No ability';
-
-    const detail = dataManager.getInitClientData?.()?.abilityDetailMap?.[action];
-    if (detail?.name) return detail.name;
-
-    return String(action).split('/').pop().replace(/_/g, ' ');
+    // One naming rule for every panel that prints an action — the trial
+    // scoreboard resolves through the same helper with the same map
+    return abilityActionLabel(action, dataManager.getInitClientData?.()?.abilityDetailMap);
 }
 
 /**

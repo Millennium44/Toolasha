@@ -39,6 +39,7 @@
  * colour.
  */
 
+import dataManager from '../../core/data-manager.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import guildTrialDamage, {
@@ -56,7 +57,16 @@ import { guildTrialRecorder } from './guild-trial-recorder.js';
 // panel nor that feature, so nothing points back.
 import guildTrialTrace, { traceGapWarning } from './guild-trial-trace.js';
 import { buildGuildReport } from './guild-trial-report.js';
-import { boardHeadHTML, boardRowHTML, boardTabsHTML, rankRows, escapeText } from '../../utils/damage-board.js';
+import {
+    abilityActionLabel,
+    abilityBreakdownRows,
+    abilityLineHTML,
+    boardHeadHTML,
+    boardRowHTML,
+    boardTabsHTML,
+    rankRows,
+    escapeText,
+} from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
 
 /** Class every part of this panel carries, so teardown is one query */
@@ -398,6 +408,12 @@ class GuildTrialScoreboard {
         this.forecast = null;
         /** The trial's name, tier and shortfall, likewise pushed in */
         this.context = null;
+        /**
+         * Which damage rows are opened to their per-ability breakdown, by
+         * lowercased player name — the key the mana markers already use.
+         * Survives the five-second redraw, so an open row stays open.
+         */
+        this.expanded = new Set();
     }
 
     /**
@@ -460,6 +476,9 @@ class GuildTrialScoreboard {
         this.container = null;
         this.context = null;
         this.forecast = null;
+        // Expansion state is about the trial being watched; the next open may
+        // be a different trial, or a different guild's
+        this.expanded.clear();
     }
 
     /** Open when shut, shut when open — what the command palette calls */
@@ -561,6 +580,16 @@ class GuildTrialScoreboard {
         body.querySelectorAll('[data-tab]').forEach((button) => {
             button.addEventListener('click', () => {
                 this.tab = button.dataset.tab;
+                this.render();
+            });
+        });
+        // A damage row opens to its per-ability breakdown and shuts again on
+        // the next click; the whole body is one string, so a toggle is a redraw
+        body.querySelectorAll('[data-player]').forEach((rowEl) => {
+            rowEl.addEventListener('click', () => {
+                const key = rowEl.dataset.player;
+                if (this.expanded.has(key)) this.expanded.delete(key);
+                else this.expanded.add(key);
                 this.render();
             });
         });
@@ -885,8 +914,25 @@ class GuildTrialScoreboard {
             ])
         );
 
+        // The stream's per-ability split by lowercased name, for the damage
+        // tab's expandable rows. Only the stream carries one — the game's
+        // post-trial stats state totals per member and nothing per ability —
+        // so a game-sourced row expands to the stretch the stream measured,
+        // and a player the stream never split gets an honest "none captured"
+        const abilitySplit =
+            this.tab === 'damage'
+                ? new Map(
+                      (breakdown?.players || []).map((player) => [
+                          String(player.name || '')
+                              .trim()
+                              .toLowerCase(),
+                          player,
+                      ])
+                  )
+                : null;
+
         const list = rows.length
-            ? rows.map((row) => this._rowHTML(row, classes, manaByName)).join('')
+            ? rows.map((row) => this._rowHTML(row, classes, manaByName, abilitySplit, breakdown?.seconds || 0)).join('')
             : estimated
               ? estimate.players
                     .map((row, position) =>
@@ -991,12 +1037,18 @@ class GuildTrialScoreboard {
     }
 
     /**
-     * One ranked row, with its bar.
+     * One ranked row, with its bar — and, on the damage tab, the click-to-open
+     * per-ability breakdown under it.
+     *
      * @param {Object} row - From {@link scoreboardRows}
      * @param {Object} [classes] - Lowercased name → verdict, from `guildTrialAbilities.classes()`
+     * @param {Map|null} [manaByName] - Lowercased name → support row
+     * @param {Map|null} [abilitySplit] - Lowercased name → the stream's player
+     *   row (carrying `abilities` and `damage`); null on tabs with no split
+     * @param {number} [seconds] - The measurement window, for the per-ability rates
      * @returns {string} HTML
      */
-    _rowHTML(row, classes = {}, manaByName = null) {
+    _rowHTML(row, classes = {}, manaByName = null, abilitySplit = null, seconds = 0) {
         // Every part of the drawing is the shared board's; what stays here is
         // the trial's own facts about a row — the colour comes from the
         // player's captured damage type, the marker beside the name comes
@@ -1006,10 +1058,53 @@ class GuildTrialScoreboard {
         const key = String(row.name || '')
             .trim()
             .toLowerCase();
-        return boardRowHTML(row, {
+        const open = abilitySplit !== null && this.expanded.has(key);
+        const caret =
+            abilitySplit === null
+                ? ''
+                : `<span style="color:${DIM}; font-size:9px; margin-left:4px;">${open ? '▾' : '▸'}</span>`;
+        const base = boardRowHTML(row, {
             color: type ? TYPE_COLORS[type] : ACCENT,
-            tagHTML: classTagHTML(classes?.[key]) + manaMarkerHTML(manaByName?.get?.(key)),
+            tagHTML: classTagHTML(classes?.[key]) + manaMarkerHTML(manaByName?.get?.(key)) + caret,
         });
+        if (abilitySplit === null) return base;
+
+        const wrapped =
+            `<div data-player="${escapeText(key)}" style="cursor:pointer;" ` +
+            `title="Click for the per-ability breakdown.">${base}</div>`;
+        if (!open) return wrapped;
+        return wrapped + this._breakdownHTML(row.name, abilitySplit.get(key), seconds);
+    }
+
+    /**
+     * One player's per-ability breakdown, or an honest line about not having one.
+     *
+     * The rows come from the same builder the DPS panel's expandable rows use
+     * (`abilityBreakdownRows`), over the split the trial attribution already
+     * keeps per ability — nothing is re-collected here. The share is of the
+     * player's own stream-measured damage, which is also what the abilities sum
+     * to; a game-stats row above it can carry a larger full-trial total, and the
+     * breakdown is still only of the stretch the stream saw.
+     *
+     * @param {string} name - The player, for the empty line
+     * @param {Object|undefined} player - The stream's row for them, if any
+     * @param {number} seconds - The measurement window
+     * @returns {string} HTML
+     */
+    _breakdownHTML(name, player, seconds) {
+        const abilities = player?.abilities || [];
+        if (!abilities.length) {
+            return (
+                `<div style="color:${DIM}; font-size:10px; padding:1px 6px 4px 26px; line-height:1.4;">` +
+                `No breakdown captured for ${escapeText(name)} — the watched stream has not named their casts.</div>`
+            );
+        }
+
+        const detailMap = dataManager.getInitClientData?.()?.abilityDetailMap;
+        const lines = abilityBreakdownRows(abilities, { total: player?.damage || 0, seconds }).map((entry) =>
+            abilityLineHTML(entry, { label: abilityActionLabel(entry.action, detailMap) })
+        );
+        return `<div style="margin:0 0 4px;">${lines.join('')}</div>`;
     }
 }
 
