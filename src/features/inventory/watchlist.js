@@ -1096,6 +1096,17 @@ export default {
         // shape as treasure-tracker's disable().
         Object.assign(state, emptyState());
         stateOwner = null;
+        // And the record with it. This runs inside the awaited
+        // `character_switching`, which is the last moment anything can still be
+        // filed under the departing character — after it, `characterKey()`
+        // names the arriving one, while `reload()` (the only other place the
+        // record is reset) does not run until the deferred
+        // `character_initialized`. A `persist()` in that gap found a curated
+        // record still trusting the departing character's memory and wrote it
+        // to the arriving character's key AS-IS, replacing their whole list.
+        // Reset here and the same write merges under what is stored instead,
+        // so the worst case is an edit lost rather than a list lost.
+        record.reset();
         inventoryBadgeManager.invalidateCache?.();
     },
 };

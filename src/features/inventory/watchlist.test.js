@@ -489,6 +489,32 @@ describe('the header', () => {
     });
 });
 
+describe('a save landing between the teardown and the reload', () => {
+    test('does not replace the arriving character’s list with this one’s', async () => {
+        storageMock.storeFor('settings').set('watchlist_iron456', {
+            items: { '/items/rare_hat': { hrid: '/items/rare_hat' } },
+        });
+
+        watchItem('/items/cheese');
+        await flushWatchlistWrites();
+
+        // The awaited `character_switching`: the feature is torn down before
+        // `characterKey()` moves. `reload()` — the only other place the record
+        // is reset — does not run until the deferred `character_initialized`.
+        watchlist.cleanup();
+        game.characterId = 'iron456';
+
+        // Anything that persists in that gap (a Track click on a menu the
+        // teardown has not reached, a panel toggle) writes to the arriving
+        // character's key
+        watchItem('/items/milk');
+        await flushWatchlistWrites();
+
+        const theirs = storageMock.storeFor('settings').get('watchlist_iron456');
+        expect(Object.keys(theirs.items)).toContain('/items/rare_hat');
+    });
+});
+
 describe('cleanup unregisters the setting-change listeners it registered', () => {
     test('a character-switch cycle does not accumulate listeners', () => {
         // Every character switch runs cleanup() then initialize() again
