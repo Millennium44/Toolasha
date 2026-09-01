@@ -260,6 +260,34 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
     });
 });
 
+describe('a load that settles after a second switch', () => {
+    test("the departing character's prices are not merged into the arriving one", async () => {
+        storageMock.storeFor('settings').set(KEY, { '/items/a:0': { buy: 111 } });
+        tradeHistory.history = {};
+        tradeHistory.isLoaded = false;
+
+        // The probe was issued for market123, and by the time it answers this
+        // module's own (unserialised) switch handling has already re-pointed
+        // the singleton at the iron cow
+        storageMock.tryGet.mockImplementationOnce(async (key, storeName = 'settings') => {
+            dataManagerMock.characterId = 'iron456';
+            tradeHistory.characterId = 'iron456';
+            const store = storageMock.storeFor(storeName);
+            return store.has(key) ? { found: true, value: structuredClone(store.get(key)) } : { found: false, value: null };
+        });
+
+        await tradeHistory.loadHistory();
+
+        // Merging them would put the market character's reference prices on
+        // every iron-cow tooltip, and the next fill writes them into
+        // tradeHistory_iron456 for good
+        expect(tradeHistory.history).toEqual({});
+        // And the flag stays down, so a fill cannot write before the iron cow's
+        // own history has been read back
+        expect(tradeHistory.isLoaded).toBe(false);
+    });
+});
+
 describe('a character switch resets in-memory state even while the feature is off', () => {
     test('toggling off, switching character, then back on does not merge the old character under the new one', async () => {
         // Character A has a price in memory (as if the feature had been on for them).

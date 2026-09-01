@@ -165,8 +165,19 @@ class TradeHistory {
      * while a save was in flight is kept.
      */
     async loadHistory() {
+        // Whose history this read is for, fixed before it. This module holds
+        // its own `character_switched` listener, so it is not serialised by the
+        // registry's switch chain: a second switch landing inside the read
+        // leaves `handleCharacterSwitch()` having already blanked `history` and
+        // pointed `characterId` at somebody else, and merging now folds the
+        // departing character's reference prices into the arriving character's
+        // map — which the next fill then writes into their `tradeHistory_<id>`,
+        // where they stay.
+        const owner = this.characterId;
         try {
             const probe = await storage.tryGet(this.getStorageKey(), 'settings');
+            if (this.characterId !== owner) return;
+
             if (probe === null) {
                 console.warn('[TradeHistory] History could not be read; keeping the in-memory copy');
             } else {
@@ -176,6 +187,9 @@ class TradeHistory {
             console.error('[TradeHistory] Failed to load history:', error);
             // Keep whatever is in memory
         }
+        // Left alone on the refused branch: the arriving character's own load
+        // owns this flag, and setting it here would let a fill write before
+        // their history had been read back
         this.isLoaded = true;
     }
 
