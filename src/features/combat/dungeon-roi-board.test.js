@@ -114,6 +114,16 @@ describe('pricing a completion', () => {
         expect(keys.total).toBeNull();
         expect(keys.complete).toBe(false);
     });
+
+    test('an unidentifiable entry key marks the cost incomplete, not free', () => {
+        // A dungeon entryKeyFor cannot resolve (missing from both game data and
+        // the fallback table) must not read as "needs no key" - regression for
+        // entries.every() on an empty array being vacuously true.
+        const rewards = priceRewards(rewardsPerRun(DEN, 0, 1, 0), pricing);
+        const keys = priceKeys(DEN, rewards, { ...pricing, entryKeyFor: () => null });
+        expect(keys.entries).toEqual([{ itemHrid: '/items/chimerical_chest_key', count: 5.02, unitCost: 1_000 }]);
+        expect(keys.complete).toBe(false);
+    });
 });
 
 describe('measured sessions and the sim snapshot', () => {

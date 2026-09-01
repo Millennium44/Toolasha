@@ -298,6 +298,11 @@ export function priceKeys(dungeonHrid, rewards, { entryKeyFor, keyCost }) {
     const entries = [];
     let total = 0;
     let anyPriced = false;
+    // entryKeyFor returning null means "no key could be identified for this
+    // dungeon", not "this dungeon needs no key" - every dungeon takes an entry
+    // key. Track that gap separately so an unresolvable key still trips
+    // `complete` below, even though it has no entry to compare unitCost on.
+    let unresolvedEntryKey = false;
 
     const entryKey = entryKeyFor?.(dungeonHrid) ?? null;
     if (entryKey) {
@@ -307,6 +312,8 @@ export function priceKeys(dungeonHrid, rewards, { entryKeyFor, keyCost }) {
             total += unitCost;
             anyPriced = true;
         }
+    } else {
+        unresolvedEntryKey = true;
     }
 
     // Which chest key: every chest this dungeon pays answers to the same one
@@ -329,8 +336,10 @@ export function priceKeys(dungeonHrid, rewards, { entryKeyFor, keyCost }) {
     }
 
     // Complete only when nothing was left out: an entry with no price is a cost
-    // the total does not carry, and a net built on it would read as profit
-    const complete = entries.every((entry) => Number.isFinite(entry.unitCost));
+    // the total does not carry, and a net built on it would read as profit.
+    // An empty `entries` array is vacuously "every priced", so an unresolved
+    // entry key (no entry pushed for it at all) must fail this explicitly.
+    const complete = !unresolvedEntryKey && entries.every((entry) => Number.isFinite(entry.unitCost));
     return { total: anyPriced ? total : null, entries, complete };
 }
 
