@@ -273,7 +273,9 @@ describe('a load that settles after a second switch', () => {
             dataManagerMock.characterId = 'iron456';
             tradeHistory.characterId = 'iron456';
             const store = storageMock.storeFor(storeName);
-            return store.has(key) ? { found: true, value: structuredClone(store.get(key)) } : { found: false, value: null };
+            return store.has(key)
+                ? { found: true, value: structuredClone(store.get(key)) }
+                : { found: false, value: null };
         });
 
         await tradeHistory.loadHistory();
