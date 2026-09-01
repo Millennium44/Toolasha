@@ -628,6 +628,35 @@ export const simCacheMethods = {
     },
 
     /**
+     * The teardown epoch an async batch belongs to.
+     *
+     * Cancellation stops work from *starting*; this fences work already in
+     * flight. Every sim loop captures this before its first `await` and
+     * re-reads it afterwards: a loop whose epoch no longer matches is running
+     * against a feature that has been torn down under it — a character switch
+     * mid-sim — and must not write anything back. That covers the state a
+     * `finally` would otherwise restore (`simRunning`, `tileCalcRunning`), the
+     * cache flush and badge-retry timers it would re-arm after `disable()`
+     * cancelled them, and any badge it would draw onto the arriving
+     * character's board.
+     * @returns {number} Current epoch
+     */
+    simEpoch() {
+        return this._simEpoch || 0;
+    },
+
+    /**
+     * Invalidate every batch in flight. Called from `disable()`, after
+     * `cancelRunningSims` — cancelling makes the in-flight sim reject promptly,
+     * and this makes what it unwinds into a no-op.
+     * @returns {number} The new epoch
+     */
+    endSimEpoch() {
+        this._simEpoch = this.simEpoch() + 1;
+        return this._simEpoch;
+    },
+
+    /**
      * Whether the batch in progress has been cancelled.
      * @returns {boolean}
      */
@@ -1207,6 +1236,7 @@ export const simCacheMethods = {
         if (this.simRunning) return;
         this.simRunning = true;
         this.beginSimBatch();
+        const epoch = this.simEpoch();
         // The Automation tab's own precision and cap, not the floor map's —
         // this queue is what fills the per-room table's cached badges
         const simOptions = this.automationSimOptions();
@@ -1214,11 +1244,11 @@ export const simCacheMethods = {
         const retry = [];
         try {
             while (this.simQueue.length > 0) {
-                if (this.simCancelled()) break;
+                if (this.simCancelled() || this.simEpoch() !== epoch) break;
                 const { monsterHrid, roomLevel, badge, attempt = 0 } = this.simQueue.shift();
                 if (!badge.isConnected) continue;
                 const result = await this.computeCombatClear(monsterHrid, roomLevel, simOptions);
-                if (result?.cancelled) break;
+                if (result?.cancelled || this.simEpoch() !== epoch) break;
                 if (!badge.isConnected) continue;
 
                 // A failed run is not a 0% clear. It means the sim's inputs were
@@ -1238,12 +1268,19 @@ export const simCacheMethods = {
                 this.updateBadge(badge, result, roomLevel);
             }
         } finally {
-            this.simRunning = false;
-            // The queue draining is the end of a search; land its results now
-            // rather than a flush window later
-            this._flushCombatCache();
-            this.refreshAutomationRunningState?.();
-            if (retry.length > 0 && !this.simCancelled()) this._scheduleSimRetry(retry);
+            // Only the live batch owns this state. A loop torn down mid-flight
+            // would otherwise clear a flag the *next* character's loop had
+            // already claimed, flush an emptied cache map over that character's
+            // persisted entries, and re-arm the retry timer `disable()` had just
+            // cancelled — a queue restarting itself seconds after teardown.
+            if (this.simEpoch() === epoch) {
+                this.simRunning = false;
+                // The queue draining is the end of a search; land its results now
+                // rather than a flush window later
+                this._flushCombatCache();
+                this.refreshAutomationRunningState?.();
+                if (retry.length > 0 && !this.simCancelled()) this._scheduleSimRetry(retry);
+            }
         }
     },
 

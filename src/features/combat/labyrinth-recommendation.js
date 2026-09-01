@@ -278,6 +278,7 @@ export const recommendationMethods = {
         if (this.recommendRunning) return;
         this.recommendRunning = true;
         this.beginSimBatch();
+        const epoch = this.simEpoch();
         this.refreshAutomationRunningState();
         this.recommendations.clear();
         // The combat cache is deliberately kept. A search run does not make a
@@ -313,24 +314,32 @@ export const recommendationMethods = {
             for (const { roomHrid, isSkill } of rooms) {
                 // Cancelling a batch has to stop the queue of rooms behind the
                 // one being simulated, not only that room's sim
-                if (this.simCancelled()) break;
+                if (this.simCancelled() || this.simEpoch() !== epoch) break;
                 if (isSkill) {
                     const threshold = this.findRecommendedThreshold(roomHrid, targetRate);
                     this.recommendations.set(roomHrid, { threshold });
                 } else {
                     this.refreshAutomationRunningState(completed + 1, totalRooms);
                     const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
-                    if (this.simCancelled()) break;
+                    if (this.simCancelled() || this.simEpoch() !== epoch) break;
                     this.recommendations.set(roomHrid, { threshold });
                 }
                 completed++;
             }
         } finally {
-            this.recommendRunning = false;
-            this.refreshAutomationRunningState();
+            // Nothing here belongs to a run the feature was torn down under: the
+            // flag has already been cleared by `disable()` and reclaimed by the
+            // arriving character, and the button is that character's button.
+            if (this.simEpoch() === epoch) {
+                this.recommendRunning = false;
+                this.refreshAutomationRunningState();
+            }
         }
         // Whatever the run did settle stays on screen — a cancelled batch keeps
-        // the rooms it got through rather than throwing the work away
+        // the rooms it got through rather than throwing the work away. A torn
+        // down one has nothing on screen to keep: drawing here would paint this
+        // character's thresholds onto the next one's table.
+        if (this.simEpoch() !== epoch) return;
         this.injectRecommendationBadges();
     },
 

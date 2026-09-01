@@ -591,3 +591,85 @@ describe('stale rooms', () => {
         expect(ctx.recomputeCombatSims).not.toHaveBeenCalled();
     });
 });
+
+/**
+ * `disable()` cancels the batch and then bumps the epoch. The loop still
+ * unwinding belongs to the character that has gone: commit 0b014165 closed one
+ * door into this (an untracked catch-up timer surviving teardown) and 844ae643
+ * another (a flush timer writing `entries: []` over the arriving character's
+ * cache). The queue's own `finally` re-armed both.
+ */
+describe('a sim queue torn down mid-flight', () => {
+    /** The mixin's `this`, with the teardown a character switch performs */
+    const teardownContext = () => {
+        const flushes = [];
+        const ctx = {
+            ...simCacheMethods,
+            flushes,
+            attempts: [],
+            drawn: [],
+            simQueue: [],
+            simRunning: false,
+            combatCache: new Map(),
+            _combatCacheMeta: new Map(),
+            _snapshotContentFingerprint: () => 'fp',
+            getLabyrinthLoadoutId: () => 0,
+            _flushCombatCache: () => flushes.push(true),
+            updateBadge: (badge, result) => ctx.drawn.push([badge, result]),
+            computeCombatClear: async (monsterHrid) => {
+                ctx.attempts.push(monsterHrid);
+                // The character switch lands inside the first room's sim
+                ctx.disable();
+                return { failed: true, clearChance: 0, expectedSeconds: Infinity };
+            },
+            // Exactly what labyrinth-clear-rate's disable() does to this state
+            disable() {
+                ctx.cancelRunningSims();
+                ctx.endSimEpoch();
+                ctx.simQueue = [];
+                ctx.simRunning = false;
+                ctx.combatCache.clear();
+                ctx._combatCacheMeta.clear();
+            },
+        };
+        return ctx;
+    };
+
+    const badge = () => ({ isConnected: true, textContent: '...' });
+
+    test('nothing is flushed, retried, or re-drawn after the switch', async () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = teardownContext();
+            ctx.queueCombatSim('/monsters/imp', 200, badge());
+            ctx.queueCombatSim('/monsters/imp', 220, badge());
+
+            await ctx.processSimQueue();
+            await vi.advanceTimersByTimeAsync(2500 * 10);
+
+            // One room simulated, the rest of the batch dropped
+            expect(ctx.attempts).toHaveLength(1);
+            expect(ctx.drawn).toHaveLength(0);
+            // The flush would rebuild the stored list from the map disable()
+            // just emptied, over the arriving character's persisted entries
+            expect(ctx.flushes).toHaveLength(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the stale loop never clears the flag the next run owns', async () => {
+        const ctx = teardownContext();
+        const teardown = ctx.disable;
+        ctx.disable = () => {
+            teardown();
+            // The arriving character's own queue starts up
+            ctx.simRunning = true;
+        };
+        ctx.queueCombatSim('/monsters/imp', 200, badge());
+
+        await ctx.processSimQueue();
+
+        expect(ctx.simRunning).toBe(true);
+    });
+});

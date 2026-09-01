@@ -511,8 +511,21 @@ class LabyrinthClearRate {
             // The fight record is one character's; dropping it here is what makes
             // the next load read it back under whichever character is then current
             this.forgetOutcomes();
+            // Teardown has to reach the work already in flight, not just the
+            // work queued behind it. `cancelRunningSims` terminates the sim
+            // running right now (its promise rejects with 'Cancelled') and
+            // disarms the pending badge retry; `endSimEpoch` fences whatever is
+            // still unwinding, so a loop resuming after this point cannot clear
+            // the arriving character's flags, re-arm the flush or retry timers,
+            // or draw a badge onto the board that replaced this one.
+            this.cancelRunningSims();
+            this.endSimEpoch();
             this.simQueue = [];
             this.simRunning = false;
+            // Left true, its own re-entrancy guard refuses every later press of
+            // the Calculate button — the button silently does nothing until a
+            // page reload.
+            this.tileCalcRunning = false;
             this.recommendations.clear();
             this.recommendRunning = false;
             this._settingsFingerprint = null;
@@ -3037,6 +3050,7 @@ class LabyrinthClearRate {
 
         this.tileCalcRunning = true;
         this.beginSimBatch();
+        const epoch = this.simEpoch();
         this.syncTileCalcButton(0, total);
         this.setTileStatus('');
         this.setTileProgress(0);
@@ -3062,12 +3076,12 @@ class LabyrinthClearRate {
             for (const target of combatTargets) {
                 // Between rooms as well as during one: cancelling an uncapped
                 // batch has to stop the queue, not just the fight in flight
-                if (this.simCancelled()) {
+                if (this.simCancelled() || this.simEpoch() !== epoch) {
                     cancelled = true;
                     break;
                 }
                 const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel, { uncapped });
-                if (result?.cancelled || this.simCancelled()) {
+                if (result?.cancelled || this.simCancelled() || this.simEpoch() !== epoch) {
                     cancelled = true;
                     break;
                 }
@@ -3095,6 +3109,9 @@ class LabyrinthClearRate {
             }
 
             if (cancelled) {
+                // Torn down rather than stopped: the status line and the
+                // fingerprint belong to a character already switched away from
+                if (this.simEpoch() !== epoch) return;
                 // A partial pass is not a settled one: leave the fingerprint
                 // unset so the rooms that never ran are picked up next time,
                 // and leave every badge already drawn exactly where it is.
@@ -3127,8 +3144,13 @@ class LabyrinthClearRate {
             console.error('[LabyrinthClearRate] Tile calculation failed:', error);
             this.setTileStatus('Failed');
         } finally {
-            this.tileCalcRunning = false;
-            this.syncTileCalcButton();
+            // A pass the feature was torn down under owns neither the flag nor
+            // the button: `disable()` cleared the first, and the second belongs
+            // to whatever floor is on screen now.
+            if (this.simEpoch() === epoch) {
+                this.tileCalcRunning = false;
+                this.syncTileCalcButton();
+            }
         }
     }
 

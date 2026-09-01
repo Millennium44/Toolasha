@@ -3898,3 +3898,110 @@ describe('the build fingerprint', () => {
         expect(gearChangedSince(stored, labyrinthClearRate._snapshotContentFingerprint(), true)).toBe(true);
     });
 });
+
+/**
+ * A character switch tears the feature down while a sim batch is mid-flight.
+ * Everything the batch would otherwise do on its way out belongs to the
+ * character that has already gone: the flags the arriving character's own run
+ * has since claimed, the timers `disable()` just cancelled, and the badges it
+ * would draw onto a board that is no longer the one it was simulating.
+ */
+describe('a teardown mid-sim', () => {
+    beforeEach(() => {
+        cancelSpy.fn.mockClear();
+        document.body.innerHTML = '';
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._simCancelRequested = false;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.simQueue = [];
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._simCancelRequested = false;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.simQueue = [];
+    });
+
+    /** Two combat rooms on a one-row floor, with the cells the tile pass needs */
+    const twoRoomFloor = () => {
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [
+                { monsterHrid: '/monsters/imp', recommendedLevel: 100, isCleared: false },
+                { monsterHrid: '/monsters/imp', recommendedLevel: 120, isCleared: false },
+            ],
+        ];
+    };
+
+    test('the Calculate button still works after a character switch', () => {
+        // The guard is the button's own: left true by teardown, every later
+        // press is refused in silence — no error, no feedback, nothing happens
+        labyrinthClearRate.tileCalcRunning = true;
+
+        labyrinthClearRate.disable();
+
+        expect(labyrinthClearRate.tileCalcRunning).toBe(false);
+    });
+
+    test('teardown stops the sim in flight, not just the queue behind it', () => {
+        labyrinthClearRate.simQueue = [{ monsterHrid: '/monsters/imp', roomLevel: 200, badge: null }];
+
+        labyrinthClearRate.disable();
+
+        expect(cancelSpy.fn).toHaveBeenCalled();
+        expect(labyrinthClearRate.simQueue).toHaveLength(0);
+    });
+
+    test('a floor calculation torn down mid-room leaves the next run’s state alone', async () => {
+        twoRoomFloor();
+        const spy = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            // The character switch lands inside the first room's sim
+            labyrinthClearRate.disable();
+            // ...and the arriving character starts a calculation of its own
+            labyrinthClearRate.tileCalcRunning = true;
+            return { clearChance: 0.5, expectedSeconds: 10 };
+        });
+
+        await labyrinthClearRate.runTileCalculation();
+
+        // The stale pass simulated one room and stopped, and its `finally` did
+        // not clear the flag the arriving character's run now owns
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(labyrinthClearRate.tileCalcRunning).toBe(true);
+        spy.mockRestore();
+        labyrinthClearRate.tileCalcRunning = false;
+    });
+
+    test('a recommend run torn down mid-room draws nothing onto the new board', async () => {
+        const cell = document.createElement('div');
+        cell.className = 'LabyrinthPanel_skipThreshold_abc';
+        cell.setAttribute('data-hrid', '/monsters/imp');
+        document.body.appendChild(cell);
+        const extract = vi
+            .spyOn(labyrinthClearRate, 'extractRoomHrid')
+            .mockImplementation((el) => el.getAttribute('data-hrid'));
+        const inject = vi.spyOn(labyrinthClearRate, 'injectRecommendationBadges').mockImplementation(() => {});
+        const search = vi.spyOn(labyrinthClearRate, 'findRecommendedThresholdCombat').mockImplementation(async () => {
+            labyrinthClearRate.disable();
+            return 5;
+        });
+
+        await labyrinthClearRate.runRecommendations();
+
+        expect(inject).not.toHaveBeenCalled();
+        search.mockRestore();
+        inject.mockRestore();
+        extract.mockRestore();
+    });
+});
