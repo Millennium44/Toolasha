@@ -462,7 +462,7 @@ class SyncManager {
         // "wedged" shape as the dialog above, just without a dialog to point at.
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull');
 
-        const { merged, complete, failed, applied } = await applyPayload(payload);
+        const { merged, mergeFailed, complete, failed, applied } = await applyPayload(payload);
 
         // A pull that wrote nothing must not move the stamp. Remembering the
         // remote's `exportedAt` after a failed apply makes every later pull
@@ -496,14 +496,24 @@ class SyncManager {
         const combined = merged?.length
             ? ` ${merged.length} ${merged.length === 1 ? 'record was' : 'records were'} combined rather than replaced.`
             : '';
+        // A record whose fold threw took the remote copy whole, which is this
+        // device's entries for it gone. The pull still succeeded, so this is a
+        // sentence rather than an error — but an unqualified "records were
+        // combined" over it would be a claim about data that was in fact
+        // overwritten.
+        const notCombined = mergeFailed?.length
+            ? ` ${mergeFailed.length} could not be combined and took the downloaded copy ` +
+              `(${mergeFailed.map((entry) => entry.label).join(', ')}).`
+            : '';
         // Not politeness: the stores this pull replaced stop accepting writes
         // until the reload (see `storage.finishRestore`), because anything this
         // session still holds in memory is the pre-pull copy and writing it
         // back would undo the pull. Saying so is the difference between a
         // reload the player chooses and changes they lose without being told.
-        showToast(`Synced from GitHub.${combined} Reload now — changes made before reloading will not be kept.`, {
-            duration: 0,
-        });
+        showToast(
+            `Synced from GitHub.${combined}${notCombined} Reload now — changes made before reloading will not be kept.`,
+            { duration: 0, kind: notCombined ? 'warn' : 'info' }
+        );
 
         // The union only exists on this device until it is sent up. Pushing it
         // now is what stops the other device pulling the pre-merge copy back

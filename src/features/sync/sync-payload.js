@@ -153,11 +153,20 @@ export async function buildPayloadJSON(scope = 'settings') {
  * from the stale base is then written straight back over the entry that just
  * landed. See {@link applyPayload}.
  *
+ * A merge that throws is not fatal to the pull — the key falls back to the
+ * whole-key write it would have had anyway — but it is not nothing either: this
+ * device's entries for that record are the ones being discarded, and a pull that
+ * reports plain success over it tells the player their histories were combined
+ * when one of them was overwritten. So the failures come back beside the
+ * successes, for the caller to say so.
+ *
  * @param {Object} payload - Parsed payload; its store values are mutated in place
- * @returns {Promise<Array<{store: string, key: string, label: string}>>} What was combined
+ * @returns {Promise<{merged: Array<{store: string, key: string, label: string}>,
+ *   failed: Array<{store: string, key: string, label: string}>}>} What was combined, and what could not be
  */
 async function mergeLocalHistories(payload) {
     const merged = [];
+    const failed = [];
 
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
@@ -173,11 +182,12 @@ async function mergeLocalHistories(payload) {
                 merged.push({ store: storeName, key, label: registration.label });
             } catch (error) {
                 console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
+                failed.push({ store: storeName, key, label: registration.label });
             }
         }
     }
 
-    return merged;
+    return { merged, failed };
 }
 
 /**
@@ -198,8 +208,9 @@ async function mergeLocalHistories(payload) {
  *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
  * @returns {Promise<{restored: Record<string, number>, failed: Array<Object>, complete: boolean,
- *   merged: Array<Object>, exportedAt: string|null, applied: string}>}
- *   What landed, whether all of it did, and the payload text as actually applied
+ *   merged: Array<Object>, mergeFailed: Array<Object>, exportedAt: string|null, applied: string}>}
+ *   What landed, whether all of it did, which records could not be combined, and
+ *   the payload text as actually applied
  */
 export async function applyPayload(json) {
     const payload = JSON.parse(json);
@@ -230,7 +241,7 @@ export async function applyPayload(json) {
     await storage.beginRestore?.();
 
     try {
-        const merged = await mergeLocalHistories(payload);
+        const { merged, failed: mergeFailed } = await mergeLocalHistories(payload);
 
         // What is remembered as "the state of this device" has to be what was
         // actually written. `mergeLocalHistories` (and the settings fix-ups
@@ -244,7 +255,7 @@ export async function applyPayload(json) {
         const applied = rewrote ? JSON.stringify(payload) : json;
 
         const { restored, failed, complete } = await importEverything(payload);
-        return { restored, failed, complete, merged, exportedAt: payload?.exportedAt ?? null, applied };
+        return { restored, failed, complete, merged, mergeFailed, exportedAt: payload?.exportedAt ?? null, applied };
     } finally {
         // `importEverything` ends the hold itself on its way out; this covers
         // a throw between the flush above and reaching it, which would

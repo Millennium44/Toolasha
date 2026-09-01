@@ -351,6 +351,40 @@ describe('applyPayload merges additive records', () => {
         off();
     });
 
+    test('a merge that throws is reported, because this device’s copy of that record is gone', async () => {
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: () => {
+                throw new Error('bad fold');
+            },
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_char: ['local'] };
+
+        const result = await applyPayload(payloadWith('dungeonRuns', 'run_char', ['remote']));
+
+        // Saying nothing would report a pull that overwrote a history as one
+        // that combined it
+        expect(result.mergeFailed).toEqual([{ store: 'dungeonRuns', key: 'run_char', label: 'fake' }]);
+        off();
+    });
+
+    test('nothing is reported as failed when every fold worked', async () => {
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...local, ...incoming],
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_char: ['local'] };
+
+        const result = await applyPayload(payloadWith('dungeonRuns', 'run_char', ['remote']));
+
+        expect(result.mergeFailed).toEqual([]);
+        off();
+    });
+
     test('the treasure tally takes the larger count of each side, not the remote one', async () => {
         storeState.stores.settings.treasureTally_char = {
             '/items/purples_gift': { opened: 40, loot: { '/items/x': 10, '/items/local_only': 3 } },

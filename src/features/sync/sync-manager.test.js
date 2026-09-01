@@ -68,6 +68,7 @@ vi.mock('./sync-payload.js', () => ({
             failed: payload.failed ?? [],
             complete: payload.complete ?? true,
             merged: payload.merged ?? [],
+            mergeFailed: payload.mergeFailed ?? [],
             exportedAt: null,
             applied: payload.appliedText ?? json,
         };
@@ -122,6 +123,7 @@ beforeEach(() => {
     payload.applied = undefined;
     payload.appliedText = undefined;
     payload.merged = [];
+    payload.mergeFailed = [];
     payload.complete = true;
     payload.failed = [];
     gist.found = null;
@@ -397,6 +399,23 @@ describe('pull', () => {
 
         expect(dialog.calls).toBe(0);
         expect(toasts.at(-1).message).toContain('2 records were combined');
+    });
+
+    test('a record whose fold threw is named, not folded into the success line', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.merged = [{ store: 'settings', key: 'treasureTally_char', label: 'Treasure tally' }];
+        payload.mergeFailed = [{ store: 'xpHistory', key: 'xpHistory_char', label: 'Skill XP history' }];
+
+        await syncManager.pull();
+
+        // The remote copy of that record overwrote this device's, which is the
+        // one thing a merging pull exists to avoid — saying "1 record was
+        // combined" and nothing else would report it as having worked
+        const toast = toasts.at(-1);
+        expect(toast.message).toContain('Skill XP history');
+        expect(toast.message).toContain('could not be combined');
+        expect(toast.kind).toBe('warn');
     });
 
     test('a first sync on a fresh device applies without asking', async () => {
