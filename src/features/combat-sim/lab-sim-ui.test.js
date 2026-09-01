@@ -2201,10 +2201,11 @@ describe('guild shrine targets are asked for one shrine at a time', () => {
         expect(grid().textContent).not.toContain('Rarity');
     });
 
-    test('and it says a blank box skips the shrine, in the House grid’s words', () => {
+    test('and it states the combat sim grid’s contract: blank steps once, 0 skips', () => {
         openGrid();
 
-        expect(grid().textContent).toContain('blank or ≤ current level skips the shrine');
+        expect(grid().textContent).toContain('blank or ≤ current level evaluates one level up');
+        expect(grid().textContent).toContain('0 skips the shrine');
         expect(grid().textContent).toContain('used instead of the Lv box while open');
     });
 
@@ -2240,11 +2241,51 @@ describe('guild shrine targets are asked for one shrine at a time', () => {
         expect(ui._getShrineTargets()).toEqual({ [FORCE]: 20 });
     });
 
-    test('and a box emptied by hand drops that shrine out of the ask', () => {
+    // The combat sim's grid moved to "blank = one level up, 0 = skip" in
+    // 227f26b9 and this one stayed on the old reading, so two grids in the same
+    // panel family disagreed about what an empty box meant — clearing one here
+    // dropped the shrine instead of stepping it once.
+    test('a box emptied by hand asks for one level up, not a skip', () => {
         openGrid();
         grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).value = '';
 
-        expect(ui._getShrineTargets()).toBeNull();
+        expect(ui._getShrineTargets()).toEqual({ [FORCE]: -1 });
+    });
+
+    test('an explicit 0 is what drops the shrine now', () => {
+        openGrid();
+        grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).value = '0';
+
+        expect(ui._getShrineTargets()).toEqual({ [FORCE]: 0 });
+    });
+
+    test('the boxes accept a 0, which the number input used to refuse', () => {
+        openGrid();
+
+        expect(grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).getAttribute('min')).toBe('0');
+    });
+
+    test('a shrine already at its cap stays out of the map rather than sending -1', () => {
+        openGrid();
+
+        expect(ui._getShrineTargets()).not.toHaveProperty(AEGIS);
+    });
+
+    test('the advisor honours both readings from this grid', () => {
+        const dto = { equipment: {}, guildShrineLevels: { [FORCE]: 4, [AEGIS]: 2 } };
+        const candidates = ui._extraDimensionCandidates(
+            ['guild_shrine'],
+            dto,
+            { itemDetailMap: {} },
+            {
+                // Blank on Force, zeroed on Aegis
+                guildShrineTargets: { [FORCE]: -1, [AEGIS]: 0 },
+            }
+        );
+
+        expect(Object.fromEntries(candidates.map((candidate) => [candidate.buffHrid, candidate.upgradeLevel]))).toEqual(
+            { [FORCE]: 5 }
+        );
     });
 
     test('the map reaches the candidate generator, one level per shrine', () => {

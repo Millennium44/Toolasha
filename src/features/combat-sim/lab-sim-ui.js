@@ -3151,13 +3151,14 @@ class LabSimUI {
 
         grid.innerHTML =
             '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
-            'or ≤ current level skips the shrine; used instead of the Lv box while open):</span>' +
+            'or ≤ current level evaluates one level up; <b>0 skips the shrine</b>; used instead of the Lv ' +
+            'box while open):</span>' +
             shrines
                 .map(
                     (shrine) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${shrine.name} (${shrine.level})</label>
-                    <input type="number" min="1" max="${shrine.maxLevel}" data-lab-shrine-target="${shrine.buffHrid}"
+                    <input type="number" min="0" max="${shrine.maxLevel}" data-lab-shrine-target="${shrine.buffHrid}"
                         value="${
                             shrine.level >= shrine.maxLevel
                                 ? ''
@@ -3173,6 +3174,19 @@ class LabSimUI {
 
     /**
      * Per-shrine target levels, or null when the grid is closed.
+     *
+     * Three readings, the same contract the combat sim's grid sends and
+     * `generateGuildShrineCandidates` reads off `perBuffTargets`: a level buys
+     * up to it, an explicit **0 drops that shrine** from the run, and a blank
+     * box sends -1 for "one level up". This grid used to emit positives only
+     * and leave a blank box out of the map, which the advisor reads as a skip —
+     * so two grids in the same panel family disagreed about what an empty box
+     * meant, and clearing one here quietly dropped the shrine instead of
+     * stepping it once.
+     *
+     * A box disabled because the buff is already maxed is left out of the map
+     * entirely, which the advisor also reads as a skip.
+     *
      * @returns {Object|null} buffHrid → target level
      * @private
      */
@@ -3181,8 +3195,13 @@ class LabSimUI {
         if (!grid || grid.style.display === 'none') return null;
         const targets = {};
         grid.querySelectorAll('[data-lab-shrine-target]').forEach((input) => {
+            if (input.disabled) return;
             const value = parseInt(input.value, 10);
-            if (Number.isFinite(value) && value > 0) {
+            if (!Number.isFinite(value)) {
+                targets[input.dataset.labShrineTarget] = -1;
+            } else if (value <= 0) {
+                targets[input.dataset.labShrineTarget] = 0;
+            } else {
                 targets[input.dataset.labShrineTarget] = Math.min(MAX_GUILD_SHRINE_LEVEL, value);
             }
         });

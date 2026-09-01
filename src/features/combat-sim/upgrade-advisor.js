@@ -4253,7 +4253,9 @@ function explainLabCandidateCost(candidate, gameData) {
  * @param {boolean} [params.auraSwapsOnly] - Restrict ability swaps to the build guide's
  *   aura options and the archetype's signature ability
  * @param {number} [params.guildShrineTargetLevel] - One level for every shrine buff
- * @param {Object} [params.guildShrineTargets] - buffHrid → target level; takes precedence
+ * @param {Object} [params.guildShrineTargets] - buffHrid → target level; takes precedence.
+ *   Positive buys up to that level, 0 skips the shrine, negative means one level up, and a
+ *   buff absent from the map is skipped
  * @param {Object} [params.tokenLevels] - buffKey → level the token rows step up from,
  *   matching whatever `labyrinthCombatBuffs` was built out of
  * @param {Function} onProgress - Called with { current, total, description }
