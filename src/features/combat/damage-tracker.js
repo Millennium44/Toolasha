@@ -64,8 +64,10 @@ let names = {};
 let castLogs = {};
 
 /**
- * Player index → the kit and sheet `new_battle` stated for the slot: the
- * equipped abilities and the combat stats (weapon style, element, threat).
+ * Player index → the kit and sheet stated for the slot — by `new_battle`, and
+ * by `battle_unit_fetched` when someone's Battle Info is opened mid-run: the
+ * equipped abilities and the combat stats (weapon style, element, threat, and
+ * the weapon passives the class inference reads the wielded weapon off).
  * What answers before anyone has cast — an auto-attacker never will, and
  * their weapon still says what they are. Reset with the run.
  */
@@ -266,9 +268,13 @@ function noteCasts(players) {
 /**
  * The role each slot appears to be playing, from its casts this run.
  * @param {Object} [abilityDetailMap] - Game data; read from the client data by default
+ * @param {Object} [itemDetailMap] - Game data, for the weapon-passive rule; read from the client by default
  * @returns {Object} Player index → verdict from `inferClass`, absent where nothing supports one
  */
-export function runClasses(abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {}) {
+export function runClasses(
+    abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {},
+    itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {}
+) {
     const out = {};
     // The one slot whose weapon need not be guessed: this character's own
     const ownName = dataManager.getCurrentCharacterName?.() || null;
@@ -281,7 +287,8 @@ export function runClasses(abilityDetailMap = dataManager.getInitClientData?.()?
                 stats: sheets[index]?.stats || null,
                 weaponHrid: ownWeapon && names[index] === ownName ? ownWeapon : null,
             },
-            abilityDetailMap
+            abilityDetailMap,
+            itemDetailMap
         );
         if (verdict) out[index] = verdict;
     }
@@ -482,6 +489,7 @@ function seedNames() {
 
 let onNewBattle = null;
 let onBattleUpdated = null;
+let onUnitFetched = null;
 
 export default {
     name: 'Damage Tracker',
@@ -691,14 +699,43 @@ export default {
             }
         };
 
+        onUnitFetched = (message) => {
+            try {
+                // Clicking a unit's Battle Info fetches its full sheet — the
+                // one message that states another player's weapon (as the
+                // passive and style on `combatStats`) mid-run, where
+                // `new_battle` may have carried nothing for them. Matched by
+                // name onto the current slots; a monster's sheet has no
+                // `character` and matches nobody.
+                const unit = message?.unit;
+                const name = unit?.character?.name;
+                const stats = unit?.combatDetails?.combatStats;
+                if (!name || !stats || typeof stats !== 'object') return;
+
+                const abilities = unit.combatAbilities;
+                const kit = Array.isArray(abilities)
+                    ? abilities.filter((entry) => entry?.abilityHrid).map((entry) => ({ hrid: entry.abilityHrid }))
+                    : null;
+                for (const [index, slotName] of Object.entries(names)) {
+                    if (slotName !== name) continue;
+                    sheets[index] = { kit: kit ?? sheets[index]?.kit ?? null, stats };
+                }
+            } catch (error) {
+                console.error('[DamageTracker] Reading a fetched unit sheet failed:', error);
+            }
+        };
+
         webSocketHook.on('new_battle', onNewBattle);
         webSocketHook.on('battle_updated', onBattleUpdated);
+        webSocketHook.on('battle_unit_fetched', onUnitFetched);
     },
     cleanup: () => {
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
+        if (onUnitFetched) webSocketHook.off('battle_unit_fetched', onUnitFetched);
         onNewBattle = null;
         onBattleUpdated = null;
+        onUnitFetched = null;
         names = {};
         monsters = {};
         monsterHealth = {};

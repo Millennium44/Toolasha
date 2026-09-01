@@ -28,11 +28,11 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 /** Which character the tab is showing; the fallback key is built from it */
-const game = vi.hoisted(() => ({ characterId: null }));
+const game = vi.hoisted(() => ({ characterId: null, items: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ abilityDetailMap: {} }),
+        getInitClientData: () => ({ abilityDetailMap: {}, itemDetailMap: game.items }),
         getCurrentCharacterId: () => game.characterId,
     },
 }));
@@ -46,6 +46,7 @@ const {
     normalizeRoster,
     mergeStoredSessions,
     captureFor,
+    classSheet,
     expectedAuraHrids,
     aggregateAuras,
     auraCoverage,
@@ -101,6 +102,7 @@ beforeEach(() => {
     disk.saved = null;
     disk.keys = {};
     game.characterId = null;
+    game.items = {};
 });
 
 describe('the key before the guild name is known', () => {
@@ -869,6 +871,74 @@ describe('class tags from the ability stream', () => {
         expect(byName.Bob.actual.key).toBe('healer');
         expect(byName.Cara.agree).toBeNull();
         expect(state.classChecks).toEqual({ agree: 1, disagree: 1, untested: 1 });
+    });
+
+    test('the captured sheet keeps the weapon passives, and drops a sheet that says nothing', () => {
+        const kept = classSheet({ threat: 12, pierce: 0.3, curse: 0, criticalRate: 0.2 });
+        expect(kept).toMatchObject({ threat: 12, pierce: 0.3 });
+        // A zero passive is no passive, and an unrelated stat is nobody's business
+        expect(kept.curse).toBeUndefined();
+        expect(kept.criticalRate).toBeUndefined();
+
+        // A passive alone is worth keeping — it is the whole crossbow fix
+        expect(classSheet({ pierce: 0.3 })).toMatchObject({ pierce: 0.3 });
+        expect(classSheet({ criticalRate: 0.2 })).toBeNull();
+    });
+
+    test('the crossbow case: the fetched sheet’s pierce passive outranks the melee kit', () => {
+        // The game's own item data says what pierce means — a ranged weapon's
+        // passive — and the reported failure was this exact unit: a crossbow
+        // in hand, melee abilities slotted, tagged Melee off the kit
+        game.items = {
+            '/items/test_crossbow': {
+                equipmentDetail: {
+                    type: '/equipment_types/two_hand',
+                    combatStats: {
+                        combatStyleHrids: ['/combat_styles/ranged'],
+                        damageType: '/damage_types/physical',
+                        pierce: 0.3,
+                    },
+                },
+            },
+        };
+        const MAP = {
+            ...STREAM_GAME,
+            '/abilities/cleave': {
+                name: 'Cleave',
+                abilityEffects: [
+                    {
+                        effectType: '/ability_effect_types/damage',
+                        combatStyleHrid: '/combat_styles/slash',
+                        damageType: '/damage_types/physical',
+                    },
+                ],
+            },
+        };
+        const meleeKit = [{ hrid: '/abilities/cleave' }];
+
+        // Never fetched: the kit is all there is, and the old answer stands
+        const unfetched = session(['Alice']);
+        unfetched.noteTrialStart(NOW);
+        unfetched.recordCapture(snap('Alice', 1, meleeKit), { at: NOW });
+        expect(unfetched.state(MAP).participants[0].classTag.key).toBe('melee');
+
+        // Fetched: the Battle Info sheet carries the weapon's own passive
+        const fetched = session(['Alice']);
+        fetched.noteTrialStart(NOW);
+        fetched.recordCapture(
+            snap('Alice', 1, meleeKit, {
+                stats: {
+                    pierce: 0.3,
+                    threat: 100,
+                    combatStyleHrids: ['/combat_styles/ranged'],
+                    damageType: '/damage_types/physical',
+                },
+            }),
+            { at: NOW }
+        );
+        const tag = fetched.state(MAP).participants[0].classTag;
+        expect(tag.key).toBe('ranged');
+        expect(tag.basis).toContain('pierce');
     });
 
     test('a cast for a name with no session in hand starts no session', () => {

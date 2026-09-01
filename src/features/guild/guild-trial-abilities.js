@@ -51,7 +51,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
-import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
+import { inferClass, newCastLog, noteCast, WEAPON_PASSIVE_STATS } from '../../utils/class-inference.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
@@ -101,12 +101,17 @@ export function sessionStorageKey(guildName, characterId = null) {
 }
 
 /**
- * The three fields of a captured stat sheet that say anything about a role.
+ * The fields of a captured stat sheet that say anything about a role.
  *
  * Kept rather than the whole `combatStats` object because the session is
- * persisted and a sheet is forty numbers, thirty-nine of which are nobody's
- * business here. `threat` is the tank signal, the style and damage type are the
- * weapon's own answer for a player whose casts have never been streamed.
+ * persisted and a sheet is forty numbers, most of which are nobody's business
+ * here. `threat` is the tank signal, the style and damage type are the weapon's
+ * own answer for a player whose casts have never been streamed — and the
+ * weapon passives (pierce, curse, bloom and the rest of
+ * `WEAPON_PASSIVE_STATS`) are the weapon *itself* speaking: the sheet's fix
+ * for the crossbow wielder whose slotted melee abilities used to tag them
+ * Melee. Passives ride flat on the object, in the same keys `inferClass`
+ * reads them off a raw `combatStats`.
  *
  * @param {Object|null} stats - `combatDetails.combatStats` from a snapshot
  * @returns {{threat: number, combatStyleHrid: string|null, damageType: string|null}|null}
@@ -116,11 +121,19 @@ export function classSheet(stats) {
     const threat = Number(stats.threat);
     const style = stats.combatStyleHrid || stats.combatStyleHrids?.[0] || null;
     const damageType = stats.damageType || null;
-    if (!Number.isFinite(threat) && !style && !damageType) return null;
+
+    const passives = {};
+    for (const key of WEAPON_PASSIVE_STATS) {
+        const value = Number(stats[key]);
+        if (Number.isFinite(value) && value > 0) passives[key] = value;
+    }
+
+    if (!Number.isFinite(threat) && !style && !damageType && !Object.keys(passives).length) return null;
     return {
         threat: Number.isFinite(threat) ? threat : 0,
         combatStyleHrid: style,
         damageType,
+        ...passives,
     };
 }
 
@@ -755,7 +768,8 @@ class GuildTrialAbilities {
                 stats: row?.capture?.classStats || null,
                 partyThreat,
             },
-            abilityDetailMap
+            abilityDetailMap,
+            this._itemMap()
         );
     }
 
@@ -847,7 +861,8 @@ class GuildTrialAbilities {
         const guess = casts ? inferClass({ casts, partyThreat }, abilityDetailMap) : null;
         const actual = inferClass(
             { kit: row.capture.abilities || null, stats: row.capture.classStats || null, partyThreat },
-            abilityDetailMap
+            abilityDetailMap,
+            this._itemMap()
         );
         const agree = guess && actual ? guess.key === actual.key : null;
         return { guess, actual, agree };
@@ -988,6 +1003,11 @@ class GuildTrialAbilities {
     /** @returns {Object} The live ability data */
     _abilityMap() {
         return dataManager.getInitClientData?.()?.abilityDetailMap || {};
+    }
+
+    /** @returns {Object} The live item data, for the weapon-passive rule */
+    _itemMap() {
+        return dataManager.getInitClientData?.()?.itemDetailMap || {};
     }
 
     /**

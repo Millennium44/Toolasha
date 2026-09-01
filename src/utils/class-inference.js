@@ -25,6 +25,18 @@
  *    the kit declaring itself, which beats a number on a stat sheet.
  * 2. **An ally heal is a healer.** An `/ability_effect_types/heal` effect
  *    pointed at an ally. Self-heals do not count: every build life-steals.
+ * 2b. **The equipped weapon's own passive, when a stat sheet has been fetched.**
+ *    `battle_unit_fetched` (and `new_battle`) carry `combatStats` computed off
+ *    the unit's real equipment, and the signature weapon passives — pierce,
+ *    curse, bloom, ripple, blaze, mayhem, fury, weaken — appear there as
+ *    nonzero numbers only when the weapon that grants one is actually wielded.
+ *    Which passive belongs to which combat style is not a list here: it is
+ *    derived from the game's own `itemDetailMap` ({@link weaponPassiveBuckets}),
+ *    so a passive is only trusted when every weapon carrying it agrees on a
+ *    bucket and no non-weapon equipment grants it. This outranks the ability
+ *    rules below because abilities are what the player *chose to slot*, while
+ *    the passive is what they *actually wield* — the reported failure was a
+ *    crossbow wielder tagged Melee off the melee abilities in their kit.
  * 3. **The modal damage style of what they actually cast or carry.** Magic
  *    splits again by the modal `damageType`, because in this game "mage"
  *    without an element says nothing about what the party is weak to — and the
@@ -88,6 +100,23 @@ const TANK_BUFFS = new Set([
 
 /** How many distinct ability hrids a verdict keeps as its evidence */
 export const MAX_EVIDENCE = 6;
+
+/**
+ * The `combatStats` fields that are weapon passives.
+ *
+ * Sourced from the game's own combat stat schema (the equipment stat list the
+ * bundled combat-sim engine ports verbatim from the game data —
+ * `features/combat-sim/engine/player.js`, `EQUIPMENT_STATS`): pierce and curse
+ * are the crossbow's and Cursed Bow's on-hits, bloom/ripple/blaze the nature,
+ * water and fire weapons', mayhem/fury/weaken the melee lines'. The list only
+ * says which keys are *worth looking up*; what each one means is derived from
+ * `itemDetailMap` in {@link weaponPassiveBuckets}, so a wrong or stale entry
+ * here yields no verdict rather than a wrong one.
+ */
+export const WEAPON_PASSIVE_STATS = ['mayhem', 'pierce', 'curse', 'fury', 'weaken', 'ripple', 'bloom', 'blaze'];
+
+/** The slots a weapon sits in; a passive read off anything else is not the weapon's */
+const WEAPON_SLOT_TYPES = new Set(['/equipment_types/main_hand', '/equipment_types/two_hand']);
 
 /**
  * How far above the party's baseline threat a sheet reading must sit before
@@ -265,6 +294,78 @@ export function bucketForStyle(style, element) {
     return MAGE_BY_ELEMENT[tail(element)] || CLASS_BUCKETS.mage;
 }
 
+/** The last `itemDetailMap` the passive table was derived from, and the table */
+let passiveBucketCache = { map: null, buckets: {} };
+
+/**
+ * What each weapon passive says about the wielder, from the game's own items.
+ *
+ * For every weapon in `itemDetailMap` (main-hand or two-hand) whose
+ * `equipmentDetail.combatStats` grants one of {@link WEAPON_PASSIVE_STATS}, the
+ * weapon's own combat style and damage type name a bucket — the crossbow's
+ * pierce reads ranged off the crossbow itself, the Blooming Trident's bloom
+ * reads magic/nature and lands in Healer by the same rule every nature caster
+ * does. Nothing is hardcoded about which passive means what, so a new tier or
+ * a renamed weapon reclassifies itself.
+ *
+ * A passive is dropped rather than guessed at when the data disagrees with the
+ * premise: granted by weapons of two different buckets, or granted by any
+ * non-weapon equipment (a charm's proc says nothing about the weapon in hand).
+ * The melee sub-style rides along when every carrier agrees on it, for the
+ * icon; buckets that agree while sub-styles differ keep the bucket and drop
+ * the sub-style.
+ *
+ * Cached against the identity of the map, exactly as the callers' other
+ * game-data digests are — one pass per client-data load.
+ *
+ * @param {Object|null} itemDetailMap - Game data
+ * @returns {Object<string, {key: string, label: string, short: string, style: string}>}
+ *   Passive stat key → the bucket it proves, only for passives the data makes unambiguous
+ */
+export function weaponPassiveBuckets(itemDetailMap) {
+    if (!itemDetailMap || typeof itemDetailMap !== 'object') return {};
+    if (passiveBucketCache.map === itemDetailMap) return passiveBucketCache.buckets;
+
+    const buckets = {};
+    const dropped = new Set();
+    for (const item of Object.values(itemDetailMap)) {
+        const equipment = item?.equipmentDetail;
+        const stats = equipment?.combatStats;
+        if (!stats || typeof stats !== 'object') continue;
+
+        const isWeapon = WEAPON_SLOT_TYPES.has(String(equipment.type || ''));
+        for (const passive of WEAPON_PASSIVE_STATS) {
+            if (!(Number(stats[passive]) > 0)) continue;
+            if (!isWeapon) {
+                // Some non-weapon grants this too, so a nonzero reading on a
+                // sheet no longer proves the weapon — the passive is out
+                dropped.add(passive);
+                continue;
+            }
+            const style = tail(stats.combatStyleHrids?.[0] || stats.combatStyleHrid);
+            const bucket = bucketForStyle(style, stats.damageType);
+            if (!bucket) {
+                dropped.add(passive);
+                continue;
+            }
+            const existing = buckets[passive];
+            if (existing && existing.key !== bucket.key) {
+                dropped.add(passive);
+                continue;
+            }
+            buckets[passive] = {
+                ...bucket,
+                // The sub-style survives only while every carrier agrees on it
+                style: existing && existing.style !== style ? '' : style,
+            };
+        }
+    }
+    for (const passive of dropped) delete buckets[passive];
+
+    passiveBucketCache = { map: itemDetailMap, buckets };
+    return buckets;
+}
+
 /**
  * What role the evidence says this player is playing.
  *
@@ -282,6 +383,8 @@ export function bucketForStyle(style, element) {
  *   party (e.g. the median of everyone else captured), used to tell a tank's threat apart from the
  *   baseline everybody's sheet shows. Omit when there is nothing to compare against yet.
  * @param {Object} [abilityDetailMap] - Game data
+ * @param {Object|null} [itemDetailMap] - Game data, for reading the weapon passives on a fetched
+ *   sheet ({@link weaponPassiveBuckets}). Omitted, the passive rule simply never fires.
  * @returns {{key: string, label: string, short: string, basis: string, evidence: string[],
  *   style: string, curse: boolean, weaponHrid: string|null}|null}
  *   The verdict, or null when nothing supports one. `style` is the melee sub-style
@@ -291,7 +394,8 @@ export function bucketForStyle(style, element) {
  */
 export function inferClass(
     { casts = null, kit = null, stats = null, weaponHrid = null, partyThreat = null } = {},
-    abilityDetailMap = {}
+    abilityDetailMap = {},
+    itemDetailMap = null
 ) {
     // The hrids the verdict may cite: what was watched first, and the captured
     // kit behind it. Deduplicated, because a captured ability that was also
@@ -300,11 +404,13 @@ export function inferClass(
     const kitHrids = (kit || []).map((entry) => String(entry?.hrid || '')).filter(Boolean);
     const evidence = [...new Set([...observed, ...kitHrids])].slice(0, MAX_EVIDENCE);
 
-    // A curse anywhere in what was watched or carried. Evidence is bounded, so
-    // the whole watched order is checked too — an early curse must not fall out
-    const curse = [...observed, ...kitHrids, ...Object.keys(casts?.counts || {})].some((hrid) =>
-        /curse/i.test(String(hrid))
-    );
+    // A curse anywhere in what was watched or carried, or on the sheet itself —
+    // `combatStats.curse` is the Cursed Bow's own passive, the strongest form
+    // of the same evidence. Evidence is bounded, so the whole watched order is
+    // checked too — an early curse must not fall out
+    const curse =
+        Number(stats?.curse) > 0 ||
+        [...observed, ...kitHrids, ...Object.keys(casts?.counts || {})].some((hrid) => /curse/i.test(String(hrid)));
     const sheetStyleTail = tail(stats?.combatStyleHrid || stats?.combatStyleHrids?.[0]);
 
     const verdict = (bucket, basis, style = '') =>
@@ -326,6 +432,21 @@ export function inferClass(
     //    a healer's filler damage is not what the party needs them for
     if (profiles.some((profile) => profile.healsAlly)) {
         return verdict(CLASS_BUCKETS.healer, 'an ally heal in the ability stream');
+    }
+
+    // 2b. The equipped weapon's own passive, read off a fetched stat sheet.
+    //     The abilities in a kit are what the player slotted; the passive is
+    //     what they wield — a crossbow wielder carrying melee abilities is
+    //     Ranged, and only the sheet knows it. Every nonzero passive the game
+    //     data can vouch for must agree on one bucket; a sheet that somehow
+    //     shows two different answers proves nothing and falls through
+    const passiveBuckets = weaponPassiveBuckets(itemDetailMap);
+    const passivesSeen = WEAPON_PASSIVE_STATS.filter(
+        (passive) => Number(stats?.[passive]) > 0 && passiveBuckets[passive]
+    );
+    if (passivesSeen.length && new Set(passivesSeen.map((passive) => passiveBuckets[passive].key)).size === 1) {
+        const chosen = passiveBuckets[passivesSeen[0]];
+        return verdict(chosen, `the equipped weapon's ${passivesSeen[0]} passive on the stat sheet`, chosen.style);
     }
 
     // 3. The modal style of the damaging casts, weighted by how often each

@@ -28,10 +28,33 @@ const ABILITIES = vi.hoisted(() => ({
     '/abilities/heal': {
         abilityEffects: [{ effectType: '/ability_effect_types/heal', targetType: 'ally' }],
     },
+    '/abilities/cleave': {
+        abilityEffects: [
+            {
+                effectType: '/ability_effect_types/damage',
+                combatStyleHrid: '/combat_styles/slash',
+                damageType: '/damage_types/physical',
+            },
+        ],
+    },
+}));
+
+/** Enough of the item map for a weapon passive to be resolved to its family */
+const ITEMS = vi.hoisted(() => ({
+    '/items/test_crossbow': {
+        equipmentDetail: {
+            type: '/equipment_types/two_hand',
+            combatStats: {
+                combatStyleHrids: ['/combat_styles/ranged'],
+                damageType: '/damage_types/physical',
+                pierce: 0.3,
+            },
+        },
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => ({ abilityDetailMap: ABILITIES }) },
+    default: { getInitClientData: () => ({ abilityDetailMap: ABILITIES, itemDetailMap: ITEMS }) },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -369,6 +392,46 @@ describe('the class read off a run', () => {
         const classes = runClasses();
         expect(classes['0']?.key).toBe('ranged');
         expect(classes['1']?.key).toBe('healer');
+    });
+
+    test('a fetched Battle Info sheet names the weapon, and its passive outranks the abilities', () => {
+        announce();
+        // Bob has only ever been seen swinging a melee ability — the reported
+        // failure shape: the crossbow wielder read as Melee off their kit
+        tick({ 1: { preparingAbilityHrid: '/abilities/cleave' } });
+        expect(runClasses()['1']?.key).toBe('melee');
+
+        // Opening his Battle Info fetches the real sheet, pierce and all
+        listeners.battle_unit_fetched({
+            unit: {
+                character: { name: 'Bob' },
+                combatDetails: {
+                    combatStats: {
+                        pierce: 0.3,
+                        combatStyleHrids: ['/combat_styles/ranged'],
+                        damageType: '/damage_types/physical',
+                    },
+                },
+                combatAbilities: [{ abilityHrid: '/abilities/cleave' }],
+            },
+        });
+
+        expect(runClasses()['1']?.key).toBe('ranged');
+        // Alice's slot is untouched by Bob's sheet
+        expect(runClasses()['0']).toBeUndefined();
+    });
+
+    test('a fetched monster sheet matches no slot and changes nothing', () => {
+        announce();
+        tick({ 0: { preparingAbilityHrid: '/abilities/fireball' } });
+
+        expect(() =>
+            listeners.battle_unit_fetched({
+                unit: { name: 'Eye', combatDetails: { combatStats: { pierce: 0.3 } } },
+            })
+        ).not.toThrow();
+        expect(() => listeners.battle_unit_fetched(null)).not.toThrow();
+        expect(runClasses()['0']?.key).toBe('fireMage');
     });
 
     test('a new run starts with no evidence', () => {

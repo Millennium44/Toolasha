@@ -7,6 +7,7 @@ import {
     inferClass,
     newCastLog,
     noteCast,
+    weaponPassiveBuckets,
 } from './class-inference.js';
 
 const damage = (style, damageType = '') => ({
@@ -303,5 +304,138 @@ describe('bucketForStyle', () => {
 
     test('a bare tail works as well as a full hrid', () => {
         expect(bucketForStyle('magic', 'fire')).toEqual(CLASS_BUCKETS.fireMage);
+    });
+});
+
+/**
+ * The weapon-passive rule, end to end: the mapping is derived from a synthetic
+ * `itemDetailMap` in the game's own shape, and the pinned case is the reported
+ * one — a crossbow wielder whose slotted melee abilities used to tag them
+ * Melee, until the fetched sheet's pierce passive said otherwise.
+ */
+const weapon = (slot, style, damageType, extra = {}) => ({
+    equipmentDetail: { type: slot, combatStats: { combatStyleHrids: [style], damageType, ...extra } },
+});
+
+const ITEMS = {
+    '/items/test_crossbow': weapon('/equipment_types/two_hand', '/combat_styles/ranged', '/damage_types/physical', {
+        pierce: 0.3,
+    }),
+    '/items/test_cursed_bow': weapon('/equipment_types/two_hand', '/combat_styles/ranged', '/damage_types/physical', {
+        curse: 0.3,
+    }),
+    '/items/test_blooming_trident': weapon(
+        '/equipment_types/two_hand',
+        '/combat_styles/magic',
+        '/damage_types/nature',
+        {
+            bloom: 0.2,
+        }
+    ),
+    '/items/test_rippling_trident': weapon('/equipment_types/two_hand', '/combat_styles/magic', '/damage_types/water', {
+        ripple: 0.2,
+    }),
+    '/items/test_blazing_trident': weapon('/equipment_types/two_hand', '/combat_styles/magic', '/damage_types/fire', {
+        blaze: 0.2,
+    }),
+    '/items/test_spear': weapon('/equipment_types/two_hand', '/combat_styles/stab', '/damage_types/physical', {
+        fury: 0.2,
+    }),
+    // Two weapons whose shared passive disagrees about the bucket: it proves nothing
+    '/items/test_mayhem_axe': weapon('/equipment_types/main_hand', '/combat_styles/slash', '/damage_types/physical', {
+        mayhem: 0.1,
+    }),
+    '/items/test_mayhem_wand': weapon('/equipment_types/main_hand', '/combat_styles/magic', '/damage_types/fire', {
+        mayhem: 0.1,
+    }),
+    // A passive a non-weapon also grants: a nonzero sheet reading no longer proves the weapon
+    '/items/test_weaken_sword': weapon('/equipment_types/main_hand', '/combat_styles/slash', '/damage_types/physical', {
+        weaken: 0.1,
+    }),
+    '/items/test_weaken_charm': {
+        equipmentDetail: { type: '/equipment_types/charm', combatStats: { weaken: 0.05 } },
+    },
+    '/items/test_plain_shield': { equipmentDetail: { type: '/equipment_types/off_hand', combatStats: {} } },
+};
+
+describe('deriving the passive table from the item data', () => {
+    test('each unambiguous weapon passive names the weapon family bucket', () => {
+        const buckets = weaponPassiveBuckets(ITEMS);
+
+        expect(buckets.pierce.key).toBe('ranged');
+        expect(buckets.curse.key).toBe('ranged');
+        expect(buckets.ripple.key).toBe('waterMage');
+        expect(buckets.blaze.key).toBe('fireMage');
+        // Nature is the healing element, same as everywhere else in the rules
+        expect(buckets.bloom.key).toBe('healer');
+        expect(buckets.fury).toMatchObject({ key: 'melee', style: 'stab' });
+    });
+
+    test('a passive the data makes ambiguous is dropped rather than guessed at', () => {
+        const buckets = weaponPassiveBuckets(ITEMS);
+
+        // Carried by weapons of two different buckets
+        expect(buckets.mayhem).toBeUndefined();
+        // Also granted by a charm, so a sheet reading does not prove the weapon
+        expect(buckets.weaken).toBeUndefined();
+    });
+
+    test('no item data means no table, not a throw', () => {
+        expect(weaponPassiveBuckets(null)).toEqual({});
+        expect(weaponPassiveBuckets(undefined)).toEqual({});
+    });
+});
+
+describe('the weapon passive on a fetched sheet', () => {
+    /** The reported unit: a crossbow in hand, melee abilities in the kit */
+    const crossbowSheet = {
+        pierce: 0.3,
+        threat: 100,
+        combatStyleHrids: ['/combat_styles/ranged'],
+        damageType: '/damage_types/physical',
+    };
+    const meleeKit = [{ hrid: '/abilities/cleave' }, { hrid: '/abilities/smack' }];
+
+    test('a crossbow wielder with melee abilities is Ranged, off the pierce passive', () => {
+        const verdict = inferClass({ kit: meleeKit, stats: crossbowSheet }, ABILITIES, ITEMS);
+
+        expect(verdict.key).toBe('ranged');
+        expect(verdict.basis).toContain('pierce');
+    });
+
+    test('the same unit without a fetched sheet falls back to the old ability answer', () => {
+        // No stats captured — no Battle Info has been opened on them — so the
+        // melee abilities are all the evidence there is
+        expect(inferClass({ kit: meleeKit }, ABILITIES, ITEMS).key).toBe('melee');
+        // And with a sheet but no item data to interpret it, likewise
+        expect(inferClass({ kit: meleeKit, stats: { pierce: 0.3 } }, ABILITIES).key).toBe('melee');
+    });
+
+    test('a taunt in the kit still outranks the weapon: a tank is a role, not a weapon', () => {
+        const verdict = inferClass({ kit: [{ hrid: '/abilities/taunt' }], stats: crossbowSheet }, ABILITIES, ITEMS);
+
+        expect(verdict.key).toBe('tank');
+    });
+
+    test('the Cursed Bow announces itself: the curse passive sets the curse flag', () => {
+        const verdict = inferClass(
+            {
+                kit: meleeKit,
+                stats: { curse: 0.3, combatStyleHrids: ['/combat_styles/ranged'] },
+            },
+            ABILITIES,
+            ITEMS
+        );
+
+        expect(verdict.key).toBe('ranged');
+        expect(verdict.curse).toBe(true);
+    });
+
+    test('a passive the table dropped proves nothing, and the abilities answer instead', () => {
+        expect(inferClass({ kit: meleeKit, stats: { mayhem: 0.1 } }, ABILITIES, ITEMS).key).toBe('melee');
+    });
+
+    test('the healing weapon files its wielder as the healer before any cast', () => {
+        expect(inferClass({ stats: { bloom: 0.2 } }, ABILITIES, ITEMS).key).toBe('healer');
     });
 });
