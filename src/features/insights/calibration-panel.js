@@ -118,6 +118,8 @@ const ALCHEMY_REREAD_MS = 15_000;
 let alchemyCache = null;
 let alchemyReadAt = 0;
 let alchemyReading = false;
+/** Which read is current, so one abandoned by `forgetAlchemySessions()` does not commit */
+let alchemyReadToken = 0;
 
 /**
  * The alchemy sessions, read on the same fire-and-forget terms as the pairs.
@@ -143,6 +145,7 @@ function alchemySessions() {
  * @returns {Promise<void>}
  */
 async function readAlchemySessions() {
+    const token = ++alchemyReadToken;
     try {
         const kinds = Object.keys(ALCHEMY_TRACKERS);
         const results = await Promise.all(
@@ -155,11 +158,34 @@ async function readAlchemySessions() {
                 }
             })
         );
+        // A switch during the read means these sessions belong to nobody now:
+        // `forgetAlchemySessions()` moved the token past this read, and
+        // committing anyway would put the departing character's rates back into
+        // the cache the arriving character is about to draw from
+        if (token !== alchemyReadToken) return;
         alchemyCache = Object.fromEntries(kinds.map((kind, index) => [kind, results[index] || []]));
     } finally {
-        alchemyReadAt = Date.now();
+        if (token === alchemyReadToken) alchemyReadAt = Date.now();
         alchemyReading = false;
     }
+}
+
+/**
+ * Drop the alchemy sessions held here, so the next draw reads them again.
+ *
+ * The trackers' sessions are this character's. `predictionCalibration` and
+ * `enhancementCalibration` both forget their records when the feature is torn
+ * down on `character_switching`, but this cache sat outside that and kept
+ * answering for up to ALCHEMY_REREAD_MS afterwards — long enough for the panel
+ * opened straight after a switch to show the departing character's transmute,
+ * decompose and coinify success rates under the arriving character's name.
+ * Called from the insights feature's `cleanup()` for that reason.
+ * @returns {void}
+ */
+export function forgetAlchemySessions() {
+    alchemyCache = null;
+    alchemyReadAt = 0;
+    alchemyReadToken += 1;
 }
 
 /**

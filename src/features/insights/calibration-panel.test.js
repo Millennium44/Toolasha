@@ -55,7 +55,7 @@ vi.mock('../alchemy/coinify-history-tracker.js', () => ({
 
 store.rows = [];
 
-const { calibrationPanel, registerCalibrationRow } = await import('./calibration-panel.js');
+const { calibrationPanel, registerCalibrationRow, forgetAlchemySessions } = await import('./calibration-panel.js');
 
 const HOUR = 3600_000;
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -87,6 +87,11 @@ beforeEach(() => {
     store.enhancing = [];
     store.rows = [];
     store.alchemy = { transmute: [], decompose: [], coinify: [] };
+    // The panel caches the trackers' sessions at module level for fifteen
+    // seconds, and the clock is pinned to the same instant in every test — so
+    // without this the previous test's alchemy cards are still what the next
+    // test's panel draws
+    forgetAlchemySessions();
 });
 
 afterEach(() => {
@@ -430,6 +435,21 @@ describe('the alchemy success cards', () => {
         expect(text()).toContain('Too few attempts to call');
         expect(text()).toContain('1 unstamped session');
         expect(text()).not.toContain('95% interval');
+    });
+
+    test("a character switch takes the departing character's sessions with it", async () => {
+        store.alchemy.coinify = [alchemySession({ id: 'c', rate: 0.7, attempts: 1000, successes: 700 })];
+        await openWithAlchemy();
+        expect(text()).toContain('Coinify success (1000 attempts)');
+
+        // What the insights feature's cleanup() does on character_switching.
+        // Without it the cards stayed up for the rest of ALCHEMY_REREAD_MS,
+        // reading as the arriving character's alchemy record
+        forgetAlchemySessions();
+        store.alchemy.coinify = [];
+        calibrationPanel.render();
+
+        expect(text()).not.toContain('Coinify success (1000 attempts)');
     });
 });
 

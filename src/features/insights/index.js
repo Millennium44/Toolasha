@@ -16,7 +16,7 @@
 import { predictionCalibration } from './prediction-calibration.js';
 import { combatCalibration } from './combat-calibration.js';
 import { enhancementCalibration } from './enhancement-calibration.js';
-import { calibrationPanel, registerCalibrationRow } from './calibration-panel.js';
+import { calibrationPanel, registerCalibrationRow, forgetAlchemySessions } from './calibration-panel.js';
 
 export { calibrationPanel, predictionCalibration, combatCalibration, enhancementCalibration };
 
@@ -40,6 +40,11 @@ export default {
         combatCalibration.disable();
         predictionCalibration.disable();
         enhancementCalibration.disable();
+        // The panel's own cache of the alchemy trackers' sessions is character
+        // data too, and outlived the two record caches above by up to fifteen
+        // seconds — enough for the panel opened right after a switch to show
+        // the departing character's success rates
+        forgetAlchemySessions();
     },
     getRecords: () => predictionCalibration.getRecords(),
     clear: () => predictionCalibration.clear(),
