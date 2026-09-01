@@ -1,7 +1,17 @@
 /** @vitest-environment happy-dom */
 
-import { describe, test, expect } from 'vitest';
-import { signedPercent, shortDuration, drawLine, row, rows, glyph, GLYPHS, ROW_COLORS } from './overlay-format.js';
+import { describe, test, expect, beforeEach } from 'vitest';
+import {
+    signedPercent,
+    shortDuration,
+    drawLine,
+    row,
+    rows,
+    glyph,
+    GLYPHS,
+    ROW_COLORS,
+    resetSpriteSheetCache,
+} from './overlay-format.js';
 
 describe('signedPercent', () => {
     test('signs both directions', () => {
@@ -225,8 +235,13 @@ describe('glyphs, as the game draws them or as text', () => {
         document.body.innerHTML = `<svg><use href="/static/media/${sheet}_sprite.abc123.svg#anything"></use></svg>`;
     };
 
-    // First, and deliberately so: the sheet URL is cached once found, and this
-    // is the only point in the file where it has not been
+    // The sheet URL is remembered once found, so emptying the page is only half
+    // of "the game has drawn nothing yet" — the cache has to go with it
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        resetSpriteSheetCache();
+    });
+
     test('before the game has drawn one, the emoji stands in', () => {
         // Rather than an empty box. The URL carries a build hash and can only be
         // read off an icon the game has already put on the page.

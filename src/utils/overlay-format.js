@@ -47,6 +47,22 @@ export function spriteUrl(sheet = 'items') {
 }
 
 /**
+ * Forget the sheet URLs found so far.
+ *
+ * For tests only. In the browser the cache is right for the page's whole life —
+ * the URL cannot change without a reload — so nothing in `src/` calls this. Tests
+ * need it because one file's tests share a module instance: a test that draws an
+ * `items_sprite` icon fills the cache, and a later test asserting the
+ * "sheet not drawn yet" fallback would then see the remembered URL and depend on
+ * having run first.
+ *
+ * @returns {void}
+ */
+export function resetSpriteSheetCache() {
+    for (const sheet of Object.keys(spriteSheets)) delete spriteSheets[sheet];
+}
+
+/**
  * The item sheet, kept as its own name because most callers only want that one.
  * @returns {string}
  */

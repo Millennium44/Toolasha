@@ -12,6 +12,8 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
+import { resetSpriteSheetCache } from './overlay-format.js';
+
 vi.mock('../core/data-manager.js', () => ({ default: { getInitClientData: () => null } }));
 
 const { CLASS_WEAPON_LEVEL, classWeapon, classTagIcon, classTagIconHTML } = await import('./class-weapon.js');
@@ -189,6 +191,9 @@ describe('failing to a chip rather than a blank', () => {
 describe('drawing the icon', () => {
     beforeEach(() => {
         document.body.replaceChildren();
+        // The sheet URL is remembered across calls, so clearing the DOM is only
+        // half of "the game has not drawn an item icon yet"
+        resetSpriteSheetCache();
     });
 
     /** The game having drawn an item sprite, which is where the sheet URL comes from */
@@ -197,9 +202,6 @@ describe('drawing the icon', () => {
             '<svg><use href="https://www.milkywayidle.com/static/media/items_sprite.abc.svg#cheese"></use></svg>';
     }
 
-    // First in this block on purpose: the sheet URL is resolved off the
-    // page once and remembered, so a test that wants the not-yet-drawn case
-    // has to ask before anything else has looked
     test('no sprite sheet yet draws nothing, so the caller keeps its chip', () => {
         // A spacer where an icon should be reads as a broken icon; the chip
         // says more than a gap does

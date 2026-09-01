@@ -7,6 +7,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 
 /** Gear the mocked loadoutSnapshot reports; mutated in place (see setGear) so
  *  every holder of the mocked default export sees updates */
@@ -149,6 +150,14 @@ const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js'
 const { default: configMock } = await import('../../core/config.js');
 const { COMBAT_CACHE_STORAGE_VERSION } = await import('./labyrinth-sim-cache.js');
 const { registeredCommands, resetCommands } = await import('../../utils/command-registry.js');
+
+// `db.unavailable` is a switch the storage-failure tests throw and, being module
+// state, one they would otherwise leave thrown for whatever runs next — which
+// reads as "the write silently did nothing" several suites away. Turned off
+// here so it only lasts the test that wanted it.
+afterEach(() => {
+    db.unavailable = false;
+});
 
 describe('normalizeChance', () => {
     test('passes through ratios and converts percent-form values', () => {
@@ -1742,6 +1751,9 @@ describe('the toolbar supply readout', () => {
 
     beforeEach(() => {
         bag.items = [supplyItem('/items/expert_torch', 260), supplyItem('/items/expert_shroud', 16)];
+        // `itemIcon` remembers the sheet URL it read off the page, so emptying
+        // the DOM is only half of "the game has drawn no item icon yet"
+        resetSpriteSheetCache();
     });
 
     afterEach(() => {
@@ -1751,10 +1763,6 @@ describe('the toolbar supply readout', () => {
         bag.items = null;
     });
 
-    // First, deliberately: `itemIcon` finds the sheet's hashed URL by looking at
-    // an icon the game has already drawn, and remembers it for the rest of the
-    // process. Once any test below has put one on the page there is no going
-    // back to "the sheet is unknown", which is the state this checks.
     test('emoji stand in only while the game has drawn no item icon to copy a sheet from', () => {
         const el = buildReadout();
 
