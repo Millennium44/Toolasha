@@ -18,7 +18,9 @@ import {
 describe('computeLabyrinthPath', () => {
     // ASCII grids: S = cleared start, E = entrance, . = clearable,
     // X = unclearable (shroud), # = wall, T = treasure, F = floor exit,
-    // ? = unrevealed/unknown (clearable, but its type is not yet seen)
+    // ? = unrevealed/unknown (clearable, but its type is not yet seen),
+    // U = unrevealed and costed as a shroud — the pessimistic posture the panel
+    // uses by default, where revealing a room can still turn out to save one
     function grid(rows) {
         const cols = rows[0].length;
         const tiles = [];
@@ -31,10 +33,10 @@ describe('computeLabyrinthPath', () => {
                 tiles.push({
                     cleared: ch === 'S',
                     isEntrance: ch === 'E',
-                    needsShroud: ch === 'X',
+                    needsShroud: ch === 'X' || ch === 'U',
                     isTreasure: ch === 'T',
                     isExit: ch === 'F',
-                    isUnknown: ch === '?',
+                    isUnknown: ch === '?' || ch === 'U',
                 });
             }
         }
@@ -126,16 +128,50 @@ describe('computeLabyrinthPath', () => {
         expect(path.route.has(4)).toBe(false); // the unknown, only on the long way
     });
 
-    test('detours to uncover a new unknown room even at an extra torch', () => {
-        // The direct S→F path reveals nothing (the unknown at 3 sits below the
-        // cleared start, off the direct line). A one-step-longer route down
-        // through room 3 uncovers it. Reveals now rank above torches, so the
-        // planner takes the detour despite spending no extra shroud.
+    test('does not pay a torch for a reveal that cannot shorten the route', () => {
+        // The unknown at 3 is already costed as a clearable room, so whatever it
+        // turns out to be can only make the route dearer — a step down to
+        // uncover it is a room spent for nothing. The direct 2-torch route wins.
         const { tiles, cols } = grid(['S.F', '?..']);
         const path = computeLabyrinthPath(tiles, cols);
         expect(path.shrouds).toBe(0);
-        expect(path.route.has(3)).toBe(true); // stepped down to reveal the unknown
-        expect(path.torches).toBe(3); // one more than the 2-torch direct route
+        expect(path.torches).toBe(2);
+        expect(path.route.has(3)).toBe(false); // no step aside for a useless reveal
+    });
+
+    test('does not detour to peek at a shroud too far away to ever help', () => {
+        // The unknown in the far corner would cost a shroud, and the way out is
+        // already two rooms with none. Even if it turned out to be free ground it
+        // sits nowhere near the exit line, so no content behind it can beat the
+        // direct route — the peek from room 5 is provably useless.
+        const { tiles, cols } = grid(['S.F', '...', '..U']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.shrouds).toBe(0);
+        expect(path.torches).toBe(2);
+        expect(path.route.has(5)).toBe(false); // the room that only peeks at the corner
+        expect(path.route.has(8)).toBe(false);
+    });
+
+    test('still detours to an unknown that could reveal a cheaper way out', () => {
+        // Both ways out cost a shroud today: through the unclearable room at 1,
+        // or through the unknown at 3. Revealing 3 could show a clearable room
+        // and a shroud-free route, which beats the plan on hand — so the extra
+        // rooms are worth it and the detour stands.
+        const { tiles, cols } = grid(['SXF', 'U..']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.shrouds).toBe(1);
+        expect(path.route.has(3)).toBe(true); // the unknown that might save the shroud
+        expect(path.route.has(1)).toBe(false); // the known-unclearable room is not taken
+    });
+
+    test('keeps a shroud that lies on the shortest way out', () => {
+        // Nothing to prune here: the only route to the exit runs through the
+        // unknown, so passing through it costs no extra room.
+        const { tiles, cols } = grid(['SUF']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.shrouds).toBe(1);
+        expect(path.torches).toBe(2);
+        expect(path.route.has(1)).toBe(true);
     });
 
     test('will not spend an extra shroud to reveal more', () => {

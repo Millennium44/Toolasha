@@ -66,6 +66,15 @@ const PATH_SHROUD_WEIGHT = 1e6;
  * detour at a time, so it opens up the floor without carpet-revealing. A
  * sub-torch reveal bonus still breaks ties inside each Dijkstra sub-path.
  *
+ * A reveal detour has to earn its rooms. One that costs nothing — an
+ * equal-length route that uncovers more — is always taken; one that costs
+ * torches is taken only when some possible content behind the rooms it would
+ * uncover could make the whole route cheaper than the route already planned.
+ * That is decided by re-routing with those rooms priced at the best they could
+ * possibly turn out to be, which lower-bounds what the detour could ever buy:
+ * if even the best case cannot beat the base route, the reveal is provably
+ * useless and the plan walks past it instead of stepping aside for it.
+ *
  * Pure function so the routing logic is testable without DOM or sims.
  * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
  *   { cleared, isEntrance, needsShroud, isTreasure, isExit, isUnknown }
@@ -152,14 +161,23 @@ export function computeLabyrinthPath(tiles, cols) {
     // Entering a tile costs shrouds*W + 1 torch when uncleared, less the reveal
     // tie-break bonus; cleared tiles, the entrance, and tiles already on the
     // route are free. Walls are impassable.
-    const enterCost = (idx, routeSet) => {
+    //
+    // `bestCase` is the set of still-hidden rooms to price at the best they
+    // could possibly turn out to be: one torch, never a shroud. A reveal can
+    // only ever tell you a room is cheaper than the pessimistic posture assumed
+    // — it cannot make a room free (only walking it clears it) and cannot take
+    // a room off the grid — so that is a true lower bound on what a reveal can
+    // buy, which is what makes the detour economy below provable rather than a
+    // guess.
+    const enterCost = (idx, routeSet, bestCase) => {
         const t = tiles[idx];
         if (!t) return null;
         if (t.cleared || t.isEntrance || routeSet.has(idx)) return 0;
-        return (t.needsShroud ? PATH_SHROUD_WEIGHT : 0) + 1 - revealEpsilon * revealScore(idx);
+        const shroud = t.needsShroud && !bestCase?.has(idx);
+        return (shroud ? PATH_SHROUD_WEIGHT : 0) + 1 - revealEpsilon * revealScore(idx);
     };
 
-    const dijkstra = (sourceIndices, routeSet) => {
+    const dijkstra = (sourceIndices, routeSet, bestCase) => {
         const dist = new Array(tiles.length).fill(Infinity);
         const prev = new Array(tiles.length).fill(-1);
         const visited = new Array(tiles.length).fill(false);
@@ -176,7 +194,7 @@ export function computeLabyrinthPath(tiles, cols) {
             if (u < 0) break;
             visited[u] = true;
             for (const v of neighbors(u)) {
-                const cost = enterCost(v, routeSet);
+                const cost = enterCost(v, routeSet, bestCase);
                 if (cost === null) continue;
                 if (dist[u] + cost < dist[v]) {
                     dist[v] = dist[u] + cost;
@@ -214,7 +232,8 @@ export function computeLabyrinthPath(tiles, cols) {
     // reveal more of the floor (which may hide a chest the planner cannot yet
     // see), but never carpet-reveals. Reveals rank above torches, never a shroud.
     const routeTiles = (set) => [...set].filter((i) => tiles[i] && !tiles[i].cleared && !tiles[i].isEntrance);
-    const shroudsOf = (set) => routeTiles(set).filter((i) => tiles[i].needsShroud).length;
+    const shroudsOf = (set, bestCase) =>
+        routeTiles(set).filter((i) => tiles[i].needsShroud && !bestCase?.has(i)).length;
     const torchesOf = (set) => routeTiles(set).length;
     // Distinct unknown rooms a route uncovers: each route room, and its unknown
     // neighbours, counted once via a set (no double-count of a shared corner).
@@ -228,20 +247,61 @@ export function computeLabyrinthPath(tiles, cols) {
     };
     // Cheapest route from the cleared region to the exit that passes through one
     // room, or null if that room or the exit beyond it is unreachable.
-    const routeThrough = (waypoint) => {
-        const toWp = dijkstra(sources, new Set());
+    const routeThrough = (waypoint, bestCase) => {
+        const toWp = dijkstra(sources, new Set(), bestCase);
         if (!Number.isFinite(toWp.dist[waypoint])) return null;
         const set = new Set(tracePath(toWp.prev, waypoint, sourceSet));
         const stop = new Set([...sourceSet, ...set]);
-        const toExit = dijkstra([...sources, ...set], set);
+        const toExit = dijkstra([...sources, ...set], set, bestCase);
         if (!Number.isFinite(toExit.dist[targetIdx])) return null;
         for (const idx of tracePath(toExit.prev, targetIdx, stop)) set.add(idx);
         return set;
     };
 
     const minShrouds = shroudsOf(routeSet);
+    const baseTorches = torchesOf(routeSet);
+
+    // Rooms a step into `r` would uncover: `r` itself when it is the hidden one,
+    // and its hidden neighbours.
+    const hiddenAt = (r) => {
+        const hidden = new Set();
+        if (tiles[r]?.isUnknown) hidden.add(r);
+        for (const nb of neighbors(r)) {
+            if (tiles[nb]?.isUnknown) hidden.add(nb);
+        }
+        return hidden;
+    };
+
+    // Detour economy. A reveal that costs nothing — a route of the same length
+    // that happens to uncover more — is always worth taking. A reveal that costs
+    // torches has to be able to pay for itself: only if some possible content
+    // behind those rooms could make the whole route cheaper than the best route
+    // already known is the detour worth a step. Pricing the rooms `r` would
+    // uncover at their best possible outcome (see `enterCost`) and re-routing
+    // through `r` gives a lower bound on what the detour could ever cost; when
+    // even that cannot beat the base route, no reveal there can, and the detour
+    // is provably useless rather than merely unpromising.
+    //
+    // A grid carrying walls is the one case that cannot be bounded: a wall is
+    // indistinguishable from a room the caller chose to treat as impassable, so
+    // there is no telling what a reveal would open up. Keep the old
+    // reveal-everything behaviour there rather than guessing. (Real labyrinth
+    // floors have no walls — every cell is a room — so this is the "avoid
+    // unrevealed rooms" posture, where nothing is flagged unknown anyway.)
+    const unboundable = tiles.some((t) => !t);
+    const couldShorten = (r) => {
+        if (unboundable) return true;
+        const hidden = hiddenAt(r);
+        if (!hidden.size) return false;
+        const optimistic = routeThrough(r, hidden);
+        if (!optimistic) return false;
+        const shrouds = shroudsOf(optimistic, hidden);
+        if (shrouds !== minShrouds) return shrouds < minShrouds;
+        return torchesOf(optimistic) < baseTorches;
+    };
+
     let bestReveals = uniqueReveals(routeSet);
-    let bestTorches = torchesOf(routeSet);
+    let bestTorches = baseTorches;
     for (let r = 0; r < tiles.length; r++) {
         const t = tiles[r];
         if (!t || t.cleared || t.isEntrance || sourceSet.has(r)) continue;
@@ -251,6 +311,7 @@ export function computeLabyrinthPath(tiles, cols) {
         if (!cand || shroudsOf(cand) !== minShrouds) continue; // never an extra shroud
         const reveals = uniqueReveals(cand);
         const torches = torchesOf(cand);
+        if (torches > baseTorches && !couldShorten(r)) continue; // a reveal that can never pay
         if (reveals > bestReveals || (reveals === bestReveals && torches < bestTorches)) {
             bestReveals = reveals;
             bestTorches = torches;
