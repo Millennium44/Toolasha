@@ -403,3 +403,34 @@ describe('curated record', () => {
         expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true });
     });
 });
+
+describe('a character switch landing between a clear and its turn to run', () => {
+    // `clear()` writes with `overwrite`, so it takes no probe — and the probe
+    // is where every other write path notices the generation has moved. A
+    // clear queued behind a save in flight starts running only once that save
+    // settles, which is wide enough for a switch to land.
+    test('a queued clear does not empty the arriving character’s record', async () => {
+        const record = byId();
+        const settings = storageMock.storeFor('settings');
+        settings.set('log_char1', [{ id: 1 }]);
+        settings.set('log_char2', [{ id: 9 }]);
+        record.set([{ id: 1 }]);
+
+        // The switch lands while the running save is suspended on its probe,
+        // so the clear queued behind it starts under the arriving character.
+        const tryGet = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementationOnce(async (key, store) => {
+            const probed = await tryGet(key, store);
+            dataManagerMock.characterId = 'char2';
+            record.reset();
+            return probed;
+        });
+
+        const saving = record.save();
+        const clearing = record.clear();
+        await saving;
+        await clearing;
+
+        expect(settings.get('log_char2')).toEqual([{ id: 9 }]);
+    });
+});

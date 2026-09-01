@@ -36,7 +36,7 @@
  */
 
 import storage from '../core/storage.js';
-import { characterKey, readScoped, writeScoped } from './character-key.js';
+import { characterKey, readScoped } from './character-key.js';
 
 /**
  * Merge for arrays of entries that carry an identity: the union, keyed by
@@ -239,13 +239,29 @@ export function createPersistedRecord({
          */
         save({ overwrite = false } = {}) {
             if (!overwrite && saving && waitingSave) return waitingSave;
+            /**
+             * The generation the save was ASKED FOR in, not the one its queued
+             * run happens to start in. An `overwrite` write takes no probe, so
+             * the check below is the only thing between it and storage — and
+             * `clear()` is precisely the write that is meant to lose entries.
+             * A clear asked for on one character while another save is in
+             * flight starts running only once that save settles, by which time
+             * a switch can have landed: `reset()` has emptied memory and moved
+             * the key, so the run wrote an empty record over the *arriving*
+             * character's stored one.
+             */
+            const askedIn = generation;
             const run = async () => {
                 saving = true;
                 if (waitingSave === promise) waitingSave = null;
                 const started = generation;
+                // One key for the probe and the write both, resolved before the
+                // read rather than again after it
+                const writeKey = scoped ? characterKey(base) : base;
                 try {
+                    if (overwrite && askedIn !== generation) return false;
                     if (!overwrite) {
-                        const probed = await probe();
+                        const probed = await storage.tryGet(writeKey, store);
                         if (probed === null) {
                             console.warn(`[${label}] ${base} not saved: storage could not be read first`);
                             return false;
@@ -256,9 +272,7 @@ export function createPersistedRecord({
                             memoryVersion += 1;
                         }
                     }
-                    return scoped
-                        ? await writeScoped(base, memory, store, immediate)
-                        : await storage.set(base, memory, store, immediate);
+                    return await storage.set(writeKey, memory, store, immediate);
                 } catch (error) {
                     console.error(`[${label}] Saving ${base} failed:`, error);
                     return false;
