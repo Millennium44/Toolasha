@@ -6347,6 +6347,12 @@ class CombatSimUI {
 
         // Clear cached character data so next open loads fresh state
         if (this._editor) this._editor.reset();
+        // Which party slot the results are being read for is that party's, and
+        // the next open is a fresh one — a slot left pointing at the party that
+        // has gone is read by All Zones and Seek as the character to measure,
+        // and a hrid nobody in the new party has reads as no experience and no
+        // deaths at all
+        this._activePlayerTab = 'player1';
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;

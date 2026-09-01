@@ -8,7 +8,7 @@
  * the text back out.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     setting: true,
@@ -299,6 +299,28 @@ describe('combat battle counter', () => {
 });
 
 describe('the re-inject poll', () => {
+    // Its own header and its own zone: the suite above builds one in its
+    // beforeEach, which is not this suite's to inherit — a run that reaches
+    // these first finds no header row to rewrite and no action to draw a chip
+    // for at all.
+    beforeEach(() => {
+        game.setting = true;
+        game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
+        game.actionDetails = { '/actions/combat/some_zone': { combatZoneInfo: { isDungeon: false } } };
+        game.wsHandlers = {};
+        game.dmHandlers = {};
+        game.throwOnUnregister = false;
+        combatBattleCounter.disable();
+        buildHeader('Chimerical Den');
+    });
+
+    // A test that fails before its own useRealTimers() would otherwise leave
+    // fake timers installed for everything that runs after it
+    afterEach(() => {
+        combatBattleCounter.disable();
+        vi.useRealTimers();
+    });
+
     test('an in-place header rewrite gets the chip back within one poll tick', () => {
         combatBattleCounter.disable();
         vi.useFakeTimers();

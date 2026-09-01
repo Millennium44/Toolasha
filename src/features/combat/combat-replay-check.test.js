@@ -157,6 +157,7 @@ import replayCheck, {
     NOISE_QUIET_PCT,
 } from './combat-replay-check.js';
 import combatRecorder from './combat-recorder.js';
+import { resetRecordTargetCache } from './combat-record-control.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import recording from '../../utils/__fixtures__/combat-run.json';
 
@@ -215,6 +216,13 @@ beforeEach(() => {
     replayCheck.error = null;
     replayCheck.loaded = false;
     replayCheck.disable();
+    // The record-target control keeps module-level state — whether the stored
+    // target has been read, and a target read back while a recording was
+    // running that is waiting for a quiet moment to be applied. A test that
+    // starts a recording leaves that stash behind, and the next test's first
+    // panel redraw consumes it and overwrites whatever that test just set. Each
+    // test is its own session, so clear it the way a character switch does.
+    resetRecordTargetCache();
 });
 
 describe('deriving what happened from a recording', () => {
@@ -2400,6 +2408,30 @@ describe('the target control on the panel', () => {
 
         expect(recorder.target).toEqual({ value: 30, unit: 'minutes' });
         expect(labelled('min')).toBeTruthy();
+    });
+
+    test('but a character switch takes the unit with the target it was chosen for', async () => {
+        // The target is per-character and a switch clears it; the unit is only
+        // remembered as shorthand for that target, so a unit left behind would
+        // count the arriving character's first typed number in a unit they
+        // never picked
+        install();
+        replayCheckPanel.show({ remember: false });
+        labelled('fights').click();
+        await settle();
+        expect(labelled('min')).toBeTruthy();
+
+        replayCheck.disable();
+        replayCheckPanel.render();
+        const recorder = install();
+        replayCheckPanel.render();
+
+        expect(labelled('fights')).toBeTruthy();
+        box().value = '100';
+        box().dispatchEvent(new window.Event('change'));
+        await settle();
+
+        expect(recorder.target).toEqual({ value: 100, unit: 'fights' });
     });
 
     test('a target already set draws in the box, so it survives a redraw', () => {

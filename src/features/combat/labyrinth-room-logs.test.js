@@ -254,6 +254,11 @@ describe('the sim accuracy list opens a room type at a time', () => {
         labyrinthRoomLogs.expandedSubjects = new Set();
         labyrinthRoomLogs.replayResult = null;
         labyrinthRoomLogs.simSource = { accuracy: async () => snapshot };
+        // The fight recorder's pool is a module-level singleton other tests in
+        // this file fill. Any fight in it adds a reliability card above the room
+        // list, which moves the cards these tests click by index — so start from
+        // an empty pool rather than from whatever ran before.
+        labFightRecorder.clearRecording();
         await labyrinthRoomLogs.renderAccuracy();
     });
 

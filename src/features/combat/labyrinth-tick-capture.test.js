@@ -30,6 +30,17 @@ function emit(type, payload) {
 
 const battle = { pMap: { 0: { cHP: 100 } }, mMap: { 0: { cHP: 200 } }, battleId: 'b1', chat: 'ignored' };
 
+/**
+ * The ref as a freshly loaded script has it.
+ *
+ * `lastCaptureRef` describes the file on disk and so is deliberately sticky —
+ * it survives clearCapture, later starts, and every reset a test hook could do.
+ * Nothing can put it back to null, so "null before anything has been saved" is
+ * read here, at import, rather than from inside a test that would then only
+ * hold while it ran before every test that downloads.
+ */
+const refBeforeAnySave = capture.lastCaptureRef();
+
 beforeEach(() => {
     capture.stopCapture();
     capture.clearCapture();
@@ -107,11 +118,8 @@ describe('labyrinth tick capture', () => {
 });
 
 describe('the file says which capture it is, and how the capture ended', () => {
-    // Runs before any suite that downloads: lastCaptureRef is deliberately
-    // sticky across clear/start, so "null before any save" is only observable
-    // while nothing in this file has saved yet.
     test('lastCaptureRef is null before any capture has been saved', () => {
-        expect(capture.lastCaptureRef()).toBeNull();
+        expect(refBeforeAnySave).toBeNull();
     });
 
     test('captureId is stable across captureFile calls, and new on the next start', () => {

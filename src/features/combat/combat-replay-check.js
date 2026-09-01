@@ -327,8 +327,14 @@ const ACCENT = '#8fd0ff';
  * An empty box has no target and so no unit to read one off, and the toggle
  * still has to say something. Remembered here rather than persisted: it only
  * matters between clearing the box and typing the next number.
+ *
+ * Reset on a character switch along with the target itself (see `disable`),
+ * because the unit is only remembered as a shorthand for the target that was
+ * just cleared — leaving it behind means the arriving character's first typed
+ * number is counted in a unit they never chose.
  */
-let lastTargetUnit = 'fights';
+const DEFAULT_TARGET_UNIT = 'fights';
+let lastTargetUnit = DEFAULT_TARGET_UNIT;
 
 /**
  * The DTO fields that describe the character rather than the world.
@@ -2193,6 +2199,9 @@ class ReplayCheck {
         this.uptime = null;
         this.loaded = false;
         resetRecordTargetCache();
+        // And the unit the empty box counts in, which is the cleared target's
+        // unit and nothing else — see DEFAULT_TARGET_UNIT
+        lastTargetUnit = DEFAULT_TARGET_UNIT;
     }
 }
 

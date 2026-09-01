@@ -456,6 +456,25 @@ function selectZone() {
     ui.panel.querySelector('[data-upgrade-mode="equipment"]').checked = true;
 }
 
+// The panel is a singleton and its table preferences — which columns are
+// hidden, what the Score is scored on, how each table is sorted — are
+// deliberately remembered across a destroy and persisted to storage, which the
+// in-memory storage mock keeps for the rest of the file. So a test that sorts a
+// column or turns the Score gradient on hands the next one a panel that has
+// been used, and tests written against a fresh panel read a table sorted and
+// coloured by something they never asked for. Every test starts from a panel
+// nobody has opened before.
+beforeEach(() => {
+    mocks.store.clear();
+    ui._upgradeSort = null;
+    ui._upgradeLevelSort = null;
+    ui._unpricedSort = null;
+    ui._upgradeHiddenColumns = null;
+    ui._upgradeScoreKeys = null;
+    ui._upgradeScoreDepth = DEFAULT_SCORE_DEPTH;
+    ui._upgradeScoreGradient = false;
+});
+
 describe('columnMenuLabel', () => {
     test('joins the qualifier on, so the five Gold/0.01% columns differ', () => {
         expect(columnMenuLabel({ label: 'Gold/0.01%', sub: 'DPS' })).toBe('Gold/0.01% DPS');
@@ -1466,6 +1485,22 @@ describe('the all-zones table', () => {
             expect(headers).toContain('score');
             expect(headers).not.toContain('magic');
             expect(headers).not.toContain('stamina');
+        });
+
+        test('a party slot left selected does not follow the panel into its next opening', async () => {
+            // Closing the panel while a party member's tab was up used to leave
+            // that hrid as the one every table read: the next open measured a
+            // character who is not in this party, whose experience and deaths
+            // are simply absent, so the table drew no skill columns at all
+            ui._activePlayerTab = 'player2';
+            ui.destroy();
+            ui.buildPanel();
+
+            await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 }, profit: 100 })], 1, {});
+            const headers = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.dataset.col);
+
+            expect(ui._activePlayerTab).toBe('player1');
+            expect(headers).toContain('defense');
         });
 
         test('names both winners above the table', async () => {
