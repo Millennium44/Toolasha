@@ -17,12 +17,15 @@ const store = vi.hoisted(() => ({
     writes: [],
     probes: 0,
     unavailable: false,
+    characterId: 'me',
+    /** Fired once inside the next probe — lets a test land a switch inside it */
+    onProbe: null,
 }));
 
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getCurrentCharacterId: () => 'me',
+        getCurrentCharacterId: () => store.characterId,
         getCurrentCharacterGameMode: () => 'standard',
         getCurrentActions: () => store.actions,
         on: () => {},
@@ -48,6 +51,7 @@ vi.mock('../../core/storage.js', () => ({
         getJSON: read,
         tryGet: async (key) => {
             store.probes++;
+            store.onProbe?.();
             if (store.unavailable) return null;
             const value = await read(key);
             return value == null ? { found: false, value: null } : { found: true, value };
@@ -93,6 +97,8 @@ beforeEach(() => {
     store.writes = [];
     store.probes = 0;
     store.unavailable = false;
+    store.characterId = 'me';
+    store.onProbe = null;
     _resetReadProbe();
     collector.isInitialized = false;
     collector.latestCombatData = null;
@@ -181,6 +187,26 @@ describe('the trackers are not written over on the strength of a failed read', (
         const trackerWrites = store.writes.filter(([key]) => key.startsWith('consumableTracker_'));
         expect(trackerWrites).toHaveLength(1);
         expect(store.probes).toBe(1);
+    });
+});
+
+describe('a character switch landing inside the readability probe', () => {
+    test('the run and the trackers are not filed under the arriving character', async () => {
+        fighting(ZONE);
+        // `storeReadable` awaits a real read whenever its five-second probe is
+        // cold, which is exactly the state right after a switch
+        store.onProbe = () => {
+            store.onProbe = null;
+            store.characterId = 'iron456';
+        };
+
+        await collector.onNewBattle({
+            battleId: 1,
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: [{ character: { id: 'me', name: 'Millennium44' }, loot: {}, consumables: [] }],
+        });
+
+        expect(store.writes.map(([key]) => key).filter((key) => key.endsWith('_iron456'))).toEqual([]);
     });
 });
 

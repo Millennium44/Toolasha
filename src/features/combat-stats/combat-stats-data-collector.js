@@ -57,6 +57,19 @@ const LATEST_RUN_KEY = 'latestCombatRun';
  * @param {string} base - The unscoped key
  * @returns {Promise<boolean>}
  */
+/**
+ * One character's scoped key, from an id the caller captured.
+ *
+ * Deliberately not `writeScoped()`: that resolves `characterKey()` when the
+ * write runs, and every write here sits on the far side of at least one await.
+ * @param {string} base - The unscoped key
+ * @param {string} charId - Whose key
+ * @returns {string} `base_<charId>`
+ */
+function scopedFor(base, charId) {
+    return `${base}_${charId}`;
+}
+
 async function storeReadable(base) {
     const now = Date.now();
     if (readProbe.ok && now - readProbe.at < READ_PROBE_TTL_MS) return true;
@@ -329,9 +342,20 @@ class CombatStatsDataCollector {
     /**
      * Save consumable tracking state to storage
      */
-    async saveConsumableTracking() {
+    async saveConsumableTracking(owner = dataManager.getCurrentCharacterId()) {
         try {
+            // Every key below is built from `owner`, captured before the first
+            // await, rather than resolved again by `writeScoped` when each
+            // write runs. There are four suspension points in this method and a
+            // non-immediate `storage.set` resolves only when its three-second
+            // debounce fires, so the three writes are seconds apart — wide
+            // enough for a switch to split one save across two characters. And
+            // `onCharacterSwitching` blanks these trackers synchronously, so
+            // what the resumed half writes is an EMPTY record over the arriving
+            // character's stored counts, resetting their consumption rates.
+            if (!owner) return false;
             if (!(await storeReadable(CONSUMABLE_TRACKER_KEY))) return false;
+            if (dataManager.getCurrentCharacterId() !== owner) return false;
             const MAX_WINDOW_MS = 24 * 60 * 60 * 1000;
 
             // Save current player tracker
@@ -354,7 +378,8 @@ class CombatStatsDataCollector {
                 elapsedMs: cappedElapsed,
                 saveTimestamp: Date.now(),
             };
-            await writeScoped(CONSUMABLE_TRACKER_KEY, toSave, COMBAT_STORE);
+            await storage.set(scopedFor(CONSUMABLE_TRACKER_KEY, owner), toSave, COMBAT_STORE);
+            if (dataManager.getCurrentCharacterId() !== owner) return false;
 
             // Save party member trackers (MCS-style)
             const partyTrackersToSave = {};
@@ -382,10 +407,11 @@ class CombatStatsDataCollector {
                     };
                 }
             });
-            await writeScoped(PARTY_TRACKERS_KEY, partyTrackersToSave, COMBAT_STORE);
+            await storage.set(scopedFor(PARTY_TRACKERS_KEY, owner), partyTrackersToSave, COMBAT_STORE);
+            if (dataManager.getCurrentCharacterId() !== owner) return false;
 
             // Save party snapshots
-            await writeScoped(PARTY_SNAPSHOTS_KEY, this.partyConsumableSnapshots, COMBAT_STORE);
+            await storage.set(scopedFor(PARTY_SNAPSHOTS_KEY, owner), this.partyConsumableSnapshots, COMBAT_STORE);
             return true;
         } catch (error) {
             console.error('[Combat Stats] Error saving consumable tracking:', error);
@@ -779,12 +805,19 @@ class CombatStatsDataCollector {
 
             // Store in IndexedDB — unless storage cannot be read, in which
             // case the stored run stays and memory carries this one
-            if (await storeReadable(LATEST_RUN_KEY)) {
-                await writeScoped(LATEST_RUN_KEY, combatData, COMBAT_STORE);
+            // `currentCharacterId` was captured at the top of this handler and
+            // `combatData` is built entirely from it. `storeReadable` awaits a
+            // real read whenever its five-second probe is cold, so a switch can
+            // land between it and the write — and `writeScoped` would resolve
+            // the key against whoever is current by then, filing this run's
+            // loot, xp and party roster under the arriving character.
+            if (currentCharacterId && (await storeReadable(LATEST_RUN_KEY))) {
+                if (dataManager.getCurrentCharacterId() !== currentCharacterId) return;
+                await storage.set(scopedFor(LATEST_RUN_KEY, currentCharacterId), combatData, COMBAT_STORE);
             }
 
             // Save the tracking state (player and party alike) once per wave
-            await this.saveConsumableTracking();
+            await this.saveConsumableTracking(currentCharacterId);
         } catch (error) {
             console.error('[Combat Stats] Error collecting combat data:', error);
         }
