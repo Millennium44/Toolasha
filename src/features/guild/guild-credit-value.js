@@ -49,7 +49,8 @@ const CSS_CLASS = 'mwi-guild-credit-value';
  * character's business — the guild-shared trial plan is the unscoped case.
  *
  * Shape: `{ targets: { [buffHrid]: number }, collapsed: boolean,
- * suggestionsCollapsed: boolean, spendMode: 'auto'|'tokens'|'gold' }`.
+ * suggestionsCollapsed: boolean, spendMode: 'auto'|'tokens'|'gold',
+ * tokenCredits: { [creditHrid]: true } }`.
  * Stored key: `guildShrinePlan_<characterId>` in the `settings` store.
  *
  * `empty()` is a bare `{}` rather than the shape with its defaults filled in:
@@ -131,6 +132,50 @@ const SPEND_MODE_LABELS = { auto: 'Auto', tokens: 'Tokens', gold: 'Gold' };
 function spendMode() {
     const mode = planState().spendMode;
     return SPEND_MODES.includes(mode) ? mode : 'auto';
+}
+
+/**
+ * The credit colours the player has marked "cover with tokens", as a Set.
+ *
+ * A per-colour override over the spend mode, not a fourth mode: the player
+ * knows they will exchange tokens for a colour — a hoard earmarked for it, or
+ * simply a decision already made — and every one of that colour's credits is
+ * then an exchange to make rather than materials to shop for, whatever the
+ * per-colour price comparison says. Only an explicit `true` counts, so a
+ * record touched by an older write (or a merge) cannot cover a colour the
+ * player never ticked.
+ *
+ * @param {Object|null} plan - The live plan record, from {@link planState}
+ * @returns {Set<string>} Credit hrids covered with tokens
+ */
+export function tokenCoveredCredits(plan) {
+    const covered = plan?.tokenCredits;
+    if (!covered || typeof covered !== 'object') return new Set();
+    return new Set(Object.keys(covered).filter((creditHrid) => covered[creditHrid] === true));
+}
+
+/**
+ * Split a bill of owed credits by the path each colour is settled down.
+ *
+ * The token side is what the guild shop exchanges for; the market side is what
+ * the shopping list and the conversion steps are drawn from. A colour with no
+ * usable path at all lands on the market side — the same rule as
+ * {@link planNextBuys}: the shopping list skips what nothing converts into,
+ * which is the same silence it gave before, and the token side must not claim
+ * an exchange it cannot price.
+ *
+ * @param {Object<string, number>} owedCredits - creditHrid → credits still owed
+ * @param {Function} pathFor - creditHrid → decision from {@link chooseCreditPath}
+ * @returns {{marketOwed: Object<string, number>, tokenOwed: Object<string, number>}} The two bills
+ */
+export function splitOwedCredits(owedCredits, pathFor = () => ({ path: 'tokens' })) {
+    const marketOwed = {};
+    const tokenOwed = {};
+    for (const [itemHrid, owed] of Object.entries(owedCredits || {})) {
+        if ((pathFor(itemHrid) || {}).path === 'tokens') tokenOwed[itemHrid] = owed;
+        else marketOwed[itemHrid] = owed;
+    }
+    return { marketOwed, tokenOwed };
 }
 
 /** How long the target inputs sit still before the plan is written */
@@ -990,6 +1035,10 @@ class GuildCreditValue {
         this._shrineObserver = null;
         this._shrineTimer = null;
         this._shrineItemsHandler = null;
+        // Keeps the shrine planner's owed rows, shopping list and conversion
+        // steps current while purchases land — see `_armPlannerObservers`.
+        this._plannerItemsHandler = null;
+        this._plannerTimer = null;
         /** Item hrids whose holdings the last shrine render depended on */
         this._shrineWatchedHrids = null;
         /** Signature of the costs+holdings the last shrine render was built from */
@@ -1316,6 +1365,55 @@ class GuildCreditValue {
         await shrinePlanRecord.flushed();
     }
 
+    /**
+     * Keep the planner's numbers current while the exchange modal stays open.
+     *
+     * The plan's owed rows, the shopping-list button and the conversion steps
+     * are all drawn from the live inventory, and until this hook existed they
+     * were drawn exactly once per modal render: buy 40,000 Red Tea Leaf from
+     * the plan's own shopping list and the plan still billed you for them until
+     * something else redrew the modal. `items_updated` is when purchases are
+     * claimed and exchanges hand their credits over, so it is the moment every
+     * one of those figures changes. Debounced like the shrine block's redraw —
+     * a claim lands as a burst — and self-releasing: a fire that finds the
+     * planner gone from the document lets the hook go rather than keep a dead
+     * closure on the listener list.
+     *
+     * One hook at a time, released with the feature — the exchange advisor's
+     * rule, for the same reason.
+     *
+     * @param {Element} wrapper - The planner's root element
+     * @param {Function} refresh - Redraws the totals and the suggestions
+     * @private
+     */
+    _armPlannerObservers(wrapper, refresh) {
+        this._disconnectPlannerObservers();
+        this._plannerItemsHandler = () => {
+            if (this._plannerTimer) clearTimeout(this._plannerTimer);
+            this._plannerTimer = setTimeout(() => {
+                this._plannerTimer = null;
+                if (!wrapper.isConnected) {
+                    this._disconnectPlannerObservers();
+                    return;
+                }
+                refresh();
+            }, SHRINE_RERENDER_DEBOUNCE_MS);
+        };
+        dataManager.on('items_updated', this._plannerItemsHandler);
+    }
+
+    /** Release the planner's inventory hook and any pending refresh */
+    _disconnectPlannerObservers() {
+        if (this._plannerTimer) {
+            clearTimeout(this._plannerTimer);
+            this._plannerTimer = null;
+        }
+        if (this._plannerItemsHandler) {
+            dataManager.off('items_updated', this._plannerItemsHandler);
+            this._plannerItemsHandler = null;
+        }
+    }
+
     /** Release the exchange advisor's selection observer and any pending re-render */
     _disconnectAdvisorObserver() {
         this._advisorObserver?.disconnect();
@@ -1516,6 +1614,11 @@ class GuildCreditValue {
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const goldPerToken = goldPerTokenFor(itemDetailMap);
             const mode = spendMode();
+            // A ticked colour is settled with tokens whatever the mode says —
+            // per colour, through the same applySpendMode the mode goes
+            // through, so a covered colour with no rate still falls back to the
+            // market rather than dropping off the plan.
+            const covered = tokenCoveredCredits(planState());
             const pathFor = (creditHrid) =>
                 applySpendMode(
                     chooseCreditPath({
@@ -1523,7 +1626,7 @@ class GuildCreditValue {
                         marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
                         goldPerToken,
                     }),
-                    mode
+                    covered.has(creditHrid) ? 'tokens' : mode
                 );
 
             // Credit costs
@@ -1535,11 +1638,61 @@ class GuildCreditValue {
                 const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop();
                 const price = getItemPrice(itemHrid, { mode: 'ask' });
                 const goldStr = price > 0 ? ` (${formatKMB(price * owed)})` : '';
+                const rate = tokenRateFor(itemHrid);
+                const described = describeRate(rate);
                 const row = document.createElement('div');
                 row.style.cssText =
                     'display:flex; justify-content:space-between; gap:6px; padding:2px 0; font-size:12px;';
                 row.innerHTML = `<span style="color:#aaa;">${name}</span><span style="color:#e0e0e0; font-weight:600;">${owed.toLocaleString()}<span style="color:#6b7280; font-weight:400;">${goldStr}</span>${ownedNote(owned)}</span>`;
                 totalsEl.appendChild(row);
+
+                // The per-colour token cover. Ticked before buying, so the
+                // shopping list is not padded with materials for a colour the
+                // player already means to exchange tokens for. Persisted on the
+                // same per-character plan record as the targets; the cost on
+                // the label is the whole-exchange bill for what is still owed,
+                // so it falls as credits land. A colour with no rate has
+                // nothing to exchange at, so its box is disabled rather than
+                // silently ignored when ticked.
+                const cover = document.createElement('label');
+                cover.className = 'mwi-shrine-token-cover';
+                cover.dataset.creditHrid = itemHrid;
+                cover.style.cssText =
+                    'display:inline-flex; align-items:center; gap:3px; margin-left:6px; cursor:pointer; ' +
+                    'color:#c4b5fd; font-size:10px; user-select:none; vertical-align:middle;';
+                const coverBox = document.createElement('input');
+                coverBox.type = 'checkbox';
+                coverBox.style.cssText = 'margin:0; cursor:pointer;';
+                coverBox.checked = covered.has(itemHrid);
+                const coverCost = described ? tokensForCredits(owed, rate) : null;
+                const coverText = document.createElement('span');
+                coverText.textContent = `🪙${coverCost > 0 ? ` ${coverCost.toLocaleString()} tok` : ''}`;
+                cover.appendChild(coverBox);
+                cover.appendChild(coverText);
+                if (!described) {
+                    coverBox.disabled = true;
+                    cover.style.cursor = 'not-allowed';
+                    cover.style.color = '#4b5563';
+                    cover.title = NO_RATE_TITLE;
+                } else {
+                    cover.title =
+                        `Cover ${name} with guild tokens: its materials come off the shopping list and the ` +
+                        `${owed.toLocaleString()} still owed is exchanged for ${described.approx ? '≈' : ''}` +
+                        `${(coverCost || 0).toLocaleString()} tokens instead, whatever the spend mode says. ` +
+                        `Saved with this character's plan. ${described.title}`;
+                }
+                coverBox.addEventListener('change', () => {
+                    const plan = planState();
+                    if (!plan.tokenCredits || typeof plan.tokenCredits !== 'object') plan.tokenCredits = {};
+                    if (coverBox.checked) plan.tokenCredits[itemHrid] = true;
+                    else delete plan.tokenCredits[itemHrid];
+                    savePlanSoon();
+                    // Both halves, like the spend-mode buttons: the still-needed
+                    // box and the suggestions settle the same shortfall
+                    recalculate();
+                    renderSuggestions();
+                });
+                row.querySelector('span').appendChild(cover);
 
                 // The other way to settle this row: the guild shop sells credits
                 // for tokens. Only said where that is the *cheaper* way — a gold
@@ -1548,8 +1701,6 @@ class GuildCreditValue {
                 // exchange there would be advice to lose money — and only when
                 // the tokens the plan is not already spending cover it. Where the
                 // market wins, the row above it already says what the gold costs.
-                const rate = tokenRateFor(itemHrid);
-                const described = describeRate(rate);
                 const note = document.createElement('div');
                 note.className = 'mwi-shrine-credit-convert';
                 note.dataset.creditHrid = itemHrid;
@@ -1570,9 +1721,10 @@ class GuildCreditValue {
                 // would be a suggestion to go and find more. A mode the player
                 // chose is not advice — the line stays and says the shortfall,
                 // rather than vanishing and leaving this box disagreeing with
-                // the button that put it here.
+                // the button that put it here. A ticked token cover is the same
+                // kind of choice, made per colour.
                 const beyondSpare = tokensNeeded > spareTokens;
-                if (beyondSpare && mode !== 'tokens') continue;
+                if (beyondSpare && mode !== 'tokens' && !covered.has(itemHrid)) continue;
                 const spareNote = beyondSpare ? ' (more than this plan leaves spare)' : '';
                 note.textContent = `or convert ${described.approx ? '≈' : ''}${tokensNeeded.toLocaleString()} tokens${spareNote}`;
                 note.title = [described.title, describeDecision(shortCreditName(name), decision)]
@@ -1588,39 +1740,91 @@ class GuildCreditValue {
                 totalsEl.appendChild(none);
             }
 
-            // Only the colours this mode sends to the market. A colour it
-            // settles with tokens has an exchange to make rather than a shopping
-            // trip, and the note under its row above already says so — putting
-            // its materials on the shopping list too would be the same shortfall
-            // billed twice, in two different currencies.
-            const marketOwed = {};
-            for (const [itemHrid, owed] of Object.entries(owedCredits)) {
-                if (pathFor(itemHrid).path !== 'tokens') marketOwed[itemHrid] = owed;
-            }
-            renderMissingMats(marketOwed, itemDetailMap, inventory);
+            // Only the colours this mode (and the token covers) send to the
+            // market go shopping. A colour settled with tokens has an exchange
+            // to make rather than a shopping trip, and the note under its row
+            // above already says so — putting its materials on the shopping
+            // list too would be the same shortfall billed twice, in two
+            // different currencies. The token side still gets its exchange
+            // listed below, so covering a colour does not make its cost vanish.
+            const { marketOwed, tokenOwed } = splitOwedCredits(owedCredits, pathFor);
+            renderPlanFlow(marketOwed, tokenOwed, itemDetailMap, inventory);
         };
 
         /**
-         * The "go and buy the shortfall" button under the totals.
+         * The "go and buy the shortfall" button under the totals, and the
+         * conversion steps that follow the shopping trip.
          *
          * Rebuilt by `recalculate()` rather than kept in step, because what is
          * missing is a function of the targets, the inventory and the ask prices
          * all at once — the same three the totals above are drawn from, so the
-         * two cannot disagree if they are drawn together. (The planner has no
-         * live inventory or price hook of its own; neither does the shrine cost
-         * table's own button, which is likewise built once per render.)
+         * two cannot disagree if they are drawn together. (`recalculate` itself
+         * is now re-run on `items_updated` — see `_armPlannerObservers` — which
+         * is what keeps all of this current while the purchases land.)
          *
-         * @param {Object<string, number>} owedCredits - creditHrid → credits still owed
+         * The conversion half is the planner's twin of the suggestions'
+         * `renderNextBuyFlow`, and off the same option — `topConversions[..][0]`
+         * — so the list bought and the list handed over the counter cannot name
+         * different items. The steps are guidance rather than navigation: the
+         * exchange this modal *is* is where they happen, and the quantities are
+         * whole trades of what is still owed, so each line ticks down as the
+         * exchanged credits land in the bag and disappears at zero.
+         *
+         * @param {Object<string, number>} marketOwed - creditHrid → credits bought via materials
+         * @param {Object<string, number>} tokenOwed - creditHrid → credits exchanged for tokens
          * @param {Object} itemDetailMap - The game's items
          * @param {Array<Object>} inventory - The character's items
          */
-        function renderMissingMats(owedCredits, itemDetailMap, inventory) {
+        function renderPlanFlow(marketOwed, tokenOwed, itemDetailMap, inventory) {
             // Fresh per recalculation: the ranking is by live ask price, and a
             // cached one would send the user after yesterday's cheapest bar
             const topConversions = buildTopConversions(itemDetailMap, 1);
-            const missingMats = creditShortfallMaterials(owedCredits, topConversions, inventory);
-            if (missingMats.length === 0) return;
+            const missingMats = creditShortfallMaterials(marketOwed, topConversions, inventory);
+            const steps = creditConversionPlan(marketOwed, topConversions, itemDetailMap);
+            const tokenSteps = tokenConversionPlan(tokenOwed, itemDetailMap);
 
+            if (missingMats.length > 0) renderMissingMatsButton(missingMats);
+
+            if (steps.length === 0 && tokenSteps.length === 0) return;
+
+            const title = document.createElement('div');
+            title.style.cssText = 'margin-top:5px; font-size:10px; color:#9ca3af;';
+            title.textContent = 'then convert:';
+            matsEl.appendChild(title);
+
+            for (const step of tokenSteps) {
+                const described = describeRate(step.rate);
+                const line = document.createElement('div');
+                line.className = 'mwi-shrine-plan-token-step';
+                line.dataset.creditHrid = step.creditItemHrid;
+                line.style.cssText =
+                    'font-size:10px; color:#c4b5fd; white-space:normal; overflow-wrap:anywhere; padding:1px 0;';
+                line.textContent = `convert ${step.tokens.toLocaleString()} tok → ${step.credits.toLocaleString()} ${shortCreditName(step.creditName)}`;
+                line.title = [
+                    `${step.tokens.toLocaleString()} guild tokens exchange here for ${step.credits.toLocaleString()} ${step.creditName} — the ${step.owed.toLocaleString()} still owed, rounded up to whole exchanges.`,
+                    described?.title,
+                ]
+                    .filter(Boolean)
+                    .join(' ');
+                matsEl.appendChild(line);
+            }
+
+            for (const step of steps) {
+                const line = document.createElement('div');
+                line.className = 'mwi-shrine-plan-convert-step';
+                line.dataset.creditHrid = step.creditItemHrid;
+                line.style.cssText =
+                    'font-size:10px; color:#c4b5fd; white-space:normal; overflow-wrap:anywhere; padding:1px 0;';
+                line.textContent = `convert ${step.itemCount.toLocaleString()}× ${step.itemName} → ${step.creditCount.toLocaleString()} ${shortCreditName(step.creditName)}`;
+                line.title = `${step.itemCount.toLocaleString()} ${step.itemName} exchanges here for ${step.creditCount.toLocaleString()} ${step.creditName} — the ${step.owed.toLocaleString()} still owed, rounded up to whole exchanges`;
+                matsEl.appendChild(line);
+            }
+        }
+
+        /**
+         * @param {Array<{itemHrid: string, name: string, count: number}>} missingMats - What to buy
+         */
+        function renderMissingMatsButton(missingMats) {
             const button = document.createElement('button');
             button.className = 'mwi-shrine-plan-mats-btn';
             button.style.cssText = `
@@ -1900,6 +2104,9 @@ class GuildCreditValue {
             // recommends and the shopping list it produces are one decision.
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const goldPerToken = goldPerTokenFor(itemDetailMap);
+            // The same per-colour token covers the still-needed box honours —
+            // the two settle the same shortfall and must route it the same way
+            const covered = tokenCoveredCredits(planState());
             const decisions = {};
             const pathFor = (creditHrid) => {
                 if (!(creditHrid in decisions))
@@ -1909,7 +2116,7 @@ class GuildCreditValue {
                             marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
                             goldPerToken,
                         }),
-                        mode
+                        covered.has(creditHrid) ? 'tokens' : mode
                     );
                 return decisions[creditHrid];
             };
@@ -2197,6 +2404,14 @@ class GuildCreditValue {
         const rankingEl = modalEl.querySelector(`.${CSS_CLASS}`);
         const insertAfter = advisorEl || rankingEl;
         insertAfter?.insertAdjacentElement('afterend', wrapper);
+
+        // Both halves are redrawn together, because both are drawn from the
+        // inventory: the still-needed box (owed rows, shopping list, conversion
+        // steps) and the suggestions (token balance, ✓ walk, its own flow)
+        this._armPlannerObservers(wrapper, () => {
+            recalculate();
+            renderSuggestions();
+        });
     }
 
     /**
@@ -2983,6 +3198,7 @@ class GuildCreditValue {
         this.unregisterObservers = [];
         this._disconnectAdvisorObserver();
         this._disconnectShrineObservers();
+        this._disconnectPlannerObservers();
         this._shrineWatchedHrids = null;
         this._shrineSignature = null;
         // A plan edited in the last few hundred milliseconds is written now

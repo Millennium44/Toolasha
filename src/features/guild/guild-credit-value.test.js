@@ -165,6 +165,8 @@ const {
     tokenConversionPlan,
     applySpendMode,
     SPEND_MODES,
+    splitOwedCredits,
+    tokenCoveredCredits,
 } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
@@ -2196,6 +2198,218 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 matsButton(modal).click();
                 expect(shopping.calls[1].items.map((i) => i.itemHrid).sort()).toEqual(['/items/rune', '/items/silk']);
             });
+        });
+    });
+
+    /** Fire dataManager's items_updated the way a claimed purchase does, and let the debounced refresh run */
+    function purchaseLands() {
+        for (const handler of [...(game.listeners['items_updated'] || [])]) handler({});
+        vi.advanceTimersByTime(50);
+    }
+
+    describe('the plan keeps up with the inventory', () => {
+        test('materials bought after the plan was drawn come off the shopping list', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            matsButton(modal).click();
+            expect(shopping.calls[0].items[0].count).toBe(250);
+
+            // 200 of the 250 iron bars land in the bag — the next trip is for
+            // the 50 that are left, not the 250 the first render billed
+            game.inventory = [
+                { itemHrid: '/items/iron_bar', itemLocationHrid: '/item_locations/inventory', count: 200 },
+            ];
+            purchaseLands();
+
+            matsButton(modal).click();
+            expect(shopping.calls[1].items).toEqual([{ itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 50 }]);
+        });
+
+        test('credits landing in the bag pull the owed rows down', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            expect(modal.querySelector('.mwi-shrine-planner').textContent).toContain('50');
+
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 20 },
+            ];
+            purchaseLands();
+
+            const totals = modal.querySelector('.mwi-shrine-planner').textContent.replace(/\s+/g, ' ');
+            expect(totals).toContain('30');
+            expect(totals).toContain('(own 20)');
+        });
+
+        test('a fully bought shortfall takes its own button away', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            expect(matsButton(modal)).not.toBeNull();
+
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 50 },
+            ];
+            purchaseLands();
+
+            expect(matsButton(modal)).toBeNull();
+        });
+
+        test('the hook is released with the feature, and lets go on its own once the planner is gone', () => {
+            openModal();
+            expect(game.listeners['items_updated']).toHaveLength(1);
+
+            // The modal closed without the feature being torn down: the next
+            // delta finds the planner disconnected and releases the hook
+            document.body.innerHTML = '';
+            purchaseLands();
+            expect(game.listeners['items_updated']).toHaveLength(0);
+
+            openModal();
+            guildCreditValue.cleanup();
+            expect(game.listeners['items_updated']).toHaveLength(0);
+        });
+    });
+
+    describe('the plan lists the conversions after the shopping trip', () => {
+        const planConvertSteps = (modal) =>
+            Array.from(modal.querySelectorAll('.mwi-shrine-plan-convert-step')).map((el) => el.textContent);
+
+        test('the step names the same item as the shopping list, and the whole trade', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            expect(planConvertSteps(modal)).toEqual(['convert 250× Iron Bar → 50 Trade']);
+        });
+
+        test('bars already held shrink the shopping list but not the hand-over', () => {
+            // The counter takes the whole trade whether or not the bars were
+            // bought today — netting belongs to the buy, not the exchange
+            game.inventory = [
+                { itemHrid: '/items/iron_bar', itemLocationHrid: '/item_locations/inventory', count: 200 },
+            ];
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            matsButton(modal).click();
+            expect(shopping.calls[0].items[0].count).toBe(50);
+            expect(planConvertSteps(modal)).toEqual(['convert 250× Iron Bar → 50 Trade']);
+        });
+
+        test('the steps tick down as exchanged credits land, and away at zero', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            expect(planConvertSteps(modal)).toEqual(['convert 250× Iron Bar → 50 Trade']);
+
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 30 },
+            ];
+            purchaseLands();
+            expect(planConvertSteps(modal)).toEqual(['convert 100× Iron Bar → 20 Trade']);
+
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 50 },
+            ];
+            purchaseLands();
+            expect(planConvertSteps(modal)).toEqual([]);
+            expect(modal.querySelector('.mwi-shrine-plan-mats').textContent).not.toContain('then convert');
+        });
+    });
+
+    describe('covering a colour with tokens before buying', () => {
+        const coverBoxFor = (modal, creditHrid) =>
+            modal.querySelector(`.mwi-shrine-token-cover[data-credit-hrid="${creditHrid}"] input`);
+        const coverLabelFor = (modal, creditHrid) =>
+            modal.querySelector(`.mwi-shrine-token-cover[data-credit-hrid="${creditHrid}"]`);
+        const planTokenSteps = (modal) =>
+            Array.from(modal.querySelectorAll('.mwi-shrine-plan-token-step')).map((el) => el.textContent);
+
+        beforeEach(() => {
+            // A seen rate for Trade Credit: 1 token → 1 credit. The base mode is
+            // Gold, which keeps the colour on the market side until the cover
+            // overrides it — the override over the mode is the whole point.
+            game.rates['/items/guild_credit_1'] = {
+                creditItemHrid: '/items/guild_credit_1',
+                creditsPerToken: 1,
+                tokensPerExchange: 1,
+                creditsPerExchange: 1,
+                capturedAt: 1_700_000_000_000,
+                via: 'arrow',
+            };
+            shrinePlanRecord.get().spendMode = 'gold';
+        });
+
+        test('ticking the box takes the colour off the shopping list and lists the exchange instead', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            expect(matsButton(modal)).not.toBeNull();
+            expect(planTokenSteps(modal)).toEqual([]);
+
+            coverBoxFor(modal, '/items/guild_credit_1').click();
+
+            expect(matsButton(modal)).toBeNull();
+            expect(planTokenSteps(modal)).toEqual(['convert 50 tok → 50 Trade']);
+            // The suggestions route the same colour the same way
+            const forceRow = nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
+            expect(forceRow.querySelector('.mwi-shrine-next-buy-convert').textContent).toContain('convert 50 tok');
+
+            // Unticking puts the shopping trip back
+            coverBoxFor(modal, '/items/guild_credit_1').click();
+            expect(matsButton(modal)).not.toBeNull();
+            expect(planTokenSteps(modal)).toEqual([]);
+        });
+
+        test('the label quotes the token cost of what is still owed, and it falls as credits land', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 20 },
+            ];
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            expect(coverLabelFor(modal, '/items/guild_credit_1').textContent).toContain('30 tok');
+
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 45 },
+            ];
+            purchaseLands();
+            expect(coverLabelFor(modal, '/items/guild_credit_1').textContent).toContain('5 tok');
+        });
+
+        test('the choice is saved with the character and comes back', async () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            coverBoxFor(modal, '/items/guild_credit_1').click();
+
+            vi.advanceTimersByTime(400);
+            await shrinePlanRecord.flushed();
+            expect(game.storage['settings:guildShrinePlan_char1'].tokenCredits).toEqual({
+                '/items/guild_credit_1': true,
+            });
+
+            const reopened = await reopenFromStorage();
+            expect(coverBoxFor(reopened, '/items/guild_credit_1').checked).toBe(true);
+            expect(matsButton(reopened)).toBeNull();
+            expect(planTokenSteps(reopened)).toEqual(['convert 50 tok → 50 Trade']);
+        });
+
+        test('a colour with no known rate cannot be covered', () => {
+            const modal = openModal();
+            // Level 4 costs Craft Credit — no colour word, never captured
+            setTarget(modal, FORCE, 4);
+
+            const box = coverBoxFor(modal, '/items/guild_credit_2');
+            expect(box.disabled).toBe(true);
+        });
+
+        test('splitOwedCredits routes each colour by its decided path', () => {
+            const pathFor = (hrid) => ({ path: hrid === '/items/a' ? 'tokens' : 'market' });
+            expect(splitOwedCredits({ '/items/a': 5, '/items/b': 3 }, pathFor)).toEqual({
+                tokenOwed: { '/items/a': 5 },
+                marketOwed: { '/items/b': 3 },
+            });
+        });
+
+        test('only an explicit true covers a colour', () => {
+            expect(tokenCoveredCredits({ tokenCredits: { a: true, b: false, c: 1 } })).toEqual(new Set(['a']));
+            expect(tokenCoveredCredits({})).toEqual(new Set());
+            expect(tokenCoveredCredits(null)).toEqual(new Set());
         });
     });
 });
