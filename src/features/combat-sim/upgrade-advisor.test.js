@@ -3840,6 +3840,26 @@ describe('what an ability upgrade costs', () => {
         expect(detail.ownedFromLevel).toBeNull();
     });
 
+    test('the cost the table ranks on reads the same book bag the breakdown prints', () => {
+        // `calculateUpgradeCost` is what the ranking uses and `explainUpgradeCost`
+        // is what the row prints. They must price a swap from the same place: a
+        // book sitting at Lv14 that the breakdown calls a top-up but the Cost
+        // column quotes as a fresh path is the exact bug fresh-book pricing was
+        // introduced to kill, and it came back when the isSelf flag was threaded
+        // through the breakdown and not through here.
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 14, experience: 12_345 }];
+        calculateUpgradeCost(swap, gameData);
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 14, 12_345, 20);
+    });
+
+    test("the ranking cost of a stranger's swap still ignores the live book bag", () => {
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 14, experience: 12_345 }];
+        calculateUpgradeCost(swap, gameData, false);
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 0, 0, 20);
+    });
+
     test("a stranger's level-up ignores the live character owning the same ability at the same level", () => {
         // `owned` used to be read unconditionally for level-ups too, not just
         // swaps — a live character who happens to own Fireball at Lv48 with XP

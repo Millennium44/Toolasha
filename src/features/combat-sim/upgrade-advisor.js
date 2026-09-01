@@ -2684,10 +2684,15 @@ export function addRefinedPathBootCandidates(candidates, gameData) {
  *
  * @param {Object} candidate - Candidate from generateCandidates()
  * @param {Object} gameData - Game data
+ * @param {boolean} [isSelf=true] - False for a player other than the live character, so an ability
+ *   row is not priced off the live character's book bag. Must match what `explainUpgradeCost` was
+ *   given for the same candidate: this is the figure the table ranks on and that one is the figure
+ *   it prints, and a row whose Cost column disagrees with its own breakdown is worse than either.
+ *   True by default because every caller but `runUpgradeAnalysis` is solo — labyrinth and lab
  * @returns {number|null} Net gold cost, negative when the resale exceeds the
  *   purchase, or null when some part of it has no known price
  */
-export function calculateUpgradeCost(candidate, gameData) {
+export function calculateUpgradeCost(candidate, gameData, isSelf = true) {
     // Combat skill levels cost XP and time, not gold
     if (candidate.type === 'combat_level') {
         return null;
@@ -2728,7 +2733,7 @@ export function calculateUpgradeCost(candidate, gameData) {
     // Books, at the market price of the book — and null rather than 0 when there
     // is no listing, so an ability nobody is selling is not ranked as free
     if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) {
-        return explainAbilityCandidateCost(candidate, gameData).net;
+        return explainAbilityCandidateCost(candidate, gameData, isSelf).net;
     }
 
     if (candidate.type === 'cross_slot') {
@@ -2979,10 +2984,13 @@ function ownedAbility(abilityHrid, isSelf) {
  *
  * @param {Object} candidate - Candidate of type `ability_level` or `ability_swap`
  * @param {Object} gameData - Game data payload
- * @param {boolean} isSelf - False when the candidate belongs to a player other than the live character
+ * @param {boolean} [isSelf=true] - False when the candidate belongs to a player other than the live
+ *   character. Defaults true rather than being required: an omitted argument reading as "not self"
+ *   silently reprices every owned book of the live character's as a fresh path, which is how the
+ *   ranking path lost its book bag once already
  * @returns {Object} Same shape as `explainUpgradeCost`, plus `books`
  */
-function explainAbilityCandidateCost(candidate, gameData, isSelf) {
+function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
     const swap = candidate.type === 'ability_swap';
     const hrid = swap ? candidate.upgradeHrid : candidate.currentHrid || candidate.upgradeHrid;
     const owned = ownedAbility(hrid, isSelf);
@@ -3258,7 +3266,12 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         } catch (error) {
             console.error('[UpgradeAdvisor] Reading the cost basis failed:', error);
         }
-        return { ...c, cost: calculateUpgradeCost(c, gameData), costSource: costDetail?.source ?? null, costDetail };
+        return {
+            ...c,
+            cost: calculateUpgradeCost(c, gameData, isSelf),
+            costSource: costDetail?.source ?? null,
+            costDetail,
+        };
     });
 
     const combatLevelCount = candidatesWithCost.filter((c) => c.type === 'combat_level').length;
