@@ -5343,6 +5343,26 @@ describe('the payout block, audited', () => {
         expect(text()).toContain('Tokens, every eligible member605');
     });
 
+    test('switching tabs with the payout already drawn re-gates the explainer both ways', () => {
+        // The gate reads the tab off the root's class on every pass, and the
+        // block is only replaced when its markup moved — so the case worth
+        // pinning is the one the initial-draw test cannot reach: a block
+        // already on screen when the reader changes tab
+        game.buildingLevels = { '/guild_buildings/builders_hall': 6, '/guild_buildings/treasury': 5 };
+        const root = buildTrialsTab({ name: 'Milking', level: 190, points: 1222, signups: '12/106' });
+        fire();
+        expect(text()).toContain('used exactly as stated');
+
+        root.className = 'GuildPanel_inProgressTab__a';
+        fire();
+        expect(text()).not.toContain('used exactly as stated');
+        expect(text()).toContain('Guild Points banked1,222');
+
+        root.className = 'GuildPanel_trialsContent__a';
+        fire();
+        expect(text()).toContain('used exactly as stated');
+    });
+
     test('with no building level anywhere, the bonus is read back out of the cards', () => {
         // No Buildings tab has been opened and no guild traffic has carried a
         // level, but three cards state Guild Points for tiers whose base the
