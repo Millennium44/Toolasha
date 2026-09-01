@@ -1984,10 +1984,14 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  * made. Off, the old dream-planning behaviour and its `needsShrineLevel`
  * annotation are unchanged.
  *
- * The cap is only applied when at least one shrine in scope has a readable
- * building level. A client that never received guild building data reports 0
- * for every shrine, which is "unknown" rather than "unbuilt" — capping on it
- * would silently empty the table.
+ * The cap is only applied when at least one shrine *anywhere in the buff map*
+ * has a readable building level. A client that never received guild building
+ * data reports 0 for every shrine, which is "unknown" rather than "unbuilt" —
+ * capping on it would silently empty the table. The read is deliberately wider
+ * than the combat/skilling scope being generated: a guild that has built only
+ * skilling shrines reads 0 across every combat shrine, and taking that for
+ * missing data handed the combat table back the "Lv0 → Lv1 in a shrine nobody
+ * built" rows this flag exists to remove.
  *
  * Cost is cumulative over every level crossed; the benefit is measured at the
  * target, because that is the loadout the sim runs.
@@ -2026,9 +2030,11 @@ export function generateGuildShrineCandidates(
         Math.max(0, Math.floor(Number(dataManager.getGuildBuildingLevel?.(shrineHrid)) || 0));
 
     const inScope = Object.entries(detailMap).filter(([, detail]) => Boolean(detail.isCombat) === combat);
-    // See the cap note above: all-zero building levels mean the data never
-    // arrived, so there is nothing to cap against
-    const capping = capToGuildLevel && inScope.some(([, detail]) => buildingLevel(detail.shrineHrid) > 0);
+    // See the cap note above: all-zero building levels across *every* shrine mean
+    // the data never arrived, so there is nothing to cap against. Scoped to the
+    // combat half it would also read that way for a guild that has only built
+    // skilling shrines, which is data, not the absence of it
+    const capping = capToGuildLevel && Object.values(detailMap).some((detail) => buildingLevel(detail.shrineHrid) > 0);
 
     const candidates = [];
     for (const [buffHrid, detail] of inScope) {

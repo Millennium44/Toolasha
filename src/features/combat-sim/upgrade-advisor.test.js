@@ -4560,6 +4560,18 @@ describe('guild shrine candidates', () => {
             expect(hrids).toEqual(['/guild_buffs/force_combat', '/guild_buffs/aegis_combat']);
         });
 
+        test('a guild that built only skilling shrines is still capped on the combat side', () => {
+            // The "nothing arrived" valve has to read every shrine, not the half
+            // in scope: a real guild that has built the Rarity Shrine and no
+            // combat shrine reads 0 across the combat set, and taking that for
+            // missing data hands the table back the "Lv0 → Lv1 in a shrine nobody
+            // built" row the cap exists to remove — with the guild's own data on
+            // screen the whole time
+            guild.shrineLevels['/guild_shrines/rarity'] = 3;
+
+            expect(generateGuildShrineCandidates(dto(), { capToGuildLevel: true })).toEqual([]);
+        });
+
         test('and the flag reaches the set through generateCandidates', () => {
             guild.shrineLevels['/guild_shrines/force'] = 5;
 
