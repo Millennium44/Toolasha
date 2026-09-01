@@ -484,3 +484,41 @@ describe('open flags left in the old shared record', () => {
         await expect(wasOpen('partyLoot')).resolves.toBe(false);
     });
 });
+
+/**
+ * A character switch during the save.
+ *
+ * `openFlags()` caches by the key that is current when it starts, and
+ * `writeScoped` recomputed the key when it ran, so the two ends of one save
+ * could belong to different characters — the open panels of the character
+ * whose button was pressed filed under the character who arrived while the
+ * flags loaded. Cosmetic, but it is the leak the per-character split exists to
+ * close.
+ */
+describe('a character switch while the open flags load', () => {
+    test('the save is refused rather than filed under the arriving character', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            store.settings.panelOpenState_market123 = { partyLoot: true };
+            store.settings.panelOpenState_iron456 = { dps: false };
+
+            const pending = saveOpenState('dps', true);
+            mockDataManager.characterId = 'iron456';
+            mockDataManager.gameMode = 'ironcow';
+            await pending;
+
+            // The iron cow never opened the DPS panel and must not be told it did
+            expect(store.settings.panelOpenState_iron456).toEqual({ dps: false });
+            expect(store.settings.panelOpenState_market123).toEqual({ partyLoot: true });
+            expect(warn).toHaveBeenCalled();
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    test('a save with no switch behind it still lands under the current character', async () => {
+        await saveOpenState('dps', true);
+
+        expect(store.settings.panelOpenState_market123).toEqual({ dps: true });
+    });
+});

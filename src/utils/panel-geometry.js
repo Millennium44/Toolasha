@@ -23,7 +23,7 @@
 
 import storage from '../core/storage.js';
 import dataManager from '../core/data-manager.js';
-import { characterKey, readScoped, writeScoped } from './character-key.js';
+import { characterKey, readScoped } from './character-key.js';
 
 const STORAGE_KEY = 'panelGeometry';
 /** Per-character open flags: `{ [panelKey]: boolean }` */
@@ -436,9 +436,20 @@ async function openFlags() {
  */
 export async function saveOpenState(panelKey, open) {
     try {
+        // Captured before the load, checked after it. `openFlags()` caches by
+        // the key that is current when it starts, and `writeScoped` used to
+        // recompute the key when it ran — so a character switch during the
+        // first load of the flags wrote the departing character's whole set of
+        // open panels under the arriving character's key, which is the leak the
+        // per-character split exists to close.
+        const key = characterKey(OPEN_KEY);
         const flags = await openFlags();
+        if (characterKey(OPEN_KEY) !== key) {
+            console.warn('[PanelGeometry] Open panels not saved: the character changed while they loaded');
+            return;
+        }
         flags[panelKey] = Boolean(open);
-        await writeScoped(OPEN_KEY, flags, 'settings');
+        await storage.set(key, flags, 'settings');
     } catch (error) {
         console.error('[PanelGeometry] Remembering whether a panel was open failed:', error);
     }
