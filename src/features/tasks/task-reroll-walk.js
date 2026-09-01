@@ -505,6 +505,24 @@ class TaskRerollWalk {
      * @private
      */
     _plan() {
+        // Unread tasks first: the board can be carrying a "You have N unread
+        // tasks" notice whose Read press reveals them, and rerolling around
+        // hidden tasks walks an incomplete board. Offered once, as the walk's
+        // first press — after that the card indexes must stay put.
+        if (!this.readDone && this.index === 0) {
+            const readButton = this._readButton();
+            if (readButton) {
+                return {
+                    kind: 'read',
+                    card: readButton.closest(UNREAD_NOTICE) || readButton,
+                    slot: 0,
+                    label: 'Read unread tasks',
+                    button: null,
+                    signature: '',
+                };
+            }
+        }
+
         const trashAtLimit = Boolean(config.getSetting('tasks_rerollWalkTrashAtLimit'));
         const preference = String(config.getSettingValue('tasks_rerollWalkCurrency', 'auto') || 'auto');
         const cowbellValue = this._cowbellValue();
@@ -616,6 +634,7 @@ class TaskRerollWalk {
         this.index = 0;
         this.pendingRetries = 0;
         this.pending = false;
+        this.readDone = false;
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
         this.message = '';
         this.hidden = false;

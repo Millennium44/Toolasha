@@ -588,6 +588,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'listingNextNavigator',
+            name: 'Listing Next Navigator',
+            category: 'Market',
+            module: Market.listingNextNavigator,
+            async: false,
+        },
+        {
             key: 'bulkSellAssistant',
             name: 'Bulk Sell Assistant',
             category: 'Market',
@@ -996,6 +1003,13 @@ function registerFeatures() {
             name: 'Character Card Button',
             category: 'Profile',
             module: Combat.characterCardButton,
+            async: false,
+        },
+        {
+            key: 'eliteAchievementReminder',
+            name: 'Elite Achievement Reminder',
+            category: 'Profile',
+            module: Combat.eliteAchievementReminder,
             async: false,
         },
         {

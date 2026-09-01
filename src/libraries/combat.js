@@ -74,6 +74,7 @@ import chestKeyMarketButton from '../features/inventory/chest-key-market-button.
 // Profile (combat score)
 import combatScore from '../features/profile/combat-score.js';
 import characterCardButton from '../features/profile/character-card-button.js';
+import eliteAchievementReminder from '../features/profile/elite-achievement-reminder.js';
 
 // Guild
 import guildXPTracker from '../features/guild/guild-xp-tracker.js';
@@ -136,6 +137,7 @@ toolashaRoot.Combat = {
     chestKeyMarketButton,
     combatScore,
     characterCardButton,
+    eliteAchievementReminder,
     combatSim,
     labSim,
     guildXPTracker,

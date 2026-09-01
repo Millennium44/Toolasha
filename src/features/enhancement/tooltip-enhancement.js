@@ -896,6 +896,39 @@ export function getCheapestProtectionPrice(itemHrid) {
 }
 
 /**
+ * Calculate the gold cost of a single enhancement attempt's consumed materials (ask-side
+ * market price). Materials are consumed on every attempt regardless of success/failure, and
+ * this cost is the same at every enhancement level (enhancementCosts is not level-indexed).
+ *
+ * Pricing goes through getEnhancementMaterialPrice(), so coins are taken at face value,
+ * untradeable trainee charms at their fixed price, and a one-sided market quote is filled in
+ * from whichever side exists.
+ * @param {Object} itemDetails - Item details containing enhancementCosts.
+ * @returns {{cost: number, hasCost: boolean, costPartial: boolean}}
+ */
+export function calculatePerAttemptMaterialCost(itemDetails) {
+    if (!itemDetails?.enhancementCosts?.length) {
+        return { cost: 0, hasCost: false, costPartial: false };
+    }
+
+    let cost = 0;
+    let hasCost = false;
+    let costPartial = false;
+
+    for (const material of itemDetails.enhancementCosts) {
+        const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+        if (price > 0) {
+            cost += material.count * price;
+            hasCost = true;
+        } else {
+            costPartial = true;
+        }
+    }
+
+    return { cost, hasCost, costPartial };
+}
+
+/**
  * Minimum sell price that covers the total cost plus a target hourly rate for the
  * time the enhancement takes, optionally grossed up for the marketplace seller tax.
  * @param {number} totalCost - Total cost to reach the level, on one side (ask or bid)

@@ -1219,10 +1219,12 @@ export const settingsGroups = {
             },
             market_listingRefreshNavigator: {
                 id: 'market_listingRefreshNavigator',
-                label: 'Market: Show Refresh Next button on My Listings',
+                label: 'Market: Show Refresh/Next buttons for cycling My Listings',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds a "Refresh Next" button next to the Market History tab that cycles through your listings, navigating to each item\'s order book one at a time',
+                help:
+                    'Adds a "Refresh" button on My Listings that opens your first listing\'s order book, then a ' +
+                    '"Next" button on each listing\'s page to move to the next one, ending in "Back to My Listings"',
             },
             market_bulkSellAssistant: {
                 id: 'market_bulkSellAssistant',
@@ -1897,6 +1899,20 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds button to open character sheet in external viewer',
+            },
+            eliteAchievementReminder: {
+                id: 'eliteAchievementReminder',
+                label: 'Profile panel: Show Elite achievement reminder icon',
+                type: 'checkbox',
+                default: true,
+                help: "Shows a ✉️ icon next to a player's name if they haven't completed Elite achievements; click to pre-fill a whisper.",
+            },
+            eliteAchievementReminderMessage: {
+                id: 'eliteAchievementReminderMessage',
+                label: 'Elite achievement reminder: whisper message',
+                type: 'text',
+                default: 'Be Elite. Do your Elite achievements.',
+                help: 'Message pre-filled into chat when the Elite achievement reminder icon is clicked.',
             },
             dungeonTracker: {
                 id: 'dungeonTracker',

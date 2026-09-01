@@ -15,7 +15,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import {
     getCheapestProtectionPrice,
-    getEnhancementMaterialPrice,
+    calculatePerAttemptMaterialCost,
     calculateEnhancementPath,
     buildEnhancementTooltipHTML,
 } from './tooltip-enhancement.js';
@@ -71,26 +71,14 @@ function calculateItemXPH(itemHrid, itemDetails, maxLevel, protectFrom, params) 
 
     const xph = Math.round((totalXP / calc.totalTime) * 3600);
 
-    // Material cost calculation
-    let materialCost = 0;
-    let costPartial = false;
-    let allMissing = true;
+    // Material cost calculation — shared pricing rules: coins at face value, untradeable
+    // trainee charms at their fixed price, and a one-sided market quote filled in from the
+    // side that exists.
+    const perAttempt = calculatePerAttemptMaterialCost(itemDetails);
+    const materialCost = perAttempt.cost * calc.attempts;
+    let costPartial = perAttempt.costPartial;
+    const hasCost = perAttempt.hasCost;
 
-    if (itemDetails.enhancementCosts?.length) {
-        for (const cost of itemDetails.enhancementCosts) {
-            // Shared pricing rules: coins at face value, untradeable trainee charms at their
-            // fixed price, and a one-sided market quote filled in from the side that exists.
-            const price = getEnhancementMaterialPrice(cost.itemHrid, 'ask');
-            if (price > 0) {
-                materialCost += cost.count * price * calc.attempts;
-                allMissing = false;
-            } else {
-                costPartial = true;
-            }
-        }
-    }
-
-    const hasCost = !allMissing;
     let goldPerXP = hasCost ? materialCost / totalXP : null;
     let costPerHour = hasCost ? goldPerXP * xph : null;
 

@@ -577,3 +577,27 @@ export function watchTabForAcquisition(tab, options) {
 
     return () => unwatchTabAcquisition(tab);
 }
+
+/**
+ * Navigate back to the native "My Listings" tab from a specific listing's order-book page.
+ *
+ * Only the tab bar that is actually on screen is searched (`visibleTabsContainer`), and our own
+ * injected tabs are skipped so a pinned material tab whose item name happens to contain the
+ * phrase can never be clicked instead.
+ *
+ * @returns {boolean} True when the tab was found and clicked.
+ */
+export function navigateToMyListings() {
+    const tabContainer = visibleTabsContainer();
+    if (!tabContainer) return false;
+
+    const tab = Array.from(tabContainer.children).find((el) => {
+        if (el.getAttribute('role') !== 'tab') return false;
+        if (el.hasAttribute('data-mwi-custom-tab') || el.hasAttribute('data-mwi-shrine-tab')) return false;
+        return el.textContent.includes('My Listings');
+    });
+
+    if (!tab) return false;
+    tab.click();
+    return true;
+}

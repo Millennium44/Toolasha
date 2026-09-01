@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Elite achievement reminder icon on player profiles
+
+A player's shared profile now shows a ✉️ icon next to their name when their Elite achievement tier is still incomplete; clicking it pre-fills a customizable whisper into the chat input (you still press Enter to send). Both the toggle and the message live in Settings under Combat.
+
 ### Item identity no longer depends on the game's display language
 
 Custom inventory tabs, the guild exchange advisor, and the token-exchange capture all identified items by their translated display name, so each silently found nothing for players running the game in any non-English language. They now read the icon's locale-independent sprite reference (via a new shared `item-icon` util), keeping the name lookup only as a fallback.
