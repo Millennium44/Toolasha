@@ -275,6 +275,37 @@ describe('the ring survives a failed read and a second tab', () => {
         ).toEqual(['9']);
         expect(stored().map((run) => run.key)).toEqual(['1']);
     });
+
+    test('a run in flight when the character changes is not filed under the arriving one', async () => {
+        // The registry tears features down by calling disable(), which the
+        // ledger did not have — so the handler stayed hooked with the departing
+        // character's run still active. The arriving character's first sighting
+        // says no labyrinth, which is the active→ended edge, and the append
+        // resolves the key when it runs rather than when the run started.
+        labyrinthRunLedger.stateOwner = null;
+        labyrinthRunLedger.observe({
+            isActive: true,
+            startedAt: 5000,
+            floor: 4,
+            torchCount: 80,
+            shroudCount: 4,
+            beaconCount: 3,
+        });
+        expect(labyrinthRunLedger.state.phase).toBe('active');
+
+        game.characterId = 'char2';
+        labyrinthRunLedger.observe({ isActive: false });
+        for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(storageMock.storeFor('labyrinth').get('labyrinthRunLedger_char2')).toBeUndefined();
+    });
+
+    test('the registry tears the ledger down by the name it calls', () => {
+        expect(typeof labyrinthRunLedger.disable).toBe('function');
+        labyrinthRunLedger.observe({ isActive: true, startedAt: 6000, floor: 2, torchCount: 50 });
+        labyrinthRunLedger.disable();
+        expect(labyrinthRunLedger.state).toEqual({ phase: 'unknown', run: null });
+    });
 });
 
 /**

@@ -399,6 +399,8 @@ class LabyrinthRunLedger {
         this.recorded = new Set();
         /** Whose endings the record in memory holds; a change means forget them first */
         this.ledgerOwner = null;
+        /** Whose run `state` is following; the same rule, for the run in flight */
+        this.stateOwner = null;
     }
 
     /**
@@ -438,10 +440,37 @@ class LabyrinthRunLedger {
         this.unregister?.();
         this.unregister = null;
         this.state = { phase: 'unknown', run: null };
+        this.stateOwner = null;
+        this.recorded.clear();
+    }
+
+    /**
+     * The feature registry tears features down by calling `disable()`, so a
+     * `cleanup()` alone is never called on a character switch — which left the
+     * websocket handler hooked and the departing character's run still in
+     * flight. Aliased rather than renamed: the module has always called this
+     * cleanup, and both names are now honoured.
+     */
+    disable() {
+        this.cleanup();
     }
 
     /** @param {Object|null} labyrinth - A payload's labyrinth object */
     observe(labyrinth) {
+        // A run in flight belongs to whoever was running it. The arriving
+        // character's first sighting reports no active labyrinth, which reads
+        // as the active→ended edge and would file the departing character's
+        // torch and shroud spend into the arriving character's ledger — the
+        // key is resolved when the append runs, not when the run started.
+        // Forgetting the run instead loses it, which is the trade `_ledger`
+        // already makes for the same reason: a lost run beats a misfiled one.
+        const owner = dataManager.getCurrentCharacterId?.() || null;
+        if (owner !== this.stateOwner) {
+            this.state = { phase: 'unknown', run: null };
+            this.recorded.clear();
+            this.stateOwner = owner;
+        }
+
         const { state, ended } = foldSighting(this.state, labyrinth, Date.now());
         this.state = state;
         if (ended && !this.recorded.has(ended.key)) {
