@@ -133,6 +133,40 @@ beforeEach(() => {
     vi.stubGlobal('alert', vi.fn());
 });
 
+describe('a character switch inside the saved-filter read', () => {
+    test("the departing character's selections are not adopted into the arriving one", async () => {
+        marketHistoryViewer.filters = {
+            dateFrom: null,
+            dateTo: null,
+            selectedItems: [],
+            selectedEnhLevels: [],
+            selectedTypes: [],
+        };
+        // The read was issued under market123 and answers with their filters,
+        // but the player is on the alt by the time it lands
+        storageMock.get.mockImplementationOnce(async () => {
+            dataManagerMock.characterId = 'alt456';
+            return {
+                dateFrom: '2026-01-01T00:00:00.000Z',
+                dateTo: null,
+                selectedItems: ['/items/a'],
+                selectedEnhLevels: [3],
+                selectedTypes: ['sell'],
+            };
+        });
+
+        await marketHistoryViewer.loadFilters();
+
+        // Adopting them would show the alt an empty table filtered by items
+        // they never listed — and write those selections under the alt's key
+        // the moment they touched any filter
+        expect(marketHistoryViewer.filters.selectedItems).toEqual([]);
+        expect(marketHistoryViewer.filters.selectedEnhLevels).toEqual([]);
+        expect(marketHistoryViewer.filters.selectedTypes).toEqual([]);
+        expect(marketHistoryViewer.filters.dateFrom).toBeNull();
+    });
+});
+
 describe('clearHistory', () => {
     test('mirrors listings into anchors before wiping the personal log', async () => {
         marketHistoryViewer.listings = [

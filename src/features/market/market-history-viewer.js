@@ -100,6 +100,13 @@ class MarketHistoryViewer {
         // appear until it was next opened — and the scripts that register them
         // load after this one does, so that is the ordinary case rather than
         // the exception
+        // Whatever is already registered goes first. `initialize()` sets
+        // `isInitialized` at the top but reaches here two awaits later, so a
+        // switch landing in between lets the arriving character's initialize
+        // register its own subscription and the parked one then overwrite the
+        // handle — stranding a subscription `disable()` can no longer reach,
+        // and redrawing the table once more for every switch survived.
+        this.unsubscribeMarkers?.();
         this.unsubscribeMarkers = listingMarkers.onChange(() => {
             if (this.modal && this.modal.style.display !== 'none') this.renderTable();
         });
@@ -112,11 +119,21 @@ class MarketHistoryViewer {
      * Load saved filters from storage
      */
     async loadFilters() {
+        // Whose filters these are, decided before the read rather than after
+        // it. `readScoped` builds the key now, but the values are adopted a
+        // storage round trip later: a switch inside that read left the
+        // departing character's item, date and type selections sitting in the
+        // arriving character's viewer, and `saveFilters()` writes the whole
+        // filter object out on the next change — so one filter click files the
+        // departing character's selections under the arriving character's key,
+        // and the table thereafter shows nothing with no visible reason.
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
         try {
             // Discarded rather than adopted on migration: a filter naming items
             // and dates is a view of one character's log, and pointing it at
             // another's shows an empty table with no visible reason
             const savedFilters = await readScoped('marketHistoryFilters', 'settings', null, { migrate: 'discard' });
+            if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) return;
             if (savedFilters) {
                 // Convert date strings back to Date objects
                 this.filters.dateFrom = savedFilters.dateFrom ? new Date(savedFilters.dateFrom) : null;
