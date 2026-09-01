@@ -285,6 +285,15 @@ function handleMarketplaceCleanup() {
     removeMaterialTabs();
     currentTabs.length = 0;
     queue.length = 0;
+    // The watchdog goes with the session it was watching. Left running, the next
+    // queued item took the first-item path again and registered a second one over
+    // the top of it — the first was then unreachable, polling `currentTabs`
+    // (a module-level array, refilled by that very queue) forever, and surviving
+    // the feature being disabled. Safe to call from the poll's own callback.
+    if (cleanupObserver) {
+        cleanupObserver();
+        cleanupObserver = null;
+    }
     if (inventoryUpdateHandler) {
         webSocketHook.off('*', inventoryUpdateHandler);
         inventoryUpdateHandler = null;

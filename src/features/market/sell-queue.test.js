@@ -7,12 +7,20 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const observerState = vi.hoisted(() => ({ handler: null }));
+const tabsState = vi.hoisted(() => ({
+    /** What `visibleTabsContainer` reports; null keeps addToQueue away from the marketplace */
+    container: null,
+    /** Every `handleMarketplaceCleanup` handed to the cleanup watchdog, and its unregister */
+    cleanups: [],
+    unregisters: [],
+}));
 const dataManagerMock = vi.hoisted(() => ({
     getInitClientData: () => ({
         itemDetailMap: { '/items/cheese': { name: 'Cheese', isTradable: true } },
     }),
-    // Nothing in the bag: addToQueue returns before touching the marketplace
-    getInventory: () => [],
+    // Nothing in the bag by default: addToQueue returns before touching the marketplace
+    inventory: [],
+    getInventory: () => dataManagerMock.inventory,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -29,11 +37,16 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
-    createMaterialTab: vi.fn(),
+    createMaterialTab: vi.fn(() => document.createElement('div')),
     removeMaterialTabs: vi.fn(),
-    setupMarketplaceCleanupObserver: vi.fn(() => () => {}),
+    setupMarketplaceCleanupObserver: vi.fn((onCleanup) => {
+        tabsState.cleanups.push(onCleanup);
+        const unregister = vi.fn();
+        tabsState.unregisters.push(unregister);
+        return unregister;
+    }),
     navigateToMarketplace: vi.fn(),
-    visibleTabsContainer: () => null,
+    visibleTabsContainer: () => tabsState.container,
 }));
 
 const { default: sellQueue, navigationBlocked } = await import('./sell-queue.js');
@@ -69,6 +82,10 @@ function shiftRightClickInventory() {
 
 beforeEach(() => {
     document.body.innerHTML = '';
+    tabsState.container = null;
+    tabsState.cleanups.length = 0;
+    tabsState.unregisters.length = 0;
+    dataManagerMock.inventory = [];
     sellQueue.initialize();
 });
 
@@ -142,5 +159,61 @@ describe('the auto-advance waits for the player', () => {
         expect(navigationBlocked(doc({ activeElement: { tagName: 'INPUT', getAttribute: () => 'checkbox' } }))).toBe(
             false
         );
+    });
+});
+
+/**
+ * The queue's cleanup watchdog is registered on the first queued item and torn
+ * down when the marketplace closes. It used to be registered again on the next
+ * first item without the previous one ever being stopped.
+ */
+describe('the marketplace cleanup watchdog', () => {
+    /** A marketplace tab strip the queue accepts as "already in the market" */
+    function marketplaceStrip() {
+        const container = document.createElement('div');
+        const myListings = document.createElement('button');
+        myListings.textContent = 'My Listings';
+        const marketListings = document.createElement('button');
+        marketListings.textContent = 'Market Listings';
+        container.append(myListings, marketListings);
+        document.body.appendChild(container);
+        return container;
+    }
+
+    /** Track a hovered Cheese and Shift+RightClick it into the queue */
+    function queueCheese() {
+        observerState.handler(popper('<a href="/items/cheese">Cheese</a>'));
+        shiftRightClickInventory();
+    }
+
+    beforeEach(() => {
+        tabsState.container = marketplaceStrip();
+        dataManagerMock.inventory = [
+            { itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 12 },
+        ];
+    });
+
+    test('one watch is registered for the first queued item', () => {
+        queueCheese();
+        expect(tabsState.cleanups.length).toBe(1);
+    });
+
+    test('a queue cycle after the marketplace closed does not leave the previous watch running', () => {
+        queueCheese();
+        // The watchdog notices the player navigated away, and tears the session down
+        tabsState.cleanups[0]();
+
+        // Queueing again starts a fresh session — and the old watch must be gone,
+        // not left polling the same module-level tab array this one refills
+        queueCheese();
+
+        expect(tabsState.cleanups.length).toBe(2);
+        expect(tabsState.unregisters[0]).toHaveBeenCalled();
+    });
+
+    test('disabling the feature leaves no watch behind', () => {
+        queueCheese();
+        sellQueue.cleanup();
+        expect(tabsState.unregisters.every((unregister) => unregister.mock.calls.length > 0)).toBe(true);
     });
 });
