@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The settings load that settles last no longer wins
+
+Two settings loads could overlap across a character switch, and whichever finished last took the map — so the departing character's settings could be served to every reader on the arriving one until something happened to reload. The load now discards its own result if the character moved while it was reading, without draining queued writes into the wrong character's map. The same shape is closed for open-panel flags. The lab sim's shrine target grid also reads a blank box the way the combat sim's does now (blank means one level up, 0 skips the shrine) — the two grids in the same panel family had come to disagree. And a dead second copy of the efficiency model has been deleted from the alchemy folder: it scraped an action's level requirement out of the panel's notes while every live figure keys off the item's own data, so anything built on it would have quietly disagreed with the rest of the app.
+
 ### Audit round: a fourfold drop undercount, missing refund coins, and one more crossed character
 
 Collection's "time to next tier" read a quantity field the game does not send, so every gathering drop was valued at one item per action — a 2–6 drop had its rate understated fourfold, and the badge under each tile quoted two hours where the truth was thirty minutes (the sort ran on it too). Net worth now counts the coins a partly-filled buy order has handed back: they were added for sell listings and for ended orders, but a live buy order's refund was dropped entirely, even as the marketplace header showed it. And the last of tonight's character-swap races is closed — net worth's detail snapshots built their storage keys after two awaits, so a switch landing mid-load wrote one character's item-level history under the other's keys and deleted the record the arriving character had not read yet, leaving the 24-hour breakdown diffing one character's holdings against another's.
