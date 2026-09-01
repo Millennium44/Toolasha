@@ -370,6 +370,37 @@ describe('which reroll gets bought', () => {
         const choice = chooseReroll({ ...base, coin: 320000, cowbell: 32 });
         expect(choice.currency).toBe(null);
         expect(choice.why).toBe('both reroll options blocked');
+        expect(choice.atCap).toBe(true);
+    });
+
+    test('a currency with no price at all is unknown, not over its threshold', () => {
+        // The screenshot: 10K spent, so the next coin reroll is 20K against an
+        // 80K cap, and the 1🔔 cap blocks every cowbell reroll there will ever
+        // be. An unpriced coin option used to read exactly like a blocked one,
+        // and the pair of them said "both reroll options blocked" — which is
+        // the sentence that discards the task.
+        const choice = chooseReroll({ ...base, coin: null, cowbell: 1, coinThreshold: 80000, cowbellThreshold: 1 });
+        expect(choice.atCap).toBe(false);
+        expect(choice.why).not.toBe('both reroll options blocked');
+    });
+
+    test('a currency the open chooser is not offering is paid in the other, and said so', () => {
+        const choice = chooseReroll({ ...base, coin: 20000, cowbell: 1, coinOffered: false });
+        expect(choice.currency).toBe('cowbell');
+        expect(choice.why).toBe('coins not on offer');
+    });
+
+    test('an unoffered currency beside a capped one is nobody being at cap', () => {
+        const choice = chooseReroll({
+            ...base,
+            coin: 20000,
+            cowbell: 1,
+            coinThreshold: 80000,
+            cowbellThreshold: 1,
+            coinOffered: false,
+        });
+        expect(choice.currency).toBe(null);
+        expect(choice.atCap).toBe(false);
     });
 
     test('a preference overrides the arithmetic, but not a block', () => {
@@ -407,9 +438,17 @@ describe('what the walk decides about one card', () => {
     });
 
     test('a blocked task is discarded, or skipped when that is off', () => {
-        const blocked = { currency: null, costLabel: '', why: 'both reroll options blocked' };
+        const blocked = { currency: null, costLabel: '', why: 'both reroll options blocked', atCap: true };
         expect(verdictForCard({ ...base, choice: blocked }).action).toBe('trash');
         expect(verdictForCard({ ...base, choice: blocked, trashAtLimit: false }).action).toBe('skip');
+    });
+
+    test('a task with nothing to press, but nothing proven over the cap, is never discarded', () => {
+        // Discarding is for prices the player capped. A reroll the walk merely
+        // cannot see a button for is not a price, and a task destroyed over one
+        // is a task destroyed on a reading that was never made.
+        const unoffered = { currency: null, costLabel: '', why: 'no reroll on offer', atCap: false };
+        expect(verdictForCard({ ...base, choice: unoffered }).action).toBe('skip');
     });
 
     test('a card whose price cannot be read is left alone rather than guessed at', () => {
@@ -635,6 +674,41 @@ describe('planning a walk down the board', () => {
         // #1 stays shut on its own remembered prices; #2 is judged on its own
         // untouched ladder, not its twin's chooser
         expect(chipText()).toContain('Reroll #2 — 10.0K🪙');
+    });
+
+    test('a card the chooser priced in one currency only is rerolled, not trashed', async () => {
+        // The reported walk, exactly: 10.0K spent on card #1, so the next coin
+        // reroll is 20K under an 80K cap, and the 1🔔 cap blocks every cowbell
+        // reroll. The chooser was showing its coin option unpressable — which is
+        // what it looks like for the moment after a payment — and the walk read
+        // "no coin price" as "coins are over the cap", called the pair of them
+        // blocked, remembered that quote, and offered to discard a task it could
+        // have rerolled for 20K.
+        stored.values.taskCapCoinThreshold_7 = 80000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        const list = board([{ name: 'Milking - Cow', buttons: ['Back', '20,000', '1'], quest: quest(MILKING, 1, 0) }]);
+        [...list.querySelectorAll('button')].find((b) => b.textContent === '20,000').disabled = true;
+
+        await walk.start();
+        expect(chipText()).not.toContain('Trash');
+        expect(chipText()).toContain('Close the menu on #1');
+
+        walk.advance();
+        setButtons(list, 1, AT_REST);
+        vi.advanceTimersByTime(500);
+
+        expect(chipText()).toContain('Reroll #1 — 20.0K🪙');
+        expect(chipText()).not.toContain('Trash');
+    });
+
+    test('a card that has already paid one 10K reroll rerolls again under an 80K cap', async () => {
+        stored.values.taskCapCoinThreshold_7 = 80000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 1, 0) }]);
+
+        await walk.start();
+
+        expect(chipText()).toContain('Reroll #1 — 20.0K🪙 (cowbells blocked)');
     });
 
     test('an empty board says so rather than offering a press', async () => {

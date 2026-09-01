@@ -188,6 +188,14 @@ export function costsFromChooser(options) {
  * options is done in coins, because that is the only unit both are quotable in;
  * a free reroll skips all of it, being cheaper than everything.
  *
+ * Three states, not two, and the third is what `atCap` exists to keep apart: an
+ * option can be over the player's cap, or it can simply not be buyable this
+ * instant — no price for it, or an open chooser refusing it. Only the first is
+ * a verdict about the task, and only the first may end in a discard. Reading
+ * the second as the first is how a card with 10K spent, a 20K next coin reroll
+ * and an 80K cap was announced as "both reroll options blocked" and offered up
+ * for the trash.
+ *
  * @param {Object} params - Prices, limits and taste
  * @param {number|null} params.coin - Next coin reroll's cost
  * @param {number|null} params.cowbell - Next cowbell reroll's cost
@@ -196,23 +204,55 @@ export function costsFromChooser(options) {
  * @param {number} params.cowbellThreshold - Block cowbells at this cost
  * @param {number} params.cowbellValue - What one cowbell is worth in coins
  * @param {string} [params.preference] - 'auto', 'cowbell' or 'coin'
- * @returns {{currency: string|null, cost: number|null, costLabel: string, why: string}}
+ * @param {boolean} [params.coinOffered=true] - Is a coin option pressable right now?
+ * @param {boolean} [params.cowbellOffered=true] - Is a cowbell option pressable right now?
+ * @returns {{currency: string|null, cost: number|null, costLabel: string, why: string, atCap: boolean}}
  */
-export function chooseReroll({ coin, cowbell, free, coinThreshold, cowbellThreshold, cowbellValue, preference }) {
-    if (free) return { currency: 'free', cost: 0, costLabel: 'free', why: '' };
+export function chooseReroll({
+    coin,
+    cowbell,
+    free,
+    coinThreshold,
+    cowbellThreshold,
+    cowbellValue,
+    preference,
+    coinOffered = true,
+    cowbellOffered = true,
+}) {
+    if (free) return { currency: 'free', cost: 0, costLabel: 'free', why: '', atCap: false };
 
-    const coinOk = coin !== null && coin !== undefined && coin < coinThreshold;
-    const cowbellOk = cowbell !== null && cowbell !== undefined && cowbell < cowbellThreshold;
+    const coinPriced = coin !== null && coin !== undefined;
+    const cowbellPriced = cowbell !== null && cowbell !== undefined;
+    const coinCapped = coinPriced && coin >= coinThreshold;
+    const cowbellCapped = cowbellPriced && cowbell >= cowbellThreshold;
+    const coinOk = coinPriced && !coinCapped && coinOffered !== false;
+    const cowbellOk = cowbellPriced && !cowbellCapped && cowbellOffered !== false;
 
     if (!coinOk && !cowbellOk) {
-        return { currency: null, cost: null, costLabel: '', why: 'both reroll options blocked' };
+        // Both priced and both over the cap is the player's own ceiling saying
+        // no, which a discard may answer. Anything else is the walk not being
+        // able to see, which it may not.
+        const atCap = coinCapped && cowbellCapped;
+        return {
+            currency: null,
+            cost: null,
+            costLabel: '',
+            why: atCap ? 'both reroll options blocked' : 'no reroll on offer',
+            atCap,
+        };
     }
 
-    const takeCoin = (why) => ({ currency: 'coin', cost: coin, costLabel: coinLabel(coin), why });
-    const takeCowbell = (why) => ({ currency: 'cowbell', cost: cowbell, costLabel: cowbellLabel(cowbell), why });
+    const takeCoin = (why) => ({ currency: 'coin', cost: coin, costLabel: coinLabel(coin), why, atCap: false });
+    const takeCowbell = (why) => ({
+        currency: 'cowbell',
+        cost: cowbell,
+        costLabel: cowbellLabel(cowbell),
+        why,
+        atCap: false,
+    });
 
-    if (!coinOk) return takeCowbell('coins blocked');
-    if (!cowbellOk) return takeCoin('cowbells blocked');
+    if (!coinOk) return takeCowbell(coinCapped ? 'coins blocked' : 'coins not on offer');
+    if (!cowbellOk) return takeCoin(cowbellCapped ? 'cowbells blocked' : 'cowbells not on offer');
     if (preference === 'cowbell') return takeCowbell('preferred');
     if (preference === 'coin') return takeCoin('preferred');
 
@@ -267,7 +307,10 @@ export function verdictForCard({ completed, isProtected, choice, trashAtLimit })
     // how a walk rerolls something the player was keeping
     if (!choice) return { action: 'skip', reason: 'unreadable' };
     if (!choice.currency) {
-        return trashAtLimit
+        // Only `atCap` — both options priced, both at or over the player's own
+        // ceiling — may end a task. Nothing to press is a card to come back to,
+        // not a card to destroy.
+        return trashAtLimit && choice.atCap
             ? { action: 'trash', reason: choice.why || 'blocked' }
             : { action: 'skip', reason: choice.why || 'blocked' };
     }
@@ -666,26 +709,30 @@ class TaskRerollWalk {
         const live = costsFromChooser(chooser);
         const ladder = nextRerollCosts(quest);
 
-        // An open chooser with something pressable in it is the whole truth
-        // about what this reroll can cost, so the ladder is not consulted at
-        // all. Merging the two priced a currency the chooser is *refusing* —
-        // the button is there and greyed out because the player cannot afford
-        // it — at the ladder's price; the plan would then pick that currency on
-        // price, `preferredRerollOption` would find nothing pressable to match
-        // it, and the walk would wait the chooser out and stop on a card it
-        // could have rerolled with the other currency.
-        if ((chooser || []).some((option) => option.available)) {
-            return { coin: live.coin, cowbell: live.cowbell, free: live.free };
-        }
-
-        // Nothing pressable: either the chooser is shut (the ladder is the only
-        // source there is) or the game has momentarily disabled every option
-        // while it answers the last payment, which the caller waits out.
+        // Nothing pressable and no ladder: either the chooser is shut and the
+        // quest is unreadable, or there is nothing here to judge at all.
         if (!ladder && !chooser.length) return null;
+
+        // An open chooser with something pressable in it says which currencies
+        // can be *paid* right now, and that is the only question the pressing
+        // side of the plan may ask of it: pricing a currency the chooser is
+        // refusing — the button is there and greyed out — at the ladder's price
+        // had the plan name coins, `preferredRerollOption` find no pressable
+        // coin option, and the walk wait the chooser out and stop on a card it
+        // could have rerolled with the other currency.
+        //
+        // It is not the question the *cap* asks. A refused option has no quoted
+        // price, and "no price" is not "over the player's cap" — read as one it
+        // condemned a card whose next coin reroll was 20K under an 80K cap. So
+        // the ladder still prices what the chooser will not, and the refusal
+        // travels separately as `offered`.
+        const offering = (chooser || []).some((option) => option.available);
         return {
             coin: live.coin ?? ladder?.coin ?? null,
             cowbell: live.cowbell ?? ladder?.cowbell ?? null,
             free: live.free,
+            coinOffered: !offering || live.coin !== null,
+            cowbellOffered: !offering || live.cowbell !== null,
         };
     }
 
@@ -795,10 +842,16 @@ class TaskRerollWalk {
             const questKey = quest?.id
                 ? `${quest.id}:${Number(quest.coinRerollCount) || 0}:${Number(quest.cowbellRerollCount) || 0}`
                 : null;
+            //
+            // Prices only: which options that chooser happened to be offering
+            // is true of one moment, not of the task, and remembering it turned
+            // a chooser that momentarily refused its coin button — which is how
+            // it looks while the game answers a payment — into a card that
+            // stayed "both reroll options blocked" for the rest of the walk.
             if (questKey && chooser.some((option) => option.available)) {
-                this.chooserQuotes.set(questKey, costs);
+                this.chooserQuotes.set(questKey, { coin: costs.coin, cowbell: costs.cowbell, free: costs.free });
             } else if (questKey && !chooser.length && this.chooserQuotes.has(questKey)) {
-                costs = this.chooserQuotes.get(questKey);
+                costs = { ...this.chooserQuotes.get(questKey), coinOffered: true, cowbellOffered: true };
             }
             const choice = costs
                 ? chooseReroll({
