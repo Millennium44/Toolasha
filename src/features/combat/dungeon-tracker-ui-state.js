@@ -4,6 +4,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 /**
@@ -15,6 +16,14 @@ import { readScoped, writeScoped } from '../../utils/character-key.js';
  * adopted by the main character once.
  */
 const UI_STATE_KEY = 'dungeonTracker_uiState';
+
+/**
+ * Who the panel's preferences belong to.
+ * @returns {string|null} Character id, or null before login
+ */
+function currentOwner() {
+    return dataManager.getCurrentCharacterId?.() ?? null;
+}
 
 /** Show only runs this character recorded (the default), or every character's */
 export const CHARACTER_FILTER_MINE = 'mine';
@@ -46,13 +55,55 @@ class DungeonTrackerUIState {
 
         // Track expanded groups to preserve state across refreshes
         this.expandedGroups = new Set();
+
+        /**
+         * Whose preferences are in memory, or null when none have been loaded.
+         * `save()` refuses to write anything else's: `writeScoped` resolves the
+         * key when the write runs, so a panel still holding the departing
+         * character's collapse, position and grouping would file them under the
+         * arriving character on the first click.
+         */
+        this.owner = null;
+    }
+
+    /** Everything the constructor sets, for a load that has to start clean */
+    _resetToDefaults() {
+        this.isCollapsed = false;
+        this.isKeysExpanded = false;
+        this.isRunHistoryExpanded = false;
+        this.isChartExpanded = true;
+        this.isRoiExpanded = false;
+        this.position = null;
+        this.groupBy = 'team';
+        this.filterDungeon = 'all';
+        this.filterTeam = 'all';
+        this.filterCharacter = CHARACTER_FILTER_MINE;
+        this.expandedGroups.clear();
     }
 
     /**
-     * Load saved state from storage
+     * Load saved state from storage.
+     *
+     * Defaults first, always. The panel is a singleton and its `load()` is what
+     * a character switch re-runs: reading a character who has never opened the
+     * panel used to leave every field but `filterCharacter` holding the last
+     * character's — their collapse, their window position, their grouping and
+     * their run-history filters, on a panel that then wrote all of it back
+     * under the new character's key on the first click.
      */
     async load() {
+        // Fixed before the read: a switch landing inside it must not apply one
+        // character's stored preferences to another's panel
+        const owner = currentOwner();
+        this.owner = null;
+        // Before the read, not after it: a load a switch supersedes returns
+        // without adopting, and what it leaves behind must not be the character
+        // it was reading for
+        this._resetToDefaults();
         const savedState = await readScoped(UI_STATE_KEY, 'settings', null, { migrate: 'adopt' });
+        if (currentOwner() !== owner) return;
+
+        this.owner = owner;
         if (savedState) {
             this.isCollapsed = savedState.isCollapsed || false;
             this.isKeysExpanded = savedState.isKeysExpanded || false;
@@ -66,17 +117,22 @@ class DungeonTrackerUIState {
             this.filterTeam = savedState.filterTeam || 'all';
             this.filterCharacter =
                 savedState.filterCharacter === CHARACTER_FILTER_ALL ? CHARACTER_FILTER_ALL : CHARACTER_FILTER_MINE;
-        } else {
-            // A character with no saved state is a character the panel has not
-            // been opened on; it should not inherit the last one's selections
-            this.filterCharacter = CHARACTER_FILTER_MINE;
         }
     }
 
     /**
-     * Save current state to storage
+     * Save current state to storage.
+     *
+     * Refused when the preferences in memory are not this character's — see
+     * {@link DungeonTrackerUIState#owner}.
      */
     async save() {
+        if (this.owner !== currentOwner()) {
+            console.warn(
+                `[Dungeon Tracker UI] Not saving panel preferences: they belong to ${this.owner ?? 'no character yet'}`
+            );
+            return;
+        }
         await writeScoped(
             UI_STATE_KEY,
             {

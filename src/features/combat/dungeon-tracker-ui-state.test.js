@@ -7,8 +7,26 @@
  * and clearFilters are the pure logic behind that indicator.
  */
 
-import { describe, test, expect, beforeEach } from 'vitest';
-import dungeonTrackerUIState from './dungeon-tracker-ui-state.js';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+/** Who is logged in, and the per-character settings store the panel writes to */
+const world = vi.hoisted(() => ({ charId: 'market' }));
+const store = vi.hoisted(() => new Map());
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => world.charId },
+}));
+vi.mock('../../utils/character-key.js', () => ({
+    readScoped: async (base, _store, defaultValue = null) => {
+        const value = store.get(`${base}_${world.charId}`);
+        return value === undefined ? defaultValue : value;
+    },
+    writeScoped: async (base, value) => {
+        store.set(`${base}_${world.charId}`, value);
+        return true;
+    },
+}));
+
+const { default: dungeonTrackerUIState } = await import('./dungeon-tracker-ui-state.js');
 
 describe('hasActiveFilters', () => {
     beforeEach(() => {
@@ -53,5 +71,54 @@ describe('clearFilters', () => {
         dungeonTrackerUIState.clearFilters();
         expect(dungeonTrackerUIState.filterDungeon).toBe('all');
         expect(dungeonTrackerUIState.filterTeam).toBe('all');
+    });
+});
+
+describe('the panel’s preferences across a character switch', () => {
+    beforeEach(() => {
+        world.charId = 'market';
+        store.clear();
+    });
+
+    test('a character who has never opened the panel gets the defaults, not the last one’s', async () => {
+        store.set('dungeonTracker_uiState_market', {
+            isCollapsed: true,
+            position: { x: 40, y: 900 },
+            groupBy: 'dungeon',
+            filterDungeon: 'Chimerical Den',
+            filterTeam: 'Solo',
+        });
+        await dungeonTrackerUIState.load();
+        expect(dungeonTrackerUIState.isCollapsed).toBe(true);
+
+        world.charId = 'iron';
+        await dungeonTrackerUIState.load();
+
+        expect(dungeonTrackerUIState.isCollapsed).toBe(false);
+        expect(dungeonTrackerUIState.position).toBeNull();
+        expect(dungeonTrackerUIState.groupBy).toBe('team');
+        expect(dungeonTrackerUIState.filterDungeon).toBe('all');
+        expect(dungeonTrackerUIState.filterTeam).toBe('all');
+    });
+
+    test('the first click after the switch does not file the departing character’s preferences', async () => {
+        store.set('dungeonTracker_uiState_market', { isCollapsed: true, groupBy: 'dungeon' });
+        await dungeonTrackerUIState.load();
+
+        world.charId = 'iron';
+        await dungeonTrackerUIState.save();
+
+        expect(store.has('dungeonTracker_uiState_iron')).toBe(false);
+    });
+
+    test('a load a switch superseded is not applied to the arriving character’s panel', async () => {
+        store.set('dungeonTracker_uiState_market', { isCollapsed: true, groupBy: 'dungeon' });
+
+        const loading = dungeonTrackerUIState.load();
+        world.charId = 'iron';
+        await loading;
+
+        expect(dungeonTrackerUIState.isCollapsed).toBe(false);
+        expect(dungeonTrackerUIState.groupBy).toBe('team');
     });
 });
