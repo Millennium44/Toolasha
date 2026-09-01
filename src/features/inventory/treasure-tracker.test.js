@@ -24,9 +24,12 @@ const storageMock = vi.hoisted(() => {
     return {
         storeFor,
         unavailable: false,
+        /** key → promise a `tryGet` of it waits on, for the mid-load switch tests */
+        delays: new Map(),
         reset() {
             stores.clear();
             storageMock.unavailable = false;
+            storageMock.delays.clear();
         },
         get: async (key, store = 'settings', fallback = null) => {
             const map = storeFor(store);
@@ -37,6 +40,7 @@ const storageMock = vi.hoisted(() => {
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
         },
         tryGet: async (key, store = 'settings') => {
+            if (storageMock.delays.has(key)) await storageMock.delays.get(key);
             if (storageMock.unavailable) return null;
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null
@@ -61,8 +65,22 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char-1',
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
-vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
-const dm = vi.hoisted(() => ({ dropTables: {}, shop: {}, labyrinthShop: {} }));
+/** The live `loot_opened` handlers, so a leaked one can be counted */
+const socketMock = vi.hoisted(() => {
+    const handlers = new Map();
+    return {
+        handlers,
+        for: (event) => handlers.get(event) || [],
+        on: (event, fn) => handlers.set(event, [...(handlers.get(event) || []), fn]),
+        off: (event, fn) =>
+            handlers.set(
+                event,
+                (handlers.get(event) || []).filter((entry) => entry !== fn)
+            ),
+    };
+});
+vi.mock('../../core/websocket.js', () => ({ default: socketMock }));
+const dm = vi.hoisted(() => ({ dropTables: {}, shop: {}, labyrinthShop: {}, characterId: 'char-1' }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -72,7 +90,7 @@ vi.mock('../../core/data-manager.js', () => ({
             shopItemDetailMap: dm.shop,
             labyrinthShopItemDetailMap: dm.labyrinthShop,
         }),
-        getCurrentCharacterId: () => 'char-1',
+        getCurrentCharacterId: () => dm.characterId,
         isFromActiveSocket: () => true,
         getCurrentCharacterGameMode: () => 'standard',
         on: () => {},
@@ -98,6 +116,14 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     clearPosition: () => {},
     saveOpenState: () => {},
     reopenIfLeftOpen: () => {},
+}));
+/** The confirmation dialog, held open for as long as a test wants */
+const choice = vi.hoisted(() => ({ answer: null }));
+vi.mock('../../utils/choice-dialog.js', () => ({
+    askChoice: () =>
+        new Promise((resolve) => {
+            choice.answer = resolve;
+        }),
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1, getPricingMode: () => 'bid' }));
 // The overlay tile's `version()` counts price feeds, so the module imports the
@@ -879,6 +905,85 @@ describe('which chests are expanded is remembered', () => {
 
         expect(treasureTracker.expanded.has(CHEST)).toBe(true);
         treasureTracker.disable();
+    });
+});
+
+describe('a character switch landing in the middle of something', () => {
+    const CHEST = '/items/chimerical_chest';
+    const tallyOf = (id) => storageMock.storeFor('settings').get(`treasureTally_${id}`);
+
+    afterEach(() => {
+        treasureTracker.disable();
+        storageMock.reset();
+        config.getSetting.mockImplementation(() => false);
+        dm.characterId = 'char-1';
+        choice.answer = null;
+        socketMock.handlers.clear();
+        treasureTracker.tally = {};
+        treasureTracker.isInitialized = false;
+    });
+
+    test('“Delete everything” answered afterwards does not wipe the character who arrived', async () => {
+        window.alert = vi.fn();
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set('treasureTally_char-1', { [CHEST]: { opened: 3, loot: {} } });
+        storageMock.storeFor('settings').set('treasureTally_char-2', { [CHEST]: { opened: 12, loot: {} } });
+        await treasureTracker.initialize();
+
+        const wipe = [...treasureTracker._configSection().querySelectorAll('button')].find(
+            (button) => button.textContent === 'Delete all history'
+        );
+        wipe.click();
+        // The dialog is now open, and waiting on a human — an unbounded wait,
+        // long enough for a character switch to happen behind it
+        expect(choice.answer).toBeTypeOf('function');
+
+        treasureTracker.disable();
+        dm.characterId = 'char-2';
+        await treasureTracker.initialize();
+
+        choice.answer('delete');
+        await treasureTracker.ledger.flushed();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await treasureTracker.ledger.flushed();
+
+        // `replace: true` is a full overwrite, so the arriving character's whole
+        // chest history went, with nothing left to recover it from
+        expect(tallyOf('char-2')[CHEST].opened).toBe(12);
+        expect(window.alert).toHaveBeenCalled();
+    });
+
+    test('an initialize parked in its loads neither leaks a handler nor adopts the departing settings', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set('treasureSettings_char-1', { hiddenChests: [CHEST] });
+        storageMock.storeFor('settings').set('treasureSettings_char-2', { hiddenChests: [] });
+
+        let release;
+        storageMock.delays.set(
+            'treasureTally_char-1',
+            new Promise((resolve) => {
+                release = resolve;
+            })
+        );
+
+        const parked = treasureTracker.initialize();
+        await Promise.resolve();
+
+        // `disable()` unregisters nothing, because the parked initialize has not
+        // reached its `webSocketHook.on` yet
+        treasureTracker.disable();
+        dm.characterId = 'char-2';
+        await treasureTracker.initialize();
+
+        release();
+        await parked;
+
+        // Two live handlers means every chest opening recorded twice, and only
+        // the newer one can ever be removed
+        expect(socketMock.for('loot_opened')).toHaveLength(1);
+        // And the departing character's per-character settings, which the next
+        // toggle would write under the arriving character's key
+        expect(treasureTracker.settings.hiddenChests).toEqual([]);
     });
 });
 

@@ -375,19 +375,76 @@ class TreasureTracker {
         this._dialogRetry = null;
         this.settings = { ...DEFAULT_SETTINGS };
         this.configMode = false;
+        /**
+         * Bumped by {@link disable}, which is what a character switch runs
+         * before the arriving character's `initialize()`. Anything that
+         * suspended under the departing character — an `initialize()` parked in
+         * its loads, a confirmation dialog waiting on a human — compares this
+         * on the way back and stands down rather than adopting the departing
+         * character's ledger or writing over the arriving character's.
+         */
+        this._generation = 0;
+    }
+
+    /**
+     * A ticket saying which character the work about to suspend belongs to.
+     *
+     * The id alone is not enough: a reconnect re-initializes the same character,
+     * so the generation has to move too. And the generation alone is not enough
+     * either — `characterKey()` builds its key from
+     * `getCurrentCharacterId()`, which moves the moment the switch settles,
+     * before `disable()` has had a turn.
+     * @returns {{generation: number, charId: string|null}} Pass to {@link _stillOurs}
+     */
+    _owner() {
+        return { generation: this._generation, charId: dataManager.getCurrentCharacterId?.() ?? null };
+    }
+
+    /**
+     * @param {{generation: number, charId: string|null}} owner - From {@link _owner}
+     * @returns {boolean} Whether the character it was taken under is still the one in hand
+     */
+    _stillOurs(owner) {
+        return owner.generation === this._generation && (dataManager.getCurrentCharacterId?.() ?? null) === owner.charId;
+    }
+
+    /**
+     * Whether an answer to a dialog may still be acted on.
+     *
+     * The wait is unbounded — a human decides when it ends — so the character
+     * can be a different one by the time it does, and every one of these
+     * answers ends in a `replace: true` write, which is a full overwrite of
+     * whoever's ledger is current. Refusing silently would read as the button
+     * being broken, so it says why.
+     * @param {{generation: number, charId: string|null}} owner - Taken before the dialog opened
+     * @returns {boolean} Whether to go ahead
+     */
+    _answerStillApplies(owner) {
+        if (this._stillOurs(owner)) return true;
+        window.alert('You switched characters while that was open, so your chest history was left alone.');
+        return false;
     }
 
     async initialize() {
         if (this.isInitialized) return;
         if (!config.getSetting('treasureTracker')) return;
         this.isInitialized = true;
+        const owner = this._owner();
 
         // An unreadable store keeps whatever ledger is in hand rather than
         // starting a blank one that the next chest would write over the stored one
         this.ledger.set(this.tally);
         await this.ledger.load();
+        // A switch landing in the load ran `disable()`, which cleared the tally
+        // and dropped the ledger — and then the arriving character's own
+        // `initialize()`. Carrying on here re-seeded `this.tally` from the
+        // DEPARTING character's ledger over that cleared state, so their counts
+        // were saved under the arriving character's key on the next chest, and
+        // registered a second `loot_opened` handler that nothing could remove.
+        if (!this._stillOurs(owner)) return;
         this.tally = this.ledger.get();
         const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
+        if (!this._stillOurs(owner)) return;
         if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
         // Reapplied every initialize, not just the first: a character switch
         // re-initializes the same instance, and the previous character's
@@ -401,6 +458,11 @@ class TreasureTracker {
         // panel is not up, which is the usual case.
         this._render();
 
+        // Symmetric with `disable()`: registration removes whatever is already
+        // registered first, so overwriting the field can never strand a handler
+        // the unregister can no longer name. Two live handlers would record
+        // every chest opening twice.
+        if (this.lootOpenedHandler) webSocketHook.off('loot_opened', this.lootOpenedHandler);
         this.lootOpenedHandler = (data, context) => this._onLootOpened(data, context);
         webSocketHook.on('loot_opened', this.lootOpenedHandler);
 
@@ -412,6 +474,10 @@ class TreasureTracker {
     }
 
     disable() {
+        // Before anything else, so work suspended under the departing character
+        // — a parked `initialize()`, an open confirmation dialog — finds the
+        // number moved however this call goes on to fare
+        this._generation += 1;
         try {
             unregisterCommand('Treasure Tracker');
             if (this.lootOpenedHandler) {
@@ -1417,6 +1483,7 @@ class TreasureTracker {
         buttons.appendChild(pin);
 
         const wipe = this._actionButton('Delete all history', async () => {
+            const owner = this._owner();
             const confirmed = await askChoice({
                 title: 'Delete all chest history',
                 message: 'Every chest opening recorded so far. This cannot be undone.',
@@ -1426,6 +1493,9 @@ class TreasureTracker {
                 ],
             });
             if (!confirmed) return;
+            // "Delete everything" answered after a switch deleted the ARRIVING
+            // character's whole history, irrecoverably
+            if (!this._answerStillApplies(owner)) return;
 
             this.tally = resetTally(this.tally);
             this._save({ replace: true });
@@ -1509,6 +1579,9 @@ class TreasureTracker {
         input.type = 'file';
         input.accept = 'application/json,.json';
 
+        // Taken when the picker is opened, not when a file comes back: choosing
+        // one is an unbounded wait too, and the import ends in a full overwrite
+        const owner = this._owner();
         input.addEventListener('change', async () => {
             const file = input.files?.[0];
             if (!file) return;
@@ -1526,6 +1599,7 @@ class TreasureTracker {
                 const chests = Object.keys(read.tally).length;
                 const mode = await this._askImportMode(`Import ${chests} chest${chests === 1 ? '' : 's'}.`);
                 if (!mode) return;
+                if (!this._answerStillApplies(owner)) return;
 
                 this.tally = mergeTally(this.tally, read.tally, mode);
                 if (Object.keys(read.settings || {}).length) {
@@ -1573,6 +1647,7 @@ class TreasureTracker {
 
     /** Read Edible Tools' chest history out of its own storage */
     async _importEdibleTools() {
+        const owner = this._owner();
         try {
             const raw = window.localStorage.getItem('Edible_Tools');
             if (!raw) {
@@ -1613,6 +1688,7 @@ class TreasureTracker {
                 `Import ${chests} chest${chests === 1 ? '' : 's'} from Edible Tools.${warning}`
             );
             if (!mode) return;
+            if (!this._answerStillApplies(owner)) return;
 
             this.tally = mergeTally(this.tally, tally, mode);
             this._save({ replace: true });
