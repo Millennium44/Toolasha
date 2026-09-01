@@ -139,6 +139,25 @@ describe('cleanup unregisters the setting-change listeners it registered', () =>
 
         expect(websocketHook.on).not.toHaveBeenCalled();
     });
+
+    test('the health it last read is forgotten, so the fight it comes back to is not one huge hit', () => {
+        // Two ticks of a fight, so there is a reading to compare against
+        hooks.battle(tick('b1'));
+        hooks.battle(tick('b1'));
+
+        // The numbers are switched off, the fight runs on without being watched,
+        // and they are switched back on — the same battle, so the new-battle
+        // guard does not fire and a stale reading would be diffed against a
+        // health bar a long way down
+        combatText.cleanup();
+        health = 100;
+        combatText.initialize();
+        clearFloats();
+        hooks.battle(tick('b1'));
+
+        // The first tick back only re-establishes the baseline
+        expect(floatedUnits()).toEqual([]);
+    });
 });
 
 describe('the unit tiles are looked up once, not per tick', () => {

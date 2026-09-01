@@ -90,6 +90,23 @@ function invalidateTiles() {
 }
 
 /**
+ * Forget the last tick's health readings and which battle they came from.
+ *
+ * Teardown has to do this as well as `new_battle` does. The readings are only
+ * meaningful as "what this unit had a moment ago", and the moment ends when the
+ * feature stops watching: toggle the numbers off mid-fight, let the fight run
+ * for a minute, toggle them back on, and the `battleId` still matches, so the
+ * new-battle guard does not fire and the first tick draws the whole minute of
+ * damage as one enormous hit. Same story for a character switch that lands back
+ * in a battle carrying the id last seen.
+ */
+function forgetHealthReadings() {
+    battleId = null;
+    enemyHealth.clear();
+    allyHealth.clear();
+}
+
+/**
  * The battle panel's unit tiles, one list a side.
  *
  * Two lists rather than one, because the payload numbers the two sides
@@ -308,6 +325,7 @@ function applySettings() {
         unregisterArea?.();
         unregisterArea = null;
         invalidateTiles();
+        forgetHealthReadings();
         handler = null;
         newBattleHandler = null;
         attribution = newAttributionState();
@@ -339,6 +357,7 @@ export default {
         unregisterArea?.();
         unregisterArea = null;
         invalidateTiles();
+        forgetHealthReadings();
         handler = null;
         newBattleHandler = null;
         attribution = newAttributionState();
