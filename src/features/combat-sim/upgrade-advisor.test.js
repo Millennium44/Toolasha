@@ -217,8 +217,15 @@ const { runLabyrinthSimulation } = await import('./combat-sim-runner.js');
 // The advisor asks the shared pricing rule what one attempt's materials come to.
 // Most tests here are not about that number, so give it a default they can ignore
 // and let the ones that care override it.
+// The same goes for the shared price lookup: the real one always answers with a
+// `{ price }` object, so a bare `vi.fn()` returning undefined is a shape the
+// callers are entitled not to guard against. Without a default here, a describe
+// that does not price anything itself ("the materials behind a house level")
+// only worked while some earlier test's `mockImplementation` was still
+// installed, and threw on destructuring as soon as it ran first.
 beforeEach(() => {
     perAttemptMaterialCost.mockReturnValue({ cost: 0, hasCost: false, hasMissingPrices: true });
+    resolveItemPrice.mockReturnValue({ price: 0, custom: false, missing: true, estimated: false });
 });
 
 const MAIN_HAND = '/equipment_types/main_hand';
