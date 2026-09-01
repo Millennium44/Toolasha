@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Why your settings reverted: a reconnect was emptying the settings map
+
+The sweep after the watchlist-dots fix found the cause of the reverting itself. Tearing down the settings panel cleared the settings cache with nothing to reload it, and it ran on a signal that fires on every websocket reconnect — not just a character switch — so after a reconnect every setting answered its shipped default (dots back on, features you had turned off back on) and every toggle you then flipped was answered on screen but never stored. That teardown is gone, and a cleared cache now reloads itself if nothing else does within fifteen seconds; a held write the reloaded map cannot accept is logged by name instead of vanishing. Alongside: turning Guild Trials info off now takes the overlay off the page instead of leaving it stranded, the Consumables panel follows a setting changed on the settings page instead of waiting for its next tick, and the inventory badge manager is a single shared copy again rather than one per bundle (the duplicated-module class, caught by the bundle guard).
+
 ### The reroll walk discards only what your cap actually blocked
 
 An unreadable price and a price over the cap were the same thing to the walk: a chooser that was not offering its coin button (how it looks in the window right after a payment) read as "both reroll options blocked", and that half-read quote was then remembered for the rest of the walk — so a task with a perfectly affordable 20K reroll under an 80K cap sat there proposing to trash itself. Prices now fall back to the reroll ladder, whether a button was on offer is tracked separately from whether it was over the cap, and a discard needs both currencies genuinely priced at or over their limits. Nothing unknown ends a task.
