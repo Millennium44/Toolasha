@@ -116,6 +116,17 @@ export function normaliseMooket1Rows(data) {
 /** How long a fetched range is reused before asking again */
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * How many item/range answers are held at once.
+ *
+ * The cache is keyed by source, item, enhancement level and range, so browsing
+ * a marketplace session's worth of items at several ranges makes hundreds of
+ * entries, each holding every row of its range — and nothing ever took them out
+ * again. Expired entries are dropped on every write; this cap is what bounds a
+ * session that keeps every entry inside its five minutes.
+ */
+const CACHE_MAX_ENTRIES = 200;
+
 /** A request that has not answered by now is not going to */
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -206,13 +217,43 @@ class MarketHistoryAPI {
             const payload = await response.json();
             // mooket II already speaks the common row shape; mooket I is folded into it
             const rows = source.key === 'mooket1' ? normaliseMooket1Rows(payload) : payload;
-            this.cache.set(key, { rows, at: Date.now() });
+            // A 200 carrying something that is not rows — an error object, a
+            // wrapper, a changed shape — is no answer. Returning it let every
+            // reader's own `Array.isArray` guard turn it into an empty chart
+            // with nothing said, and caching it made the next five minutes of
+            // retries return the same non-answer without asking the server.
+            if (!Array.isArray(rows)) throw new Error('history payload is not an array of rows');
+            this.remember(key, rows);
             return rows;
         } catch (error) {
             console.error('[MooketHistory] Fetching history failed:', error);
             return null;
         } finally {
             clearTimeout(timeout);
+        }
+    }
+
+    /**
+     * Hold one answer, dropping what has expired and the oldest of what has not.
+     *
+     * A `Map` keeps insertion order, so the first key is the least recently
+     * stored — good enough for a cache whose entries all expire in five minutes
+     * anyway, and cheaper than tracking reads.
+     *
+     * @param {string} key - Cache key
+     * @param {Array<Object>} rows - The rows to hold
+     * @returns {void}
+     */
+    remember(key, rows) {
+        const now = Date.now();
+        for (const [held, entry] of this.cache) {
+            if (now - entry.at >= CACHE_TTL_MS) this.cache.delete(held);
+        }
+        this.cache.set(key, { rows, at: now });
+        while (this.cache.size > CACHE_MAX_ENTRIES) {
+            const oldest = this.cache.keys().next();
+            if (oldest.done) break;
+            this.cache.delete(oldest.value);
         }
     }
 

@@ -218,6 +218,57 @@ describe('history source', () => {
     });
 });
 
+describe('an answer that is not rows', () => {
+    beforeEach(() => {
+        on('www.milkywayidle.com');
+    });
+
+    test('a 200 carrying an error object is no answer, and is not remembered as one', async () => {
+        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ error: 'rate limited' }) }));
+        globalThis.fetch = fetchMock;
+
+        expect(await marketHistoryAPI.fetchHistory('/items/cheese', 0, 7)).toBeNull();
+
+        // Caching it would make the next five minutes of retries answer with the
+        // same non-answer without asking the server again
+        const rows = [{ a: 5, b: 4, p: 4.5, v: 10, time: 1 }];
+        fetchMock.mockImplementation(async () => ({ ok: true, json: async () => rows }));
+        expect(await marketHistoryAPI.fetchHistory('/items/cheese', 0, 7)).toEqual(rows);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('the fetch cache is bounded', () => {
+    beforeEach(() => {
+        on('www.milkywayidle.com');
+        globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => [{ a: 1, b: 1, p: 1, v: 0, time: 1 }] }));
+    });
+
+    test('a session that browses hundreds of items does not hold all of them', async () => {
+        for (let i = 0; i < 260; i += 1) {
+            await marketHistoryAPI.fetchHistory(`/items/item_${i}`, 0, 7);
+        }
+
+        expect(marketHistoryAPI.cache.size).toBeLessThanOrEqual(200);
+        // The newest answer is the one kept
+        expect(marketHistoryAPI.cache.has('mooket2:/items/item_259:0:7')).toBe(true);
+    });
+
+    test('an expired entry is dropped rather than counted against the cap', async () => {
+        vi.useFakeTimers();
+        try {
+            await marketHistoryAPI.fetchHistory('/items/old', 0, 7);
+            vi.advanceTimersByTime(6 * 60 * 1000);
+            await marketHistoryAPI.fetchHistory('/items/new', 0, 7);
+
+            expect(marketHistoryAPI.cache.has('mooket2:/items/old:0:7')).toBe(false);
+            expect(marketHistoryAPI.cache.has('mooket2:/items/new:0:7')).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
 describe('normaliseMooket1Rows', () => {
     test('folds ask/bid series into rows with a midpoint and zero volume', () => {
         expect(normaliseMooket1Rows({ ask: [{ time: 1, price: 10 }], bid: [{ time: 1, price: 6 }] })).toEqual([
