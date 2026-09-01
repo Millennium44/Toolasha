@@ -732,8 +732,16 @@ function actionRates(bucket, measured, interval) {
         const high = perRoom ? perRoom.high : pooledCheck.high;
 
         let verdict = 'consistent';
+        // Both shapes of "no reading" have to be caught. A per-room mean too
+        // thin to band stores null; `compareToPrediction` given no trials at all
+        // returns before it computes an interval, so its bounds come back
+        // undefined — and `undefined === null` is false, while `server < undefined`
+        // and `server > undefined` are both false, so a strict null test let a
+        // row that measured nothing fall through and print as agreeing with the
+        // server. That is exactly a double rate on a room with actions but no
+        // successes: no trials, no interval, and nothing to be consistent with.
         if (!Number.isFinite(server)) verdict = 'no server rate';
-        else if (low === null || high === null) verdict = 'too few rooms';
+        else if (!Number.isFinite(low) || !Number.isFinite(high)) verdict = 'too few rooms';
         else if (server < low) verdict = 'sim too low';
         else if (server > high) verdict = 'sim too high';
 
@@ -879,6 +887,12 @@ const COUNTERS = [
     'doubles',
     'fights',
     'fightSeconds',
+    // The sum of squares behind the fight-length band. Left off this list, a
+    // since-view kept the whole record's squares over a since-view fight count,
+    // and the variance came out ~15x too wide — which is a band nothing can
+    // ever fall outside, so the sharpest test in the record was silently dead
+    // in exactly the view that asked for a fresh reading.
+    'fightSquares',
     'successRatioSum',
     'successRatioSquares',
     'successRatioRooms',
@@ -941,6 +955,20 @@ export function totalsSince(totals, baseline) {
             // different times and an old record may not carry all of them
             if (now || then) since[field] = Math.max(0, now - then);
         }
+
+        // A field-wise difference does not preserve the record's own pairings.
+        // An entry and the clear that answers it arrive in separate floor
+        // updates, so a mark taken between them puts the clear inside the period
+        // and the attempt outside it — a bucket with more clears than attempts,
+        // which the pooled headline then reports as "0 fights, expected 0.0
+        // clears, got 1". A clear whose attempt is not in the period is not in
+        // the period either.
+        const clamp = (won, tried) => {
+            const cap = Number(since[tried]) || 0;
+            if ((Number(since[won]) || 0) > cap) since[won] = cap;
+        };
+        clamp('clears', 'attempts');
+        clamp('fullKitJudgedClears', 'fullKitJudged');
 
         // Nothing has happened here since the mark, so it is not part of the
         // period at all — listing it would fill the panel with empty rooms

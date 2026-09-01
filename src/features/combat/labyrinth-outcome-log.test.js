@@ -894,6 +894,20 @@ describe('judging the per-action rates', () => {
         expect(rates(bucket).success.formulaOff).toBe(true);
         expect(rates(bucket).double.formulaOff).toBe(false);
     });
+
+    test('a double rate with no successes to draw on has measured nothing', () => {
+        // Doubles are judged against successes, so no success is no trial and
+        // no interval. The bounds come back undefined rather than null on that
+        // path, and `server < undefined` is false — so a row that measured
+        // nothing at all used to print as agreeing with the server.
+        const bucket = bucketOf(
+            [...Array(6)].map(() => ({ actions: 50, successes: 0, doubles: 0, seconds: 60 })),
+            { serverSuccess: 0.22, predictedSuccess: 0.22, serverDouble: 0.18, predictedDouble: 0.18 }
+        );
+
+        expect(rates(bucket).double.observed).toBeNull();
+        expect(rates(bucket).double.verdict).toBe('too few rooms');
+    });
 });
 
 describe('how long a clear costs', () => {
@@ -1125,6 +1139,35 @@ describe('reading the record since a mark', () => {
     test('no mark means the whole record', () => {
         const now = { a: bucket() };
         expect(totalsSince(now, null)).toBe(now);
+    });
+
+    test('the sum of squares is subtracted like every other counter', () => {
+        // Left out of the list it was carried through whole, and the fight
+        // length band came out of a full-record numerator over a since-period
+        // denominator — a band wide enough that nothing could ever fall outside
+        // it, which quietly disables the verdict in exactly this view
+        const since = totalsSince(
+            { a: bucket({ rooms: 12, fights: 102, fightSeconds: 3060, fightSquares: 91_800 }) },
+            { a: bucket({ rooms: 10, fights: 100, fightSeconds: 3000, fightSquares: 90_000 }) }
+        );
+
+        expect(since.a.fights).toBe(2);
+        expect(since.a.fightSquares).toBe(1800);
+    });
+
+    test('a clear whose attempt fell before the mark is not in the period either', () => {
+        // The entry and the clear that answers it arrive in separate floor
+        // updates, so a mark taken between them straddles the pair. Diffing the
+        // two counters apart leaves a bucket with a clear and no attempt, which
+        // the pooled headline reports as "0 fights … got 1".
+        const since = totalsSince(
+            { a: bucket({ attempts: 10, clears: 6, rooms: 11, fullKitJudged: 10, fullKitJudgedClears: 6 }) },
+            { a: bucket({ attempts: 10, clears: 5, rooms: 10, fullKitJudged: 10, fullKitJudgedClears: 5 }) }
+        );
+
+        expect(since.a.attempts).toBe(0);
+        expect(since.a.clears).toBe(0);
+        expect(since.a.fullKitJudgedClears).toBe(0);
     });
 });
 
