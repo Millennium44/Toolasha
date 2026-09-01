@@ -28,10 +28,11 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { compressionAvailable, gzipText, gunzipToText } from '../sync/sync-compress.js';
-import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { readScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** The settings toggle the capture is gated on */
@@ -96,6 +97,16 @@ const TRACE_STORE = 'guildHistory';
 /** Base key of the manifest record (character-scoped through writeScoped/readScoped) */
 const MANIFEST_BASE = 'trialTraceManifest';
 
+/**
+ * How many orphaned chunk records one sweep will delete.
+ *
+ * The sweep is housekeeping running behind a restore, not a migration; a store
+ * holding thousands of orphans is a bug elsewhere and deleting them all in one
+ * pass would be a long run of IndexedDB deletes on the tab that has to render
+ * the fight. Whatever is left is picked up by the next restore.
+ */
+export const MAX_ORPHAN_SWEEP_DELETES = 200;
+
 /** Monotonic tail for traceId, so two starts in one millisecond still differ */
 let traceSeq = 0;
 
@@ -107,6 +118,32 @@ let traceSeq = 0;
 function chunkBase(seq) {
     return `trialTraceChunk_${seq}`;
 }
+
+/** The character a trace being started right now would belong to */
+function traceCharId() {
+    return dataManager.getCurrentCharacterId() || 'default';
+}
+
+/**
+ * One character's scoped key, built from an id the caller captured.
+ *
+ * Deliberately not `characterKey()`: that answers with whoever is current at
+ * the moment it is called, and every key a trace touches — its chunks, its
+ * manifest, the deletes that evict and clear them — has to belong to the
+ * character the trace was started or adopted for. A flush that rebuilt its key
+ * after a switch wrote one trace's chunks under two characters' keys, and the
+ * manifest under whichever key was current last then named chunks that were not
+ * there.
+ * @param {string} base - The unscoped key
+ * @param {string} charId - Whose key
+ * @returns {string} `base_<charId>`
+ */
+function charKey(base, charId) {
+    return `${base}_${charId}`;
+}
+
+/** Chunk keys belonging to one character, and the seq each one holds */
+const CHUNK_KEY_RE = /^trialTraceChunk_(\d+)_(.+)$/;
 
 class GuildTrialTrace {
     /**
@@ -144,6 +181,12 @@ class GuildTrialTrace {
         this._unknownSince = 0;
         this._lastProbeAt = 0;
         this._probing = false;
+        /**
+         * Bumped by {@link disable}. A restore that began under the departing
+         * character finds the number moved and refuses to adopt that
+         * character's manifest into the arriving character's trace.
+         */
+        this._generation = 0;
         this._reset();
     }
 
@@ -155,6 +198,13 @@ class GuildTrialTrace {
         this.storedBytes = 0;
         this.eventCount = 0; // retained events: persisted chunks + pending
         this.traceId = null;
+        /**
+         * Which character this trace belongs to. Set once — when a manifest is
+         * adopted, or when the first event starts a fresh trace — and every key
+         * the trace touches afterwards is built from it, never from whoever is
+         * current at the moment of the write.
+         */
+        this.ownerId = null;
         this.startedAt = 0;
         this.duplicatesDiscarded = 0;
         this.eventsDropped = 0;
@@ -173,6 +223,19 @@ class GuildTrialTrace {
     /** Whether the opt-in toggle is on right now */
     _enabled() {
         return config.getSetting(TRACE_SETTING, false);
+    }
+
+    /**
+     * A key for the character this trace belongs to.
+     *
+     * Falls back to whoever is current only while no trace exists — the first
+     * write of a trace is what fixes the owner, and there is nothing to
+     * mis-file before that.
+     * @param {string} base - The unscoped key
+     * @returns {string} The scoped key
+     */
+    _key(base) {
+        return charKey(base, this.ownerId || traceCharId());
     }
 
     /**
@@ -211,7 +274,7 @@ class GuildTrialTrace {
                     console.warn('[GuildTrialTrace] The trace manifest could not be read; holding events until it can');
                     return;
                 }
-                this._settleRestore();
+                this._settleRestore(outcome === 'adopted' || outcome === 'fresh');
             });
     }
 
@@ -219,13 +282,25 @@ class GuildTrialTrace {
      * The restore is decided: replay what arrived meanwhile through the normal
      * path. Sequence numbers are only ever allocated from here on, so chunks
      * written after an adoption continue from the adopted manifest's last.
+     *
+     * @param {boolean} sweep - Whether the decision was trustworthy enough to
+     *   reclaim orphaned chunks from. A restore a character switch superseded,
+     *   or one that gave up on an unreadable manifest, knows nothing about
+     *   which chunks are live and must not delete any.
      */
-    _settleRestore() {
+    _settleRestore(sweep) {
         this._manifestUnknown = false;
         this._restored = true;
         const queued = this._queue;
         this._queue = [];
         for (const message of queued) this._record(message.type, message.data, message.at);
+        // The manifest in hand is the authority on which chunks are live, so
+        // this is the one moment orphans can be told apart from a trace that is
+        // simply not adopted yet. Behind the flush chain, so the replay's own
+        // chunks are on disk and in `this.chunks` before the sweep looks.
+        if (!sweep) return;
+        const owner = this.ownerId || traceCharId();
+        this._flushChain = this._flushChain.then(() => this._sweepOrphanChunks(owner));
     }
 
     /**
@@ -258,7 +333,7 @@ class GuildTrialTrace {
                         )}s with ${this._queue.length} events held; starting a fresh trace`
                     );
                 }
-                this._settleRestore();
+                this._settleRestore(outcome === 'adopted' || outcome === 'fresh');
             })
             .finally(() => {
                 this._probing = false;
@@ -284,6 +359,38 @@ class GuildTrialTrace {
     }
 
     /**
+     * Stand the departing character's trace down, on a character switch.
+     *
+     * `cleanup()` alone is not enough: it keeps the trace in memory, and
+     * `_restore()` short-circuits on a trace already in hand, so the arriving
+     * character's `initialize()` used to skip its own manifest entirely and
+     * carry on appending to the departing character's trace — one traceId, one
+     * event stream, two characters' fights in it, and the arriving character's
+     * own persisted trace never read.
+     *
+     * The departing character's pending lines are flushed first, under their
+     * keys, so nothing captured before the switch is lost; the persisted chunks
+     * stay on disk for that character's next session to resume.
+     * @returns {Promise<void>}
+     */
+    async disable() {
+        this.cleanup();
+        this._generation++;
+        try {
+            // Any restore in flight settles (refusing to adopt, now that the
+            // generation has moved) before the flush that follows it
+            await this._settle();
+            this._scheduleFlush();
+            await this._settle();
+        } catch (error) {
+            console.error('[GuildTrialTrace] Standing the trace down failed:', error);
+        }
+        this._reset();
+        this._restored = false;
+        this._manifestUnknown = false;
+    }
+
+    /**
      * Read the persisted manifest: resume a trace whose stream went quiet less
      * than the resume window ago, delete anything older. A live in-memory trace
      * (re-initialize without a reload) is never overwritten.
@@ -291,24 +398,35 @@ class GuildTrialTrace {
      * A read that could not be made is told apart from "no manifest": the first
      * answers `'unknown'` and the caller waits; only a trustworthy absence goes
      * on to the legacy-adoption read and a fresh start.
-     * @returns {Promise<'adopted'|'fresh'|'unknown'>} What was decided
+     * @returns {Promise<'adopted'|'fresh'|'unknown'|'stale'>} What was decided; `'stale'`
+     *   means a character switch superseded this read and nothing was adopted
      */
     async _restore() {
         if (this.traceId) return 'fresh';
-        const probe = await storage.tryGet(characterKey(MANIFEST_BASE), TRACE_STORE);
+        // Captured before the first read; every key below is built from it, and
+        // a switch landing inside the reads stands the adoption down rather
+        // than handing the departing character's trace to the arriving one.
+        const charId = traceCharId();
+        const started = this._generation;
+        const stale = () => this._generation !== started || traceCharId() !== charId;
+
+        const probe = await storage.tryGet(charKey(MANIFEST_BASE, charId), TRACE_STORE);
+        if (stale()) return 'stale';
         if (probe === null) return 'unknown';
         const manifest = probe.found ? probe.value : await readScoped(MANIFEST_BASE, TRACE_STORE, null);
+        if (stale()) return 'stale';
         if (!manifest) return 'fresh';
 
         const fresh =
             typeof manifest.lastEventAt === 'number' && Date.now() - manifest.lastEventAt <= this.resumeWindowMs;
         if (!fresh) {
             for (const seq of manifest.chunkSeqs || []) {
-                await storage.delete(characterKey(chunkBase(seq)), TRACE_STORE);
+                await storage.delete(charKey(chunkBase(seq), charId), TRACE_STORE);
             }
-            await storage.delete(characterKey(MANIFEST_BASE), TRACE_STORE);
-            return 'fresh';
+            await storage.delete(charKey(MANIFEST_BASE, charId), TRACE_STORE);
+            return stale() ? 'stale' : 'fresh';
         }
+        if (stale()) return 'stale';
 
         const stats = Array.isArray(manifest.chunkStats)
             ? manifest.chunkStats
@@ -323,6 +441,7 @@ class GuildTrialTrace {
         // old tab had not flushed died with it and must not be counted
         this.eventCount = this.chunks.reduce((sum, chunk) => sum + chunk.events, 0);
         this.nextSeq = this.chunks.length ? Math.max(...this.chunks.map((chunk) => chunk.seq)) + 1 : 0;
+        this.ownerId = charId;
         this.traceId = manifest.traceId;
         this.startedAt = manifest.startedAt || 0;
         this.duplicatesDiscarded = manifest.duplicatesDiscarded || 0;
@@ -375,6 +494,7 @@ class GuildTrialTrace {
                 // spectator joining mid-fight still gets a trace, and the file
                 // says so via startedMidFight
                 this.traceId = `${at.toString(36)}-${(traceSeq++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+                this.ownerId = traceCharId();
                 this.startedAt = at;
                 this.lastFlushAt = at;
             }
@@ -455,8 +575,8 @@ class GuildTrialTrace {
                 const gz = compressionAvailable();
                 const data = gz ? await gzipText(text) : text;
                 const bytes = gz ? data.byteLength : text.length;
-                const ok = await writeScoped(
-                    chunkBase(seq),
+                const ok = await storage.set(
+                    this._key(chunkBase(seq)),
                     { seq, events: lines.length, gz, data },
                     TRACE_STORE,
                     true
@@ -490,7 +610,7 @@ class GuildTrialTrace {
             this.eventsDropped += oldest.events;
             this.storedBytes -= oldest.bytes;
             try {
-                await storage.delete(characterKey(chunkBase(oldest.seq)), TRACE_STORE);
+                await storage.delete(this._key(chunkBase(oldest.seq)), TRACE_STORE);
             } catch (error) {
                 console.error('[GuildTrialTrace] Evicting an old trace chunk failed:', error);
             }
@@ -500,8 +620,8 @@ class GuildTrialTrace {
     /** Persist the trace's identity and counters so a reload can pick it back up. */
     async _writeManifest() {
         try {
-            await writeScoped(
-                MANIFEST_BASE,
+            await storage.set(
+                this._key(MANIFEST_BASE),
                 {
                     traceId: this.traceId,
                     startedAt: this.startedAt,
@@ -607,6 +727,7 @@ class GuildTrialTrace {
             // A wedged flush must not make the trace unclearable
         }
         const seqs = this.chunks.map((chunk) => chunk.seq);
+        const owner = this.ownerId || traceCharId();
         const restored = this._restored;
         this._reset();
         this._restored = restored;
@@ -617,11 +738,67 @@ class GuildTrialTrace {
             this._restored = true;
         }
         try {
-            for (const seq of seqs) await storage.delete(characterKey(chunkBase(seq)), TRACE_STORE);
-            await storage.delete(characterKey(MANIFEST_BASE), TRACE_STORE);
+            for (const seq of seqs) await storage.delete(charKey(chunkBase(seq), owner), TRACE_STORE);
+            await storage.delete(charKey(MANIFEST_BASE, owner), TRACE_STORE);
         } catch (error) {
             console.error('[GuildTrialTrace] Clearing the persisted trace failed:', error);
         }
+        // "Throw the trace away" has to mean the bytes too, or a clear run to
+        // free space leaves the orphans behind — the very records nothing else
+        // reclaims
+        await this._sweepOrphanChunks(owner);
+    }
+
+    /**
+     * Delete this character's chunk records that no manifest names any more.
+     *
+     * A chunk is only reachable through the manifest, so one the manifest has
+     * forgotten is unreadable weight that still counts against the store's
+     * budget — and nothing else reclaims it. `clear()` deletes what the manifest
+     * names, eviction walks `this.chunks`, and a chunk that fell out of both
+     * (a write that landed after the manifest write failed, or anything the
+     * pre-`ownerId` key drift left under the wrong character) was never
+     * mentioned again.
+     *
+     * Only ever this character's keys: another character's chunks are theirs to
+     * reclaim on their own restore, and their manifest is not readable from
+     * here to decide with. Bounded by {@link MAX_ORPHAN_SWEEP_DELETES}, and the
+     * live chunk list is re-read before every delete so a flush that lands
+     * during the sweep cannot have its chunk swept out from under it.
+     *
+     * @param {string} charId - Whose chunks to sweep
+     * @returns {Promise<number>} How many records were deleted
+     */
+    async _sweepOrphanChunks(charId) {
+        let deleted = 0;
+        try {
+            const keys = await storage.getAllKeys(TRACE_STORE);
+            if (!Array.isArray(keys)) return 0;
+            let skipped = 0;
+            for (const key of keys) {
+                const match = typeof key === 'string' ? CHUNK_KEY_RE.exec(key) : null;
+                if (!match || match[2] !== charId) continue;
+                // The owner moved on: `this.chunks` is now some other
+                // character's list and cannot say what is orphaned here
+                if (this.ownerId && this.ownerId !== charId) break;
+                const seq = Number(match[1]);
+                if (this.chunks.some((chunk) => chunk.seq === seq)) continue;
+                if (deleted >= MAX_ORPHAN_SWEEP_DELETES) {
+                    skipped++;
+                    continue;
+                }
+                await storage.delete(key, TRACE_STORE);
+                deleted++;
+            }
+            if (skipped > 0) {
+                console.warn(
+                    `[GuildTrialTrace] Reclaimed ${deleted} orphaned trace chunks; ${skipped} left for the next restore`
+                );
+            }
+        } catch (error) {
+            console.error('[GuildTrialTrace] Sweeping orphaned trace chunks failed:', error);
+        }
+        return deleted;
     }
 
     /**
@@ -668,7 +845,7 @@ class GuildTrialTrace {
         const parts = [JSON.stringify(this._buildMetadata())];
         for (const chunk of this.chunks) {
             try {
-                const record = await readScoped(chunkBase(chunk.seq), TRACE_STORE, null);
+                const record = await storage.get(this._key(chunkBase(chunk.seq)), TRACE_STORE, null);
                 if (!record) {
                     console.error(`[GuildTrialTrace] Trace chunk ${chunk.seq} is missing from storage`);
                     continue;

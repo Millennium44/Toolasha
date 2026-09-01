@@ -4705,6 +4705,8 @@ class GuildTrials {
         guildTrialSkilling.cleanup();
         guildTrialStatsModal.cleanup();
         guildTrialRecorder.cleanup();
+        // Listeners only; the trace's own memory is stood down by disable(),
+        // which is async and so cannot run from this synchronous teardown
         guildTrialTrace.cleanup?.();
         guildTrialAbilitiesFeature.cleanup();
         guildTrialScoreboard.close();
@@ -4725,9 +4727,14 @@ const guildTrials = new GuildTrials();
 export default {
     name: 'Guild Trials',
     initialize: () => guildTrials.initialize(),
-    cleanup: () => {
+    // Async because the diagnostic trace has to flush the departing character's
+    // pending lines under their keys and empty its memory before the arriving
+    // character's initialize() reads their own manifest — a trace left in hand
+    // makes `_restore()` short-circuit and the two characters share one trace.
+    cleanup: async () => {
         try {
-            return guildTrials.cleanup();
+            guildTrials.cleanup();
+            await guildTrialTrace.disable?.();
         } catch (error) {
             console.error('[Guild Trials] Disable failed part-way:', error);
         } finally {

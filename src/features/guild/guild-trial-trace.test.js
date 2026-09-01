@@ -33,17 +33,23 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
+// Who is logged in, mutable so a test can switch characters mid-trace
+const chars = vi.hoisted(() => ({ current: 'c1' }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => chars.current },
+}));
+
 // One in-memory map stands in for the guildHistory store, shared by the
-// character-key mock (scoped reads/writes) and the storage mock (deletes)
+// character-key mock (the legacy manifest read) and the storage mock
 const store = vi.hoisted(() => new Map());
 vi.mock('../../utils/character-key.js', () => ({
-    characterKey: (base) => `${base}_c1`,
+    characterKey: (base) => `${base}_${chars.current}`,
     readScoped: async (base, storeName, defaultValue = null) => {
-        const value = store.get(`${base}_c1`);
+        const value = store.get(`${base}_${chars.current}`);
         return value === undefined ? defaultValue : value;
     },
     writeScoped: async (base, value) => {
-        store.set(`${base}_c1`, value);
+        store.set(`${base}_${chars.current}`, value);
         return true;
     },
 }));
@@ -56,6 +62,15 @@ vi.mock('../../core/storage.js', () => ({
             if (storageMock.unavailable) return null;
             return store.has(key) ? { found: true, value: store.get(key) } : { found: false, value: null };
         },
+        get: async (key, storeName, defaultValue = null) => {
+            const value = store.get(key);
+            return value === undefined ? defaultValue : value;
+        },
+        set: async (key, value) => {
+            store.set(key, value);
+            return true;
+        },
+        getAllKeys: async () => [...store.keys()],
         delete: async (key) => {
             store.delete(key);
             return true;
@@ -101,6 +116,7 @@ const tick = { battleId: 1, tier: 2, pMap: { 0: { cHP: 100 } }, mMap: { 0: { cHP
 beforeEach(async () => {
     settings.guildTrialDiagnosticTrace = true;
     storageMock.unavailable = false;
+    chars.current = 'c1';
     store.clear();
     await trace.clear();
     trace.initialize();
@@ -897,5 +913,131 @@ describe('traceGapWarning', () => {
 
     test('silent when there is no gap figure to quote', () => {
         expect(traceGapWarning(status({ maxGapMs: null }))).toBe('');
+    });
+});
+
+describe('character switches', () => {
+    // The singleton is listening on the same bus; these tests drive their own
+    // instance and read the shared store
+    beforeEach(() => {
+        trace.cleanup();
+    });
+
+    /**
+     * A manifest and one chunk belonging to `charId`, recent enough to resume.
+     * @param {string} charId - Whose trace
+     * @param {string} traceId - Its id
+     */
+    function seedTrace(charId, traceId) {
+        store.set(`trialTraceManifest_${charId}`, {
+            traceId,
+            startedAt: Date.now() - 60_000,
+            chunkSeqs: [0],
+            chunkStats: [{ seq: 0, events: 1, bytes: 40 }],
+            eventCount: 1,
+            firstEventType: 'new_guild_battle',
+            lastEventAt: Date.now() - 30_000,
+        });
+        store.set(`trialTraceChunk_0_${charId}`, {
+            seq: 0,
+            events: 1,
+            gz: false,
+            data: `{"type":"new_guild_battle","payload":{"owner":"${charId}"}}`,
+        });
+    }
+
+    test("the arriving character reads their own trace instead of continuing the departing one's", async () => {
+        const instance = new GuildTrialTrace({ flushEvents: 1 });
+        instance.initialize();
+        await instance.whenReady();
+        try {
+            emit('new_guild_battle', { battleId: 1, tier: 1 });
+            await instance._settle();
+            const departing = instance.activeTraceId();
+            expect(store.get('trialTraceManifest_c1').traceId).toBe(departing);
+
+            seedTrace('c2', 'arriving-trace');
+
+            await instance.disable();
+            chars.current = 'c2';
+            instance.initialize();
+            await instance.whenReady();
+            await instance._settle();
+
+            // c2's own persisted trace, not c1's still in memory
+            expect(instance.activeTraceId()).toBe('arriving-trace');
+
+            emit('guild_battle_updated', tick);
+            await instance._settle();
+            const events = await tracedEvents(instance);
+            expect(events.some((event) => event.type === 'new_guild_battle' && event.payload?.tier === 1)).toBe(false);
+
+            // and c1's trace is intact for c1's next session
+            expect(store.get('trialTraceManifest_c1').traceId).toBe(departing);
+            expect(store.has('trialTraceChunk_0_c1')).toBe(true);
+        } finally {
+            instance.cleanup();
+        }
+    });
+
+    test("one trace's chunks and manifest never split across two characters' keys", async () => {
+        const instance = new GuildTrialTrace({ flushEvents: 1 });
+        instance.initialize();
+        await instance.whenReady();
+        try {
+            emit('new_guild_battle', { battleId: 1, tier: 1 });
+            await instance._settle();
+
+            // The pointer moves before the feature layer is torn down — every
+            // key this trace touches still belongs to the character it started
+            // under
+            chars.current = 'c2';
+            emit('guild_battle_updated', tick);
+            await instance._settle();
+
+            expect(store.get('trialTraceManifest_c1').chunkSeqs).toEqual([0, 1]);
+            expect(store.has('trialTraceChunk_1_c1')).toBe(true);
+            expect(store.has('trialTraceChunk_1_c2')).toBe(false);
+            expect(store.has('trialTraceManifest_c2')).toBe(false);
+        } finally {
+            chars.current = 'c1';
+            instance.cleanup();
+        }
+    });
+
+    test('chunks no manifest names are reclaimed, and only this character’s', async () => {
+        seedTrace('c1', 'live-trace');
+        store.set('trialTraceChunk_7_c1', { seq: 7, events: 500, gz: false, data: 'orphan' });
+        store.set('trialTraceChunk_3_c2', { seq: 3, events: 500, gz: false, data: 'not ours' });
+
+        const instance = new GuildTrialTrace();
+        instance.initialize();
+        await instance.whenReady();
+        await instance._settle();
+        try {
+            expect(instance.activeTraceId()).toBe('live-trace');
+            expect(store.has('trialTraceChunk_0_c1')).toBe(true); // the manifest names it
+            expect(store.has('trialTraceChunk_7_c1')).toBe(false); // orphaned, reclaimed
+            expect(store.has('trialTraceChunk_3_c2')).toBe(true); // another character's to reclaim
+        } finally {
+            instance.cleanup();
+        }
+    });
+
+    test('clear() reclaims orphans too, not only what the manifest names', async () => {
+        const instance = new GuildTrialTrace({ flushEvents: 1 });
+        instance.initialize();
+        await instance.whenReady();
+        try {
+            emit('new_guild_battle', { battleId: 1, tier: 1 });
+            await instance._settle();
+            store.set('trialTraceChunk_9_c1', { seq: 9, events: 500, gz: false, data: 'orphan' });
+
+            await instance.clear();
+
+            expect([...store.keys()].filter((key) => key.startsWith('trialTrace'))).toEqual([]);
+        } finally {
+            instance.cleanup();
+        }
     });
 });
