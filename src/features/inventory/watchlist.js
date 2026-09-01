@@ -563,7 +563,14 @@ class WatchlistPanel {
         return button;
     }
 
-    /** Put the header switches in step with the settings they write */
+    /**
+     * Put the header switches in step with the settings they write.
+     *
+     * Called on every redraw and on the settings' own change callbacks, so a
+     * switch flipped on the settings page moves the pill up here at once rather
+     * than at the next five-second tick. Two switches over one setting are only
+     * safe while neither can be seen saying the wrong thing.
+     */
     _paintToggles() {
         for (const button of [this.dotsBtn, this.menuBtn]) {
             if (!button?._label) continue;
@@ -1055,7 +1062,10 @@ export default {
         inventoryBadgeManager.registerProvider('watchlist-dot', markTrackedItem, 150);
         applyMenuButtonSetting();
         unregisterSettingListeners = [
-            config.onSettingChange(MENU_BUTTON_SETTING, applyMenuButtonSetting),
+            config.onSettingChange(MENU_BUTTON_SETTING, () => {
+                applyMenuButtonSetting();
+                watchlistPanel._paintToggles();
+            }),
             // Turning the dots off has to clear the ones already drawn; turning
             // them on has to redraw without waiting for the grid to change
             config.onSettingChange(DOTS_SETTING, () => {
@@ -1063,6 +1073,7 @@ export default {
                     document.querySelectorAll(`.${DOT_CLASS}`).forEach((dot) => dot.remove());
                 }
                 inventoryBadgeManager.invalidateCache?.();
+                watchlistPanel._paintToggles();
             }),
         ];
     },

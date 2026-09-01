@@ -437,7 +437,9 @@ describe('Config — a write during the settings-reload window', () => {
         config.onSettingChange('checkbox', cb);
 
         config.setSetting('checkbox', true);
-        expect(cb).not.toHaveBeenCalled();
+        // Taken at once — a feature that paints from this key has to repaint
+        // now, not when the load happens to land
+        expect(cb).toHaveBeenCalledWith(true);
 
         settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
         await config.loadSettings();
@@ -475,6 +477,44 @@ describe('Config — a write during the settings-reload window', () => {
         await config.loadSettings();
 
         expect(seen).toBe(true);
+    });
+
+    test('the value written reads back at once, rather than the schema default', async () => {
+        // The window is only supposed to be the gap between clearSettingsCache()
+        // and the loadSettings() that refills the map, but nothing forces that
+        // load to happen — settings-ui's destroy() clears the cache on its own,
+        // and a character switch that never settles leaves it cleared too. With
+        // the map empty, getSetting answers every key from SCHEMA_DEFAULTS, so a
+        // toggle the user just turned off read back as the shipped default and
+        // the switch looked dead. Reads and writes have to agree for as long as
+        // the window lasts, not only after it closes.
+        config.clearSettingsCache();
+
+        config.setSetting('watchlist_inventoryDots', false);
+
+        expect(config.getSetting('watchlist_inventoryDots')).toBe(false);
+    });
+
+    test('and the change callbacks fire at once, so what the value drives redraws', async () => {
+        // A feature that paints from a setting repaints on the change callback.
+        // Holding the callback until the load meant the inventory dots stayed
+        // drawn after both switches said they were off.
+        config.clearSettingsCache();
+        const cb = vi.fn();
+        config.onSettingChange('watchlist_inventoryDots', cb);
+
+        config.setSetting('watchlist_inventoryDots', false);
+
+        expect(cb).toHaveBeenCalledWith(false);
+    });
+
+    test('a non-boolean write reads back at once too', async () => {
+        config.clearSettingsCache();
+
+        config.setSettingValue('pricingMode', 'conservative');
+
+        expect(config.getSetting('pricingMode')).toBe('conservative');
+        expect(config.getSettingValue('pricingMode')).toBe('conservative');
     });
 
     test('the queue is emptied, so a later load does not re-apply it', async () => {

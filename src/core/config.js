@@ -103,6 +103,12 @@ class Config {
         // key, last write winning. See _deferWriteDuringReload().
         this._pendingWrites = [];
 
+        /**
+         * The same queued writes keyed for reading, so `getSetting` answers a
+         * write it has taken but not yet stored. Cleared with the queue.
+         */
+        this._pendingValues = Object.create(null);
+
         // Feature toggles with metadata for future UI
         this.features = {
             // Market Features
@@ -586,6 +592,10 @@ class Config {
      * @returns {*} Setting value
      */
     getSetting(key, defaultValue = false) {
+        // A write taken during the reload window is the newest intent for this
+        // key and outranks anything the map or the schema says
+        if (key in this._pendingValues) return this._pendingValues[key];
+
         // Check loaded settings first
         const setting = this.settingsMap[key];
         if (setting) {
@@ -651,6 +661,8 @@ class Config {
     }
 
     getSettingValue(key, defaultValue = null) {
+        if (key in this._pendingValues) return this._pendingValues[key];
+
         const setting = this.settingsMap[key];
         if (!setting) {
             return defaultValue;
@@ -752,6 +764,17 @@ class Config {
         if (Object.keys(this.settingsMap).length > 0) return false;
         this._pendingWrites = this._pendingWrites.filter((write) => write.key !== key);
         this._pendingWrites.push({ method, key, value });
+        // Queued for storage, but answered now. The read side never deferred:
+        // with the map empty, getSetting answers every key from SCHEMA_DEFAULTS,
+        // so a queued write left the reader on the shipped default while the
+        // writer believed the value had changed — two switches on the Watchlist
+        // dots saying "off" over a renderer still reading `true`, neither switch
+        // able to move it. The window is meant to be short, but nothing forces
+        // the load that closes it (settings-ui's destroy() clears the cache on
+        // its own; a character switch that never settles leaves it cleared), so
+        // read and write have to agree for as long as it lasts.
+        this._pendingValues[key] = value;
+        this._notifySettingChange(key, value);
         return true;
     }
 
@@ -767,6 +790,7 @@ class Config {
         if (!this._pendingWrites.length) return;
         const pending = this._pendingWrites;
         this._pendingWrites = [];
+        this._pendingValues = Object.create(null);
         for (const { method, key, value } of pending) {
             try {
                 this[method](key, value);

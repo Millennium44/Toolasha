@@ -664,6 +664,37 @@ describe('the dot on tracked items', () => {
         expect(dots(element)).toHaveLength(0);
     });
 
+    test('the panel’s dots switch turns them off', () => {
+        watchlist.initialize();
+        watchlistPanel.show();
+        const element = tile('Cheese');
+        provider(element);
+        expect(dots(element)).toHaveLength(1);
+
+        const button = watchlistPanel.panel.querySelector('button[data-setting="watchlist_inventoryDots"]');
+        expect(button.textContent).toBe('Dots on');
+        button.click();
+
+        expect(settings.watchlist_inventoryDots).toBe(false);
+        expect(button.textContent).toBe('Dots off');
+        expect(dots(element)).toHaveLength(0);
+    });
+
+    test('a flip from the settings page moves the panel’s pill with it', () => {
+        // The pill and the settings checkbox are two views of one setting, and
+        // the panel only repainted on its five-second tick — long enough to
+        // read as a pill that disagrees with the switch that just moved it
+        watchlist.initialize();
+        watchlistPanel.show();
+        const button = watchlistPanel.panel.querySelector('button[data-setting="watchlist_inventoryDots"]');
+        expect(button.textContent).toBe('Dots on');
+
+        settings.watchlist_inventoryDots = false;
+        for (const cb of listeners.watchlist_inventoryDots || []) cb(false);
+
+        expect(button.textContent).toBe('Dots off');
+    });
+
     test('and turning it off clears the ones already drawn', () => {
         // The provider is what walks the grid, so simply not drawing any more
         // would leave every existing dot sitting there until the game happened
