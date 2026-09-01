@@ -2186,6 +2186,9 @@ class LabSimUI {
             return;
         }
 
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
+
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
         const roomLevel = parseInt(this.panel.querySelector('#mwi-labsim-level')?.value) || 100;
 
@@ -2355,6 +2358,7 @@ class LabSimUI {
                     hours,
                     crates,
                     playerHrid: playerDTOs[0].hrid,
+                    ownerId,
                 });
             }
         } catch (error) {
@@ -2418,6 +2422,26 @@ class LabSimUI {
     }
 
     /**
+     * Whether the character a run was started for is still the one logged in.
+     *
+     * A labyrinth run takes minutes, and everything recorded after it — the
+     * comparison entry, the remembered upgrade analysis — is filed under a key
+     * resolved at the moment of the write. A switch inside that window recorded
+     * the departing character's run against the arriving character's gear
+     * history and overwrote the analysis the arriving character was keeping.
+     *
+     * Compared rather than merely required, so a run with no character on
+     * either side records exactly as it always has.
+     *
+     * @param {string|null|undefined} ownerId - The id captured before the run's first await
+     * @returns {boolean} True when the results still belong to whoever is current
+     * @private
+     */
+    _stillSameCharacter(ownerId) {
+        return dataManager.getCurrentCharacterId() === ownerId;
+    }
+
+    /**
      * Keep a finished single-target run so the next one has something to be
      * read against.
      *
@@ -2426,12 +2450,16 @@ class LabSimUI {
      * table would invite a comparison that does not mean anything.
      *
      * @param {Object} simResult - From `runLabyrinthSimulation`
-     * @param {Object} context - `{ monsterHrid, roomLevel, hours, crates, playerHrid }`
+     * @param {Object} context - `{ monsterHrid, roomLevel, hours, crates, playerHrid, ownerId }`
      * @returns {Promise<void>}
      * @private
      */
-    async _recordSingleTargetRun(simResult, { monsterHrid, roomLevel, hours, crates, playerHrid }) {
+    async _recordSingleTargetRun(simResult, { monsterHrid, roomLevel, hours, crates, playerHrid, ownerId }) {
         try {
+            // The run measured the character it started under. Recorded after a
+            // switch it would join the arriving character's comparison table,
+            // where it reads as their own "before" and skews every delta.
+            if (!this._stillSameCharacter(ownerId)) return;
             await this._comparison.load();
             await this._comparison.add(
                 makeLabRunEntry({
@@ -2586,6 +2614,9 @@ class LabSimUI {
         // the first run's results.
         if (this._upgradeRunning) return;
         this._upgradeRunning = true;
+
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
 
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
@@ -2872,7 +2903,10 @@ class LabSimUI {
             this._restoredUpgradeAt = null;
             this._restoredUpgradeMeta = null;
             this._renderUpgradeResults(analysisResult, resultsEl);
-            if (analysisResult?.results?.length) {
+            // The remembered set is per character and has no undo: writing this
+            // run under the character who arrived mid-analysis would delete the
+            // analysis they were keeping
+            if (analysisResult?.results?.length && this._stillSameCharacter(ownerId)) {
                 const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
                 saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult, {
                     characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,

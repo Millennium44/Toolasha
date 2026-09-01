@@ -308,6 +308,35 @@ describe('the store behind it', () => {
         expect(db.values.get(`${LAB_COMPARISON_BASELINE_KEY}_alt2`)).toBe('alt-baseline');
     });
 
+    test('a run recorded after a switch does not overwrite the arriving character’s runs', async () => {
+        db.values.set(`${LAB_COMPARISON_KEY}_alt2`, [run({ roomLevel: 200 })]);
+        const store = new LabComparisonStore();
+        await store.load();
+        await store.add(run({ roomLevel: 100 }));
+
+        // The panel keeps the store for the life of the page. A switch after
+        // the load left the main's runs in memory and every later write
+        // resolving the alt's key — the alt's own recorded runs replaced by
+        // the main's, which is what their comparison table then measures
+        // against.
+        db.characterId = 'alt2';
+        await store.add(run({ roomLevel: 120 }));
+
+        expect(db.values.get(`${LAB_COMPARISON_KEY}_alt2`).map((e) => e.settings.roomLevel)).toEqual([200]);
+        expect(db.values.get(`${LAB_COMPARISON_KEY}_char1`).map((e) => e.settings.roomLevel)).toEqual([100, 120]);
+    });
+
+    test('a load after a switch reads the arriving character’s runs rather than serving the cached ones', async () => {
+        db.values.set(`${LAB_COMPARISON_KEY}_alt2`, [run({ roomLevel: 200 })]);
+        const store = new LabComparisonStore();
+        await store.load();
+        await store.add(run({ roomLevel: 100 }));
+
+        db.characterId = 'alt2';
+
+        expect((await store.load()).map((e) => e.settings.roomLevel)).toEqual([200]);
+    });
+
     test('a baseline pointing at a run that is no longer stored is not restored', async () => {
         db.values.set(`${LAB_COMPARISON_KEY}_char1`, [run()]);
         db.values.set(`${LAB_COMPARISON_BASELINE_KEY}_char1`, 'a-run-from-another-life');

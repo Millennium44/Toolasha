@@ -49,8 +49,12 @@ const game = vi.hoisted(() => ({
     characterSetting: null,
     /** What the Configure editor reports, or null when it has none */
     editedDTOs: null,
+    /** Who is logged in; a test moves it mid-run to stage a character switch */
+    characterId: 'me',
+    /** Whether the opt-in "remember upgrade results" setting is on */
+    rememberUpgradeResults: false,
 }));
-const sim = vi.hoisted(() => ({ calls: [] }));
+const sim = vi.hoisted(() => ({ calls: [], onCall: null }));
 /** Every key the panel wrote, so a persisted choice can be asserted on */
 const storage = vi.hoisted(() => ({ written: {} }));
 const rowActions = vi.hoisted(() => ({ wired: [] }));
@@ -58,7 +62,7 @@ const rowActions = vi.hoisted(() => ({ wired: [] }));
 vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 100,
-        getSetting: () => false,
+        getSetting: (key) => (key === 'combatSim_rememberUpgradeResults' ? game.rememberUpgradeResults : false),
         getSettingValue: (_key, fallback) => fallback,
         setSetting: () => {},
     },
@@ -85,7 +89,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInventory: () => [],
         // The scoped-storage helpers key on the character; without these the
         // panel's own restore throws before it can read anything back
-        getCurrentCharacterId: () => 'me',
+        getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterGameMode: () => 'standard',
         characterItems: [],
         characterEquipment: new Map(),
@@ -161,6 +165,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
 vi.mock('./combat-sim-runner.js', () => ({
     runLabyrinthSimulation: async (params) => {
         sim.calls.push(params);
+        sim.onCall?.(sim.calls.length);
         return { labyAttemptCount: 100, encounters: 70, deaths: {}, simulatedTime: 3 * 3600 * 1e9 };
     },
     cancelSimulation: () => {},
@@ -849,6 +854,39 @@ describe('a house room level reaches the character the simulation is handed', ()
         expect(sim.calls).toHaveLength(3);
     });
 
+    test('an analysis finishing after a character switch does not overwrite the arriving character’s remembered run', async () => {
+        // The analysis runs for minutes. The remembered set is per character
+        // and has no undo, so a run filed under whoever arrived mid-analysis
+        // deletes the analysis they were keeping.
+        game.rememberUpgradeResults = true;
+        checkOnlyHouse();
+        sim.onCall = (n) => {
+            if (n === 1) game.characterId = 'alt';
+        };
+        try {
+            await ui._onUpgradeAnalyze();
+        } finally {
+            sim.onCall = null;
+            game.characterId = 'me';
+            game.rememberUpgradeResults = false;
+        }
+
+        expect(storage.written['labSimUpgradeResults-fullkit_alt']).toBeUndefined();
+    });
+
+    test('an analysis that stays on one character still remembers its run', async () => {
+        // The other half of the guard: it must refuse the switch and nothing else
+        game.rememberUpgradeResults = true;
+        checkOnlyHouse();
+        try {
+            await ui._onUpgradeAnalyze();
+        } finally {
+            game.rememberUpgradeResults = false;
+        }
+
+        expect(storage.written['labSimUpgradeResults-fullkit_me']).toBeTruthy();
+    });
+
     test('the panel’s own character is never the one that gets the level', async () => {
         checkOnlyHouse();
 
@@ -1092,7 +1130,7 @@ describe('a single-target result can be read against the last one', () => {
     });
 
     /** Run a fixed-level fight and record it the way `_onSimulate` does. */
-    const simulate = async (roomLevel, { attempts = 1000, encounters = 700, deaths = 30 } = {}) => {
+    const simulate = async (roomLevel, { attempts = 1000, encounters = 700, deaths = 30, ownerId = 'me' } = {}) => {
         const simResult = {
             labyAttemptCount: attempts,
             encounters,
@@ -1106,6 +1144,7 @@ describe('a single-target result can be read against the last one', () => {
             hours: 3,
             crates: [],
             playerHrid: 'p1',
+            ownerId,
         });
     };
 
@@ -1182,6 +1221,24 @@ describe('a single-target result can be read against the last one', () => {
         expect(ui._comparison.baselineId).toBe(ui._comparison.runs[1].id);
         // Read the other way round now: 82% → 70% is a loss
         expect(comparison().textContent).toContain('-12.00%');
+    });
+
+    test('a run that finished after a character switch is not recorded against the arriving character', async () => {
+        // The run measured the character it started under. Joining the arriving
+        // character's table it reads as their own "before" and skews every
+        // delta the table draws.
+        await simulate(130);
+        game.characterId = 'alt';
+        try {
+            await simulate(160);
+        } finally {
+            game.characterId = 'me';
+        }
+
+        // Still the main's own single run, not an alt table holding the 160
+        expect(ui._comparison.runs).toHaveLength(1);
+        expect(ui._comparison.runs[0].settings.roomLevel).toBe(130);
+        expect(storage.written['labSimComparisonRuns_alt']).toBeUndefined();
     });
 
     test('a Find Max result is a different question, so it does not join the table', async () => {

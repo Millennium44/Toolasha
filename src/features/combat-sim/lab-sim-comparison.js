@@ -451,20 +451,33 @@ export class LabComparisonStore {
         /** @type {string|null} */
         this.baselineId = null;
         this._loaded = false;
+        /**
+         * The pair of keys `this.runs` and `this.baselineId` were read from,
+         * i.e. whose runs are in memory. Every write goes back to these rather
+         * than to whoever is current at the moment of the write.
+         * @type {{runs: string, baseline: string}|null}
+         */
+        this._keys = null;
     }
 
     /**
      * Read the runs back from storage. Safe to call repeatedly; only the first
-     * call reaches the database.
+     * call for a given character reaches the database.
+     *
+     * A character switch is a re-read, not a cache hit: the latch alone kept
+     * the first character's runs in memory for the life of the page, so the
+     * panel showed the wrong character's comparison table and every edit made
+     * from it wrote that table back.
      * @returns {Promise<Object[]>} The runs
      */
     async load() {
-        if (this._loaded) return this.runs;
-        this._loaded = true;
         // Both keys resolved before the first await, so the runs and the
         // baseline that indexes them cannot come from two different characters
         const runsKey = characterKey(LAB_COMPARISON_KEY);
         const baselineKey = characterKey(LAB_COMPARISON_BASELINE_KEY);
+        if (this._loaded && this._keys?.runs === runsKey) return this.runs;
+        this._loaded = true;
+        this._keys = { runs: runsKey, baseline: baselineKey };
         try {
             this.runs = sanitizeLabRuns(await storage.get(runsKey, 'settings', null));
             const savedBaseline = await storage.get(baselineKey, 'settings', null);
@@ -556,8 +569,15 @@ export class LabComparisonStore {
         // baseline under whoever was current by then, and a baseline naming a
         // run that character does not have is dropped on load: their pinned
         // "before" run silently unpins itself.
-        const runsKey = characterKey(LAB_COMPARISON_KEY);
-        const baselineKey = characterKey(LAB_COMPARISON_BASELINE_KEY);
+        //
+        // The keys come from the load that produced `this.runs`, not from
+        // whoever is current now: a switch after the load left the departing
+        // character's whole run list being written under the arriving
+        // character's key, replacing runs they had recorded themselves.
+        const { runs: runsKey, baseline: baselineKey } = this._keys || {
+            runs: characterKey(LAB_COMPARISON_KEY),
+            baseline: characterKey(LAB_COMPARISON_BASELINE_KEY),
+        };
         try {
             await storage.set(runsKey, this.runs, 'settings');
             await storage.set(baselineKey, this.baselineId, 'settings');
