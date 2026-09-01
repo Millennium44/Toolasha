@@ -6,9 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Levelling up no longer looks like the sim getting worse
+### The leftovers: thirteen more crossed characters, and a button that did nothing
 
-The labyrinth replay check compares recorded fights against what the sim predicted, grouped by a fingerprint of your build — but that fingerprint covered only equipment and enhancement levels, not your combat levels. Level up and yesterday's fights were pooled with today's, so the panel reported the sim over-crediting your damage when what had actually changed was you. The fingerprint now covers the seven combat levels the sim genuinely reads (stamina, intelligence, attack, defense, melee, ranged and magic — skilling levels are deliberately left out, since the combat sim never reads one and hashing them would throw the cache away on every woodcutting level). It also carries a version now, so records made before this change are kept and still shown in the browse pool and the export, but are never pooled into a rate, a cohort or a reliability reading with records made after it — and a card with too few current fights says "too few to call" rather than reaching for the older ones.
+Finishing the ranked list from the character-switch sweep. Six of these lost data — the dungeon outlier scrub was undone every session by a read still in flight, empty alchemy-protection defaults could overwrite the arriving character's saved categories, and the goal planner, pinned actions, dungeon runs and the record target each filed one character's data under another's key. Seven more adopted the wrong character's loadouts, trade prices or filters and then persisted them, or showed them as advice.
+
+Also: the labyrinth's Calculate button silently refused every press after a character switch until a reload, and in-flight simulations could write an emptied cache over the arriving character's saved sims. An entry regenerating was announced twice, the first time quoting stale stock; the first labyrinth-stop alert after a switch was dropped as a duplicate of the previous character's; and a run interrupted by a reconnect is now closed out rather than discarded, marked as inferred so no average treats it as measured. The first click of an enhancing session was never recorded, and the dungeon ROI board no longer reads a dungeon whose entry key it cannot identify as pure profit.
 
 ### Audit round: the countdown fix undone, a free material, and readings that could not fail
 
