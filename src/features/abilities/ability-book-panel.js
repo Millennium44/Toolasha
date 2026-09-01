@@ -129,9 +129,9 @@ export function buyBooks(itemHrid, books) {
         autofillReady = true;
     }
 
-    // One-shot rather than standing: the dialog does not say which item it is
-    // for, so a quantity left armed would fill in the next thing you buy
-    if (books > 0) autofill.setQuantity(Math.ceil(books));
+    // One-shot, and armed for this book alone: a standing quantity that is not
+    // tied to an item fills in the next thing you buy, whatever it is
+    if (books > 0) autofill.setQuantity(Math.ceil(books), { itemHrid });
     else autofill.clearQuantity();
 
     navigateToMarketplace(itemHrid);

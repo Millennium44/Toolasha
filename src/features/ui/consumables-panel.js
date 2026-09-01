@@ -995,7 +995,7 @@ class ConsumablesPanel {
         if (!count) return;
         try {
             this.hide({ remember: false });
-            this.autofill.setQuantity(count);
+            this.autofill.setQuantity(count, { itemHrid: entry.itemHrid });
             navigateToMarketplace(entry.itemHrid);
             this._openRecommendedForm(strategy);
         } catch (error) {

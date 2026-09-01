@@ -743,10 +743,13 @@ async function waitForMarketplace() {
 function makeMaterialClickHandler(tabRef) {
     return (_e, mat) => {
         // Read the current missing quantity from the tab's data attribute,
-        // which is kept up-to-date by the inventory listener.
-        autofillManager.setPendingCalculation(() => {
-            return parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10);
-        });
+        // which is kept up-to-date by the inventory listener. Armed for this
+        // tab's item: the calculation persists on purpose, so without the item
+        // it would go on filling buy boxes long after this tab is gone.
+        autofillManager.setPendingCalculation(
+            () => parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10),
+            { itemHrid: mat.itemHrid }
+        );
         navigateToMarketplace(mat.itemHrid, 0);
     };
 }

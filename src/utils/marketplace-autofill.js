@@ -102,6 +102,24 @@ export function isShopBuyModal(modal) {
 }
 
 /**
+ * The item a buy modal is about, read off the icon it draws.
+ *
+ * The modal names its item nowhere in text — the icon's `<use href="…#slug">`
+ * is the only handle on it, and it is the same one the buy-modal "Owned: N"
+ * line resolves the item by.
+ *
+ * @param {HTMLElement} modal - Modal container element
+ * @returns {string|null} Item HRID, or null when the modal draws no item icon
+ */
+export function modalItemHrid(modal) {
+    const useEl = modal?.querySelector?.('svg use[href], svg use[xlink\\:href]');
+    if (!useEl) return null;
+    const href = useEl.getAttribute('href') || useEl.getAttribute('xlink:href');
+    const slug = href && href.match(/#(.+)$/)?.[1];
+    return slug ? `/items/${slug}` : null;
+}
+
+/**
  * Handle buy modal appearance and auto-fill quantity if available
  * @param {HTMLElement} modal - Modal container element
  * @param {number|null} activeQuantity - Static quantity to auto-fill (null if using pending fn)
@@ -177,6 +195,7 @@ let latestIntentOwner = null;
 export function createAutofillManager(observerId) {
     let activeQuantity = null;
     let pendingCalculation = null;
+    let armedItemHrid = null;
     let observerUnregister = null;
     const self = {};
 
@@ -185,14 +204,27 @@ export function createAutofillManager(observerId) {
         if (latestIntentOwner === self) latestIntentOwner = null;
     };
 
+    const forget = () => {
+        activeQuantity = null;
+        pendingCalculation = null;
+        armedItemHrid = null;
+        releaseIntent();
+    };
+
     return {
         /**
          * Set a static quantity to auto-fill in the next buy modal
          * @param {number} quantity - Quantity to auto-fill
+         * @param {Object} [options] - Options
+         * @param {string} [options.itemHrid] - Arm for this item only. A buy modal for anything
+         *   else is left alone AND retires the arming: the errand it was armed for is over the
+         *   moment the player is buying something else. Omitted means "any buy modal", which is
+         *   what a caller that cannot know the item (the Shop's own dialog) needs.
          */
-        setQuantity(quantity) {
+        setQuantity(quantity, { itemHrid = null } = {}) {
             activeQuantity = quantity;
             pendingCalculation = null;
+            armedItemHrid = itemHrid;
             latestIntentOwner = self;
         },
 
@@ -200,11 +232,19 @@ export function createAutofillManager(observerId) {
          * Set a lazy calculation function that is called each time a buy modal opens.
          * Takes priority over setQuantity — quantity is recomputed fresh on every modal open,
          * so subsequent purchases within the same session always autofill the remaining needed amount.
+         *
+         * A persisting arming with no `itemHrid` outlives its errand: it goes on filling every
+         * later buy box, for any item, until something else claims the fill. Pass the item unless
+         * the modal genuinely cannot be identified.
+         *
          * @param {Function} fn - Function returning the current quantity to fill
+         * @param {Object} [options] - Options
+         * @param {string} [options.itemHrid] - Arm for this item only; see `setQuantity`
          */
-        setPendingCalculation(fn) {
+        setPendingCalculation(fn, { itemHrid = null } = {}) {
             pendingCalculation = fn;
             activeQuantity = null;
+            armedItemHrid = itemHrid;
             latestIntentOwner = self;
         },
 
@@ -212,9 +252,7 @@ export function createAutofillManager(observerId) {
          * Clear the stored quantity (cancel autofill)
          */
         clearQuantity() {
-            activeQuantity = null;
-            pendingCalculation = null;
-            releaseIntent();
+            forget();
         },
 
         /**
@@ -245,12 +283,27 @@ export function createAutofillManager(observerId) {
             const attempt = (modal) => {
                 // Only the most recently set intent fills; see latestIntentOwner
                 if (latestIntentOwner !== self) return false;
+
+                // An arming belongs to one item. A buy box for a different one
+                // is not this errand — and it is proof the errand was abandoned,
+                // so the arming is dropped rather than left to ambush the next
+                // buy box too. A modal that names no item (the Shop's dialog)
+                // cannot be told apart and is left to the header checks below.
+                if (armedItemHrid) {
+                    const modalItem = modalItemHrid(modal);
+                    if (modalItem && modalItem !== armedItemHrid) {
+                        forget();
+                        return false;
+                    }
+                }
+
                 const filled = handleBuyModal(modal, activeQuantity, pendingCalculation);
                 // Clear static quantity once it has actually gone into a buy
                 // form (one-shot) — not on whatever modal happened to open
                 // first. pendingCalculation persists intentionally.
                 if (filled && activeQuantity !== null && !pendingCalculation) {
                     activeQuantity = null;
+                    armedItemHrid = null;
                     releaseIntent();
                 }
                 return filled;
@@ -277,9 +330,7 @@ export function createAutofillManager(observerId) {
                 observerUnregister();
                 observerUnregister = null;
             }
-            activeQuantity = null;
-            pendingCalculation = null;
-            releaseIntent();
+            forget();
         },
     };
 }

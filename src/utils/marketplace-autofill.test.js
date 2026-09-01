@@ -19,14 +19,19 @@ vi.mock('../core/dom-observer.js', () => ({
     },
 }));
 
-const { createAutofillManager } = await import('./marketplace-autofill.js');
+const { createAutofillManager, modalItemHrid } = await import('./marketplace-autofill.js');
 
-function buildModal({ headerText = 'Buy Now', inputs = [{ label: 'Quantity' }] } = {}) {
+function buildModal({ headerText = 'Buy Now', inputs = [{ label: 'Quantity' }], itemHrid = null } = {}) {
     const modal = document.createElement('div');
     const header = document.createElement('div');
     header.className = 'MarketplacePanel_header';
     header.textContent = headerText;
     modal.appendChild(header);
+
+    // The icon is the only place a buy modal says which item it is about
+    if (itemHrid) {
+        modal.innerHTML += `<svg><use href="/static/media/items_sprite.svg#${itemHrid.split('/').pop()}"></use></svg>`;
+    }
 
     for (const input of inputs) {
         const wrapper = document.createElement('div');
@@ -279,6 +284,75 @@ describe('createAutofillManager', () => {
         observerState.handlers['Test-Observer'](buy);
         expect(buy.querySelector('input').value).toBe('25');
         expect(manager.getQuantity()).toBeNull();
+    });
+
+    test('modalItemHrid reads the item off the modal icon, and null when there is none', () => {
+        expect(modalItemHrid(buildModal({ itemHrid: '/items/berserk' }))).toBe('/items/berserk');
+        expect(modalItemHrid(buildModal())).toBeNull();
+    });
+
+    // The armed-count-outlives-its-errand bug. An ability row armed 760 books
+    // with a lazily recomputed constant, which persists by design and was
+    // scoped to nothing — so it went on filling every later buy box, for any
+    // item, until the page reloaded.
+    describe('an arming belongs to one item and one errand', () => {
+        test('a buy box for a different item is left alone', () => {
+            const manager = createAutofillManager('Test-Observer');
+            manager.initialize();
+            manager.setPendingCalculation(() => 760, { itemHrid: '/items/berserk' });
+
+            const key = buildModal({ headerText: 'Buy Listing', itemHrid: '/items/chimerical_key' });
+            observerState.handlers['Test-Observer'](key);
+
+            expect(key.querySelector('input').value).toBe('');
+        });
+
+        test('and the arming is retired, so it cannot ambush the buy box after that either', () => {
+            const manager = createAutofillManager('Test-Observer');
+            manager.initialize();
+            manager.setPendingCalculation(() => 760, { itemHrid: '/items/berserk' });
+
+            observerState.handlers['Test-Observer'](
+                buildModal({ headerText: 'Buy Listing', itemHrid: '/items/chimerical_key' })
+            );
+
+            const book = buildModal({ headerText: 'Buy Now', itemHrid: '/items/berserk' });
+            observerState.handlers['Test-Observer'](book);
+            expect(book.querySelector('input').value).toBe('');
+            expect(manager.getQuantity()).toBeNull();
+        });
+
+        test('the item it WAS armed for still fills', () => {
+            const manager = createAutofillManager('Test-Observer');
+            manager.initialize();
+            manager.setQuantity(760, { itemHrid: '/items/berserk' });
+
+            const book = buildModal({ itemHrid: '/items/berserk' });
+            observerState.handlers['Test-Observer'](book);
+            expect(book.querySelector('input').value).toBe('760');
+        });
+
+        test('a one-shot arming applies exactly once, even to its own item', () => {
+            const manager = createAutofillManager('Test-Observer');
+            manager.initialize();
+            manager.setQuantity(760, { itemHrid: '/items/berserk' });
+
+            observerState.handlers['Test-Observer'](buildModal({ itemHrid: '/items/berserk' }));
+            const second = buildModal({ itemHrid: '/items/berserk' });
+            observerState.handlers['Test-Observer'](second);
+
+            expect(second.querySelector('input').value).toBe('');
+        });
+
+        test('an unscoped arming still fills a modal that names no item — the Shop dialog', () => {
+            const manager = createAutofillManager('Test-Observer');
+            manager.initialize();
+            manager.setQuantity(8);
+
+            const modal = buildModal();
+            observerState.handlers['Test-Observer'](modal);
+            expect(modal.querySelector('input').value).toBe('8');
+        });
     });
 
     test('clearing or cleaning up a manager releases the fill to nobody, not to a stale one', () => {

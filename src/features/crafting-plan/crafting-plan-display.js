@@ -585,9 +585,12 @@ function createCraftingPlanTabs(missingMaterials) {
     for (const material of missingMaterials) {
         const tabRef = { tab: null };
         const handler = () => {
-            autofillManager.setPendingCalculation(() => {
-                return parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10);
-            });
+            // Armed for this tab's item: the calculation persists between
+            // modals, so unscoped it would fill buy boxes for anything
+            autofillManager.setPendingCalculation(
+                () => parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10),
+                { itemHrid: material.itemHrid }
+            );
             navigateToMarketplace(material.itemHrid, 0);
         };
         const tab = createMaterialTab(material, referenceTab, handler);

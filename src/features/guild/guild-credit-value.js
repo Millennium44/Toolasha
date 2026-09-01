@@ -3064,8 +3064,13 @@ class GuildCreditValue {
                 for (const mat of missingMats) {
                     let tabEl = null;
                     const tab = createMaterialTab(mat, referenceTab, (_e, m) => {
-                        this.autofillManager.setPendingCalculation(() =>
-                            parseInt(tabEl?.getAttribute('data-missing-quantity') || '0', 10)
+                        // Armed for this tab's item. These tabs outlive the
+                        // marketplace deliberately (see the opt-out below) and
+                        // nothing here clears the arming, so without the item
+                        // an armed count went on filling every later buy box.
+                        this.autofillManager.setPendingCalculation(
+                            () => parseInt(tabEl?.getAttribute('data-missing-quantity') || '0', 10),
+                            { itemHrid: m.itemHrid }
                         );
                         navigateToMarketplace(m.itemHrid, 0);
                     });

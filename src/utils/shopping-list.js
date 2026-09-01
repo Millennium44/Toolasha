@@ -175,7 +175,7 @@ export function openShoppingList(items, { heading: headingText = '' } = {}) {
 
     // The first item opens the marketplace, and the tabs are put in behind it
     navigateToMarketplace(wanted[0].itemHrid, 0);
-    autofill.setQuantity(wanted[0].count);
+    autofill.setQuantity(wanted[0].count, { itemHrid: wanted[0].itemHrid });
     watchForTabBar(watchedItems);
 }
 
@@ -295,8 +295,9 @@ function addTabs(container, reference, items) {
 function handlerFor(item) {
     return () => {
         // What is STILL missing, not the original bill — half-filled lines
-        // arm the buy box with the half that is left
-        autofill.setQuantity(item.remaining ?? item.count);
+        // arm the buy box with the half that is left. Armed for this line's
+        // item, so it can never land in a buy box for something else.
+        autofill.setQuantity(item.remaining ?? item.count, { itemHrid: item.itemHrid });
         navigateToMarketplace(item.itemHrid, 0);
     };
 }

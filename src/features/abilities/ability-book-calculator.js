@@ -304,7 +304,7 @@ class AbilityBookCalculator {
         `;
         buyButton.addEventListener('click', () => {
             if (currentBooks > 0) {
-                this.autofillManager.setQuantity(Math.ceil(currentBooks));
+                this.autofillManager.setQuantity(Math.ceil(currentBooks), { itemHrid });
                 navigateToMarketplace(itemHrid);
             }
         });

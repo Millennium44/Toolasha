@@ -810,9 +810,12 @@ class HouseCostDisplay {
             const tab = createMaterialTab(material, referenceTab, (_e, mat) => {
                 // Read the current missing quantity from the tab's data attribute,
                 // which is kept up-to-date by the inventory listener.
-                this.autofillManager.setPendingCalculation(() => {
-                    return parseInt(tabEl?.getAttribute('data-missing-quantity') || '0', 10);
-                });
+                // Armed for this tab's item, so a buy box for anything else is
+                // left alone — the calculation persists between modals
+                this.autofillManager.setPendingCalculation(
+                    () => parseInt(tabEl?.getAttribute('data-missing-quantity') || '0', 10),
+                    { itemHrid: mat.itemHrid }
+                );
                 // Navigate to marketplace
                 navigateToMarketplace(mat.itemHrid, 0);
             });
