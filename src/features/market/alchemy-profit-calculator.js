@@ -971,11 +971,18 @@ class AlchemyProfitCalculator {
             // Calculate output value
             let outputValue = 0;
             const dropDetails = [];
+            // An output nobody can price contributes nothing to the revenue, which
+            // understates the profit rather than overstating it — but silently. The
+            // display says which outputs are missing instead of showing a partial
+            // bill as a full one.
+            const unpricedOutputs = [];
 
             // 1. Base decompose items (always received on success)
             for (const output of itemDetails.alchemyDetail.decomposeItems) {
                 const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
-                if (outputPrice !== null) {
+                if (outputPrice === null) {
+                    unpricedOutputs.push(output.itemHrid);
+                } else {
                     const afterTax = calculatePriceAfterTax(outputPrice);
                     const outputCount = output.count * bulkMultiplier;
                     const dropValue = afterTax * outputCount;
@@ -999,7 +1006,9 @@ class AlchemyProfitCalculator {
                 essenceAmount = Math.round(2 * (0.5 + 0.1 * Math.pow(1.05, itemLevel)) * Math.pow(2, enhancementLevel));
 
                 const essencePrice = getItemPrice('/items/enhancing_essence', { context: 'profit', side: 'sell' });
-                if (essencePrice !== null) {
+                if (essencePrice === null) {
+                    unpricedOutputs.push('/items/enhancing_essence');
+                } else {
                     const afterTax = calculatePriceAfterTax(essencePrice);
                     const dropValue = afterTax * essenceAmount;
                     outputValue += dropValue;
@@ -1138,6 +1147,8 @@ class AlchemyProfitCalculator {
                 actionType: 'decompose',
                 itemHrid,
                 enhancementLevel,
+                /** Output hrids left out of the revenue for want of a price */
+                unpricedOutputs,
 
                 // Summary totals
                 profitPerHour,
@@ -1272,6 +1283,9 @@ class AlchemyProfitCalculator {
             // Calculate expected value of outputs, excluding self-returns (Milkonomy-style)
             // Self-returns are when you get the same item back - these don't count as income
             let expectedOutputValue = 0;
+            // As decompose: an unpriced drop is left out of the revenue, and the
+            // display says so rather than quoting a partial total as a full one
+            const unpricedOutputs = [];
             let selfReturnRate = 0;
             let selfReturnCount = 0;
             const dropDetails = [];
@@ -1287,7 +1301,11 @@ class AlchemyProfitCalculator {
                 }
 
                 const outputPrice = getItemPrice(drop.itemHrid, { context: 'profit', side: 'sell' });
-                if (outputPrice !== null) {
+                if (outputPrice === null) {
+                    // A self-return that cannot be priced still adjusts the material
+                    // cost above; it is only its resale value that is unknown
+                    unpricedOutputs.push(drop.itemHrid);
+                } else {
                     const afterTax = calculatePriceAfterTax(outputPrice);
                     // Expected value: price × dropRate × averageCount × bulkMultiplier
                     const dropValue = afterTax * drop.dropRate * averageCount * bulkMultiplier;
@@ -1454,6 +1472,8 @@ class AlchemyProfitCalculator {
                 actionType: 'transmute',
                 itemHrid,
                 enhancementLevel: 0, // Transmute doesn't care about enhancement
+                /** Output hrids left out of the revenue for want of a price */
+                unpricedOutputs,
 
                 // Summary totals
                 profitPerHour,

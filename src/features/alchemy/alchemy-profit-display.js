@@ -483,6 +483,19 @@ class AlchemyProfitDisplay {
         const revenueDiv = document.createElement('div');
         revenueDiv.innerHTML = `<div style="font-weight: 500; color: var(--text-color-primary, #fff); margin-bottom: 4px;">Revenue: ${formatLargeNumber(revenue)}/hr</div>`;
 
+        // An output the market cannot price is dropped from the revenue entirely,
+        // so every figure above it — revenue, profit per hour, profit per day — is
+        // an understatement. Say which item, rather than letting a partial total
+        // read as a complete one.
+        const unpriced = Array.isArray(profitData.unpricedOutputs) ? profitData.unpricedOutputs : [];
+        if (unpriced.length > 0) {
+            const names = unpriced.map((hrid) => dataManager.getItemDetails(hrid)?.name || hrid).join(', ');
+            const note = document.createElement('div');
+            note.style.cssText = 'margin-left: 8px; opacity: 0.7;';
+            note.textContent = `• No market price for ${names} — revenue and profit are understated.`;
+            revenueDiv.appendChild(note);
+        }
+
         // Split drops into normal, essence, and rare
         const normalDrops = profitData.dropRevenues.filter((drop) => !drop.isEssence && !drop.isRare);
         const essenceDrops = profitData.dropRevenues.filter((drop) => drop.isEssence);

@@ -452,6 +452,44 @@ describe('official alchemy rules', () => {
         const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 0);
         expect(result.dropRevenues.find((d) => d.itemHrid === '/items/enhancing_essence')).toBeUndefined();
     });
+
+    describe('an output the market cannot price', () => {
+        // Left out of the revenue entirely, which understates the profit rather
+        // than overstating it — but the reader has to be told, or a partial total
+        // reads as a complete one.
+        beforeEach(() => {
+            mocks.itemPrice = null;
+        });
+
+        test('decompose names it instead of quoting the shortfall in silence', () => {
+            mocks.itemPrices = { '/items/cheese_hat': 100 };
+            const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 0);
+
+            expect(result.unpricedOutputs).toEqual(['/items/cheese']);
+            expect(result.dropRevenues.find((d) => d.itemHrid === '/items/cheese')).toBeUndefined();
+        });
+
+        test('decompose counts the enhancing essence it could not price', () => {
+            mocks.itemPrices = { '/items/cheese_hat': 100, '/items/cheese': 50 };
+            const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 2);
+
+            expect(result.unpricedOutputs).toEqual(['/items/enhancing_essence']);
+        });
+
+        test('transmute names its unpriced drop', () => {
+            mocks.itemPrices = { '/items/milk': 10 };
+            const result = alchemyProfitCalculator.calculateTransmuteProfit('/items/milk');
+
+            expect(result.unpricedOutputs).toEqual(['/items/cheese']);
+        });
+
+        test('a fully priced run reports nothing missing', () => {
+            mocks.itemPrices = { '/items/cheese_hat': 100, '/items/cheese': 50 };
+            expect(alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 0).unpricedOutputs).toEqual(
+                []
+            );
+        });
+    });
 });
 
 describe('_forcedCatalystCombo', () => {

@@ -149,7 +149,11 @@ export function computeEnhancingSummary(run, deps) {
     // does — materialPrice handles coins (1) and the unlisted-material fallbacks.
     // A material that still comes back at zero after those fallbacks is unknown,
     // not free: every cost figure below is then an understatement, and the caller
-    // is told so rather than being handed a confident-looking number.
+    // is told so rather than being handed a confident-looking number. The same
+    // rule as `perAttemptMaterialCost`'s hasMissingPrices, tallied here rather
+    // than imported: that helper lives in a module that reaches dataManager and
+    // the market feed, and this one takes its prices as a dependency so the
+    // arithmetic stays testable without the game.
     let perAttempt = 0;
     let materialsUnpriced = false;
     for (const material of enhancementCosts) {
