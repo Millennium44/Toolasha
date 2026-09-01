@@ -112,6 +112,11 @@ let calibration;
 beforeEach(async () => {
     game.stored = {};
     game.handlers = {};
+    // Readable storage is the neutral state. Several tests below make storage
+    // unreadable and only some of them put it back, so it has to be reset here
+    // rather than in the one describe that plays with it — otherwise a test
+    // that merely runs after one of those silently gets its saves skipped.
+    game.unavailable = false;
     game.characterId = 'char-1';
     game.profitPerHour = 1000;
     game.runProfit = { askProfit: 500, bidProfit: 400 };
@@ -290,10 +295,6 @@ describe('pairing a forecast with a finished run', () => {
 describe('the ledger survives a failed read and a second tab', () => {
     const KEY = 'lootLogHistory:calibration_char-1';
     const pair = (id, t = 0) => ({ id, actionType: 'combat', predicted: 1, actual: 1, t });
-
-    beforeEach(() => {
-        game.unavailable = false;
-    });
 
     test('a load that cannot read storage keeps the pairs in memory', async () => {
         await calibration.addRecord(pair('a', 1));

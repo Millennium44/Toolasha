@@ -8,7 +8,16 @@
  * it too, so the generated source is parsed and run here and its answers
  * compared against the main-thread calculator's.
  */
-import { describe, test, expect, vi, afterEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Each manager memoises its worker pool at module scope, and a memoised pool
+// builds no Blob — so a test that only wants to READ the generated source has
+// to start from a fresh module registry or `captureWorkerScript` captures
+// nothing. Resetting for every test makes that independent of which tests ran
+// before, rather than each test having to remember.
+beforeEach(() => {
+    vi.resetModules();
+});
 
 /**
  * Capture the worker source a manager hands to `new Blob([...])`.

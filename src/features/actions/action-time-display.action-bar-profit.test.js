@@ -23,6 +23,13 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
+// NOTE ON ISOLATION: the hoisted fixtures below (`game`, `liquidity`,
+// `alchemyCalc`) are module-level singletons the mock factories close over, so
+// whatever one test sets stays set for every later test in the file. The
+// file-level beforeEach at the bottom puts all three back to their neutral
+// values before each test; a describe that wants a different value sets it
+// itself. Do not rely on the neighbouring describe's beforeEach for this.
+
 const game = vi.hoisted(() => ({
     actionDetails: {},
 }));
@@ -104,6 +111,14 @@ const actionTimeDisplay = (await import('./action-time-display.js')).default;
 function setActionNameDom() {
     document.body.innerHTML = '<div class="Header_actionName_abc123">Coinify: Foraging Essence (100)</div>';
 }
+
+// Every shared fixture back to neutral, so no test inherits a throttle, a
+// calculator or an action table another one installed.
+beforeEach(() => {
+    liquidity.throttle = null;
+    alchemyCalc.coinify = null;
+    game.actionDetails = {};
+});
 
 describe('action bar profit line — idempotent injection', () => {
     beforeEach(() => {

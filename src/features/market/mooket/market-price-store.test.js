@@ -46,13 +46,20 @@ const { default: marketPriceStore } = await import('./market-price-store.js');
 
 beforeEach(async () => {
     vi.useFakeTimers();
+    // cleanup() flushes, and flush() is async and un-awaited. A store the
+    // previous test left dirty therefore writes to storage some microtasks
+    // later — after the mocks below would have been cleared, so the write got
+    // counted against the NEXT test ('flush writes only when dirty' saw a
+    // phantom set of an empty record). Tear down first and let the write
+    // settle, then clear.
+    marketPriceStore.cleanup();
+    await marketPriceStore.record.flushed();
     storageMock.saved = {};
     storageMock.unavailable = false;
     storageMock.tryGet.mockClear();
     storageMock.set.mockClear();
     dataManagerMock.on.mockClear();
     dataManagerMock.off.mockClear();
-    marketPriceStore.cleanup();
     marketPriceStore.record.reset();
     marketPriceStore.dirty = false;
     marketPriceStore.loaded = false;
