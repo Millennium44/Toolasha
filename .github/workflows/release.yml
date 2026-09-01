@@ -112,9 +112,19 @@ jobs:
                   cp dist/Toolasha.user.js /tmp/Toolasha.user.js
                   cp -R dist/libraries /tmp/libraries
 
-                  # Fetch and checkout releases branch (create if doesn't exist)
-                  git fetch origin releases:releases 2>/dev/null || git checkout --orphan releases
-                  git checkout releases 2>/dev/null || git checkout --orphan releases
+                  # Fetch the remote-tracking ref first, then reset the local
+                  # publishing branch to it. Fetching directly into a local
+                  # `releases` branch can leave that branch behind even when
+                  # the fetch exits unsuccessfully, which makes the orphan
+                  # fallback fail with "a branch named 'releases' already
+                  # exists". Keeping remote discovery and local checkout as
+                  # separate operations also makes manual republishes safe.
+                  if git ls-remote --exit-code --heads origin releases >/dev/null; then
+                      git fetch origin refs/heads/releases:refs/remotes/origin/releases
+                      git checkout -B releases refs/remotes/origin/releases
+                  else
+                      git checkout --orphan releases
+                  fi
 
                   # Commit the libraries on their own, leaving the userscript
                   # untouched so this commit stays out of GreasyFork's changelog.

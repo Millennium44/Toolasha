@@ -2032,60 +2032,56 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.36.0](https://github.com/Millennium44/Toolasha/compare/v3.35.1...v3.36.0) (2026-09-01)
 
-
 ### Features
 
-* export the off-plan players from the trial abilities Plan section ([fa3cf15](https://github.com/Millennium44/Toolasha/commit/fa3cf152ece54927e54bf4d8c66f3a5a158e721c))
-* per-ability damage breakdown behind each trial scoreboard row ([d3bd95d](https://github.com/Millennium44/Toolasha/commit/d3bd95dd39b2bdaf87e5fe494d9e50eeb7af1dd5))
-* shrine plan updates live, lists its conversions, and token-covers colours ([bb74986](https://github.com/Millennium44/Toolasha/commit/bb749869023680a9b54a2a18ff3b7ad365437436))
-* the shrine planner marks which colours are worth the tokens ([254ddd2](https://github.com/Millennium44/Toolasha/commit/254ddd2c0b3c188117afe7c55ff964a604ddbf75))
-* the sim's ability Market button opens the missing-mats tabs ([7927540](https://github.com/Millennium44/Toolasha/commit/79275401811894ccf6657f27cdd72a9bcccb6eac))
-* trial abilities Controls card draws first, above the summary ([27cae69](https://github.com/Millennium44/Toolasha/commit/27cae697d4ea7dc529a8726a31c64634ffa7f837))
-
+- export the off-plan players from the trial abilities Plan section ([fa3cf15](https://github.com/Millennium44/Toolasha/commit/fa3cf152ece54927e54bf4d8c66f3a5a158e721c))
+- per-ability damage breakdown behind each trial scoreboard row ([d3bd95d](https://github.com/Millennium44/Toolasha/commit/d3bd95dd39b2bdaf87e5fe494d9e50eeb7af1dd5))
+- shrine plan updates live, lists its conversions, and token-covers colours ([bb74986](https://github.com/Millennium44/Toolasha/commit/bb749869023680a9b54a2a18ff3b7ad365437436))
+- the shrine planner marks which colours are worth the tokens ([254ddd2](https://github.com/Millennium44/Toolasha/commit/254ddd2c0b3c188117afe7c55ff964a604ddbf75))
+- the sim's ability Market button opens the missing-mats tabs ([7927540](https://github.com/Millennium44/Toolasha/commit/79275401811894ccf6657f27cdd72a9bcccb6eac))
+- trial abilities Controls card draws first, above the summary ([27cae69](https://github.com/Millennium44/Toolasha/commit/27cae697d4ea7dc529a8726a31c64634ffa7f837))
 
 ### Bug Fixes
 
-* a character simmed from their profile keeps their own house rooms ([ed65bf9](https://github.com/Millennium44/Toolasha/commit/ed65bf99991c556eaab3e83c7f986916e2606b2d))
-* a custom price override edit notifies the price listeners ([9cc5d33](https://github.com/Millennium44/Toolasha/commit/9cc5d3320c7b3ef4309513a5d11239c2516d2fab))
-* a shrine plan that loads late redraws the suggestions too ([4073173](https://github.com/Millennium44/Toolasha/commit/40731736715d97069e6618325e80e141ec52cd2a))
-* a tank read off the party threat baseline is not retagged by their weapon ([bc3df7c](https://github.com/Millennium44/Toolasha/commit/bc3df7ce02d87f796a6b4ec510ff270e5e5b63ae))
-* an armed marketplace quantity no longer outlives its errand ([e5d1923](https://github.com/Millennium44/Toolasha/commit/e5d1923e9811781cf14087b0a1639f08a44aea21))
-* comparison baseline select shrinks instead of pushing the row off the panel ([47b1335](https://github.com/Millennium44/Toolasha/commit/47b1335f29b27bc9e3f3b76edb23f83993208a6f))
-* crafting plan memo path recursed forever on mutually recursive recipes ([8f9a7aa](https://github.com/Millennium44/Toolasha/commit/8f9a7aab4ed16dd72bb822c24f819a84b52934e7))
-* crafting plan shopping list overcounted multi-output recipes ([740ac27](https://github.com/Millennium44/Toolasha/commit/740ac277e89728e5e59b9ff5afaf1e2ae8bcdc99))
-* Export off-plan no longer reports "All on plan" for a plan naming nobody ([6d8f4b8](https://github.com/Millennium44/Toolasha/commit/6d8f4b8f266f9479fb4074e85ad7ca6c8ad92d45))
-* getPriceTimestamp reports a patch's time when no snapshot ever loaded ([89e3ead](https://github.com/Millennium44/Toolasha/commit/89e3ead76dae0679d677c5f50c52fbed318bd778))
-* House-targets grid stops reading the live character's own room level for other players ([1766ee9](https://github.com/Millennium44/Toolasha/commit/1766ee997e068759965cc952828f358fa0c456cb))
-* max produceable read an exact artisan-stretched stack one action short ([da7f2e5](https://github.com/Millennium44/Toolasha/commit/da7f2e5f46ef642ccc7e9bf32c197aa64268b1f9))
-* notification cooldown no longer silences events across a backward clock jump ([a6613c5](https://github.com/Millennium44/Toolasha/commit/a6613c57743f0de249f7a72ac6d5b2f81b582cb5))
-* planner treated an absent sustainability ceiling as a cap of zero ([0ea0832](https://github.com/Millennium44/Toolasha/commit/0ea083249c19b5aad53249db7d54331db2a7ee52))
-* price history volume split credits the quoted side when only one is on the book ([8a509af](https://github.com/Millennium44/Toolasha/commit/8a509af9e2de371903a9dcaf180454563a4539c6))
-* read a player's class off their fetched weapon passive before their abilities ([1e7f5cf](https://github.com/Millennium44/Toolasha/commit/1e7f5cf5f692a97a377ae0a46967b078fd5b010b))
-* shrine planner no longer converts tokens the plan does not have ([45db2c2](https://github.com/Millennium44/Toolasha/commit/45db2c2ecf8e135d31fc07318a71ce2a69395446))
-* simming a profile import no longer overwrites your own saved consumable rate ([b6e8be0](https://github.com/Millennium44/Toolasha/commit/b6e8be08f99e565e0bdf9acd913b39df7838c524))
-* the listing price clamp stays live for the modal's lifetime ([9b9f239](https://github.com/Millennium44/Toolasha/commit/9b9f239189c36baefff960d99fca2a2b78a3f027))
-* the reroll walk is done with a slot once it discards it ([042cb51](https://github.com/Millennium44/Toolasha/commit/042cb515d645f003bca6dd3a4ae66046aac986c2))
-* the skilling escalation walk skips items the clear-rate model cannot see ([a911fd9](https://github.com/Millennium44/Toolasha/commit/a911fd994d5449cf48765dfcc831054868ee9c75))
-* the Watch pin targets the item's own buy price, not the row's net cost ([65a06cc](https://github.com/Millennium44/Toolasha/commit/65a06cc9fdb93c9a3381a296e1779f07a977591f))
-* the XP/hour ranking's status line names pro rates instead of quoting them in silence ([cafbeea](https://github.com/Millennium44/Toolasha/commit/cafbeea1821ff331405e07bec2a2cb64dfcbb4fa))
-* trial payout upgrade explainer prose shows on the Trials tab only ([4131420](https://github.com/Millennium44/Toolasha/commit/41314207480b1b0e694dedf10e867d4fcb32499e))
-* upgrade advisor no longer prices a stranger's ability off your own book bag ([d859f29](https://github.com/Millennium44/Toolasha/commit/d859f29e36af6e9bd7540bb3f5f7b5cf59d9b67b))
-
+- a character simmed from their profile keeps their own house rooms ([ed65bf9](https://github.com/Millennium44/Toolasha/commit/ed65bf99991c556eaab3e83c7f986916e2606b2d))
+- a custom price override edit notifies the price listeners ([9cc5d33](https://github.com/Millennium44/Toolasha/commit/9cc5d3320c7b3ef4309513a5d11239c2516d2fab))
+- a shrine plan that loads late redraws the suggestions too ([4073173](https://github.com/Millennium44/Toolasha/commit/40731736715d97069e6618325e80e141ec52cd2a))
+- a tank read off the party threat baseline is not retagged by their weapon ([bc3df7c](https://github.com/Millennium44/Toolasha/commit/bc3df7ce02d87f796a6b4ec510ff270e5e5b63ae))
+- an armed marketplace quantity no longer outlives its errand ([e5d1923](https://github.com/Millennium44/Toolasha/commit/e5d1923e9811781cf14087b0a1639f08a44aea21))
+- comparison baseline select shrinks instead of pushing the row off the panel ([47b1335](https://github.com/Millennium44/Toolasha/commit/47b1335f29b27bc9e3f3b76edb23f83993208a6f))
+- crafting plan memo path recursed forever on mutually recursive recipes ([8f9a7aa](https://github.com/Millennium44/Toolasha/commit/8f9a7aab4ed16dd72bb822c24f819a84b52934e7))
+- crafting plan shopping list overcounted multi-output recipes ([740ac27](https://github.com/Millennium44/Toolasha/commit/740ac277e89728e5e59b9ff5afaf1e2ae8bcdc99))
+- Export off-plan no longer reports "All on plan" for a plan naming nobody ([6d8f4b8](https://github.com/Millennium44/Toolasha/commit/6d8f4b8f266f9479fb4074e85ad7ca6c8ad92d45))
+- getPriceTimestamp reports a patch's time when no snapshot ever loaded ([89e3ead](https://github.com/Millennium44/Toolasha/commit/89e3ead76dae0679d677c5f50c52fbed318bd778))
+- House-targets grid stops reading the live character's own room level for other players ([1766ee9](https://github.com/Millennium44/Toolasha/commit/1766ee997e068759965cc952828f358fa0c456cb))
+- max produceable read an exact artisan-stretched stack one action short ([da7f2e5](https://github.com/Millennium44/Toolasha/commit/da7f2e5f46ef642ccc7e9bf32c197aa64268b1f9))
+- notification cooldown no longer silences events across a backward clock jump ([a6613c5](https://github.com/Millennium44/Toolasha/commit/a6613c57743f0de249f7a72ac6d5b2f81b582cb5))
+- planner treated an absent sustainability ceiling as a cap of zero ([0ea0832](https://github.com/Millennium44/Toolasha/commit/0ea083249c19b5aad53249db7d54331db2a7ee52))
+- price history volume split credits the quoted side when only one is on the book ([8a509af](https://github.com/Millennium44/Toolasha/commit/8a509af9e2de371903a9dcaf180454563a4539c6))
+- read a player's class off their fetched weapon passive before their abilities ([1e7f5cf](https://github.com/Millennium44/Toolasha/commit/1e7f5cf5f692a97a377ae0a46967b078fd5b010b))
+- shrine planner no longer converts tokens the plan does not have ([45db2c2](https://github.com/Millennium44/Toolasha/commit/45db2c2ecf8e135d31fc07318a71ce2a69395446))
+- simming a profile import no longer overwrites your own saved consumable rate ([b6e8be0](https://github.com/Millennium44/Toolasha/commit/b6e8be08f99e565e0bdf9acd913b39df7838c524))
+- the listing price clamp stays live for the modal's lifetime ([9b9f239](https://github.com/Millennium44/Toolasha/commit/9b9f239189c36baefff960d99fca2a2b78a3f027))
+- the reroll walk is done with a slot once it discards it ([042cb51](https://github.com/Millennium44/Toolasha/commit/042cb515d645f003bca6dd3a4ae66046aac986c2))
+- the skilling escalation walk skips items the clear-rate model cannot see ([a911fd9](https://github.com/Millennium44/Toolasha/commit/a911fd994d5449cf48765dfcc831054868ee9c75))
+- the Watch pin targets the item's own buy price, not the row's net cost ([65a06cc](https://github.com/Millennium44/Toolasha/commit/65a06cc9fdb93c9a3381a296e1779f07a977591f))
+- the XP/hour ranking's status line names pro rates instead of quoting them in silence ([cafbeea](https://github.com/Millennium44/Toolasha/commit/cafbeea1821ff331405e07bec2a2cb64dfcbb4fa))
+- trial payout upgrade explainer prose shows on the Trials tab only ([4131420](https://github.com/Millennium44/Toolasha/commit/41314207480b1b0e694dedf10e867d4fcb32499e))
+- upgrade advisor no longer prices a stranger's ability off your own book bag ([d859f29](https://github.com/Millennium44/Toolasha/commit/d859f29e36af6e9bd7540bb3f5f7b5cf59d9b67b))
 
 ### Documentation
 
-* changelog for audit round 25's ten fixes ([974d9ba](https://github.com/Millennium44/Toolasha/commit/974d9ba6e7adc18ecf7b6315c47bbfaaad3a25f0))
-* changelog for audit round 26's five fixes ([371f344](https://github.com/Millennium44/Toolasha/commit/371f3449ada94545ba8065411b0d142c974e2d70))
-* changelog for the marketplace arming scope fix and missing-mats unification ([263f678](https://github.com/Millennium44/Toolasha/commit/263f678c37d8776b66eacbb1c1baad0d2742b7a6))
-* changelog for the reroll walk slot-retire fix ([b655a7c](https://github.com/Millennium44/Toolasha/commit/b655a7cd5a1571a7c03e9c5c34de7a740a35afc8))
-* changelog for the shrine token budget fix and best-value indicator ([6b27b8e](https://github.com/Millennium44/Toolasha/commit/6b27b8e5edbcc7f59814f7231683935c415bcd8e))
-* changelog for the you-vs-them sweep's three fixes ([f859a18](https://github.com/Millennium44/Toolasha/commit/f859a1878aa3c456df8d9ed7e64ec4d40e30d704))
-
+- changelog for audit round 25's ten fixes ([974d9ba](https://github.com/Millennium44/Toolasha/commit/974d9ba6e7adc18ecf7b6315c47bbfaaad3a25f0))
+- changelog for audit round 26's five fixes ([371f344](https://github.com/Millennium44/Toolasha/commit/371f3449ada94545ba8065411b0d142c974e2d70))
+- changelog for the marketplace arming scope fix and missing-mats unification ([263f678](https://github.com/Millennium44/Toolasha/commit/263f678c37d8776b66eacbb1c1baad0d2742b7a6))
+- changelog for the reroll walk slot-retire fix ([b655a7c](https://github.com/Millennium44/Toolasha/commit/b655a7cd5a1571a7c03e9c5c34de7a740a35afc8))
+- changelog for the shrine token budget fix and best-value indicator ([6b27b8e](https://github.com/Millennium44/Toolasha/commit/6b27b8e5edbcc7f59814f7231683935c415bcd8e))
+- changelog for the you-vs-them sweep's three fixes ([f859a18](https://github.com/Millennium44/Toolasha/commit/f859a1878aa3c456df8d9ed7e64ec4d40e30d704))
 
 ### Tests
 
-* lock the comparison baseline row's shrink rule ([b91936f](https://github.com/Millennium44/Toolasha/commit/b91936f321ac6164065388f11e0f62f762ad3dc1))
-* pin the payout explainer's tab gate across a tab switch, not just first draw ([daf51d5](https://github.com/Millennium44/Toolasha/commit/daf51d5bb2f9ac2725b89384127bc81eb7436bac))
+- lock the comparison baseline row's shrink rule ([b91936f](https://github.com/Millennium44/Toolasha/commit/b91936f321ac6164065388f11e0f62f762ad3dc1))
+- pin the payout explainer's tab gate across a tab switch, not just first draw ([daf51d5](https://github.com/Millennium44/Toolasha/commit/daf51d5bb2f9ac2725b89384127bc81eb7436bac))
 
 ## [3.35.1](https://github.com/Millennium44/Toolasha/compare/v3.35.0...v3.35.1) (2026-08-31)
 

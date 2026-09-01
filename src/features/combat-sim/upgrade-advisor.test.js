@@ -3832,9 +3832,7 @@ describe('what an ability upgrade costs', () => {
         // pricing an imported profile's or a party member's row from it would
         // quote a fireball-level book path as "already at Lv14" for someone who
         // never read a page of it. isSelf: false must price it as unread.
-        character.characterAbilities = [
-            { abilityHrid: '/abilities/critical_aura', level: 14, experience: 12_345 },
-        ];
+        character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 14, experience: 12_345 }];
         const detail = explainUpgradeCost(swap, gameData, false);
 
         expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 0, 0, 20);
