@@ -6877,6 +6877,7 @@ class CombatSimUI {
                 {
                     playerDTOs,
                     playerIndex,
+                    selfHrid: this._editor?.getSelfHrid() || null,
                     zoneHrid,
                     difficultyTier,
                     hours,

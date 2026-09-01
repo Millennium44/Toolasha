@@ -1036,8 +1036,10 @@ function guideSwapAllowed(guide, currentHrid, incomingHrid) {
  * @param {Object} gameData - Game data payload
  * @param {Object} guide - From `buildGuidePlan`
  * @param {Array} candidates - Candidate list (mutated)
+ * @param {boolean} isSelf - False for an imported profile or party member, whose book bag
+ *   the live character's `ownedAbility` read cannot answer for
  */
-function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates) {
+function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates, isSelf) {
     const abilities = playerDTO.abilities || [];
     const equipped = new Set(abilities.filter((a) => a).map((a) => a.hrid));
     const specialSlotFree = abilities.length > 0 && !abilities[0];
@@ -1052,7 +1054,7 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates) {
         // is style-correct by construction (see the swap loop). The heuristic would
         // wrongly drop a universal aura into an empty special slot.
 
-        const level = Math.max(1, ownedAbility(abHrid)?.level || 0);
+        const level = Math.max(1, ownedAbility(abHrid, isSelf)?.level || 0);
         const swapName = abDetail.name || abHrid.split('/').pop();
         candidates.push({
             slot: `ability_${slotIdx}`,
@@ -1082,10 +1084,12 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates) {
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
  * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
  * @param {Object} [options] - `{ auraSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
- *   guildShrineTargets }`. `houseWinRateOnly` narrows the house set to rooms that can move a
- *   fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
+ *   guildShrineTargets, isSelf }`. `houseWinRateOnly` narrows the house set to rooms that can move
+ *   a fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
  *   several buff levels at once; `guildShrineTargets` is a per-shrine target map that takes
- *   precedence over `guildShrineTargetLevel`, skipping any shrine it does not name.
+ *   precedence over `guildShrineTargetLevel`, skipping any shrine it does not name. `isSelf`
+ *   (default true) gates the guide's empty-slot fill level off the live character's own book
+ *   bag — false for an imported profile or party member, who the sim has no book bag for.
  * @returns {Array} Candidates: [{slot, currentHrid, currentLevel, upgradeHrid, upgradeLevel, description, type}]
  */
 export function generateCandidates(
@@ -1532,7 +1536,7 @@ export function generateCandidates(
             }
         }
 
-        if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates);
+        if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates, options.isSelf !== false);
     }
 
     if (mode === 'combat_level') {
@@ -2901,10 +2905,19 @@ const ABILITY_CANDIDATE_TYPES = new Set(['ability_level', 'ability_swap']);
  * would not do: the whole point of a swap candidate is an ability that is *not*
  * equipped, and the one you have sat in the book bag is exactly the case.
  *
+ * `characterAbilities` is the live user's own book bag — there is no such list
+ * for an imported profile or a party member read off a shared card, only their
+ * equipped abilities. Pricing a stranger's row from what *you* happen to own
+ * would price a Fireball swap as "already at Lv40" because you read Fireball,
+ * not because they did — `isSelf` keeps this read to rows about the character
+ * whose live data this actually is.
+ *
  * @param {string} abilityHrid - The ability being swapped in
- * @returns {{level: number, experience: number}|null} Null when it is unlearned
+ * @param {boolean} isSelf - False for any player other than the live character
+ * @returns {{level: number, experience: number}|null} Null when it is unlearned or not self
  */
-function ownedAbility(abilityHrid) {
+function ownedAbility(abilityHrid, isSelf) {
+    if (!isSelf) return null;
     const owned = (dataManager.characterData?.characterAbilities || []).find(
         (entry) => entry?.abilityHrid === abilityHrid
     );
@@ -2931,12 +2944,13 @@ function ownedAbility(abilityHrid) {
  *
  * @param {Object} candidate - Candidate of type `ability_level` or `ability_swap`
  * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - False when the candidate belongs to a player other than the live character
  * @returns {Object} Same shape as `explainUpgradeCost`, plus `books`
  */
-function explainAbilityCandidateCost(candidate, gameData) {
+function explainAbilityCandidateCost(candidate, gameData, isSelf) {
     const swap = candidate.type === 'ability_swap';
     const hrid = swap ? candidate.upgradeHrid : candidate.currentHrid || candidate.upgradeHrid;
-    const owned = ownedAbility(hrid);
+    const owned = ownedAbility(hrid, isSelf);
 
     // A level-up starts from where the equipped ability is; a swap starts from
     // where the book you own is, and from nothing when you own none
@@ -2995,10 +3009,13 @@ function explainAbilityCandidateCost(candidate, gameData) {
  * price instead of leaving the reader guessing.
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
+ * @param {boolean} [isSelf=true] - False when pricing a row for a player other than the live
+ *   character (an imported profile, a party member) — keeps the ability-book breakdown from
+ *   reading the live character's own book bag as if it belonged to them
  * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
  */
-export function explainUpgradeCost(candidate, gameData) {
-    if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData);
+export function explainUpgradeCost(candidate, gameData, isSelf = true) {
+    if (ABILITY_CANDIDATE_TYPES.has(candidate.type)) return explainAbilityCandidateCost(candidate, gameData, isSelf);
     if (candidate.type === 'guild_shrine') return explainGuildShrineCost(candidate);
     if (candidate.type === 'drink') {
         return {
@@ -3112,8 +3129,8 @@ export function explainUpgradeCost(candidate, gameData) {
 
 /**
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
- * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
- *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
+ * @param {Object} params - { playerDTOs, playerIndex, selfHrid, zoneHrid, difficultyTier, hours, communityBuffs,
+ *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
@@ -3123,6 +3140,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const {
         playerDTOs,
         playerIndex,
+        selfHrid = null,
         zoneHrid,
         difficultyTier,
         hours,
@@ -3152,6 +3170,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
     const playerDTO = playerDTOs[playerIndex];
     const playerHrid = playerDTO.hrid;
+    // Whether the row being priced is the live character. An imported profile or
+    // a party member read off a shared card carries `selfHrid: null` (or a
+    // `hrid` that never matches it) precisely so a book-bag or inventory read
+    // below does not mistake the live character's own data for theirs.
+    const isSelf = selfHrid != null && playerHrid === selfHrid;
 
     // One seed for the whole analysis: baseline and every candidate draw the same
     // random numbers, so a delta reflects the upgrade rather than the gap between
@@ -3173,7 +3196,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             houseTargets,
             communityBuffs,
             guildShrineTargetLevel,
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, isSelf }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
@@ -3194,7 +3217,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         // say so, rather than three different kinds of number sharing a column
         let costDetail = null;
         try {
-            costDetail = explainUpgradeCost(c, gameData);
+            costDetail = explainUpgradeCost(c, gameData, isSelf);
         } catch (error) {
             console.error('[UpgradeAdvisor] Reading the cost basis failed:', error);
         }

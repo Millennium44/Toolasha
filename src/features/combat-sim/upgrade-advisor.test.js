@@ -3827,6 +3827,32 @@ describe('what an ability upgrade costs', () => {
         expect(detail.ownedFromLevel).toBe(14);
     });
 
+    test("a stranger's swap is not priced off the live character's book bag", () => {
+        // The book at Lv14 above belongs to the character actually playing —
+        // pricing an imported profile's or a party member's row from it would
+        // quote a fireball-level book path as "already at Lv14" for someone who
+        // never read a page of it. isSelf: false must price it as unread.
+        character.characterAbilities = [
+            { abilityHrid: '/abilities/critical_aura', level: 14, experience: 12_345 },
+        ];
+        const detail = explainUpgradeCost(swap, gameData, false);
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/critical_aura', 0, 0, 20);
+        expect(detail.freshBook).toBe(true);
+        expect(detail.ownedFromLevel).toBeNull();
+    });
+
+    test("a stranger's level-up ignores the live character owning the same ability at the same level", () => {
+        // `owned` used to be read unconditionally for level-ups too, not just
+        // swaps — a live character who happens to own Fireball at Lv48 with XP
+        // banked would silently donate that XP to any other player's Lv48
+        // Fireball row, understating what they need to buy
+        character.characterAbilities = [{ abilityHrid: '/abilities/fireball', level: 48, experience: 99_999 }];
+        explainUpgradeCost(levelUp, gameData, false);
+
+        expect(explainAbilityLevelUpCost).toHaveBeenLastCalledWith('/abilities/fireball', 48, 0, 53);
+    });
+
     test('an owned book with no experience recorded starts at its level, not at zero', () => {
         character.characterAbilities = [{ abilityHrid: '/abilities/critical_aura', level: 1 }];
         explainUpgradeCost(swap, gameData);
@@ -5225,6 +5251,18 @@ describe('guide-driven ability swaps', () => {
         expect(fireball.description).toBe('Empty slot → Fireball (Lv37)');
         // One you have never read is what the book would get you
         expect(filled.find((c) => c.upgradeHrid === '/abilities/precision').upgradeLevel).toBe(1);
+    });
+
+    test("an imported or party member's empty slots fill at Lv1, not the live character's book level", () => {
+        // The Lv37 Fireball above belongs to whoever is actually playing. Simming
+        // an imported profile or a party member with `isSelf: false` must not
+        // credit them with a book they never read — the loadout guide has no way
+        // to know what is in a stranger's book bag, so it can only offer what
+        // buying the book fresh would get: Lv1
+        character.characterAbilities = [{ abilityHrid: '/abilities/fireball', level: 37, experience: 0 }];
+        const filled = swaps(fireMage(), { isSelf: false }).filter((c) => !c.replacesHrid);
+
+        expect(filled.find((c) => c.upgradeHrid === '/abilities/fireball').upgradeLevel).toBe(1);
     });
 
     test('a wark gets the defensive set, not the mace set its damage type says', () => {
