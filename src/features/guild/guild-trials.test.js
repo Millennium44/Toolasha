@@ -26,6 +26,8 @@ const game = vi.hoisted(() => ({
     prices: {},
     buildingLevels: {},
     store: {},
+    /** key → promise a `storage.tryGet` of it waits on */
+    holds: {},
     observers: {},
     wsHandlers: {},
     guildName: 'Milky Way',
@@ -112,6 +114,8 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (key in game.store ? game.store[key] : fallback),
         tryGet: async (key) => {
+            // A read a test can hold open, for the switch-mid-read cases
+            if (game.holds?.[key]) await game.holds[key];
             if (game.unavailable) return null;
             return key in game.store
                 ? { found: true, value: structuredClone(game.store[key]) }
@@ -1443,6 +1447,7 @@ describe('the panel, end to end', () => {
         game.prices = {};
         game.buildingLevels = {};
         game.store = {};
+        game.holds = {};
         game.unavailable = false;
         game.members = [];
         game.characterId = null;
@@ -2851,6 +2856,46 @@ describe('the panel, end to end', () => {
         expect(game.store['guildTrials_SuperMoo']?.tiles?.['skilling::alchemy']).toBeUndefined();
     });
 
+    test('a character switch during the guild adoption read does not merge one guild into another', async () => {
+        // `_adoptGuildName`'s read is a storage round trip and it had no
+        // re-check on the far side. A switch landing inside it folded the
+        // departing character's guild record into the arriving character's —
+        // and stamped it with the departing guild's name, which is what the
+        // `foreign` provenance check on the next load reads as "own", so
+        // nothing downstream ever discards it again.
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = null;
+        game.store = {};
+        await trialsFeature.initialize();
+
+        game.store['guildTrials_Testmaxxing'] = {
+            weekStart: trialWeekStart(now),
+            guildName: 'Testmaxxing',
+            tiles: { 'skilling::alchemy': { name: 'Alchemy', kind: 'skilling', samples: [] } },
+        };
+        game.guildName = 'Testmaxxing';
+
+        let release;
+        game.holds['guildTrials_Testmaxxing'] = new Promise((resolve) => {
+            release = resolve;
+        });
+
+        const adopting = guildTrials._adoptGuildName();
+        await Promise.resolve();
+
+        game.characterId = 222;
+        game.guildName = null;
+        guildTrials._forgetCharacter(222);
+
+        release();
+        await adopting;
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(guildTrials.guildName).toBeNull();
+        expect(guildTrials.record?.tiles?.['skilling::alchemy']).toBeUndefined();
+    });
+
     test('a watched fight feeds the pool to a card the game draws no bar on', async () => {
         // The Trials tab's combat card carries a level and no bar at all, so
         // every projection said "measuring…" for the whole hour. The spectator
@@ -3446,6 +3491,7 @@ describe('the two trial tabs, as the game draws them', () => {
         game.prices = {};
         game.buildingLevels = {};
         game.store = {};
+        game.holds = {};
         game.unavailable = false;
         game.members = [];
         game.characterId = null;
@@ -5234,6 +5280,7 @@ describe('the payout block, audited', () => {
         game.prices = {};
         game.buildingLevels = {};
         game.store = {};
+        game.holds = {};
         game.unavailable = false;
         game.members = [];
         game.characterId = null;

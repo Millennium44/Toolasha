@@ -19,6 +19,8 @@ const game = vi.hoisted(() => ({
     characterName: null,
     wsHandlers: {},
     observers: {},
+    /** key → promise a `storage.get` of it waits on */
+    holds: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -30,7 +32,11 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async (key, _store, fallback) => (key in game.store ? game.store[key] : fallback),
+        get: async (key, _store, fallback) => {
+            // A read a test can hold open, for the switch-mid-adoption case
+            if (game.holds[key]) await game.holds[key];
+            return key in game.store ? game.store[key] : fallback;
+        },
         set: async (key, value) => {
             game.store[key] = value;
             return true;
@@ -396,6 +402,7 @@ describe('two owners', () => {
 describe('guild scoping', () => {
     beforeEach(async () => {
         game.store = {};
+        game.holds = {};
         game.characterId = 'char-1';
         game.clientData = {};
         vi.useFakeTimers();
@@ -525,6 +532,45 @@ describe('guild scoping', () => {
         expect(guildLoadoutCapture.seen()).toEqual([]);
         // …and the guild they left keeps its own, for if they go back
         expect(game.store[guildLoadoutsStorageKey('char-1', 'Testmaxxing')].players.testmaxxer).toBeDefined();
+    });
+
+    test('a character switch during the adoption read leaves the arriving character alone', async () => {
+        // The old guard compared the guild NAME, and both sides of a first
+        // adoption are `null` — so a switch that landed inside the read was
+        // invisible to it, and the rest of the adoption ran the DEPARTING
+        // character's roster against the arriving character's keys.
+        const guildKey = guildLoadoutsStorageKey('char-1', 'Testmaxxing');
+        game.store[guildKey] = { players: { tib: { name: 'Tib', rows: [], at: 1 } }, updatedAt: 1 };
+        game.store[guildLoadoutsStorageKey('char-2')] = {
+            players: {
+                moo: { name: 'Moo', rows: [], at: 1 },
+                // Also on char-1's guild roster, so the prune would take it
+                tib: { name: 'Tib', rows: [], at: 1 },
+            },
+            updatedAt: 1,
+        };
+
+        let release;
+        game.holds[guildKey] = new Promise((resolve) => {
+            release = resolve;
+        });
+
+        const adopting = guildLoadoutCapture.setGuildName('Testmaxxing');
+        await Promise.resolve();
+
+        // A snapshot is what tells the capture the character changed
+        game.characterId = 'char-2';
+        game.wsHandlers.battle_unit_fetched(sheet('Newcomer'));
+        await vi.advanceTimersByTimeAsync(0);
+
+        release();
+        await adopting;
+        await vi.advanceTimersByTimeAsync(2000);
+
+        // char-1's roster must not be filed under char-2's guild key…
+        expect(game.store[guildLoadoutsStorageKey('char-2', 'Testmaxxing')]).toBeUndefined();
+        // …and char-2's own "Seen loadouts" must not be pruned against it
+        expect(game.store[guildLoadoutsStorageKey('char-2')].players.tib).toBeDefined();
     });
 });
 

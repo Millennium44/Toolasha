@@ -2459,6 +2459,7 @@ class GuildTrials {
         this.initialized = true;
 
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        const characterId = this.characterId;
         this.guildName = this._resolveGuildName();
         guildTrialRecorder.setGuildName(this.guildName);
         guildTrialAbilities.setGuildName?.(this.guildName);
@@ -2473,13 +2474,22 @@ class GuildTrials {
         ]);
         // A read that could not be made leaves the in-memory record as it is:
         // the one a tick built in the meantime, or none — never a fresh week
-        // written back over the stored one
+        // written back over the stored one.
+        //
+        // A switch landing in those three reads has already run
+        // `_forgetCharacter`, which cleared the record and started the arriving
+        // character's own read; folding this one in would put the departing
+        // character's guild readings into it, and the next save files them
+        // under the arriving character's key.
+        // Merged under whatever a tick learned while the read was in flight, so
+        // a base observed seconds after startup is not thrown away by the load.
+        // Before the character check below because work bases are the game's,
+        // not one character's.
+        this.workBases = { ...storedBases, ...this.workBases };
+
+        if (this.characterId !== characterId) return;
         this._adoptStored(stored);
         this._publishTrialNames();
-
-        // Merged under whatever a tick learned while the read was in flight, so
-        // a base observed seconds after startup is not thrown away by the load
-        this.workBases = { ...storedBases, ...this.workBases };
     }
 
     /**
@@ -2859,7 +2869,15 @@ class GuildTrials {
         this.adopting = true;
         try {
             const changing = this.guildName !== null;
-            const stored = await loadTrialRecord(name, Date.now(), this.characterId, { guildId: this._guildId() });
+            const characterId = this.characterId;
+            const stored = await loadTrialRecord(name, Date.now(), characterId, { guildId: this._guildId() });
+            // The read is a storage round trip, and `_forgetCharacter` moves
+            // `this.characterId` the moment a switch lands. Carrying on merged
+            // the departing character's guild record into the arriving
+            // character's — and then stamped it with the departing guild's name,
+            // which is exactly what the `foreign` provenance check on the next
+            // load reads as "own", so nothing downstream ever discards it.
+            if (this.characterId !== characterId) return;
             if (changing) {
                 // Nothing in hand belongs to the arriving guild. An unreadable
                 // read starts the week empty and is flagged, exactly as the
@@ -4130,9 +4148,14 @@ class GuildTrials {
         }
         if (this.lastSessionChecked) return;
         this.lastSessionChecked = true;
+        // `_forgetCharacter` clears `lastSession` and re-arms this check, but a
+        // read already in flight settles afterwards: the arriving character's
+        // "Last trial" block then showed the departing character's final
+        // readings and player rows
+        const characterId = this.characterId;
         Promise.resolve(guildTrialRecorder.loadSession?.())
             .then((session) => {
-                if (session) this.lastSession = session;
+                if (session && this.characterId === characterId) this.lastSession = session;
             })
             .catch(() => {});
     }

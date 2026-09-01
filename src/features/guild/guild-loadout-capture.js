@@ -320,9 +320,20 @@ class GuildLoadoutCapture {
 
             const held = this.record;
             const before = this.guildName;
-            const stored = await loadLoadouts(this.characterId, name);
-            // A switch may have happened while the read was in flight
-            if (this.guildName !== before) return;
+            // The character, not just the name. The old check compared the
+            // NAME, and the name a switch leaves behind is `null` — which is
+            // also what an ordinary first adoption starts from, so `null` back
+            // to `null` read as nothing having happened. Meanwhile `_note` had
+            // moved `this.characterId` on to the arriving character and reset
+            // the record for them, and everything below then wrote the
+            // DEPARTING character's roster under the arriving character's guild
+            // key and handed it to the prune — which deletes from their
+            // character-only record every player that roster happens to name,
+            // and for two alts in one guild that is the whole of it.
+            const characterId = this.characterId;
+            const stored = await loadLoadouts(characterId, name);
+            // A switch, or another guild, may have arrived while the read was in flight
+            if (this.guildName !== before || this.characterId !== characterId) return;
 
             // A name arriving over another name is a guild change, and every
             // sighting in hand was taken inside the guild being left
@@ -341,7 +352,7 @@ class GuildLoadoutCapture {
             // Now that the guild key holds them, the character-only key must
             // not go on holding them too — that duplicate is what the old
             // wholesale adoption spread across guilds
-            const dropped = await pruneCharacterOnlyLoadouts(this.characterId, this.record);
+            const dropped = await pruneCharacterOnlyLoadouts(characterId, this.record);
             if (dropped.length) {
                 console.info('[GuildLoadoutCapture] Character-only record pruned:', dropped.join(', '));
             }
