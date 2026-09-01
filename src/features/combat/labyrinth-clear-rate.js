@@ -481,6 +481,19 @@ class LabyrinthClearRate {
             this.combatCache.clear();
             this._combatCacheMeta.clear();
             this._combatCacheLoaded = false;
+            // The pending flush has to go with them. `_flushCombatCache`
+            // rebuilds the stored list from whatever the meta map holds and
+            // writes it through `writeScoped`, which resolves the key when the
+            // write runs — so a timer armed a moment before this teardown fired
+            // a second later, found the map emptied above and the dirty flag
+            // still set, and wrote `entries: []` over the ARRIVING character's
+            // persisted sim cache. `_clearPersistedCombatCache` cancels it for
+            // exactly this reason; disable() did not.
+            if (this._combatCacheFlushTimer) {
+                clearTimeout(this._combatCacheFlushTimer);
+                this._combatCacheFlushTimer = null;
+            }
+            this._combatCacheDirty = false;
             // The fight record is one character's; dropping it here is what makes
             // the next load read it back under whichever character is then current
             this.forgetOutcomes();

@@ -355,6 +355,31 @@ describe('persisted combat cache', () => {
         expect(Number.isFinite(loaded.computedAt)).toBe(true);
     });
 
+    test('a teardown cancels the pending flush instead of emptying the arriving character’s cache', async () => {
+        vi.useFakeTimers();
+        const dm = await import('../../core/data-manager.js');
+        const key = 'imp:200:1:1pp:';
+        const result = simResult();
+        labyrinthClearRate.combatCache.set(key, result);
+        // Arms the one-second flush timer
+        labyrinthClearRate._persistCombatCacheEntry(key, result);
+
+        try {
+            // feature-registry tears the feature down on `character_switching`,
+            // which empties the map the flush rebuilds its list from...
+            labyrinthClearRate.disable();
+            dm.default.getCurrentCharacterId.mockReturnValue('iron456');
+
+            // ...and the timer would fire a second later, with the id moved
+            vi.advanceTimersByTime(2000);
+            await Promise.resolve();
+
+            expect(db.map.has('labyrinth:labyrinthCombatSimCache_iron456')).toBe(false);
+        } finally {
+            dm.default.getCurrentCharacterId.mockReturnValue('me');
+        }
+    });
+
     test('calling _loadCombatCache twice only reads storage once', async () => {
         const key = 'imp:200:1:1pp:';
         const result = simResult();
