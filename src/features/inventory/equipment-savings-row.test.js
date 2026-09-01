@@ -1460,7 +1460,12 @@ describe('what a run costs, through the real Markov chain', () => {
                 },
             },
         };
-    });
+        // mathjs's dynamic import alone measures ~0.7 s standalone (see
+        // enhancement-config.test.js) and imports fresh per test here since
+        // this hook is what does the importing; under the full suite's worker
+        // contention that races vitest's 5 s default hook timeout, independent
+        // of any per-test timeout on the tests that follow.
+    }, 30_000);
 
     afterEach(() => {
         delete window.Toolasha;
