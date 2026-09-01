@@ -65,6 +65,8 @@ const mocks = vi.hoisted(() => ({
     simResult: null,
     /** playerHrid each calculateSimRevenue() call was made with, in order */
     revenueCalls: [],
+    /** Who is logged in; a test moves it mid-run to stage a character switch */
+    characterId: 'char1',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -151,7 +153,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: () => null,
         getSkills: () => [],
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => mocks.characterId,
         getCurrentCharacterGameMode: () => 'standard',
         getLearnedAbilities: () => mocks.learned || [],
         getInitClientData: () => ({
@@ -1028,7 +1030,7 @@ describe('persisted consumable rates name the character explicitly', () => {
             },
         };
 
-        ui._persistConsumableRates(simResult, 'player2');
+        ui._persistConsumableRates(simResult, 'player2', 'char1');
         await Promise.resolve();
         await Promise.resolve();
 
@@ -1048,7 +1050,7 @@ describe('persisted consumable rates name the character explicitly', () => {
             consumablesUsed: { player1: { '/items/mystery_stew': 100 } },
         };
 
-        ui._persistConsumableRates(simResult, null);
+        ui._persistConsumableRates(simResult, null, 'char1');
         await Promise.resolve();
         await Promise.resolve();
 
@@ -1078,6 +1080,108 @@ describe('persisted consumable rates name the character explicitly', () => {
 
         const stored = await readScoped('simConsumableRates', 'combatExport', null);
         expect(stored).toBeNull();
+    });
+});
+
+/**
+ * A run takes minutes, and everything it persists afterwards is filed under
+ * whoever is logged in at the moment of the write. A character switch inside
+ * that window handed the departing character's results to the arriving one —
+ * overwriting results the arriving character had waited just as long for.
+ */
+describe('results outliving the character they were run for', () => {
+    beforeEach(() => {
+        mocks.store.clear();
+        mocks.characterId = 'char1';
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.characterId = 'char1';
+        mocks.simResult = null;
+        mocks.zones = [];
+        mocks.allZonesResult = [];
+        mocks.onRun = null;
+        vi.restoreAllMocks();
+    });
+
+    test('the by-zone consumable map is not rewritten under the arriving character', async () => {
+        // The alt has their own ratings for two zones. The main's read of its
+        // own (empty) map is already in flight when the switch lands, and the
+        // write that follows it used to resolve the alt's key — replacing both
+        // of the alt's ratings with the main's single new one.
+        mocks.store.set('combatExport:simConsumableRatesByZone_char2', {
+            'a|0': { perHour: { '/items/cheese': 1 } },
+            'b|0': { perHour: { '/items/cheese': 2 } },
+        });
+
+        ui._persistConsumableRates(
+            {
+                simulatedTime: 3600 * 1e9,
+                zoneName: '/actions/combat/fly',
+                difficultyTier: 0,
+                consumablesUsed: { player1: { '/items/mystery_stew': 6 } },
+            },
+            'player1',
+            'char1'
+        );
+        mocks.characterId = 'char2';
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(Object.keys(mocks.store.get('combatExport:simConsumableRatesByZone_char2'))).toEqual(['a|0', 'b|0']);
+    });
+
+    test('an all-zones sweep finishing after a switch does not overwrite the arriving character’s snapshot', async () => {
+        mocks.store.set('combatExport:allZonesSnapshot_char2', { zones: [{ zoneHrid: '/actions/combat/alt' }] });
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.allZonesResult = [
+            {
+                simulatedTime: 3600 * 1e9,
+                encounters: 10,
+                deaths: { player1: 0 },
+                experienceGained: { player1: { defense: 100 } },
+            },
+        ];
+        ui.buildPanel();
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+        // The switch lands during the finalization pass, after the workers are
+        // done and before the snapshot is written
+        vi.spyOn(ui, '_displayAllZonesResults').mockImplementation(async () => {
+            mocks.characterId = 'char2';
+        });
+
+        await ui._onSimulateAllZones();
+
+        expect(mocks.store.get('combatExport:allZonesSnapshot_char2').zones).toEqual([
+            { zoneHrid: '/actions/combat/alt' },
+        ]);
+        expect(mocks.store.get('combatExport:allZonesSnapshot_char1')).toBeUndefined();
+    });
+
+    test('an upgrade analysis finishing after a switch does not replace the arriving character’s remembered run', async () => {
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+        mocks.store.set('combatExport:combatSimUpgradeResults_char2', {
+            data: { results: [{ candidate: { description: 'the alt’s own run' } }] },
+            savedAt: 1,
+        });
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('Main gear')], food: null };
+        mocks.onRun = () => {
+            mocks.characterId = 'char2';
+        };
+        ui.buildPanel();
+        selectZone();
+
+        await ui._onUpgradeAnalyze();
+
+        expect(
+            mocks.store.get('combatExport:combatSimUpgradeResults_char2').data.results[0].candidate.description
+        ).toBe('the alt’s own run');
     });
 });
 

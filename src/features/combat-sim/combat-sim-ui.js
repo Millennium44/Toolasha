@@ -4077,6 +4077,11 @@ class CombatSimUI {
             return this._onSimulateAllZones();
         }
 
+        // Captured before the first await: the run below takes minutes, and
+        // everything persisted after it is otherwise keyed by whoever is
+        // current by the time it finishes
+        const ownerId = dataManager.getCurrentCharacterId();
+
         const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
         const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
         const hours = Math.min(
@@ -4211,7 +4216,7 @@ class CombatSimUI {
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
-            this._persistConsumableRates(simResult, trueSelfHrid);
+            this._persistConsumableRates(simResult, trueSelfHrid, ownerId);
 
             // Generate label before displaying (display may re-render)
             const historyLabel = this._editor?.generateSimLabel() || 'Current Gear';
@@ -4283,6 +4288,8 @@ class CombatSimUI {
      * @private
      */
     async _onSimulateAllZones() {
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
         const selectedZones = this._getSelectedAllZones();
         if (!selectedZones.length) {
             this._setStatus('No zones selected.');
@@ -4430,15 +4437,21 @@ class CombatSimUI {
             await this._displayAllZonesResults(zoneResults, hours, gameData);
 
             // Outlives the panel: the ranked action list reads this to put combat
-            // zones next to skilling actions long after the results pane is gone
-            await saveAllZonesSnapshot(
-                buildAllZonesSnapshot(zoneResults, {
-                    hours,
-                    playerHrid,
-                    fingerprint: gearFingerprint(playerDTOs),
-                    maxTierFood: useMaxTierFood,
-                })
-            );
+            // zones next to skilling actions long after the results pane is gone.
+            // Which is exactly why a run that outlived its character must not be
+            // written — the snapshot carries no character of its own, so one
+            // filed under the arriving character quotes the departing
+            // character's zone profits to every reader, indefinitely.
+            if (this._stillSameCharacter(ownerId)) {
+                await saveAllZonesSnapshot(
+                    buildAllZonesSnapshot(zoneResults, {
+                        hours,
+                        playerHrid,
+                        fingerprint: gearFingerprint(playerDTOs),
+                        maxTierFood: useMaxTierFood,
+                    })
+                );
+            }
 
             this._switchTab('results');
             this._setStatus(
@@ -4468,6 +4481,30 @@ class CombatSimUI {
      * @private
      */
     /**
+     * Whether the character a run was started for is still the one logged in.
+     *
+     * Everything this panel persists after a run — the all-zones snapshot, the
+     * consumable rates, the remembered upgrade analysis — is filed under a key
+     * resolved at the moment of the write, but the run that produced it takes
+     * minutes. A character switch landing inside that window files the
+     * departing character's results under the arriving character's key,
+     * silently destroying results the arriving character waited just as long
+     * for and, for the snapshot, feeding another character's zone profits to
+     * the ranked action list long after the panel is gone.
+     *
+     * Compared rather than merely required, so a run started before login (no
+     * id on either side) still persists exactly as it always has — a guard
+     * that refuses more than the switch is its own bug.
+     *
+     * @param {string|null|undefined} ownerId - The id captured before the run's first await
+     * @returns {boolean} True when the results still belong to whoever is current
+     * @private
+     */
+    _stillSameCharacter(ownerId) {
+        return dataManager.getCurrentCharacterId() === ownerId;
+    }
+
+    /**
      * Keep the last sim's per-hour consumable use where a reload cannot lose it.
      *
      * The one figure the Consumables panel cannot compute for itself: food has
@@ -4487,9 +4524,10 @@ class CombatSimUI {
      * @param {string|null} selfHrid - The character's own hrid in this run's DTOs, or null
      *   when nothing in the run is the live character
      */
-    _persistConsumableRates(simResult, selfHrid) {
+    _persistConsumableRates(simResult, selfHrid, ownerId) {
         try {
             if (!selfHrid) return;
+            if (!this._stillSameCharacter(ownerId)) return;
             const used = simResult?.consumablesUsed?.[selfHrid];
             if (!used) return;
             const simHours = (Number(simResult.simulatedTime) || 0) / (3600 * 1e9) || 1;
@@ -4508,11 +4546,22 @@ class CombatSimUI {
             // Also filed under the zone itself, so the Consumables panel can
             // pin "always rate my food from this zone at this tier" and keep
             // that rating across sims of other zones
+            //
+            // A read-modify-write: `readScoped` resolves its key now,
+            // `writeScoped` resolves its own only once the read has settled. A
+            // switch in between wrote this character's whole by-zone map back
+            // under the arriving character's key, replacing every zone rating
+            // they had recorded with someone else's. Re-checked after the read.
             const zoneKey = `${record.zoneHrid || 'unknown'}|${record.difficultyTier}`;
             readScoped('simConsumableRatesByZone', 'combatExport', {})
-                .then((byZone) =>
-                    writeScoped('simConsumableRatesByZone', { ...(byZone || {}), [zoneKey]: record }, 'combatExport')
-                )
+                .then((byZone) => {
+                    if (!this._stillSameCharacter(ownerId)) return undefined;
+                    return writeScoped(
+                        'simConsumableRatesByZone',
+                        { ...(byZone || {}), [zoneKey]: record },
+                        'combatExport'
+                    );
+                })
                 .catch(() => {});
         } catch (error) {
             console.error('[CombatSimUI] Persisting consumable rates failed:', error);
@@ -6873,6 +6922,8 @@ class CombatSimUI {
      * @private
      */
     async _onUpgradeAnalyze() {
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
         const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
         const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
         const hours = Math.min(
@@ -7052,7 +7103,10 @@ class CombatSimUI {
                 const foodNote = results.food ? ' Food search complete.' : '';
                 this._setStatus(`Analysis complete. ${completed} upgrades evaluated.${foodNote}`);
             }
-            if (completed) {
+            // The remembered set is per character and has no undo: writing this
+            // run under the character who arrived mid-analysis would delete the
+            // analysis they were keeping
+            if (completed && this._stillSameCharacter(ownerId)) {
                 // Who and where, so a restored set can say whose run it was -
                 // the selector may hold a different player, or another zone,
                 // by the time these come back
