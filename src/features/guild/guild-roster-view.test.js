@@ -620,6 +620,24 @@ describe('the panel and tile', () => {
         expect(container.textContent).toContain('1 quiet');
         expect(typeof tile.onOpen).toBe('function');
     });
+
+    test('a member with no captured name is withheld on the tile too, never printed as null', () => {
+        // Before the first roster message the member list is empty and the
+        // history stands in, so every row's name is null. The panel already said
+        // "Unnamed member"; the tile read `top.name` straight through and drew
+        // `null produced 58.1% of the guild XP observed this week` beside it.
+        tracker.members = [];
+        registerGuildRosterRow();
+        const [tile] = tracker.rows;
+
+        const container = document.createElement('div');
+        tile.render(container);
+
+        expect(container.textContent).toContain('Unnamed member');
+        expect(container.textContent).not.toContain('null');
+        expect(container.title).toContain('Unnamed member');
+        expect(container.title).not.toContain('null');
+    });
 });
 
 describe('a captured loadout redraws the panel at once', () => {

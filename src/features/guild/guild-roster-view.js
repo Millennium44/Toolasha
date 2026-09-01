@@ -721,13 +721,19 @@ export function registerGuildRosterRow() {
             if (!top) return blank(container);
 
             const quiet = snapshot.rows.filter((member) => member.quiet).length;
+            // `memberLabel`, not the raw name: a row whose name was never
+            // captured carries null, and the tile is the one place that read it
+            // straight through — `null produced 58.1%` on a tile drawn before
+            // the first roster message, where the panel beside it said
+            // "Unnamed member"
+            const label = memberLabel(top);
             row(container, [
-                { text: top.name, color: ROW_COLORS.dim, ellipsis: true, title: top.name },
+                { text: label, color: ROW_COLORS.dim, ellipsis: true, title: label },
                 { text: percent(top.share7d), color: ROW_COLORS.gold },
                 { text: quiet ? `${quiet} quiet` : 'all active', color: quiet ? ROW_COLORS.bad : ROW_COLORS.good },
             ]);
             container.title =
-                `${top.name} produced ${percent(top.share7d)} of the guild XP observed this week.` +
+                `${label} produced ${percent(top.share7d)} of the guild XP observed this week.` +
                 (quiet ? `\n${quiet} member(s) have gone quiet against their own weekly rate.` : '') +
                 '\nDouble-click for the whole roster.';
         },
