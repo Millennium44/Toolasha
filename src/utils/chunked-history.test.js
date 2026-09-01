@@ -511,6 +511,39 @@ describe('two loads at once', () => {
     });
 });
 
+describe('a save whose own load is superseded by another character', () => {
+    test('the arriving character is not handed the departing one’s history', async () => {
+        storageMock.store.set('rec_c1_2026-06', [at(2026, 6)]);
+        storageMock.store.set('rec_c2_2026-07', [at(2026, 7)]);
+
+        // Only the first read hangs, so the switch's own load lands first and
+        // takes the load token
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        let holds = 1;
+        storageMock.getAllKeys.mockImplementation(async () => {
+            if (holds-- > 0) await held;
+            return [...storageMock.store.keys()];
+        });
+
+        const store = build();
+        // Nothing is loaded, so this save has to read first — and that read hangs
+        const saving = store.save('c1', [at(2026, 6), at(2026, 6, 2)]);
+        const arriving = store.load('c2');
+        release();
+        await arriving;
+        await saving;
+
+        // `load()` short-circuits on `_charId`, so a departing save that wrote
+        // its list into `_entries` under the arriving character's name served
+        // that list back as the arriving character's history — and the next
+        // save wrote it under their chunk keys.
+        expect((await store.load('c2')).map((p) => p.v)).toEqual(['2026-7-1']);
+    });
+});
+
 describe('the snapshot only claims what was written', () => {
     test('a refused write is retried by the next save instead of being skipped for ever', async () => {
         const store = build();

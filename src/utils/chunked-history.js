@@ -420,10 +420,28 @@ class ChunkedHistory {
         // list as the whole truth would delete every chunk it does not mention
         if (!this._loaded || this._charId !== charId) await this.load(charId);
 
-        const list = Array.isArray(entries) ? entries : [];
-        this._entries = this._sorted(list);
+        // The load above can be superseded: a character switch starting its own
+        // load takes the `_loadToken`, so this one returns its entries without
+        // committing them, and `_charId`/`_entries`/`_snapshot`/`_legacy` end up
+        // describing the ARRIVING character instead. Writing through them then
+        // did two things. `_entries` was overwritten with this character's list
+        // while `_charId` named the other one, and `load()` short-circuits on
+        // `_charId` — so the arriving character was handed the departing one's
+        // history, and its next save wrote that history under the arriving
+        // character's chunk keys. And the chunk-diff cache, which decides what
+        // NOT to write, was consulted against another character's
+        // serialisations, so a chunk could be skipped for ever on the strength
+        // of a match that was never about it.
+        //
+        // Every key below is built from `charId`, so the write itself is always
+        // safe to make; it is only the shared memory that has to be left alone.
+        const owns = this._loaded && this._charId === charId;
+        const snapshot = owns ? this._snapshot : new Map();
 
-        if (this._legacy) {
+        const list = Array.isArray(entries) ? entries : [];
+        if (owns) this._entries = this._sorted(list);
+
+        if (owns && this._legacy) {
             storage.set(this.legacyKey(charId), list, this.storeName, this.immediate);
             return true;
         }
@@ -440,7 +458,7 @@ class ChunkedHistory {
         const changedChunks = normalizeChunkHint(options.changedChunks);
 
         for (const [chunkId, bucket] of grouped) {
-            const previous = this._snapshot.get(chunkId);
+            const previous = snapshot.get(chunkId);
 
             // Only skip a chunk the caller vouched for AND that we have a previous
             // serialisation of — a chunk we have never written has to be written
@@ -486,12 +504,12 @@ class ChunkedHistory {
 
         // A rolling window drops its oldest entries; here that is a chunk that
         // no longer has any, and pruning is deleting its key
-        for (const chunkId of this._snapshot.keys()) {
+        for (const chunkId of snapshot.keys()) {
             if (next.has(chunkId)) continue;
             pending.push(storage.delete(this.keyFor(charId, chunkId), this.storeName));
         }
 
-        this._snapshot = next;
+        if (owns) this._snapshot = next;
 
         if (pending.length > 0) await Promise.all(pending);
         return true;
