@@ -1837,21 +1837,31 @@ class LabSimUI {
      */
     async _saveUpgradeSelection() {
         try {
-            await writeScoped(UPGRADE_DIMENSIONS_KEY, this._getUpgradeDimensions(), 'settings');
-            await writeScoped(
-                UPGRADE_SCOPE_KEY,
-                { mode: this._getUpgradeScopeMode(), monsters: this._getChosenTargets() },
-                'settings'
-            );
-            await writeScoped(UPGRADE_LEVEL_SOURCE_KEY, this._getLevelSource(), 'settings');
-            // The box's own state, not the gated answer below: unchecking
-            // Ability Swaps would otherwise save a false over the tick and lose
-            // it the moment the set is checked again
-            await writeScoped(
-                UPGRADE_SWAP_AURA_KEY,
-                Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked),
-                'settings'
-            );
+            // Issued together rather than awaited one after another. Each
+            // `writeScoped` resolves its key as it is called, but a
+            // non-immediate `storage.set` resolves only when its debounce fires
+            // — seconds later — so awaiting between them let a character switch
+            // land in the middle and split one selection across two characters:
+            // the arriving character keeping their own checked sets while
+            // inheriting the departing character's target scope, which is a
+            // combination neither of them ever chose.
+            await Promise.all([
+                writeScoped(UPGRADE_DIMENSIONS_KEY, this._getUpgradeDimensions(), 'settings'),
+                writeScoped(
+                    UPGRADE_SCOPE_KEY,
+                    { mode: this._getUpgradeScopeMode(), monsters: this._getChosenTargets() },
+                    'settings'
+                ),
+                writeScoped(UPGRADE_LEVEL_SOURCE_KEY, this._getLevelSource(), 'settings'),
+                // The box's own state, not the gated answer below: unchecking
+                // Ability Swaps would otherwise save a false over the tick and
+                // lose it the moment the set is checked again
+                writeScoped(
+                    UPGRADE_SWAP_AURA_KEY,
+                    Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked),
+                    'settings'
+                ),
+            ]);
         } catch (error) {
             console.error('[LabSimUI] Failed to save upgrade selection:', error);
         }
@@ -1881,10 +1891,20 @@ class LabSimUI {
         let savedLevelSource = null;
         let savedAuraOnly = false;
         try {
-            const savedDimensions = await readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null);
-            const savedScope = await readScoped(UPGRADE_SCOPE_KEY, 'settings', null);
-            savedLevelSource = await readScoped(UPGRADE_LEVEL_SOURCE_KEY, 'settings', null);
-            savedAuraOnly = Boolean(await readScoped(UPGRADE_SWAP_AURA_KEY, 'settings', false));
+            // Every key resolved before the first await, for the same reason
+            // the save issues its writes together: read one at a time, a switch
+            // between two of them restored half of one character's selection
+            // over half of another's — and the next change to any box saved
+            // that mixture back over whichever character was current.
+            let savedDimensions;
+            let savedScope;
+            [savedDimensions, savedScope, savedLevelSource, savedAuraOnly] = await Promise.all([
+                readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null),
+                readScoped(UPGRADE_SCOPE_KEY, 'settings', null),
+                readScoped(UPGRADE_LEVEL_SOURCE_KEY, 'settings', null),
+                readScoped(UPGRADE_SWAP_AURA_KEY, 'settings', false),
+            ]);
+            savedAuraOnly = Boolean(savedAuraOnly);
             const legacyMode =
                 savedDimensions === null && savedScope === null
                     ? await readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)

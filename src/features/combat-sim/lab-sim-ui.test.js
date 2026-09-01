@@ -56,7 +56,7 @@ const game = vi.hoisted(() => ({
 }));
 const sim = vi.hoisted(() => ({ calls: [], onCall: null }));
 /** Every key the panel wrote, so a persisted choice can be asserted on */
-const storage = vi.hoisted(() => ({ written: {} }));
+const storage = vi.hoisted(() => ({ written: {}, values: {} }));
 const rowActions = vi.hoisted(() => ({ wired: [] }));
 
 vi.mock('../../core/config.js', () => ({
@@ -70,7 +70,7 @@ vi.mock('../../core/config.js', () => ({
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async (_key, _store, fallback) => fallback,
+        get: async (key, _store, fallback) => (key in storage.values ? storage.values[key] : fallback),
         set: async (key, value) => {
             storage.written[key] = value;
         },
@@ -1009,6 +1009,51 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         scope.dispatchEvent(new window.Event('change', { bubbles: true }));
     };
     const readout = () => ui.panel.querySelector('#mwi-labsim-level-source-resolved').textContent;
+
+    test('a switch mid-save does not split one selection across two characters', async () => {
+        // Each key used to be resolved after the previous write's await, and a
+        // non-immediate `storage.set` resolves only when its debounce fires —
+        // long enough for a switch to land between two of them and leave the
+        // arriving character holding half of the departing character's
+        // selection, a combination neither of them ever chose.
+        setScope('all');
+        storage.written = {};
+        const saving = ui._saveUpgradeSelection();
+        game.characterId = 'alt';
+        try {
+            await saving;
+        } finally {
+            game.characterId = 'me';
+        }
+
+        expect(Object.keys(storage.written).sort()).toEqual([
+            'labSimSwapAuraOnly_me',
+            'labSimUpgradeDimensions_me',
+            'labSimUpgradeLevelSource_me',
+            'labSimUpgradeScope_me',
+        ]);
+    });
+
+    test('a switch mid-restore does not restore half of one character over half of another', async () => {
+        storage.values = {
+            labSimUpgradeScope_me: { mode: 'all', monsters: [] },
+            labSimUpgradeLevelSource_me: 'skip',
+            labSimUpgradeScope_alt: { mode: 'current', monsters: [] },
+            labSimUpgradeLevelSource_alt: 'configure',
+        };
+        try {
+            const restoring = ui._restoreUpgradeSelection();
+            game.characterId = 'alt';
+            await restoring;
+        } finally {
+            game.characterId = 'me';
+            storage.values = {};
+        }
+
+        // Both halves are this character's, not one of each
+        expect(ui.panel.querySelector('#mwi-labsim-upgrade-scope').value).toBe('all');
+        expect(source().value).toBe('skip');
+    });
 
     test('the choice sits beside Targets, with all three levels a fight has', () => {
         expect([...source().options].map((o) => o.value)).toEqual(['sim_max', 'skip', 'configure']);
