@@ -438,4 +438,21 @@ describe('the weapon passive on a fetched sheet', () => {
     test('the healing weapon files its wielder as the healer before any cast', () => {
         expect(inferClass({ stats: { bloom: 0.2 } }, ABILITIES, ITEMS).key).toBe('healer');
     });
+
+    test('a tank read off the party threat baseline keeps the tank verdict, weapon passive and all', () => {
+        // The regression the passive rule introduced: a tank wields a real
+        // weapon — a spear behind a shield here — and their taunt is the one
+        // thing a spectated capture routinely misses, so threat well clear of
+        // the party is the whole of the evidence. The passive named the weapon
+        // family and overwrote the role.
+        const tankSheet = { fury: 0.2, threat: 900, combatStyleHrids: ['/combat_styles/stab'] };
+
+        expect(inferClass({ stats: tankSheet, partyThreat: 100 }, ABILITIES, ITEMS).key).toBe('tank');
+        // Threat merely at the party's own level is not a tank signal, and the
+        // passive answers as it should
+        expect(inferClass({ stats: tankSheet, partyThreat: 900 }, ABILITIES, ITEMS).key).toBe('melee');
+        // Without a baseline there is nothing to call the reading elevated
+        // against — the damage tracker's case, where the weapon still answers
+        expect(inferClass({ stats: tankSheet }, ABILITIES, ITEMS).key).toBe('melee');
+    });
 });

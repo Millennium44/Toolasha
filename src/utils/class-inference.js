@@ -36,7 +36,9 @@
  *    bucket and no non-weapon equipment grants it. This outranks the ability
  *    rules below because abilities are what the player *chose to slot*, while
  *    the passive is what they *actually wield* — the reported failure was a
- *    crossbow wielder tagged Melee off the melee abilities in their kit.
+ *    crossbow wielder tagged Melee off the melee abilities in their kit. Held
+ *    back only for a sheet whose threat is well clear of the party's baseline:
+ *    that is a role reading and a passive is not, so a tank keeps rule 4.
  * 3. **The modal damage style of what they actually cast or carry.** Magic
  *    splits again by the modal `damageType`, because in this game "mage"
  *    without an element says nothing about what the party is weak to — and the
@@ -440,7 +442,20 @@ export function inferClass(
     //     Ranged, and only the sheet knows it. Every nonzero passive the game
     //     data can vouch for must agree on one bucket; a sheet that somehow
     //     shows two different answers proves nothing and falls through
-    const passiveBuckets = weaponPassiveBuckets(itemDetailMap);
+    //
+    //     Held back for a sheet whose threat sits well clear of the party's own
+    //     baseline: that reading is a *role*, and a passive names only a weapon
+    //     family. A tank wields a real weapon — the mayhem sword behind a
+    //     shield is the ordinary tank kit — so letting the passive answer would
+    //     retag every tank whose taunt was never captured as Melee. With the
+    //     rule held back the evidence falls through as it did before this rule
+    //     existed: the abilities below first, then the threat rule.
+    const threat = Number(stats?.threat);
+    const baseline = Number(partyThreat);
+    const hasBaseline = Number.isFinite(baseline) && baseline > 0;
+    const tankByThreat = hasBaseline && Number.isFinite(threat) && threat > baseline * TANK_THREAT_RATIO;
+
+    const passiveBuckets = tankByThreat ? {} : weaponPassiveBuckets(itemDetailMap);
     const passivesSeen = WEAPON_PASSIVE_STATS.filter(
         (passive) => Number(stats?.[passive]) > 0 && passiveBuckets[passive]
     );
@@ -476,11 +491,7 @@ export function inferClass(
     //    flag — every unit's sheet carries a baseline value — so with a party
     //    baseline to compare against, only a reading well clear of it counts;
     //    without one, this falls back to "nonzero", the weakest reading of it
-    const threat = Number(stats?.threat);
-    const baseline = Number(partyThreat);
-    const hasBaseline = Number.isFinite(baseline) && baseline > 0;
-    const threatIsElevated =
-        Number.isFinite(threat) && (hasBaseline ? threat > baseline * TANK_THREAT_RATIO : threat > 0);
+    const threatIsElevated = hasBaseline ? tankByThreat : Number.isFinite(threat) && threat > 0;
     if (threatIsElevated) {
         return verdict(
             CLASS_BUCKETS.tank,
