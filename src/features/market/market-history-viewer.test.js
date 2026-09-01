@@ -279,3 +279,88 @@ describe('importEdibleToolsData grows the anchor pool', () => {
         ]);
     });
 });
+
+describe('rows an import cannot use', () => {
+    test('an Edible Tools row with an unparseable date is skipped, not stored as NaN', async () => {
+        const payload = JSON.stringify([
+            { id: 1, createdTimestamp: 'not a date', itemHrid: '/items/a', price: 1 },
+            { id: 2, createdTimestamp: '2026-02-01T00:00:00.000Z', itemHrid: '/items/a', price: 1 },
+        ]);
+
+        await marketHistoryViewer.importEdibleToolsData(payload);
+
+        // A NaN timestamp is dropped by addAnchors and drawn as "Invalid Date"
+        // for ever, so the row must not reach storage in the first place
+        const stored = estimatedListingAgeMock.importListings.mock.calls[0][0];
+        expect(stored.map((listing) => listing.id)).toEqual([2]);
+        expect(estimatedListingAgeMock.addAnchors).toHaveBeenCalledWith([
+            { id: 2, timestamp: new Date('2026-02-01T00:00:00.000Z').getTime() },
+        ]);
+    });
+
+    test('an Edible Tools row with no item is skipped — it could never be drawn', async () => {
+        const payload = JSON.stringify([{ id: 3, createdTimestamp: '2026-02-01T00:00:00.000Z' }]);
+
+        await marketHistoryViewer.importEdibleToolsData(payload);
+
+        expect(estimatedListingAgeMock.importListings.mock.calls[0][0]).toEqual([]);
+        expect(estimatedListingAgeMock.addAnchors).toHaveBeenCalledWith([]);
+    });
+
+    test('a CSV row with an unparseable date is skipped, the way an invalid price already was', async () => {
+        dataManagerMock.getInitClientData = () => ({ itemDetailMap: { '/items/a': { name: 'Widget' } } });
+
+        const csv = [
+            'Date,Item,Enhancement,Type,Status,Price,Quantity,Filled,Total,ID',
+            ',Widget,0,Sell,filled,100,1,1,100,555',
+            '2026-01-01T00:00:00.000Z,Widget,0,Sell,filled,100,1,1,100,556',
+        ].join('\n');
+
+        await marketHistoryViewer.importCSV(csv);
+
+        const stored = estimatedListingAgeMock.importListings.mock.calls[0][0];
+        expect(stored.map((listing) => listing.id)).toEqual([556]);
+    });
+});
+
+describe('the date column sorts by the date it shows', () => {
+    beforeEach(() => {
+        marketHistoryViewer.filters = {
+            dateFrom: null,
+            dateTo: null,
+            selectedItems: [],
+            selectedEnhLevels: [],
+            selectedTypes: [],
+        };
+        marketHistoryViewer.searchTerm = '';
+        marketHistoryViewer.typeFilter = 'all';
+        marketHistoryViewer.statusFilter = 'all';
+        marketHistoryViewer.sortColumn = 'createdTimestamp';
+        marketHistoryViewer.sortDirection = 'desc';
+    });
+
+    test('a row whose stored timestamp is NaN lands by its shown date, not at random', () => {
+        // What an import written before the date was validated left behind
+        marketHistoryViewer.listings = [
+            { id: 1, itemHrid: '/items/a', createdTimestamp: '2026-01-01T00:00:00.000Z', timestamp: NaN },
+            { id: 2, itemHrid: '/items/a', createdTimestamp: '2026-03-01T00:00:00.000Z', timestamp: NaN },
+            { id: 3, itemHrid: '/items/a', createdTimestamp: '2026-02-01T00:00:00.000Z', timestamp: NaN },
+        ];
+
+        marketHistoryViewer.applyFilters();
+
+        expect(marketHistoryViewer.filteredListings.map((listing) => listing.id)).toEqual([2, 3, 1]);
+    });
+
+    test('a row with no createdTimestamp still sorts by the numeric timestamp the column falls back to', () => {
+        marketHistoryViewer.listings = [
+            { id: 1, itemHrid: '/items/a', timestamp: 1000 },
+            { id: 2, itemHrid: '/items/a', timestamp: 3000 },
+            { id: 3, itemHrid: '/items/a', timestamp: 2000 },
+        ];
+
+        marketHistoryViewer.applyFilters();
+
+        expect(marketHistoryViewer.filteredListings.map((listing) => listing.id)).toEqual([2, 3, 1]);
+    });
+});

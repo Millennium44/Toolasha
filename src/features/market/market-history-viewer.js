@@ -443,10 +443,19 @@ class MarketHistoryViewer {
                 return this.sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
             });
         } else if (this.sortColumn === 'createdTimestamp') {
-            // Use numeric timestamp for fast sorting
+            // The same value the column draws and the date filter reads, not the
+            // raw `timestamp`: a row imported before those paths validated their
+            // dates carries `timestamp: NaN`, and a NaN comparator drops it at an
+            // arbitrary point in a column that still looks sorted. Pre-computed
+            // per row rather than parsed inside the comparator, which runs O(n log n).
+            const times = new Map();
+            for (const listing of filtered) {
+                const parsed = Date.parse(listing.createdTimestamp);
+                times.set(listing, Number.isFinite(parsed) ? parsed : Number(listing.timestamp) || 0);
+            }
             filtered.sort((a, b) => {
-                const aVal = a.timestamp;
-                const bVal = b.timestamp;
+                const aVal = times.get(a);
+                const bVal = times.get(b);
                 return this.sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
             });
         } else {
@@ -1819,10 +1828,21 @@ class MarketHistoryViewer {
                     continue;
                 }
 
+                // The Date column is validated the same way price and quantity
+                // are: an unparseable one stores a NaN timestamp, which
+                // `addAnchors` silently drops while the row is still counted as
+                // imported, and which draws as "Invalid Date" for ever after
+                const timestamp = Date.parse(dateStr);
+                if (!Number.isFinite(timestamp)) {
+                    console.warn(`[MarketHistoryViewer] Skipping row with an unparseable date: ${line}`);
+                    skipped++;
+                    continue;
+                }
+
                 // Create listing object
                 const listing = {
                     id: id,
-                    timestamp: new Date(dateStr).getTime(),
+                    timestamp,
                     createdTimestamp: dateStr,
                     itemHrid: itemHrid,
                     enhancementLevel: parseInt(enhStr) || 0,
@@ -1985,10 +2005,23 @@ class MarketHistoryViewer {
                     continue;
                 }
 
+                // A row that cannot be dated, or that names no item, is not a
+                // listing this log can hold. Its timestamp would be NaN — which
+                // `addAnchors` drops, the Date column draws as "Invalid Date"
+                // and the date sort has no place for — and an itemless row is
+                // filtered out of every view while sitting in storage for ever.
+                // Counted as skipped rather than reported as imported.
+                const timestamp = Date.parse(etListing.createdTimestamp);
+                if (!etListing.itemHrid || !Number.isFinite(timestamp) || !Number.isFinite(etListing.id)) {
+                    console.warn('[MarketHistoryViewer] Skipping row with no item, id or usable date:', etListing);
+                    skipped++;
+                    continue;
+                }
+
                 // Convert to Toolasha format
                 const toolashaListing = {
                     id: etListing.id,
-                    timestamp: new Date(etListing.createdTimestamp).getTime(),
+                    timestamp,
                     createdTimestamp: etListing.createdTimestamp,
                     itemHrid: etListing.itemHrid,
                     enhancementLevel: etListing.enhancementLevel || 0,
@@ -2012,7 +2045,7 @@ class MarketHistoryViewer {
 
             // Show success message
             alert(
-                `Import complete!\n\nImported: ${imported} new listings\nSkipped: ${skipped} duplicates\nTotal: ${existingListings.length} listings`
+                `Import complete!\n\nImported: ${imported} new listings\nSkipped: ${skipped} duplicates or invalid rows\nTotal: ${existingListings.length} listings`
             );
 
             // Reload and render table
