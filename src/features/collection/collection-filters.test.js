@@ -77,7 +77,11 @@ vi.mock('../../core/storage.js', () => ({
             delete store[name][key];
             return true;
         },
-        getJSON: async (key, name = 'settings', fallback = null) => store[name]?.[key] ?? fallback,
+        getJSON: async (key, name = 'settings', fallback = null) => {
+            // Lets a test land a character switch inside a load's reads
+            store.onRead?.();
+            return store[name]?.[key] ?? fallback;
+        },
         setJSON: async (key, value, name = 'settings') => {
             store[name][key] = value;
             return true;
@@ -92,6 +96,7 @@ beforeEach(async () => {
     store.collections = {};
     store.settings = {};
     store.unavailable = false;
+    store.onRead = null;
     mockDataManager.characterId = 'market123';
     mockDataManager.clientData = null;
     mockConfig.settings = {};
@@ -1074,6 +1079,28 @@ describe('the favourites survive a read that cannot be made', () => {
         await collectionFilters._saveFavorites();
         expect(store.collections.favorites_iron456).toEqual({ '/items/log': true });
         expect(store.collections.favorites_market123).toEqual({ '/items/milk': true });
+    });
+
+    test('a load settling after a switch does not apply the departing character’s filters', async () => {
+        store.collections.flags_market123 = { 'cf-c1-9': true, __sortMode: 'gold-cost' };
+        store.collections.showUncollected_market123 = true;
+        collectionFilters.sortMode = 'default';
+        collectionFilters.showUncollected = false;
+
+        // Every read was issued under market123; the player is on the iron cow
+        // by the time they land
+        store.onRead = () => {
+            mockDataManager.characterId = 'iron456';
+            store.onRead = null;
+        };
+
+        await collectionFilters._load();
+
+        // Applying them would show the iron cow the market character's
+        // checkboxes and sort mode — and the first toggle files that mix under
+        // the iron cow's own keys
+        expect(collectionFilters.sortMode).toBe('default');
+        expect(collectionFilters.showUncollected).toBe(false);
     });
 
     test('the flag states and scanned counts are kept the same way', async () => {

@@ -724,6 +724,17 @@ class CollectionFilters {
             storage.getJSON(this._charKey('showUncollected'), 'collections', false),
             storage.get(this._charKey('collectionsUpdatedAt'), 'collections', null),
         ]);
+        // A switch inside those reads means everything here is another
+        // character's. The curated records already refuse to adopt a superseded
+        // read — their generation is bumped by the `reset()` above — but that
+        // refusal is what makes `flagsRead` false, which used to fall back to
+        // `heldFlags`: the *departing* character's checkboxes and sort mode,
+        // applied over the ones the arriving character's own `_load()` had just
+        // installed. The two raw reads below were never guarded at all.
+        // `_saveFlags()` and `_saveShowUncollected()` then file that mix under
+        // the arriving character's keys on their next click.
+        if ((dataManager.getCurrentCharacterId() || null) !== who) return;
+
         const savedFlags = flagsRead ? this.records.flags.get() : heldFlags;
 
         // Apply saved flag states
