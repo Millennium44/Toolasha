@@ -194,6 +194,57 @@ describe('measuring the bar', () => {
         hidden.mockRestore();
     });
 
+    // The bar is torn out mid-fill when the action is stopped or the queue
+    // empties, and a cancelled animation fires `animationcancel`, not
+    // `animationend`. `lastEndAt` therefore stays at an EARLIER action's end,
+    // and measuring the next interval from it invents a stall that never
+    // happened — with a negative animated span, which no real bar can have.
+    test('an end that belongs to an earlier action is not measured from', async () => {
+        const bar = mountBar(3);
+        await feature.initialize();
+
+        fire(bar, 'animationstart');
+        runAction(bar, { animatedMs: 3000, deadMs: 100 });
+        // This action's fill is cancelled part-way: no `animationend` at all
+        vi.advanceTimersByTime(8000);
+        fire(bar, 'animationstart');
+
+        expect(monitor.anomalies).toHaveLength(0);
+    });
+
+    // The queue emptied, the action was stopped, the user clicked away and came
+    // back. Nothing here can tell any of those from a server stall, and a
+    // ten-minute "dead time" in the buffer drags the median it is read from.
+    test('an idle stretch between actions is not evidence of a stall', async () => {
+        const bar = mountBar(3);
+        await feature.initialize();
+
+        fire(bar, 'animationstart');
+        runAction(bar, { animatedMs: 3000, deadMs: 10 * 60 * 1000 });
+
+        expect(monitor.anomalies).toHaveLength(0);
+    });
+
+    // A diagnostic that throws while recording must not also poison the next
+    // measurement: leaving `lastStartAt` at the previous action's start makes
+    // the following interval read as one action longer than it was.
+    test('a failed recording does not corrupt the next measurement', async () => {
+        const bar = mountBar(3);
+        await feature.initialize();
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        dataManager.getActionDetails.mockImplementationOnce(() => {
+            throw new Error('game data went away mid-switch');
+        });
+
+        fire(bar, 'animationstart');
+        const startedAt = Date.now();
+        runAction(bar, { animatedMs: 3000, deadMs: 5000 });
+
+        expect(monitor.lastStartAt).toBe(startedAt + 8000);
+        errors.mockRestore();
+    });
+
     test('animations that are not the roundtime fill are ignored', async () => {
         const bar = mountBar(3);
         await feature.initialize();

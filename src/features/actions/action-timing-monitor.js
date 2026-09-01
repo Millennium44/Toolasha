@@ -54,6 +54,17 @@ const MAX_RECORD_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const DEAD_TIME_FLOOR_MS = 1500;
 const DEAD_TIME_FRACTION = 0.25;
 
+/**
+ * Above this the gap stops being the reported symptom and becomes an idle
+ * client: the queue emptied, the action was stopped and started again later,
+ * the window was left in front of something else without the tab going hidden.
+ * Nothing observable here separates those from a server stall, so the module
+ * declines to claim — and a ten-minute "dead time" would drag the median the
+ * report is read from far more than it would inform it. Four times the worst
+ * reported stall leaves the symptom itself an ample margin.
+ */
+const DEAD_TIME_CEILING_MS = 120 * 1000;
+
 /** The game's keyframes name, as it survives the CSS module's hashing. */
 const ANIMATION_NAME = 'roundtime';
 /** Double underscore: `ProgressBar_innerBarContainer__x` must not match. */
@@ -188,9 +199,17 @@ class ActionTimingMonitor {
         const at = Date.now();
         const declared = this._readDeclaredDuration(event.target);
 
-        if (this.lastStartAt !== null) {
-            this.observed += 1;
-            this._evaluate(at);
+        try {
+            if (this.lastStartAt !== null) {
+                this.observed += 1;
+                this._evaluate(at);
+            }
+        } catch (error) {
+            // A diagnostic that throws while recording a stall must not also
+            // poison the next measurement. The state below is advanced either
+            // way; leaving `lastStartAt` behind would measure the following
+            // interval from a start two actions old and report a fake stall.
+            console.error('[Action Timing Monitor] Recording an interval failed:', error);
         }
 
         this.lastStartAt = at;
@@ -230,8 +249,17 @@ class ActionTimingMonitor {
         if (this.wentHidden) return;
         if (deadMs === null || deadMs < 0 || !(declared > 0)) return;
 
+        // The end has to belong to the interval that just closed. A bar torn
+        // out mid-fill — a stopped action, an emptied queue, React replacing
+        // the element — fires `animationcancel`, not `animationend`, so
+        // `lastEndAt` is left pointing at an EARLIER action's end. Measuring
+        // from it invents a stall and hands the record a negative animated
+        // span, which no bar can have.
+        if (this.lastEndAt <= this.lastStartAt) return;
+
         const threshold = Math.max(DEAD_TIME_FLOOR_MS, declared * 1000 * DEAD_TIME_FRACTION);
         if (deadMs < threshold) return;
+        if (deadMs > DEAD_TIME_CEILING_MS) return;
 
         const animatedMs = this.lastEndAt - this.lastStartAt;
         this._record({
