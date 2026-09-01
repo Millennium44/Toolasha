@@ -165,8 +165,11 @@ class NetworthHistory {
             seriesStore.save(this.characterId, this.history);
         }
 
-        // Load existing detail history from storage
-        const detailHistory = await this._loadDetailHistory();
+        // Load existing detail history from storage. The character is passed in
+        // rather than read off `this`: the load writes as well as reads (it
+        // migrates the legacy key and trims an overgrown window), and those
+        // writes happen after awaits that a character switch can land inside.
+        const detailHistory = await this._loadDetailHistory(generation, this.characterId);
         if (this._generation !== generation) return;
         this.detailHistory = detailHistory;
 
@@ -186,25 +189,38 @@ class NetworthHistory {
      * The array was rewritten whole on every hourly snapshot — twenty-five
      * item-level maps of an entire inventory, to append one of them. Per-snapshot
      * keys make the hourly write the one snapshot that is new.
+     *
+     * Every key is built from the `characterId` handed in, not from `this`, and
+     * every write is gated on the generation this load started in. Both awaits
+     * below are wide enough for a character switch to land inside, and reading
+     * `this.characterId` after one meant the departing character's snapshots
+     * were written under the *arriving* character's keys — and the arriving
+     * character's own legacy record deleted before it was ever migrated.
+     *
+     * @param {number} generation - The `_generation` this load belongs to
+     * @param {string} characterId - Who these snapshots belong to
      * @returns {Promise<Array<{t: number, items: Object}>>} Snapshots, oldest first
      * @private
      */
-    async _loadDetailHistory() {
-        const legacy = await storage.get(this._legacyDetailKey(), STORE_NAME, null);
+    async _loadDetailHistory(generation, characterId) {
+        const legacyKey = `networthDetail_${characterId}`;
+        const detailKey = (t) => `${legacyKey}_${t}`;
+        const legacy = await storage.get(legacyKey, STORE_NAME, null);
+        if (this._generation !== generation) return [];
 
         if (Array.isArray(legacy) && legacy.length > 0) {
             const kept = legacy.slice(-MAX_DETAIL_SNAPSHOTS);
             const entries = {};
             for (const snapshot of kept) {
-                if (typeof snapshot?.t === 'number') entries[this._detailKey(snapshot.t)] = snapshot;
+                if (typeof snapshot?.t === 'number') entries[detailKey(snapshot.t)] = snapshot;
             }
             await storage.putAll(STORE_NAME, entries);
-            await storage.delete(this._legacyDetailKey(), STORE_NAME);
+            await storage.delete(legacyKey, STORE_NAME);
             return kept;
         }
 
         // Already split: gather this character's snapshot keys back into order
-        const prefix = `${this._legacyDetailKey()}_`;
+        const prefix = `${legacyKey}_`;
         const keys = (await storage.getAllKeys(STORE_NAME)).filter(
             (key) => typeof key === 'string' && key.startsWith(prefix)
         );
@@ -213,6 +229,7 @@ class NetworthHistory {
         // this is up to MAX_DETAIL_SNAPSHOTS item-level records and it runs on
         // the path that opens the networth panel.
         const records = await storage.getMany(keys, STORE_NAME);
+        if (this._generation !== generation) return [];
         const snapshots = [];
         for (const key of keys) {
             const snapshot = records.get(key);
@@ -225,7 +242,7 @@ class NetworthHistory {
         const overflow = snapshots.length - MAX_DETAIL_SNAPSHOTS;
         if (overflow > 0) {
             const dropped = snapshots.splice(0, overflow);
-            await Promise.all(dropped.map((entry) => storage.delete(this._detailKey(entry.t), STORE_NAME)));
+            await Promise.all(dropped.map((entry) => storage.delete(detailKey(entry.t), STORE_NAME)));
         }
 
         return snapshots;

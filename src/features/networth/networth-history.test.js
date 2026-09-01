@@ -191,7 +191,7 @@ describe('detail snapshots are stored one key each', () => {
             key === 'networthDetail_char-1' ? legacy : fallback
         );
 
-        const loaded = await networthHistory._loadDetailHistory();
+        const loaded = await networthHistory._loadDetailHistory(networthHistory._generation, 'char-1');
 
         expect(loaded).toEqual(legacy);
         expect(storageMock.putAll).toHaveBeenCalledWith('networthHistory', {
@@ -211,10 +211,39 @@ describe('detail snapshots are stored one key each', () => {
         storageMock.getAllKeys.mockImplementation(async () => Object.keys(stored));
         storageMock.get.mockImplementation(async (key, store, fallback) => stored[key] ?? fallback);
 
-        const loaded = await networthHistory._loadDetailHistory();
+        const loaded = await networthHistory._loadDetailHistory(networthHistory._generation, 'char-1');
 
         expect(loaded.map((s) => s.t)).toEqual([100, 200, 300]);
         expect(storageMock.putAll).not.toHaveBeenCalled();
+    });
+
+    test('a switch during the legacy read does not migrate one character onto another', async () => {
+        // Character A's legacy detail array, held open — this is the await
+        // `_loadDetailHistory` is sitting behind when the switch lands
+        const legacyA = [{ t: 1, items: { a: 1 } }];
+        let releaseA;
+        storageMock.get.mockImplementation(
+            (key) =>
+                new Promise((resolve) => {
+                    releaseA = () => resolve(key === 'networthDetail_char-A' ? legacyA : null);
+                })
+        );
+
+        networthHistory.characterId = 'char-A';
+        const generation = networthHistory._generation;
+        const stale = networthHistory._loadDetailHistory(generation, 'char-A');
+
+        // The switch: disable() bumps the generation, and character B arrives
+        networthHistory.disable();
+        networthHistory.characterId = 'char-B';
+
+        releaseA();
+        expect(await stale).toEqual([]);
+
+        // Nothing of A's may be written under B's keys, and B's own legacy
+        // record must still be there for B's own load to migrate
+        expect(storageMock.putAll).not.toHaveBeenCalled();
+        expect(storageMock.delete).not.toHaveBeenCalledWith('networthDetail_char-B', 'networthHistory');
     });
 });
 
