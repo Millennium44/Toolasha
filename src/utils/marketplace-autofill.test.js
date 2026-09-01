@@ -291,6 +291,51 @@ describe('createAutofillManager', () => {
         expect(modalItemHrid(buildModal())).toBeNull();
     });
 
+    // A modal draws icons that are not its item — an info badge, a coin, the
+    // close ×. The first `<use>` in the modal is whichever the layout happens
+    // to put first, and reading one of those as the item produced a confident
+    // `/items/<icon-name>` that matched no arming.
+    describe('the item icon, not merely the first icon', () => {
+        /** @param {HTMLElement} modal @returns {HTMLElement} the same modal, with a decoy icon first */
+        const withDecoyIconFirst = (modal) => {
+            modal.insertAdjacentHTML(
+                'afterbegin',
+                '<svg><use href="/static/media/misc_sprite.svg#info"></use></svg>'
+            );
+            return modal;
+        };
+
+        test('a non-item sprite drawn ahead of the item icon is not mistaken for the item', () => {
+            expect(modalItemHrid(withDecoyIconFirst(buildModal({ itemHrid: '/items/berserk' })))).toBe(
+                '/items/berserk'
+            );
+        });
+
+        test('a modal whose only icons are not items names no item, rather than naming the icon', () => {
+            expect(modalItemHrid(withDecoyIconFirst(buildModal()))).toBeNull();
+        });
+
+        test('an item icon inside the game’s item container is read even off an unfamiliar sheet', () => {
+            const modal = buildModal();
+            modal.insertAdjacentHTML(
+                'beforeend',
+                '<div class="Item_itemContainer__x9k"><svg><use href="/sprite.svg#berserk"></use></svg></div>'
+            );
+            expect(modalItemHrid(modal)).toBe('/items/berserk');
+        });
+
+        test('an arming survives a buy box that draws an info icon before the item', () => {
+            const manager = createAutofillManager('Test-Observer');
+            manager.initialize();
+            manager.setQuantity(760, { itemHrid: '/items/berserk' });
+
+            const book = withDecoyIconFirst(buildModal({ itemHrid: '/items/berserk' }));
+            observerState.handlers['Test-Observer'](book);
+
+            expect(book.querySelector('input').value).toBe('760');
+        });
+    });
+
     // The armed-count-outlives-its-errand bug. An ability row armed 760 books
     // with a lazily recomputed constant, which persists by design and was
     // scoped to nothing — so it went on filling every later buy box, for any

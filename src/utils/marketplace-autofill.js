@@ -108,11 +108,23 @@ export function isShopBuyModal(modal) {
  * is the only handle on it, and it is the same one the buy-modal "Owned: N"
  * line resolves the item by.
  *
+ * Only an *item* sprite counts. A modal draws other `<use>` icons too — an info
+ * badge, a coin, a close × — and the first one in document order need not be
+ * the item's. Reading one of those yielded a confident `/items/<icon-name>`
+ * that matched no arming, which retired the arming and left the quantity
+ * unfilled. The item's own icon is identified the way the rest of the codebase
+ * identifies one: inside an `Item_itemContainer`, or drawn from the items
+ * sprite sheet. Anything else reads as "this modal names no item" (null), which
+ * leaves the header checks to decide, exactly as a modal with no icon does.
+ *
  * @param {HTMLElement} modal - Modal container element
  * @returns {string|null} Item HRID, or null when the modal draws no item icon
  */
 export function modalItemHrid(modal) {
-    const useEl = modal?.querySelector?.('svg use[href], svg use[xlink\\:href]');
+    const useEl =
+        modal?.querySelector?.(
+            '[class*="Item_itemContainer"] svg use[href], [class*="Item_itemContainer"] svg use[xlink\\:href]'
+        ) || modal?.querySelector?.('svg use[href*="items_sprite"], svg use[xlink\\:href*="items_sprite"]');
     if (!useEl) return null;
     const href = useEl.getAttribute('href') || useEl.getAttribute('xlink:href');
     const slug = href && href.match(/#(.+)$/)?.[1];
