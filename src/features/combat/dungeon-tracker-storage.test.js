@@ -24,10 +24,16 @@ const game = vi.hoisted(() => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         tryGet: async (key, storeName) => {
-            game.onRead?.();
+            // A handler may return a promise to hold this read open, which is
+            // how a test lands other work inside one. What the read answers is
+            // snapshotted first, as IndexedDB does: a write that lands while
+            // the read is outstanding is not visible to it.
+            const hold = game.onRead?.();
             if (game.unreadable) return null;
             const value = game.saved[storeName]?.[key];
-            return value == null ? { found: false, value: null } : { found: true, value };
+            const result = value == null ? { found: false, value: null } : { found: true, value };
+            if (hold) await hold;
+            return result;
         },
         getJSON: async (key, storeName, defaultValue) => game.saved[storeName]?.[key] ?? defaultValue,
         setJSON: async (key, value, storeName, immediate = false) => {
@@ -630,6 +636,39 @@ describe('scrubOutlierRuns', () => {
 
         expect(removed).toBe(1);
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(10);
+    });
+
+    test('a read still in flight does not put the scrubbed runs back', async () => {
+        seedRuns([
+            { timestamp: '2024-01-01T00:00:00Z', dungeonName: 'Chimerical Den', teamKey: 'A,B', duration: 100 },
+            { timestamp: '2024-01-01T00:01:00Z', dungeonName: 'Chimerical Den', teamKey: 'A,B', duration: 110 },
+            { timestamp: '2024-01-01T00:02:00Z', dungeonName: 'Chimerical Den', teamKey: 'A,B', duration: 90 },
+            { timestamp: '2024-01-01T00:03:00Z', dungeonName: 'Chimerical Den', teamKey: 'A,B', duration: 105 },
+            { timestamp: '2024-01-01T00:04:00Z', dungeonName: 'Chimerical Den', teamKey: 'A,B', duration: 95 },
+            { timestamp: '2024-01-01T00:05:00Z', dungeonName: 'Chimerical Den', teamKey: 'A,B', duration: 5000 },
+        ]);
+
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        // The scrub's own first read runs unheld; the panel read started right
+        // behind it is the one left outstanding
+        const scrub = dungeonTrackerStorage.scrubOutlierRuns();
+        game.onRead = () => held;
+        const panelRead = dungeonTrackerStorage.getAllRuns();
+        game.onRead = null;
+
+        expect(await scrub).toBe(1);
+
+        release();
+        await panelRead;
+
+        // The store must not still be serving — and so merging back into the
+        // next write — the run it just dropped
+        const after = await dungeonTrackerStorage.getAllRuns();
+        expect(after).toHaveLength(5);
+        expect(after.every((run) => run.duration < 1000)).toBe(true);
     });
 });
 

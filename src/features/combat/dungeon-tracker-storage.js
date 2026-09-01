@@ -155,6 +155,8 @@ class DungeonTrackerStorage {
          * session and written only when it changes.
          */
         this._runs = null;
+        /** The read in flight, so concurrent callers share one instead of each indexing its own copy */
+        this._loading = null;
         /** teamKey → that team's runs (the same objects), for the duplicate check */
         this._byTeam = new Map();
         /**
@@ -219,14 +221,36 @@ class DungeonTrackerStorage {
      */
     async _loadRuns() {
         if (this._runs) return this._runs;
+        // Only the *result* used to be memoised, not the read itself. Several
+        // consumers ask for the history as their panels come up, so on a cold
+        // session two or more reads of the same key ran at once and each one
+        // `_index`ed its own copy of the stored list on arrival — including the
+        // ones that arrived after a caller had already changed memory. The
+        // outlier scrub is the loser: it runs at chat-annotation init, drops
+        // the outliers from memory and asks for a merging write, and a read
+        // still in flight puts them straight back, where `mergeRuns` keeps
+        // them — `_deleted` only filters the *stored* side.
+        if (this._loading) return this._loading;
 
-        const probe = await storage.tryGet('allRuns', this.unifiedStoreName);
-        if (probe === null) {
-            console.warn('[DungeonTrackerStorage] Run history could not be read');
-            return null;
-        }
-        this._index(Array.isArray(probe.value) ? probe.value : []);
-        return this._runs;
+        let read;
+        read = (async () => {
+            try {
+                const probe = await storage.tryGet('allRuns', this.unifiedStoreName);
+                if (probe === null) {
+                    console.warn('[DungeonTrackerStorage] Run history could not be read');
+                    return null;
+                }
+                // A reset landing inside the read means this list is no longer
+                // the one anyone asked for; indexing it would revive it
+                if (this._loading !== read) return null;
+                this._index(Array.isArray(probe.value) ? probe.value : []);
+                return this._runs;
+            } finally {
+                if (this._loading === read) this._loading = null;
+            }
+        })();
+        this._loading = read;
+        return read;
     }
 
     /**
@@ -343,6 +367,7 @@ class DungeonTrackerStorage {
             this._pendingTimer = null;
         }
         this._runs = null;
+        this._loading = null;
         this._byTeam = new Map();
         this._deleted = new Set();
         this._persistChain = null;
