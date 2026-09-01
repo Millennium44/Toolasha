@@ -2094,6 +2094,72 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.39.0](https://github.com/Millennium44/Toolasha/compare/v3.38.1...v3.39.0) (2026-09-01)
+
+
+### Features
+
+* fingerprint v3 covers the ability kit and house rooms ([aca7680](https://github.com/Millennium44/Toolasha/commit/aca7680fcd7d89923895887710719b798a4531ad))
+* keep a thousand labyrinth fights instead of five hundred ([9b7d92c](https://github.com/Millennium44/Toolasha/commit/9b7d92ca939794719902d110ec465bf02ba17a41))
+* labyrinth build fingerprint covers combat levels, and is versioned ([bdd22c3](https://github.com/Millennium44/Toolasha/commit/bdd22c3d32f029c1e2b9ef097441778513cf0cba))
+
+
+### Bug Fixes
+
+* a collection-filters load settling after a switch applies the wrong filters ([48b6924](https://github.com/Millennium44/Toolasha/commit/48b6924788b63586dead7d8332aa324a4588e5ac))
+* a dungeon run restored after a switch is filed under the wrong character ([3e27e9b](https://github.com/Millennium44/Toolasha/commit/3e27e9b1843d03b5c4af7e1db57cf04e36af0991))
+* a labyrinth fold in flight lands one character's rooms in another's record ([8fadaf1](https://github.com/Millennium44/Toolasha/commit/8fadaf1a5506fbd89f546bb050195cdd3ba9c36b))
+* a labyrinth run outliving its character is recorded against the wrong one ([0df7e96](https://github.com/Millennium44/Toolasha/commit/0df7e969c535a6ba0d8c3e1c59cd13b2246c1253))
+* a labyrinth sim in flight is stopped and fenced by a character switch ([5de119c](https://github.com/Millennium44/Toolasha/commit/5de119cb44226ec44b6bb188b8124887a05ff123))
+* a loadout read landing after a switch restores the wrong character's gear ([5e6240c](https://github.com/Millennium44/Toolasha/commit/5e6240cfd371aefa01ed6627989641e1544a7674))
+* a long-offline device evicts newer labyrinth fights than the ones it brings ([5aae11f](https://github.com/Millennium44/Toolasha/commit/5aae11fdf872c5fb0a2afb4fa865b097222a3b62))
+* a new_battle landing across a switch starts one character's dungeon on another ([2654383](https://github.com/Millennium44/Toolasha/commit/2654383a871642ef76b7309e2449c0d81d15ec75))
+* a setting changed during the reload window is silently lost to a restore latch ([5bebe3f](https://github.com/Millennium44/Toolasha/commit/5bebe3f82b82b8073fcdf7956f963fb8ea512bfe))
+* a sim finishing after a character switch files its results under the wrong character ([955f45e](https://github.com/Millennium44/Toolasha/commit/955f45edf0f85d52cadb10fe73b4c139ac60af65))
+* a sim-editor loadout restore in flight dresses the next character in it ([daa9931](https://github.com/Millennium44/Toolasha/commit/daa9931bf39a28ed3621083567d167737f0f646c))
+* a stale record-target read leaves the new character with no target at all ([1c6cef1](https://github.com/Millennium44/Toolasha/commit/1c6cef19a5d6e01dce6be6600badab3c76fc22eb))
+* a switch mid-load wipes the arriving character's alchemy protection ([d0576c2](https://github.com/Millennium44/Toolasha/commit/d0576c2ae9b83249d4427e47fb67aec90131cde4))
+* a trade-history load settling after a switch merges the wrong prices ([9759692](https://github.com/Millennium44/Toolasha/commit/9759692e3557738f93239dc16227ff936a69f948))
+* after a character switch the arriving character's remembered upgrade analysis never restores ([9576a0f](https://github.com/Millennium44/Toolasha/commit/9576a0f6131f6b463f0431f39c2e9d852880a726))
+* an auto-reroll init in flight writes one character's blacklist over another's ([e79194a](https://github.com/Millennium44/Toolasha/commit/e79194a1df92fcf34edc6b9cd7aab2039786215e))
+* announce one labyrinth entry regeneration once, with the stock it produced ([583a95d](https://github.com/Millennium44/Toolasha/commit/583a95da567b3e66e09c0d55ab396825a283f2e0))
+* close a labyrinth run out on reconnect instead of losing it ([8c6f3c4](https://github.com/Millennium44/Toolasha/commit/8c6f3c4b8673bfc34040ad08088a37eda5faf259))
+* dungeon ROI board treats an unresolvable key as free instead of incomplete ([09fa65c](https://github.com/Millennium44/Toolasha/commit/09fa65ccf324f9845dacf8d8fec983b8de2b02fd))
+* enhance item menu tracking misses the first click before it starts ([bb333b3](https://github.com/Millennium44/Toolasha/commit/bb333b36d11bbaddc34abef32d2e6c9c9666bb7d))
+* keep the first labyrinth-stop alert after a character switch ([854b09a](https://github.com/Millennium44/Toolasha/commit/854b09a395938427cf44a671e820ed46f22b86a0))
+* market-history filters cross characters on a switch mid-read ([97cc4bb](https://github.com/Millennium44/Toolasha/commit/97cc4bb6da03f0d7433f7d768d921b84491bd4ca))
+* **market:** reject undatable import rows and sort the date column by the date it shows ([0c84996](https://github.com/Millennium44/Toolasha/commit/0c84996c5a4bd177b2027ad9076a8509a26f211d))
+* **mooket:** refuse a history payload that is not rows, and bound the fetch cache ([d1b9dcf](https://github.com/Millennium44/Toolasha/commit/d1b9dcf3f3a9f03b21df9c6d2301709403303cf3))
+* pinned actions and the sort mode cross characters on a switch ([9d44d36](https://github.com/Millennium44/Toolasha/commit/9d44d36eddaf1986381c8a19649bd63984e9a9cf))
+* **profile:** count the guild-credit costs the shrine score could not price ([f105a24](https://github.com/Millennium44/Toolasha/commit/f105a24156c36f359669a6a9dec2bb0b66bc5d6f))
+* scroll selections from one character are simulated on the next ([3aca503](https://github.com/Millennium44/Toolasha/commit/3aca50355b8a395748654dafce6090a94ca20afa))
+* **sync:** say when a pull could not combine a record and took the remote copy ([5beff80](https://github.com/Millennium44/Toolasha/commit/5beff804fd401846e584b3414c17ee1c86366364))
+* the dungeon outlier scrub is undone by a read still in flight ([8f404f5](https://github.com/Millennium44/Toolasha/commit/8f404f55d6ecca2c516283eb9e75725da0ff3875))
+* the dungeon panel keeps the previous character's layout and files it as theirs ([b43ea3b](https://github.com/Millennium44/Toolasha/commit/b43ea3b78f9e14da724ae401f026aa12a51adcee))
+* the goal planner writes one character's plan under another's key ([b3e3077](https://github.com/Millennium44/Toolasha/commit/b3e3077e148e7680ff550f7b6c197efcac26b86c))
+* the guild trial trace follows the player onto the next character ([1b20fb1](https://github.com/Millennium44/Toolasha/commit/1b20fb179fe55a0d745f06626580360ce19a30c7))
+* the lab comparison baseline is filed under whoever is current seconds later ([df612fb](https://github.com/Millennium44/Toolasha/commit/df612fbc14551f60791baa99ad81a0db95ae2fff))
+* the Lab Sim upgrade selection splits across two characters mid-switch ([2b4f4fc](https://github.com/Millennium44/Toolasha/commit/2b4f4fcedc7091515a19460b3489aac52903bd34))
+* the labyrinth teardown leaves one character's tile results cached ([6a12c68](https://github.com/Millennium44/Toolasha/commit/6a12c683c703ceb33ba3add685177671bd989e5e))
+* the profit panel quotes the departing character's sim run ([0d699eb](https://github.com/Millennium44/Toolasha/commit/0d699ebf0f39ba56f6b17fbf604742f58b55db99))
+* the rush-floor verdict judges one character by another's fights ([ffb6a4c](https://github.com/Millennium44/Toolasha/commit/ffb6a4c521f015fe3f3d172bb615b576e0de3b6f))
+* the sim editor keeps the departing character's DTOs when a switch lands mid-build ([bbe7a7e](https://github.com/Millennium44/Toolasha/commit/bbe7a7e71674110c12b79f1f113a8a4dd42eb1e4))
+* the Skilling tab's loadout assignments are read once and written to whoever is current ([d66f997](https://github.com/Millennium44/Toolasha/commit/d66f99787cc71b0ada39ca298deedd470fd36cb7))
+* the walk waits out a chooser refusing one currency instead of retiring the card, and says why it closes a menu ([c5c3ef9](https://github.com/Millennium44/Toolasha/commit/c5c3ef9e7989e66dbfb9adfc5cdbacf9aa843103))
+
+
+### Documentation
+
+* changelog for the character-switch leftovers and labyrinth teardown work ([d8c5a20](https://github.com/Millennium44/Toolasha/commit/d8c5a20843f4771b7ea60053b24f073e0a150be4))
+* changelog for the versioned build fingerprint ([e0506d7](https://github.com/Millennium44/Toolasha/commit/e0506d7c98944be7c5b3c78e63f0852c58d6c587))
+* changelog for the walk close-menu fix and the sweep's final twenty-one ([ed73e11](https://github.com/Millennium44/Toolasha/commit/ed73e11ad5612d5528c13a55bf0c5adcadba4199))
+
+
+### Tests
+
+* raise the hook timeout around the real-chain beforeEach's mathjs import ([e3a1ccd](https://github.com/Millennium44/Toolasha/commit/e3a1ccd3a65074ba2c244a869687c49c486736da))
+* reset the enhancement UI singleton's merge mode between tests ([298cd46](https://github.com/Millennium44/Toolasha/commit/298cd4699df4e3559ceaed3bc3087eed7372e2f2))
+
 ## [3.38.1](https://github.com/Millennium44/Toolasha/compare/v3.38.0...v3.38.1) (2026-09-01)
 
 ### Bug Fixes
