@@ -47,9 +47,13 @@ let tracking = false;
 /**
  * Start remembering which item selector gets clicked.
  *
- * Installed on first use rather than by a caller, so that every reader of
- * this module gets it without having to know it exists. Capture phase,
- * because the game stops the event on its way back up.
+ * Called at module load, not lazily from `findEnhanceItemMenu` — this used to
+ * install on first call instead, which meant a user's very first click of
+ * the enhancing session (before anything had asked `findEnhanceItemMenu`
+ * even once) went unrecorded: the listener that would have caught it was not
+ * registered yet. Same gap made the test suite order-dependent, since
+ * whichever test happened to run first hit that same unrecorded-first-click
+ * window. Capture phase, because the game stops the event on its way back up.
  */
 function trackSelectorClicks() {
     if (tracking || typeof document === 'undefined') return;
@@ -77,13 +81,13 @@ function trackSelectorClicks() {
     );
 }
 
+trackSelectorClicks();
+
 /**
  * The open "Enhance Item" menu, if one is open.
  * @returns {HTMLElement|null}
  */
 export function findEnhanceItemMenu() {
-    trackSelectorClicks();
-
     // Nothing to identify unless the enhancing panel is actually up — the
     // slot's own class is shared with alchemy's primary slot, so this gate is
     // what keeps the two apart
