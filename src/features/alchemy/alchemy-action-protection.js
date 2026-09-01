@@ -19,9 +19,20 @@ const STORAGE_KEY_PREFIX = 'alchemyProtectedCategories';
 const LOCKDOWN_MS = 3000;
 const CONFIRM_WINDOW_MS = 3000;
 
-function getStorageKey() {
-    const charId = dataManager.getCurrentCharacterId() || 'default';
-    return `${STORAGE_KEY_PREFIX}_${charId}`;
+/**
+ * Who this list belongs to, as the key builds it.
+ * @returns {string} Character id, or `'default'` before login
+ */
+function currentOwner() {
+    return dataManager.getCurrentCharacterId() || 'default';
+}
+
+/**
+ * @param {string} [owner] - Whose list, defaulting to whoever is logged in now
+ * @returns {string} The storage key
+ */
+function getStorageKey(owner = currentOwner()) {
+    return `${STORAGE_KEY_PREFIX}_${owner}`;
 }
 
 const DEFAULT_PROTECTION = {
@@ -48,7 +59,17 @@ class AlchemyActionProtection {
 
         this.isInitialized = true;
 
-        const saved = await storage.getJSON(getStorageKey(), 'settings', null);
+        // Whose list this is, fixed before the read. Boot's `initializeFeatures()`
+        // is not on the switch chain, so a switch landing inside the read
+        // resumes here with another character current — and the `else` branch
+        // *writes*. Seeding the empty default under the arriving character's key
+        // would wipe the categories they had protected, and the double-confirm
+        // that stands between a click and a decomposed item would simply stop
+        // firing, with nothing in the popup to say why.
+        const owner = currentOwner();
+        const saved = await storage.getJSON(getStorageKey(owner), 'settings', null);
+        if (currentOwner() !== owner) return;
+
         if (saved) {
             for (const [type, categories] of Object.entries(saved)) {
                 this.protectedMap.set(type, new Set(categories));
@@ -57,7 +78,7 @@ class AlchemyActionProtection {
             for (const [type, categories] of Object.entries(DEFAULT_PROTECTION)) {
                 this.protectedMap.set(type, new Set(categories));
             }
-            await this._saveProtection();
+            await this._saveProtection(owner);
         }
 
         this._setupClickInterceptor();
@@ -654,12 +675,17 @@ class AlchemyActionProtection {
         };
     }
 
-    async _saveProtection() {
+    /**
+     * @param {string} [owner] - Whose list to file this under; defaults to
+     *   whoever is logged in, which is right for every call made from a click
+     * @returns {Promise<void>}
+     */
+    async _saveProtection(owner) {
         const obj = {};
         for (const [type, set] of this.protectedMap) {
             obj[type] = [...set];
         }
-        await storage.setJSON(getStorageKey(), obj, 'settings');
+        await storage.setJSON(getStorageKey(owner), obj, 'settings');
     }
 
     disable() {

@@ -14,8 +14,19 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: () => 0 } }));
+/** Who is logged in, and every write the feature made, for the switch test */
+const store = vi.hoisted(() => ({
+    characterId: 'character',
+    writes: [],
+    getJSON: async () => null,
+}));
 vi.mock('../../core/storage.js', () => ({
-    default: { getJSON: async () => null, setJSON: async () => {} },
+    default: {
+        getJSON: (...args) => store.getJSON(...args),
+        setJSON: async (key, value) => {
+            store.writes.push({ key, value });
+        },
+    },
 }));
 const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
 vi.mock('../../core/dom-observer.js', () => ({
@@ -35,7 +46,7 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getCurrentCharacterId: () => 'character',
+        getCurrentCharacterId: () => store.characterId,
         getItemDetails: () => null,
         getInventory: () => [],
         getCurrentActions: () => [],
@@ -96,6 +107,36 @@ afterEach(() => {
     alchemyItemPins.disable();
     document.body.innerHTML = '';
     document.head.innerHTML = '';
+});
+
+describe('a character switch inside the protected-category read', () => {
+    beforeEach(() => {
+        store.characterId = 'character';
+        store.writes = [];
+        store.getJSON = async () => null;
+        alchemyActionProtection.disable();
+    });
+
+    afterEach(() => {
+        alchemyActionProtection.disable();
+        store.characterId = 'character';
+        store.getJSON = async () => null;
+    });
+
+    test('the empty default is not seeded over the arriving character’s list', async () => {
+        // The read was issued for `character`, who has nothing stored, and the
+        // player is on the alt by the time it answers. Writing the default now
+        // would empty the alt's protected categories — and with them the
+        // double-confirm that stands between one click and a decomposed item.
+        store.getJSON = async () => {
+            store.characterId = 'alt';
+            return null;
+        };
+
+        await alchemyActionProtection.initialize();
+
+        expect(store.writes).toEqual([]);
+    });
 });
 
 describe('the shield row beside the item selector', () => {
