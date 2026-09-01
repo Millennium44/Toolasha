@@ -2042,6 +2042,39 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.37.0](https://github.com/Millennium44/Toolasha/compare/v3.36.0...v3.37.0) (2026-09-01)
+
+### Features
+
+- cap combat sim guild shrine targets to what the guild built ([227f26b](https://github.com/Millennium44/Toolasha/commit/227f26b97a936bd82438b5b779300348e3d0df07))
+- clear-all control for Missing Mats Marketplace tabs ([567a487](https://github.com/Millennium44/Toolasha/commit/567a487fbdbad17ead9dea6fe7ab303922942016))
+- remember the sim editor's loadout selection per character ([9349fe9](https://github.com/Millennium44/Toolasha/commit/9349fe93f9658f34056d5e71132f7588b4fe74c3))
+
+### Bug Fixes
+
+- a held settings write the loaded map cannot take says so ([4a8c0b6](https://github.com/Millennium44/Toolasha/commit/4a8c0b6c879eded0e8723e751c8c2230222cc491))
+- a settings map cleared and never reloaded reloads itself ([136a002](https://github.com/Millennium44/Toolasha/commit/136a00275e8298a1ef234e487233cdc526790eb5))
+- a settings write made while the map is empty is answered, not swallowed ([26fc5e0](https://github.com/Millennium44/Toolasha/commit/26fc5e0839e499e563aae4a4cf50769d20cd76fb))
+- discard build rewrites before release checkout ([1553a38](https://github.com/Millennium44/Toolasha/commit/1553a38d090c1c46b1be6f012a026c333729911a))
+- labyrinth path stops detouring for reveals that cannot help ([acfb876](https://github.com/Millennium44/Toolasha/commit/acfb876d070d1022a69622138351b6b841d2fa3a))
+- make failed release republishing reliable ([42014df](https://github.com/Millennium44/Toolasha/commit/42014dff38649e9153be105473a3264cb64e5f64))
+- tearing the settings panel down no longer empties the settings map ([6123f9d](https://github.com/Millennium44/Toolasha/commit/6123f9d3f0c2c5bf8fc8f1ca3125c019d6665658))
+- the Consumables panel follows a setting changed on the settings page ([57b821e](https://github.com/Millennium44/Toolasha/commit/57b821e6b370379f49403672c4d3bdd7fd4019a2))
+- the inventory badge manager is one copy again, not one per bundle ([36f6988](https://github.com/Millennium44/Toolasha/commit/36f6988725769071b09b02a69587f2aa640dd42c))
+- the reroll walk discards only what the player's cap actually blocked ([e6fd47d](https://github.com/Millennium44/Toolasha/commit/e6fd47d0cb04eecd861de7008a7c90c71f594f97))
+- turning Guild Trials info off takes the overlay off the page ([7ea2260](https://github.com/Millennium44/Toolasha/commit/7ea22608d92db411892925d53de6b87d075595c3))
+
+### Documentation
+
+- changelog for the maintainer's batch of four asks and the dots fix ([6e9b5d6](https://github.com/Millennium44/Toolasha/commit/6e9b5d631961be5de7eacb308f84f519f872aef0))
+- changelog for the reroll walk block-predicate fix ([cbb2328](https://github.com/Millennium44/Toolasha/commit/cbb2328f07d34d21c7fcbc727b9d3e70a52fee63))
+- changelog for the swallowed-write sweep ([5f09f40](https://github.com/Millennium44/Toolasha/commit/5f09f40bb3df6cf566f4ebe7045130c3059c34c9))
+- the sim bundle no longer carries fallback copies of the watch writers ([49af9e4](https://github.com/Millennium44/Toolasha/commit/49af9e44505ee5d089eacd738c320017c839ef0c))
+
+### Tests
+
+- the dungeon readiness card's config mock answers onSettingChange ([88dd69d](https://github.com/Millennium44/Toolasha/commit/88dd69d50703199d0f9ca896ca8a188256062b34))
+
 ## [3.36.0](https://github.com/Millennium44/Toolasha/compare/v3.35.1...v3.36.0) (2026-09-01)
 
 ### Features

@@ -250,9 +250,9 @@ describe('the marketplace clear-all control', () => {
         await openMissingMaterials('/actions/crafting/plank', 5);
 
         const [firstTab] = container.querySelectorAll('[data-item-hrid]');
-        firstTab.querySelector('[data-mwi-tab-dismiss="true"]').dispatchEvent(
-            new MouseEvent('click', { bubbles: true, cancelable: true })
-        );
+        firstTab
+            .querySelector('[data-mwi-tab-dismiss="true"]')
+            .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
         expect(container.contains(firstTab)).toBe(false);
         expect(container.querySelectorAll('[data-item-hrid]').length).toBe(1);
