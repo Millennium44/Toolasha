@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The rest of the you-vs-them class: a simmed character is theirs everywhere
+
+A sweep for the house-rooms bug's siblings found three more: the Upgrade tab's ability candidates priced another player's abilities off your own book bag ("already owned from LvN" for a stranger who owns nothing), the House-targets grid filled an imported character's unbuilt rooms with your own room levels, and simming a profile import persisted the stranger's consumable usage as your own saved auto-rate, quietly corrupting the Consumables panel. All three now keep the analyzed player's own data on their side of the line.
+
 ### The listing price clamp stays live while the modal is open
 
 The auto-fill's tradable-range clamp ran once, 150ms after the listing modal opened — a band that re-rendered afterwards (changing the enhancement level) or a best-price refill left the price sitting outside it, e.g. a buy at a stale 15M best offer under a 15.1M floor. The clamp now watches for the modal's lifetime: a buy below the floor snaps up to the floor, a sell above the ceiling snaps down to it, and a price being typed is left alone until the input loses focus.
