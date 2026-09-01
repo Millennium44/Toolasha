@@ -141,12 +141,12 @@ vi.mock('../../utils/marketplace-autofill.js', () => ({
                 mocks.autofill.push({ event: 'cleanup' });
                 mocks.autofillPending = null;
             },
-            setQuantity: (quantity) => {
-                mocks.autofill.push({ event: 'setQuantity', quantity });
+            setQuantity: (quantity, options) => {
+                mocks.autofill.push({ event: 'setQuantity', quantity, options });
                 mocks.autofillPending = () => quantity;
             },
-            setPendingCalculation: (fn) => {
-                mocks.autofill.push({ event: 'setPendingCalculation' });
+            setPendingCalculation: (fn, options) => {
+                mocks.autofill.push({ event: 'setPendingCalculation', options });
                 mocks.autofillPending = fn;
             },
             clearQuantity: () => {
@@ -330,9 +330,7 @@ vi.mock('./sim-editor.js', () => ({
             return mocks.editorSelfHrid;
         }
         getPlayerInfo() {
-            return mocks.editedDTOs
-                ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid }))
-                : [];
+            return mocks.editedDTOs ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid })) : [];
         }
         getMissingMembers() {
             return [];
@@ -2124,9 +2122,9 @@ describe('upgrade row handoff', () => {
         }
     });
 
-    test('Market on an ability row arms the buy box with the books the upgrade needs', () => {
-        const container = document.createElement('div');
-        container.innerHTML = upgradeRowActionsHtml({
+    /** An ability row costed at 39.2 books, i.e. 40 to buy */
+    function abilityRow() {
+        return {
             candidate: {
                 description: 'Berserk Lv65 → Lv70',
                 upgradeHrid: '/abilities/berserk',
@@ -2135,18 +2133,44 @@ describe('upgrade row handoff', () => {
             },
             cost: 140_600_000,
             costDetail: { books: { books: 39.2, bookName: 'Berserk' } },
-        });
-        const button = container.querySelector('[data-buy-action="market"]');
-        expect(button.getAttribute('data-buy-quantity')).toBe('40');
+        };
+    }
 
+    test('Market on an ability row hands its books to the missing-materials tabs, as a one-line bill', () => {
+        const opened = [];
+        mocks.bridgeMissingMats = { openMaterialsList: (lines) => opened.push(lines) };
+        try {
+            const container = document.createElement('div');
+            container.innerHTML = upgradeRowActionsHtml(abilityRow());
+            const button = container.querySelector('[data-buy-action="market"]');
+            expect(button.getAttribute('data-buy-quantity')).toBe('40');
+
+            wireUpgradeRowActions(container);
+            button.click();
+
+            expect(opened).toEqual([[{ itemHrid: '/items/berserk', count: 40 }]]);
+            // The tabs do the opening; the row does not also navigate itself
+            expect(mocks.marketOpened).toEqual([]);
+            expect(button.title).toContain('still short');
+        } finally {
+            mocks.bridgeMissingMats = null;
+        }
+    });
+
+    test('and without that module the fallback arms one shot, for that book alone', () => {
+        // The armed count used to be a standing recalculation tied to no item,
+        // so 760 books left unbought went on filling the quantity box of every
+        // later order modal — a dungeon key's Buy Listing included
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(abilityRow());
         wireUpgradeRowActions(container);
-        button.click();
+        container.querySelector('[data-buy-action="market"]').click();
 
         expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/berserk', enhancementLevel: 0 }]);
-        // The modal has not opened yet, so what was handed over is a recipe for
-        // the quantity rather than the quantity itself
-        expect(mocks.autofill.map((c) => c.event)).toEqual(['initialize', 'setPendingCalculation']);
-        expect(mocks.autofillPending()).toBe(40);
+        const armed = mocks.autofill.at(-1);
+        expect(armed.event).toBe('setQuantity');
+        expect(armed.quantity).toBe(40);
+        expect(armed.options).toEqual({ itemHrid: '/items/berserk' });
     });
 
     test('and Market on a gear row arms nothing, so a sword never inherits a book count', () => {

@@ -1163,8 +1163,9 @@ const ROW_ACTION_STYLE =
  * Both kinds of row can be saved for, by two different routes: gear reserves a
  * slot in Equipment Savings, an ability book records a level goal. Market opens
  * whatever the row actually buys — for an ability that is the book, which is an
- * ordinary marketplace item — so it is offered by anything that buys at all, and
- * carries the count so the buy box can be filled in with it.
+ * ordinary marketplace item — so it is offered by anything that buys at all. A
+ * row that buys a *stack* carries its count as a one-line bill and goes through
+ * the missing-materials tabs, the same machinery a house level's bill uses.
  *
  * @param {Object} result - A row from the upgrade analysis, or a budget pick
  * @returns {string} HTML, empty for rows that buy nothing
@@ -1216,10 +1217,20 @@ export function upgradeRowActionsHtml(result) {
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
     }
 
-    const marketTitle =
-        buy.quantity > 1
-            ? `Open this in the marketplace, with ${buy.quantity} ready in the buy box — what this upgrade needs`
-            : 'Open this in the marketplace';
+    // A row that buys a stack — an ability's books — is a one-line bill, and
+    // goes through the same missing-materials tabs a house level does: a tab
+    // that arms the buy box with what is still short of the stack and stands
+    // down when you leave the marketplace. Gear is one of a thing at a
+    // specific enhancement level, which those tabs cannot express (they open
+    // every item at +0), so it keeps the plain open.
+    const bill =
+        buy.quantity > 1 && buy.enhancementLevel === 0
+            ? ` data-buy-materials="${escapeAttribute(JSON.stringify([{ itemHrid: buy.itemHrid, count: buy.quantity }]))}"`
+            : '';
+    const marketTitle = bill
+        ? `Opens the marketplace with a tab for this, arming the buy box with what you are still short of the ` +
+          `${buy.quantity.toLocaleString()} this upgrade needs`
+        : 'Open this in the marketplace';
 
     // A costed price rides the Watch button as well as the Save one: watching
     // an item you have just been quoted a price for almost always means "tell
@@ -1229,7 +1240,7 @@ export function upgradeRowActionsHtml(result) {
     // pin fires on the item's own ask, which resale credit never reaches.
     const watchCost = buy.watchCost == null ? '' : String(buy.watchCost);
     return `${save}<button type="button" ${attrs} data-buy-action="watch" data-buy-cost="${watchCost}"
-        title="Add to the watchlist" style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"
+        title="Add to the watchlist" style="${ROW_ACTION_STYLE}">Watch</button><button type="button" ${attrs} data-buy-action="market"${bill}
         title="${escapeAttribute(marketTitle)}" style="${ROW_ACTION_STYLE}">Market</button>`;
 }
 
@@ -1342,6 +1353,11 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     // whole of it to the missing-materials tabs, one per line,
                     // each arming what is still short. Falls through to the
                     // one-item open when that module is not around
+                    // Anything with a bill — a house level's materials, an
+                    // ability row's stack of books — goes to the missing-mats
+                    // tabs, one per line, each arming what is still short.
+                    // Falls through to the one-item open when that module is
+                    // not around
                     const rawBill = button.getAttribute('data-buy-materials');
                     const openBill = missingMaterialsButton()?.openMaterialsList;
                     if (rawBill && typeof openBill === 'function') {
@@ -1349,13 +1365,13 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                         openBill(JSON.parse(rawBill));
                         button.textContent = 'Opened ✓';
                     } else {
-                        // An ability row buys a stack of books, so the buy box is
-                        // armed with the count before the marketplace opens; gear
-                        // buys one of a thing and clears any arming left over from
-                        // the last row, so a sword never inherits a book's quantity
+                        // The fallback arms the count itself. One-shot and tied
+                        // to this item: a standing arming for a book you never
+                        // bought used to go on filling every later buy box, for
+                        // any item, until the page reloaded
                         const quantity = Number(button.getAttribute('data-buy-quantity')) || 1;
                         if (quantity > 1) {
-                            upgradeMarketAutofill().setPendingCalculation(() => quantity);
+                            upgradeMarketAutofill().setQuantity(quantity, { itemHrid });
                         } else {
                             marketAutofill?.clearQuantity();
                         }
