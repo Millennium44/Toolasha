@@ -405,7 +405,9 @@ class TreasureTracker {
      * @returns {boolean} Whether the character it was taken under is still the one in hand
      */
     _stillOurs(owner) {
-        return owner.generation === this._generation && (dataManager.getCurrentCharacterId?.() ?? null) === owner.charId;
+        return (
+            owner.generation === this._generation && (dataManager.getCurrentCharacterId?.() ?? null) === owner.charId
+        );
     }
 
     /**

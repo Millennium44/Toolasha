@@ -1846,9 +1846,7 @@ class ReplayCheck {
      * @returns {boolean} Whether the character it was taken under is still the one in hand
      */
     _stillOurs(owner) {
-        return (
-            this.generation === owner.generation && (dataManager.getCurrentCharacterId?.() ?? null) === owner.charId
-        );
+        return this.generation === owner.generation && (dataManager.getCurrentCharacterId?.() ?? null) === owner.charId;
     }
 
     /**
