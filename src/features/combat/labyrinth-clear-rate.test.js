@@ -19,7 +19,7 @@ const shrines = vi.hoisted(() => ({ detailMap: {}, owned: {} }));
 const community = vi.hoisted(() => ({ levels: {} }));
 
 /** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
-const db = vi.hoisted(() => ({ map: new Map(), unavailable: false }));
+const db = vi.hoisted(() => ({ map: new Map(), unavailable: false, hold: null }));
 
 /** The mocked inventory the supply reader sees */
 const bag = vi.hoisted(() => ({ items: null }));
@@ -124,6 +124,8 @@ const dbSet = async (key, value, storeName = 'settings') => {
 };
 /** The probe the persisted-record discipline reads through: null when storage cannot be read */
 const dbTryGet = async (key, storeName = 'settings') => {
+    // A read left open, so a test can land a character switch inside one
+    if (db.hold) await db.hold;
     if (db.unavailable) return null;
     const stored = db.map.get(`${storeName}:${key}`);
     return stored === undefined || stored === null
@@ -1087,6 +1089,7 @@ describe('per-character fight outcomes', () => {
     beforeEach(() => {
         db.map.clear();
         db.unavailable = false;
+        db.hold = null;
         labyrinthClearRate.forgetOutcomes();
     });
 
@@ -1192,6 +1195,53 @@ describe('per-character fight outcomes', () => {
         await labyrinthClearRate.saveOutcomes();
 
         expect(db.map.get('settings:labyrinthFightOutcomes_me').totals).toEqual({ mine: { attempts: 2, clears: 1 } });
+    });
+
+    test("a switch during the load keeps the departing character's room out of the arriving character's record", async () => {
+        // A room finished on the market cow, still folding when the player
+        // moves to the iron cow. `forgetOutcomes()` has emptied the totals for
+        // the arriving character; the fold that resumes must not put the
+        // departing character's room straight back into them.
+        let release;
+        db.hold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const recording = labyrinthClearRate.recordRoomResult({
+            subjectHrid: '/monsters/imp',
+            roomLevel: 200,
+            kind: 'combat',
+            actions: 10,
+            successes: 6,
+        });
+
+        labyrinthClearRate.forgetOutcomes();
+        db.hold = null;
+        release();
+        await recording;
+
+        expect(labyrinthClearRate._outcomes).toEqual({});
+        expect(db.map.has('settings:labyrinthFightOutcomes_me')).toBe(false);
+    });
+
+    test("a switch during the load keeps the departing character's floor out of the arriving character's totals", async () => {
+        let release;
+        db.hold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const recording = labyrinthClearRate.recordOutcomes({
+            startedAt: 1,
+            currentFloor: 3,
+            roomData: [[{ monsterHrid: '/monsters/imp', recommendedLevel: 200, entryCount: 4, isCleared: true }]],
+        });
+
+        labyrinthClearRate.forgetOutcomes();
+        db.hold = null;
+        release();
+        await recording;
+
+        expect(labyrinthClearRate._outcomes).toEqual({});
+        expect(labyrinthClearRate._outcomesSeen).toEqual({});
+        expect(db.map.has('settings:labyrinthFightOutcomes_me')).toBe(false);
     });
 
     test('a reset is the one overwrite: it drops what is stored', async () => {

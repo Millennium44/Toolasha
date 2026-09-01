@@ -184,6 +184,11 @@ export const outcomeMethods = {
         this._outcomesSeen = {};
         this._baseline = null;
         this._outcomesLoaded = false;
+        // The record's own generation covers what it holds; this one covers the
+        // singleton's copy of it. A fold that started before the switch resumes
+        // holding the departing character's rooms and, without this, adds them
+        // to whatever `this._outcomes` is by then — the arriving character's.
+        this._outcomeGeneration = (this._outcomeGeneration || 0) + 1;
     },
 
     /**
@@ -243,7 +248,13 @@ export const outcomeMethods = {
      */
     async recordRoomResult(result) {
         if (!result?.subjectHrid) return;
+        const started = this._outcomeGeneration || 0;
         await this.loadOutcomes();
+        // The room was finished by the character this call started under. A
+        // switch during the load means the totals now in memory are somebody
+        // else's, and folding into them files one character's room under the
+        // other's record.
+        if ((this._outcomeGeneration || 0) !== started) return;
         this._outcomes = foldRoomResult(this._outcomes, result);
         await this.saveOutcomes();
     },
@@ -255,7 +266,13 @@ export const outcomeMethods = {
     async recordOutcomes(labyrinth) {
         const roomData = labyrinth?.roomData;
         if (!roomData) return;
+        const started = this._outcomeGeneration || 0;
         await this.loadOutcomes();
+        // This grid is the departing character's floor if a switch landed in
+        // the load — `forgetOutcomes()` emptied the totals for the arriving
+        // character and this fold would put the departing one's rooms straight
+        // back into them, under the arriving character's key
+        if ((this._outcomeGeneration || 0) !== started) return;
 
         const folded = foldFloorOutcomes(this._outcomes, this._outcomesSeen, readFloorRooms(roomData), {
             scope: this.outcomeScope(labyrinth),

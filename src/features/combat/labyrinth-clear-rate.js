@@ -154,6 +154,8 @@ class LabyrinthClearRate {
         this._outcomes = {};
         this._outcomesSeen = {};
         this._outcomesLoaded = false;
+        /** Bumped by `forgetOutcomes()`; see there */
+        this._outcomeGeneration = 0;
         this._fight = null;
         this._liveCombatTimeout = null;
         this._liveCombatDrawnAt = 0;
