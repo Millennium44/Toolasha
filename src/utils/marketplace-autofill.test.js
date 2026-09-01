@@ -298,10 +298,7 @@ describe('createAutofillManager', () => {
     describe('the item icon, not merely the first icon', () => {
         /** @param {HTMLElement} modal @returns {HTMLElement} the same modal, with a decoy icon first */
         const withDecoyIconFirst = (modal) => {
-            modal.insertAdjacentHTML(
-                'afterbegin',
-                '<svg><use href="/static/media/misc_sprite.svg#info"></use></svg>'
-            );
+            modal.insertAdjacentHTML('afterbegin', '<svg><use href="/static/media/misc_sprite.svg#info"></use></svg>');
             return modal;
         };
 
