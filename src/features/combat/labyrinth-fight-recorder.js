@@ -34,8 +34,15 @@
  *
  * ## Bounded
  *
- * Five hundred fights, oldest dropped. That is many runs of history, small
- * enough to hold and write without thinking about it.
+ * A thousand fights, oldest dropped. That is many runs of history — about
+ * 720 KB per character at ~737 bytes a record — still small enough to hold and
+ * write without thinking about it. The number is doubled transiently by
+ * `mergeAttempts`, which unions both devices' pools before slicing, so a
+ * cross-device sync peaks at up to twice the cap in memory; that is the figure
+ * to check against before raising it again. The upload is not the constraint:
+ * the gist payload is gzipped and split into 900 KB chunks under a 9 MB
+ * ceiling, and a pool of near-identical records is about the most compressible
+ * text there is.
  *
  * The cap is age-ordered and version-blind, which is what keeps a migration
  * from starving the new cohort: a pre-migration attempt is by construction
@@ -58,8 +65,15 @@ import { FINGERPRINT_SPEC, FINGERPRINT_VERSION, isCurrentFingerprintVersion } fr
 const STORE = 'labyrinth';
 const KEY = 'labyrinthFightRecorder';
 
-/** Fights kept before the oldest fall off — many runs of history, still small */
-const MAX_ATTEMPTS = 500;
+/**
+ * Fights kept before the oldest fall off — many runs of history, still small.
+ *
+ * At ~737 bytes a record this is ~720 KB per character. `mergeAttempts` unions
+ * both devices' pools before slicing to the cap, so a cross-device sync holds
+ * up to twice this many records at once; raise it only against that figure, not
+ * against the steady-state one.
+ */
+const MAX_ATTEMPTS = 1000;
 
 /** A fight shorter than this is an abandon, not a fight, and says nothing about a rate */
 const MIN_FIGHT_SECONDS = 3;

@@ -173,26 +173,51 @@ describe('labyrinth fight recorder', () => {
         expect(c.playerDotDamage).toBeNull();
     });
 
-    test('the buffer is bounded to the newest 500', () => {
-        for (let i = 0; i < 550; i++) recorder.noteAttempt(attempt());
-        expect(recorder.recordingStatus().attempts).toBe(500);
+    test('the buffer is bounded to the newest 1000', () => {
+        for (let i = 0; i < 1100; i++) recorder.noteAttempt(attempt());
+        expect(recorder.recordingStatus().attempts).toBe(1000);
     });
 
     test('the cap is age-ordered, so pre-migration records cannot crowd out new ones', async () => {
         // A pool already full of history from before the migration
-        seedStored(Array.from({ length: 500 }, (_, i) => legacyStored({ recordId: `old-${i}` })));
+        seedStored(Array.from({ length: 1000 }, (_, i) => legacyStored({ recordId: `old-${i}` })));
         recorder.forget();
         await recorder.load();
-        expect(recorder.recordingStatus().legacyFingerprint).toBe(500);
+        expect(recorder.recordingStatus().legacyFingerprint).toBe(1000);
 
         // Every new fight lands; an old one falls off for each
         for (let i = 0; i < 120; i++) recorder.noteAttempt(attempt());
 
         const status = recorder.recordingStatus();
-        expect(status.total).toBe(500);
-        expect(status.legacyFingerprint).toBe(380);
+        expect(status.total).toBe(1000);
+        expect(status.legacyFingerprint).toBe(880);
         const current = recorder.recordedAttempts().filter((a) => a.fingerprintVersion === FINGERPRINT_VERSION);
         expect(current).toHaveLength(120);
+    });
+
+    test('eviction is version-blind: a mixed pool still loses its oldest first', async () => {
+        // v1 (unstamped) and v2 records, oldest first, filling the cap exactly.
+        // Nothing reserves space per version — the whole point of the cap is
+        // that history ages out in the order it arrived.
+        seedStored([
+            ...Array.from({ length: 500 }, (_, i) => legacyStored({ recordId: `v1-${i}` })),
+            ...Array.from({ length: 500 }, (_, i) => ({
+                ...legacyStored({ recordId: `v2-${i}` }),
+                fingerprintVersion: 2,
+            })),
+        ]);
+        recorder.forget();
+        await recorder.load();
+        expect(recorder.recordingStatus().legacyFingerprint).toBe(1000);
+
+        for (let i = 0; i < 600; i++) recorder.noteAttempt(attempt());
+
+        const kept = recorder.recordedAttempts();
+        expect(kept).toHaveLength(1000);
+        // The 600 oldest went, and they were all v1 — the v2 half is untouched
+        expect(kept.filter((a) => a.recordId?.startsWith('v1-'))).toHaveLength(0);
+        expect(kept.filter((a) => a.recordId?.startsWith('v2-'))).toHaveLength(400);
+        expect(kept.filter((a) => a.fingerprintVersion === FINGERPRINT_VERSION)).toHaveLength(600);
     });
 
     test('a v2 record is legacy under v3, kept and counted but never pooled', async () => {
