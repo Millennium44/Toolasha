@@ -461,9 +461,13 @@ export class LabComparisonStore {
     async load() {
         if (this._loaded) return this.runs;
         this._loaded = true;
+        // Both keys resolved before the first await, so the runs and the
+        // baseline that indexes them cannot come from two different characters
+        const runsKey = characterKey(LAB_COMPARISON_KEY);
+        const baselineKey = characterKey(LAB_COMPARISON_BASELINE_KEY);
         try {
-            this.runs = sanitizeLabRuns(await storage.get(characterKey(LAB_COMPARISON_KEY), 'settings', null));
-            const savedBaseline = await storage.get(characterKey(LAB_COMPARISON_BASELINE_KEY), 'settings', null);
+            this.runs = sanitizeLabRuns(await storage.get(runsKey, 'settings', null));
+            const savedBaseline = await storage.get(baselineKey, 'settings', null);
             this.baselineId = this.runs.some((entry) => entry.id === savedBaseline) ? savedBaseline : null;
         } catch (error) {
             console.error('[LabSimComparison] Failed to load recorded runs:', error);
@@ -544,11 +548,19 @@ export class LabComparisonStore {
 
     /** @private */
     async _persist() {
+        // Keyed per character: a run is a comparison against one character's
+        // gear, and the runs were recorded on this one. Both keys are resolved
+        // here, before either write, because a non-immediate `storage.set`
+        // resolves only when its debounce fires — several seconds later.
+        // Re-resolving the second key after awaiting the first filed the
+        // baseline under whoever was current by then, and a baseline naming a
+        // run that character does not have is dropped on load: their pinned
+        // "before" run silently unpins itself.
+        const runsKey = characterKey(LAB_COMPARISON_KEY);
+        const baselineKey = characterKey(LAB_COMPARISON_BASELINE_KEY);
         try {
-            // Keyed per character: a run is a comparison against one
-            // character's gear, and the runs were recorded on this one.
-            await storage.set(characterKey(LAB_COMPARISON_KEY), this.runs, 'settings');
-            await storage.set(characterKey(LAB_COMPARISON_BASELINE_KEY), this.baselineId, 'settings');
+            await storage.set(runsKey, this.runs, 'settings');
+            await storage.set(baselineKey, this.baselineId, 'settings');
         } catch (error) {
             console.error('[LabSimComparison] Failed to save recorded runs:', error);
         }

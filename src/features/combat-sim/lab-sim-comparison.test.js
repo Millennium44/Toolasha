@@ -12,10 +12,10 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const db = vi.hoisted(() => ({ values: new Map(), failWrites: false }));
+const db = vi.hoisted(() => ({ values: new Map(), failWrites: false, characterId: 'char1' }));
 
 vi.mock('../../utils/character-key.js', () => ({
-    characterKey: (base) => `${base}_char1`,
+    characterKey: (base) => `${base}_${db.characterId}`,
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -65,6 +65,7 @@ function run(overrides = {}) {
 beforeEach(() => {
     db.values = new Map();
     db.failWrites = false;
+    db.characterId = 'char1';
 });
 
 describe('what a finished run is recorded as', () => {
@@ -281,6 +282,30 @@ describe('the store behind it', () => {
         expect(reopened.baselineId).toBe(pinned);
         expect(db.values.get(`${LAB_COMPARISON_KEY}_char1`)).toHaveLength(2);
         expect(db.values.get(`${LAB_COMPARISON_BASELINE_KEY}_char1`)).toBe(pinned);
+    });
+
+    test('a switch inside the write does not unpin the arriving character’s baseline', async () => {
+        const store = new LabComparisonStore();
+        await store.load();
+        await store.add(run({ roomLevel: 100 }));
+        await store.add(run({ roomLevel: 120 }));
+
+        // The alt has their own pinned baseline. The main's runs write lands
+        // first; the switch happens while the debounced write is still pending,
+        // and the baseline write follows behind it.
+        db.values.set(`${LAB_COMPARISON_BASELINE_KEY}_alt2`, 'alt-baseline');
+        const realSet = db.values.set.bind(db.values);
+        let writes = 0;
+        db.values.set = (key, value) => {
+            writes += 1;
+            if (writes === 1) db.characterId = 'alt2';
+            return realSet(key, value);
+        };
+
+        await store.setBaseline(store.runs[0].id);
+        db.values.set = realSet;
+
+        expect(db.values.get(`${LAB_COMPARISON_BASELINE_KEY}_alt2`)).toBe('alt-baseline');
     });
 
     test('a baseline pointing at a run that is no longer stored is not restored', async () => {
