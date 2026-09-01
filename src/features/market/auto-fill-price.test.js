@@ -7,7 +7,7 @@
  * price nobody can trade against.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: (_key, fallback) => fallback },
@@ -102,5 +102,80 @@ describe('the one-shot is spent on work done, not on a modal being seen', () => 
         // And not again
         autoFillPrice.handleOrderModal(early.modal);
         expect(clicked).toBe(1);
+    });
+});
+
+describe('the clamp stays live while the modal is open', () => {
+    /**
+     * A Buy Listing modal with a stated band and a filled price input.
+     * @param {string} rangeText - The tradable-range line the game renders
+     * @param {string} price - The price input's current value
+     * @returns {{modal: HTMLElement, input: HTMLInputElement, rangeEl: HTMLElement}}
+     */
+    const modalWithPrice = (rangeText, price) => {
+        const modal = document.createElement('div');
+        modal.innerHTML = `
+            <div class="MarketplacePanel_header__yahJo">Buy Listing</div>
+            <span class="range">${rangeText}</span>
+            <div class="MarketplacePanel_inputContainer__1qP2x">
+                <div class="MarketplacePanel_priceInputs__1qP2x"><input value="${price}"></div>
+            </div>`;
+        document.body.appendChild(modal);
+        return { modal, input: modal.querySelector('input'), rangeEl: modal.querySelector('.range') };
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        autoFillPrice.timerRegistry.clearAll();
+    });
+
+    afterEach(() => {
+        autoFillPrice.timerRegistry.clearAll();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    test('a best offer refilled under the floor after open snaps up to the floor', () => {
+        // The reported case: 15.1M–18.4M band, best buy offer 15M filled later
+        const { modal, input } = modalWithPrice('Tradable range: 15.1M – 18.4M', '16,000,000');
+        autoFillPrice.watchPriceBand(modal);
+
+        input.value = '15000000';
+        vi.advanceTimersByTime(300);
+        expect(input.value).toBe('15100000');
+    });
+
+    test('a sell price over a ceiling that moved snaps down to the ceiling', () => {
+        const { modal, input, rangeEl } = modalWithPrice('Tradable range: 15.1M – 18.4M', '18,000,000');
+        autoFillPrice.watchPriceBand(modal);
+
+        // The enhancement level changes and the band re-renders lower
+        rangeEl.textContent = 'Tradable range: 10M – 12M';
+        vi.advanceTimersByTime(300);
+        expect(input.value).toBe('12000000');
+    });
+
+    test('a price being typed is not snapped out from under the cursor', () => {
+        const { modal, input } = modalWithPrice('Tradable range: 15.1M – 18.4M', '16,000,000');
+        autoFillPrice.watchPriceBand(modal);
+
+        input.focus();
+        input.value = '1'; // the prefix of 16,500,000, not a price
+        vi.advanceTimersByTime(900);
+        expect(input.value).toBe('1');
+
+        input.blur();
+        vi.advanceTimersByTime(300);
+        expect(input.value).toBe('15100000');
+    });
+
+    test('a closed modal stops being watched', () => {
+        const { modal, input } = modalWithPrice('Tradable range: 15.1M – 18.4M', '16,000,000');
+        autoFillPrice.watchPriceBand(modal);
+
+        modal.remove();
+        input.value = '15000000';
+        vi.advanceTimersByTime(900);
+        expect(input.value).toBe('15000000');
     });
 });

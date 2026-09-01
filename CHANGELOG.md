@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The listing price clamp stays live while the modal is open
+
+The auto-fill's tradable-range clamp ran once, 150ms after the listing modal opened — a band that re-rendered afterwards (changing the enhancement level) or a best-price refill left the price sitting outside it, e.g. a buy at a stale 15M best offer under a 15.1M floor. The clamp now watches for the modal's lifetime: a buy below the floor snaps up to the floor, a sell above the ceiling snaps down to it, and a price being typed is left alone until the input loses focus.
+
 ### A character simmed from their profile keeps their own house
 
 Simming another player via their profile's "Sim Character" button registered them as the self player, so the editor's keep-house-current sync overwrote their imported house rooms with your own live levels — every run and every Upgrade analysis for them used your house, not theirs. The imported character is no longer treated as self, so their profile's house rooms stand.

@@ -146,6 +146,34 @@ class AutoFillPrice {
             this.clampPriceToTradableRange(modal);
         }, 150);
         this.timerRegistry.registerTimeout(clampTimeout);
+
+        this.watchPriceBand(modal);
+    }
+
+    /**
+     * Keep the clamp live for the modal's lifetime, not just the opening fill.
+     *
+     * The range and best offer both re-render inside the open modal — changing
+     * the enhancement level swaps in a different item's band, and a best-price
+     * click refills the input — so a one-shot clamp at open leaves a later fill
+     * sitting outside the band (a buy at a stale best offer under the floor).
+     * The input is left alone while it holds focus: a price being typed passes
+     * through below-the-floor prefixes that are not the price.
+     * @param {HTMLElement} modal - Modal container element
+     */
+    watchPriceBand(modal) {
+        const interval = setInterval(() => {
+            if (!modal.isConnected) {
+                clearInterval(interval);
+                return;
+            }
+            const input = modal.querySelector(
+                'div[class*="MarketplacePanel_inputContainer"] div[class*="MarketplacePanel_priceInputs"] input'
+            );
+            if (!input || document.activeElement === input) return;
+            this.clampPriceToTradableRange(modal);
+        }, 300);
+        this.timerRegistry.registerInterval(interval);
     }
 
     /**
