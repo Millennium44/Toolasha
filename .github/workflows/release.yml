@@ -112,6 +112,12 @@ jobs:
                   cp dist/Toolasha.user.js /tmp/Toolasha.user.js
                   cp -R dist/libraries /tmp/libraries
 
+                  # version:sync and Rollup intentionally rewrite tracked
+                  # source/header files. The built artifacts are safe in /tmp,
+                  # so return the disposable Actions checkout to HEAD before
+                  # changing to the unrelated publishing branch.
+                  git reset --hard HEAD
+
                   # Fetch the remote-tracking ref first, then reset the local
                   # publishing branch to it. Fetching directly into a local
                   # `releases` branch can leave that branch behind even when
@@ -121,9 +127,10 @@ jobs:
                   # separate operations also makes manual republishes safe.
                   if git ls-remote --exit-code --heads origin releases >/dev/null; then
                       git fetch origin refs/heads/releases:refs/remotes/origin/releases
-                      git checkout -B releases refs/remotes/origin/releases
+                      git checkout -f -B releases refs/remotes/origin/releases
                   else
                       git checkout --orphan releases
+                      git rm -rf .
                   fi
 
                   # Commit the libraries on their own, leaving the userscript
