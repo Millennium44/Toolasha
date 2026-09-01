@@ -198,14 +198,34 @@ function drawPartyProfit(body, mode, tax) {
 let soloSnapshot;
 
 /**
+ * Whose sim run {@link soloSnapshot} holds.
+ *
+ * The snapshot is stored per character, so it must not outlive the character it
+ * was loaded for. Nothing in this module is torn down on a switch, so without
+ * this the cache is a one-shot: the first character to open the profit panel
+ * owns the "solo comparison" and the "sim said here" lines for the rest of the
+ * session.
+ */
+let soloSnapshotOwner;
+
+/**
  * The cached snapshot, kicking off the one load on the first ask.
+ *
+ * A load is restarted whenever the character has moved on, and one already in
+ * flight is discarded on arrival if the player has left in the meantime —
+ * caching one character's simulated profit under another's name is worse than
+ * drawing no line at all, because the line reads as a verdict on this
+ * character's gear.
  * @returns {Object|null} The snapshot, or null until the load lands
  */
 function cachedSnapshot() {
-    if (soloSnapshot === undefined) {
+    const owner = dataManager.getCurrentCharacterId?.() ?? null;
+    if (soloSnapshot === undefined || soloSnapshotOwner !== owner) {
         soloSnapshot = null;
+        soloSnapshotOwner = owner;
         loadAllZonesSnapshot()
             .then((snapshot) => {
+                if (soloSnapshotOwner !== owner) return;
                 soloSnapshot = snapshot;
             })
             .catch(() => {});

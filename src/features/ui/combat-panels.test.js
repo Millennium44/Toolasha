@@ -31,6 +31,7 @@ const state = vi.hoisted(() => ({
     // loads the snapshot once and caches the reference, so a reassigned object
     // would never be seen again
     snapshot: { savedAt: 0, zones: [] },
+    characterId: 'char1',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -53,7 +54,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => ({ name: hrid, isOpenable: Boolean(state.openable[hrid]) }),
         // The Record button's state reaches storage through the character key,
         // to put back the record target the last session was using
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => state.characterId,
         getCurrentCharacterGameMode: () => 'standard',
         get battleData() {
             return state.battle;
@@ -159,6 +160,7 @@ beforeEach(() => {
     state.equipment = null;
     state.itemDetailMap = {};
     state.abilityDetailMap = {};
+    state.characterId = 'char1';
     // Mutated in place — see the hoisted comment
     state.snapshot.savedAt = Date.parse('2026-08-01T00:00:00Z');
     state.snapshot.zones.length = 0;
@@ -848,6 +850,25 @@ describe('the sim forecast beside the measured revenue', () => {
         profitPanel.refresh();
 
         expect(profitPanel.panel.textContent).not.toContain('sim said here');
+    });
+
+    test('a character switch drops the snapshot rather than quoting it at the next character', async () => {
+        profitPanel.show();
+        await flush();
+        profitPanel.refresh();
+        expect(profitPanel.panel.textContent).toContain('24.0M/day');
+
+        // The snapshot is stored per character, and this one has never run the
+        // sim: the line has to go, not carry the last character's figure over
+        state.characterId = 'char2';
+        state.snapshot = { savedAt: 0, zones: [] };
+
+        profitPanel.refresh();
+        await flush();
+        profitPanel.refresh();
+
+        expect(profitPanel.panel.textContent).not.toContain('sim said here');
+        expect(profitPanel.panel.textContent).not.toContain('24.0M/day');
     });
 });
 
