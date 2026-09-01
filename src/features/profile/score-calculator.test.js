@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
     settings: {},
     enhancingParams: { teas: {} },
     workerTasks: [],
+    workerResults: null,
+    askPrices: {},
+    books: {},
 }));
 
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
@@ -27,19 +30,25 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getInitClientData: () => mocks.clientData } }));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: () => mocks.enhancingParams }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => null }));
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (hrid) => mocks.askPrices[hrid] ?? 0,
+    getItemPrices: (hrid) => mocks.books[hrid] ?? null,
+}));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: (key) => mocks.settings[key] ?? null } }));
 vi.mock('../../utils/enhancement-worker-manager.js', () => ({
     // Records what the worker would have been asked to run — the parity the
     // blessed-tea test below pins — and answers "unpriced" for every task
     calculateEnhancementBatch: async (tasks) => {
         mocks.workerTasks.push(...tasks);
-        return tasks.map(() => null);
+        return tasks.map(() => mocks.workerResults);
     },
 }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getCheapestProtectionPrice: () => ({ price: 0 }),
-    getRealisticBaseItemPrice: () => 0,
+    // The mirror is priced out of reach so the mirror optimisation never wins:
+    // the material-cost tests below are about the per-attempt material bill and
+    // nothing else.
+    getRealisticBaseItemPrice: (hrid) => (hrid === '/items/philosophers_mirror' ? 1e12 : 0),
 }));
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
 // The shrine fold into the total is gated on the marketplace patch being live.
@@ -67,6 +76,9 @@ beforeEach(() => {
     mocks.settings = {};
     mocks.enhancingParams = { teas: {} };
     mocks.workerTasks = [];
+    mocks.workerResults = null;
+    mocks.askPrices = {};
+    mocks.books = {};
     mocks.clientData = {
         itemDetailMap: {},
         guildBuffDetailMap: {
@@ -225,6 +237,97 @@ describe('guild shrine score', () => {
             expect(score.guildShrineKnown).toBe(true);
             expect(score.guildShrineCombat).toBe(0);
         });
+    });
+});
+
+describe('equipment the market cannot price', () => {
+    /**
+     * A profile wearing one thing, with nothing else on it.
+     * @param {Object} item - `{itemHrid, enhancementLevel}`
+     * @returns {Object} profileData
+     */
+    function profileWearing(item) {
+        return {
+            profile: {
+                equippedAbilities: [],
+                wearableItemMap: { '/item_locations/main_hand': item },
+            },
+        };
+    }
+
+    test('an unpriceable piece is named as unpriced rather than dropped from the breakdown', async () => {
+        // Nothing prices it: no ask, no recipe, no shop line, no token table. The
+        // old calculator added zero and then dropped the row for formatting to
+        // "0.0", so an equipped item vanished and the total read as complete.
+        mocks.clientData.itemDetailMap['/items/mystery_blade'] = { name: 'Mystery Blade', equipmentDetail: {} };
+
+        const score = await calculateCombatScore(
+            profileWearing({ itemHrid: '/items/mystery_blade', enhancementLevel: 0 })
+        );
+
+        expect(score.equipment).toBe(0);
+        expect(score.equipmentUnpriced).toBe(1);
+        const row = score.breakdown.equipment.find((entry) => entry.name === 'Mystery Blade');
+        expect(row).toBeTruthy();
+        expect(row.value).toBe('no price');
+        expect(row.unpriced).toBe(true);
+    });
+
+    test('a priced piece worth less than 0.05M is still left out, and is not called unpriced', async () => {
+        mocks.clientData.itemDetailMap['/items/cheap_dagger'] = { name: 'Cheap Dagger', equipmentDetail: {} };
+        mocks.askPrices['/items/cheap_dagger'] = 40_000;
+
+        const score = await calculateCombatScore(
+            profileWearing({ itemHrid: '/items/cheap_dagger', enhancementLevel: 0 })
+        );
+
+        expect(score.equipment).toBeCloseTo(40_000 / 1_000_000, 10);
+        expect(score.equipmentUnpriced).toBe(0);
+        expect(score.breakdown.equipment).toEqual([]);
+    });
+});
+
+describe('enhancement material pricing', () => {
+    // Audit round 30: `getItemPrices` reports a missing side of the book as
+    // `null`, never as a negative, so the calculator's `< 0` normalisation never
+    // fired. A material with bids but no sellers left `price` at null, and
+    // `null * count` costed it at nothing — a charm nobody was selling was free.
+    /**
+     * Score one +2 piece whose only enhancement material has the given book.
+     * @param {Object|null} book - What `getItemPrices` answers for the charm
+     * @returns {Promise<number>} The combat equipment score
+     */
+    async function scoreWithCharmBook(book) {
+        mocks.books = { '/items/rare_charm': book };
+        mocks.workerResults = { attempts: 10, protectionCount: 0 };
+        mocks.clientData.itemDetailMap['/items/big_axe'] = {
+            name: 'Big Axe',
+            itemLevel: 60,
+            equipmentDetail: {},
+            enhancementCosts: [{ itemHrid: '/items/rare_charm', count: 2 }],
+        };
+
+        const score = await calculateCombatScore({
+            profile: {
+                equippedAbilities: [],
+                wearableItemMap: { '/item_locations/main_hand': { itemHrid: '/items/big_axe', enhancementLevel: 2 } },
+            },
+        });
+        return score.equipment;
+    }
+
+    test('a book with only bids costs what the bids say, not nothing', async () => {
+        // 2 charms per attempt × 10 expected attempts × 3 coins
+        expect(await scoreWithCharmBook({ ask: null, bid: 3 })).toBeCloseTo(60 / 1_000_000, 12);
+    });
+
+    test('a two-sided book is costed at the ask — replacing the material is a purchase', async () => {
+        expect(await scoreWithCharmBook({ ask: 5, bid: 3 })).toBeCloseTo(100 / 1_000_000, 12);
+    });
+
+    test('no book at all falls back to the sell price, as it always did', async () => {
+        mocks.clientData.itemDetailMap['/items/rare_charm'] = { sellPrice: 7 };
+        expect(await scoreWithCharmBook(null)).toBeCloseTo(140 / 1_000_000, 12);
     });
 });
 

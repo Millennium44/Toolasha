@@ -163,6 +163,10 @@ export async function calculateCombatScore(profileData) {
             guildShrineCombatTokens: guildShrineResult.combat.tokens,
             equipmentHidden: profileData.profile?.hideWearableItems || false,
             hasEquipmentData: combatEquipmentResult.hasEquipmentData,
+            // How many equipped pieces nothing could put a price on. The score
+            // is short by whatever they are worth, and a caller that wants to
+            // say so needs the count rather than having to re-walk the breakdown
+            equipmentUnpriced: combatEquipmentResult.unpricedItems,
             breakdown: {
                 houses: houseResult.breakdown,
                 abilities: abilityResult.breakdown,
@@ -173,6 +177,7 @@ export async function calculateCombatScore(profileData) {
             // Skiller score (skilling equipment only)
             skillerTotal: skillerTotalScore,
             skillerEquipment: skillerEquipmentResult.score,
+            skillerEquipmentUnpriced: skillerEquipmentResult.unpricedItems,
             skillerGuildShrine: guildShrineResult.skilling.score,
             skillerGuildShrineTokens: guildShrineResult.skilling.tokens,
             skillerBreakdown: {
@@ -194,9 +199,11 @@ export async function calculateCombatScore(profileData) {
             guildShrineCombatTokens: 0,
             equipmentHidden: false,
             hasEquipmentData: false,
+            equipmentUnpriced: 0,
             breakdown: { houses: [], abilities: [], equipment: [], guildShrines: [], guildShrinesCombat: [] },
             skillerTotal: 0,
             skillerEquipment: 0,
+            skillerEquipmentUnpriced: 0,
             skillerGuildShrine: 0,
             skillerGuildShrineTokens: 0,
             skillerBreakdown: { equipment: [], guildShrines: [] },
@@ -510,11 +517,11 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
 
     // If equipment is hidden AND no data available, return 0
     if (hideEquipment && !hasEquipmentData) {
-        return { score: 0, breakdown: [], hasEquipmentData: false };
+        return { score: 0, breakdown: [], hasEquipmentData: false, unpricedItems: 0 };
     }
 
     const gameData = dataManager.getInitClientData();
-    if (!gameData) return { score: 0, breakdown: [], hasEquipmentData: false };
+    if (!gameData) return { score: 0, breakdown: [], hasEquipmentData: false, unpricedItems: 0 };
 
     const useHighEnhancementCost = config.getSetting('networth_highEnhancementUseCost');
     const minLevel = config.getSetting('networth_highEnhancementMinLevel') || 13;
@@ -630,6 +637,7 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
 
     // Phase 3: Calculate costs using worker results
     let totalValue = 0;
+    let unpricedItems = 0;
     const breakdown = [];
 
     for (const item of itemsToProcess) {
@@ -671,19 +679,30 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
             }
         }
 
-        totalValue += itemCost;
+        // Nothing priced it: no ask, no craftable recipe, no shop line, no token
+        // table. The score still moves by nothing — there is no figure to add —
+        // but the row must not vanish. An equipped piece silently dropped from
+        // the breakdown reads as a character wearing one item fewer, and a total
+        // built over it reads as complete when it is short by whatever that
+        // piece is worth. The same refusal the ability score already makes.
+        const unpriced = !(itemCost > 0);
+        if (unpriced) unpricedItems += 1;
+        else totalValue += itemCost;
 
         // Format item name for display
         const itemName = item.itemDetails.name || item.itemHrid.replace('/items/', '');
         const displayName = item.enhancementLevel > 0 ? `${itemName} +${item.enhancementLevel}` : itemName;
 
-        // Only add to breakdown if formatted value is not "0.0"
-        const formattedValue = (itemCost / 1_000_000).toFixed(1);
-        if (formattedValue !== '0.0') {
+        // A priced item worth under 0.05M rounds to "0.0" and is left out: the
+        // breakdown is denominated in millions and a column of zeroes says
+        // nothing. An *unpriced* one is kept, because "no price" is the claim.
+        const formattedValue = unpriced ? 'no price' : (itemCost / 1_000_000).toFixed(1);
+        if (unpriced || formattedValue !== '0.0') {
             breakdown.push({
                 name: displayName,
                 value: formattedValue,
-                cost: itemCost,
+                cost: unpriced ? 0 : itemCost,
+                unpriced,
                 itemHrid: item.itemHrid,
                 slot: item.slot,
                 enhancementLevel: item.enhancementLevel,
@@ -694,10 +713,12 @@ async function calculateEquipmentScore(profileData, scoreType = 'combat') {
     // Convert to score (value / 1 million)
     const score = totalValue / 1_000_000;
 
-    // Sort by value descending
-    breakdown.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+    // By cost rather than by `value`, which is now a string that is sometimes
+    // 'no price' — the same reason the ability breakdown sorts this way, and an
+    // unpriced row belongs at the bottom rather than at NaN
+    breakdown.sort((a, b) => b.cost - a.cost);
 
-    return { score, breakdown, hasEquipmentData };
+    return { score, breakdown, hasEquipmentData, unpricedItems };
 }
 
 /**
@@ -729,18 +750,19 @@ function calculateEnhancementCostFromWorkerResult(itemHrid, protectFrom, workerR
         } else if (material.itemHrid === '/items/coin') {
             price = 1; // coins at face value
         } else {
+            // A missing side of the book arrives as `null`, never as a negative:
+            // `getItemPrices` reconciles both sides and returns null only when
+            // neither exists. The old `< 0` normalisation therefore never fired,
+            // so an ask-less book left `price` at null and `null * count` costed
+            // the material at nothing — a +14 piece whose charm has bids but no
+            // sellers scored as if that charm were free.
             const marketPrice = getItemPrices(material.itemHrid, 0);
-            if (marketPrice) {
-                let ask = marketPrice.ask;
-                let bid = marketPrice.bid;
-                // Normalize: if one side is negative (no listings), use the positive side
-                if (ask > 0 && bid < 0) bid = ask;
-                if (bid > 0 && ask < 0) ask = bid;
-                price = ask;
-            } else {
-                // Fallback to sell price if no market data
-                price = gameData.itemDetailMap[material.itemHrid]?.sellPrice || 0;
-            }
+            const sideOf = (value) => (Number.isFinite(value) && value >= 0 ? value : null);
+            const ask = sideOf(marketPrice?.ask);
+            const bid = sideOf(marketPrice?.bid);
+            // Ask first — this is what replacing the material costs — and the
+            // other side rather than nothing when the book is one-sided
+            price = ask ?? bid ?? gameData.itemDetailMap[material.itemHrid]?.sellPrice ?? 0;
         }
         perActionCost += price * (material.count || 1);
     }
