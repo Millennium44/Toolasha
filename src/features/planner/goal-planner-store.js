@@ -142,6 +142,14 @@ function claimGoals() {
 }
 
 /**
+ * Who the goals, the snapshot and the gear record belong to.
+ * @returns {string|null} Character id, or null before login
+ */
+function currentOwner() {
+    return dataManager.getCurrentCharacterId() || null;
+}
+
+/**
  * @param {*} list - Whatever is in the record
  * @returns {Array<Object>} Normalised goals, oldest first
  */
@@ -211,7 +219,16 @@ export async function addGoal(raw) {
     const goal = normalizeGoal(raw);
     if (!goal) return loadGoals();
 
+    // Whose list this is, fixed before the read. `saveGoals` calls
+    // `claimGoals()` itself, which points the record at whoever is current
+    // *now* — so a switch inside the read would have it write the departing
+    // character's list, plus this goal, into the arriving character's record,
+    // where `mergeById` folds it into their stored goals and the `MAX_GOALS`
+    // cap then drops their newest ones to make room.
+    const owner = currentOwner();
     const goals = await loadGoals();
+    if (currentOwner() !== owner) return goals;
+
     const key = (entry) => JSON.stringify({ ...entry, id: null, createdAt: null });
     if (goals.some((existing) => key(existing) === key(goal))) return goals;
 
@@ -224,7 +241,12 @@ export async function addGoal(raw) {
  * @returns {Promise<Array<Object>>} The new goal list
  */
 export async function removeGoal(goalId) {
+    // Same window as addGoal: the read is one character's, the write would be
+    // whoever is current when it lands
+    const owner = currentOwner();
     const goals = await loadGoals();
+    if (currentOwner() !== owner) return goals;
+
     return saveGoals(goals.filter((goal) => goal.id !== goalId));
 }
 
@@ -249,10 +271,18 @@ export async function loadSnapshot() {
 
 /**
  * Remember the plans just computed.
+ *
+ * The plans were computed against one character's gold, gear and rates, and the
+ * pricing that produced them takes seconds. Pass `expectedOwner` from whoever
+ * the caller started planning for and the write is refused rather than filed
+ * under whoever is logged in when it finishes.
+ *
  * @param {Array<Object>} plans - Plans from `planGoals`
+ * @param {string|null} [expectedOwner] - Who these plans are for; omitted skips the check
  * @returns {Promise<void>}
  */
-export async function saveSnapshot(plans) {
+export async function saveSnapshot(plans, expectedOwner) {
+    if (expectedOwner !== undefined && currentOwner() !== expectedOwner) return;
     try {
         await writeScoped(SNAPSHOT_KEY, { plans: Array.isArray(plans) ? plans : [], computedAt: Date.now() });
     } catch (error) {
@@ -295,8 +325,14 @@ export async function loadCombatGear() {
  * @returns {Promise<{preferred: string|null, baseline: Object|null}>} The new record
  */
 export async function saveCombatGear(patch) {
+    // A read-modify-write across an await: `writeScoped` resolves its key when
+    // it runs, so a switch inside the read files the departing character's
+    // preferred loadout and baseline under the arriving character's key
+    const owner = currentOwner();
     const current = await loadCombatGear();
     const next = { ...current, ...(patch || {}) };
+    if (currentOwner() !== owner) return next;
+
     try {
         await writeScoped(COMBAT_GEAR_KEY, next, 'settings');
     } catch (error) {

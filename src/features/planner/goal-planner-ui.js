@@ -454,9 +454,20 @@ class GoalPlannerPanel {
         this.busy = true;
         this.notice = null;
         this._status(reprice ? 'Pricing…' : 'Planning…');
+        // Who this plan is for, fixed before the pricing. `buildPlannerContext()`
+        // is the multi-second market fetch the "Pricing…" status exists for, and
+        // everything after it — the context, the plans, the snapshot write — was
+        // adopted under whoever was logged in when it finished. A switch inside
+        // it showed the arriving character the departing character's goals and
+        // step costs, stamped as priced just now, and `saveSnapshot`'s
+        // `writeScoped` filed them over the arriving character's own snapshot.
+        const owner = dataManager.getCurrentCharacterId() || null;
+        const gone = () => (dataManager.getCurrentCharacterId() || null) !== owner;
         try {
             if (reprice || !this.context) {
-                this.context = await buildPlannerContext();
+                const context = await buildPlannerContext();
+                if (gone()) return;
+                this.context = context;
                 this.pricedAt = Date.now();
             } else {
                 // The memoised providers and the ranked rates ride along
@@ -465,10 +476,11 @@ class GoalPlannerPanel {
             }
 
             await withHouseCosts(this.context, this.goals);
+            if (gone()) return;
             this.plans = planGoals(this.goals, this.context);
             this.rateNotes = this.context.rateNotes || [];
             this.combatStatus = this.context.combatStatus || null;
-            await saveSnapshot(this.plans);
+            await saveSnapshot(this.plans, owner);
         } catch (error) {
             console.error('[GoalPlanner] Planning failed:', error);
             // On `notice` rather than straight to the status line: the redraw in

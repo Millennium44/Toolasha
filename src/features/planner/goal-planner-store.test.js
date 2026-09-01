@@ -165,6 +165,54 @@ describe('the goal list', () => {
     });
 });
 
+describe('a character switch inside a read-modify-write', () => {
+    test("addGoal does not fold the departing character's goals into the arriving one", async () => {
+        settings().set(`${GOALS_KEY}_market123`, [{ id: 'main-a', type: 'gold', amount: 100 }]);
+        settings().set(`${GOALS_KEY}_alt456`, [{ id: 'alt-a', type: 'gold', amount: 200 }]);
+
+        // The read was issued for market123; the player is on the alt by the
+        // time it answers, and `saveGoals` resolves its key when it runs
+        mockStorage.tryGet.mockImplementationOnce(async (key, storeName = 'settings') => {
+            mockDataManager.currentCharacterId = 'alt456';
+            const store = mockStorage.storeFor(storeName);
+            return store.has(key) && store.get(key) != null
+                ? { found: true, value: structuredClone(store.get(key)) }
+                : { found: false, value: null };
+        });
+
+        await addGoal({ type: 'gold', amount: 999 });
+        await flushGoalWrites();
+
+        // The alt's own list is untouched: no main goal folded in, and nothing
+        // of theirs pushed off the end by one
+        expect(settings().get(`${GOALS_KEY}_alt456`)).toEqual([{ id: 'alt-a', type: 'gold', amount: 200 }]);
+    });
+
+    test('saveCombatGear refuses rather than filing one character’s loadout under another', async () => {
+        settings().set(`${COMBAT_GEAR_KEY}_market123`, { preferred: 'Ranged', baseline: null });
+
+        mockStorage.get.mockImplementationOnce(async (key, storeName = 'settings', fallback = null) => {
+            mockDataManager.currentCharacterId = 'alt456';
+            const store = mockStorage.storeFor(storeName);
+            return store.has(key) && store.get(key) != null ? store.get(key) : fallback;
+        });
+
+        await saveCombatGear({ baseline: { savedAt: 12, signature: 'sword+5' } });
+
+        expect(settings().has(`${COMBAT_GEAR_KEY}_alt456`)).toBe(false);
+    });
+
+    test('saveSnapshot refuses a write for a character the planner has left', async () => {
+        await saveSnapshot([{ goalId: 'a' }], 'market123');
+        expect(settings().has(`${SNAPSHOT_KEY}_market123`)).toBe(true);
+
+        mockDataManager.currentCharacterId = 'alt456';
+        await saveSnapshot([{ goalId: 'a' }], 'market123');
+
+        expect(settings().has(`${SNAPSHOT_KEY}_alt456`)).toBe(false);
+    });
+});
+
 describe('the combat gear record', () => {
     test('starts empty rather than undefined, so nothing has to guard it', async () => {
         expect(await loadCombatGear()).toEqual({ preferred: null, baseline: null });
