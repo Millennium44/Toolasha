@@ -76,9 +76,15 @@ function completedSession(overrides = {}) {
 
 let calibration;
 
+// `game` is one fixture object shared by every test in the file, so each field a
+// test moves — the storage outage, the active character — has to come back here
+// rather than at the end of the test that moved it: an outage left switched on
+// silently turns every later `storage.set` into a no-op.
 beforeEach(() => {
     game.stored = {};
     game.calibrationOn = true;
+    game.unavailable = false;
+    game.characterId = 'char-1';
     calibration = new EnhancementCalibration();
 });
 
@@ -168,10 +174,6 @@ describe('the observations survive a failed read and a second tab', () => {
     const KEY = 'lootLogHistory:calibrationEnhancing_char-1';
     const ids = (list) => list.map((r) => r.id);
 
-    beforeEach(() => {
-        game.unavailable = false;
-    });
-
     test('a load that cannot read storage keeps the observations in memory', async () => {
         await calibration.recordCompletion(completedSession());
         game.unavailable = true;
@@ -223,7 +225,6 @@ describe('the observations survive a failed read and a second tab', () => {
 
         expect(ids(game.stored['lootLogHistory:calibrationEnhancing_char-2'])).toEqual(['session_9:5']);
         expect(ids(game.stored[KEY])).toEqual(['session_1:5']);
-        game.characterId = 'char-1';
     });
 
     test('disable() clears getCachedRecords() immediately, before any new session completes', async () => {
@@ -241,6 +242,5 @@ describe('the observations survive a failed read and a second tab', () => {
         calibration.disable();
 
         expect(calibration.getCachedRecords()).toBeNull();
-        game.characterId = 'char-1';
     });
 });

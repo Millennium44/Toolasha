@@ -76,6 +76,7 @@ const {
     openNextTrialUnit,
     retryTrialUnit,
     resetTrialUnitRequests,
+    resetControls,
     tierRangeLabel,
     headerLine,
     completionLine,
@@ -163,6 +164,11 @@ describe('trial abilities panel', () => {
         resetTrialUnitRequests();
         resetPlanUi();
         resetChipUi();
+        // `controls` is module state: a test that wires its own openNext /
+        // retryCurrent / captureFor replaces the built-in action for every
+        // test that follows, so a chip press lands in the previous test's spy
+        // instead of clicking a unit box
+        resetControls();
     });
 
     afterEach(() => {
@@ -370,7 +376,8 @@ describe('trial abilities panel', () => {
         return { clicks };
     }
 
-    // Runs before anything calls setControls: the defaults are under test
+    // The defaults are what is under test here; `resetControls()` in the
+    // beforeEach puts them back whatever an earlier test wired up
     test('the default controls click outstanding fighters even when the roster store holds fresh sheets', async () => {
         await feature.initialize('Cats');
         guildTrialAbilities.setRoster(['Me', 'Ada']);

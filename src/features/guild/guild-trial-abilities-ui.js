@@ -334,11 +334,18 @@ export function openTrialUnitFor(name, now = Date.now()) {
  * "Retry" is the same gesture aimed at a named player, window ignored.
  * `captureFor` is the chip's: the cycler aimed, window respected.
  */
-const controls = {
+const DEFAULT_CONTROLS = {
     openNext: () => openNextTrialUnit(),
     retryCurrent: (name) => retryTrialUnit(name),
     captureFor: (name) => openTrialUnitFor(name),
 };
+
+const controls = { ...DEFAULT_CONTROLS };
+
+/** Put the built-in actions back — for tests, and for a panel left without an orchestrator */
+export function resetControls() {
+    Object.assign(controls, DEFAULT_CONTROLS);
+}
 
 /**
  * Let the orchestrator wire its own control actions.

@@ -185,6 +185,15 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-02T12:00:00Z'));
     character();
+    // The rate history is module scope and survives the panel being hidden, by
+    // design — but every test here rewinds the clock to the same instant, so a
+    // previous test's readings are left stamped in this test's future (or, for a
+    // test that moved the clock backwards, in its past) and get measured
+    // against. That is how one test's five-minute window came out as
+    // fifty-five. `character_switching` is the production "different character,
+    // start again" reset and clears the session, the in-combat flag and the
+    // history together.
+    dataManager.emit('character_switching');
     // Out of combat, so a test that starts a fight starts a session with it
     fire('battle_unit_fetched');
     resetSession(combatSkillState().skills);

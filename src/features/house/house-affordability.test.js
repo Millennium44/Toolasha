@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach, vi } from 'vitest';
+import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
 
 const roomDetails = {
     '/house_rooms/dojo': { name: 'Dojo' },
@@ -63,8 +63,23 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { nextLevelCost, affordableUpgrades, setRoomTracked, isRoomTracked, materialsCost, loadUntrackedRooms } =
-    await import('./house-affordability.js');
+const {
+    nextLevelCost,
+    affordableUpgrades,
+    setRoomTracked,
+    isRoomTracked,
+    materialsCost,
+    loadUntrackedRooms,
+    untrackedRooms,
+} = await import('./house-affordability.js');
+
+// The declined-room set lives in module state and is shared by every test in
+// this file: declining a room, or loading a character whose saved list has one,
+// leaves it declined for whatever runs next (and the affordability counts read
+// straight off it). Start every test from "saving for every room".
+beforeEach(async () => {
+    for (const houseRoomHrid of [...untrackedRooms()]) await setRoomTracked(houseRoomHrid, true);
+});
 
 describe('nextLevelCost', () => {
     test('is the difference between two cumulative totals, not a cumulative total', () => {
@@ -299,8 +314,8 @@ describe('the Houses tile summarises its own inputs', () => {
             characterHouseRoomMap: { '/house_rooms/dojo': { level: 2 } },
             characterItems: [{ itemHrid: '/items/coin', count: 500 }],
         };
-        // The switch-race suite above may have left the gym untracked; the
-        // move under test is tracked → untracked, so start from tracked
+        // The move under test is tracked → untracked, so state the starting
+        // point explicitly rather than leaning on the file-wide reset
         setRoomTracked('/house_rooms/gym', true);
         const before = version();
 
