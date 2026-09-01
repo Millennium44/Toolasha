@@ -6,6 +6,7 @@ const game = vi.hoisted(() => ({
     simulateScrollEffects: true,
     snapshotName: null,
     switchHandlers: [],
+    hold: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -21,7 +22,11 @@ vi.mock('../../core/config.js', () => ({
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key, storeName, defaultValue) => game.saved[key] ?? defaultValue,
+        getJSON: async (key, storeName, defaultValue) => {
+            // A read left open, so a test can land a character switch inside one
+            if (game.hold) await game.hold;
+            return game.saved[key] ?? defaultValue;
+        },
         setJSON: async (key, value) => {
             game.saved[key] = value;
         },
@@ -40,9 +45,11 @@ describe('scroll simulator', () => {
         game.simulateScrollEffects = true;
         game.snapshotName = null;
         game.switchHandlers = [];
+        game.hold = null;
         scrollSimulator.scrollsByLoadout = {};
         scrollSimulator.initialized = false;
         scrollSimulator.switchHandler = null;
+        scrollSimulator.owner = null;
         await scrollSimulator.initialize();
     });
 
@@ -121,5 +128,53 @@ describe('scroll simulator', () => {
         await game.switchHandlers[0]();
 
         expect(scrollSimulator.getScrollsForLoadout(null)).toEqual(new Set(['char2_scroll']));
+    });
+
+    test("a load in flight across the switch does not add its selections to the new character's", async () => {
+        // `character_switched` is deferred, so the handler's own reload is not
+        // ordered against a load already running. The stale one used to land
+        // last and assign straight into the map the reload had just filled.
+        game.saved['scroll_simulation_char1'] = { Fishing: ['char1_scroll'] };
+        game.saved['scroll_simulation_char2'] = { __default__: ['char2_scroll'] };
+        scrollSimulator.scrollsByLoadout = {};
+        scrollSimulator.owner = null;
+        scrollSimulator.initialized = false;
+
+        let release;
+        game.hold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const stale = scrollSimulator.initialize();
+
+        game.characterId = 'char2';
+        game.hold = null;
+        await game.switchHandlers[0]();
+        release();
+        await stale;
+
+        expect(scrollSimulator.getScrollsForLoadout('Fishing')).toEqual(new Set());
+        expect(scrollSimulator.getScrollsForLoadout(null)).toEqual(new Set(['char2_scroll']));
+
+        // and the next save writes only the arriving character's selections
+        await scrollSimulator.saveScrollsForLoadout('Mining', ['char2_mining']);
+        expect(game.saved['scroll_simulation_char2']).toEqual({
+            __default__: ['char2_scroll'],
+            Mining: ['char2_mining'],
+        });
+        expect(game.saved['scroll_simulation_char1']).toEqual({ Fishing: ['char1_scroll'] });
+    });
+
+    test('a save is refused when the selections in memory are not this character’s', async () => {
+        await scrollSimulator.saveScrollsForLoadout(null, ['char1_scroll']);
+        game.characterId = 'char2';
+
+        const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await scrollSimulator.saveScrollsForLoadout('Fishing', ['leaked']);
+        } finally {
+            warned.mockRestore();
+        }
+
+        expect(game.saved['scroll_simulation_char2']).toBeUndefined();
     });
 });

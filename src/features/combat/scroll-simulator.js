@@ -19,8 +19,21 @@ import loadoutSnapshot from './loadout-snapshot.js';
 const STORAGE_KEY_PREFIX = 'scroll_simulation';
 export const DEFAULT_KEY = '__default__';
 
-function getStorageKey() {
-    const charId = dataManager.getCurrentCharacterId() || 'default';
+/** Whoever is logged in, or `'default'` before login */
+function currentCharId() {
+    return dataManager.getCurrentCharacterId() || 'default';
+}
+
+/**
+ * One character's key, built from an id the caller captured.
+ *
+ * Not resolved at each use: the read and the write of a selection have to name
+ * the same character, and `character_switched` is a deferred macrotask, so the
+ * switch can land between them.
+ * @param {string} charId - Whose selections
+ * @returns {string} The storage key
+ */
+function storageKeyFor(charId) {
     return `${STORAGE_KEY_PREFIX}_${charId}`;
 }
 
@@ -30,21 +43,52 @@ class ScrollSimulator {
         this.scrollsByLoadout = {};
         this.initialized = false;
         this.switchHandler = null;
+        /**
+         * Whose selections are in memory, or null when none are. `_persist()`
+         * refuses to write anything else's — the key is resolved at write time,
+         * so a map still holding the departing character's loadouts would
+         * otherwise be stored as the arriving character's configuration.
+         */
+        this.owner = null;
+        /**
+         * Bumped by the switch handler. `character_switched` is deferred, so it
+         * is not serialised against a load already running; a load that finds
+         * the number moved drops what it read rather than folding it in.
+         */
+        this._generation = 0;
     }
 
     async initialize() {
         if (this.initialized) return;
-        const saved = await storage.getJSON(getStorageKey(), 'settings', {});
+        // Captured before the read: the hydration below used to assign into
+        // whatever `scrollsByLoadout` held when it landed, so a load still in
+        // flight across a switch added the departing character's loadout
+        // selections on top of the arriving character's — simulating scroll
+        // buffs they have not bought, in every profit and XP figure on screen,
+        // and storing the union under their key on the next save.
+        const charId = currentCharId();
+        const started = this._generation;
+        const saved = await storage.getJSON(storageKeyFor(charId), 'settings', {});
+        if (this._generation !== started || currentCharId() !== charId) return;
+
+        // A selection saved while the read was in flight is this character's
+        // own and wins over the stored copy, as everywhere else in the codebase
+        const held = this.owner === charId ? this.scrollsByLoadout : {};
+        const next = { ...held };
         for (const [name, arr] of Object.entries(saved)) {
-            if (Array.isArray(arr)) {
-                this.scrollsByLoadout[name] = new Set(arr);
+            if (Array.isArray(arr) && !(name in held)) {
+                next[name] = new Set(arr);
             }
         }
+        this.scrollsByLoadout = next;
+        this.owner = charId;
         this.initialized = true;
 
         if (!this.switchHandler) {
             this.switchHandler = async () => {
+                this._generation += 1;
                 this.scrollsByLoadout = {};
+                this.owner = null;
                 this.initialized = false;
                 await this.initialize();
             };
@@ -82,17 +126,30 @@ class ScrollSimulator {
      * @param {string[]} buffTypeHrids
      */
     async saveScrollsForLoadout(loadoutName, buffTypeHrids) {
+        const charId = currentCharId();
+        if (this.owner !== charId) {
+            console.warn(
+                `[ScrollSimulator] Not saving scroll selections: they belong to ${this.owner ?? 'no character yet'}, ` +
+                    `not to ${charId}`
+            );
+            return;
+        }
         const key = loadoutName ?? DEFAULT_KEY;
         this.scrollsByLoadout[key] = new Set(buffTypeHrids);
-        await this._persist();
+        await this._persist(charId);
     }
 
-    async _persist() {
+    /**
+     * Write the whole map under one character's key.
+     * @param {string} charId - Whose selections these are, already verified
+     * @private
+     */
+    async _persist(charId) {
         const toSave = {};
         for (const [name, set] of Object.entries(this.scrollsByLoadout)) {
             toSave[name] = [...set];
         }
-        await storage.setJSON(getStorageKey(), toSave, 'settings');
+        await storage.setJSON(storageKeyFor(charId), toSave, 'settings');
     }
 }
 
