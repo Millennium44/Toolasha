@@ -6,7 +6,8 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import storage from '../../core/storage.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -547,7 +548,14 @@ class LabSimUI {
         this._upgradeRunning = false;
         this._skillingAborted = false;
         this._skillLoadouts = {};
-        this._skillLoadoutsLoaded = false;
+        /**
+         * The scoped key `_skillLoadouts` was read from, i.e. whose loadout
+         * assignments are in memory. Null until the Skilling tab first loads
+         * them; every write goes back to this key rather than to whoever is
+         * current at the moment of the write.
+         * @type {string|null}
+         */
+        this._skillLoadoutsKey = null;
         this._loadoutsCollapsed = true;
         this._upgradeSortHandler = null;
         this._skillingSortHandler = null;
@@ -4901,12 +4909,22 @@ class LabSimUI {
             { hrid: '/skills/enhancing', label: 'Enhancing', actionType: '/action_types/enhancing' },
         ];
 
-        // Load persisted overrides once
-        if (!this._skillLoadoutsLoaded) {
-            this._skillLoadoutsLoaded = true;
+        // Load persisted overrides once per character. A plain latch kept the
+        // first character's assignments in memory for the life of the page: the
+        // table then offered the wrong character's loadouts, the auto-populate
+        // below saw a full map and never filled from the arriving character's
+        // own lab automation settings, and changing any row wrote that whole
+        // stale map back — over assignments the arriving character had made.
+        const loadoutsKey = characterKey('labSimSkillingLoadouts');
+        if (this._skillLoadoutsKey !== loadoutsKey) {
+            this._skillLoadoutsKey = loadoutsKey;
+            this._skillLoadouts = {};
             // Discard any legacy global value: loadout names resolve against
             // this character's snapshots, so another character's map is noise.
             const persisted = await readScoped('labSimSkillingLoadouts', 'settings', null, { migrate: 'discard' });
+            // A switch during the read means a later render is loading the
+            // character who is actually here; this one's result is not theirs
+            if (this._skillLoadoutsKey !== loadoutsKey) return;
             if (persisted && typeof persisted === 'object') {
                 this._skillLoadouts = persisted;
             }
@@ -4968,7 +4986,10 @@ class LabSimUI {
             select.addEventListener('change', () => {
                 const skillHrid = select.dataset.skillLoadout;
                 this._skillLoadouts[skillHrid] = select.value;
-                writeScoped('labSimSkillingLoadouts', this._skillLoadouts, 'settings');
+                // The key the map was read from, not whoever is current: a
+                // table left on screen across a switch is still the departing
+                // character's, and their edit belongs to them
+                storage.set(this._skillLoadoutsKey, this._skillLoadouts, 'settings');
             });
         });
 

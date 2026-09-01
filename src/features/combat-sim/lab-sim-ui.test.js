@@ -289,6 +289,10 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
         get snapshots() {
             return Object.fromEntries(Object.entries(game.loadoutNames).map(([id, name]) => [id, { name }]));
         },
+        // Every named loadout, tagged with the action type the Skilling tab
+        // filters them by — the shape the loadout table reads
+        getAllSnapshots: () =>
+            Object.values(game.loadoutNames).map((name) => ({ name, actionTypeHrid: '/action_types/woodcutting' })),
     },
 }));
 
@@ -2687,5 +2691,55 @@ describe('the cost breakdown', () => {
             enhanceSource: null,
         });
         expect(html).not.toContain('Enhance rates');
+    });
+});
+
+/**
+ * The Skilling tab remembers which loadout to sim each skill with, per
+ * character. It used to read that map once per page and write it back under
+ * whoever was current at the moment of the write.
+ */
+describe('the Skilling tab’s per-character loadout assignments', () => {
+    beforeEach(() => {
+        game.loadoutNames = { l1: 'Main WC', l2: 'Alt WC' };
+        game.characterId = 'me';
+        storage.values = {
+            labSimSkillingLoadouts_me: { '/skills/woodcutting': 'Main WC' },
+            labSimSkillingLoadouts_alt: { '/skills/woodcutting': 'Alt WC' },
+        };
+        storage.written = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        game.characterId = 'me';
+        game.loadoutNames = {};
+        storage.values = {};
+        ui._skillLoadouts = {};
+        ui._skillLoadoutsKey = null;
+        ui.destroy();
+    });
+
+    test('a render after a switch offers the arriving character’s assignments', async () => {
+        await ui._renderSkillLoadoutTable();
+        expect(ui._skillLoadouts['/skills/woodcutting']).toBe('Main WC');
+
+        game.characterId = 'alt';
+        await ui._renderSkillLoadoutTable();
+
+        expect(ui._skillLoadouts['/skills/woodcutting']).toBe('Alt WC');
+    });
+
+    test('a change made from a table left on screen across a switch is written back to its own character', async () => {
+        await ui._renderSkillLoadoutTable();
+        // The panel is sitting on the Skilling tab; nothing re-renders it, so
+        // the rows on screen are still the departing character's
+        game.characterId = 'alt';
+        const select = ui.panel.querySelector('[data-skill-loadout="/skills/woodcutting"]');
+        select.value = 'Alt WC';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+
+        expect(storage.written.labSimSkillingLoadouts_alt).toBeUndefined();
+        expect(storage.written.labSimSkillingLoadouts_me['/skills/woodcutting']).toBe('Alt WC');
     });
 });
