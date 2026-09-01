@@ -625,3 +625,113 @@ describe('Config — a clear nobody reloads', () => {
         }
     });
 });
+
+/**
+ * `settingsOwner` records whose map is in hand, but it cannot arbitrate two
+ * loads in flight at once: a switch A→B starts B's load while A's is still
+ * outstanding, and the read that settles last used to win. Config then served
+ * character A's settings to every reader — features initialize off this map,
+ * panels draw from it — while the player was on B.
+ */
+describe('Config — two settings loads in flight across a character switch', () => {
+    beforeEach(() => {
+        config.settingsLoadedCallbacks = [];
+        config.settingChangeCallbacks = {};
+        config._pendingWrites = [];
+        config._pendingValues = Object.create(null);
+        settingsStorageMock.lastLoadReadable = true;
+        settingsStorageMock.loadSettings.mockReset();
+        settingsStorageMock.saveSettings.mockClear();
+        dataManagerMock.characterId = 'char-A';
+    });
+
+    test('the departing character’s late read does not overwrite the arriving one’s map', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            let releaseA;
+            const aRead = new Promise((resolve) => {
+                releaseA = () => resolve({ checkbox: { id: 'checkbox', isTrue: true } });
+            });
+            settingsStorageMock.loadSettings.mockReturnValueOnce(aRead);
+
+            const loadA = config.loadSettings();
+
+            // The switch: the chain empties the map and reloads under B
+            dataManagerMock.characterId = 'char-B';
+            config.clearSettingsCache();
+            settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+            await config.loadSettings();
+
+            // A's read settles second, with the player already on B
+            releaseA();
+            await loadA;
+
+            expect(config.settingsOwner).toBe('char-B');
+            expect(config.getSetting('checkbox')).toBe(false);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    test('a discarded load leaves its queued writes for the load that wins', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            let releaseA;
+            const aRead = new Promise((resolve) => {
+                releaseA = () => resolve({ checkbox: { id: 'checkbox', isTrue: true } });
+            });
+            settingsStorageMock.loadSettings.mockReturnValueOnce(aRead);
+
+            const loadA = config.loadSettings();
+            dataManagerMock.characterId = 'char-B';
+            config.clearSettingsCache();
+
+            // The player toggles while the map is empty — queued, not stored
+            config.setSetting('checkbox', true);
+            expect(config._pendingWrites).toHaveLength(1);
+
+            // A's read settles first, and must not drain the queue on B's behalf
+            releaseA();
+            await loadA;
+            expect(config._pendingWrites).toHaveLength(1);
+
+            settingsStorageMock.loadSettings.mockResolvedValueOnce({ checkbox: { id: 'checkbox', isTrue: false } });
+            await config.loadSettings();
+
+            expect(config._pendingWrites).toHaveLength(0);
+            expect(config.getSetting('checkbox')).toBe(true);
+        } finally {
+            warn.mockRestore();
+        }
+    });
+
+    test('a switch with no reload behind it still refills the map on the watchdog', async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            let releaseA;
+            const aRead = new Promise((resolve) => {
+                releaseA = () => resolve({ checkbox: { id: 'checkbox', isTrue: true } });
+            });
+            settingsStorageMock.loadSettings.mockReturnValueOnce(aRead);
+
+            const loadA = config.loadSettings();
+            dataManagerMock.characterId = 'char-B';
+            config.clearSettingsCache();
+
+            // Nothing reloads for B; A's read comes back and is discarded
+            settingsStorageMock.loadSettings.mockResolvedValue({ checkbox: { id: 'checkbox', isTrue: false } });
+            releaseA();
+            await loadA;
+            expect(config.settingsMap).toEqual({});
+
+            await vi.advanceTimersByTimeAsync(20000);
+
+            expect(config.settingsOwner).toBe('char-B');
+            expect(config.getSetting('checkbox')).toBe(false);
+        } finally {
+            warn.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+});

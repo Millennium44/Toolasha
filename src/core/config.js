@@ -120,6 +120,13 @@ class Config {
         /** Timer that reloads a map left empty by a clear nobody followed — see _armReloadWatchdog() */
         this._reloadWatchdog = null;
 
+        /**
+         * Bumped by every `loadSettings()` entry. A load whose generation has
+         * moved by the time its read settles is stale and must not adopt its
+         * result — see loadSettings().
+         */
+        this._loadGeneration = 0;
+
         // Feature toggles with metadata for future UI
         this.features = {
             // Market Features
@@ -498,6 +505,8 @@ class Config {
      * @returns {Promise<void>}
      */
     async loadSettings() {
+        const generation = ++this._loadGeneration;
+
         // Set character ID in settings storage for per-character settings
         const characterId = dataManager.getCurrentCharacterId();
 
@@ -516,6 +525,30 @@ class Config {
 
         // Load settings from settings-storage (which uses settings-schema as source of truth)
         const loadedMap = await settingsStorage.loadSettings();
+
+        // Captured before the read, checked after it. `settingsOwner` records
+        // whose map is in hand but cannot arbitrate two loads in flight at
+        // once: a switch A→B starts B's load while A's is still outstanding,
+        // and if A's read settles second it overwrote both `settingsMap` and
+        // `settingsOwner` with A's data — config then served character A's
+        // settings to every reader while the player was on B. `setSetting`'s
+        // key check catches the resulting cross-character *write*, but the
+        // features initializing off this map and the panels drawing from it
+        // read the wrong values with nothing to catch them.
+        //
+        // Stale means either: a later `loadSettings()` has since started (its
+        // result is the one to keep, whether it has landed yet or not), or the
+        // player has moved off the character this read was for. Discard rather
+        // than adopt. The map may be left empty by that, which is why the
+        // discard leaves `_pendingWrites` queued for the winning load to drain
+        // and leaves the `clearSettingsCache()` watchdog armed to refill a map
+        // no later load ever reaches.
+        const stale = generation !== this._loadGeneration || dataManager.getCurrentCharacterId() !== characterId;
+        if (stale) {
+            console.warn('[Config] Settings load discarded: the character changed while they loaded');
+            return;
+        }
+
         if (settingsStorage.lastLoadReadable === false) {
             // The store could not be read, so what came back is schema defaults
             // standing in for the user's settings. Keep the map in hand when it
