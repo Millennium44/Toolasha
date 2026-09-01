@@ -3691,7 +3691,7 @@ describe('the stale-gear marker on a cached room tile', () => {
             snapshotFingerprint: fingerprint,
         });
         expect(text).toContain('cached');
-        expect(text).not.toContain('gear changed');
+        expect(text).not.toContain('build changed');
     });
 
     test('a result simmed under other gear is marked, and the age gives way to it', () => {
@@ -3703,7 +3703,7 @@ describe('the stale-gear marker on a cached room tile', () => {
             computedAt: Date.now() - 2 * 60 * 60 * 1000,
             snapshotFingerprint: stale,
         });
-        expect(text).toBe('gear changed since this was computed');
+        expect(text).toBe('build changed since this was computed');
     });
 
     test('a result simmed this session is marked too — an equip does not refresh a sim', () => {
@@ -3712,7 +3712,7 @@ describe('the stale-gear marker on a cached room tile', () => {
 
         // No fromPersistedCache and no age: the case the Recompute button's own
         // tooltip admits to, which the age note could never have shown
-        expect(noteFor({ snapshotFingerprint: stale })).toBe('gear changed since this was computed');
+        expect(noteFor({ snapshotFingerprint: stale })).toBe('build changed since this was computed');
     });
 
     test('nothing is marked before the loadout snapshots have landed', () => {
@@ -3723,7 +3723,7 @@ describe('the stale-gear marker on a cached room tile', () => {
         gear.ready = false;
 
         const text = noteFor({ fromPersistedCache: true, computedAt: Date.now() - 1000, snapshotFingerprint: stale });
-        expect(text).not.toContain('gear changed');
+        expect(text).not.toContain('build changed');
         expect(text).toContain('cached');
     });
 
@@ -3731,20 +3731,22 @@ describe('the stale-gear marker on a cached room tile', () => {
         setGear({ 1: axe });
         const text = noteFor({ fromPersistedCache: true, computedAt: Date.now() - 2 * 60 * 60 * 1000 });
         expect(text).toContain('cached');
-        expect(text).not.toContain('gear changed');
+        expect(text).not.toContain('build changed');
     });
 
-    test('the marker names gear and nothing else', () => {
+    test('the marker names what the fingerprint checks and nothing else', () => {
         const stale = labyrinthClearRate._snapshotContentFingerprint();
         setGear({ 1: axe });
         const el = document.createElement('div');
         labyrinthClearRate._appendCacheAgeNote(el, { snapshotFingerprint: stale });
 
-        // The fingerprint covers loadouts and worn item + enhancement level and
-        // nothing else; the marker must not imply abilities or buffs are checked
-        expect(el.textContent).toBe('gear changed since this was computed');
-        expect(el.textContent).not.toMatch(/abilit|buff|level|build/i);
-        expect(el.firstChild.title).toContain('abilities and buffs are not');
+        // As of v3 the fingerprint covers loadouts, worn item + enhancement
+        // level, the seven combat levels, the ability kit and the house rooms —
+        // so "build" is now the honest word. Buffs and consumables are still
+        // outside it, and the marker must not imply they were checked
+        expect(el.textContent).toBe('build changed since this was computed');
+        expect(el.textContent).not.toMatch(/buff|tea|drink|food/i);
+        expect(el.firstChild.title).toContain('buffs and consumables are not');
     });
 });
 
@@ -3896,6 +3898,118 @@ describe('the build fingerprint', () => {
     test('a stored v1 fingerprint reads as a gear change, so its cached sims are re-simmed', () => {
         const stored = labyrinthClearRate._hashString('anything the old definition produced');
         expect(gearChangedSince(stored, labyrinthClearRate._snapshotContentFingerprint(), true)).toBe(true);
+    });
+
+    describe('what v3 added: abilities and house rooms', () => {
+        /** The DTO shape `_simBuildInputs` reads its two new parts off */
+        const dto = (over = {}) => ({
+            abilities: [
+                { hrid: '/abilities/berserk', level: 20, triggers: null },
+                { hrid: '/abilities/cleave', level: 15, triggers: null },
+                null,
+                null,
+                null,
+            ],
+            houseRooms: { '/house_rooms/gym': 5, '/house_rooms/dairy_barn': 0 },
+            drinks: [{ hrid: '/items/super_magic_coffee', triggers: null }, null, null],
+            food: [null, null, null],
+            ...over,
+        });
+
+        beforeEach(() => {
+            dataManagerMock.characterData = { characterAbilities: [] };
+            dataManagerMock.getInitClientData.mockReturnValue({ itemDetailMap: {} });
+            adapterMock.buildPlayerDTO.mockReturnValue(dto());
+        });
+
+        afterEach(() => {
+            dataManagerMock.characterData = null;
+            dataManagerMock.getInitClientData.mockReturnValue(null);
+            adapterMock.buildPlayerDTO.mockReset();
+        });
+
+        test('swapping an equipped ability moves the fingerprint, gear and levels held still', () => {
+            const before = labyrinthClearRate._snapshotContentFingerprint();
+            adapterMock.buildPlayerDTO.mockReturnValue(
+                dto({
+                    abilities: [
+                        { hrid: '/abilities/berserk', level: 20, triggers: null },
+                        { hrid: '/abilities/precision', level: 15, triggers: null },
+                        null,
+                        null,
+                        null,
+                    ],
+                })
+            );
+            expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+        });
+
+        test('an ability levelling up moves it too', () => {
+            const before = labyrinthClearRate._snapshotContentFingerprint();
+            adapterMock.buildPlayerDTO.mockReturnValue(
+                dto({
+                    abilities: [
+                        { hrid: '/abilities/berserk', level: 21, triggers: null },
+                        { hrid: '/abilities/cleave', level: 15, triggers: null },
+                        null,
+                        null,
+                        null,
+                    ],
+                })
+            );
+            expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+        });
+
+        test('a house room level moves it, and a room standing at 0 does not', () => {
+            const before = labyrinthClearRate._snapshotContentFingerprint();
+            adapterMock.buildPlayerDTO.mockReturnValue(
+                dto({ houseRooms: { '/house_rooms/gym': 6, '/house_rooms/dairy_barn': 0 } })
+            );
+            expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+
+            // Player.createFromDTO skips level 0, so an unbuilt room is not part
+            // of the build and must not be part of the hash
+            adapterMock.buildPlayerDTO.mockReturnValue(dto({ houseRooms: { '/house_rooms/gym': 5 } }));
+            expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(before);
+        });
+
+        test('changing a tea or a drink does NOT move it', () => {
+            // Deliberate: consumables change several times an hour, so hashing
+            // them would restart the cohort before it could ever reach the
+            // fights a reading needs, and every reading would read "too few to
+            // call" forever
+            const before = labyrinthClearRate._snapshotContentFingerprint();
+            adapterMock.buildPlayerDTO.mockReturnValue(
+                dto({
+                    drinks: [{ hrid: '/items/super_magic_tea', triggers: null }, null, null],
+                    food: [{ hrid: '/items/orange_gummy', triggers: null }, null, null],
+                })
+            );
+            expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(before);
+        });
+
+        test('a loadout-named ability levelling up moves it with the equipped kit untouched', () => {
+            // A loadout room sims the snapshot's abilities at the character's
+            // current levels, which the snapshot itself does not carry
+            setGear({ 1: { ...sword, abilities: [{ abilityHrid: '/abilities/toughness' }] } });
+            dataManagerMock.characterData = {
+                characterAbilities: [{ abilityHrid: '/abilities/toughness', level: 7 }],
+            };
+            const before = labyrinthClearRate._snapshotContentFingerprint();
+
+            dataManagerMock.characterData = {
+                characterAbilities: [{ abilityHrid: '/abilities/toughness', level: 8 }],
+            };
+            expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+        });
+
+        test('a build that cannot be read yet is a placeholder, not an empty kit', () => {
+            // Callers gate on snapshotsReady, so the placeholder is never
+            // mistaken for a character who has unequipped everything
+            const read = labyrinthClearRate._snapshotContentFingerprint();
+            adapterMock.buildPlayerDTO.mockReturnValue(null);
+            expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(read);
+        });
     });
 });
 

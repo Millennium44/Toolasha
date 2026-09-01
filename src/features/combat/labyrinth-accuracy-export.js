@@ -76,7 +76,8 @@ export function exportMeta() {
         // How the fingerprints in this file were computed, so a reader knows
         // what a matching pair of them does and does not guarantee, and which
         // definition produced them — attempts carry their own version, and one
-        // without the field was fingerprinted under v1 (gear only)
+        // without the field was fingerprinted under v1 (gear only); the spec
+        // string names what the version in force actually hashes
         fingerprintSpec: FINGERPRINT_SPEC,
         fingerprintVersion: FINGERPRINT_VERSION,
     };

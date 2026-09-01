@@ -195,6 +195,19 @@ describe('labyrinth fight recorder', () => {
         expect(current).toHaveLength(120);
     });
 
+    test('a v2 record is legacy under v3, kept and counted but never pooled', async () => {
+        seedStored([{ ...legacyStored({ recordId: 'v2-one' }), fingerprintVersion: 2 }]);
+        recorder.forget();
+        await recorder.load();
+        recorder.noteAttempt(attempt());
+
+        const status = recorder.recordingStatus();
+        expect(status.total).toBe(2);
+        // Kept and shown, and counted apart — the v2 cohort is not deleted
+        expect(status.legacyFingerprint).toBe(1);
+        expect(recorder.recordedAttempts().some((a) => a.recordId === 'v2-one')).toBe(true);
+    });
+
     test('clearing empties the pool', () => {
         recorder.noteAttempt(attempt());
         recorder.clearRecording();

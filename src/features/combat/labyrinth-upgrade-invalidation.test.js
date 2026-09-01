@@ -10,7 +10,14 @@ import {
     describeInvalidatedRooms,
     CLOSE_TO_BAR_PP,
 } from './labyrinth-upgrade-invalidation.js';
-import { FINGERPRINT_PREFIX, combatLevelsPart, fingerprintInput, tagFingerprint } from './labyrinth-fingerprint.js';
+import {
+    FINGERPRINT_PREFIX,
+    abilitiesPart,
+    combatLevelsPart,
+    fingerprintInput,
+    houseRoomsPart,
+    tagFingerprint,
+} from './labyrinth-fingerprint.js';
 
 /**
  * The djb2 hash `labyrinth-recommendation.js` uses, standing in for the live
@@ -71,9 +78,17 @@ describe('the fingerprint delta', () => {
      * @param {Object|null} [levels] - Combat skill levels
      * @returns {string}
      */
-    const liveFingerprint = (levels = null) =>
+    const liveFingerprint = (levels = null, abilities = null, houseRooms = null) =>
         tagFingerprint(
-            hash(fingerprintInput({ stored, worn: wornFingerprintInput(loadouts), levels: combatLevelsPart(levels) }))
+            hash(
+                fingerprintInput({
+                    stored,
+                    worn: wornFingerprintInput(loadouts),
+                    levels: combatLevelsPart(levels),
+                    abilities: abilitiesPart(abilities),
+                    houseRooms: houseRoomsPart(houseRooms),
+                })
+            )
         );
 
     test('an enhancement candidate replaces the worn item at its level', () => {
@@ -183,6 +198,38 @@ describe('the fingerprint delta', () => {
         expect(projected).toBe(current);
         // And a projection against a different set of levels does not
         expect(projected).not.toBe(liveFingerprint({ ...levels, melee: 100 }));
+    });
+
+    test('the projection carries the ability kit and the house rooms through too', () => {
+        // Both are hashed as of v3. A projection that dropped either would
+        // differ from the live value on every gear row, which is exactly the
+        // failure mode that made the levels worth carrying in v2.
+        const levels = { stamina: 90, intelligence: 80, attack: 95, defense: 92, melee: 99, ranged: 1, magic: 1 };
+        const abilities = {
+            equipped: [null, { hrid: '/abilities/quick_shot', level: 12, triggers: null }, null, null, null],
+            learned: { '/abilities/quick_shot': 12 },
+        };
+        const houseRooms = { '/house_rooms/archery_range': 8, '/house_rooms/dairy_barn': 0 };
+        const noop = {
+            type: 'tier',
+            currentHrid: '/items/spear',
+            currentLevel: 0,
+            upgradeHrid: '/items/better_spear',
+            upgradeLevel: 0,
+        };
+
+        const projected = projectedFingerprint({ stored, loadouts, levels, abilities, houseRooms }, noop, hash);
+        expect(projected).toBe(liveFingerprint(levels, abilities, houseRooms));
+
+        // A different ability level, and a different house room level, each move it
+        const levelled = { ...abilities, learned: { '/abilities/quick_shot': 13 } };
+        expect(
+            projectedFingerprint({ stored, loadouts, levels, abilities: levelled, houseRooms }, noop, hash)
+        ).not.toBe(projected);
+        const built = { ...houseRooms, '/house_rooms/archery_range': 9 };
+        expect(projectedFingerprint({ stored, loadouts, levels, abilities, houseRooms: built }, noop, hash)).not.toBe(
+            projected
+        );
     });
 
     test('a projected fingerprint is version-tagged like the live one', () => {

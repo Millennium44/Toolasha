@@ -7273,9 +7273,10 @@ class CombatSimUI {
      * statements about the cache, not predictions about the rooms.
      *
      * Silent on a candidate outside the fingerprint's coverage. A house room, an
-     * ability swap or a combat level changes nothing the fingerprint hashes, so
-     * there is no mechanism to report — and "would stale 0 cached rooms" on
-     * those rows would imply there was one.
+     * ability swap or a combat level does move the fingerprint, but nothing here
+     * can model what the changed build would hash to, so those rows say nothing
+     * rather than reporting a projection they cannot make — and "would stale 0
+     * cached rooms" on them would claim the opposite of the truth.
      *
      * @param {Object} r - Result row
      * @returns {string} HTML, empty when there is nothing true to say
@@ -7326,8 +7327,9 @@ class CombatSimUI {
      * and the current fingerprint, which between them change on every event that
      * could make the answer stale.
      *
-     * @returns {Object|null} `{stored, loadouts, levels, current, entries, targetRate, hash}`,
-     *   or null when the labyrinth bundle is absent or the cache is empty
+     * @returns {Object|null} `{stored, loadouts, levels, abilities, houseRooms, current,
+     *   entries, targetRate, hash}`, or null when the labyrinth bundle is absent
+     *   or the cache is empty
      * @private
      */
     _invalidationContext() {
@@ -7360,14 +7362,18 @@ class CombatSimUI {
             entries.push({ key, result });
         }
 
+        // The parts of the hashed input a gear candidate does not move. The
+        // projection carries all of them through unchanged — without any one of
+        // them the projected value would differ from `current` on every row and
+        // every candidate would read as cache-invalidating.
+        const build = lab._simBuildInputs?.() ?? null;
+
         const context = {
             stored,
             loadouts,
-            // The third half of the hashed input. A gear candidate moves no
-            // level, so the projection carries the live map through unchanged —
-            // without it the projected value would differ from `current` on
-            // every row and every candidate would read as cache-invalidating.
             levels: lab._combatSkillLevels?.() ?? null,
+            abilities: build?.abilities ?? null,
+            houseRooms: build?.houseRooms ?? null,
             current,
             entries,
             targetRate: (lab.getRecommendTargetPct?.() || 70) / 100,

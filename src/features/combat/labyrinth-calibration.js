@@ -59,11 +59,12 @@ export const CALIBRATION_BANDS = [
  * monster abilities carry it, older records do not. Their predictions came from
  * a different model.
  *
- * `fingerprintVersion`: attempts recorded since the fingerprint learned about
- * combat skill levels carry the current one, older records read as version 1.
- * Those were pooled by gear alone, so a level-up moved the sim's answer without
- * moving their fingerprint — and comparing them against a sim of the character
- * you are now is comparing against a different character.
+ * `fingerprintVersion`: attempts carry the version they were fingerprinted
+ * under, and only the current one passes. A v1 record was pooled by gear alone,
+ * so a level-up moved the sim's answer without moving its fingerprint; a v2
+ * record was pooled by gear and levels, so an ability swap or a house room did
+ * the same. Either way, comparing one against a sim of the character you are
+ * now is comparing against a different character.
  *
  * The excluded halves are returned rather than dropped, so a caller can count
  * each in a note and say which kind of exclusion it is looking at. `legacy` is

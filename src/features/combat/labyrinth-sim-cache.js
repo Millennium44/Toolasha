@@ -44,21 +44,22 @@ import { scriptVersion } from '../../utils/script-version.js';
 const TRIAL_PROBE_ZONE = '/actions/combat/fly';
 
 /**
- * What a tile says when the gear it was simmed under is not the gear worn now.
+ * What a tile says when the build it was simmed under is not the build now.
  *
- * The wording is deliberately narrow, and pinned by a test. The fingerprint
- * behind it is {@link FINGERPRINT_SPEC} — loadout snapshots plus the worn
- * item and enhancement level — and it does **not** cover levels, abilities or
- * buffs. A marker reading "your build changed" would be claiming a check that
- * is not made; "gear changed" claims exactly the one that is.
+ * The wording is deliberately narrow, and pinned by a test: it names exactly
+ * what {@link FINGERPRINT_SPEC} checks and nothing beyond it. Under v1 that was
+ * gear alone and the marker said "gear changed"; v2 added the combat skill
+ * levels and v3 the ability kit and house rooms, so the check is now a build
+ * check and the marker says so. Buffs and consumables are still outside it, and
+ * the tooltip says which way that cuts rather than leaving it to be assumed.
  */
-export const GEAR_CHANGED_MARK = 'gear changed since this was computed';
+export const GEAR_CHANGED_MARK = 'build changed since this was computed';
 
 /** The longer form, for the marker's own tooltip */
 export const GEAR_CHANGED_DETAIL =
-    'This result was simulated with different equipment. Equipment and enhancement levels are compared — ' +
-    'skill levels, abilities and buffs are not, so a change to those is not detected here. Press Recompute ' +
-    'to sim the rooms again.';
+    'This result was simulated against a different build. Equipment and enhancement levels, combat skill ' +
+    'levels, the ability kit and house rooms are compared — buffs and consumables are not, so a change to ' +
+    'those is not detected here. Press Recompute to sim the rooms again.';
 
 /**
  * Whether a cached result should be marked as computed under different gear.

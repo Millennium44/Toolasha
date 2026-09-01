@@ -1464,6 +1464,60 @@ class LabyrinthClearRate {
     }
 
     /**
+     * The learned level of every ability any labyrinth loadout names.
+     *
+     * A room with a loadout assigned does not sim the equipped kit:
+     * `applyLoadoutSnapshotToDTO` takes the ability *set* from the snapshot and
+     * each one's *level* from `characterData.characterAbilities`. The snapshot
+     * carries no level, so without this a levelled ability would change every
+     * loadout room's sim and change nothing in the fingerprint. Restricted to
+     * the abilities loadouts actually name — the full learned book would drop
+     * the whole combat cache when an ability nothing equips went up.
+     * @private
+     * @returns {Object} abilityHrid → learned level
+     */
+    _loadoutAbilityLevels() {
+        const named = new Set();
+        for (const snapshot of Object.values(loadoutSnapshot.snapshots || {})) {
+            for (const ability of snapshot?.abilities || []) {
+                if (ability?.abilityHrid) named.add(ability.abilityHrid);
+            }
+        }
+        if (named.size === 0) return {};
+
+        const levels = {};
+        for (const ability of dataManager.characterData?.characterAbilities || []) {
+            if (ability?.abilityHrid && named.has(ability.abilityHrid)) {
+                levels[ability.abilityHrid] = Number(ability.level) || 1;
+            }
+        }
+        return levels;
+    }
+
+    /**
+     * The ability kit and house rooms the sim would run, read off the DTO
+     * builder rather than re-derived.
+     *
+     * Going through `buildPlayerDTO` is the point: it is the only thing that
+     * decides which ability lands in which slot and what a house room's level
+     * reads as, and a second copy of that logic here would drift and silently
+     * stop matching the build being simulated. Null when there is nothing to
+     * read yet — `buildPlayerDTO` logs and returns null without character or
+     * client data, so both are checked first rather than provoking it.
+     * @private
+     * @returns {{abilities: Object, houseRooms: Object}|null}
+     */
+    _simBuildInputs() {
+        if (!dataManager.characterData || !dataManager.getInitClientData?.()) return null;
+        const dto = buildPlayerDTO();
+        if (!dto) return null;
+        return {
+            abilities: { equipped: dto.abilities, learned: this._loadoutAbilityLevels() },
+            houseRooms: dto.houseRooms,
+        };
+    }
+
+    /**
      * Get the player's effective combat level (used as base for skip threshold
      * calculations). The game computes room level as:
      * playerEffectiveCombatLevel + skipThreshold - 1.
@@ -4694,9 +4748,10 @@ class LabyrinthClearRate {
      * Recompute and re-sim everything, including the rooms that had not changed.
      *
      * The comparison is the fingerprint the recommendation invalidation already
-     * keeps ({@link FINGERPRINT_SPEC}): loadout snapshots plus each worn item
-     * and its enhancement level. It sees nothing else, and the marker says
-     * nothing else — see {@link GEAR_CHANGED_MARK}.
+     * keeps ({@link FINGERPRINT_SPEC}): loadout snapshots, each worn item and
+     * its enhancement level, the seven combat skill levels, the ability kit and
+     * the house rooms. It sees nothing else — buffs and consumables are out —
+     * and the marker says nothing else, see {@link GEAR_CHANGED_MARK}.
      *
      * When it marks, it marks *instead of* the age rather than beside it: a
      * result whose gear no longer holds is not stale-ish, and how long ago it

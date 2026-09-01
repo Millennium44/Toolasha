@@ -121,10 +121,10 @@ export function readFloorRooms(roomData) {
  * variance — accumulated against the predictions in effect at the time. Those
  * predictions were made for a character the old fingerprint described and the
  * new one does not: v1 hashed gear alone, so folds from either side of a combat
- * level-up went into the same sums as though nothing had changed. There is no
- * way to unpick which fold belongs to which side, so the whole cohort is
- * retired and a fresh one starts. Averaging across the boundary is the one
- * outcome not on offer.
+ * level-up went into the same sums as though nothing had changed, and v2 did
+ * the same across an ability swap or a house room. There is no way to unpick
+ * which fold belongs to which side, so the whole cohort is retired and a fresh
+ * one starts. Averaging across the boundary is the one outcome not on offer.
  *
  * `legacyCohortJudged` accumulates what has been retired, so the count is
  * reported rather than lost. `attempts` and `clears` are the server's own count

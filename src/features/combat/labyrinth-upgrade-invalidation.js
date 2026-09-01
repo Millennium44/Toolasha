@@ -30,18 +30,26 @@
  *
  * ## Coverage
  *
- * The fingerprint hashes loadout snapshots, worn item+enhancement, and the
- * seven combat skill levels the sim reads; it excludes skilling levels,
- * abilities and buffs. So a house candidate, an ability swap, a drink or a
- * community buff changes nothing it hashes, and this says *nothing at all* on
- * those rows — not "0 rooms", which would be a claim about a mechanism that
- * does not apply to them. Only worn-item and enhancement candidates are in
- * coverage. A combat level now IS in the fingerprint, but no advisor candidate
- * offers one, so the projection holds the levels still and reports only what
- * the gear change alone would stale.
+ * The fingerprint hashes loadout snapshots, worn item+enhancement, the seven
+ * combat skill levels the sim reads, the equipped ability kit and the house
+ * rooms; it excludes skilling levels, buffs and consumables. So a drink, a
+ * community buff or a shrine candidate changes nothing it hashes, and this says
+ * *nothing at all* on those rows — not "0 rooms", which would be a claim about
+ * a mechanism that does not apply to them. Only worn-item and enhancement
+ * candidates are in coverage. Combat levels, abilities and house rooms are all
+ * IN the fingerprint now, but the projection has no way to model what an
+ * ability or house candidate would do to a sim, so it holds all three still and
+ * reports only what the gear change alone would stale — and `isGearCandidate`
+ * keeps those rows silent rather than letting them read as "changes nothing".
  */
 
-import { combatLevelsPart, fingerprintInput, tagFingerprint } from './labyrinth-fingerprint.js';
+import {
+    abilitiesPart,
+    combatLevelsPart,
+    fingerprintInput,
+    houseRoomsPart,
+    tagFingerprint,
+} from './labyrinth-fingerprint.js';
 
 /** Candidate types whose change lands on worn gear, and so on the fingerprint */
 export const GEAR_CANDIDATE_TYPES = Object.freeze(['tier', 'enhancement', 'cross_slot']);
@@ -147,23 +155,37 @@ export function wornFingerprintInput(loadouts) {
  * equal the live value, and the advisor would report every candidate as
  * invalidating the whole cache.
  *
- * A gear candidate moves no combat level, so `levels` passes through unchanged
- * — it is the current build's, which is exactly what a gear-only projection
- * should hold still.
+ * A gear candidate moves no combat level, no ability and no house room, so
+ * `levels`, `abilities` and `houseRooms` all pass through unchanged — they are
+ * the current build's, which is exactly what a gear-only projection should hold
+ * still. Carrying them through the same shared part-builders matters as much as
+ * carrying them at all: a projection that omitted one would differ from the
+ * live value on every row, and every candidate would read as staling the cache.
  *
- * @param {Object} current - The three halves the live fingerprint hashes
+ * @param {Object} current - The parts the live fingerprint hashes
  * @param {string} current.stored - Snapshot JSON with `savedAt` stripped
  * @param {Array<Array<Object>>} current.loadouts - Resolved equipment per loadout
  * @param {Object|null} current.levels - The combat skill level map, as
  *   `_combatSkillLevels` returns it; null when the levels could not be read
+ * @param {Object|null} current.abilities - `{equipped, learned}`, as
+ *   `_simBuildInputs` returns it; null when the build could not be read
+ * @param {Object|null} current.houseRooms - houseRoomHrid → level
  * @param {Object} candidate - A gear candidate
  * @param {Function} hash - The djb2 hasher the live fingerprint uses
  * @returns {string} The projected fingerprint, version-tagged
  */
-export function projectedFingerprint({ stored, loadouts, levels }, candidate, hash) {
+export function projectedFingerprint({ stored, loadouts, levels, abilities, houseRooms }, candidate, hash) {
     const projected = (loadouts || []).map((equipment) => applyGearCandidate(equipment, candidate));
     return tagFingerprint(
-        hash(fingerprintInput({ stored, worn: wornFingerprintInput(projected), levels: combatLevelsPart(levels) }))
+        hash(
+            fingerprintInput({
+                stored,
+                worn: wornFingerprintInput(projected),
+                levels: combatLevelsPart(levels),
+                abilities: abilitiesPart(abilities ?? null),
+                houseRooms: houseRoomsPart(houseRooms ?? null),
+            })
+        )
     );
 }
 

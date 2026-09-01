@@ -26,10 +26,11 @@
  *
  * The fingerprint's own definition changes over time — v2 added the combat
  * skill levels the sim reads, because a level-up moves the sim's answer without
- * moving an item. Each attempt is stamped with the version it was fingerprinted
- * under, and readings never pool across versions: a v1 fight and a v2 fight are
- * fights against two different characters as far as the sim is concerned. The
- * v1 cohort is kept, shown and counted — never deleted.
+ * moving an item; v3 added the ability kit and the house rooms, for the same
+ * reason. Each attempt is stamped with the version it was fingerprinted under,
+ * and readings never pool across versions: a v1, a v2 and a v3 fight are fights
+ * against three different characters as far as the sim is concerned. Every
+ * older cohort is kept, shown and counted — never deleted.
  *
  * ## Bounded
  *
@@ -40,11 +41,12 @@
  * from starving the new cohort: a pre-migration attempt is by construction
  * older than every post-migration one, so it is always among the first to fall
  * off. There is deliberately no per-version reservation — reserving space for
- * the old cohort would let a stale version hold 250 slots forever, and the
+ * the old cohort would let a stale version hold half the slots forever, and the
  * whole point of the cap is that history ages out. What a migration therefore
- * costs is that the v1 cohort shrinks as v2 fills, and once 500 v2 fights have
- * accumulated the v1 records are gone. That is the intended end state: they are
- * kept while they are the only history there is, and retired once they are not.
+ * costs is that the older cohort shrinks as the new one fills, and once
+ * MAX_ATTEMPTS current-version fights have accumulated the older records are
+ * gone. That is the intended end state: they are kept while they are the only
+ * history there is, and retired once they are not.
  */
 
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';

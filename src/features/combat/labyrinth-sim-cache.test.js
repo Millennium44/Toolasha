@@ -225,10 +225,12 @@ describe('gearChangedSince', () => {
         // FINGERPRINT_SPEC hashes loadout snapshots plus worn item and
         // enhancement level, and explicitly excludes levels, abilities and
         // buffs. The wording must not imply otherwise.
-        expect(GEAR_CHANGED_MARK).toBe('gear changed since this was computed');
-        expect(GEAR_CHANGED_MARK).not.toMatch(/abilit|buff|level|build/i);
+        expect(GEAR_CHANGED_MARK).toBe('build changed since this was computed');
+        // Still no claim about what it cannot see: buffs and consumables are
+        // outside the fingerprint, so the marker may not imply it checked them
+        expect(GEAR_CHANGED_MARK).not.toMatch(/buff|tea|drink|food/i);
         // The longer form is allowed to name them, but only to say they are NOT checked
-        expect(GEAR_CHANGED_DETAIL).toContain('abilities and buffs are not');
+        expect(GEAR_CHANGED_DETAIL).toContain('buffs and consumables are not');
     });
 });
 

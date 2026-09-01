@@ -14,7 +14,13 @@ import dataManager from '../../core/data-manager.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import { getAnnotationContainer } from './labyrinth-annotations.js';
 import { SKIP_THRESHOLD_RANGE } from './labyrinth-formulas.js';
-import { combatLevelsPart, fingerprintInput, tagFingerprint } from './labyrinth-fingerprint.js';
+import {
+    abilitiesPart,
+    combatLevelsPart,
+    fingerprintInput,
+    houseRoomsPart,
+    tagFingerprint,
+} from './labyrinth-fingerprint.js';
 
 export const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 export const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
@@ -179,16 +185,17 @@ export const recommendationMethods = {
 
     /**
      * Fingerprint of the build a sim would run: loadout snapshot contents (gear
-     * + enhancement levels) and the seven combat skill levels the sim reads.
+     * + enhancement levels), the seven combat skill levels the sim reads, the
+     * equipped ability slots and the house rooms.
      * savedAt is excluded — snapshots are rebuilt with a fresh timestamp every
      * time the game re-broadcasts loadouts (e.g. when the lab equips the next
      * room's loadout), which is not a content change.
      *
      * Inputs and algorithm are pinned by {@link FINGERPRINT_SPEC}: stored
      * records key on the value, so neither may change *within a version*. The
-     * value carries its version — `v2:<hash>` — so a record made under the
-     * gear-only v1 can never match one made now, and nothing pools across the
-     * change by accident.
+     * value carries its version — `v3:<hash>` — so a record made under the
+     * gear-only v1 or the gear+levels v2 can never match one made now, and
+     * nothing pools across a change by accident.
      * @private
      */
     _snapshotContentFingerprint() {
@@ -209,7 +216,18 @@ export const recommendationMethods = {
                 )
                 .join('|');
             const levels = this._combatLevelsFingerprintPart();
-            return tagFingerprint(this._hashString(fingerprintInput({ stored, worn, levels })));
+            const build = this._simBuildInputs?.() ?? null;
+            return tagFingerprint(
+                this._hashString(
+                    fingerprintInput({
+                        stored,
+                        worn,
+                        levels,
+                        abilities: abilitiesPart(build?.abilities ?? null),
+                        houseRooms: houseRoomsPart(build?.houseRooms ?? null),
+                    })
+                )
+            );
         } catch {
             // Unhashable → treat as changed so stale sims never survive. Still
             // version-tagged: an untagged value would read as a v1 fingerprint.
