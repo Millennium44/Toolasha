@@ -16,6 +16,9 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const world = vi.hoisted(() => ({
     settings: { actions_budgetCalculator: true },
+    gameData: null,
+    prices: {},
+    materials: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -24,13 +27,14 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => null },
+    default: { getInitClientData: () => world.gameData },
 }));
 vi.mock('../../api/marketplace.js', () => ({
-    default: { getPrice: () => null },
+    default: { getPrice: (hrid) => world.prices[hrid] ?? null },
 }));
 vi.mock('../../utils/material-calculator.js', () => ({
-    calculateMaterialRequirements: () => [],
+    calculateMaterialRequirements: (_hrid, n) =>
+        world.materials.map((m) => ({ ...m, required: m.perUnit * n, missing: Math.max(0, m.perUnit * n - m.have) })),
 }));
 vi.mock('../../utils/react-input.js', () => ({
     setReactInputValue: () => {},
@@ -70,6 +74,9 @@ function mountPanel() {
 beforeEach(() => {
     document.body.innerHTML = '';
     dispatcher.callback = null;
+    world.gameData = null;
+    world.prices = {};
+    world.materials = [];
 });
 
 afterEach(() => {
@@ -106,5 +113,56 @@ describe('budget calculator panel observer teardown', () => {
         await Promise.resolve();
 
         expect(panel.querySelector('#mwi-budget-calculator')).toBeNull();
+    });
+});
+
+describe('budget calculator unpriced materials', () => {
+    const ACTION = '/actions/cooking/omelette';
+
+    /** A production recipe whose second ingredient has no market ask. */
+    function stageRecipe() {
+        world.gameData = {
+            actionDetailMap: {
+                [ACTION]: {
+                    type: '/action_types/cooking',
+                    inputItems: [{ itemHrid: '/items/egg' }, { itemHrid: '/items/truffle' }],
+                },
+            },
+            itemDetailMap: {
+                '/items/egg': { isTradable: true },
+                '/items/truffle': { isTradable: true },
+            },
+        };
+        world.prices = { '/items/egg': { ask: 10 } };
+        world.materials = [
+            { itemHrid: '/items/egg', itemName: 'Egg', perUnit: 1, have: 0, isTradeable: true },
+            { itemHrid: '/items/truffle', itemName: 'Truffle', perUnit: 1, have: 0, isTradeable: true },
+        ];
+    }
+
+    /** Click Calculate with a budget and hand back the breakdown modal. */
+    function calculate(budget) {
+        budgetCalculator.initialize();
+        dispatcher.callback(resolveDetailPanel(mountPanel()));
+        const ui = document.getElementById('mwi-budget-calculator');
+        ui.querySelector('input').value = String(budget);
+        ui.querySelector('button').click();
+        return document.getElementById('mwi-budget-modal-overlay');
+    }
+
+    test('warns that the unit count is an upper bound when a needed material has no price', () => {
+        stageRecipe();
+        // Only the egg is charged for, so 1000g "affords" 100 omelettes — the truffles are free
+        const modal = calculate(1000);
+        expect(modal.textContent).toContain('100 units');
+        expect(modal.querySelector('#mwi-budget-unpriced-note')).not.toBeNull();
+    });
+
+    test('stays quiet when every material a shortfall covers is priced', () => {
+        stageRecipe();
+        world.prices['/items/truffle'] = { ask: 40 };
+        const modal = calculate(1000);
+        expect(modal.textContent).toContain('20 units');
+        expect(modal.querySelector('#mwi-budget-unpriced-note')).toBeNull();
     });
 });

@@ -171,12 +171,16 @@ function showBreakdownModal(budget, result) {
 
     let totalSpend = 0;
     let perUnitCost = 0;
+    // The binary search charges nothing for a tradeable material the market has no ask for,
+    // so a shortfall in one of those makes the unit count an upper bound, not a promise.
+    let hasUnpricedShortfall = false;
 
     const rows = result.materials
         .map((mat) => {
             const price = mat.isTradeable ? marketAPI.getPrice(mat.itemHrid) : null;
             const ask = price?.ask > 0 ? price.ask : null;
             const lineCost = ask && mat.missing > 0 ? mat.missing * ask : 0;
+            if (mat.isTradeable && mat.missing > 0 && !ask) hasUnpricedShortfall = true;
             totalSpend += lineCost;
             if (ask) perUnitCost += ask * (mat.required / (result.n || 1));
 
@@ -236,6 +240,20 @@ function showBreakdownModal(budget, result) {
 
     modal.appendChild(header);
     modal.appendChild(tableWrap);
+
+    if (hasUnpricedShortfall) {
+        const note = document.createElement('div');
+        note.id = 'mwi-budget-unpriced-note';
+        note.style.cssText = `
+            margin-top: 12px; padding: 7px 10px; border-radius: 4px;
+            background: rgba(232,168,124,0.12); border: 1px solid rgba(232,168,124,0.35);
+            color: #e8a87c; font-size: 12px;
+        `;
+        note.textContent =
+            'Some materials you still need have no market data and were counted as free — ' +
+            'the unit figure above is an upper bound, not a price you can actually pay.';
+        modal.appendChild(note);
+    }
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
