@@ -17,6 +17,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     charId: 'me',
+    buildHold: null,
     characterData: { character: { id: 'me', name: 'Milkman' } },
     selfDTO: null,
     allPlayers: null,
@@ -38,7 +39,11 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({ itemDetailMap: {}, abilityDetailMap: {}, houseRoomDetailMap: {} }),
-    buildAllPlayerDTOs: async () => game.allPlayers,
+    buildAllPlayerDTOs: async () => {
+        // A build left open, so a test can land a character switch inside one
+        if (game.buildHold) await game.buildHold;
+        return game.allPlayers;
+    },
     buildPlayerDTO: () => (game.selfDTO ? structuredClone(game.selfDTO) : null),
     parseShykaiImport: () => null,
     // The real one returns false for a name no snapshot answers to, which is
@@ -111,6 +116,7 @@ beforeEach(() => {
     settings.values.clear();
     settings.hold = null;
     game.charId = 'me';
+    game.buildHold = null;
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
@@ -353,6 +359,45 @@ describe('loadout picker reads the fed store, not this bundle', () => {
  * remembered per character and re-applied through the same path a manual pick
  * takes — and only for this character's own DTO.
  */
+describe('the editor is built for one character', () => {
+    test('a switch inside the DTO build leaves the editor unbuilt rather than holding the wrong gear', async () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+
+        let release;
+        game.buildHold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const building = editor.initEditor();
+        game.charId = 'iron';
+        game.buildHold = null;
+        release();
+        await building;
+
+        // Adopting would have left the departing character's gear, levels and
+        // house in the panel, with nothing to rebuild it — and a sim run from
+        // there reports another character's numbers as a measurement
+        expect(editor._editorInitialized).toBe(false);
+        expect(editor._editedDTOs).toBeNull();
+
+        // and the next build, for whoever is current, still works
+        await editor.initEditor();
+        expect(editor._editorInitialized).toBe(true);
+    });
+
+    test('a build with no character logged in either side is still adopted', async () => {
+        // The guard compares the id, it does not require one: a pre-login
+        // build must not be refused for having none
+        game.charId = null;
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+
+        await editor.initEditor();
+
+        expect(editor._editorInitialized).toBe(true);
+    });
+});
+
 describe('the loadout selection is remembered', () => {
     const openEditor = async (options = {}) => {
         const el = document.createElement('div');

@@ -211,8 +211,22 @@ export class SimEditor {
         const editorArea = this._editorEl;
         if (!editorArea) return;
 
+        // Fixed before the build. `buildAllPlayerDTOs()` reads the live
+        // character, and everything below is adopted after it: a switch landing
+        // inside that window left the departing character's gear, levels and
+        // house in the rebuilt panel's editor, with `_editorInitialized` set so
+        // nothing rebuilt it. A sim run from there reports the wrong
+        // character's numbers as a measurement, and reads as one.
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
+
         try {
             const { players, playerInfo, selfHrid, missingMembers } = await buildAllPlayerDTOs();
+            if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) {
+                // Left uninitialised on purpose: the next show()/initEditor
+                // builds the arriving character's own DTOs
+                this._editorInitialized = false;
+                return;
+            }
             if (!players.length) {
                 editorArea.innerHTML =
                     '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
