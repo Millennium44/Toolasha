@@ -986,6 +986,112 @@ describe('one press, one game click', () => {
     });
 });
 
+describe('a discarded slot is done with, not walked again', () => {
+    /**
+     * The game's answer to a discard: the slot keeps its place and a brand new
+     * task drops into it, reroll counts back to zero.
+     * @param {HTMLElement} list - The task list
+     * @param {number} slot - 1-based card position
+     * @param {string} name - The arriving task's name
+     */
+    function refill(list, slot, name) {
+        list.children[slot - 1].querySelector('[class*="RandomTask_name"]').textContent = name;
+        let questFiber = document.getElementById('root')._reactRootContainer.current.child;
+        for (let i = 0; i < slot - 1; i++) questFiber = questFiber.sibling;
+        questFiber.memoizedProps.characterQuest = quest(MILKING);
+        setButtons(list, slot, AT_REST);
+    }
+
+    test('the task that drops into the discarded slot is not walked as if it were the card', async () => {
+        // The treadmill: with the index left on the discarded slot, the walk
+        // planned the replacement's fresh 10K/1 ladder, rerolled it to the cap,
+        // discarded it, and went round again — for as long as the player kept
+        // pressing, never reaching card #2.
+        stored.values.taskCapCoinThreshold_7 = 10000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        const list = board([
+            { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
+            { name: 'Cooking - Stew', buttons: AT_REST, quest: quest('/actions/cooking/stew') },
+        ]);
+        await walk.start();
+
+        walk.advance();
+        setButtons(list, 1, ['Confirm Discard']);
+        vi.advanceTimersByTime(200);
+        walk.advance();
+
+        refill(list, 1, 'Tanning - Hide');
+        vi.advanceTimersByTime(3000);
+
+        expect(walk.tally.trashed).toBe(1);
+        expect(chipText()).toContain('#2');
+        expect(chipText()).not.toContain('#1');
+    });
+
+    test('the running spend stops at the task that was discarded', async () => {
+        // The chip's total against the card's own "Reroll spend" line: with the
+        // slot walked again the two could not agree, because the chip was
+        // carrying tasks that had been discarded out of that slot.
+        stored.values.taskCapCoinThreshold_7 = 20000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        const list = board([{ name: 'Milking - Cow', buttons: ['Back', '10,000'], quest: quest(MILKING) }]);
+        await walk.start();
+
+        walk.advance();
+        // The reroll lands: the chooser stays open, quoting the doubled price
+        list.children[0].querySelector('[class*="RandomTask_name"]').textContent = 'Brewing - Coffee';
+        document.getElementById('root')._reactRootContainer.current.child.memoizedProps.characterQuest = quest(
+            MILKING,
+            1,
+            0
+        );
+        setButtons(list, 1, ['Back', '20,000']);
+        vi.advanceTimersByTime(3000);
+        expect(walk.tally.goldSpent).toBe(10000);
+
+        // 20.0K is the cap now, so the task is closed up, trashed and confirmed
+        walk.advance();
+        setButtons(list, 1, AT_REST);
+        vi.advanceTimersByTime(200);
+        walk.advance();
+        setButtons(list, 1, ['Confirm Discard']);
+        vi.advanceTimersByTime(200);
+        walk.advance();
+
+        refill(list, 1, 'Tanning - Hide');
+        vi.advanceTimersByTime(3000);
+
+        expect(clicks.filter((click) => click.endsWith(':10,000'))).toHaveLength(1);
+        expect(walk.tally.goldSpent).toBe(10000);
+        expect(chipText()).toBe('✓ Done — 0 kept, 1 rerolled, 1 trashed · spent 10.0K🪙');
+    });
+
+    test('a board that got shorter instead still judges the card that moved up', async () => {
+        // The other answer to a discard: the card is removed and everything
+        // below it moves up a place, so the index is already on the next card
+        stored.values.taskCapCoinThreshold_7 = 10000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        const list = board([
+            { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
+            { name: 'Cooking - Stew', buttons: AT_REST, quest: quest('/actions/cooking/stew') },
+        ]);
+        await walk.start();
+
+        walk.advance();
+        setButtons(list, 1, ['Confirm Discard']);
+        vi.advanceTimersByTime(200);
+        walk.advance();
+
+        list.children[0].remove();
+        vi.advanceTimersByTime(3000);
+
+        expect(walk.tally.trashed).toBe(1);
+        expect(chipText()).toContain('Trash #1');
+        walk.advance();
+        expect(clicks).toContain('Cooking - Stew:trash');
+    });
+});
+
 describe('the walk replans rather than clicking the wrong thing', () => {
     test('a card that is no longer in its slot is planned again, not clicked', async () => {
         const list = board([

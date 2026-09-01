@@ -754,6 +754,7 @@ class TaskRerollWalk {
                 const { kind, currency, cost } = this.pendingBill;
                 if (kind === 'trash') {
                     this.tally.trashed += 1;
+                    this._retireDiscardedSlot(this.pendingBill);
                 } else {
                     this.tally.rerolled += 1;
                     if (Number.isFinite(cost) && cost > 0) {
@@ -999,13 +1000,41 @@ class TaskRerollWalk {
         this.pendingBill =
             planned.kind === 'pay'
                 ? { kind: 'reroll', currency: planned.currency, cost: Number(planned.cost) }
-                : { kind: 'trash', currency: null, cost: 0 };
+                : // The slot and how long the board was are what
+                  // `_retireDiscardedSlot` needs to tell a refilled slot from a
+                  // removed one once the discard lands
+                  { kind: 'trash', currency: null, cost: 0, slot: planned.slot, cardCount: this._cards().length };
         this.paidFor = {
             card: planned.card,
             questId: questForTaskCard(planned.card)?.id ?? null,
             ...this._rerollFingerprint(planned.card),
         };
         this.paidWaits = 0;
+    }
+
+    /**
+     * Walk past a slot whose task has just been discarded.
+     *
+     * A discard is the end of the walk's business with that slot, and the game
+     * refills it in place with a brand new task. Leaving the index where it was
+     * made the very next plan judge that replacement as if it were the card the
+     * walk had set out to price: a fresh 10K/1 ladder, rerolled up to the cap,
+     * discarded, refilled, and round again — one press each, so never a runaway,
+     * but an endless treadmill on one slot. The running spend piled up tasks
+     * that no longer existed, which is why the chip's total could read three
+     * times the card's own "Reroll spent" line.
+     *
+     * A board that got *shorter* is the other case: the card was removed rather
+     * than replaced, everything below it moved up a place, and the index already
+     * points at the next card to judge.
+     *
+     * @param {{slot: number, cardCount: number}} bill - The discard that just settled
+     * @private
+     */
+    _retireDiscardedSlot({ slot, cardCount }) {
+        if (!Number.isFinite(slot)) return;
+        if (this._cards().length < cardCount) return;
+        this.index = Math.max(this.index, slot);
     }
 
     /**
