@@ -27,11 +27,12 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
 import { summarizePool, poolHygiene, nearMissRemainder } from './labyrinth-replay-check.js';
+import { isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
-import { splitModelCohorts, calibrationReport } from './labyrinth-calibration.js';
+import { splitModelCohorts, calibrationReport, MIN_CALIBRATION_FIGHTS } from './labyrinth-calibration.js';
 import { exportMeta, buildAccuracyExport, sanitizeExport, downloadJson } from './labyrinth-accuracy-export.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
@@ -1986,6 +1987,26 @@ class LabyrinthRoomLogs {
             'these fields existed are counted apart rather than folded in.';
         header.appendChild(hygieneLine);
 
+        // The migration's own note. These fights are still here, still browsable
+        // and still in every export — they are simply not evidence about the
+        // character you are now, because the fingerprint they carry describes
+        // gear alone and says nothing about the levels the sim reads.
+        const legacyFingerprint = all.filter((a) => !isCurrentFingerprintVersion(a)).length;
+        if (legacyFingerprint > 0) {
+            const versionLine = document.createElement('div');
+            versionLine.style.cssText = 'color:#9fb4d8; font-size:10px; margin-top:2px;';
+            versionLine.textContent =
+                `${legacyFingerprint} of them predate the current build fingerprint — kept and readable, ` +
+                'never pooled into a rate or a reliability reading';
+            versionLine.title =
+                'The fingerprint used to hash gear alone, so fights from either side of a combat level-up ' +
+                'shared one value and were pooled as if they were fought by the same character. It now hashes ' +
+                'the seven combat skill levels the sim reads as well. Fights recorded under the old definition ' +
+                'are kept — nothing is deleted — but they are counted apart from new ones everywhere a reading ' +
+                'is produced.';
+            header.appendChild(versionLine);
+        }
+
         const save = document.createElement('button');
         save.textContent = 'Save pool';
         save.title =
@@ -2935,15 +2956,22 @@ class LabyrinthRoomLogs {
     /**
      * The reliability report: recorded attempts grouped by the clear chance
      * that was stored with each, so a band's expected clears can be read
-     * against what it delivered. Computed over the current sim-model cohort
-     * only — attempts without the model marker predate the full-kit switch and
-     * are counted in a note, never pooled.
+     * against what it delivered. Computed over the current cohort only — an
+     * attempt is in it when its prediction came from the full-kit sim model AND
+     * its fingerprint came from the current definition. Everything else is
+     * counted in a note, never pooled.
+     *
+     * A thin current cohort says "too few to call" and stops there. The
+     * tempting alternative — widening until the figure looks solid — is exactly
+     * the pooling the cohort split exists to prevent, and after a fingerprint
+     * migration it is at its most tempting, because the pool can be full of
+     * history and the cohort nearly empty.
      *
      * @param {Array<Object>} attempts - The recorder's pool, all fingerprints
      * @returns {HTMLElement}
      */
     renderReliability(attempts) {
-        const { current, legacy } = splitModelCohorts(attempts);
+        const { current, legacy, legacyModel, legacyFingerprint } = splitModelCohorts(attempts);
         const report = calibrationReport(current);
 
         const card = document.createElement('div');
@@ -2963,8 +2991,20 @@ class LabyrinthRoomLogs {
         const body = document.createElement('div');
         body.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.92);';
         if (report.count === 0) {
+            body.textContent = legacy.length
+                ? 'No fight on the current build carries a stored prediction yet — the fights below were recorded ' +
+                  'under an older sim model or an older build fingerprint and are not pooled with new ones. ' +
+                  'They accumulate again as simmed rooms are fought.'
+                : 'No recorded fight carries a stored prediction yet — they accumulate as simmed rooms are fought.';
+            card.appendChild(body);
+        } else if (!report.enough) {
+            // Honest degradation: the arithmetic ran, but a Brier score over a
+            // handful of attempts is a number and not a reading, and the way to
+            // make it one is more fights — never a wider cohort
             body.textContent =
-                'No recorded fight carries a stored prediction yet — they accumulate as simmed rooms are fought.';
+                `${report.count} fight${report.count === 1 ? '' : 's'} with a stored prediction — too few to call. ` +
+                `A reliability reading needs ${MIN_CALIBRATION_FIGHTS}; below that the spread swallows any gap ` +
+                'worth seeing.';
             card.appendChild(body);
         } else {
             const spread = report.sd ? ` — ${Math.abs(report.sigma).toFixed(1)} sd` : '';
@@ -2992,7 +3032,19 @@ class LabyrinthRoomLogs {
 
         const notes = [];
         if (report.unpredicted > 0) notes.push(`${report.unpredicted} without a stored prediction`);
-        if (legacy.length > 0) notes.push(`${legacy.length} older fights from a previous sim model excluded`);
+        // Named apart because the two exclusions are different problems with
+        // different cures: a previous sim model is gone for good, where a
+        // previous fingerprint just means those fights were fought on a build
+        // the current one no longer describes
+        if (legacyModel.length > 0) {
+            notes.push(`${legacyModel.length} older fights from a previous sim model excluded`);
+        }
+        if (legacyFingerprint.length > 0) {
+            notes.push(
+                `${legacyFingerprint.length} older fights from a previous build fingerprint excluded ` +
+                    '(kept, but recorded before combat levels were part of it)'
+            );
+        }
         if (notes.length) {
             const note = document.createElement('div');
             note.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55);';

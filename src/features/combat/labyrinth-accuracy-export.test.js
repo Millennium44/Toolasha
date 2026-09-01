@@ -21,6 +21,7 @@ import {
     setSimConfigSource,
 } from './labyrinth-accuracy-export.js';
 import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
+import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 describe('hashPlayerName', () => {
     test('is stable: the same name always hashes the same', () => {
@@ -83,7 +84,19 @@ describe('sanitizeExport', () => {
 });
 
 describe('buildAccuracyExport', () => {
-    const marked = (predicted, cleared) => ({ predicted, cleared, model: { fullKit: true, version: '4.0.0' } });
+    const marked = (predicted, cleared) => ({
+        predicted,
+        cleared,
+        model: { fullKit: true, version: '4.0.0' },
+        fingerprintVersion: FINGERPRINT_VERSION,
+    });
+
+    /** Current sim model, but recorded under the gear-only fingerprint */
+    const oldFingerprint = (predicted, cleared) => ({
+        predicted,
+        cleared,
+        model: { fullKit: true, version: '4.0.0' },
+    });
 
     test('carries provenance, identity and the unrounded snapshot', () => {
         const file = buildAccuracyExport({
@@ -107,6 +120,23 @@ describe('buildAccuracyExport', () => {
         expect(file.reliability.count).toBe(2);
         expect(file.reliability.expected).toBeCloseTo(1, 10);
         expect(file.reliability.legacyExcluded).toBe(1);
+        expect(file.reliability.legacyModelExcluded).toBe(1);
+        expect(file.reliability.legacyFingerprintExcluded).toBe(0);
+    });
+
+    test('an attempt from an older fingerprint is counted under its own heading', () => {
+        const file = buildAccuracyExport({
+            attempts: [marked(0.5, true), oldFingerprint(0.5, false)],
+        });
+        expect(file.reliability.count).toBe(1);
+        expect(file.reliability.legacyFingerprintExcluded).toBe(1);
+        expect(file.reliability.legacyModelExcluded).toBe(0);
+    });
+
+    test('the file names the fingerprint definition its values were computed under', () => {
+        const file = buildAccuracyExport({ attempts: [] });
+        expect(file.fingerprintVersion).toBe(FINGERPRINT_VERSION);
+        expect(file.fingerprintSpec).toBe(FINGERPRINT_SPEC);
     });
 
     test('exportMeta says which sim model this build runs', () => {

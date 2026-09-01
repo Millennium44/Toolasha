@@ -10,6 +10,7 @@ import {
     describeInvalidatedRooms,
     CLOSE_TO_BAR_PP,
 } from './labyrinth-upgrade-invalidation.js';
+import { FINGERPRINT_PREFIX, combatLevelsPart, fingerprintInput, tagFingerprint } from './labyrinth-fingerprint.js';
 
 /**
  * The djb2 hash `labyrinth-recommendation.js` uses, standing in for the live
@@ -63,6 +64,18 @@ describe('the fingerprint delta', () => {
     const loadouts = [[equip('/items/sword', 3), equip('/items/hat', 0)], [equip('/items/sword', 3)]];
     const stored = '{"a":1}';
 
+    /**
+     * What `_snapshotContentFingerprint` would produce for this build — built
+     * from the same shared helpers, so the test pins the projection against the
+     * live assembly rather than against a copy of it.
+     * @param {Object|null} [levels] - Combat skill levels
+     * @returns {string}
+     */
+    const liveFingerprint = (levels = null) =>
+        tagFingerprint(
+            hash(fingerprintInput({ stored, worn: wornFingerprintInput(loadouts), levels: combatLevelsPart(levels) }))
+        );
+
     test('an enhancement candidate replaces the worn item at its level', () => {
         const after = applyGearCandidate(loadouts[0], {
             type: 'enhancement',
@@ -115,7 +128,7 @@ describe('the fingerprint delta', () => {
     });
 
     test('the projected fingerprint differs from the current one for a real change', () => {
-        const current = hash(`${stored}||${wornFingerprintInput(loadouts)}`);
+        const current = liveFingerprint();
         const projected = projectedFingerprint(
             { stored, loadouts },
             {
@@ -132,7 +145,7 @@ describe('the fingerprint delta', () => {
     });
 
     test('a candidate that changes nothing worn hashes to the same fingerprint', () => {
-        const current = hash(`${stored}||${wornFingerprintInput(loadouts)}`);
+        const current = liveFingerprint();
         // An upgrade for an item this character does not wear in any loadout
         const projected = projectedFingerprint(
             { stored, loadouts },
@@ -147,6 +160,38 @@ describe('the fingerprint delta', () => {
         );
 
         expect(projected).toBe(current);
+    });
+
+    test('the projection carries the combat levels through, so a gear-only change matches', () => {
+        // The levels are part of the hashed input now. A projection that
+        // omitted them would differ from the live value on every row, and the
+        // advisor would report every candidate as invalidating the whole cache.
+        const levels = { stamina: 90, intelligence: 80, attack: 95, defense: 92, melee: 99, ranged: 1, magic: 1 };
+        const current = liveFingerprint(levels);
+        const projected = projectedFingerprint(
+            { stored, loadouts, levels },
+            {
+                type: 'tier',
+                currentHrid: '/items/spear',
+                currentLevel: 0,
+                upgradeHrid: '/items/better_spear',
+                upgradeLevel: 0,
+            },
+            hash
+        );
+
+        expect(projected).toBe(current);
+        // And a projection against a different set of levels does not
+        expect(projected).not.toBe(liveFingerprint({ ...levels, melee: 100 }));
+    });
+
+    test('a projected fingerprint is version-tagged like the live one', () => {
+        const projected = projectedFingerprint(
+            { stored, loadouts },
+            { type: 'tier', currentHrid: '/items/spear', currentLevel: 0, upgradeHrid: '/items/x', upgradeLevel: 0 },
+            hash
+        );
+        expect(projected.startsWith(FINGERPRINT_PREFIX)).toBe(true);
     });
 
     test('the snapshot half is hashed alongside the worn half, as the spec pins', () => {

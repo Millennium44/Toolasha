@@ -83,6 +83,7 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 const { groupByFloor, floorSummary, labyrinthRoomLogs, ROOM_TRAVEL_SECONDS, sessionIdentity } =
     await import('./labyrinth-room-logs.js');
 const { default: labFightRecorder } = await import('./labyrinth-fight-recorder.js');
+const { FINGERPRINT_VERSION } = await import('./labyrinth-fingerprint.js');
 
 const room = (over = {}) => ({
     runKey: 'run|15',
@@ -489,28 +490,65 @@ describe('the accuracy view keeps sim-model cohorts apart', () => {
         expect(text()).toContain('11 older fights from a previous sim model excluded');
     });
 
+    const fight = (predicted, cleared) => ({
+        monsterHrid: '/monsters/cyclops',
+        roomLevel: 200,
+        seconds: 40,
+        outcome: cleared ? 'clear' : 'death',
+        cleared,
+        monsterMaxHp: 1000,
+        monsterHpEnd: cleared ? 0 : 300,
+        playerMaxHp: 500,
+        playerHpStart: 500,
+        playerHpEnd: cleared ? 200 : 0,
+        predicted,
+    });
+
     test('recorded fights with stored predictions draw the reliability bands', async () => {
-        const fight = (predicted, cleared) => ({
-            monsterHrid: '/monsters/cyclops',
-            roomLevel: 200,
-            seconds: 40,
-            outcome: cleared ? 'clear' : 'death',
-            cleared,
-            monsterMaxHp: 1000,
-            monsterHpEnd: cleared ? 0 : 300,
-            playerMaxHp: 500,
-            playerHpStart: 500,
-            playerHpEnd: cleared ? 200 : 0,
-            predicted,
-        });
-        labFightRecorder.noteAttempt(fight(0.8, true));
-        labFightRecorder.noteAttempt(fight(0.8, false));
+        // Enough to be a reading rather than "too few to call"
+        for (let i = 0; i < 10; i++) {
+            labFightRecorder.noteAttempt(fight(0.8, true));
+            labFightRecorder.noteAttempt(fight(0.8, false));
+        }
         await setup(snapshot(undefined));
 
         expect(text()).toContain('Reliability — stored predictions vs outcomes');
         expect(text()).toContain('70–90%');
-        expect(text()).toContain('expected 1.6');
+        expect(text()).toContain('expected 16.0');
         expect(text()).toContain('Brier');
+    });
+
+    test('a cohort too thin to judge says so instead of quoting a Brier score', () => {
+        const current = (predicted, cleared) => ({
+            ...fight(predicted, cleared),
+            model: { fullKit: true },
+            fingerprintVersion: FINGERPRINT_VERSION,
+        });
+        const card = labyrinthRoomLogs.renderReliability([current(0.8, true), current(0.8, false)]);
+
+        expect(card.textContent).toContain('too few to call');
+        expect(card.textContent).not.toContain('Brier');
+    });
+
+    test('a pool of pre-migration fights is not pooled to reach the bar', async () => {
+        // Thirty fights of history, all from before the fingerprint learned
+        // about combat levels, and two on the current one. The card reports
+        // two — too few to call — and names what it set aside.
+        const pool = [];
+        for (let i = 0; i < 30; i++) {
+            const stored = { ...fight(0.8, true), model: { fullKit: true, version: '3.0.0' }, complete: true };
+            delete stored.fingerprintVersion;
+            pool.push(stored);
+        }
+        const card = labyrinthRoomLogs.renderReliability([
+            ...pool,
+            { ...fight(0.8, true), model: { fullKit: true }, fingerprintVersion: FINGERPRINT_VERSION },
+            { ...fight(0.8, false), model: { fullKit: true }, fingerprintVersion: FINGERPRINT_VERSION },
+        ]);
+
+        expect(card.textContent).toContain('2 fights with a stored prediction — too few to call');
+        expect(card.textContent).toContain('30 older fights from a previous build fingerprint excluded');
+        expect(card.textContent).not.toContain('Brier');
     });
 
     test('the sanitized export is offered on the accuracy view, labelled for public bug reports', async () => {

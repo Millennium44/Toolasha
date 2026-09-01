@@ -12,7 +12,9 @@ import {
     accuracyBySubject,
     accuracyReport,
     totalsSince,
+    rotateCohortForFingerprint,
 } from './labyrinth-outcome-log.js';
+import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 
 const grid = (rooms) => [rooms];
@@ -322,6 +324,84 @@ describe('foldFloorOutcomes prediction capture', () => {
     });
 });
 
+describe('the fingerprint cohort', () => {
+    const cohortBucket = (over = {}) => ({
+        monsterHrid: '/monsters/mimic',
+        roomLevel: 252,
+        attempts: 40,
+        clears: 20,
+        predicted: 0.5,
+        fullKitJudged: 40,
+        fullKitJudgedClears: 20,
+        fullKitExpected: 20,
+        fullKitVariance: 10,
+        ...over,
+    });
+
+    test('a cohort accumulated under an older fingerprint is retired, not added to', () => {
+        // Nothing in these sums can be attributed to one side of the level-up
+        // or the other, so the whole cohort goes and a fresh one starts
+        const rotated = rotateCohortForFingerprint(cohortBucket());
+        expect(rotated.fullKitJudged).toBe(0);
+        expect(rotated.fullKitExpected).toBe(0);
+        expect(rotated.fullKitVariance).toBe(0);
+        expect(rotated.cohortFingerprintVersion).toBe(FINGERPRINT_VERSION);
+    });
+
+    test('what was retired is counted, not lost', () => {
+        expect(rotateCohortForFingerprint(cohortBucket()).legacyCohortJudged).toBe(40);
+    });
+
+    test('the room’s own record survives the migration untouched', () => {
+        // attempts/clears are the server's count of what happened in the room
+        // and belong to no cohort — the raw win rate is never disturbed
+        const rotated = rotateCohortForFingerprint(cohortBucket());
+        expect(rotated.attempts).toBe(40);
+        expect(rotated.clears).toBe(20);
+    });
+
+    test('a bucket already on the current version passes straight through', () => {
+        const bucket = cohortBucket({ cohortFingerprintVersion: FINGERPRINT_VERSION });
+        expect(rotateCohortForFingerprint(bucket)).toBe(bucket);
+    });
+
+    test('rotation is idempotent, so the fold and the read cannot double-retire', () => {
+        const once = rotateCohortForFingerprint(cohortBucket());
+        const twice = rotateCohortForFingerprint(once);
+        expect(twice.legacyCohortJudged).toBe(40);
+        expect(twice).toBe(once);
+    });
+
+    test('a bucket with nothing accumulated only takes the stamp', () => {
+        // Writing four zeros onto every never-simmed room would make it
+        // indistinguishable from one whose cohort was retired
+        const rotated = rotateCohortForFingerprint({ monsterHrid: '/monsters/mimic', attempts: 3, clears: 1 });
+        expect(rotated.fullKitJudged).toBeUndefined();
+        expect(rotated.legacyCohortJudged).toBeUndefined();
+        expect(rotated.cohortFingerprintVersion).toBe(FINGERPRINT_VERSION);
+    });
+
+    test('a room not fought since the migration is still rotated when it is read', () => {
+        // It has never been through the fold, so its stored cohort is the old
+        // definition's and a headline would otherwise pool it
+        const [row] = accuracyRows({ [MIMIC]: cohortBucket() }, { interval: wilsonInterval });
+        expect(row.cohort.judged).toBe(0);
+        expect(row.legacyCohortJudged).toBe(40);
+        // And the record it reports is untouched
+        expect(row.attempts).toBe(40);
+        expect(row.clears).toBe(20);
+    });
+
+    test('the headline reports nothing rather than the pre-migration expectation', () => {
+        const rows = accuracyRows({ [MIMIC]: cohortBucket() }, { interval: wilsonInterval });
+        const summary = accuracySummary(rows, wilsonInterval);
+        expect(summary.cohort.judged).toBe(0);
+        // Null, not zero: with nothing judged there is no expectation to quote,
+        // which is the same "no cohort yet" the pre-full-kit buckets read as
+        expect(summary.cohort.expected).toBeNull();
+    });
+});
+
 describe('the full-kit cohort', () => {
     test('folds accumulate the cohort only while a prediction was in effect', () => {
         const state = foldAll([grid([combat({ entryCount: 2 })])], { predictedFor: () => 0.25 });
@@ -408,6 +488,10 @@ describe('the full-kit cohort', () => {
                     fullKitJudgedClears: 5,
                     fullKitExpected: 7.5,
                     fullKitVariance: 3.75,
+                    // Stamped current, so the repair is what is under test —
+                    // an unstamped bucket is a pre-migration cohort and gets
+                    // retired instead, which the cohort tests cover
+                    cohortFingerprintVersion: FINGERPRINT_VERSION,
                 },
             },
             { interval: wilsonInterval }

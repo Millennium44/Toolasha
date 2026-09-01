@@ -18,7 +18,18 @@
  *
  * Pure: recorded attempts and a sim result in, a comparison out. The sim itself
  * is run by the clear-rate feature, which owns the simulator and the loadout.
+ *
+ * ## Cohorts
+ *
+ * The pool is filtered to one build before it gets here, by a fingerprint that
+ * carries its own version. Rates are still guarded against a mixed pool: a
+ * fingerprint made before combat skill levels were part of it identifies gear
+ * and nothing else, so fights either side of a level-up shared one value and
+ * pooling them produced exactly the false finding this module exists to report
+ * — "the sim over-credits your damage", when what had moved was the character.
  */
+
+import { isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
 
 /** Below this many fights a rate is noise, and the verdict says so rather than guessing */
 export const MIN_LAB_FIGHTS = 5;
@@ -195,23 +206,38 @@ function exchange(attempt) {
  * compares. Groups are returned most-fought first, since that is the one worth
  * spending a sim on.
  *
+ * Attempts fingerprinted under an older definition are dropped outright. The
+ * caller normally filters by a version-tagged fingerprint before it gets here,
+ * so this is belt and braces — but the failure it guards against is silent and
+ * expensive: a rate pooled across a fingerprint migration is a rate measured on
+ * two different characters, and the comparison would report the difference as
+ * the sim over-crediting damage.
+ *
  * @param {Array<Object>} attempts - From the recorder
  * @returns {Array<Object>} One entry per monster+level fought. The array also
- *   carries `droppedUnknownOutcome`, `droppedIncomplete` and
- *   `droppedNotCleanStart` — how many attempts each filter excluded — so an
- *   export can say what the pooled rates were derived from
+ *   carries `droppedUnknownOutcome`, `droppedIncomplete`,
+ *   `droppedNotCleanStart` and `droppedLegacyFingerprint` — how many attempts
+ *   each filter excluded — so an export can say what the pooled rates were
+ *   derived from
  */
 export function deriveObserved(attempts) {
     const groups = new Map();
     let droppedUnknownOutcome = 0;
     let droppedIncomplete = 0;
     let droppedNotCleanStart = 0;
+    let droppedLegacyFingerprint = 0;
 
     for (const attempt of attempts || []) {
         const seconds = Number(attempt?.seconds) || 0;
         if (!attempt?.monsterHrid || seconds <= 0) continue;
         if (attempt.outcome === 'unknown') {
             droppedUnknownOutcome += 1;
+            continue;
+        }
+
+        // Fought on a build the current fingerprint does not describe
+        if (!isCurrentFingerprintVersion(attempt)) {
+            droppedLegacyFingerprint += 1;
             continue;
         }
 
@@ -415,6 +441,7 @@ export function deriveObserved(attempts) {
     out.droppedUnknownOutcome = droppedUnknownOutcome;
     out.droppedIncomplete = droppedIncomplete;
     out.droppedNotCleanStart = droppedNotCleanStart;
+    out.droppedLegacyFingerprint = droppedLegacyFingerprint;
     return out;
 }
 
@@ -422,10 +449,16 @@ export function deriveObserved(attempts) {
  * The recorder's whole pool, summarised for browsing — no sims, no verdicts.
  *
  * Unlike {@link deriveObserved} this drops nothing but malformed rows:
- * incomplete fights, wounded starts and unknown-model attempts are part of
- * what the pool holds, and a browse view that quietly filtered them would
- * misstate what has accumulated. (The recorder never stores unknown
- * outcomes, so every attempt here cleared, died or timed out.)
+ * incomplete fights, wounded starts, unknown-model attempts and attempts from
+ * an older fingerprint definition are all part of what the pool holds, and a
+ * browse view that quietly filtered them would misstate what has accumulated.
+ * (The recorder never stores unknown outcomes, so every attempt here cleared,
+ * died or timed out.)
+ *
+ * A group is a browse row and never a reading, which is what makes keeping the
+ * old cohort in it safe: `legacyFingerprintFights` says how much of the row
+ * predates the current fingerprint, so nothing reads a mixed rate as a verdict
+ * without being told.
  *
  * @param {Array<Object>} attempts - From the recorder
  * @returns {Array<Object>} One summary per monster+level bucket, most-fought first
@@ -460,6 +493,7 @@ export function summarizePool(attempts) {
                 residualTotal: 0,
                 residualFights: 0,
                 fingerprints: new Set(),
+                legacyFingerprintFights: 0,
                 attempts: [],
             };
             groups.set(key, group);
@@ -476,6 +510,7 @@ export function summarizePool(attempts) {
         group.totalTaken += playerTaken;
         if (attempt.complete === true) group.completeFights += 1;
         if (attempt.fingerprint) group.fingerprints.add(attempt.fingerprint);
+        if (!isCurrentFingerprintVersion(attempt)) group.legacyFingerprintFights += 1;
         // Same accumulation rules as the comparison: raw finiteness (a stored
         // null is not a zero), and never more crits than hits
         const hits = Number(attempt.playerHits);
@@ -516,6 +551,9 @@ export function summarizePool(attempts) {
         residualMean: group.residualFights > 0 ? group.residualTotal / group.residualFights : null,
         residualFights: group.residualFights,
         gearCount: group.fingerprints.size,
+        // How much of this row was fingerprinted under an older definition —
+        // shown, kept, and never folded into a rate the panel presents as one
+        legacyFingerprintFights: group.legacyFingerprintFights,
         attempts: group.attempts,
     }));
 

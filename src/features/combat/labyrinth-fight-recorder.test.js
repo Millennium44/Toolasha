@@ -55,9 +55,23 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 }));
 
 import recorder, { attemptIdentity } from './labyrinth-fight-recorder.js';
+import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 /** The pool as stored under this character's key */
 const stored = () => storageMock.storeFor('labyrinth').get('labyrinthFightRecorder_char1');
+/** Write a pool straight into storage, as a previous session would have left it */
+const seedStored = (pool) => storageMock.storeFor('labyrinth').set('labyrinthFightRecorder_char1', pool);
+
+/**
+ * An attempt as the recorder stored it before fingerprints carried a version:
+ * the same shape, with no `fingerprintVersion` field.
+ */
+const legacyStored = (over = {}) => {
+    const stored = { ...attempt(), model: { fullKit: true, version: '3.0.0' }, complete: true, ...over };
+    delete stored.fingerprintVersion;
+    return stored;
+};
+
 /** Let fire-and-forget writes settle */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -164,6 +178,23 @@ describe('labyrinth fight recorder', () => {
         expect(recorder.recordingStatus().attempts).toBe(500);
     });
 
+    test('the cap is age-ordered, so pre-migration records cannot crowd out new ones', async () => {
+        // A pool already full of history from before the migration
+        seedStored(Array.from({ length: 500 }, (_, i) => legacyStored({ recordId: `old-${i}` })));
+        recorder.forget();
+        await recorder.load();
+        expect(recorder.recordingStatus().legacyFingerprint).toBe(500);
+
+        // Every new fight lands; an old one falls off for each
+        for (let i = 0; i < 120; i++) recorder.noteAttempt(attempt());
+
+        const status = recorder.recordingStatus();
+        expect(status.total).toBe(500);
+        expect(status.legacyFingerprint).toBe(380);
+        const current = recorder.recordedAttempts().filter((a) => a.fingerprintVersion === FINGERPRINT_VERSION);
+        expect(current).toHaveLength(120);
+    });
+
     test('clearing empties the pool', () => {
         recorder.noteAttempt(attempt());
         recorder.clearRecording();
@@ -249,11 +280,62 @@ describe('labyrinth fight recorder', () => {
     test('the recording file says which script, server and sim model produced it', () => {
         recorder.noteAttempt(attempt());
         const file = recorder.recordingFile();
-        expect(file.version).toBe(3);
+        expect(file.version).toBe(4);
         expect(file.fullKit).toBe(true);
+        expect(file.fingerprintVersion).toBe(FINGERPRINT_VERSION);
+        expect(file).toHaveProperty('fingerprintSpec');
         expect(file).toHaveProperty('toolashaVersion');
         expect(file).toHaveProperty('host');
         expect(file).toHaveProperty('isTestServer');
+    });
+
+    test('every fight is stamped with the fingerprint definition in force', () => {
+        recorder.noteAttempt(attempt());
+        const [a] = recorder.recordedAttempts();
+        expect(a.fingerprintVersion).toBe(FINGERPRINT_VERSION);
+    });
+
+    test('the stamp comes from the build, not from the caller', () => {
+        // A caller could otherwise label a value the current fingerprint
+        // produced as one an older definition did, and the cohort split would
+        // believe it
+        recorder.noteAttempt(attempt({ fingerprintVersion: 1 }));
+        const [a] = recorder.recordedAttempts();
+        expect(a.fingerprintVersion).toBe(FINGERPRINT_VERSION);
+    });
+
+    test('records from before the stamp existed are read back whole, and counted apart', async () => {
+        // What storage holds for a character who last played before the
+        // migration: attempts in the same shape, with no version field
+        seedStored([
+            legacyStored({ recordId: 'old-1' }),
+            legacyStored({ recordId: 'old-2', monsterHrid: '/monsters/imp' }),
+        ]);
+        recorder.forget();
+        await recorder.load();
+
+        const pool = recorder.recordedAttempts();
+        expect(pool).toHaveLength(2);
+        // Readable: nothing about them is dropped or rewritten on the way out
+        expect(pool[0].monsterHrid).toBe('/monsters/cyclops');
+        expect(pool[0].seconds).toBe(40);
+        expect(pool[0].fingerprintVersion).toBeUndefined();
+        // Counted apart, so a panel can say what the migration set aside
+        expect(recorder.recordingStatus().legacyFingerprint).toBe(2);
+    });
+
+    test('a current-fingerprint filter never reaches a pre-migration record', async () => {
+        // The value carries its version, so this holds without the filter
+        // knowing anything about cohorts
+        seedStored([legacyStored({ recordId: 'old-1', fingerprint: 'gearA' })]);
+        recorder.forget();
+        await recorder.load();
+        recorder.noteAttempt(attempt({ fingerprint: 'v2:gearA' }));
+
+        expect(recorder.recordedAttempts('v2:gearA')).toHaveLength(1);
+        expect(recorder.recordedAttempts('v2:gearA')[0].fingerprintVersion).toBe(FINGERPRINT_VERSION);
+        // Still in the pool, still browsable — just not in that pool
+        expect(recorder.recordingStatus().total).toBe(2);
     });
 
     test('a replay comparison embeds beside the attempts without clobbering the format', () => {

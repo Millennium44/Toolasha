@@ -7326,7 +7326,7 @@ class CombatSimUI {
      * and the current fingerprint, which between them change on every event that
      * could make the answer stale.
      *
-     * @returns {Object|null} `{stored, loadouts, current, entries, targetRate, hash}`,
+     * @returns {Object|null} `{stored, loadouts, levels, current, entries, targetRate, hash}`,
      *   or null when the labyrinth bundle is absent or the cache is empty
      * @private
      */
@@ -7363,6 +7363,11 @@ class CombatSimUI {
         const context = {
             stored,
             loadouts,
+            // The third half of the hashed input. A gear candidate moves no
+            // level, so the projection carries the live map through unchanged —
+            // without it the projected value would differ from `current` on
+            // every row and every candidate would read as cache-invalidating.
+            levels: lab._combatSkillLevels?.() ?? null,
             current,
             entries,
             targetRate: (lab.getRecommendTargetPct?.() || 70) / 100,

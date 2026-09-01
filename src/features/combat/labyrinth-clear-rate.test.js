@@ -3813,3 +3813,88 @@ describe('the recompute verb', () => {
         spy.mockRestore();
     });
 });
+
+/**
+ * The build fingerprint is what every stored labyrinth record keys on. v1
+ * hashed gear alone, so a combat level-up left it unchanged and the replay
+ * pooled fights from either side of one — then reported the resulting gap as
+ * the sim over-crediting damage. These pin the widened inputs, the version tag
+ * that keeps the two definitions from ever matching, and what still does and
+ * does not move the value.
+ */
+const { FINGERPRINT_PREFIX } = await import('./labyrinth-fingerprint.js');
+const { gearChangedSince } = await import('./labyrinth-sim-cache.js');
+
+describe('the build fingerprint', () => {
+    /** Replace the mocked loadoutSnapshot's gear in place */
+    const setGear = (snapshots) => {
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        Object.assign(gear.snapshots, snapshots);
+    };
+
+    const skill = (name, level) => ({ skillHrid: `/skills/${name}`, level });
+    const levels = (over = {}) => {
+        const base = { stamina: 90, intelligence: 80, attack: 95, defense: 92, melee: 99, ranged: 1, magic: 1 };
+        return Object.entries({ ...base, ...over }).map(([name, level]) => skill(name, level));
+    };
+
+    const sword = { equipment: [{ itemHrid: '/items/sword', enhancementLevel: 5 }] };
+    const axe = { equipment: [{ itemHrid: '/items/axe', enhancementLevel: 0 }] };
+
+    beforeEach(() => {
+        setGear({ 1: sword });
+        dataManagerMock.getSkills.mockReturnValue(levels());
+    });
+
+    afterEach(() => {
+        dataManagerMock.getSkills.mockReturnValue([]);
+    });
+
+    test('a combat level-up moves the fingerprint with the gear held still', () => {
+        const before = labyrinthClearRate._snapshotContentFingerprint();
+        dataManagerMock.getSkills.mockReturnValue(levels({ melee: 100 }));
+        expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+    });
+
+    test('every combat level the sim reads moves it, not just the offensive ones', () => {
+        // Stamina is max HP and intelligence is max MP; both decide fights the
+        // sim runs, and neither touches an item
+        const before = labyrinthClearRate._snapshotContentFingerprint();
+        for (const name of ['stamina', 'intelligence', 'attack', 'defense', 'melee', 'ranged', 'magic']) {
+            dataManagerMock.getSkills.mockReturnValue(levels({ [name]: 200 }));
+            expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+        }
+    });
+
+    test('a skilling level does not move it', () => {
+        // buildPlayerDTO carries them, Player.createFromDTO never reads one, so
+        // no skilling level can change a combat sim's answer — and hashing them
+        // would drop the whole combat cache on every woodcutting level
+        const before = labyrinthClearRate._snapshotContentFingerprint();
+        dataManagerMock.getSkills.mockReturnValue([...levels(), skill('woodcutting', 150)]);
+        expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(before);
+    });
+
+    test('a gear change still moves it, levels held still', () => {
+        const before = labyrinthClearRate._snapshotContentFingerprint();
+        setGear({ 1: axe });
+        expect(labyrinthClearRate._snapshotContentFingerprint()).not.toBe(before);
+    });
+
+    test('nothing changing leaves it alone', () => {
+        expect(labyrinthClearRate._snapshotContentFingerprint()).toBe(labyrinthClearRate._snapshotContentFingerprint());
+    });
+
+    test('the value carries its version, so a v1 record can never match one', () => {
+        const current = labyrinthClearRate._snapshotContentFingerprint();
+        expect(current.startsWith(FINGERPRINT_PREFIX)).toBe(true);
+        // A v1 value is the bare djb2 output — no prefix, and no way to collide
+        // with a tagged one whatever the hash happens to be
+        expect(current).not.toBe(current.slice(FINGERPRINT_PREFIX.length));
+    });
+
+    test('a stored v1 fingerprint reads as a gear change, so its cached sims are re-simmed', () => {
+        const stored = labyrinthClearRate._hashString('anything the old definition produced');
+        expect(gearChangedSince(stored, labyrinthClearRate._snapshotContentFingerprint(), true)).toBe(true);
+    });
+});

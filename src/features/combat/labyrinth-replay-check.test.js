@@ -18,6 +18,7 @@ import {
     nearMissRemainder,
     simDamageTally,
 } from './labyrinth-replay-check.js';
+import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 function attempt(overrides = {}) {
     return {
@@ -31,8 +32,16 @@ function attempt(overrides = {}) {
         playerMaxHp: 500,
         playerHpStart: 500,
         playerHpEnd: 0,
+        fingerprintVersion: FINGERPRINT_VERSION,
         ...overrides,
     };
+}
+
+/** The same fight as the recorder stored it before fingerprints had versions */
+function legacyFingerprintAttempt(overrides = {}) {
+    const stored = attempt(overrides);
+    delete stored.fingerprintVersion;
+    return stored;
 }
 
 /** N identical losses: dps sample 8/s, taken 10/s, no variance */
@@ -573,6 +582,50 @@ describe('compareLab verdicts and diagnosis', () => {
         expect(taken.verdict).toBe('consistent');
         // The shown deviation is still the honest raw figure, not bias-adjusted.
         expect(taken.deviationPct).toBeCloseTo(-3.846, 2);
+    });
+});
+
+describe('the fingerprint version boundary', () => {
+    test('a pre-migration fight is dropped from a rate rather than pooled into it', () => {
+        // Both fights are the same monster at the same level, so a
+        // version-blind pool would fold them into one group and one dps
+        const groups = deriveObserved([attempt(), legacyFingerprintAttempt()]);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].fights).toBe(1);
+        expect(groups.droppedLegacyFingerprint).toBe(1);
+    });
+
+    test('the level-up case: the same gear, a different character, two pools', () => {
+        // Eight fights before a combat level-up and eight after. Under the
+        // gear-only fingerprint these shared one value and were compared
+        // against one sim of the levelled character — which is what made the
+        // replay report "the sim over-credits your damage" for a level-up.
+        const before = Array.from({ length: 8 }, () =>
+            legacyFingerprintAttempt({ seconds: 100, monsterHpEnd: 600, fingerprint: 'gearA' })
+        );
+        const after = Array.from({ length: 8 }, () =>
+            attempt({ seconds: 50, monsterHpEnd: 600, fingerprint: 'v2:gearA' })
+        );
+
+        const groups = deriveObserved([...before, ...after]);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].fights).toBe(8);
+        // The rate is the levelled character's alone: 400 damage over 50s
+        expect(groups[0].dps).toBeCloseTo(8, 5);
+        expect(groups.droppedLegacyFingerprint).toBe(8);
+    });
+
+    test('a pre-migration fight is still in the pool the browse view shows', () => {
+        // Dropped from a reading, never from the record
+        const [group] = summarizePool([attempt(), legacyFingerprintAttempt()]);
+        expect(group.fights).toBe(2);
+        expect(group.legacyFingerprintFights).toBe(1);
+        expect(group.attempts).toHaveLength(2);
+    });
+
+    test('a pool with nothing pre-migration says so with a zero, not a null', () => {
+        const [group] = summarizePool([attempt(), attempt()]);
+        expect(group.legacyFingerprintFights).toBe(0);
     });
 });
 

@@ -7,20 +7,30 @@
 import { describe, test, expect } from 'vitest';
 import {
     CALIBRATION_BANDS,
+    MIN_CALIBRATION_FIGHTS,
     splitModelCohorts,
     calibrationBandIndex,
     calibrationReport,
 } from './labyrinth-calibration.js';
+import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 const attempt = (predicted, cleared, over = {}) => ({
     predicted,
     cleared,
     model: { fullKit: true, version: '4.0.0' },
+    fingerprintVersion: FINGERPRINT_VERSION,
     ...over,
 });
 
 /** An attempt recorded before the model marker existed */
 const legacyAttempt = (predicted, cleared) => ({ predicted, cleared });
+
+/** Recorded under the current sim model but the gear-only fingerprint */
+const oldFingerprintAttempt = (predicted, cleared) => ({
+    predicted,
+    cleared,
+    model: { fullKit: true, version: '4.0.0' },
+});
 
 describe('splitModelCohorts', () => {
     test('attempts without the marker are the legacy cohort, kept apart', () => {
@@ -41,8 +51,44 @@ describe('splitModelCohorts', () => {
     });
 
     test('handles an empty pool', () => {
-        expect(splitModelCohorts([])).toEqual({ current: [], legacy: [] });
-        expect(splitModelCohorts(null)).toEqual({ current: [], legacy: [] });
+        const empty = { current: [], legacy: [], legacyModel: [], legacyFingerprint: [] };
+        expect(splitModelCohorts([])).toEqual(empty);
+        expect(splitModelCohorts(null)).toEqual(empty);
+    });
+
+    test('an attempt from an older fingerprint is legacy however current its model', () => {
+        const { current, legacy, legacyModel, legacyFingerprint } = splitModelCohorts([
+            attempt(0.5, true),
+            oldFingerprintAttempt(0.5, false),
+        ]);
+        expect(current).toHaveLength(1);
+        expect(legacy).toHaveLength(1);
+        // Named apart: this one is excluded by its fingerprint, not its model
+        expect(legacyModel).toHaveLength(0);
+        expect(legacyFingerprint).toHaveLength(1);
+    });
+
+    test('the two exclusions are counted separately and never double-counted', () => {
+        const { legacy, legacyModel, legacyFingerprint } = splitModelCohorts([
+            legacyAttempt(0.5, true),
+            oldFingerprintAttempt(0.5, true),
+            attempt(0.5, true),
+        ]);
+        expect(legacyModel).toHaveLength(1);
+        expect(legacyFingerprint).toHaveLength(1);
+        // `legacy` is their union, which is what a single "excluded" count reads
+        expect(legacy).toHaveLength(legacyModel.length + legacyFingerprint.length);
+    });
+
+    test('a future fingerprint version is no more poolable than a past one', () => {
+        // The split asks whether the version MATCHES, not whether it is older:
+        // a record written by a newer build that synced across is not evidence
+        // about a fingerprint this build cannot compute
+        const { current, legacyFingerprint } = splitModelCohorts([
+            attempt(0.5, true, { fingerprintVersion: FINGERPRINT_VERSION + 1 }),
+        ]);
+        expect(current).toHaveLength(0);
+        expect(legacyFingerprint).toHaveLength(1);
     });
 });
 
@@ -135,5 +181,44 @@ describe('cohort exclusion end to end', () => {
         expect(report.expected).toBeCloseTo(1, 10);
         expect(report.observed).toBe(1);
         expect(legacy).toHaveLength(1);
+    });
+
+    test('a level-up cohort is not rescued by pooling the fights that came before it', () => {
+        // What the migration is for. Forty fights on the old fingerprint would
+        // make a confident reading; three on the new one must not borrow them.
+        const pool = [
+            ...Array.from({ length: 40 }, () => oldFingerprintAttempt(0.5, false)),
+            attempt(0.5, true),
+            attempt(0.5, false),
+            attempt(0.5, true),
+        ];
+        const { current, legacyFingerprint } = splitModelCohorts(pool);
+        const report = calibrationReport(current);
+
+        expect(report.count).toBe(3);
+        expect(legacyFingerprint).toHaveLength(40);
+        // Too few to call, rather than a verdict built on the old character
+        expect(report.enough).toBe(false);
+    });
+
+    test('the current cohort reports a verdict once it is big enough to be one', () => {
+        const report = calibrationReport(Array.from({ length: MIN_CALIBRATION_FIGHTS }, () => attempt(0.5, true)));
+        expect(report.count).toBe(MIN_CALIBRATION_FIGHTS);
+        expect(report.enough).toBe(true);
+    });
+
+    test('one fight short is still too few', () => {
+        const report = calibrationReport(Array.from({ length: MIN_CALIBRATION_FIGHTS - 1 }, () => attempt(0.5, true)));
+        expect(report.enough).toBe(false);
+    });
+
+    test('an attempt with no stored prediction does not count toward "enough"', () => {
+        // `predicted: null` is rejected before coercion — Number(null) is 0,
+        // which is a rate a room can genuinely have — so these are unpredicted,
+        // not a band-zero cohort padding the count toward a verdict
+        const report = calibrationReport(Array.from({ length: MIN_CALIBRATION_FIGHTS }, () => attempt(null, true)));
+        expect(report.count).toBe(0);
+        expect(report.unpredicted).toBe(MIN_CALIBRATION_FIGHTS);
+        expect(report.enough).toBe(false);
     });
 });

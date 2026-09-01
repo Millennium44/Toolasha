@@ -14,18 +14,20 @@ import dataManager from '../../core/data-manager.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import { getAnnotationContainer } from './labyrinth-annotations.js';
 import { SKIP_THRESHOLD_RANGE } from './labyrinth-formulas.js';
+import { combatLevelsPart, fingerprintInput, tagFingerprint } from './labyrinth-fingerprint.js';
 
 export const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 export const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
 /** Fallback for the recommend panel's Target Win %, matching settings-schema */
 const DEFAULT_RECOMMEND_TARGET_PCT = 70;
 
-/**
- * What the build fingerprint hashes, for exports to carry — stored records key
- * on the value, so the algorithm must never change; this documents it instead.
+/*
+ * The fingerprint's constants live in labyrinth-fingerprint.js — a
+ * dependency-free module the recorder, the calibration split and the export can
+ * all import without dragging the sim graph in. Re-exported here because this
+ * is where callers have always looked for them.
  */
-export const FINGERPRINT_SPEC =
-    'djb2 over loadout snapshots (savedAt excluded) + worn itemHrid+enhancementLevel; excludes levels, abilities, buffs';
+export { FINGERPRINT_SPEC, FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 /** Prototype methods mixed into LabyrinthClearRate */
 export const recommendationMethods = {
@@ -162,13 +164,31 @@ export const recommendationMethods = {
     },
 
     /**
-     * Fingerprint of loadout snapshot contents (gear + enhancement levels).
+     * The combat-level half of the fingerprint's input, as the hashed string.
+     *
+     * Only the seven levels the sim reads. `buildPlayerDTO` also carries the
+     * fifteen skilling levels, but `Player.createFromDTO` never copies one onto
+     * the simulated player, so none of them can move a combat sim's answer —
+     * and hashing them would drop the whole combat cache on every skilling
+     * level-up, which is minutes of sims for no change in the result.
+     * @private
+     */
+    _combatLevelsFingerprintPart() {
+        return combatLevelsPart(this._combatSkillLevels?.() ?? null);
+    },
+
+    /**
+     * Fingerprint of the build a sim would run: loadout snapshot contents (gear
+     * + enhancement levels) and the seven combat skill levels the sim reads.
      * savedAt is excluded — snapshots are rebuilt with a fresh timestamp every
      * time the game re-broadcasts loadouts (e.g. when the lab equips the next
      * room's loadout), which is not a content change.
      *
      * Inputs and algorithm are pinned by {@link FINGERPRINT_SPEC}: stored
-     * records key on the value, so neither may change.
+     * records key on the value, so neither may change *within a version*. The
+     * value carries its version — `v2:<hash>` — so a record made under the
+     * gear-only v1 can never match one made now, and nothing pools across the
+     * change by accident.
      * @private
      */
     _snapshotContentFingerprint() {
@@ -188,10 +208,12 @@ export const recommendationMethods = {
                         .join(',')
                 )
                 .join('|');
-            return this._hashString(`${stored}||${worn}`);
+            const levels = this._combatLevelsFingerprintPart();
+            return tagFingerprint(this._hashString(fingerprintInput({ stored, worn, levels })));
         } catch {
-            // Unhashable → treat as changed so stale sims never survive
-            return `err-${Date.now()}`;
+            // Unhashable → treat as changed so stale sims never survive. Still
+            // version-tagged: an untagged value would read as a v1 fingerprint.
+            return tagFingerprint(`err-${Date.now()}`);
         }
     },
 

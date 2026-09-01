@@ -22,15 +22,35 @@
  * current loadout, and a fight fought on last week's gear is a fight against a
  * different character — pooling it would compare the sim to the wrong fights.
  *
+ * ## Versioned
+ *
+ * The fingerprint's own definition changes over time — v2 added the combat
+ * skill levels the sim reads, because a level-up moves the sim's answer without
+ * moving an item. Each attempt is stamped with the version it was fingerprinted
+ * under, and readings never pool across versions: a v1 fight and a v2 fight are
+ * fights against two different characters as far as the sim is concerned. The
+ * v1 cohort is kept, shown and counted — never deleted.
+ *
  * ## Bounded
  *
  * Five hundred fights, oldest dropped. That is many runs of history, small
  * enough to hold and write without thinking about it.
+ *
+ * The cap is age-ordered and version-blind, which is what keeps a migration
+ * from starving the new cohort: a pre-migration attempt is by construction
+ * older than every post-migration one, so it is always among the first to fall
+ * off. There is deliberately no per-version reservation — reserving space for
+ * the old cohort would let a stale version hold 250 slots forever, and the
+ * whole point of the cap is that history ages out. What a migration therefore
+ * costs is that the v1 cohort shrinks as v2 fills, and once 500 v2 fights have
+ * accumulated the v1 records are gone. That is the intended end state: they are
+ * kept while they are the only history there is, and retired once they are not.
  */
 
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { FINGERPRINT_SPEC, FINGERPRINT_VERSION, isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
 
 /** The labyrinth store, shared with the sim cache — this is labyrinth history */
 const STORE = 'labyrinth';
@@ -213,7 +233,8 @@ function persist() {
  *   'new_fight', 'stale', 'room_switch', 'left_labyrinth', 'feature_disabled')
  * @param {boolean} [attempt.complete] - Whole fight measured: seeded from its
  *   new_battle snapshot and resolved to a known outcome. Defaults false.
- * @param {string} [attempt.fingerprint] - The gear the fight was fought in
+ * @param {string} [attempt.fingerprint] - The build the fight was fought in
+ *   (gear and combat levels), version-tagged by the fingerprint module
  * @param {number} [attempt.predicted] - The cached clear chance in effect when the
  *   fight was recorded (0..1), or absent when no sim had run for the room
  */
@@ -291,6 +312,13 @@ export function noteAttempt(attempt) {
         // the absent field as a fight that bled for nothing
         playerDotDamage: nonNegOrNull(attempt.playerDotDamage),
         fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
+        // Which fingerprint definition the value above was computed under.
+        // Stamped from the constant rather than taken from the caller: the
+        // recorder and the fingerprint are the same build, and a caller-supplied
+        // version could label a v2 value v1. Absent on records written before
+        // this field existed, and those read as version 1 — the gear-only
+        // fingerprint — wherever they are split into cohorts.
+        fingerprintVersion: FINGERPRINT_VERSION,
         // The clear chance the sim was claiming when the fight was recorded —
         // the prediction at entry, not one recomputed later by a newer engine.
         // Null when no sim had run for the room; old records lack the field.
@@ -305,9 +333,15 @@ export function noteAttempt(attempt) {
 }
 
 /**
- * The accumulated fights, optionally only those fought in one gear.
+ * The accumulated fights, optionally only those fought on one build.
  *
- * @param {string} [fingerprint] - Keep only fights carrying this gear fingerprint
+ * The fingerprint carries its version, so filtering by a current-version value
+ * already excludes every pre-migration record — a v1 fingerprint cannot equal a
+ * v2 one. Passing no fingerprint returns the whole pool, older cohorts and all;
+ * that is what the browse view and the export want, and any *reading* built
+ * from it must split the cohorts itself.
+ *
+ * @param {string} [fingerprint] - Keep only fights carrying this build fingerprint
  * @returns {Array<Object>}
  */
 export function recordedAttempts(fingerprint) {
@@ -316,14 +350,24 @@ export function recordedAttempts(fingerprint) {
 }
 
 /**
- * How much has accumulated, for the gear given.
+ * How much has accumulated, for the build given.
  *
- * @param {string} [fingerprint] - Count only fights carrying this gear fingerprint
- * @returns {{attempts: number, total: number, monsters: number}}
+ * `legacyFingerprint` counts what the whole pool holds from an older
+ * fingerprint definition — kept and readable, never pooled into a reading — so
+ * a panel can say how much history the migration set aside rather than leaving
+ * a dropped count unexplained.
+ *
+ * @param {string} [fingerprint] - Count only fights carrying this build fingerprint
+ * @returns {{attempts: number, total: number, monsters: number, legacyFingerprint: number}}
  */
 export function recordingStatus(fingerprint) {
     const list = fingerprint ? attempts.filter((a) => a.fingerprint === fingerprint) : attempts;
-    return { attempts: list.length, total: attempts.length, monsters: new Set(list.map((a) => a.monsterHrid)).size };
+    return {
+        attempts: list.length,
+        total: attempts.length,
+        monsters: new Set(list.map((a) => a.monsterHrid)).size,
+        legacyFingerprint: attempts.filter((a) => !isCurrentFingerprintVersion(a)).length,
+    };
 }
 
 /** Throw away every accumulated fight. */
@@ -348,13 +392,19 @@ export function recordingFile(extra = {}) {
     return {
         ...extra,
         format: 'toolasha-labyrinth-recording',
-        version: 3,
+        // 4: attempts carry fingerprintVersion, and the file names the
+        // definition it was written under
+        version: 4,
         exportedAt: Date.now(),
         toolashaVersion: scriptVersion(),
         host,
         isTestServer: host ? host.includes('test.') : null,
         // The sim model this build records under; attempts carry their own marker
         fullKit: true,
+        // The fingerprint definition this build records under. Attempts carry
+        // their own `fingerprintVersion`, and an attempt without one is v1.
+        fingerprintVersion: FINGERPRINT_VERSION,
+        fingerprintSpec: FINGERPRINT_SPEC,
         attempts: recordedAttempts(),
     };
 }

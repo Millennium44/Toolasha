@@ -9,14 +9,32 @@
  * reliability bands), and how sharp the predictions are overall (the Brier
  * score).
  *
- * Cohorts matter here more than anywhere: a prediction made before the sim
- * switched to full monster abilities came from a different model, so attempts
- * without the marker are the legacy cohort and are excluded from every figure —
- * counted, never pooled, never deleted.
+ * Cohorts matter here more than anywhere, and there are two of them to keep
+ * apart. A prediction made before the sim switched to full monster abilities
+ * came from a different *model*. A prediction made before the fingerprint
+ * learned about combat skill levels came from a different *character* — the
+ * gear-only fingerprint pooled fights from either side of a level-up, and the
+ * replay reported the resulting gap as the sim over-crediting damage. Attempts
+ * failing either test are excluded from every figure — counted, never pooled,
+ * never deleted.
  *
  * Pure: attempts in, numbers out. The recorder owns the pool and the panel owns
  * the drawing.
  */
+
+import { FINGERPRINT_VERSION, isCurrentFingerprintVersion } from './labyrinth-fingerprint.js';
+
+/**
+ * Below this many judged fights a reliability reading is noise, and the panel
+ * says "too few to call" rather than quoting a Brier score.
+ *
+ * Higher than the replay's five-fight floor because this is a harder
+ * question: a rate needs only enough fights to divide, where a calibration
+ * reading has to separate a miscalibrated sim from the spread a correct one
+ * produces, and Σ p(1−p) over a handful of attempts leaves almost any observed
+ * count inside one standard deviation.
+ */
+export const MIN_CALIBRATION_FIGHTS = 20;
 
 /**
  * The probability bands the reliability report buckets attempts into. Uneven on
@@ -32,23 +50,50 @@ export const CALIBRATION_BANDS = [
 ];
 
 /**
- * Split recorded attempts into the current sim-model cohort and the legacy one.
+ * Split recorded attempts into the cohort a reading may use and the ones it
+ * may only count.
  *
- * The marker is `model.fullKit`: attempts recorded since the sim switched every
- * path to full monster abilities carry it, older records do not. The two must
- * not be pooled — their predictions came from different models — but the legacy
- * half is returned rather than dropped, so a caller can count it in a note.
+ * Two tests, and an attempt has to pass both.
+ *
+ * `model.fullKit`: attempts recorded since the sim switched every path to full
+ * monster abilities carry it, older records do not. Their predictions came from
+ * a different model.
+ *
+ * `fingerprintVersion`: attempts recorded since the fingerprint learned about
+ * combat skill levels carry the current one, older records read as version 1.
+ * Those were pooled by gear alone, so a level-up moved the sim's answer without
+ * moving their fingerprint — and comparing them against a sim of the character
+ * you are now is comparing against a different character.
+ *
+ * The excluded halves are returned rather than dropped, so a caller can count
+ * each in a note and say which kind of exclusion it is looking at. `legacy` is
+ * their union, which is what a caller wanting a single "excluded" count reads.
  *
  * @param {Array<Object>} attempts - From the recorder
- * @returns {{current: Array<Object>, legacy: Array<Object>}}
+ * @param {Object} [options]
+ * @param {number} [options.fingerprintVersion] - Version to measure against
+ * @returns {{current: Array<Object>, legacy: Array<Object>,
+ *   legacyModel: Array<Object>, legacyFingerprint: Array<Object>}}
  */
-export function splitModelCohorts(attempts) {
+export function splitModelCohorts(attempts, { fingerprintVersion = FINGERPRINT_VERSION } = {}) {
     const current = [];
     const legacy = [];
+    const legacyModel = [];
+    const legacyFingerprint = [];
     for (const attempt of attempts || []) {
-        (attempt?.model?.fullKit ? current : legacy).push(attempt);
+        if (!attempt?.model?.fullKit) {
+            legacy.push(attempt);
+            legacyModel.push(attempt);
+            continue;
+        }
+        if (!isCurrentFingerprintVersion(attempt, fingerprintVersion)) {
+            legacy.push(attempt);
+            legacyFingerprint.push(attempt);
+            continue;
+        }
+        current.push(attempt);
     }
-    return { current, legacy };
+    return { current, legacy, legacyModel, legacyFingerprint };
 }
 
 /**
@@ -76,11 +121,18 @@ export function calibrationBandIndex(p) {
  * from expected when every prediction is right — which is what `sigma` reads
  * the gap against.
  *
+ * `enough` is the honest-degradation flag: below {@link MIN_CALIBRATION_FIGHTS}
+ * judged fights the arithmetic still runs (the numbers are the numbers) but no
+ * caller may present it as a verdict. It exists so a cohort thinned by a
+ * fingerprint migration says "too few to call" rather than tempting a caller to
+ * widen the cohort until the figure looks solid — which would mean pooling the
+ * pre-migration records this split exists to keep out.
+ *
  * @param {Array<Object>} attempts - One cohort, e.g. `splitModelCohorts().current`
  * @returns {{count: number, unpredicted: number, expected: number, observed: number,
  *   brier: number|null, variance: number, sd: number|null, sigma: number|null,
- *   bands: Array<{label: string, low: number, high: number, count: number,
- *   expected: number, observed: number}>}}
+ *   enough: boolean, bands: Array<{label: string, low: number, high: number,
+ *   count: number, expected: number, observed: number}>}}
  */
 export function calibrationReport(attempts) {
     const bands = CALIBRATION_BANDS.map((band) => ({ ...band, count: 0, expected: 0, observed: 0 }));
@@ -123,8 +175,15 @@ export function calibrationReport(attempts) {
         variance,
         sd,
         sigma: sd ? (observed - expected) / sd : null,
+        enough: count >= MIN_CALIBRATION_FIGHTS,
         bands,
     };
 }
 
-export default { CALIBRATION_BANDS, splitModelCohorts, calibrationBandIndex, calibrationReport };
+export default {
+    CALIBRATION_BANDS,
+    MIN_CALIBRATION_FIGHTS,
+    splitModelCohorts,
+    calibrationBandIndex,
+    calibrationReport,
+};

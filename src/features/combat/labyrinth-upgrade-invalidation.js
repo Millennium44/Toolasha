@@ -30,13 +30,18 @@
  *
  * ## Coverage
  *
- * The fingerprint hashes loadout snapshots and worn item+enhancement, and
- * excludes levels, abilities and buffs. So a house candidate, an ability swap,
- * a combat level, a drink or a community buff changes nothing it hashes, and
- * this says *nothing at all* on those rows — not "0 rooms", which would be a
- * claim about a mechanism that does not apply to them. Only worn-item and
- * enhancement candidates are in coverage.
+ * The fingerprint hashes loadout snapshots, worn item+enhancement, and the
+ * seven combat skill levels the sim reads; it excludes skilling levels,
+ * abilities and buffs. So a house candidate, an ability swap, a drink or a
+ * community buff changes nothing it hashes, and this says *nothing at all* on
+ * those rows — not "0 rooms", which would be a claim about a mechanism that
+ * does not apply to them. Only worn-item and enhancement candidates are in
+ * coverage. A combat level now IS in the fingerprint, but no advisor candidate
+ * offers one, so the projection holds the levels still and reports only what
+ * the gear change alone would stale.
  */
+
+import { combatLevelsPart, fingerprintInput, tagFingerprint } from './labyrinth-fingerprint.js';
 
 /** Candidate types whose change lands on worn gear, and so on the fingerprint */
 export const GEAR_CANDIDATE_TYPES = Object.freeze(['tier', 'enhancement', 'cross_slot']);
@@ -137,16 +142,29 @@ export function wornFingerprintInput(loadouts) {
 /**
  * The fingerprint a candidate's gear change would produce.
  *
- * @param {Object} current - The two halves the live fingerprint hashes
+ * Assembled and tagged through the same helpers the live fingerprint uses. A
+ * projection that built its input or its version tag independently would never
+ * equal the live value, and the advisor would report every candidate as
+ * invalidating the whole cache.
+ *
+ * A gear candidate moves no combat level, so `levels` passes through unchanged
+ * — it is the current build's, which is exactly what a gear-only projection
+ * should hold still.
+ *
+ * @param {Object} current - The three halves the live fingerprint hashes
  * @param {string} current.stored - Snapshot JSON with `savedAt` stripped
  * @param {Array<Array<Object>>} current.loadouts - Resolved equipment per loadout
+ * @param {Object|null} current.levels - The combat skill level map, as
+ *   `_combatSkillLevels` returns it; null when the levels could not be read
  * @param {Object} candidate - A gear candidate
  * @param {Function} hash - The djb2 hasher the live fingerprint uses
- * @returns {string} The projected fingerprint
+ * @returns {string} The projected fingerprint, version-tagged
  */
-export function projectedFingerprint({ stored, loadouts }, candidate, hash) {
+export function projectedFingerprint({ stored, loadouts, levels }, candidate, hash) {
     const projected = (loadouts || []).map((equipment) => applyGearCandidate(equipment, candidate));
-    return hash(`${stored}||${wornFingerprintInput(projected)}`);
+    return tagFingerprint(
+        hash(fingerprintInput({ stored, worn: wornFingerprintInput(projected), levels: combatLevelsPart(levels) }))
+    );
 }
 
 /**

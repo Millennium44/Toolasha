@@ -15,7 +15,7 @@
 
 import { splitModelCohorts, calibrationReport } from './labyrinth-calibration.js';
 import tickCapture from './labyrinth-tick-capture.js';
-import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
+import { FINGERPRINT_SPEC, FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 /**
  * Where the sim's stop rule and hour budget are read from at export time.
@@ -59,7 +59,8 @@ function scriptVersion() {
  * What produced an export and against which server — live and test do not
  * share balance, so a reader has to know which one a record measured.
  * @returns {{toolashaVersion: string|null, host: string|null, isTestServer: boolean|null,
- *   fullKit: boolean, seedPolicy: string, fingerprintSpec: string}}
+ *   fullKit: boolean, seedPolicy: string, fingerprintSpec: string,
+ *   fingerprintVersion: number}}
  */
 export function exportMeta() {
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
@@ -73,8 +74,11 @@ export function exportMeta() {
         // the exact trial sequence — only the distribution
         seedPolicy: 'unseeded',
         // How the fingerprints in this file were computed, so a reader knows
-        // what a matching pair of them does and does not guarantee
+        // what a matching pair of them does and does not guarantee, and which
+        // definition produced them — attempts carry their own version, and one
+        // without the field was fingerprinted under v1 (gear only)
         fingerprintSpec: FINGERPRINT_SPEC,
+        fingerprintVersion: FINGERPRINT_VERSION,
     };
 }
 
@@ -146,7 +150,7 @@ export function sanitizeExport(value) {
  * @returns {Object}
  */
 export function buildAccuracyExport({ snapshot = null, attempts = [], replay = null, character = null } = {}) {
-    const { current, legacy } = splitModelCohorts(attempts);
+    const { current, legacy, legacyModel, legacyFingerprint } = splitModelCohorts(attempts);
     return {
         format: 'toolasha-labyrinth-accuracy',
         version: 1,
@@ -157,8 +161,15 @@ export function buildAccuracyExport({ snapshot = null, attempts = [], replay = n
         summary: snapshot?.summary ?? null,
         rows: snapshot?.rows ?? [],
         bySubject: snapshot?.bySubject ?? [],
-        // Over the current cohort only; the legacy count is reported, not pooled
-        reliability: { ...calibrationReport(current), legacyExcluded: legacy.length },
+        // Over the current cohort only; the legacy counts are reported, not
+        // pooled, and split by reason — a previous sim model and a previous
+        // fingerprint definition exclude an attempt for different causes
+        reliability: {
+            ...calibrationReport(current),
+            legacyExcluded: legacy.length,
+            legacyModelExcluded: legacyModel.length,
+            legacyFingerprintExcluded: legacyFingerprint.length,
+        },
         // The tick-capture file this export can be paired with, when one was
         // saved this session (guarded: test doubles may not carry the accessor)
         capture: typeof tickCapture?.lastCaptureRef === 'function' ? tickCapture.lastCaptureRef() : null,

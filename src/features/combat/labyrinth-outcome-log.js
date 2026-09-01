@@ -16,7 +16,26 @@
  *
  * The accumulation is pure and lives here; the storage and the display are the
  * caller's business.
+ *
+ * ## Cohorts, and what a bucket can and cannot be split by
+ *
+ * A bucket is a running sum, not a list of fights, so it can only be split
+ * along a boundary it was told about while it was accumulating. Two such
+ * boundaries exist. The sim model is one — `fullKit*` counts only what was
+ * folded under the full-ability sim. The build fingerprint is the other:
+ * `cohortFingerprintVersion` records which fingerprint definition the current
+ * `fullKit*` sums were built under, and when that definition changes the sums
+ * are retired rather than added to, because a counter accumulated against a
+ * fingerprint that could not see combat levels is a counter over a character
+ * the current one no longer describes.
+ *
+ * Retired, not deleted: `legacyCohortJudged` keeps the count, so the panel says
+ * how much history the migration set aside instead of appearing to lose it.
+ * The raw `attempts`/`clears` are untouched by any of this — they are the
+ * server's own count of what happened in a room and belong to no cohort.
  */
+
+import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 /**
  * Key an accumulator bucket. Level matters as much as what is in the room — the
@@ -92,6 +111,56 @@ export function readFloorRooms(roomData) {
         }
     }
     return rooms;
+}
+
+/**
+ * A bucket with its full-kit cohort retired when the fingerprint definition it
+ * accumulated under is no longer the current one.
+ *
+ * The cohort is a set of running sums — judged fights, expected clears, their
+ * variance — accumulated against the predictions in effect at the time. Those
+ * predictions were made for a character the old fingerprint described and the
+ * new one does not: v1 hashed gear alone, so folds from either side of a combat
+ * level-up went into the same sums as though nothing had changed. There is no
+ * way to unpick which fold belongs to which side, so the whole cohort is
+ * retired and a fresh one starts. Averaging across the boundary is the one
+ * outcome not on offer.
+ *
+ * `legacyCohortJudged` accumulates what has been retired, so the count is
+ * reported rather than lost. `attempts` and `clears` are the server's own count
+ * of what happened in the room and belong to no cohort — they are never touched
+ * here, which is why the record's raw win rates survive a migration intact.
+ *
+ * A bucket written before the field existed carries no version and is treated
+ * as v1, which is what it is: folded under the gear-only fingerprint.
+ *
+ * @param {Object} bucket - An accumulator bucket
+ * @param {number} [version=FINGERPRINT_VERSION] - The definition in force
+ * @returns {Object} The bucket unchanged, or a copy with the cohort rotated
+ */
+export function rotateCohortForFingerprint(bucket, version = FINGERPRINT_VERSION) {
+    const stamped = bucket?.cohortFingerprintVersion;
+    const was = Number.isInteger(stamped) && stamped > 0 ? stamped : 1;
+    if (was === version) return bucket;
+
+    const judged = Math.max(0, Number(bucket?.fullKitJudged) || 0);
+    const expected = Math.max(0, Number(bucket?.fullKitExpected) || 0);
+    // Nothing accumulated under the old definition, so only the stamp moves.
+    // The counters are left absent rather than written as zeros: absent is how
+    // a bucket that never had a cohort has always read, and writing zeros would
+    // make a room never simmed indistinguishable from one whose cohort was
+    // retired — and would put four new fields on every bucket in the record.
+    if (judged <= 0 && expected <= 0) return { ...bucket, cohortFingerprintVersion: version };
+
+    return {
+        ...bucket,
+        cohortFingerprintVersion: version,
+        legacyCohortJudged: (Number(bucket?.legacyCohortJudged) || 0) + judged,
+        fullKitJudged: 0,
+        fullKitJudgedClears: 0,
+        fullKitExpected: 0,
+        fullKitVariance: 0,
+    };
 }
 
 /**
@@ -200,7 +269,9 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
         if (newEntries === 0 && newClear === 0) continue;
 
         const key = outcomeKey(subjectHrid, roomLevel);
-        const bucket = nextTotals[key] || { subjectHrid, kind, roomLevel, attempts: 0, clears: 0 };
+        const bucket = rotateCohortForFingerprint(
+            nextTotals[key] || { subjectHrid, kind, roomLevel, attempts: 0, clears: 0 }
+        );
         const predicted = predictedFor ? rateOrNaN(predictedFor(subjectHrid, roomLevel, kind)) : NaN;
         const clears = bucket.clears + newClear;
         // The full-kit cohort: attempts folded with a prediction in effect at
@@ -543,6 +614,9 @@ export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
     const rows = [];
     for (const bucket of Object.values(totals || {})) {
         const subjectHrid = bucketSubject(bucket);
+        // The cohort as the current fingerprint definition sees it — see the
+        // `cohort` field below for why the read path rotates too
+        const current = rotateCohortForFingerprint(bucket);
         const live = predictedFor ? rateOrNaN(predictedFor(subjectHrid, bucket.roomLevel, bucket.kind)) : NaN;
         const predicted = Number.isFinite(live) ? live : rateOrNaN(bucket.predicted);
         const known = Number.isFinite(predicted);
@@ -570,7 +644,18 @@ export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
             // The full-kit cohort's share of this bucket, with expected clears
             // summed at the prediction in effect when each fight was folded. A
             // bucket predating the counters reads all zeros — the legacy cohort.
-            cohort: repairedCohort(bucket),
+            //
+            // Rotated on the way out as well as on the way in: a room not
+            // fought since the fingerprint changed has never been through the
+            // fold, so its stored cohort is still the old definition's, and
+            // reading it here would put pre-migration sums into a current-
+            // version headline. Rotation is idempotent, so a bucket the fold
+            // already rotated passes straight through.
+            cohort: repairedCohort(current),
+            // How many judged fights the fingerprint migration set aside for
+            // this room — reported so a thinned cohort is explained rather than
+            // looking like history that vanished
+            legacyCohortJudged: Math.max(0, Number(current.legacyCohortJudged) || 0),
         });
     }
     // The game's order, and within a room type by level, so a subject's rooms
@@ -903,6 +988,11 @@ const COUNTERS = [
     'fullKitJudgedClears',
     'fullKitExpected',
     'fullKitVariance',
+    // Also a running sum, so a since-view must subtract it: a migration that
+    // happened before the mark is not something the period since it set aside.
+    // `cohortFingerprintVersion` is deliberately NOT here — it is a stamp, not
+    // a counter, and differencing it would produce a version number of zero.
+    'legacyCohortJudged',
 ];
 
 /**
