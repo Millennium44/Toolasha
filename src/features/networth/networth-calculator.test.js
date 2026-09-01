@@ -813,3 +813,71 @@ describe('what the sweep collects prices for', () => {
         expect(result.totalNetworth).toBe(100);
     });
 });
+
+/**
+ * What a market listing is holding. Three distinct pots of value — the units
+ * still on the market, the coins locked against unfilled buy quantity, and the
+ * items or coins already handed back and waiting to be claimed — and the total
+ * has to carry all three exactly once.
+ */
+describe('market listings', () => {
+    beforeEach(() => {
+        mocks.settings.networth_pricingMode = 'ask';
+        mocks.initData = { houseRoomDetailMap: {}, itemDetailMap: { '/items/milk': { name: 'Milk' } } };
+        mocks.itemPrices['/items/milk'] = { ask: 100, bid: 90 };
+    });
+
+    /**
+     * Run the sweep over one listing and nothing else.
+     * @param {Object} listing - A `myMarketListings` entry
+     * @returns {Promise<Object>} The listings section
+     */
+    const sweepListing = async (listing) => {
+        mocks.combinedData = {
+            characterItems: [],
+            myMarketListings: [listing],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: mocks.initData.itemDetailMap,
+        };
+        const result = await calculateNetworth();
+        return result.currentAssets.listings;
+    };
+
+    test('a live buy order counts the coins refunded to it, not just the coins still locked', async () => {
+        // Half of a 100-unit order filled below the bid price, so the game
+        // handed back both the units and the price improvement
+        const listings = await sweepListing({
+            itemHrid: '/items/milk',
+            enhancementLevel: 0,
+            isSell: false,
+            status: '/market_listing_status/active',
+            orderQuantity: 100,
+            filledQuantity: 50,
+            price: 1000,
+            unclaimedItemCount: 50,
+            unclaimedCoinCount: 5000,
+        });
+
+        // 50 unfilled x 1000 locked + 50 milk at ask + the 5000 refund
+        expect(listings.value).toBe(50 * 1000 + 50 * 100 + 5000);
+    });
+
+    test('an ended buy order counts its refund exactly once', async () => {
+        const listings = await sweepListing({
+            itemHrid: '/items/milk',
+            enhancementLevel: 0,
+            isSell: false,
+            status: '/market_listing_status/cancelled',
+            orderQuantity: 100,
+            filledQuantity: 50,
+            price: 1000,
+            unclaimedItemCount: 50,
+            unclaimedCoinCount: 50_000,
+        });
+
+        // Nothing is locked any more: the units came back and so did the coins
+        expect(listings.value).toBe(50 * 100 + 50_000);
+    });
+});

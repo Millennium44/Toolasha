@@ -1090,8 +1090,14 @@ export async function calculateNetworth() {
                 priceCache
             );
 
-            const listingValue =
-                quantity * listing.price + unclaimedValue + (ended ? listing.unclaimedCoinCount || 0 : 0);
+            // Unclaimed coins are yours whatever the listing's status. On an
+            // ended order they are the refund of what never filled; on a live
+            // one they are the price improvement a fill was cheaper by, and
+            // those coins were dropped from the total entirely — the market
+            // header's own "unclaimed" figure counts them on every listing.
+            // They cannot double-count `quantity * price`, which is what is
+            // still locked against the units that have *not* filled.
+            const listingValue = quantity * listing.price + unclaimedValue + (listing.unclaimedCoinCount || 0);
             listingsValue += listingValue;
             listingsBreakdown.push({
                 itemHrid: listing.itemHrid,
