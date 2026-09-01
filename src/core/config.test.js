@@ -540,3 +540,58 @@ describe('Config — a write during the settings-reload window', () => {
         expect(config.getSetting('checkbox')).toBe(false);
     });
 });
+
+/**
+ * Clearing the map is only ever half of a pair, and nothing enforces the other
+ * half: the character-switch chain's re-init returns early when a newer switch
+ * is in flight, and a `loadSettings()` that rejects leaves the map empty with
+ * nothing scheduled to try again. An empty map answers every read with the
+ * shipped default and stores no write at all, so it cannot be left standing.
+ */
+describe('Config — a clear nobody reloads', () => {
+    beforeEach(() => {
+        config.settingsLoadedCallbacks = [];
+        config.settingChangeCallbacks = {};
+        config._pendingWrites = [];
+        config._pendingValues = Object.create(null);
+        settingsStorageMock.lastLoadReadable = true;
+        settingsStorageMock.loadSettings.mockClear();
+        dataManagerMock.characterId = 'char-1';
+    });
+
+    test('the map is reloaded on its own when no load follows the clear', async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            settingsStorageMock.loadSettings.mockResolvedValue({ checkbox: { id: 'checkbox', isTrue: true } });
+
+            config.clearSettingsCache();
+            expect(config.getSetting('checkbox')).toBe(false); // the schema default, not what is stored
+
+            await vi.advanceTimersByTimeAsync(20000);
+
+            expect(settingsStorageMock.loadSettings).toHaveBeenCalled();
+            expect(config.getSetting('checkbox')).toBe(true);
+        } finally {
+            warn.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('a clear the switch chain does reload costs no second load', async () => {
+        vi.useFakeTimers();
+        try {
+            settingsStorageMock.loadSettings.mockResolvedValue({ checkbox: { id: 'checkbox', isTrue: true } });
+
+            config.clearSettingsCache();
+            await config.loadSettings();
+            settingsStorageMock.loadSettings.mockClear();
+
+            await vi.advanceTimersByTimeAsync(20000);
+
+            expect(settingsStorageMock.loadSettings).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});

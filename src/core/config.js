@@ -24,6 +24,14 @@ const SCHEMA_DEFAULTS = (() => {
 })();
 
 /**
+ * How long an emptied settings map may stay empty before config reloads it
+ * itself. Comfortably longer than the character-switch chain takes to reach its
+ * own `loadSettings()` (a teardown of every feature plus a 50 ms settle), so
+ * the watchdog only ever fires for a clear whose reload never came.
+ */
+const RELOAD_WATCHDOG_MS = 15000;
+
+/**
  * Config class manages all script configuration
  * - Constants (colors, URLs, formatters)
  * - User settings with persistence
@@ -108,6 +116,9 @@ class Config {
          * write it has taken but not yet stored. Cleared with the queue.
          */
         this._pendingValues = Object.create(null);
+
+        /** Timer that reloads a map left empty by a clear nobody followed — see _armReloadWatchdog() */
+        this._reloadWatchdog = null;
 
         // Feature toggles with metadata for future UI
         this.features = {
@@ -565,6 +576,42 @@ class Config {
     clearSettingsCache() {
         this.settingsMap = {};
         this.characterSettingsLoaded = false;
+        this._armReloadWatchdog();
+    }
+
+    /**
+     * Make sure an emptied map gets refilled even if the caller forgets.
+     *
+     * Clearing is only ever half of a pair — the character-switch chain clears
+     * on the way down and reloads on the way up — but the reload is not
+     * guaranteed by anything: the chain's re-init step returns early when a
+     * newer switch is already in flight, and a `loadSettings()` that rejects
+     * leaves the map empty with nothing else scheduled to try again. An empty
+     * map is not a neutral state: every read falls through to the shipped schema
+     * default (so settings the player turned off come back on) and every write
+     * goes to `_pendingWrites`, which only a load drains — so nothing is stored
+     * until one happens.
+     *
+     * Re-armed rather than cancelled by a load: the check is "is the map still
+     * empty when the timer fires", which costs one no-op timer per character
+     * switch and cannot be defeated by a load that starts and then throws.
+     * @returns {void}
+     * @private
+     */
+    _armReloadWatchdog() {
+        if (typeof setTimeout !== 'function') return;
+        clearTimeout(this._reloadWatchdog);
+        this._reloadWatchdog = setTimeout(() => {
+            this._reloadWatchdog = null;
+            if (Object.keys(this.settingsMap).length > 0) return;
+            console.warn('[Config] Settings map has stayed empty since it was cleared; reloading it');
+            this.loadSettings().catch((error) => {
+                console.error('[Config] Watchdog reload of the settings failed:', error);
+            });
+        }, RELOAD_WATCHDOG_MS);
+        // Node (the test runner) counts a pending timer as work keeping the
+        // process alive; browsers have no unref and need none.
+        this._reloadWatchdog?.unref?.();
     }
 
     /**
