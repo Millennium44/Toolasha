@@ -2084,6 +2084,27 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.38.1](https://github.com/Millennium44/Toolasha/compare/v3.38.0...v3.38.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* a labyrinth run in flight is not filed under the arriving character ([2465c92](https://github.com/Millennium44/Toolasha/commit/2465c92d57d8b0e2cabf24eee2254fa2266dde30))
+* build score costed an ask-less material at nothing and dropped unpriced gear ([0c68d8a](https://github.com/Millennium44/Toolasha/commit/0c68d8a753cd93a23c0d0997126e6f19bc6130dd))
+* escape player names on the trial scoreboard's mana and no-build lines ([393fc58](https://github.com/Millennium44/Toolasha/commit/393fc58e1ce4768fa9f13462ca8e940c27b12757))
+* guild roster tile prints "null" for a member with no captured name ([7ff42f5](https://github.com/Millennium44/Toolasha/commit/7ff42f51ca777c9792ef3c28016edd5bd7921b05))
+* the countdown froze at the previous action's total ([6597b51](https://github.com/Millennium44/Toolasha/commit/6597b51206c00ad127da4546d2caa20492d8dbae))
+* the timing diagnostic files pauses and phantom stalls as evidence ([bb3e2f5](https://github.com/Millennium44/Toolasha/commit/bb3e2f53c344fa5819d0a234572324457937ce0f))
+* three labyrinth clear-rate readings that could not tell "unknown" from "zero" ([a532163](https://github.com/Millennium44/Toolasha/commit/a5321634f2670c4393362172c32dac46c16d7f27))
+* three labyrinth outcome-record readings that quietly could not fail ([283cf82](https://github.com/Millennium44/Toolasha/commit/283cf82e44b056ad9d445a2179f22e7ee9de3cf9))
+* treasure tracker blames a character switch that did not happen ([a6e1113](https://github.com/Millennium44/Toolasha/commit/a6e11131b8f1e6b94ba0be5c58f0d6d37163a185))
+
+
+### Documentation
+
+* changelog for audit round 30 ([65f7af6](https://github.com/Millennium44/Toolasha/commit/65f7af6dcde340bf85ddf5ccaf0ffede3f12de13))
+* labyrinth path reveal detour says what the economy actually prices ([3083ed4](https://github.com/Millennium44/Toolasha/commit/3083ed4727e0cffa58c0c6a11e73e8357893087c))
+
 ## [3.38.0](https://github.com/Millennium44/Toolasha/compare/v3.37.0...v3.38.0) (2026-09-01)
 
 ### Features
