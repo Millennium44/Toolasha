@@ -2078,6 +2078,68 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.38.0](https://github.com/Millennium44/Toolasha/compare/v3.37.0...v3.38.0) (2026-09-01)
+
+### Features
+
+- action timing diagnostic measures the bar's real pacing ([9599832](https://github.com/Millennium44/Toolasha/commit/9599832f92bbcb179e726ae5089b520d68e54f70))
+
+### Bug Fixes
+
+- a buy modal's item is read off its item icon, not its first icon ([3ca296f](https://github.com/Millennium44/Toolasha/commit/3ca296fc1b2e365a5a73963451280b98e6e14161))
+- a character switch mid-load loses the arriving character's trade ledger ([180b93f](https://github.com/Millennium44/Toolasha/commit/180b93fa344e300379f0dfd05340f57e8b972621))
+- a chunked history save serves one character's entries to another ([a442e37](https://github.com/Millennium44/Toolasha/commit/a442e37f7e7f615cf1ab564a0aa00ea467cbe86e))
+- a combat run is written under the character who arrived mid-save ([766a554](https://github.com/Millennium44/Toolasha/commit/766a554cc0093257a361b4d656dbe62ef16f2a32))
+- a debounced write in flight escapes the restore latch and flushAll ([4793e4f](https://github.com/Millennium44/Toolasha/commit/4793e4f738d88f3e1771f2b74482917d2c0f1d4c))
+- a dungeon run is stamped with the character who arrived, not the one who ran it ([60975b7](https://github.com/Millennium44/Toolasha/commit/60975b7448dd54fe7998fe6ad0e89a29c509662a))
+- a labyrinth teardown empties the arriving character's sim cache ([0b01416](https://github.com/Millennium44/Toolasha/commit/0b01416524ad5725078f40c8174bf57b74c9ad36))
+- a listing delete across a switch overwrites the other character's log ([a19bdca](https://github.com/Millennium44/Toolasha/commit/a19bdcab485b99bc1e97cea91f25eb6168be0b83))
+- a net worth exclusion can be written over the arriving character's list ([4e4c3a0](https://github.com/Millennium44/Toolasha/commit/4e4c3a0ef59ab02f240dcf64c268544826462562))
+- a queued clear() can empty the arriving character's persisted record ([c15e233](https://github.com/Millennium44/Toolasha/commit/c15e233243c77e8fc34a93023cf26b5f17c2fe45))
+- a setting toggled on one character is replayed onto the next ([a39a2ad](https://github.com/Millennium44/Toolasha/commit/a39a2adff6865795ee491483231deae37cc2acba))
+- a switch behind an open dialog wipes the arriving character's chests ([a05c73f](https://github.com/Millennium44/Toolasha/commit/a05c73fb9ebdc96ba8de5e8c7e0cf10eb2416c9d))
+- a sync pull erases settings the other device has never heard of ([9e4ab17](https://github.com/Millennium44/Toolasha/commit/9e4ab173a3b87294a2f4edb14e75bea1d2e0e177))
+- a Tester shop arming ends with its errand, like the marketplace's ([5b55b90](https://github.com/Millennium44/Toolasha/commit/5b55b90193ad100b5e21bd477cd4d3725c53ba50))
+- a watchlist save during teardown replaces the arriving character's list ([49e8d13](https://github.com/Millennium44/Toolasha/commit/49e8d13e615f98dbe31999c105e48fe4f1a3ce79))
+- action countdown stops repeating a lying progress bar ([dbf76cb](https://github.com/Millennium44/Toolasha/commit/dbf76cb25dabf486655b2f491eb5bfa9df5e4463))
+- alchemy profit names an output it could not price instead of leaving it out in silence ([f08bf9b](https://github.com/Millennium44/Toolasha/commit/f08bf9b4feb24ed19d29eeef4d1ab665b475335a))
+- an enhancement attempt is scored against the level it actually started from ([59e5da5](https://github.com/Millennium44/Toolasha/commit/59e5da5aaf75e30504bb1eb362ba1ea641d456bd))
+- an enhancing loot-log summary says when its costs are understated, and that its protect-from is assumed ([e8b170a](https://github.com/Millennium44/Toolasha/commit/e8b170ae29e22c19c1234472c53387aa4f5b2be6))
+- an XP init parked across a switch saves under the wrong character ([6c39f90](https://github.com/Millennium44/Toolasha/commit/6c39f90227868f8faaf2724f75384bfffa620b5f))
+- budget calculator says how many units it could not price ([71a61cb](https://github.com/Millennium44/Toolasha/commit/71a61cb4ebc9a9707ddbcd6d9e204c660f9dd00c))
+- collection time-to-next-tier reads a drop's real quantity range ([361220f](https://github.com/Millennium44/Toolasha/commit/361220f556c06a3bc3fdda3ab2e8307226645fc1))
+- guild records adopted across a character switch land on the wrong key ([fbdf1c6](https://github.com/Millennium44/Toolasha/commit/fbdf1c6de9d339e1a6b8133870ad6f9e625066e6))
+- lab sim's shrine grid reads a blank box the way the combat sim's does ([c49ab9a](https://github.com/Millennium44/Toolasha/commit/c49ab9aecaddd39d65cd68cb776389fdf0763d2a))
+- level projections credit efficiency the game's clamp withholds ([bb167e2](https://github.com/Millennium44/Toolasha/commit/bb167e21298af0ae782269eac93e384049db4af1))
+- net worth counts a live buy order's unclaimed coins ([d23eea2](https://github.com/Millennium44/Toolasha/commit/d23eea2b281e5c659374e5fb56ced60b20b874cd))
+- net worth detail snapshots stop crossing characters mid-load ([61eb96c](https://github.com/Millennium44/Toolasha/commit/61eb96c73fd4b3822fd585679c16cf0dd514b079))
+- open-panel flags saved under the character who arrived mid-save ([5132d08](https://github.com/Millennium44/Toolasha/commit/5132d086a8fcd6198ff23dbbf51a884df1d6814c))
+- replay-check recovery clears a checkpoint that is not its own ([1453f55](https://github.com/Millennium44/Toolasha/commit/1453f5570593a67b6cf30310cfbeccd0953b5065))
+- settings writes file one character's data under another's key ([8901041](https://github.com/Millennium44/Toolasha/commit/890104186885d87071f421310205d854f14d0f08))
+- the collection rename hands one character's favourites to another ([e6fad5e](https://github.com/Millennium44/Toolasha/commit/e6fad5e6d8d48029913e334966fe64cd0f861a67))
+- the sell queue's cleanup watchdog does not outlive its session ([de74e01](https://github.com/Millennium44/Toolasha/commit/de74e012c313ac8f60eb382a2b05e96bc1fafcb2))
+- the settings load that settles last no longer wins ([d0b7f1e](https://github.com/Millennium44/Toolasha/commit/d0b7f1eb215fa79441762e26895fc13c2ec53535))
+- the shrine cap's safety valve stops misreading a skilling-only guild ([59917a0](https://github.com/Millennium44/Toolasha/commit/59917a0401b6df5c148932969c584288d4bd34b4))
+- the sim's Cost column stops repricing your own books as a fresh path ([f88491d](https://github.com/Millennium44/Toolasha/commit/f88491d99f25b7376e45610f65e340089848fde5))
+
+### Code Refactoring
+
+- delete alchemy-profit's dead second efficiency model ([5c97db9](https://github.com/Millennium44/Toolasha/commit/5c97db93810a5408b580c832c679865491721c87))
+
+### Documentation
+
+- changelog for audit round 27's five fixes ([3af5dbb](https://github.com/Millennium44/Toolasha/commit/3af5dbb347f7a750e410cf257187e3381946fead))
+- changelog for audit round 28's Toolasha fixes ([6521220](https://github.com/Millennium44/Toolasha/commit/652122099f2b598fc4dd1a06c841117352cab92a))
+- changelog for the async-race sweep and the action timing work ([03ba994](https://github.com/Millennium44/Toolasha/commit/03ba99458196fb67d076273567ce1104a7b73038))
+- changelog for the character-switch leftovers ([dace996](https://github.com/Millennium44/Toolasha/commit/dace9965f419de44650b0d2cc796f245cd710d0b))
+- changelog for the flagged-residual fixes ([2046b7c](https://github.com/Millennium44/Toolasha/commit/2046b7c20daa5c1f599d2aa6c5167f6b286b29d0))
+- changelog for the networth and collection audit fixes ([77c0ee3](https://github.com/Millennium44/Toolasha/commit/77c0ee3daab3f5b71c7b02c1d95849c23f56a96a))
+
+### Styles
+
+- prettier over the switch-guard changes ([5f81244](https://github.com/Millennium44/Toolasha/commit/5f81244b2b56109fcabaa6f36675cf7851a27ddf))
+- prettier the two market audit test files ([34f7a2f](https://github.com/Millennium44/Toolasha/commit/34f7a2fa5208539e95dcc6267105e026ba73195e))
+
 ## [3.37.0](https://github.com/Millennium44/Toolasha/compare/v3.36.0...v3.37.0) (2026-09-01)
 
 ### Features
