@@ -129,6 +129,24 @@ describe('house rooms follow the game', () => {
         game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 3 }]]);
         expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(5);
     });
+
+    test("a character simmed from their profile keeps their house, not this player's", () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        const stranger = emptyDTO('player1');
+        stranger.houseRooms = { '/house_rooms/dojo': 5, '/house_rooms/garden': 3 };
+        editor.openWithExternalDTO(stranger, 'Venaam');
+
+        // This player's own house says otherwise
+        game.houseRooms = new Map([
+            ['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 2 }],
+            ['/house_rooms/garden', { houseRoomHrid: '/house_rooms/garden', level: 8 }],
+        ]);
+
+        const rooms = editor.getEditedDTOs().player1.houseRooms;
+        expect(rooms['/house_rooms/dojo']).toBe(5);
+        expect(rooms['/house_rooms/garden']).toBe(3);
+    });
 });
 
 describe('reset to me', () => {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A character simmed from their profile keeps their own house
+
+Simming another player via their profile's "Sim Character" button registered them as the self player, so the editor's keep-house-current sync overwrote their imported house rooms with your own live levels — every run and every Upgrade analysis for them used your house, not theirs. The imported character is no longer treated as self, so their profile's house rooms stand.
+
 ### Audit round: the tank keeps their tag, and the shrine plan's halves agree
 
 A guild-trial tank whose taunt was never captured could be retagged as melee by their weapon's passive — the new weapon-passive rule sat above the party-threat rule despite claiming otherwise, so a 9×-baseline threat reading lost to a sword. A baseline-confirmed tank verdict now outranks the passive (the crossbow case the rule was added for is untouched). A shrine plan loading late from storage now redraws the Suggested Next Buys along with the totals box, so the two halves can't route the same shortfall differently. The Export off-plan button no longer flashes "All on plan ✓" when the saved plan names nobody in the trial, and a notification cooldown no longer silences the next real alert after the system clock jumps backwards. Plus tests pinning the payout explainer's tab gate across live tab switches and the comparison baseline row's shrink rule.

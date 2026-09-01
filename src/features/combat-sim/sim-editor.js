@@ -171,7 +171,9 @@ export class SimEditor {
         this._originalDTOs = structuredClone(dtoMap);
         this._editedDTOs = structuredClone(dtoMap);
         this._editedPlayerInfo = [{ hrid: 'player1', name: playerName }];
-        this._selfHrid = 'player1';
+        // Not self: the DTO is another character's profile, and the self house
+        // sync in getEditedDTOs would overwrite their rooms with this player's
+        this._selfHrid = null;
         this._activeEditPlayer = 'player1';
         this._missingMembers = [];
         this._editorInitialized = true;
