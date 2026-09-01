@@ -1991,6 +1991,43 @@ describe('the live clear chance on the attempt bar', () => {
         expect(liveText()).toContain('Clear ~63%');
     });
 
+    test('a fight whose mana the server never sent replays at full, not at NaN', () => {
+        // A tick is a sparse delta merged over the last one, so a field never
+        // sent is undefined. The health denominator is validated for exactly
+        // that reason; the mana one was guarded on health instead, so
+        // `cMP / mMP` came out NaN and went straight into the replay.
+        buildActionBar();
+        const spy = vi.spyOn(labyrinthClearRate, 'maybeReplayFight').mockImplementation(() => {});
+        try {
+            const dry = (monsterFraction, playerFraction, atkCounter) => ({
+                battleId: 'b1',
+                pMap: { 0: { cHP: Math.round(1000 * playerFraction), mHP: 1000, atkCounter } },
+                mMap: { 0: { cHP: Math.round(2000 * monsterFraction), mHP: 2000 } },
+            });
+            for (const [m, p] of [
+                [1, 1],
+                [0.9, 0.95],
+                [0.8, 0.9],
+                [0.7, 0.85],
+                [0.6, 0.8],
+                [0.5, 0.75],
+                [0.4, 0.7],
+            ]) {
+                vi.advanceTimersByTime(1000);
+                labyrinthClearRate._liveCombatDrawnAt = 0;
+                labyrinthClearRate.onBattleUpdated(dry(m, p, ++atk));
+            }
+
+            expect(spy).toHaveBeenCalled();
+            for (const [, live] of spy.mock.calls) {
+                expect(Number.isFinite(live.playerMpFraction)).toBe(true);
+                expect(live.playerMpFraction).toBe(1);
+            }
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     /** Full ticks from full health, past MIN_ELAPSED so a chance is quoted */
     function openFight() {
         runTicks([
@@ -2427,11 +2464,27 @@ describe('re-planning a route after shrouds have been spent', () => {
     beforeEach(() => {
         settings.map.clear();
         bag.items = null;
+        // The fights below are meant to be *judged and lost*, not left
+        // unsimmable. This harness carries no loadout snapshots, so a real sim
+        // reports `failed` — which is "not simmable yet", a room the planner
+        // leaves unjudged rather than one it shrouds. A cached 0% result is what
+        // it would have got from a sim that actually ran, so the tests are about
+        // re-planning rather than about a sim that never started.
+        labyrinthClearRate.combatCache.set(
+            labyrinthClearRate.buildCombatCacheKey(
+                '/monsters/gobo',
+                100,
+                null,
+                labyrinthClearRate.getSimPrecisionPct()
+            ),
+            { clearChance: 0, winRate: 0, expectedSeconds: Infinity, trials: 400, hitTarget: true }
+        );
     });
 
     afterEach(() => {
         document.body.innerHTML = '';
         labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
         bag.items = null;
     });
 
@@ -2448,6 +2501,27 @@ describe('re-planning a route after shrouds have been spent', () => {
         // …and it is the right plan: six rooms to the corner, five of them
         // fights it cannot win, the exit itself free to walk into
         expect(first.text).toBe('Path: 6 rooms · 5 shrouds · 0 chests');
+    });
+
+    test('a fight the sims could not run is unjudged, not a 0% clear', async () => {
+        // Press Path before the loadout snapshots are back from storage and
+        // every combat sim reports `failed`. Filing that as a 0% clear chance
+        // puts every room below the threshold, so the plan demands five shrouds
+        // for a floor it has learned nothing about — and says nothing about why.
+        // (One sim covers all fifteen rooms: they are the same monster at the
+        // same level, and the queue is keyed on that.)
+        const { status, parent } = buildBoard(unbeatableFloor());
+        labyrinthClearRate.combatCache.clear(); // nothing judged yet
+        gear.ready = false;
+        try {
+            await labyrinthClearRate.runPathCalculation();
+
+            expect(status.textContent).toContain('0 shrouds');
+            expect(status.textContent).toContain('1 fight could not be simmed');
+            expect(marks(parent)).not.toContain('Shroud');
+        } finally {
+            gear.ready = true;
+        }
     });
 
     test('rooms already shrouded are not planned to be shrouded again', async () => {
@@ -3166,6 +3240,33 @@ describe('the snapshot store arriving redraws the table', () => {
         handler();
         expect(spy).toHaveBeenCalled();
         spy.mockRestore();
+    });
+
+    test('a teardown inside the settle window cancels the catch-up pass', () => {
+        // The ready signal arms two 500 ms catch-up timers. Unregistering the
+        // ready handler stops it firing again but cannot cancel a timer already
+        // armed, so a character switch inside that window used to let them run
+        // on a torn-down feature — re-injecting controls nothing is left to
+        // remove, and seeding the cache under whichever character is current by
+        // the time the timer fires.
+        vi.useFakeTimers();
+        gear.listeners = [];
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+
+        const seed = vi.spyOn(labyrinthClearRate, '_seedCombatCache').mockImplementation(() => {});
+        const controls = vi.spyOn(labyrinthClearRate, 'injectTileControls').mockImplementation(() => {});
+        try {
+            labyrinthClearRate.unregisterHandlers = [];
+            labyrinthClearRate.disable();
+            vi.advanceTimersByTime(2000);
+
+            expect(seed).not.toHaveBeenCalled();
+            expect(controls).not.toHaveBeenCalled();
+        } finally {
+            seed.mockRestore();
+            controls.mockRestore();
+        }
     });
 });
 

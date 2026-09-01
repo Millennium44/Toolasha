@@ -127,6 +127,10 @@ class LabyrinthClearRate {
     constructor() {
         this.isInitialized = false;
         this.unregisterHandlers = [];
+        // Settle-delay timers armed once the shared observer reports ready.
+        // Held so `disable()` can cancel them: unregistering the ready handler
+        // stops it firing again, but does nothing about a timer already armed.
+        this.catchUpTimers = [];
         this.roomData = null;
         this.wsHandler = null;
         this.combatCache = new Map();
@@ -275,21 +279,29 @@ class LabyrinthClearRate {
         // @run-at document-start: both settle delays start from the shared observer's
         // actual-ready signal (immediate if it is already attached), not module init, so
         // labyrinth DOM rendered during the readiness gap is not missed.
+        // Tracked, because unregistering the ready handler cannot cancel a timer
+        // it has already armed. A character switch inside the settle window used
+        // to let these fire on a torn-down feature: re-injecting controls and
+        // badges nothing is left to remove, and — worse — running
+        // `_seedCombatCache` during the switch, which reads the departing
+        // character's persisted sims and latches the cache as loaded, so the
+        // arriving character never loads their own.
         this.unregisterHandlers.push(
             domObserver.onReady('LabyrinthClearRateCatchUp', () => {
-                setTimeout(() => {
-                    this.seedFromCharacterData();
-                    this.injectTileControls();
-                    this.scheduleAutoTileCalc();
-                }, 500);
-
-                setTimeout(() => {
-                    // The overlay pass fires immediately for skilling/enhancing badges
-                    // (which never touch combatCache); combat rooms get a placeholder
-                    // and are redrawn once the cache is in.
-                    this.injectOverlays();
-                    this._seedCombatCache();
-                }, 500);
+                this.catchUpTimers.push(
+                    setTimeout(() => {
+                        this.seedFromCharacterData();
+                        this.injectTileControls();
+                        this.scheduleAutoTileCalc();
+                    }, 500),
+                    setTimeout(() => {
+                        // The overlay pass fires immediately for skilling/enhancing badges
+                        // (which never touch combatCache); combat rooms get a placeholder
+                        // and are redrawn once the cache is in.
+                        this.injectOverlays();
+                        this._seedCombatCache();
+                    }, 500)
+                );
             })
         );
 
@@ -452,6 +464,8 @@ class LabyrinthClearRate {
                 clearTimeout(this.pruneTileTimer);
                 this.pruneTileTimer = null;
             }
+            for (const timer of this.catchUpTimers) clearTimeout(timer);
+            this.catchUpTimers = [];
             this.calculatedTileKeys?.clear();
 
             unregisterCommand('Recompute lab sims');
@@ -1777,7 +1791,12 @@ class LabyrinthClearRate {
         this.maybeReplayFight(started, {
             monsterHpFraction,
             playerHpFraction,
-            playerMpFraction: player.mHP > 0 ? player.cMP / player.mMP : 1,
+            // Guarded on the denominator it divides by, not on health: `player`
+            // is a sparse battle_updated delta merged over the last one, so a
+            // field the server has never sent is undefined. mHP is validated
+            // above for exactly that reason; mMP has to be too, or a fight whose
+            // mana was never carried hands the replay Infinity or NaN.
+            playerMpFraction: player.mMP > 0 && Number.isFinite(player.cMP) ? player.cMP / player.mMP : 1,
             observedSeconds,
             elapsedSeconds: started.caughtStart ? observedSeconds : 0,
         });
@@ -3491,11 +3510,25 @@ class LabyrinthClearRate {
                 queued.add(key);
                 combatToSim.push({ monsterHrid: room.monsterHrid, roomLevel, key });
             }
+            // A sim that could not run is not a room that cannot be cleared.
+            // `computeCombatClear` reports `failed` when its inputs are not ready
+            // — the loadout snapshots still coming back from IndexedDB, most
+            // often, right after a reload — and filing that as a 0% clear chance
+            // puts the room below any threshold and routes the plan around it, or
+            // declares the exit unreachable, with nothing on screen saying why.
+            // Leaving the key unset is what `chanceOf` reads as "not judged", so
+            // the room keeps the ? posture the mode selector asks for, exactly as
+            // the tile-badge pass already does with the same result.
+            let unsimmed = 0;
             for (let i = 0; i < combatToSim.length; i++) {
                 const { monsterHrid, roomLevel, key } = combatToSim[i];
                 this.setTileStatus(`Pathing: fight sims ${i + 1}/${combatToSim.length}`);
                 const result = await this.computeCombatClear(monsterHrid, roomLevel);
-                chances.set(key, result && !result.failed ? result.clearChance : 0);
+                if (!result || result.failed) {
+                    unsimmed++;
+                    continue;
+                }
+                chances.set(key, result.clearChance);
             }
 
             // Second pass, against the board as it stands now. The sims take
@@ -3636,10 +3669,17 @@ class LabyrinthClearRate {
             // are counted beside the plan's own rooms rather than inside them
             const walkedNote = approach.length ? ` (+${approach.length} walked)` : '';
 
+            // Fights the sims could not judge are routed under the ? posture, not
+            // as unclearable — so the plan is honest, but it is a weaker plan than
+            // it looks and it says so rather than passing itself off as settled
+            const unsimmedNote = unsimmed
+                ? ` · ${plural(unsimmed, 'fight')} could not be simmed — press Path again`
+                : '';
+
             this.setTileStatus(
                 `Path: ${plural(path.torches, 'room')}${walkedNote} · ${shrouds.text}${shroudNote} · ` +
-                    `${plural(path.chests.size, 'chest')}${unknownText}${splitNote}${torchNote}`,
-                shrouds.over || torches.over
+                    `${plural(path.chests.size, 'chest')}${unknownText}${splitNote}${torchNote}${unsimmedNote}`,
+                shrouds.over || torches.over || unsimmed > 0
             );
         } catch (error) {
             console.error('[LabyrinthClearRate] Path calculation failed:', error);
