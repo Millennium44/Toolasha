@@ -107,16 +107,6 @@ vi.mock('../../core/storage.js', () => {
     };
 });
 
-// The two handoff targets are module-scope panels of their own; this file is
-// about what the sim panel hands them, not about their storage or their DOM
-vi.mock('../inventory/equipment-savings-row.js', () => ({
-    watchTarget: (itemHrid, enhancementLevel, quote) => mocks.saved.push({ itemHrid, enhancementLevel, quote }),
-}));
-
-vi.mock('../inventory/watchlist.js', () => ({
-    watchItem: (itemHrid, name, enhancementLevel) => mocks.watched.push({ itemHrid, enhancementLevel }),
-}));
-
 // Ability goals live beside the gear targets in Equipment Savings; this file is
 // about what the row hands over, not about how the goal is stored
 vi.mock('../../utils/equipment-savings.js', () => ({
@@ -184,10 +174,12 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     missingMaterialsButton: () => mocks.bridgeMissingMats,
     dungeonTrackerStorage: () => ({ getAllRuns: async () => mocks.dungeonRuns }),
     marketHistoryPanel: () => mocks.bridgePricePanel,
-    // Null like an absent market bundle, so the handoff falls back to the
-    // bundled writers the tests spy on
-    marketWatchTarget: () => null,
-    marketWatchItem: () => null,
+    // The two handoff targets are module-scope panels of their own, and the sim
+    // bundle reaches them only through the bridge — this file is about what the
+    // sim panel hands over, not about their storage or their DOM
+    marketWatchTarget: () => (itemHrid, enhancementLevel, quote) =>
+        mocks.saved.push({ itemHrid, enhancementLevel, quote }),
+    marketWatchItem: () => (itemHrid, name, enhancementLevel) => mocks.watched.push({ itemHrid, enhancementLevel }),
 }));
 
 vi.mock('../../api/marketplace.js', () => ({

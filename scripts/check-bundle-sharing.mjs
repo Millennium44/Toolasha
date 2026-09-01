@@ -74,6 +74,18 @@ const SINGLE_COPY_FEATURES = new Set([
     'src/features/combat/combat-record-control.js',
     'src/features/combat/scroll-simulator-ui.js',
     'src/features/market/network-alert.js',
+    // The inventory badge pipeline: registered providers, the processed-item set
+    // and the price caches the dots, category totals and custom tabs all read.
+    // The sim bundle used to reach it through combat-sim-ui's bundled watchlist
+    // fallback and carry a second copy — dead only because every live inventory
+    // surface happens to sit in the market bundle. That fallback is gone; this
+    // keeps a future import from quietly bringing the copy back.
+    'src/features/inventory/inventory-badge-manager.js',
+    // Reached the same way, and stateful for the same reason: the watchlist's
+    // entries, zones and chests live at module scope, and only the market
+    // bundle's copy backs the panel. Cross-bundle callers use the bridge.
+    'src/features/inventory/watchlist.js',
+    'src/features/inventory/equipment-savings-row.js',
 ]);
 
 const ALLOWLIST = new Map([
@@ -269,6 +281,9 @@ async function main() {
         console.error('Fix by sharing one copy (the liquidity-cap entry is the precedent):');
         console.error('  1. add the module to utilsExternalGlobals in rollup.config.js, and');
         console.error('  2. import + export it in src/libraries/utils.js so the global exists.');
+        console.error('When the second bundle loads BEFORE the owning one, it cannot reference the');
+        console.error('global at all — cut the import instead and read the owner through');
+        console.error('src/utils/bundle-bridge.js at call time.');
         console.error('Only a module that is stateless by design may instead be allowlisted');
         console.error('in scripts/check-bundle-sharing.mjs, with a justification.');
         console.error('');

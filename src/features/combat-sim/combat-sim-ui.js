@@ -23,12 +23,15 @@ import {
     rankInvalidatedRooms,
     describeInvalidatedRooms,
 } from '../combat/labyrinth-upgrade-invalidation.js';
-// Fallbacks for the standalone build only: in the packaged build this bundle
-// loads before market, so these bind bundle-local copies whose writes the
-// savings panel and watchlist never see — the bridge accessors above reach the
-// live market-bundle writers at call time instead.
-import { watchTarget as bundledWatchTarget } from '../inventory/equipment-savings-row.js';
-import { watchItem as bundledWatchItem } from '../inventory/watchlist.js';
+// No bundled fallbacks for the two handoffs below. They used to be imported as
+// standalone-build fallbacks, but the standalone build loads every library into
+// one graph and publishes `window.Toolasha.Market` before any click can happen,
+// so the bridge answers there too — and in the packaged build the fallback was
+// never the right answer: this bundle loads before market, so a bundle-local
+// `watchItem`/`watchTarget` writes into a copy the visible panel never reads.
+// The imports also dragged watchlist.js, equipment-savings-row.js and their
+// subtrees — inventory-badge-manager and its price caches among them — into
+// this bundle as a second, divergent set of module state.
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
@@ -1279,6 +1282,26 @@ function escapeAttribute(value) {
  * @param {number} enhancementLevel - At the level the row buys it
  * @param {string|null} rawCost - The row's costed price, off the button
  */
+/**
+ * The live writer for a row handoff, or a throw naming what is missing.
+ *
+ * There is no bundle-local fallback to take instead: this bundle loads before
+ * market, so its own copy of those writers keeps memory the visible panel never
+ * reads — a handoff into it looks like it worked and is gone by the next
+ * repaint. The throw lands in the click handler's catch, which labels the
+ * button "Failed", which is what actually happened.
+ *
+ * @param {Function|null} writer - What the bridge answered
+ * @param {string} name - Its name, for the message
+ * @returns {Function} The writer
+ */
+function requireHandoff(writer, name) {
+    if (typeof writer !== 'function') {
+        throw new Error(`Market bundle's ${name} is not available; the row cannot be handed off`);
+    }
+    return writer;
+}
+
 function seedWatchlistPriceTarget(itemHrid, enhancementLevel, rawCost) {
     const cost = rawCost === '' || rawCost == null ? null : Number(rawCost);
     if (!Number.isFinite(cost) || !(cost > 0)) return;
@@ -1321,7 +1344,7 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                 const action = button.getAttribute('data-buy-action');
                 if (action === 'save') {
                     const rawCost = button.getAttribute('data-buy-cost');
-                    (marketWatchTarget() || bundledWatchTarget)(itemHrid, enhancementLevel, {
+                    requireHandoff(marketWatchTarget(), 'watchTarget')(itemHrid, enhancementLevel, {
                         cost: rawCost === '' || rawCost == null ? null : Number(rawCost),
                         costSource: button.getAttribute('data-buy-cost-source') || '',
                     });
@@ -1383,7 +1406,7 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     // The level goes with it, as it does to the Market button
                     // on the same row: a "+5" watched as a +0 lands on the list
                     // priced at a fraction of what the row was quoting
-                    (marketWatchItem() || bundledWatchItem)(itemHrid, null, enhancementLevel);
+                    requireHandoff(marketWatchItem(), 'watchItem')(itemHrid, null, enhancementLevel);
                     seedWatchlistPriceTarget(itemHrid, enhancementLevel, button.getAttribute('data-buy-cost'));
                     button.textContent = 'Watching ✓';
                 }
