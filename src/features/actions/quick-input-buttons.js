@@ -73,46 +73,30 @@ function scrollSpriteHtml(buffTypeHrid, size = 14) {
 
 /**
  * Compute wall-clock seconds for a queue, accounting for efficiency gains as levels are gained.
- * Each level gained adds 1% efficiency (game mechanic: efficiency = effective_level − requirement).
+ *
+ * Delegates to the same walk the Target Level Calculator uses, rather than re-deriving it.
+ * The two used to be separate implementations — one counting whole performed actions per
+ * level, this one letting actions run fractional — so "To Level N: … Time" and "Total time"
+ * disagreed for the very action count the calculator had just typed into the box.
+ *
  * @param {number} queueCount - Number of queued actions
  * @param {Object} levelContext - From _buildLevelContext: { currentLevel, currentXP, modifiedXP, levelExperienceTable }
  * @param {number} baseEfficiency - Current efficiency percentage (e.g., 131.02)
  * @param {number} actionTime - Seconds per time-consuming action
+ * @param {number} [levelEfficiencyDeficit=0] - Levels owed before level efficiency starts
  * @returns {number} Total wall-clock seconds
  */
-function computeProgressiveQueueTime(queueCount, levelContext, baseEfficiency, actionTime) {
-    let remaining = queueCount;
-    let totalTime = 0;
-    let level = levelContext.currentLevel;
-    let xp = levelContext.currentXP;
-    let levelsGained = 0;
-    const { levelExperienceTable, modifiedXP } = levelContext;
-
-    while (remaining > 0) {
-        const effMult = 1 + (baseEfficiency + levelsGained) / 100;
-        const nextLevelXP = levelExperienceTable[level + 1];
-
-        if (!nextLevelXP) {
-            totalTime += (remaining / effMult) * actionTime;
-            break;
-        }
-
-        const xpToNextLevel = nextLevelXP - xp;
-        const queueActionsToLevel = xpToNextLevel / modifiedXP;
-
-        if (remaining <= queueActionsToLevel) {
-            totalTime += (remaining / effMult) * actionTime;
-            break;
-        }
-
-        totalTime += (queueActionsToLevel / effMult) * actionTime;
-        remaining -= queueActionsToLevel;
-        level++;
-        xp = nextLevelXP;
-        levelsGained++;
-    }
-
-    return totalTime;
+function computeProgressiveQueueTime(queueCount, levelContext, baseEfficiency, actionTime, levelEfficiencyDeficit = 0) {
+    return calculateLevelFromActions(
+        levelContext.currentLevel,
+        levelContext.currentXP,
+        queueCount,
+        baseEfficiency,
+        actionTime,
+        levelContext.modifiedXP,
+        levelContext.levelExperienceTable,
+        levelEfficiencyDeficit
+    ).timeElapsed;
 }
 
 /**
@@ -414,6 +398,13 @@ class QuickInputButtons {
                 gameData
             );
             const efficiencyMultiplier = 1 + totalEfficiency / 100;
+            // Level efficiency is clamped at zero, so while the effective level is still below
+            // the effective requirement (Action Level teas raise it; the panel is also readable
+            // for actions above the player's level) the first levels of a grind buy no efficiency.
+            const levelEfficiencyDeficit = Math.max(
+                0,
+                (efficiencyBreakdown?.effectiveRequirement ?? 0) - (efficiencyBreakdown?.effectiveLevel ?? 0)
+            );
             let levelContext = null;
 
             // Find the container to insert after (same as original MWI Tools)
@@ -640,7 +631,13 @@ class QuickInputButtons {
 
                 const computeTotalSeconds = (queueCount) =>
                     levelContext
-                        ? computeProgressiveQueueTime(queueCount, levelContext, totalEfficiency, actionTime)
+                        ? computeProgressiveQueueTime(
+                              queueCount,
+                              levelContext,
+                              totalEfficiency,
+                              actionTime,
+                              levelEfficiencyDeficit
+                          )
                         : Math.ceil(queueCount / efficiencyMultiplier) * actionTime;
 
                 const updateTotalTime = () => {
@@ -788,7 +785,8 @@ class QuickInputButtons {
                 gameData,
                 numberInput,
                 totalEfficiency,
-                levelContext
+                levelContext,
+                levelEfficiencyDeficit
             );
 
             let queueContent = null;
@@ -1301,9 +1299,18 @@ class QuickInputButtons {
      * @param {HTMLInputElement} numberInput - Queue input element
      * @param {number} totalEfficiency - Current efficiency percentage
      * @param {Object|null} levelContext - Pre-computed from _buildLevelContext; null returns null
+     * @param {number} [levelEfficiencyDeficit=0] - Levels owed before level efficiency starts
      * @returns {HTMLElement|null} Level progress section or null if not applicable
      */
-    createLevelProgressSection(actionDetails, actionTime, gameData, numberInput, totalEfficiency, levelContext) {
+    createLevelProgressSection(
+        actionDetails,
+        actionTime,
+        gameData,
+        numberInput,
+        totalEfficiency,
+        levelContext,
+        levelEfficiencyDeficit = 0
+    ) {
         try {
             if (!levelContext) {
                 return null;
@@ -1418,7 +1425,8 @@ class QuickInputButtons {
                 totalEfficiency,
                 actionTime,
                 modifiedXP,
-                levelExperienceTable
+                levelExperienceTable,
+                levelEfficiencyDeficit
             );
 
             lines.push(
@@ -1485,13 +1493,14 @@ class QuickInputButtons {
                         totalEfficiency,
                         actionTime,
                         modifiedXP,
-                        levelExperienceTable
+                        levelExperienceTable,
+                        levelEfficiencyDeficit
                     );
 
                     targetLevelResult.innerHTML = `
                         ${formatWithSeparator(result.actionsNeeded)} actions | ${timeReadable(result.timeNeeded)}
                     `;
-                    targetLevelResult.style.color = 'var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY})';
+                    targetLevelResult.style.color = `var(--text-color-primary, ${config.COLOR_TEXT_PRIMARY})`;
 
                     // Auto-fill queue input when target level changes
                     this.setInputValue(numberInput, result.actionsNeeded);
@@ -1518,7 +1527,8 @@ class QuickInputButtons {
                     totalEfficiency,
                     actionTime,
                     modifiedXP,
-                    levelExperienceTable
+                    levelExperienceTable,
+                    levelEfficiencyDeficit
                 );
 
                 targetLevelResult.innerHTML = `

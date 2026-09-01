@@ -93,6 +93,25 @@ export function calculateExpPerHour(actionHrid) {
 }
 
 /**
+ * Efficiency multiplier partway through a grind.
+ *
+ * The game's level efficiency is `max(0, effective_level − effective_requirement)`, so a
+ * character standing below the effective requirement (an Action Level tea raises it, and the
+ * panel is also readable for actions above the player's level) gains no efficiency at all
+ * until the gap closes. Adding a flat +1% per level from the first one over-credits exactly
+ * that gap. The deficit may be fractional, since Action Level bonuses are.
+ *
+ * @param {number} baseEfficiency - Current total efficiency percentage
+ * @param {number} levelsGained - Levels gained so far in the walk
+ * @param {number} levelEfficiencyDeficit - Levels still owed before level efficiency starts
+ * @returns {number} Multiplier (1 + efficiency/100)
+ */
+function progressiveEfficiencyMultiplier(baseEfficiency, levelsGained, levelEfficiencyDeficit) {
+    const gained = Math.max(0, levelsGained - (levelEfficiencyDeficit || 0));
+    return 1 + (baseEfficiency + gained) / 100;
+}
+
+/**
  * Calculate actions and time needed to reach a target level
  * Accounts for progressive efficiency gains (+1% per level)
  * @param {number} currentLevel - Current skill level
@@ -102,6 +121,9 @@ export function calculateExpPerHour(actionHrid) {
  * @param {number} actionTime - Time per action in seconds
  * @param {number} xpPerAction - Modified XP per action (with multipliers, success rate, etc.)
  * @param {Object} levelExperienceTable - XP requirements per level
+ * @param {number} [levelEfficiencyDeficit=0] - How far the effective level sits *below* the
+ *   effective requirement right now. Level efficiency is clamped at zero, so the first
+ *   `levelEfficiencyDeficit` levels gained buy no efficiency at all.
  * @returns {{ actionsNeeded: number, timeNeeded: number }}
  */
 export function calculateMultiLevelProgress(
@@ -111,12 +133,16 @@ export function calculateMultiLevelProgress(
     baseEfficiency,
     actionTime,
     xpPerAction,
-    levelExperienceTable
+    levelExperienceTable,
+    levelEfficiencyDeficit = 0
 ) {
     let totalActions = 0;
     let totalTime = 0;
 
     for (let level = currentLevel; level < targetLevel; level++) {
+        // The table stops at the level cap; walking past it would yield NaN actions
+        if (levelExperienceTable[level + 1] === undefined) break;
+
         let xpNeeded;
         if (level === currentLevel) {
             xpNeeded = levelExperienceTable[level + 1] - currentXP;
@@ -124,10 +150,11 @@ export function calculateMultiLevelProgress(
             xpNeeded = levelExperienceTable[level + 1] - levelExperienceTable[level];
         }
 
-        // Progressive efficiency: +1% per level gained during grind
-        const levelsGained = level - currentLevel;
-        const progressiveEfficiency = baseEfficiency + levelsGained;
-        const efficiencyMultiplier = 1 + progressiveEfficiency / 100;
+        const efficiencyMultiplier = progressiveEfficiencyMultiplier(
+            baseEfficiency,
+            level - currentLevel,
+            levelEfficiencyDeficit
+        );
 
         const xpPerPerformedAction = xpPerAction * efficiencyMultiplier;
         const baseActionsForLevel = Math.ceil(xpNeeded / xpPerPerformedAction);
@@ -151,6 +178,8 @@ export function calculateMultiLevelProgress(
  * @param {number} actionTime - Seconds per action
  * @param {number} xpPerAction - Modified XP per action
  * @param {Object} levelExperienceTable - XP requirements per level
+ * @param {number} [levelEfficiencyDeficit=0] - Levels owed before level efficiency starts
+ *   (see calculateMultiLevelProgress)
  * @returns {{finalLevel: number, finalXP: number, xpGained: number, timeElapsed: number, percentToNext: number}}
  */
 export function calculateLevelFromActions(
@@ -160,21 +189,30 @@ export function calculateLevelFromActions(
     baseEfficiency,
     actionTime,
     xpPerAction,
-    levelExperienceTable
+    levelExperienceTable,
+    levelEfficiencyDeficit = 0
 ) {
     let remainingActions = actionCount;
     let level = currentLevel;
     let xp = currentXP;
     let timeElapsed = 0;
 
-    while (remainingActions > 0 && levelExperienceTable[level + 1] !== undefined) {
+    while (remainingActions > 0) {
         const xpForNextLevel = levelExperienceTable[level + 1];
-        const xpNeeded = xpForNextLevel - xp;
+        const efficiencyMultiplier = progressiveEfficiencyMultiplier(
+            baseEfficiency,
+            level - currentLevel,
+            levelEfficiencyDeficit
+        );
 
-        // Progressive efficiency: +1% per level gained during the grind
-        const levelsGained = level - currentLevel;
-        const progressiveEfficiency = baseEfficiency + levelsGained;
-        const efficiencyMultiplier = 1 + progressiveEfficiency / 100;
+        if (xpForNextLevel === undefined) {
+            // At the level cap: the queue still runs, it just stops buying levels
+            timeElapsed += Math.ceil(remainingActions / efficiencyMultiplier) * actionTime;
+            remainingActions = 0;
+            break;
+        }
+
+        const xpNeeded = xpForNextLevel - xp;
 
         const xpPerPerformedAction = xpPerAction * efficiencyMultiplier;
         const baseActionsForLevel = Math.ceil(xpNeeded / xpPerPerformedAction);

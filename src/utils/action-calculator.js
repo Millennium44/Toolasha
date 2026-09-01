@@ -180,6 +180,8 @@ export function calculateActionStats(actionDetails, options = {}) {
                 actionLevelBonus,
                 actionLevelBreakdown,
                 effectiveRequirement,
+                teaSkillLevelBonus,
+                effectiveLevel,
             };
         }
 

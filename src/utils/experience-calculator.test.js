@@ -62,6 +62,51 @@ describe('calculateLevelFromActions', () => {
         expect(r.finalLevel).toBe(5);
         expect(r.percentToNext).toBe(100);
     });
+
+    test('actions queued past the level cap still cost time', () => {
+        // Level 4→5 needs 800 xp at 25/action and 0% efficiency: 32 actions, 192s. The
+        // remaining 999,968 run at the level cap, where the one level gained is worth +1%.
+        // Dropping them (the old early loop exit) reported a 100k-action queue as 3 minutes.
+        const r = calculateLevelFromActions(4, 700, 1_000_000, 0, 6, 25, table);
+        expect(r.timeElapsed).toBe(192 + Math.ceil(999_968 / 1.01) * 6);
+    });
+});
+
+describe('level efficiency deficit', () => {
+    // 1 xp per action makes the per-level rounding invisible, so the efficiency term shows
+    const table = { 1: 0, 2: 1000, 3: 3000 };
+
+    test('levels gained below the effective requirement buy no efficiency', () => {
+        // Standing 1 level below the effective requirement (an Action Level tea raises it),
+        // the first level gained only closes the gap — it does not start the +1%/level climb.
+        const credited = calculateMultiLevelProgress(1, 0, 3, 0, 6, 1, table, 0);
+        const clamped = calculateMultiLevelProgress(1, 0, 3, 0, 6, 1, table, 1);
+
+        expect(credited.actionsNeeded).toBe(3001); // 1000 + round(ceil(2000/1.01) * 1.01)
+        expect(credited.timeNeeded).toBe(17_886);
+
+        expect(clamped.actionsNeeded).toBe(3000); // second level still at +0%
+        expect(clamped.timeNeeded).toBe(18_000);
+    });
+
+    test('a deficit larger than the whole span keeps efficiency flat throughout', () => {
+        const r = calculateMultiLevelProgress(1, 0, 3, 50, 6, 1, table, 50);
+        // Every level runs at the unchanged 50%, so both levels cost the same per-action
+        // ratio: ceil(xp/1.5) performed actions, requeued at ×1.5
+        expect(r.timeNeeded).toBe(Math.ceil(1000 / 1.5) * 6 + Math.ceil(2000 / 1.5) * 6);
+        expect(r.actionsNeeded).toBe(Math.round(Math.ceil(1000 / 1.5) * 1.5) + Math.round(Math.ceil(2000 / 1.5) * 1.5));
+        // Without the clamp the second level would have run at 51%
+        expect(r.timeNeeded).toBeGreaterThan(calculateMultiLevelProgress(1, 0, 3, 50, 6, 1, table, 0).timeNeeded);
+    });
+
+    test('the round trip still lands exactly on the target with a deficit applied', () => {
+        const forward = calculateMultiLevelProgress(1, 0, 3, 10, 6, 1, table, 1.5);
+        const back = calculateLevelFromActions(1, 0, forward.actionsNeeded, 10, 6, 1, table, 1.5);
+        expect(back.finalLevel).toBe(3);
+        expect(back.xpGained).toBe(3000);
+        // The panel's "Total time" line delegates to this walk, so the two lines must match
+        expect(back.timeElapsed).toBeCloseTo(forward.timeNeeded, 9);
+    });
 });
 
 beforeEach(() => {
@@ -153,5 +198,12 @@ describe('calculateMultiLevelProgress', () => {
     test('returns zero for a target level equal to the current level', () => {
         const result = calculateMultiLevelProgress(5, 0, 5, 0, 6, 100, levelExperienceTable);
         expect(result).toEqual({ actionsNeeded: 0, timeNeeded: 0 });
+    });
+
+    test('a target past the end of the table stops at the cap instead of returning NaN', () => {
+        const capped = calculateMultiLevelProgress(1, 0, 4, 0, 6, 100, levelExperienceTable);
+        const beyond = calculateMultiLevelProgress(1, 0, 12, 0, 6, 100, levelExperienceTable);
+        expect(beyond).toEqual(capped);
+        expect(Number.isFinite(beyond.actionsNeeded)).toBe(true);
     });
 });
