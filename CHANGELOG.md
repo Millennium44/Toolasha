@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The reroll walk stops making you close the same menu, and the character-switch sweep is done
+
+The walk read the instant after a payment — when the game redraws the chooser with the coin button momentarily greyed — as "coins not on offer" and retired the card with a Back press instead of waiting the redraw out, so every reroll cost a wasted close-and-reopen. It now waits, as the reroll branch always did, and the close-menu step says why it is closing. The last twenty-one character-switch races are closed, including a guild trial trace continuing as the wrong character's with chunks orphaned toward a 64 MB ceiling, a sim finishing minutes after a switch filing its results (and wiping the whole consumable-rates map) under the arriving character, and the Lab Sim's upgrade selection and skilling loadouts splitting across two characters. A sync pull that could not combine a record now says so instead of silently taking the remote copy; the build score counts guild credits it could not price as a floor rather than as free; marketplace history rejects undatable import rows and sorts the Date column by the date it shows; and a mooket payload that is not rows is refused instead of cached for five minutes.
+
 ### The leftovers: thirteen more crossed characters, and a button that did nothing
 
 Finishing the ranked list from the character-switch sweep. Six of these lost data — the dungeon outlier scrub was undone every session by a read still in flight, empty alchemy-protection defaults could overwrite the arriving character's saved categories, and the goal planner, pinned actions, dungeon runs and the record target each filed one character's data under another's key. Seven more adopted the wrong character's loadouts, trade prices or filters and then persisted them, or showed them as advice.
