@@ -528,8 +528,16 @@ export function parseShykaiImport(jsonString) {
         if (Array.isArray(p.equipment)) {
             for (const eq of p.equipment) {
                 if (!eq.itemHrid) continue;
-                // Map itemLocationHrid (e.g. /equipment_types/head) to equipment type
-                const eqType = eq.itemLocationHrid || itemDetailMap[eq.itemHrid]?.equipmentDetail?.type;
+                // The engine keys equipment by equipmentDetail.type
+                // (/equipment_types/head), but the export — like the game's raw
+                // data — files each piece under itemLocationHrid
+                // (/item_locations/head). Prefer the item sheet's authoritative
+                // type; fall back to translating the location prefix so an item
+                // missing from the sheet still lands on the slot the engine reads
+                // rather than an /item_locations/* key it never looks at.
+                const eqType =
+                    itemDetailMap[eq.itemHrid]?.equipmentDetail?.type ||
+                    eq.itemLocationHrid?.replace('/item_locations/', '/equipment_types/');
                 if (eqType) {
                     dto.equipment[eqType] = {
                         hrid: eq.itemHrid,

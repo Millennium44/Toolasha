@@ -62,6 +62,7 @@ const {
     buildGuildBuffsFromLevels,
     buildPlayerDTO,
     buildPlayerDTOFromProfile,
+    parseShykaiImport,
     taxedDropValue,
 } = await import('./combat-sim-adapter.js');
 const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
@@ -442,5 +443,61 @@ describe('a player DTO without the game data', () => {
         mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
 
         expect(buildPlayerDTO()).not.toBeNull();
+    });
+});
+
+/**
+ * A Shykai import must land its equipment on the same keys the engine reads.
+ *
+ * The exported format (and the game's raw data) carries each piece under an
+ * `itemLocationHrid` like `/item_locations/head`, but the engine's Player keys
+ * its equipment slots by `equipmentDetail.type` — `/equipment_types/head`. The
+ * `updateCombatDetails` weapon/charm/pouch reads are by exact key, so a piece
+ * filed under the location prefix is invisible to them: the weapon's style,
+ * damage type and attack interval fall back to unarmed, the charm's focus is
+ * lost, and the pouch's extra food/drink slots vanish. This is the one build
+ * path that used to diverge — `buildPlayerDTO`/`buildPartyMemberDTO` both key by
+ * `equipmentDetail.type` already.
+ */
+describe('the equipment a Shykai import carries', () => {
+    beforeEach(() => {
+        mocks.clientData = {
+            itemDetailMap: {
+                '/items/helm': { equipmentDetail: { type: '/equipment_types/head' } },
+                '/items/sword': { equipmentDetail: { type: '/equipment_types/main_hand' } },
+            },
+            abilityDetailMap: {},
+        };
+    });
+
+    test('is keyed by equipment type, not by item location', () => {
+        const payload = JSON.stringify({
+            player: {
+                attackLevel: 50,
+                equipment: [
+                    { itemLocationHrid: '/item_locations/head', itemHrid: '/items/helm', enhancementLevel: 3 },
+                    { itemLocationHrid: '/item_locations/main_hand', itemHrid: '/items/sword', enhancementLevel: 5 },
+                ],
+            },
+        });
+
+        const result = parseShykaiImport(payload);
+        expect(result).not.toBeNull();
+        const dto = result.players[0];
+        expect(Object.keys(dto.equipment).sort()).toEqual(['/equipment_types/head', '/equipment_types/main_hand']);
+        expect(dto.equipment['/equipment_types/head']).toEqual({ hrid: '/items/helm', enhancementLevel: 3 });
+        expect(dto.equipment['/equipment_types/main_hand']).toEqual({ hrid: '/items/sword', enhancementLevel: 5 });
+    });
+
+    test('falls back to translating the location prefix when the item is off the sheet', () => {
+        const payload = JSON.stringify({
+            player: {
+                attackLevel: 50,
+                equipment: [{ itemLocationHrid: '/item_locations/back', itemHrid: '/items/unknown_cape' }],
+            },
+        });
+
+        const dto = parseShykaiImport(payload).players[0];
+        expect(dto.equipment['/equipment_types/back']).toEqual({ hrid: '/items/unknown_cape', enhancementLevel: 0 });
     });
 });
