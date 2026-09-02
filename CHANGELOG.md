@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: a mis-weaponed import, and a zone sweep judged by the wrong player
+
+A build pasted in via a Shykai export string was equipped under a key the sim engine never reads, so every imported piece's weapon style, attack speed, charm focus and pouch slots reverted to unarmed defaults — the import fought naked-handed while looking fully geared. Generic stats survived, which is why it hid. Separately, the all-zones sweep's early-exit pruning judged a tier by the party total (and priced profit for player 1) while the table shows only your own numbers, so in a party or when you are not in the first slot it could write off a tier still climbing for you. Solo play was unaffected. The upgrade advisor's ranking and budget solver were re-audited and hold — a couple of budget edge cases gained test coverage.
+
 ### The reroll walk chip no longer covers a profile opened over it
 
 The task reroll-walk chip floated on the shared panel layer, above the game's own modals — so opening a profile (or any game dialog) while the walk was on screen left the chip sitting on top of it. The chip now sits below the game's modal layer, so a focused dialog wins.
