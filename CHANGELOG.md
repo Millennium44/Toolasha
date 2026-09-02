@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The reroll walk chip no longer covers a profile opened over it
+
+The task reroll-walk chip floated on the shared panel layer, above the game's own modals — so opening a profile (or any game dialog) while the walk was on screen left the chip sitting on top of it. The chip now sits below the game's modal layer, so a focused dialog wins.
+
 ### Audit round: a NaN-poisoned buff, and honest docs on market depth
 
 A second pass over the freshest code found one live regression from the last round: a special ability whose buff scales off a combat skill the sim tracks only indirectly (power, which folds into melee) resolved no level and multiplied the buff by NaN, silently wrecking the buffed stat for the whole fight — it now delivers the buff unscaled when there is no resolvable level, and scales exactly as before when there is. Alongside it, the crafting plan's market-depth store had its documented contract corrected to match what it actually does (a fresh price snapshot supersedes an older order-book reading, which is what keeps the thin-market check from acting on stale depth), with the test made to assert the real behaviour. The rest held: the threat, damage-over-time, teardown, and chat name-linking work all re-audited and confirmed sound.

@@ -99,6 +99,11 @@ const BUTTON_CLASS = 'mwi-task-reroll-walk-btn';
 const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
 const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
 
+// The chip sits below the game's own modal layer (its modals run z 200-1000)
+// so opening a profile or any dialog over it wins — the shared floating-panel
+// z (1100) otherwise leaves the chip covering a focused modal.
+const CHIP_Z_INDEX = 150;
+
 /** The board's "You have N unread tasks" notice, whose one button reads them */
 const UNREAD_NOTICE = '[class*="TasksPanel_unreadTasks"]';
 
@@ -1630,6 +1635,7 @@ class TaskRerollWalk {
             accent: config.COLOR_ACCENT || '#8ecfff',
             positionKey: PANEL_POSITION_KEY,
             position: this.panelPosition,
+            zIndex: CHIP_Z_INDEX,
             mainClass: 'mwi-task-reroll-walk-advance',
             closeClass: 'mwi-task-reroll-walk-stop',
         });

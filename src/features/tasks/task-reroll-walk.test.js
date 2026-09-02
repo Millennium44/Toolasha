@@ -1427,6 +1427,15 @@ describe('the floating walk widget', () => {
         expect(clicks).toEqual([]);
     });
 
+    test('the chip sits below the game modal layer so a profile opened over it wins', () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        walk._render();
+
+        const chip = document.getElementById('mwi-task-reroll-walk-chip');
+        // The game's own modals run z 200-1000; the chip must be under them.
+        expect(Number(chip.style.zIndex)).toBeLessThan(200);
+    });
+
     test('the main button becomes the next action once a walk is running', async () => {
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         walk._render();
