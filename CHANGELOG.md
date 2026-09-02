@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### A wave-by-wave diagnostic for dungeon sim timing
 
-A dungeon run that sims long could be slow to start each wave or slow to finish it, and a run total cannot tell those apart. The simulator now records, per dungeon wave, how long after the wave spawned the party landed its first hit, and a console diagnostic — `Toolasha.Debug.dungeonWaveTiming()` — lines the dungeon recording in memory up against the last dungeon simulation wave by wave: first-hit windup and fight length on each side, plus the real respawn gap. Start the recorder before a run, let it cover a full clear, run the dungeon in the Combat Sim, then call it.
+A dungeon run that sims long could be slow to start each wave or slow to finish it, and a run total cannot tell those apart. The simulator now records, per dungeon wave, how long after the wave spawned the party landed its first hit, and a console diagnostic — `Toolasha.Debug.dungeonWaveTiming()` — lines the dungeon recording in memory up against the last dungeon simulation wave by wave: first-hit windup and fight length on each side, plus the real respawn gap. Start the recorder before a run, let it cover a full clear, run the dungeon in the Combat Sim, then call it. (The first cut of this carried the simulator's clock on the result the worker posts back, which broke every worker-run simulation; fixed before release.)
 
 ### Every "what am I doing right now" reader uses the action actually running
 

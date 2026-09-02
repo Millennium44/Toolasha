@@ -87,4 +87,19 @@ describe('per-wave first hit', () => {
         result.addAttack(player, monster, 'a', 30);
         expect(result.waveFirstHit).toEqual([]);
     });
+
+    test('the clock and the open-wave window never travel with the result the worker posts back', () => {
+        // postMessage structured-clones the result; a function on it throws a
+        // DataCloneError and every worker-run simulation fails at the finish
+        const { result, setTime } = resultWithClock();
+        result.updateTimeSpentAlive('#1', true, 0);
+        setTime(1_000);
+        result.addAttack(player, monster, 'a', 30);
+
+        expect(() => structuredClone(result)).not.toThrow();
+        const posted = structuredClone(result);
+        expect('clock' in posted).toBe(false);
+        expect('_wave' in posted).toBe(false);
+        expect(posted.waveFirstHit).toEqual([{ name: '#1', total: 1_000, count: 1 }]);
+    });
 });

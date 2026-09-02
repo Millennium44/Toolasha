@@ -32,9 +32,13 @@ class SimResult {
         // the alive time above cannot separate out, and the part a real
         // recording can be compared against wave for wave.
         this.waveFirstHit = [];
-        this._wave = null; // { label, spawnedAt, hitSeen } while a dungeon wave is open
-        // Injected by the simulator as () => simulationTime, so a hit can be timed
-        this.clock = null;
+        // The open-wave window ({ label, spawnedAt, hitSeen }) and the clock the
+        // simulator injects (() => simulationTime) both live here for
+        // addAttack's sake, but must never travel with the result: the worker
+        // posts it back to the page with postMessage, whose structured clone
+        // cannot copy a function. Non-enumerable, so the clone skips them.
+        Object.defineProperty(this, '_wave', { value: null, writable: true, enumerable: false, configurable: true });
+        Object.defineProperty(this, 'clock', { value: null, writable: true, enumerable: false, configurable: true });
         this.bossSpawns = [];
         this.hitpointsSpent = {};
         this.zoneName = zone.hrid;
