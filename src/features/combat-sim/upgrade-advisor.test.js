@@ -2604,6 +2604,31 @@ describe('what a budget buys', () => {
         expect(plan.picks).toHaveLength(0);
     });
 
+    test('a zero budget buys nothing that costs coin, and does not throw', () => {
+        const plan = planWithinBudget([pick({ cost: 100 }), pick({ cost: 250, slot: '/equipment_types/head' })], 0);
+
+        expect(plan.picks).toHaveLength(0);
+        expect(plan.totalCost).toBe(0);
+        expect(plan.skipped.every((s) => s.reason === 'over budget')).toBe(true);
+    });
+
+    test('a zero budget still takes a swap that pays for itself and helps', () => {
+        // A refund does not spend from the budget, so a budget of nothing can
+        // still afford it — leaving it out would forgo a strictly-good swap
+        const plan = planWithinBudget([pick({ cost: -50, attemptsDelta: -1 })], 0);
+
+        expect(plan.picks).toHaveLength(1);
+        expect(plan.totalCost).toBe(-50);
+    });
+
+    test('a budget below the cheapest candidate plans nothing rather than crashing', () => {
+        const plan = planWithinBudget([pick({ cost: 5000 }), pick({ cost: 9000, slot: '/equipment_types/head' })], 100);
+
+        expect(plan.picks).toHaveLength(0);
+        expect(plan.totalCost).toBe(0);
+        expect(plan.skipped.some((s) => s.reason === 'over budget')).toBe(true);
+    });
+
     test('the totals are what was actually picked', () => {
         const plan = planWithinBudget(
             [
