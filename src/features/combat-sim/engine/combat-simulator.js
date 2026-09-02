@@ -1173,8 +1173,12 @@ class CombatSimulator {
         event.target.combatDetails.currentHitpoints -= damage;
         this.simResult.addAttack(event.sourceRef, event.target, 'damageOverTime', damage);
 
-        const log = this.buildCombatLog('', 'damageOverTime', event.target, damage);
-        this.addToWipeLogs(log);
+        // Wipe logs explain a player wipe; gate on a dungeon as the seven other
+        // addToWipeLogs sites do, so DoT ticks cannot evict the killing blow.
+        if (this.zone.isDungeon && event.target.isPlayer) {
+            const log = this.buildCombatLog('', 'damageOverTime', event.target, damage);
+            this.addToWipeLogs(log);
+        }
 
         if (event.currentTick < event.totalTicks) {
             const damageOverTimeTickEvent = new DamageOverTimeEvent(

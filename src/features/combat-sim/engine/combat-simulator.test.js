@@ -867,3 +867,39 @@ describe('a damage-over-time tick on a corpse', () => {
         expect(sim.simResult.deaths[TOAD_HRID]).toBe(1);
     });
 });
+
+/**
+ * A damage-over-time tick outside a dungeon must not fill the wipe-log buffer.
+ *
+ * The other seven addToWipeLogs sites gate on zone.isDungeon; the DoT tick did
+ * not, so in a dungeon its per-tick lines evict the damage that explains a wipe
+ * from the 200-entry ring buffer. Diagnostic only — no simulated number moves.
+ */
+describe('a damage-over-time tick outside a dungeon', () => {
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('writes no wipe-log line', () => {
+        installGameData();
+        seedSimRng(6);
+        const zone = new Zone(ZONE_HRID, 0);
+        expect(zone.isDungeon).toBe(false);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+
+        const victim = new Monster(TOAD_HRID, 0);
+        victim.reset(sim.simulationTime);
+        sim.enemies = [victim];
+
+        const tick = new DamageOverTimeEvent(sim.simulationTime, player, victim, 100, 5, 1, '/combat_styles/smash');
+        sim.processDamageOverTimeTickEvent(tick);
+
+        expect(sim.wipeLogs.count).toBe(0);
+    });
+});
