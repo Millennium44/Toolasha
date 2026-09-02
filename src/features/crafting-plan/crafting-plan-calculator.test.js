@@ -478,3 +478,129 @@ describe('missing game data', () => {
         expect(plan.unitCost).toBe(500);
     });
 });
+
+describe('thin-market re-route', () => {
+    // Helper: call the planner with the thin-market setting on and a fixed
+    // best-ask-size table. Positions 8–11 (buyRawOnly, forceRootCraft,
+    // timeCost, skipProcessing) are left at their defaults unless overridden.
+    const plan = (itemHrid, quantity, askQtyByHrid, opts = {}) =>
+        computeBestCraftingPlan(
+            itemHrid,
+            quantity,
+            'ask',
+            new Set(),
+            new Map(),
+            0,
+            undefined,
+            opts.buyRawOnly ?? false,
+            opts.forceRootCraft ?? false,
+            0,
+            opts.skipProcessing ?? false,
+            opts.thinMarket ?? true,
+            (hrid) => (hrid in askQtyByHrid ? askQtyByHrid[hrid] : null)
+        );
+
+    beforeEach(() => {
+        // Leather now lists below its craft cost, so the plan buys it by default.
+        market.prices[LEATHER] = 20; // craft cost is 30
+    });
+
+    test('a buy leg whose ask cannot cover the need re-routes to craft', () => {
+        // Boots need 6 leather; only 3 rest at the best ask → craft the leather.
+        const p = plan(BOOTS, 1, { [LEATHER]: 3 });
+        const leather = p.children[0];
+        expect(leather.itemHrid).toBe(LEATHER);
+        expect(leather.strategy).toBe('craft');
+        expect(leather.unitCost).toBe(30); // craft cost, not the unachievable 20
+        expect(leather.thinMarketRerouted).toBe(true);
+        expect(leather.children[0].itemHrid).toBe(COWHIDE);
+    });
+
+    test('the re-routed plan total reflects the craft path, not the thin buy', () => {
+        // Buy path would be 6 × 20 = 120; craft path is 6 × 30 = 180.
+        const p = plan(BOOTS, 1, { [LEATHER]: 3 });
+        expect(p.children[0].totalCost).toBe(180);
+    });
+
+    test('an ask at or above the need stays a buy', () => {
+        const p = plan(BOOTS, 1, { [LEATHER]: 6 }); // exactly enough
+        expect(p.children[0].strategy).toBe('buy');
+        expect(p.children[0].unitCost).toBe(20);
+        expect(p.children[0].thinMarketRerouted).toBeUndefined();
+    });
+
+    test('no mooket sighting leaves the buy in place (setting on)', () => {
+        const p = plan(BOOTS, 1, {}); // getAskQty returns null for leather
+        expect(p.children[0].strategy).toBe('buy');
+        expect(p.children[0].unitCost).toBe(20);
+    });
+
+    test('a zero ask size is treated as no-depth, not zero-listed, and stays buy', () => {
+        // askQty 0 is what a snapshot-only sighting stores; it is not a positive
+        // "too few listed" signal, so the feature must not act on it.
+        const p = plan(BOOTS, 1, { [LEATHER]: 0 });
+        expect(p.children[0].strategy).toBe('buy');
+    });
+
+    test('the setting off ignores mooket entirely', () => {
+        const p = plan(BOOTS, 1, { [LEATHER]: 1 }, { thinMarket: false });
+        expect(p.children[0].strategy).toBe('buy');
+        expect(p.children[0].unitCost).toBe(20);
+    });
+
+    test('a thin raw material with no recipe stays a buy — crafting is impossible', () => {
+        // Cowhide has no recipe; even a lone unit at the ask cannot re-route.
+        const p = plan(COWHIDE, 10, { [COWHIDE]: 1 });
+        expect(p.strategy).toBe('buy');
+        expect(p.children).toEqual([]);
+    });
+
+    test('the same intermediate re-routes on a thin leg and stays buy on a fat one', () => {
+        // A diamond: SET needs one BOOTS (6 leather) and one GLOVES (2 leather).
+        // With 4 resting at the ask, the 6-need leg is thin and the 2-need leg is
+        // not — proving the decision is per-leg and the memo is not poisoned.
+        const GLOVES = '/items/leather_gloves';
+        const SET = '/items/leather_set';
+        game.itemDetails[GLOVES] = { name: 'Leather Gloves', isTradable: true };
+        game.itemDetails[SET] = { name: 'Leather Set', isTradable: true };
+        market.prices[GLOVES] = 999;
+        market.prices[SET] = 999;
+        game.initClientData.actionDetailMap['/actions/crafting/leather_gloves'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/hands',
+            inputItems: [{ itemHrid: LEATHER, count: 2 }],
+            outputItems: [{ itemHrid: GLOVES, count: 1 }],
+        };
+        game.initClientData.actionDetailMap['/actions/crafting/leather_set'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/set',
+            inputItems: [
+                { itemHrid: BOOTS, count: 1 },
+                { itemHrid: GLOVES, count: 1 },
+            ],
+            outputItems: [{ itemHrid: SET, count: 1 }],
+        };
+
+        const p = plan(SET, 1, { [LEATHER]: 4 });
+        const boots = p.children.find((c) => c.itemHrid === BOOTS);
+        const gloves = p.children.find((c) => c.itemHrid === GLOVES);
+        const bootsLeather = boots.children.find((c) => c.itemHrid === LEATHER);
+        const glovesLeather = gloves.children.find((c) => c.itemHrid === LEATHER);
+        expect(bootsLeather.strategy).toBe('craft'); // need 6 > 4 listed
+        expect(glovesLeather.strategy).toBe('buy'); // need 2 ≤ 4 listed
+    });
+
+    test('no-processing keeps the thin processing buy — the mode wins over the re-route', () => {
+        // Leather is a /material processing action; no-processing forbids crafting
+        // it, so a thin ask cannot re-route it. The buy stands.
+        const p = plan(BOOTS, 1, { [LEATHER]: 3 }, { skipProcessing: true });
+        expect(p.children[0].strategy).toBe('buy');
+        expect(p.children[0].thinMarketRerouted).toBeUndefined();
+    });
+
+    test('buy-raw-only crafts the intermediate regardless, so the re-route is moot', () => {
+        const p = plan(BOOTS, 1, { [LEATHER]: 3 }, { buyRawOnly: true });
+        expect(p.children[0].strategy).toBe('craft');
+        expect(p.children[0].thinMarketRerouted).toBeUndefined(); // crafted by the mode, not the re-route
+    });
+});

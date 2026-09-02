@@ -5,6 +5,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import marketPriceStore from '../market/mooket/market-price-store.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -13,6 +14,52 @@ import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 
 const MAX_DEPTH = 15;
+
+/**
+ * Default "how many are listed at the best ask" lookup, read from mooket's
+ * pooled order-book cache at enhancement level 0 (recipe materials are always
+ * plain items). Returns the synchronously-cached askQty, or null when mooket
+ * has no sighting for the item (store not loaded, mooket disabled, or the item
+ * was never seen in an order book).
+ *
+ * Only order-book sightings carry a size; the periodic marketplace.json
+ * snapshot stores askQty 0. A returned 0 therefore means "no depth known", not
+ * "zero listed", which is why {@link isThinForLeg} requires a strictly positive
+ * askQty before it will act — the feature never force-crafts on absent data.
+ *
+ * @param {string} itemHrid - Item
+ * @returns {number|null} Units resting at the best ask, or null when unknown
+ */
+function defaultGetAskQty(itemHrid) {
+    try {
+        const entry = marketPriceStore.get(itemHrid, 0);
+        return entry && typeof entry.askQty === 'number' ? entry.askQty : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether a buy leg is "thin": mooket positively reports fewer units resting at
+ * the best ask than this leg needs.
+ *
+ * The signal is top-of-book only — the units at the single best ask price, not
+ * summed depth, because mooket does not carry deeper levels. That is exactly the
+ * reported failure (the plan buys an intermediate priced off a lone unit), and
+ * summing depth is neither possible here nor what the complaint is about.
+ *
+ * Requires askQty > 0: a null (no sighting) or 0 (snapshot-only, depth unknown)
+ * reading is not a positive "too few are listed" signal, so the buy stands.
+ *
+ * @param {string} itemHrid - Item the leg would buy
+ * @param {number} quantity - Units this leg needs
+ * @param {Function} getAskQty - (itemHrid) => number|null
+ * @returns {boolean}
+ */
+function isThinForLeg(itemHrid, quantity, getAskQty) {
+    const askQty = getAskQty(itemHrid);
+    return typeof askQty === 'number' && askQty > 0 && askQty < quantity;
+}
 
 /**
  * Find the production action that creates a given item.
@@ -64,6 +111,11 @@ export function getArtisanBonus(actionType) {
  * @param {boolean} [forceRootCraft=false] - When true, forces the root item (depth 0) to be crafted
  * @param {number} [timeCostPerHour=0] - Gold value per hour of player time (0 = disabled)
  * @param {boolean} [skipProcessing=false] - When true, forces buy for processing actions (single input, no upgrade)
+ * @param {boolean} [thinMarket=false] - When true, a leg the plan would buy is re-routed to craft when mooket
+ *   positively reports fewer units at the best ask than the leg needs, provided the item is craftable and crafting
+ *   it is permitted by the other modes. Acts only on a positive signal; falls through to the buy when mooket has no
+ *   depth for the item.
+ * @param {Function} [getAskQty=defaultGetAskQty] - (itemHrid) => number|null; best-ask size lookup, injectable for tests
  * @returns {CraftingPlanNode}
  */
 export function computeBestCraftingPlan(
@@ -77,7 +129,9 @@ export function computeBestCraftingPlan(
     buyRawOnly = false,
     forceRootCraft = false,
     timeCostPerHour = 0,
-    skipProcessing = false
+    skipProcessing = false,
+    thinMarket = false,
+    getAskQty = defaultGetAskQty
 ) {
     const itemDetails = dataManager.getItemDetails(itemHrid);
     const itemName = itemDetails?.name || itemHrid.split('/').pop();
@@ -138,8 +192,20 @@ export function computeBestCraftingPlan(
         };
     }
 
-    // Check memo for previously computed unit cost
-    if (memo.has(itemHrid)) {
+    // Check memo for previously computed unit cost.
+    // The memo holds the NORMAL, quantity-independent decision. A thin-market
+    // reroute is per-leg (it depends on THIS leg's quantity), so a cached 'buy'
+    // for a craftable item (craftCost !== null) must be re-evaluated against
+    // this leg's need rather than served blindly: when it is thin here, fall
+    // through to a full recompute so the leg is crafted. A cached 'craft' is
+    // already the more-available path and is reused as-is.
+    const memoThinReroute =
+        memo.has(itemHrid) &&
+        thinMarket &&
+        memo.get(itemHrid).strategy === 'buy' &&
+        memo.get(itemHrid).craftCost !== null &&
+        isThinForLeg(itemHrid, quantity, getAskQty);
+    if (memo.has(itemHrid) && !memoThinReroute) {
         const cachedUnitCost = memo.get(itemHrid);
         return {
             itemHrid,
@@ -167,7 +233,9 @@ export function computeBestCraftingPlan(
                               buyRawOnly,
                               forceRootCraft,
                               timeCostPerHour,
-                              skipProcessing
+                              skipProcessing,
+                              thinMarket,
+                              getAskQty
                           )
                       )
                     : [],
@@ -231,6 +299,12 @@ export function computeBestCraftingPlan(
             actionsNeeded: 0,
             children: [],
         };
+        // No-processing is an explicit directive to buy this material, so a thin
+        // market cannot re-route it — crafting it is exactly what the user
+        // forbade. The buy stands: physical availability is a constraint, not a
+        // licence to override a mode the user selected. (No thin flag here — the
+        // memo reconstructs this leg elsewhere in the tree without it, so a flag
+        // set only on the first sighting would be inconsistent.)
     }
 
     // Recurse into crafting
@@ -261,7 +335,9 @@ export function computeBestCraftingPlan(
                 buyRawOnly,
                 forceRootCraft,
                 timeCostPerHour,
-                skipProcessing
+                skipProcessing,
+                thinMarket,
+                getAskQty
             );
 
             craftCostPerUnit += childPlan.unitCost * qtyPerUnit;
@@ -284,7 +360,9 @@ export function computeBestCraftingPlan(
             buyRawOnly,
             forceRootCraft,
             timeCostPerHour,
-            skipProcessing
+            skipProcessing,
+            thinMarket,
+            getAskQty
         );
 
         craftCostPerUnit += upgradePlan.unitCost * qtyPerUnit;
@@ -312,19 +390,35 @@ export function computeBestCraftingPlan(
     // Buy vs craft decision
     // When buyRawOnly is true, always craft (we only reach here if a recipe exists)
     // When forceRootCraft is true and depth === 0, always craft the root item
-    const shouldBuy =
+    const normalShouldBuy =
         !buyRawOnly && !(forceRootCraft && depth === 0) && buyPrice !== null && buyPrice <= craftCostPerUnit;
+
+    // Thin-market re-route. Reaching this decision at all means crafting THIS
+    // item is permitted: buyRawOnly and forceRootCraft@0 make normalShouldBuy
+    // false (so they never leave a buy to re-route), and no-processing on a
+    // processing action returned above — so a permitted buy that lands here can
+    // always be crafted instead. When the setting is on and mooket positively
+    // says fewer units rest at the best ask than this leg needs, craft it.
+    // The recursion above already built craftCostPerUnit through the same
+    // depth/visited-guarded path, so a re-route cannot loop and terminates at
+    // raw materials; the re-routed leg is costed at that craft cost, not the
+    // unachievable buy price.
+    const thinReroute = normalShouldBuy && thinMarket && isThinForLeg(itemHrid, quantity, getAskQty);
+    const shouldBuy = normalShouldBuy && !thinReroute;
     const strategy = shouldBuy ? 'buy' : 'craft';
     const unitCost = shouldBuy ? buyPrice : craftCostPerUnit;
 
-    // Cache the decision
+    // Cache the NORMAL (quantity-independent) decision, never the thin re-route:
+    // the re-route depends on this leg's quantity, so caching it would force the
+    // same craft (or the same buy) onto another leg with a different need. Each
+    // leg re-applies the thin check itself, on the memo path above and here.
     memo.set(itemHrid, {
-        strategy,
-        unitCost,
+        strategy: normalShouldBuy ? 'buy' : 'craft',
+        unitCost: normalShouldBuy ? buyPrice : craftCostPerUnit,
         craftCost: craftCostPerUnit,
-        actionHrid: strategy === 'craft' ? actionHrid : null,
+        actionHrid: normalShouldBuy ? null : actionHrid,
         outputCount,
-        childrenTemplate: strategy === 'craft' ? childrenTemplate : [],
+        childrenTemplate: normalShouldBuy ? [] : childrenTemplate,
     });
 
     // Build children for the actual quantities
@@ -349,7 +443,9 @@ export function computeBestCraftingPlan(
                         buyRawOnly,
                         forceRootCraft,
                         timeCostPerHour,
-                        skipProcessing
+                        skipProcessing,
+                        thinMarket,
+                        getAskQty
                     )
                 );
             }
@@ -367,7 +463,9 @@ export function computeBestCraftingPlan(
                     buyRawOnly,
                     forceRootCraft,
                     timeCostPerHour,
-                    skipProcessing
+                    skipProcessing,
+                    thinMarket,
+                    getAskQty
                 )
             );
         }
@@ -385,6 +483,10 @@ export function computeBestCraftingPlan(
         actionHrid: strategy === 'craft' ? actionHrid : null,
         actionsNeeded: strategy === 'craft' ? Math.ceil(quantity / outputCount) : 0,
         children,
+        // Optional marker: this leg would have been bought on price, but was
+        // crafted because the cheap ask cannot supply the quantity. Renders as an
+        // ordinary craft node otherwise — the display already keys off strategy.
+        ...(thinReroute ? { thinMarketRerouted: true } : {}),
     };
 }
 

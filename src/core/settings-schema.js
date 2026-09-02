@@ -544,6 +544,13 @@ export const settingsGroups = {
                 default: 0,
                 help: 'Your time value in gold per hour. Used to calculate if crafting intermediates is worth the time. Set to your typical hourly profit (e.g., 500000).',
             },
+            actionPanel_craftingPlanThinMarket: {
+                id: 'actionPanel_craftingPlanThinMarket',
+                label: 'Action panel: Crafting plan re-routes thin buys to craft',
+                type: 'checkbox',
+                default: false,
+                help: 'When the plan would buy an intermediate but the community price data shows fewer units listed at that cheap ask than the plan needs, craft it instead so the plan stays achievable. Only acts when the data positively shows a thin listing; falls back to buying when no depth is known. Never overrides "buys raw materials only" or "no processing".',
+            },
             actions_artisanMaterialMode: {
                 id: 'actions_artisanMaterialMode',
                 label: 'Missing materials: Artisan requirement mode',

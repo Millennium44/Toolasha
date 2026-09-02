@@ -154,6 +154,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     const taskMode = config.getSetting('actionPanel_craftingPlanTaskMode');
     const timeCostEnabled = config.getSetting('actionPanel_craftingPlanTimeCost');
     const goldPerHour = config.getSetting('actionPanel_craftingPlanGoldPerHour') || 0;
+    const thinMarket = config.getSetting('actionPanel_craftingPlanThinMarket');
     let plan;
     try {
         plan = computeBestCraftingPlan(
@@ -167,7 +168,8 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
             buyIntermediates,
             taskMode,
             timeCostEnabled ? goldPerHour : 0,
-            noProcessing
+            noProcessing,
+            thinMarket
         );
     } catch (e) {
         console.error('[CraftingPlan] computeBestCraftingPlan error:', e);
@@ -431,7 +433,8 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
                     buyIntermediates,
                     taskMode,
                     timeCostEnabled ? goldPerHour : 0,
-                    noProcessing
+                    noProcessing,
+                    thinMarket
                 );
             } catch (e) {
                 console.error('[CraftingPlan] computeBestCraftingPlan error:', e);
