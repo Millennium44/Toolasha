@@ -27,7 +27,15 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { battlesToBoss, addBattleGap, averageBattleMs, formatBossEta, bossEtaTooltip } from '../../utils/boss-eta.js';
+import {
+    battlesToBoss,
+    wavesToDungeonBoss,
+    addBattleGap,
+    averageBattleMs,
+    formatBossEta,
+    bossEtaTooltip,
+} from '../../utils/boss-eta.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 const ETA_ID = 'mwi-boss-eta';
 
@@ -59,6 +67,11 @@ class CombatBossEta {
         this.battlesPerBoss = 0;
         this.hasBossCycle = false;
         this.battleNumber = 0;
+        // Dungeon mode: the boss is the final wave, so there is no cadence to
+        // divide — just the current wave out of maxWaves, read off new_battle.
+        this.isDungeon = false;
+        this.currentWave = 0;
+        this.maxWaves = 0;
         // null, not 0: a real Date.now() reading of exactly the epoch is not
         // realistic, but tests drive a fake clock that starts at 0, so 0 would
         // be indistinguishable from "no battle seen yet" there.
@@ -124,7 +137,11 @@ class CombatBossEta {
 
     _onNewBattle(data) {
         const actions = dataManager.getCurrentActions() || [];
-        const combatAction = actions.find((a) => a.actionHrid?.startsWith('/actions/combat/') && !a.isDone);
+        // The running zone is the lowest-ordinal unfinished combat action, not
+        // the first in array order: a requeued repeat sits first with a higher
+        // ordinal, and reading it printed a queued normal zone's cadence on a
+        // dungeon ("9 to boss" on a 50-wave dungeon).
+        const combatAction = runningCombatAction(actions);
         const zoneDetail = combatAction ? dataManager.getActionDetails(combatAction.actionHrid) : null;
         const zoneInfo = zoneDetail?.combatZoneInfo;
         const fightInfo = zoneInfo?.fightInfo;
@@ -141,7 +158,14 @@ class CombatBossEta {
 
         const battlesPerBoss = Number(fightInfo?.battlesPerBoss) || 0;
         const hasBossSpawns = Array.isArray(fightInfo?.bossSpawns) && fightInfo.bossSpawns.length > 0;
-        this.hasBossCycle = zoneInfo?.isDungeon !== true && hasBossSpawns && battlesPerBoss > 0;
+
+        // A dungeon has no boss cadence — its boss is the last of maxWaves — so
+        // it is tracked by wave number (off new_battle) instead of the cycle.
+        this.isDungeon = zoneInfo?.isDungeon === true;
+        this.maxWaves = this.isDungeon ? Number(zoneInfo?.dungeonInfo?.maxWaves) || 0 : 0;
+        this.currentWave = this.isDungeon ? Number(data?.wave) || 0 : 0;
+
+        this.hasBossCycle = !this.isDungeon && hasBossSpawns && battlesPerBoss > 0;
         this.battlesPerBoss = battlesPerBoss;
 
         let battleNumber = Number(data?.battleId) || 0;
@@ -178,12 +202,19 @@ class CombatBossEta {
 
         let text = '';
         let title = '';
-        if (!isLabyrinthFight && !inSkillingAction && this.hasBossCycle && this.battleNumber > 0) {
-            const info = battlesToBoss(this.battleNumber, this.battlesPerBoss);
+        if (!isLabyrinthFight && !inSkillingAction) {
+            let info = null;
+            let noun = 'battle';
+            if (this.isDungeon && this.maxWaves > 0 && this.currentWave > 0) {
+                info = wavesToDungeonBoss(this.currentWave, this.maxWaves);
+                noun = 'wave';
+            } else if (this.hasBossCycle && this.battleNumber > 0) {
+                info = battlesToBoss(this.battleNumber, this.battlesPerBoss);
+            }
             if (info) {
                 const avgMs = averageBattleMs(this.samples);
                 text = formatBossEta(info, avgMs);
-                title = bossEtaTooltip(info, avgMs);
+                title = bossEtaTooltip(info, avgMs, noun);
             }
         }
 

@@ -60,6 +60,36 @@ export function battlesToBoss(battleNumber, battlesPerBoss) {
 }
 
 /**
+ * Where the current wave sits in a dungeon, whose boss is simply the final
+ * wave. Unlike a boss-cycle zone there is no `battlesPerBoss` cadence — the
+ * dungeon runs a fixed `maxWaves` and the last one is the boss — so this reads
+ * the wave number straight off `new_battle` (`data.wave`) instead.
+ *
+ * Returns the same shape as {@link battlesToBoss} so the same
+ * `formatBossEta` / `bossEtaMs` / `bossEtaTooltip` render it, with the wave
+ * gap standing in for the battle gap (a dungeon fires one `new_battle` per
+ * wave, so the rolling average is already per-wave).
+ *
+ * @param {number} currentWave - The wave now being fought (`data.wave`, 1-based)
+ * @param {number} maxWaves - Total waves in the dungeon (`dungeonInfo.maxWaves`)
+ * @returns {{battlesRemaining: number, bossBattleNumber: number, isBossNow: boolean}|null}
+ *   `battlesRemaining` is the waves strictly after the current one up to and
+ *   including the final boss wave — 0 when already on the last wave. Null when
+ *   either input is not a usable positive number.
+ */
+export function wavesToDungeonBoss(currentWave, maxWaves) {
+    const w = Number(currentWave);
+    const m = Number(maxWaves);
+    if (!Number.isFinite(m) || m <= 0) return null;
+    if (!Number.isFinite(w) || w <= 0) return null;
+
+    const clampedWave = Math.min(w, m);
+    const battlesRemaining = m - clampedWave;
+
+    return { battlesRemaining, bossBattleNumber: m, isBossNow: battlesRemaining === 0 };
+}
+
+/**
  * Add one inter-battle gap to a rolling sample window, dropping implausible
  * outliers rather than letting one disconnect wreck the average.
  *
@@ -128,16 +158,19 @@ export function formatBossEta(info, avgBattleMs) {
  *
  * @param {{battlesRemaining: number, bossBattleNumber: number, isBossNow: boolean}|null} info
  * @param {number|null} avgBattleMs
+ * @param {string} [noun='battle'] - What one unit is called — 'battle' for a
+ *   boss-cycle zone, 'wave' for a dungeon — so the tooltip reads naturally
+ *   for both.
  * @returns {string} Empty when `info` is null
  */
-export function bossEtaTooltip(info, avgBattleMs) {
+export function bossEtaTooltip(info, avgBattleMs, noun = 'battle') {
     if (!info) return '';
     const { battlesRemaining, bossBattleNumber, isBossNow } = info;
 
     const lines = [
         isBossNow
-            ? `This battle is the boss (battle #${bossBattleNumber}).`
-            : `Boss is battle #${bossBattleNumber} (${battlesRemaining} more battle${
+            ? `This ${noun} is the boss (${noun} #${bossBattleNumber}).`
+            : `Boss is ${noun} #${bossBattleNumber} (${battlesRemaining} more ${noun}${
                   battlesRemaining === 1 ? '' : 's'
               } first).`,
     ];
@@ -145,12 +178,12 @@ export function bossEtaTooltip(info, avgBattleMs) {
     if (Number.isFinite(avgBattleMs) && avgBattleMs > 0) {
         const battles = battlesRemaining + 1;
         lines.push(
-            `~${formatEta(avgBattleMs)}/battle average × ${battles} battle${
+            `~${formatEta(avgBattleMs)}/${noun} average × ${battles} ${noun}${
                 battles === 1 ? '' : 's'
             } (including the current one) ≈ time until the boss is defeated.`
         );
     } else {
-        lines.push('Not enough battles tracked yet for a time estimate.');
+        lines.push(`Not enough ${noun}s tracked yet for a time estimate.`);
     }
 
     return lines.join(' ');

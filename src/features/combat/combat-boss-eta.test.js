@@ -148,7 +148,25 @@ describe('combat boss eta', () => {
         expect(etaText()).toBeNull();
     });
 
-    test('a dungeon shows nothing even if the field carries battlesPerBoss', () => {
+    test('a dungeon counts waves to the final-wave boss, ignoring any battlesPerBoss', () => {
+        game.actions = [{ actionHrid: '/actions/combat/a_dungeon', isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails['/actions/combat/a_dungeon'] = {
+            combatZoneInfo: {
+                isDungeon: true,
+                dungeonInfo: { maxWaves: 50 },
+                // battleId 5 % battlesPerBoss 5 === 0, so the old boss-cycle
+                // path would have wrongly said "boss now"; the dungeon must use
+                // the wave instead.
+                fightInfo: { battlesPerBoss: 5, bossSpawns: [{}] },
+            },
+        };
+
+        game.wsHandlers.new_battle({ battleId: 5, wave: 45 });
+
+        expect(etaText()).toBe('· 5 to boss');
+    });
+
+    test('a dungeon with no maxWaves shows nothing rather than a stale cycle', () => {
         game.actions = [{ actionHrid: '/actions/combat/a_dungeon', isDone: false, ordinal: 0, difficultyTier: 0 }];
         game.actionDetails['/actions/combat/a_dungeon'] = {
             combatZoneInfo: { isDungeon: true, fightInfo: { battlesPerBoss: 5, bossSpawns: [{}] } },
@@ -157,6 +175,28 @@ describe('combat boss eta', () => {
         game.wsHandlers.new_battle({ battleId: 5, wave: 5 });
 
         expect(etaText()).toBeNull();
+    });
+
+    test('a normal zone queued in front of the running dungeon does not bleed its boss cadence', () => {
+        // The queue that produced the "9 to boss on a dungeon" report: a
+        // requeued Sorcerer's Tower sits first in the array with the highest
+        // ordinal, while the dungeon actually running has a lower ordinal.
+        game.actions = [
+            { actionHrid: '/actions/combat/sorcerers_tower', isDone: false, ordinal: 8589934588, difficultyTier: 0 },
+            { actionHrid: '/actions/combat/chimerical_den', isDone: false, ordinal: 8589934587, difficultyTier: 0 },
+        ];
+        game.actionDetails['/actions/combat/sorcerers_tower'] = {
+            combatZoneInfo: { isDungeon: false, fightInfo: { battlesPerBoss: 10, bossSpawns: [{}] } },
+        };
+        game.actionDetails['/actions/combat/chimerical_den'] = {
+            combatZoneInfo: { isDungeon: true, dungeonInfo: { maxWaves: 50 }, fightInfo: {} },
+        };
+
+        // battleId 1 with the stale cadence would read "9 to boss"; the wave
+        // says 45, so the dungeon should read 5.
+        game.wsHandlers.new_battle({ battleId: 1, wave: 45 });
+
+        expect(etaText()).toBe('· 5 to boss');
     });
 
     test('a labyrinth fight never shows a boss chip', () => {

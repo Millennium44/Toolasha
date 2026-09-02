@@ -22,6 +22,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 const COUNTER_ID = 'mwi-battle-counter';
 
@@ -178,8 +179,10 @@ class CombatBattleCounter {
         const battleId = Number(data?.battleId) || 0;
         if (battleId) this.battleId = battleId;
 
-        const actions = dataManager.getCurrentActions();
-        const combatAction = actions.find((a) => a.actionHrid?.startsWith('/actions/combat/') && !a.isDone);
+        // The running zone is the lowest-ordinal unfinished combat action, not
+        // the first in array order — a requeued repeat sits first with a higher
+        // ordinal, which made a dungeon show "Battle #N" instead of "Wave N".
+        const combatAction = runningCombatAction(dataManager.getCurrentActions());
         this.isDungeon = combatAction
             ? dataManager.getActionDetails(combatAction.actionHrid)?.combatZoneInfo?.isDungeon === true
             : false;

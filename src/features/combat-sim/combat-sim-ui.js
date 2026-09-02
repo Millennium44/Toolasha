@@ -4792,27 +4792,37 @@ class CombatSimUI {
             html += `<span style="${valueStyle}">${formatWithSeparator(simResult.dungeonsCompleted)} / ${formatWithSeparator(simResult.dungeonsFailed)}</span>`;
             html += '</div>';
             if (simResult.dungeonsCompleted > 0) {
-                // Prefer the clean clear-time average (completion-to-completion
-                // over consecutive successful runs), which matches the in-game
-                // dungeon tracker's number. Fall back to total time / completed
-                // when there are too few completions to form a pair — that
-                // fallback carries wipe and partial-run time and reads longer.
-                const avgTimeNs =
-                    simResult.dungeonCleanClearCount > 0
-                        ? simResult.dungeonCleanClearTimeTotal / simResult.dungeonCleanClearCount
-                        : simResult.simulatedTime / simResult.dungeonsCompleted;
-                const avgTimeSec = avgTimeNs / 1e9;
-                let avgTimeStr;
-                if (config.getSettingValue('combatSim_decimalMinutes', false)) {
-                    avgTimeStr = `${(avgTimeSec / 60).toFixed(2)} min`;
-                } else {
-                    const avgMin = Math.floor(avgTimeSec / 60);
-                    const avgSec = Math.round(avgTimeSec % 60);
-                    avgTimeStr = `${avgMin}m ${avgSec}s`;
+                const formatClear = (ns) => {
+                    const sec = ns / 1e9;
+                    if (config.getSettingValue('combatSim_decimalMinutes', false)) {
+                        return `${(sec / 60).toFixed(2)} min`;
+                    }
+                    return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+                };
+
+                // Two clear-time numbers answer two different questions.
+                //
+                // Clean: mean interval between consecutive successful clears
+                // (no wipe between), which matches the in-game dungeon tracker —
+                // "how fast is a run when it works".
+                if (simResult.dungeonCleanClearCount > 0) {
+                    const cleanNs = simResult.dungeonCleanClearTimeTotal / simResult.dungeonCleanClearCount;
+                    html += `<div style="${rowStyle}">`;
+                    html += `<span style="${labelStyle}" title="Mean time between consecutive successful clears, failed attempts excluded. Matches the in-game dungeon tracker.">Avg clear (clean)</span>`;
+                    html += `<span style="${valueStyle}">${formatClear(cleanNs)}</span>`;
+                    html += '</div>';
                 }
+
+                // Effective: total simulated time amortised over every
+                // completion, so wipe time and the unfinished tail are charged
+                // against throughput — "effective time per clear including
+                // failures". Above the clean number by the cost of failures,
+                // which is the figure for judging whether a higher tier that
+                // occasionally wipes is still worth pushing.
+                const effectiveNs = simResult.simulatedTime / simResult.dungeonsCompleted;
                 html += `<div style="${rowStyle}">`;
-                html += `<span style="${labelStyle}">Avg completion time</span>`;
-                html += `<span style="${valueStyle}">${avgTimeStr}</span>`;
+                html += `<span style="${labelStyle}" title="Total simulated time divided by dungeons completed — includes failed attempts and the unfinished final run. Compare with the clean number to see the cost of failures at this tier.">Avg clear (incl. fails)</span>`;
+                html += `<span style="${valueStyle}">${formatClear(effectiveNs)}</span>`;
                 html += '</div>';
             }
             html += `<div style="${rowStyle}">`;

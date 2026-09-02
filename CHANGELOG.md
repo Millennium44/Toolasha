@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat header reads the running zone, not a queued one — and "to boss" works in dungeons
+
+The header chips and the sim-accuracy recorder all picked your current combat zone by taking the first combat action in the queue array, but a repeating action gets requeued to the front with a higher ordinal while a lower-ordinal action actually runs — so with a normal zone queued ahead of a running dungeon, the boss chip printed that normal zone's cadence ("9 to boss" on a 50-wave dungeon), the counter showed "Battle #N" instead of "Wave N", and — worst — a dungeon recording got stamped with the queued normal zone's name and mis-filed. All three now pick the zone actually running (lowest ordinal). The boss-ETA chip also learned dungeons: it counts waves to the final-wave boss with a time estimate, instead of showing nothing (or a stray cadence). And the Combat Sim now shows two dungeon clear times side by side — a clean average over successful runs (matching the in-game tracker) and an effective one that amortises failed attempts over completions — so you can weigh whether a higher tier that occasionally wipes is still worth pushing.
+
 ### The sim's dungeon clear time matches the game instead of always reading longer
 
 The Combat Sim's average dungeon completion time was total simulated time divided by dungeons completed — but the numerator also carried every failed attempt's time and the half-finished final run still going at the cutoff, while the denominator counted only clean clears, so the figure was always longer than the real in-game time. It now measures the way the dungeon tracker does: the time between one successful clear and the next, over consecutive successful runs only, so the two numbers finally describe the same thing. (The suggested cause — the sim not resetting buffs and cooldowns between runs — was checked and ruled out: it carries them forward, which would make the sim faster, not slower.)

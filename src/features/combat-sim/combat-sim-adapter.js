@@ -16,6 +16,7 @@ import bundledExpectedValueCalculator from '../market/expected-value-calculator.
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 import { combatLevel } from '../../utils/combat-level.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import { manualAchievementCombatBuffs, deriveAchievementCombatBuffs } from '../../utils/achievement-combat-buffs.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -965,18 +966,23 @@ export function getCurrentCombatZone() {
         return null;
     }
 
-    for (const action of characterData.characterActions) {
-        if (action && action.actionHrid?.includes('/actions/combat/')) {
-            const isDungeon = clientData?.actionDetailMap?.[action.actionHrid]?.combatZoneInfo?.isDungeon || false;
-            return {
-                zoneHrid: action.actionHrid,
-                difficultyTier: action.difficultyTier || 0,
-                isDungeon,
-            };
-        }
+    // The running action is the lowest-ordinal unfinished combat action, not
+    // the first one in array order — a requeued repeat sits first with a higher
+    // ordinal. Reading array[0] here mis-stamped dungeon recordings with a
+    // queued normal zone's hrid. includeFinished keeps a zone nameable the
+    // instant combat ends, matching the old "return the first combat action"
+    // behaviour a segment fold relies on.
+    const action = runningCombatAction(characterData.characterActions, { includeFinished: true });
+    if (!action) {
+        return null;
     }
 
-    return null;
+    const isDungeon = clientData?.actionDetailMap?.[action.actionHrid]?.combatZoneInfo?.isDungeon || false;
+    return {
+        zoneHrid: action.actionHrid,
+        difficultyTier: action.difficultyTier || 0,
+        isDungeon,
+    };
 }
 
 /**

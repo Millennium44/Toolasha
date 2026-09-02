@@ -64,6 +64,7 @@ const {
     buildPlayerDTOFromProfile,
     parseShykaiImport,
     taxedDropValue,
+    getCurrentCombatZone,
 } = await import('./combat-sim-adapter.js');
 const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
 
@@ -499,5 +500,58 @@ describe('the equipment a Shykai import carries', () => {
 
         const dto = parseShykaiImport(payload).players[0];
         expect(dto.equipment['/equipment_types/back']).toEqual({ hrid: '/items/unknown_cape', enhancementLevel: 0 });
+    });
+});
+
+describe('getCurrentCombatZone picks the running action, not the first in the array', () => {
+    test('a requeued repeat in front does not mask the lower-ordinal running dungeon', () => {
+        // The queue that mis-stamped a dungeon recording as Sorcerer's Tower:
+        // the long-running repeat sits first with the highest ordinal, the
+        // dungeon actually running has a lower ordinal.
+        mocks.clientData.actionDetailMap = {
+            '/actions/combat/sorcerers_tower': { combatZoneInfo: { isDungeon: false } },
+            '/actions/combat/chimerical_den': { combatZoneInfo: { isDungeon: true } },
+        };
+        mocks.characterData = {
+            characterActions: [
+                {
+                    actionHrid: '/actions/combat/sorcerers_tower',
+                    isDone: false,
+                    ordinal: 8589934588,
+                    difficultyTier: 0,
+                },
+                { actionHrid: '/actions/combat/chimerical_den', isDone: false, ordinal: 8589934587, difficultyTier: 2 },
+            ],
+        };
+
+        expect(getCurrentCombatZone()).toEqual({
+            zoneHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 2,
+            isDungeon: true,
+        });
+    });
+
+    test('a finished action can still name the zone the instant combat ends', () => {
+        mocks.clientData.actionDetailMap = {
+            '/actions/combat/chimerical_den': { combatZoneInfo: { isDungeon: true } },
+        };
+        mocks.characterData = {
+            characterActions: [
+                { actionHrid: '/actions/combat/chimerical_den', isDone: true, ordinal: 0, difficultyTier: 1 },
+            ],
+        };
+
+        expect(getCurrentCombatZone()).toEqual({
+            zoneHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 1,
+            isDungeon: true,
+        });
+    });
+
+    test('no combat action at all returns null', () => {
+        mocks.characterData = {
+            characterActions: [{ actionHrid: '/actions/foraging/something', isDone: false, ordinal: 0 }],
+        };
+        expect(getCurrentCombatZone()).toBeNull();
     });
 });

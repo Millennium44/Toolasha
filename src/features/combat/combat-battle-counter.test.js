@@ -115,6 +115,23 @@ describe('combat battle counter', () => {
         expect(counterText()).toBe('· Wave 5 · Battle #3');
     });
 
+    test('a dungeon running behind a requeued normal zone still shows its wave', () => {
+        // The queue order that hid the wave: a requeued repeat sits first in the
+        // array with the highest ordinal while the running dungeon has a lower
+        // one, so array-order selection would read the normal zone and drop the
+        // wave.
+        game.actions = [
+            { actionHrid: '/actions/combat/sorcerers_tower', isDone: false, ordinal: 8589934588 },
+            { actionHrid: '/actions/combat/dungeon_zone', isDone: false, ordinal: 8589934587 },
+        ];
+        game.actionDetails['/actions/combat/sorcerers_tower'] = { combatZoneInfo: { isDungeon: false } };
+        game.actionDetails['/actions/combat/dungeon_zone'] = { combatZoneInfo: { isDungeon: true } };
+
+        game.wsHandlers.new_battle({ battleId: 3, wave: 45 });
+
+        expect(counterText()).toBe('· Wave 45 · Battle #3');
+    });
+
     test('a new_battle with no battleId keeps showing the last known number, rather than zeroing it', () => {
         // boss-eta tolerates the same gap by text-parsing this counter's own
         // last-shown number, so zeroing here would blank the counter and take

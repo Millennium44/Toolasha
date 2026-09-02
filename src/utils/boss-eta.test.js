@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     battlesToBoss,
+    wavesToDungeonBoss,
     addBattleGap,
     averageBattleMs,
     bossEtaMs,
@@ -21,6 +22,13 @@ describe('battlesToBoss', () => {
 
     test('battle #1 of a fresh zone is 9 out from the first boss at 10', () => {
         expect(battlesToBoss(1, 10)).toEqual({ battlesRemaining: 9, bossBattleNumber: 10, isBossNow: false });
+    });
+
+    test('a dungeon-style call is handled by wavesToDungeonBoss, not this', () => {
+        // battlesToBoss with battlesPerBoss 0 (a dungeon's fightInfo) returns
+        // null, which is why the chip must route dungeons through the other
+        // helper rather than this one.
+        expect(battlesToBoss(45, 0)).toBeNull();
     });
 
     test('non-positive or non-finite inputs return null', () => {
@@ -161,5 +169,40 @@ describe('bossEtaTooltip', () => {
     test('says there is not enough data without an average', () => {
         const text = bossEtaTooltip({ battlesRemaining: 7, bossBattleNumber: 330, isBossNow: false }, null);
         expect(text).toContain('Not enough battles tracked yet');
+    });
+
+    test('the wave noun reworks the whole tooltip for a dungeon', () => {
+        const text = bossEtaTooltip({ battlesRemaining: 5, bossBattleNumber: 50, isBossNow: false }, 10_000, 'wave');
+        expect(text).toContain('Boss is wave #50');
+        expect(text).toContain('5 more waves first');
+        expect(text).toContain('6 waves');
+        expect(text).not.toContain('battle');
+    });
+});
+
+describe('wavesToDungeonBoss', () => {
+    test('wave 45 of a 50-wave dungeon is 5 out from the boss wave', () => {
+        expect(wavesToDungeonBoss(45, 50)).toEqual({ battlesRemaining: 5, bossBattleNumber: 50, isBossNow: false });
+    });
+
+    test('the final wave is the boss itself', () => {
+        expect(wavesToDungeonBoss(50, 50)).toEqual({ battlesRemaining: 0, bossBattleNumber: 50, isBossNow: true });
+    });
+
+    test('a wave past the max (a stale reading) clamps to the boss rather than going negative', () => {
+        expect(wavesToDungeonBoss(51, 50)).toEqual({ battlesRemaining: 0, bossBattleNumber: 50, isBossNow: true });
+    });
+
+    test('non-positive or non-finite inputs return null', () => {
+        expect(wavesToDungeonBoss(0, 50)).toBeNull();
+        expect(wavesToDungeonBoss(5, 0)).toBeNull();
+        expect(wavesToDungeonBoss(NaN, 50)).toBeNull();
+        expect(wavesToDungeonBoss(5, NaN)).toBeNull();
+    });
+
+    test('its shape feeds formatBossEta and reads as "to boss" like a boss zone', () => {
+        const info = wavesToDungeonBoss(45, 50);
+        expect(formatBossEta(info, null)).toBe('5 to boss');
+        expect(formatBossEta(info, 10_000)).toMatch(/^5 to boss · ~.*left$/);
     });
 });
