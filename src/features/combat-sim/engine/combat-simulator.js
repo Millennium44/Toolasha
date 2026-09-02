@@ -1618,23 +1618,35 @@ class CombatSimulator {
         return true;
     }
 
+    /**
+     * A special ability's buff can scale with the caster's skill level. Returns a
+     * scaled clone when the buff carries that scaling, and the buff unchanged
+     * otherwise — so an ordinary buff is added byte-for-byte as before. Both the
+     * allAllies and self branches route through this so they can never drift.
+     * @param {Object} source - The caster; its combatDetails supply the skill level.
+     * @param {Object} ability - The ability applying the buff (isSpecialAbility gate).
+     * @param {Object} buff - The buff definition.
+     * @returns {Object} The scaled clone, or the original buff when no scaling applies.
+     */
+    scaledBuff(source, ability, buff) {
+        if (!(ability.isSpecialAbility && buff.multiplierForSkillHrid && buff.multiplierPerSkillLevel > 0)) {
+            return buff;
+        }
+        const multiplier =
+            1.0 +
+            source.combatDetails[buff.multiplierForSkillHrid.split('/')[2] + 'Level'] * buff.multiplierPerSkillLevel;
+        const currentBuff = { ...buff };
+        currentBuff.flatBoost *= multiplier;
+        currentBuff.ratioBoost *= multiplier;
+        return currentBuff;
+    }
+
     processAbilityBuffEffect(source, ability, abilityEffect) {
         if (abilityEffect.targetType === 'allAllies') {
             const targets = source.isPlayer ? this.players : this.enemies;
             for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {
                 for (const buff of abilityEffect.buffs) {
-                    if (ability.isSpecialAbility && buff.multiplierForSkillHrid && buff.multiplierPerSkillLevel > 0) {
-                        const multiplier =
-                            1.0 +
-                            source.combatDetails[buff.multiplierForSkillHrid.split('/')[2] + 'Level'] *
-                                buff.multiplierPerSkillLevel;
-                        const currentBuff = { ...buff };
-                        currentBuff.flatBoost *= multiplier;
-                        currentBuff.ratioBoost *= multiplier;
-                        target.addBuff(currentBuff, this.simulationTime);
-                    } else {
-                        target.addBuff(buff, this.simulationTime);
-                    }
+                    target.addBuff(this.scaledBuff(source, ability, buff), this.simulationTime);
                     const checkBuffExpirationEvent = new CheckBuffExpirationEvent(
                         this.simulationTime + buff.duration,
                         target
@@ -1651,7 +1663,7 @@ class CombatSimulator {
         }
 
         for (const buff of abilityEffect.buffs) {
-            source.addBuff(buff, this.simulationTime);
+            source.addBuff(this.scaledBuff(source, ability, buff), this.simulationTime);
             const checkBuffExpirationEvent = new CheckBuffExpirationEvent(this.simulationTime + buff.duration, source);
             this.eventQueue.addEvent(checkBuffExpirationEvent);
         }
