@@ -11,6 +11,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     settings: {},
     characterData: null,
+    characterId: 'char-1',
     wsHandlers: {},
     dmHandlers: {},
     notified: [],
@@ -31,6 +32,7 @@ vi.mock('../../core/data-manager.js', () => ({
         off: (event, handler) => {
             if (game.dmHandlers[event] === handler) delete game.dmHandlers[event];
         },
+        getCurrentCharacterId: () => game.characterId,
     },
 }));
 vi.mock('../../core/websocket.js', () => ({
@@ -72,6 +74,7 @@ describe('labyrinth entry alerts', () => {
         vi.useFakeTimers();
         vi.setSystemTime(NOW);
         game.settings = { [MASTER_SETTING]: true };
+        game.characterId = 'char-1';
         game.wsHandlers = {};
         game.dmHandlers = {};
         game.notified = [];
@@ -116,6 +119,27 @@ describe('labyrinth entry alerts', () => {
         const after = game.notified.length;
         labyrinthEntryAlerts.check();
         expect(game.notified.length).toBe(after);
+    });
+
+    test('two characters regenerating in the same minute bucket are keyed apart', () => {
+        // char-1 regenerated an entry an hour ago
+        stock({ entries: 1, lastHoursAgo: 49 });
+        labyrinthEntryAlerts.check({ seed: true });
+        expect(labyrinthEntryAlerts.check()?.fired).toBe(true);
+        const firstKey = game.notified.at(-1).key;
+
+        // A switch stands the watcher down; the arriving character starts clean
+        labyrinthEntryAlerts.disable();
+        game.characterId = 'char-2';
+
+        // Identical stock → same regeneration instant → same minute bucket
+        stock({ entries: 1, lastHoursAgo: 49 });
+        labyrinthEntryAlerts.check({ seed: true });
+        expect(labyrinthEntryAlerts.check()?.fired).toBe(true);
+        const secondKey = game.notified.at(-1).key;
+
+        // Scoped by character, so the shared de-dup map cannot swallow the second
+        expect(secondKey).not.toBe(firstKey);
     });
 
     test('the projection and the server’s own edge are one regeneration, not two', () => {

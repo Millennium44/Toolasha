@@ -22,14 +22,17 @@
  *
  * ## Re-arming
  *
- * Keyed on the regeneration instant alone, because one regeneration is one
- * event however it was noticed: the projection names it as the deadline just
- * crossed (`nextEntryAt` now in the past) and the server names the same instant
- * as the new `lastLabyrinthTimestamp` once the count moves, so both signals
- * resolve to the same identity and only the first of them speaks. The stock
- * count is deliberately *not* part of the key — it differs between those two
- * sightings of one event, which is exactly how the same regeneration used to be
- * announced twice.
+ * Keyed on the regeneration instant, because one regeneration is one event
+ * however it was noticed: the projection names it as the deadline just crossed
+ * (`nextEntryAt` now in the past) and the server names the same instant as the
+ * new `lastLabyrinthTimestamp` once the count moves, so both signals resolve to
+ * the same identity and only the first of them speaks. The stock count is
+ * deliberately *not* part of the key — it differs between those two sightings of
+ * one event, which is exactly how the same regeneration used to be announced
+ * twice. The key is scoped by character id, because the notification service's
+ * de-dup map is shared across bundles and outlives a switch: without it, two
+ * characters regenerating in the same minute bucket would collide and the second
+ * alert would be swallowed as a duplicate.
  *
  * Instants within `SAME_EVENT_TOLERANCE_MS` are the same event, so a server
  * that stamps the regeneration a second or two after the projected deadline
@@ -162,7 +165,11 @@ class LabyrinthEntryAlerts {
         // The projection fires before the count has moved, so the entry it is
         // announcing is not in `forecast.entries` yet.
         const stock = rose ? forecast.entries : Math.min(forecast.maxEntries, forecast.entries + 1);
-        const key = `${EVENT_KEY_PREFIX}:${Math.round(instant / 60_000)}`;
+        // Scope the key to the character: the service's de-dup map is shared across
+        // bundles and outlives a switch, so two characters regenerating in the same
+        // minute bucket would otherwise collide and swallow the second alert.
+        const who = dataManager.getCurrentCharacterId?.() || 'unknown';
+        const key = `${EVENT_KEY_PREFIX}:${who}:${Math.round(instant / 60_000)}`;
         const result = notificationService.notify(key, entryMessage(forecast, { stock }), {
             title: 'Labyrinth entry ready',
         });
