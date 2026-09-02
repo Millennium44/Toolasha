@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dungeon tracker reads the tier of the dungeon you're actually running
+
+With more than one copy of a dungeon queued at different tiers — a T2 run with a T0 copy lined up behind it — the tracker resolved the current run's tier from a queued copy rather than the one being run, so the panel (and every run it saved) showed T0 while the game fought T2. It now reads the tier from the action actually running, and a run that started on the wrong tier corrects itself on its next wave rather than finishing mislabeled.
+
 ### Dungeon tracker: tiers on backfilled runs, a tier filter, and a panel that stays on top
 
 Three fixes to the dungeon tracker. Chat carries no tier, so runs rebuilt with **Backfill** came out untiered and filed under T0 — they now inherit the tier of the dungeon you're running when you press Backfill (runs of other dungeons stay untiered; re-run Clear history → Backfill to apply). The run-history filters gain a **Tier** dropdown beside Dungeon, so you can narrow to just T2 (or any tier present in your history). And a dragged, then expanded, panel was left at its collapsed HUD stacking — below the game's own combat UI — so the game's ability-cooldown numbers showed through it; expanding a moved panel now restores its on-top stacking.

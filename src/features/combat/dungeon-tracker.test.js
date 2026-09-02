@@ -266,6 +266,34 @@ describe('starting a run', () => {
         expect(tracker.currentRun.maxWaves).toBe(10);
     });
 
+    test('the running action’s tier wins over a stale pending tier from a queued copy', async () => {
+        // The queue that showed a T2 fight as T0: the running dungeon (ordinal
+        // 0, T2) sits alongside a queued T0 copy, and pendingDungeonInfo had
+        // grabbed the T0 one.
+        tracker.pendingDungeonInfo = { dungeonHrid: DEN, tier: 0 };
+        game.actions = [
+            { actionHrid: DEN, difficultyTier: 2, ordinal: 0, isDone: false },
+            { actionHrid: DEN, difficultyTier: 0, ordinal: 8589934587, isDone: false },
+        ];
+
+        await tracker.onNewBattle({ wave: 0, battleId: 5, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.tier).toBe(2);
+    });
+
+    test('a mid-run wave re-syncs a tier that started wrong', async () => {
+        // Already tracking at the wrong tier (T0); the running action says T2,
+        // and a tier cannot change mid-run, so the run self-corrects.
+        beTracking({ tier: 0, currentWave: 3, wavesCompleted: 2 });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, ordinal: 0, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 4, battleId: 9, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.tier).toBe(2);
+    });
+
     test('a non-dungeon pending action never starts tracking', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         tracker.pendingDungeonInfo = { dungeonHrid: FLY, tier: 0 };

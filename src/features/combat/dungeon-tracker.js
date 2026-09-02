@@ -1018,6 +1018,20 @@ class DungeonTracker {
             }
         } else {
             // Subsequent wave (already tracking)
+            // Self-heal a tier a stale pendingDungeonInfo set wrong at the start:
+            // the tier cannot change mid-run, so if the running action is this
+            // same dungeon at a different tier, the run's tier is the bug. Fixes
+            // the live panel and the tier this run is eventually saved under.
+            const running = runningCombatAction(dataManager.getCurrentActions());
+            if (
+                running &&
+                this.currentRun &&
+                running.actionHrid === this.currentRun.dungeonHrid &&
+                running.difficultyTier !== this.currentRun.tier
+            ) {
+                this.currentRun.tier = running.difficultyTier;
+            }
+
             // Update battleId in case user logged out and back in (new battle instance)
             this.currentBattleId = data.battleId;
             this.startWave(data);
@@ -1034,7 +1048,19 @@ class DungeonTracker {
         let tier = null;
         let maxWaves = null;
 
-        if (this.pendingDungeonInfo) {
+        // The action actually running is the authoritative source of the tier.
+        // pendingDungeonInfo (from an actions_updated loop) and a first-in-array
+        // find() both captured the wrong tier when the queue held more than one
+        // copy of the same dungeon — a T2 run with a T0 copy queued behind it
+        // showed the panel as T0 while the game fought T2. runningCombatAction
+        // picks the lowest-ordinal unfinished combat action, which is the one
+        // being run.
+        const running = runningCombatAction(dataManager.getCurrentActions());
+        if (running && this.isDungeonAction(running.actionHrid)) {
+            dungeonHrid = running.actionHrid;
+            tier = running.difficultyTier;
+            this.pendingDungeonInfo = null;
+        } else if (this.pendingDungeonInfo) {
             // Verify this is actually a dungeon action before starting tracking
             if (!this.isDungeonAction(this.pendingDungeonInfo.dungeonHrid)) {
                 console.warn(
@@ -1049,26 +1075,14 @@ class DungeonTracker {
             dungeonHrid = this.pendingDungeonInfo.dungeonHrid;
             tier = this.pendingDungeonInfo.tier;
 
+            // Clear pending info
+            this.pendingDungeonInfo = null;
+        }
+
+        if (dungeonHrid) {
             const dungeonInfo = dungeonTrackerStorage.getDungeonInfo(dungeonHrid);
             if (dungeonInfo) {
                 maxWaves = dungeonInfo.maxWaves;
-            }
-
-            // Clear pending info
-            this.pendingDungeonInfo = null;
-        } else {
-            // FALLBACK: Check current actions from dataManager
-            const currentActions = dataManager.getCurrentActions();
-            const dungeonAction = currentActions.find((a) => this.isDungeonAction(a.actionHrid) && !a.isDone);
-
-            if (dungeonAction) {
-                dungeonHrid = dungeonAction.actionHrid;
-                tier = dungeonAction.difficultyTier;
-
-                const dungeonInfo = dungeonTrackerStorage.getDungeonInfo(dungeonHrid);
-                if (dungeonInfo) {
-                    maxWaves = dungeonInfo.maxWaves;
-                }
             }
         }
 
