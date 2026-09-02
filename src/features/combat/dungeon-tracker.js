@@ -42,6 +42,7 @@ class DungeonTracker {
         this.isInitialized = false; // Guard flag
         this.currentRun = null;
         this.waveStartTime = null;
+        this.lastWaveEndTime = null;
         this.waveTimes = [];
         this.updateCallbacks = [];
         this.pendingDungeonInfo = null; // Store dungeon info before tracking starts
@@ -137,6 +138,7 @@ class DungeonTracker {
             wavesCompleted: this.currentRun.wavesCompleted,
             waveTimes: [...this.waveTimes],
             waveStartTime: this.waveStartTime?.getTime() || null,
+            lastWaveEndTime: this.lastWaveEndTime,
             keyCountsMap: this.currentRun.keyCountsMap || {},
             lastUpdateTime: Date.now(),
             // Save timestamp tracking fields for completion detection
@@ -231,6 +233,7 @@ class DungeonTracker {
         this.currentBattleId = saved.battleId;
         this.waveTimes = saved.waveTimes || [];
         this.waveStartTime = saved.waveStartTime ? new Date(saved.waveStartTime) : null;
+        this.lastWaveEndTime = saved.lastWaveEndTime ?? null;
 
         // Restore timestamp tracking fields
         this.firstKeyCountTimestamp = saved.firstKeyCountTimestamp || null;
@@ -385,6 +388,7 @@ class DungeonTracker {
             this.currentBattleId = saved.battleId;
             this.waveTimes = saved.waveTimes || [];
             this.waveStartTime = saved.waveStartTime ? new Date(saved.waveStartTime) : null;
+            this.lastWaveEndTime = saved.lastWaveEndTime ?? null;
 
             // Restore timestamp tracking fields
             this.firstKeyCountTimestamp = saved.firstKeyCountTimestamp || null;
@@ -1093,7 +1097,14 @@ class DungeonTracker {
 
         this.isTracking = true;
         this.currentBattleId = data.battleId; // Store battleId for persistence
-        this.waveStartTime = new Date(data.combatStartTime);
+        // The run starts now. data.combatStartTime is NOT this run's start: it
+        // is the combat *action's* start, which in continuous queued combat is
+        // when the session's fighting began — hours stale by the time a later
+        // run starts. Anchoring the run (and its first wave) to it made wave 1
+        // read as hours, swamped the wave average (a −6000% pace), and left a
+        // solo run's total (no key-count anchor) as garbage.
+        this.waveStartTime = new Date();
+        this.lastWaveEndTime = null;
         this.waveTimes = [];
 
         // Reset party message tracking
@@ -1194,11 +1205,24 @@ class DungeonTracker {
             this.notifyUpdate();
         }
 
-        // Calculate wave time (waveStartTime can be null after restoring an in-progress run)
+        // A wave's time is completion-to-completion (the previous wave's end,
+        // or the run's start for wave 1), so it is the full cycle — fight plus
+        // the respawn gap before it. That is the same measure as a stored
+        // run's duration over its wave count, which is what the pace chip and
+        // backfilled history compare against; timing only the fight
+        // (new_battle→completion) read ~60% "faster" than that for no reason.
+        // It also makes the ETA (average × remaining waves) a real finish time.
+        // The run's start anchors only a fresh run's first wave. A run restored
+        // mid-way with no previous-wave end has missed that wave's start, so its
+        // first completion records nothing (as before) rather than a wave that
+        // spans the whole gap back to the run's start.
         const waveEndTime = Date.now();
-        if (this.waveStartTime) {
-            this.waveTimes.push(waveEndTime - this.waveStartTime.getTime());
+        const noWaveDoneYet = !(this.currentRun.wavesCompleted > 0);
+        const waveStart = this.lastWaveEndTime ?? (noWaveDoneYet ? this.currentRun.startTime : null);
+        if (Number.isFinite(waveStart)) {
+            this.waveTimes.push(waveEndTime - waveStart);
         }
+        this.lastWaveEndTime = waveEndTime;
 
         // Update waves completed
         // BUGFIX: Wave 50 completion sends wave: 0, so use currentWave instead
@@ -1261,6 +1285,7 @@ class DungeonTracker {
         // Clear ALL state immediately - next dungeon can now start without contamination
         this.currentRun = null;
         this.waveStartTime = null;
+        this.lastWaveEndTime = null;
         this.waveTimes = [];
         this.firstKeyCountTimestamp = null;
         this.lastKeyCountTimestamp = null;
@@ -1368,6 +1393,7 @@ class DungeonTracker {
         this.isTracking = false;
         this.currentRun = null;
         this.waveStartTime = null;
+        this.lastWaveEndTime = null;
         this.waveTimes = [];
         this.pendingDungeonInfo = null;
         this.currentBattleId = null;
@@ -1514,6 +1540,7 @@ class DungeonTracker {
             this.isTracking = false;
             this.currentRun = null;
             this.waveStartTime = null;
+            this.lastWaveEndTime = null;
             this.waveTimes = [];
             this.pendingDungeonInfo = null;
             this.currentBattleId = null;

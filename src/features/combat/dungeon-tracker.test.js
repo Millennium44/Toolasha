@@ -144,6 +144,9 @@ function beTracking({
     tracker.restoredMidRun = restored;
     tracker.currentBattleId = battleId;
     tracker.waveStartTime = new Date(startTime);
+    // The previous wave's end is the anchor a mid-run completion is timed
+    // from; seed it to the same instant so a test can measure a wave off it.
+    tracker.lastWaveEndTime = startTime;
     tracker.waveTimes = waveTimes;
     tracker.currentRun = { dungeonHrid, tier, startTime, currentWave, maxWaves, wavesCompleted, keyCountsMap };
     if (anchoredAt !== null) {
@@ -161,6 +164,7 @@ function resetTracker() {
     tracker.isInitialized = false;
     tracker.currentRun = null;
     tracker.waveStartTime = null;
+    tracker.lastWaveEndTime = null;
     tracker.waveTimes = [];
     tracker.updateCallbacks = [];
     tracker.pendingDungeonInfo = null;
@@ -235,6 +239,11 @@ describe('recognising a dungeon', () => {
 
 describe('starting a run', () => {
     test('wave 0 starts a run from the queued dungeon action', async () => {
+        // The run starts now, not at combatStartTime — that field is the combat
+        // action's start, hours stale in continuous queued combat.
+        const runStart = Date.parse('2026-08-04T10:03:20.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(runStart);
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
         expect(tracker.pendingDungeonInfo).toEqual({ dungeonHrid: DEN, tier: 2 });
 
@@ -246,7 +255,7 @@ describe('starting a run', () => {
         expect(tracker.currentRun).toMatchObject({
             dungeonHrid: DEN,
             tier: 2,
-            startTime: Date.parse('2026-08-04T10:00:00.000Z'),
+            startTime: runStart,
             currentWave: 0,
             maxWaves: 10,
             wavesCompleted: 0,
@@ -369,6 +378,9 @@ describe('starting a run', () => {
     test('but a genuinely new dungeon queued while wave 0 is still open starts fresh', async () => {
         // The one case a resent wave 0 must NOT be swallowed: actions_updated
         // queued a real new dungeon action before this new_battle arrived
+        const freshStart = Date.parse('2026-08-04T11:02:45.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(freshStart);
         beTracking({ currentWave: 0, wavesCompleted: 0, battleId: 42 });
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 1, isDone: false }] });
 
@@ -376,7 +388,8 @@ describe('starting a run', () => {
         await flush();
 
         expect(tracker.currentRun.dungeonHrid).toBe(LAIR);
-        expect(tracker.currentRun.startTime).toBe(Date.parse('2026-08-04T11:00:00.000Z'));
+        // Clocked from now, not the stale combatStartTime
+        expect(tracker.currentRun.startTime).toBe(freshStart);
     });
 });
 
@@ -875,6 +888,48 @@ describe('per-wave timing', () => {
         const run = tracker.getCurrentRun();
         expect(run.avgWaveTime).toBe(10_000);
     });
+
+    test('wave 1 is timed from the run start, not a combatStartTime hours stale', async () => {
+        // In continuous queued combat, combatStartTime is when the session's
+        // fighting began — here 2.6 hours before this run. The old code
+        // anchored wave 1 to it, recording one 9,500,000 ms wave that swamped
+        // the average and drove the pace chip to −6000%.
+        const runStart = Date.parse('2026-08-04T12:40:00.000Z');
+        const staleCombatStart = '2026-08-04T10:00:00.000Z';
+        vi.useFakeTimers();
+        vi.setSystemTime(runStart);
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, ordinal: 0, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 0, battleId: 7, combatStartTime: staleCombatStart });
+        await flush();
+        expect(tracker.currentRun.startTime).toBe(runStart);
+
+        vi.setSystemTime(runStart + 10_000);
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 1, isDone: false } });
+
+        expect(tracker.waveTimes).toEqual([10_000]);
+        expect(tracker.getCurrentRun().avgWaveTime).toBe(10_000);
+    });
+
+    test('a wave’s time is completion-to-completion, so it matches duration over wave count', async () => {
+        // Fight 6s, then a 4s respawn gap before the next completion: the
+        // stored history (duration ÷ waves) counts the gap, so the live wave
+        // must too, or the pace reads spuriously "faster".
+        const t0 = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(t0);
+        beTracking({ startTime: t0, currentWave: 1, wavesCompleted: 0, maxWaves: 10, waveTimes: [] });
+
+        vi.setSystemTime(t0 + 6_000); // wave 1 fight ends
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 1, isDone: false } });
+        vi.setSystemTime(t0 + 10_000); // 4s gap, wave 2 starts
+        tracker.startWave({ wave: 2, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        vi.setSystemTime(t0 + 16_000); // wave 2 fight ends (6s fight)
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 2, isDone: false } });
+
+        // wave 1: 6s from run start; wave 2: 10s = 4s gap + 6s fight
+        expect(tracker.waveTimes).toEqual([6_000, 10_000]);
+    });
 });
 
 describe('finishing a run', () => {
@@ -1151,7 +1206,10 @@ describe('waves completing over the websocket', () => {
 
     test('a restored run with no wave start time records no wave time', async () => {
         beTracking({ currentWave: 5, wavesCompleted: 4 });
+        // No anchor for the wave in progress: neither its start nor the
+        // previous wave's end is known after a restore
         tracker.waveStartTime = null;
+        tracker.lastWaveEndTime = null;
 
         tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 5, isDone: false } });
         await flush();
