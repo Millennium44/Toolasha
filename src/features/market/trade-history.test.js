@@ -290,6 +290,36 @@ describe('a load that settles after a second switch', () => {
     });
 });
 
+describe('a load that settles in the gap before characterId catches up', () => {
+    test('the guard checks the live character, not the lagging field', async () => {
+        storageMock.storeFor('settings').set(KEY, { '/items/a:0': { buy: 111 } });
+        tradeHistory.history = {};
+        tradeHistory.isLoaded = false;
+
+        // The probe was issued for market123. By the time it answers a switch has
+        // settled, so getCurrentCharacterId() already names the iron cow — but
+        // handleCharacterSwitch() is still parked on `await this._saveChain` and has
+        // not reached initialize(), so tradeHistory.characterId still lags at
+        // market123. The old guard compared that lagging field and would pass.
+        storageMock.tryGet.mockImplementationOnce(async (key, storeName = 'settings') => {
+            dataManagerMock.characterId = 'iron456';
+            const store = storageMock.storeFor(storeName);
+            return store.has(key)
+                ? { found: true, value: structuredClone(store.get(key)) }
+                : { found: false, value: null };
+        });
+
+        await tradeHistory.loadHistory();
+
+        // Merging would put market123's reference prices onto the iron cow, and the
+        // next fill would write them into tradeHistory_iron456 for good.
+        expect(tradeHistory.history).toEqual({});
+        // And the flag stays down, so a fill cannot write before the iron cow's own
+        // history has been read back.
+        expect(tradeHistory.isLoaded).toBe(false);
+    });
+});
+
 describe('a character switch resets in-memory state even while the feature is off', () => {
     test('toggling off, switching character, then back on does not merge the old character under the new one', async () => {
         // Character A has a price in memory (as if the feature had been on for them).

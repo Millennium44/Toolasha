@@ -173,10 +173,17 @@ class TradeHistory {
         // departing character's reference prices into the arriving character's
         // map — which the next fill then writes into their `tradeHistory_<id>`,
         // where they stay.
-        const owner = this.characterId;
+        //
+        // Capture and re-check the *live* current character, not `this.characterId`:
+        // that field only moves in `initialize()`, which `handleCharacterSwitch()`
+        // reaches after `await this._saveChain`, so during that gap it still names
+        // the departing character. A read resuming there would compare equal to the
+        // stale id and pass the guard; `getCurrentCharacterId()` moves the instant
+        // the switch settles, so it catches the switch the lagging field misses.
+        const owner = dataManager.getCurrentCharacterId();
         try {
             const probe = await storage.tryGet(this.getStorageKey(), 'settings');
-            if (this.characterId !== owner) return;
+            if (dataManager.getCurrentCharacterId() !== owner) return;
 
             if (probe === null) {
                 console.warn('[TradeHistory] History could not be read; keeping the in-memory copy');
