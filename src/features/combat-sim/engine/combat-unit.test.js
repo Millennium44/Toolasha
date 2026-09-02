@@ -7,6 +7,7 @@
 
 import { describe, test, expect } from 'vitest';
 import CombatUnit from './combat-unit.js';
+import Player from './player.js';
 
 function makeUnit() {
     const unit = new CombatUnit();
@@ -202,5 +203,69 @@ describe('CombatUnit.updateCombatDetails max HP/MP buffs', () => {
         unit.updateCombatDetails();
         unit.updateCombatDetails();
         expect(unit.combatDetails.maxHitpoints).toBe(2295);
+    });
+});
+
+/**
+ * Threat decides which party member a monster's swing lands on, so a taunt has
+ * to raise it. The ratio branch used to add onto the equipment contribution
+ * alone, dropping the 100-point baseline the zero-ratio branch kept.
+ */
+describe('threat with a /buff_types/threat boost', () => {
+    /**
+     * A threat buff in the shape the engine stores.
+     * @param {number} ratioBoost - Ratio boost
+     * @param {number} [flatBoost] - Flat boost
+     * @returns {Object}
+     */
+    function threatBuff(ratioBoost, flatBoost = 0) {
+        return {
+            uniqueHrid: '/buff_uniques/provoke',
+            typeHrid: '/buff_types/threat',
+            ratioBoost,
+            ratioBoostLevelBonus: 0,
+            flatBoost,
+            flatBoostLevelBonus: 0,
+            duration: 60 * NS,
+        };
+    }
+
+    /**
+     * A player with no equipment, so baseThreat is the bare 100.
+     * @returns {Player}
+     */
+    function barePlayer() {
+        return new Player();
+    }
+
+    test('an unbuffed player carries the 100-point baseline', () => {
+        const player = barePlayer();
+        player.updateCombatDetails();
+
+        expect(player.combatDetails.combatStats.threat).toBe(100);
+    });
+
+    test('a ratio boost raises threat instead of collapsing it', () => {
+        const player = barePlayer();
+        player.addBuff(threatBuff(0.3), 0);
+
+        // Was 30 — the taunt made its caster the LEAST likely target
+        expect(player.combatDetails.combatStats.threat).toBeCloseTo(130, 9);
+    });
+
+    test('a flat boost still adds on top of the baseline', () => {
+        const player = barePlayer();
+        player.addBuff(threatBuff(0, 50), 0);
+
+        expect(player.combatDetails.combatStats.threat).toBeCloseTo(150, 9);
+    });
+
+    test('ratio and flat combine, and a rebuild does not re-accumulate', () => {
+        const player = barePlayer();
+        player.addBuff(threatBuff(0.5, 20), 0);
+        player.updateCombatDetails();
+        player.updateCombatDetails();
+
+        expect(player.combatDetails.combatStats.threat).toBeCloseTo(170, 9);
     });
 });

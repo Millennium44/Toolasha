@@ -428,12 +428,15 @@ class CombatUnit {
         const baseThreat = 100 + this.combatDetails.combatStats.threat;
         this.combatDetails.totalThreat = baseThreat;
         const threatBoosts = boostOf('/buff_types/threat');
-        if (threatBoosts.ratioBoost !== 0) {
-            this.combatDetails.combatStats.threat += baseThreat * threatBoosts.ratioBoost;
-        } else {
-            this.combatDetails.combatStats.threat = baseThreat;
-        }
-        this.combatDetails.combatStats.threat += threatBoosts.flatBoost;
+        // Scaled off baseThreat, which carries the 100-point baseline every unit
+        // has. The ratio branch used to `+=` onto combatStats.threat, which at
+        // this point still holds the equipment contribution alone — so a Provoke
+        // or Taunt landed a unit on gearThreat + 100*ratio instead of
+        // 100 + gearThreat + baseThreat*ratio, and a +30% threat buff took a
+        // bare player from 100 down to 30: the taunt made them the LEAST likely
+        // target the threat roll would pick. Identical to the old zero-ratio
+        // branch when nothing boosts threat, which is the common case.
+        this.combatDetails.combatStats.threat = baseThreat * (1 + threatBoosts.ratioBoost) + threatBoosts.flatBoost;
 
         this.combatDetails.combatStats.retaliation += boostOf('/buff_types/retaliation').flatBoost;
         this.combatDetails.combatStats.tenacity += boostOf('/buff_types/tenacity').flatBoost;
