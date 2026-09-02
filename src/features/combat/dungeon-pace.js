@@ -90,6 +90,104 @@ export function historyAvgWaveMs(runs, { dungeonName, tier, maxWaves } = {}) {
 }
 
 /**
+ * How far a stored run's summed wave times may stray from its own duration
+ * before its per-wave data is treated as corrupt and left out of the split
+ * profile. Real waves are the full cycle, gap included, so they sum to
+ * roughly the run's duration; the old cumulative-from-start artefact summed
+ * to many times it. Generous, because a chat-validated duration and tracked
+ * waves can legitimately differ at the run's edges.
+ */
+export const PROFILE_SUM_TOLERANCE = 0.5;
+
+/**
+ * Whether a stored run's per-wave times can align with a split profile: one
+ * entry per wave, all real, and consistent with the run's own duration.
+ *
+ * @param {Object} run - A stored run
+ * @param {number} maxWaves - The dungeon's wave count
+ * @returns {boolean}
+ */
+function saneWaveTimes(run, maxWaves) {
+    const times = run?.waveTimes;
+    if (!Array.isArray(times) || times.length === 0) return false;
+    // Every entry must be wave k for profile[k] to mean anything, so a run
+    // that missed a wave (a restore mid-run) cannot contribute
+    if (times.length !== maxWaves) return false;
+    if (!times.every((t) => Number.isFinite(t) && t > 0)) return false;
+
+    const duration = Number(run.duration ?? run.totalTime);
+    if (Number.isFinite(duration) && duration > 0) {
+        const sum = times.reduce((total, t) => total + t, 0);
+        if (Math.abs(sum - duration) > duration * PROFILE_SUM_TOLERANCE) return false;
+    }
+    return true;
+}
+
+/**
+ * The stored history's average cumulative time at each wave — the "split"
+ * a live run is measured against.
+ *
+ * A whole-run wave average cannot judge a run in progress: waves get harder
+ * through a dungeon, so the average of the easy waves done so far reads as a
+ * big lead over the whole-run figure (+50% at wave 10) that evaporates by the
+ * end. Cumulative-at-the-same-wave is apples to apples at every point.
+ *
+ * @param {Array<Object>} runs - Stored runs, already narrowed to the character
+ * @param {Object} current - The live run's identity
+ * @param {string|null} current.dungeonName - Which dungeon
+ * @param {number|null} current.tier - Its tier, where known
+ * @param {number|null} current.maxWaves - Its wave count
+ * @returns {Array<number>|null} `profile[k]` is the mean milliseconds elapsed
+ *   after wave k (1-based; index 0 is unused). Null without any run whose
+ *   per-wave times are usable — chat-backfilled runs carry none.
+ */
+export function historyCumulativeProfile(runs, { dungeonName, tier, maxWaves } = {}) {
+    if (!dungeonName || dungeonName === 'Unknown') return null;
+    if (!Number.isFinite(maxWaves) || maxWaves <= 0) return null;
+
+    const cumulatives = [];
+    for (const run of runs || []) {
+        if (!run || run.dungeonName !== dungeonName) continue;
+        if (tier !== null && tier !== undefined && run.tier !== null && run.tier !== undefined && run.tier !== tier) {
+            continue;
+        }
+        if (!saneWaveTimes(run, maxWaves)) continue;
+
+        let elapsed = 0;
+        cumulatives.push(run.waveTimes.map((t) => (elapsed += t)));
+    }
+    if (!cumulatives.length) return null;
+
+    const profile = new Array(maxWaves + 1).fill(0);
+    for (let k = 1; k <= maxWaves; k++) {
+        profile[k] = cumulatives.reduce((sum, c) => sum + c[k - 1], 0) / cumulatives.length;
+    }
+    return profile;
+}
+
+/**
+ * Split-time pace: the live run's cumulative time so far against the stored
+ * cumulative at the same wave. Positive is ahead, as with `pacePercent`.
+ *
+ * @param {Array<number>|null} liveWaveTimes - The live run's completed wave times
+ * @param {Array<number>|null} profile - From `historyCumulativeProfile`
+ * @returns {number|null} Whole percent, or null without a profile, with too
+ *   few waves to judge, or past the profile's last wave
+ */
+export function splitPacePercent(liveWaveTimes, profile) {
+    if (!Array.isArray(liveWaveTimes) || !Array.isArray(profile)) return null;
+    const n = liveWaveTimes.length;
+    if (n < MIN_WAVES_FOR_PACE || n >= profile.length) return null;
+
+    const live = liveWaveTimes.reduce((sum, t) => sum + t, 0);
+    const history = profile[n];
+    if (!Number.isFinite(live) || live <= 0) return null;
+    if (!Number.isFinite(history) || history <= 0) return null;
+
+    return Math.round(((history - live) / history) * 100);
+}
+
+/**
  * How far ahead of the stored average this run is.
  *
  * Positive is faster: the sign answers "am I winning", not "is the number

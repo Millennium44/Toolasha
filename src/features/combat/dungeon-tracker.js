@@ -1359,6 +1359,11 @@ class DungeonTracker {
                     dungeonHrid: completedRunData.dungeonHrid,
                     tier: completedRunData.tier,
                     keyCountsMap: completedRunData.keyCountsMap, // Include key counts
+                    // Per-wave times feed the split-time pace profile; without
+                    // them history is only a whole-run average, which reads the
+                    // easy early waves as a huge lead
+                    waveTimes: completedWaveTimes,
+                    avgWaveTime,
                 };
 
                 // Save to database (with duplicate detection)
@@ -1454,6 +1459,7 @@ class DungeonTracker {
             avgWaveTime,
             fastestWave,
             slowestWave,
+            waveTimes: [...this.waveTimes],
             estimatedTimeRemaining,
             keyCountsMap: this.currentRun.keyCountsMap || {}, // Party member key counts
             hibernationDetected: this.hibernationDetected || this.currentRun.hibernationDetected || false,

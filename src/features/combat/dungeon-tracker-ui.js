@@ -12,7 +12,7 @@ import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
 import DungeonTrackerUIInteractions from './dungeon-tracker-ui-interactions.js';
 import DungeonRoiBoardUI from './dungeon-roi-board-ui.js';
 import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
-import { historyAvgWaveMs, pacePercent, paceChip } from './dungeon-pace.js';
+import { historyAvgWaveMs, historyCumulativeProfile, splitPacePercent, pacePercent, paceChip } from './dungeon-pace.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -683,12 +683,20 @@ class DungeonTrackerUI {
         let chip = null;
         if (config.getSetting('dungeonPace')) {
             const mine = filterRunsForCharacter(allRuns, 'mine', currentCharacter());
-            const history = historyAvgWaveMs(mine, {
-                dungeonName: run.dungeonName,
-                tier: run.tier,
-                maxWaves: run.maxWaves,
-            });
-            chip = paceChip(pacePercent(run.avgWaveTime, history, run.wavesCompleted));
+            const identity = { dungeonName: run.dungeonName, tier: run.tier, maxWaves: run.maxWaves };
+
+            // Split time first: cumulative so far against the stored cumulative
+            // at this wave, honest at any point in a run. The plain per-wave
+            // average compares the easy early waves against a whole-run figure
+            // and read +50% at wave 10; it stays as the fallback until history
+            // holds per-wave times (chat-backfilled runs never will).
+            const profile = historyCumulativeProfile(mine, identity);
+            let percent = splitPacePercent(run.waveTimes, profile);
+            if (percent === null) {
+                const history = historyAvgWaveMs(mine, identity);
+                percent = pacePercent(run.avgWaveTime, history, run.wavesCompleted);
+            }
+            chip = paceChip(percent);
         }
 
         if (!chip) {

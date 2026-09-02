@@ -930,6 +930,11 @@ describe('per-wave timing', () => {
         // wave 1: 6s from run start; wave 2: 10s = 4s gap + 6s fight
         expect(tracker.waveTimes).toEqual([6_000, 10_000]);
     });
+
+    test('getCurrentRun exposes the wave times so the split-time pace can sum them', () => {
+        beTracking({ waveTimes: [3000, 5000, 4000], currentWave: 4, wavesCompleted: 3 });
+        expect(tracker.getCurrentRun().waveTimes).toEqual([3000, 5000, 4000]);
+    });
 });
 
 describe('finishing a run', () => {
@@ -965,13 +970,19 @@ describe('finishing a run', () => {
         expect(run.keyCountMessages).toHaveLength(2);
     });
 
-    test('the completed run reaches history under the sorted team key', async () => {
-        beTracking({ keyCountsMap: { Bob: 8, Alice: 12 }, anchoredAt: '2026-08-04T10:00:00.000Z' });
+    test('the completed run reaches history under the sorted team key, wave times included', async () => {
+        beTracking({
+            keyCountsMap: { Bob: 8, Alice: 12 },
+            anchoredAt: '2026-08-04T10:00:00.000Z',
+            waveTimes: [3000, 5000, 4000],
+        });
         tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Bob - 7], [Alice - 11]'));
         await flush();
 
         expect(game.savedRuns).toHaveLength(1);
         expect(game.savedRuns[0].teamKey).toBe('Alice,Bob');
+        // The per-wave times travel with the run: they are what the split-time
+        // pace profile is built from, and history used to drop them on save
         expect(game.savedRuns[0].run).toEqual({
             timestamp: '2026-08-04T10:00:00.000Z',
             duration: 272_000,
@@ -979,6 +990,8 @@ describe('finishing a run', () => {
             dungeonHrid: '/actions/combat/chimerical_den',
             tier: 0,
             keyCountsMap: { Alice: 11, Bob: 7 },
+            waveTimes: [3000, 5000, 4000],
+            avgWaveTime: 4000,
         });
     });
 

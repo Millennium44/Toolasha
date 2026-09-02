@@ -518,12 +518,25 @@ class DungeonTrackerStorage {
         });
         const isDuplicate = Boolean(existing);
 
-        // A chat backfill never sees a tier; the live tracker does. When the two
-        // routes record the same run, the one that knew the tier fills it in
-        if (existing && existing.tier == null && Number.isInteger(run.tier)) {
-            existing.tier = run.tier;
-            if (!existing.dungeonHrid && run.dungeonHrid) existing.dungeonHrid = run.dungeonHrid;
-            await this._persist(false);
+        // A chat backfill never sees a tier or a wave; the live tracker does.
+        // When the two routes record the same run, the one that knew fills it
+        // in — and a later chat sighting must never erase what the tracker kept
+        if (existing) {
+            let filled = false;
+            if (existing.tier == null && Number.isInteger(run.tier)) {
+                existing.tier = run.tier;
+                filled = true;
+            }
+            if (!existing.dungeonHrid && run.dungeonHrid) {
+                existing.dungeonHrid = run.dungeonHrid;
+                filled = true;
+            }
+            if (!existing.waveTimes && Array.isArray(run.waveTimes) && run.waveTimes.length > 0) {
+                existing.waveTimes = [...run.waveTimes];
+                existing.avgWaveTime = Number.isFinite(run.avgWaveTime) ? run.avgWaveTime : null;
+                filled = true;
+            }
+            if (filled) await this._persist(false);
         }
 
         if (!isDuplicate) {
@@ -541,8 +554,8 @@ class DungeonTrackerStorage {
                 duration: run.duration,
                 validated: true,
                 source: 'chat',
-                waveTimes: null,
-                avgWaveTime: null,
+                waveTimes: Array.isArray(run.waveTimes) && run.waveTimes.length > 0 ? [...run.waveTimes] : null,
+                avgWaveTime: Number.isFinite(run.avgWaveTime) ? run.avgWaveTime : null,
                 keyCountsMap: run.keyCountsMap || null, // Include key counts if available
             };
 

@@ -8,7 +8,15 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { MIN_WAVES_FOR_PACE, runAvgWaveMs, historyAvgWaveMs, pacePercent, paceChip } from './dungeon-pace.js';
+import {
+    MIN_WAVES_FOR_PACE,
+    runAvgWaveMs,
+    historyAvgWaveMs,
+    historyCumulativeProfile,
+    splitPacePercent,
+    pacePercent,
+    paceChip,
+} from './dungeon-pace.js';
 
 const MAX_WAVES = 50;
 
@@ -118,5 +126,89 @@ describe('the chip', () => {
     test('no pace is no chip', () => {
         expect(paceChip(null)).toBeNull();
         expect(paceChip(undefined)).toBeNull();
+    });
+});
+
+describe('the split-time profile', () => {
+    const waves = (ms, n = MAX_WAVES) => Array.from({ length: n }, () => ms);
+    /** A run the live tracker recorded: waves that sum to its duration */
+    const trackedRun = (dungeonName, waveTimes, tier = null) => ({
+        dungeonName,
+        tier,
+        waveTimes,
+        duration: waveTimes.reduce((sum, t) => sum + t, 0),
+    });
+    const den = { dungeonName: 'Chimerical Den', tier: null, maxWaves: MAX_WAVES };
+
+    test('averages the cumulative time at each wave across usable runs', () => {
+        const runs = [trackedRun('Chimerical Den', waves(10_000)), trackedRun('Chimerical Den', waves(12_000))];
+        const profile = historyCumulativeProfile(runs, den);
+        expect(profile[1]).toBe(11_000);
+        expect(profile[10]).toBe(110_000);
+        expect(profile[MAX_WAVES]).toBe(550_000);
+    });
+
+    test('rejects the old cumulative-from-start artefact, whose waves sum to far more than the run', () => {
+        // 50 entries climbing 10s each sum to ~12,750s against a 500s run
+        const corrupt = Array.from({ length: MAX_WAVES }, (_, i) => (i + 1) * 10_000);
+        const run = { dungeonName: 'Chimerical Den', tier: null, waveTimes: corrupt, duration: 500_000 };
+        expect(historyCumulativeProfile([run], den)).toBeNull();
+    });
+
+    test('a run missing a wave cannot align with the profile and is left out', () => {
+        expect(historyCumulativeProfile([trackedRun('Chimerical Den', waves(10_000, MAX_WAVES - 1))], den)).toBeNull();
+    });
+
+    test('chat-backfilled runs carry no waves and contribute nothing', () => {
+        expect(historyCumulativeProfile([chatRun('Chimerical Den', 500_000)], den)).toBeNull();
+    });
+
+    test('a stated tier keeps that tier and untiered runs, and drops the rest', () => {
+        const runs = [
+            trackedRun('Chimerical Den', waves(10_000), 2),
+            trackedRun('Chimerical Den', waves(30_000), 0),
+            trackedRun('Chimerical Den', waves(12_000)),
+        ];
+        const profile = historyCumulativeProfile(runs, { ...den, tier: 2 });
+        expect(profile[1]).toBe(11_000); // the T0 run is excluded
+    });
+
+    test('no usable identity is no profile', () => {
+        const run = trackedRun('Chimerical Den', waves(10_000));
+        expect(historyCumulativeProfile([run], { ...den, dungeonName: 'Unknown' })).toBeNull();
+        expect(historyCumulativeProfile([run], { ...den, maxWaves: 0 })).toBeNull();
+    });
+});
+
+describe('the split-time pace', () => {
+    const profile = historyCumulativeProfile(
+        [
+            {
+                dungeonName: 'D',
+                tier: null,
+                waveTimes: Array.from({ length: MAX_WAVES }, () => 10_000),
+                duration: 500_000,
+            },
+        ],
+        { dungeonName: 'D', tier: null, maxWaves: MAX_WAVES }
+    );
+
+    test('compares cumulative time so far against the stored cumulative at the same wave', () => {
+        // 10 waves at 8s = 80s against a stored 100s at wave 10: 20% ahead
+        expect(splitPacePercent(Array(10).fill(8_000), profile)).toBe(20);
+    });
+
+    test('matching the profile wave for wave is even, not a lead', () => {
+        expect(splitPacePercent(Array(10).fill(10_000), profile)).toBe(0);
+    });
+
+    test('a slower run reads behind', () => {
+        expect(splitPacePercent(Array(10).fill(12_500), profile)).toBe(-25);
+    });
+
+    test('too few waves, no profile, or a wave past the profile is no pace', () => {
+        expect(splitPacePercent(Array(MIN_WAVES_FOR_PACE - 1).fill(10_000), profile)).toBeNull();
+        expect(splitPacePercent(Array(10).fill(10_000), null)).toBeNull();
+        expect(splitPacePercent(Array(MAX_WAVES + 1).fill(10_000), profile)).toBeNull();
     });
 });

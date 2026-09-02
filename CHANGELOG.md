@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dungeon pace chip reads true at every wave, not just the last one
+
+The pace compared the average of the waves you had done so far against your whole-run average — but waves get harder through a dungeon, so at wave 10 you had only done the easy ones and it read "+50% faster" for a run that finished +5%. It now works like race splits: your cumulative time at wave N against your own historical cumulative at wave N, so it is honest from the first few waves on. To make that possible the tracker now keeps each validated party run's per-wave times in history (chat-backfilled runs never had any); the profile builds up from runs recorded after this change, with a sanity check so nothing malformed can enter it, and the old whole-run comparison stays as the fallback until then.
+
 ### The dungeon tracker reads the tier of the dungeon you're actually running
 
 With more than one copy of a dungeon queued at different tiers — a T2 run with a T0 copy lined up behind it — the tracker resolved the current run's tier from a queued copy rather than the one being run, so the panel (and every run it saved) showed T0 while the game fought T2. It now reads the tier from the action actually running, and a run that started on the wrong tier corrects itself on its next wave rather than finishing mislabeled.

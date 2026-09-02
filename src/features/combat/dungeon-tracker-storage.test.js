@@ -172,6 +172,64 @@ describe('getStatsByName', () => {
 });
 
 describe('saveTeamRun', () => {
+    test('a run recorded with per-wave times keeps them', async () => {
+        seedRuns([]);
+        const waveTimes = [3000, 5000, 4000];
+        await dungeonTrackerStorage.saveTeamRun('C,D', {
+            timestamp: '2026-01-05T00:00:00Z',
+            duration: 12000,
+            dungeonName: 'Chimerical Den',
+            waveTimes,
+            avgWaveTime: 4000,
+        });
+
+        const [saved] = await dungeonTrackerStorage.getAllRuns();
+        expect(saved.waveTimes).toEqual(waveTimes);
+        expect(saved.avgWaveTime).toBe(4000);
+    });
+
+    test('a chat run, which carries no waves, is stored with none', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('C,D', {
+            timestamp: '2026-01-05T00:00:00Z',
+            duration: 12000,
+            dungeonName: 'Chimerical Den',
+        });
+
+        const [saved] = await dungeonTrackerStorage.getAllRuns();
+        expect(saved.waveTimes).toBeNull();
+        expect(saved.avgWaveTime).toBeNull();
+    });
+
+    test('a tracker run arriving as a duplicate of a chat run fills in its wave times', async () => {
+        seedRuns([]);
+        const base = { timestamp: '2026-01-05T00:00:00Z', duration: 12000, dungeonName: 'Chimerical Den' };
+        await dungeonTrackerStorage.saveTeamRun('C,D', base); // chat saw it first: no waves, no tier
+        await dungeonTrackerStorage.saveTeamRun('C,D', {
+            ...base,
+            tier: 2,
+            waveTimes: [3000, 5000, 4000],
+            avgWaveTime: 4000,
+        });
+
+        const runs = await dungeonTrackerStorage.getAllRuns();
+        expect(runs).toHaveLength(1);
+        expect(runs[0].waveTimes).toEqual([3000, 5000, 4000]);
+        expect(runs[0].avgWaveTime).toBe(4000);
+        expect(runs[0].tier).toBe(2);
+    });
+
+    test('a chat run arriving as a duplicate does not erase a tracker run’s wave times', async () => {
+        seedRuns([]);
+        const base = { timestamp: '2026-01-05T00:00:00Z', duration: 12000, dungeonName: 'Chimerical Den' };
+        await dungeonTrackerStorage.saveTeamRun('C,D', { ...base, waveTimes: [3000, 5000, 4000], avgWaveTime: 4000 });
+        await dungeonTrackerStorage.saveTeamRun('C,D', base);
+
+        const runs = await dungeonTrackerStorage.getAllRuns();
+        expect(runs).toHaveLength(1);
+        expect(runs[0].waveTimes).toEqual([3000, 5000, 4000]);
+    });
+
     beforeEach(() => {
         game.saved = {};
     });
