@@ -134,9 +134,13 @@ class MarketPriceStore {
     /**
      * Take prices from the periodic marketplace.json snapshot.
      *
-     * It carries no sizes, so anything already seen in an order book is left
-     * alone — a price with depth behind it is worth more than a fresher one
-     * without, and overwriting would throw the depth away.
+     * It carries no sizes. Readings fold newest-wins by timestamp
+     * ({@link foldPrice}), so a snapshot fresher than a stored order-book
+     * reading replaces it and resets its sizes to zero — depth survives only
+     * until the next snapshot re-reads that item. This is deliberate: the sole
+     * reader of stored sizes (the crafting plan's thin-market reroute) treats a
+     * zero size as "depth unknown" and falls back to buying, so a wiped size
+     * fails safe rather than force-crafting on stale depth.
      *
      * @param {Object} marketData - itemHrid -> { level: { a, b } }
      * @param {number} timestamp - When the snapshot was taken (ms)

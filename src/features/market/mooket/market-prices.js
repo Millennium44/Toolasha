@@ -10,8 +10,12 @@
  * else — no size. That is enough to say what an item is worth and useless for
  * saying whether you can trade it: a 40k spread with one unit at the ask is a
  * curiosity, the same spread with eight hundred is a trade. The order books the
- * game pushes when you open an item do carry size, so anything seen that way is
- * kept with its quantities and outranks the snapshot.
+ * game pushes when you open an item do carry size, so a sighting seen that way
+ * is kept with its quantities. Readings are folded newest-wins by timestamp,
+ * though: a fresher marketplace.json snapshot (which carries no size) replaces
+ * an older order-book reading and resets its sizes to zero, so a stored size
+ * lasts only until the next snapshot re-reads that item. Consumers that need
+ * depth must treat a zero size as "unknown", not "none listed".
  *
  * Pure: entries in, entries out. Storage and sockets live in the feature module.
  */

@@ -112,7 +112,7 @@ describe('ingestSnapshot', () => {
         expect(entry).toMatchObject({ ask: 50, bid: 40, askQty: 0, bidQty: 0 });
     });
 
-    test('does not overwrite an entry that already has order-book depth behind it', () => {
+    test('a fresher snapshot replaces an order-book reading and drops its depth (newest-wins)', () => {
         dataManagerMock.handlers['market_item_order_books_updated']({
             marketItemOrderBooks: {
                 itemHrid: '/items/plank',
@@ -120,11 +120,13 @@ describe('ingestSnapshot', () => {
             },
         });
 
-        // A snapshot arrives right after — foldPrice will still fold it in (it doesn't special-case
-        // qty=0 snapshots), but this pins the actual observed behavior rather than assuming.
+        // foldPrice is newest-wins by timestamp and does not special-case the size-less snapshot,
+        // so a fresher snapshot overwrites both the price AND the stored size. The thin-market
+        // reader depends on this: a wiped askQty reads as "depth unknown" and falls back to buying.
         marketPriceStore.ingestSnapshot({ '/items/plank': { 0: { a: 61, b: 41 } } }, Date.now() + 1);
         const entry = marketPriceStore.get('/items/plank', 0);
         expect(entry.ask).toBe(61);
+        expect(entry.askQty).toBe(0);
     });
 
     test('the same snapshot object offered twice is folded in once', () => {

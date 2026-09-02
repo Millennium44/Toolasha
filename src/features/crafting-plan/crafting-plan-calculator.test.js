@@ -590,6 +590,46 @@ describe('thin-market re-route', () => {
         expect(glovesLeather.strategy).toBe('buy'); // need 2 ≤ 4 listed
     });
 
+    test('a fat leg seen first memoises buy; a later thin leg still re-routes off the memo', () => {
+        // Same diamond, but GLOVES (2 leather, fat) is listed BEFORE BOOTS (6
+        // leather, thin), so leather is memoised 'buy' on the fat leg first. The
+        // later thin leg must re-evaluate the cached buy against its own need and
+        // craft — this drives the memoThinReroute recompute branch specifically,
+        // the reverse order of the test above.
+        const GLOVES = '/items/leather_gloves';
+        const SET = '/items/leather_set';
+        game.itemDetails[GLOVES] = { name: 'Leather Gloves', isTradable: true };
+        game.itemDetails[SET] = { name: 'Leather Set', isTradable: true };
+        market.prices[GLOVES] = 999;
+        market.prices[SET] = 999;
+        game.initClientData.actionDetailMap['/actions/crafting/leather_gloves'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/hands',
+            inputItems: [{ itemHrid: LEATHER, count: 2 }],
+            outputItems: [{ itemHrid: GLOVES, count: 1 }],
+        };
+        game.initClientData.actionDetailMap['/actions/crafting/leather_set'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/set',
+            inputItems: [
+                { itemHrid: GLOVES, count: 1 },
+                { itemHrid: BOOTS, count: 1 },
+            ],
+            outputItems: [{ itemHrid: SET, count: 1 }],
+        };
+
+        const p = plan(SET, 1, { [LEATHER]: 4 });
+        const boots = p.children.find((c) => c.itemHrid === BOOTS);
+        const gloves = p.children.find((c) => c.itemHrid === GLOVES);
+        const bootsLeather = boots.children.find((c) => c.itemHrid === LEATHER);
+        const glovesLeather = gloves.children.find((c) => c.itemHrid === LEATHER);
+        expect(glovesLeather.strategy).toBe('buy'); // seen first, need 2 ≤ 4 listed
+        expect(glovesLeather.unitCost).toBe(20);
+        expect(bootsLeather.strategy).toBe('craft'); // memo said buy, but need 6 > 4 → re-route
+        expect(bootsLeather.unitCost).toBe(30);
+        expect(bootsLeather.thinMarketRerouted).toBe(true);
+    });
+
     test('no-processing keeps the thin processing buy — the mode wins over the re-route', () => {
         // Leather is a /material processing action; no-processing forbids crafting
         // it, so a thin ask cannot re-route it. The buy stands.
