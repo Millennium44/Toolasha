@@ -6,18 +6,11 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { openMaterialsList } from '../actions/missing-materials-button.js';
 import { computeBestCraftingPlan, collectMissingMaterials } from './crafting-plan-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import { findActionInput, onDetailPanel } from '../../utils/action-panel-helper.js';
-import {
-    createMaterialTab,
-    removeMaterialTabs,
-    setupMarketplaceCleanupObserver,
-    navigateToMarketplace,
-    visibleTabsContainer,
-} from '../../utils/marketplace-tabs.js';
-import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
@@ -30,9 +23,6 @@ const PRICING_MODES = [
     { value: 'optimistic', label: 'Patient Buy / Patient Sell' },
     { value: 'patientBuy', label: 'Patient Buy' },
 ];
-const craftingPlanTabs = [];
-let cleanupObserver = null;
-const autofillManager = createAutofillManager('CraftingPlan');
 
 const PRODUCTION_TYPES = [
     '/action_types/brewing',
@@ -147,7 +137,7 @@ function createRow(leftText, rightText, options = {}) {
  * @param {boolean} [defaultOpen=false] - Whether the section should be open
  * @returns {HTMLElement|null}
  */
-function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
+export function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData?.actionDetailMap?.[actionHrid];
     if (!actionDetail) return null;
@@ -455,29 +445,15 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
 
             if (missingMaterials.length === 0) return;
 
-            // Navigate to marketplace via navbar click
-            const navButtons = document.querySelectorAll('.NavigationBar_nav__3uuUl');
-            const marketplaceButton = Array.from(navButtons).find((nav) => {
-                const svg = nav.querySelector('svg[aria-label="navigationBar.marketplace"]');
-                return svg !== null;
-            });
-            if (!marketplaceButton) return;
-            marketplaceButton.click();
-
-            // Wait for marketplace to appear
-            for (let i = 0; i < 50; i++) {
-                const tabsContainer = visibleTabsContainer();
-                if (tabsContainer) {
-                    const hasMarketListings = Array.from(tabsContainer.children).some((btn) =>
-                        btn.textContent.includes('Market Listings')
-                    );
-                    if (hasMarketListings) break;
-                }
-                await new Promise((resolve) => setTimeout(resolve, 100));
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            createCraftingPlanTabs(missingMaterials);
+            // Route through the shared missing-mats mechanism so the tabs get
+            // live inventory tracking: buying a material lowers its badge and
+            // turns the tab green/"Sufficient", and re-arms only what is still
+            // short — the same path the "Missing Mats Marketplace" button uses.
+            // It navigates to the marketplace and subtracts inventory itself, so
+            // pass the REQUIRED totals (not the shortfall) and let it recompute.
+            await openMaterialsList(
+                missingMaterials.map((material) => ({ itemHrid: material.itemHrid, count: material.required }))
+            );
         });
         content.appendChild(buyButton);
     }
@@ -566,46 +542,6 @@ function buildPlanUI(actionHrid, onToggle, defaultOpen = false) {
     return section;
 }
 
-/**
- * Create marketplace tabs for crafting plan shopping list materials.
- * @param {Array} missingMaterials - Array of { itemHrid, itemName, missing, required, isTradeable }
- */
-function createCraftingPlanTabs(missingMaterials) {
-    const tabsContainer = visibleTabsContainer();
-    if (!tabsContainer) return;
-
-    removeMaterialTabs();
-    craftingPlanTabs.length = 0;
-
-    const referenceTab = Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'));
-    if (!referenceTab) return;
-
-    tabsContainer.style.flexWrap = 'wrap';
-
-    for (const material of missingMaterials) {
-        const tabRef = { tab: null };
-        const handler = () => {
-            // Armed for this tab's item: the calculation persists between
-            // modals, so unscoped it would fill buy boxes for anything
-            autofillManager.setPendingCalculation(
-                () => parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10),
-                { itemHrid: material.itemHrid }
-            );
-            navigateToMarketplace(material.itemHrid, 0);
-        };
-        const tab = createMaterialTab(material, referenceTab, handler);
-        tabRef.tab = tab;
-        tabsContainer.appendChild(tab);
-        craftingPlanTabs.push(tab);
-    }
-
-    if (!cleanupObserver) {
-        cleanupObserver = setupMarketplaceCleanupObserver(() => {
-            craftingPlanTabs.length = 0;
-        }, craftingPlanTabs);
-    }
-}
-
 class CraftingPlanDisplay {
     constructor() {
         this.isInitialized = false;
@@ -620,7 +556,6 @@ class CraftingPlanDisplay {
         if (!config.getSetting('actionPanel_bestCraftingPlan')) return;
 
         this.isInitialized = true;
-        autofillManager.initialize();
 
         const unregister = onDetailPanel((context) => this._processPanel(context));
         this.unregisterHandlers.push(unregister);
