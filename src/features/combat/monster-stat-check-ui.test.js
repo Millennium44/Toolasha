@@ -322,6 +322,26 @@ describe('the fight-start buff snapshot', () => {
     });
 });
 
+describe('teardown forgets the person, not the monsters', () => {
+    test('a character switch leaves no live stats, verdict or buff map behind', () => {
+        // `disable()` is how a character switch reaches this panel. The monster
+        // log is game data and deliberately shared, but these three describe
+        // whoever was playing: "Check my build" runs against `lastPlayerUnit`
+        // and only asks you to click yourself when it is null, `playerCheck` is
+        // the verdict drawn on the panel, and the offense fold subtracts
+        // `fightStartBuffMap` from the comparison.
+        panel.lastPlayerUnit = { character: { id: 'me-id' }, combatDetails: {} };
+        panel.playerCheck = { rows: [{ label: 'Stamina' }] };
+        panel.fightStartBuffMap = { '/b/mine': { typeHrid: '/buff_types/damage' } };
+
+        monsterStatCheck.disable();
+
+        expect(panel.lastPlayerUnit).toBeNull();
+        expect(panel.playerCheck).toBeNull();
+        expect(panel.fightStartBuffMap).toBeNull();
+    });
+});
+
 describe('disable unregisters the setting-change listener it registered', () => {
     test('a disable+initialize cycle does not accumulate listeners', () => {
         for (const key of Object.keys(settingListeners)) delete settingListeners[key];

@@ -1838,6 +1838,16 @@ class MonsterStatCheckPanel {
         this.body = null;
         this.header = null;
         this.isDragging = false;
+        // The three panel fields that describe a person rather than a monster.
+        // The monster log is game data and deliberately not character-scoped;
+        // these are your live stats, the verdict drawn from them, and the buff
+        // map the offense fold deltas against, and teardown is how a character
+        // switch arrives here. Left standing, "Check my build" answers for the
+        // character who left instead of asking the arriving one to click
+        // themselves.
+        this.lastPlayerUnit = null;
+        this.playerCheck = null;
+        this.fightStartBuffMap = null;
     }
 }
 
