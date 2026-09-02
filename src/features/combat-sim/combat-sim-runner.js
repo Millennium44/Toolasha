@@ -338,6 +338,12 @@ function mergeSimResults(results) {
             merged.dungeonsCompleted = (merged.dungeonsCompleted || 0) + (r.dungeonsCompleted || 0);
             merged.dungeonsFailed = (merged.dungeonsFailed || 0) + (r.dungeonsFailed || 0);
             merged.maxWaveReached = Math.max(merged.maxWaveReached || 0, r.maxWaveReached || 0);
+            // Clean clear-time pairs are per-chunk; summing both parts keeps the
+            // pooled average an interval-weighted mean across chunks. A chunk
+            // boundary breaks a pair, as a session boundary does in the tracker.
+            merged.dungeonCleanClearTimeTotal =
+                (merged.dungeonCleanClearTimeTotal || 0) + (r.dungeonCleanClearTimeTotal || 0);
+            merged.dungeonCleanClearCount = (merged.dungeonCleanClearCount || 0) + (r.dungeonCleanClearCount || 0);
         }
 
         // Simulated time

@@ -34,6 +34,15 @@ class SimResult {
         this.dungeonsCompleted = 0;
         this.dungeonsFailed = 0;
         this.maxWaveReached = 0;
+        // Clear-time metric matching the in-game dungeon tracker's key→key
+        // definition (see dungeon-tracker-chat-annotations.js): the average is
+        // taken over completion-to-completion intervals of consecutive
+        // successful runs only. A wipe breaks the pair, so failed-run time and
+        // the partial final run never enter the average — unlike
+        // simulatedTime / dungeonsCompleted, which counts both and so reads
+        // systematically longer than a real clear.
+        this.dungeonCleanClearTimeTotal = 0;
+        this.dungeonCleanClearCount = 0;
         this.numberOfPlayers = numberOfPlayers;
         this.maxEnrageStack = 0;
 

@@ -903,3 +903,96 @@ describe('a damage-over-time tick outside a dungeon', () => {
         expect(sim.wipeLogs.count).toBe(0);
     });
 });
+
+/**
+ * "Avg completion time" must match the in-game dungeon tracker's key→key
+ * definition: the mean of completion-to-completion intervals over consecutive
+ * successful runs. The old `simulatedTime / dungeonsCompleted` divided the whole
+ * simulated window (including the unfinished final run, and any wipe time) by
+ * only the completed runs, so it read systematically longer than a real clear.
+ */
+describe('dungeon clean clear-time metric', () => {
+    const DUNGEON_HRID = '/actions/combat/golden_crypt';
+
+    function installDungeon(maxWaves = 2) {
+        installGameData();
+        getGameData().actionDetailMap[DUNGEON_HRID] = {
+            buffs: null,
+            combatZoneInfo: {
+                isDungeon: true,
+                fightInfo: { bossSpawns: null },
+                dungeonInfo: {
+                    maxWaves,
+                    fixedSpawnsMap: {
+                        1: [{ combatMonsterHrid: RAT_HRID, difficultyTier: 0 }],
+                        2: [{ combatMonsterHrid: TOAD_HRID, difficultyTier: 0 }],
+                    },
+                    randomSpawnInfoMap: null,
+                },
+            },
+        };
+    }
+
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('averages completion-to-completion intervals, excluding the unfinished tail', () => {
+        installDungeon();
+        seedSimRng(11);
+        const zone = new Zone(DUNGEON_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+
+        const result = new CombatSimulator([player], zone).simulate(600 * ONE_SECOND);
+
+        // The fixture player clears these trivial waves every time
+        expect(result.isDungeon).toBe(true);
+        expect(result.dungeonsFailed).toBe(0);
+        expect(result.dungeonsCompleted).toBeGreaterThan(2);
+
+        // With no wipes, every completion after the first forms a clean pair
+        expect(result.dungeonCleanClearCount).toBe(result.dungeonsCompleted - 1);
+        expect(result.dungeonCleanClearTimeTotal).toBeGreaterThan(0);
+
+        const cleanAvg = result.dungeonCleanClearTimeTotal / result.dungeonCleanClearCount;
+        const naiveAvg = result.simulatedTime / result.dungeonsCompleted;
+
+        // The naive average carries the unfinished final run's elapsed time in
+        // its numerator without crediting it, so it is strictly larger.
+        expect(cleanAvg).toBeLessThan(naiveAvg);
+
+        // Each clean pair is exactly one completion-to-completion interval; they
+        // are consistent, so the total is an integer multiple of one cycle.
+        const perCycle = result.dungeonCleanClearTimeTotal / result.dungeonCleanClearCount;
+        expect(perCycle).toBeGreaterThan(0);
+    });
+
+    test('a wipe breaks the clear-time pair', () => {
+        installDungeon();
+        seedSimRng(3);
+        const zone = new Zone(DUNGEON_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = 10 * ONE_SECOND;
+        player.reset(sim.simulationTime);
+        sim.enemies = zone.getNextWave();
+        sim.enemies.forEach((enemy) => enemy.reset(sim.simulationTime));
+        // Open the wave's alive window that startNewEncounter would have opened
+        sim.simResult.updateTimeSpentAlive('#' + (zone.encountersKilled - 1).toString(), true, sim.simulationTime);
+
+        // Clear the wave, then wipe the party
+        sim.enemies.forEach((enemy) => (enemy.combatDetails.currentHitpoints = 0));
+        sim.checkEncounterEnd();
+        sim.simulationTime += ONE_SECOND;
+        sim.players.forEach((p) => (p.combatDetails.currentHitpoints = 0));
+        sim.checkEncounterEnd();
+
+        expect(sim.dungeonPairBroken).toBe(true);
+    });
+});

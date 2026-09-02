@@ -390,6 +390,11 @@ class CombatSimulator {
 
     reset() {
         this.tempDungeonCount = 0;
+        // Clear-time pairing state (see SimResult.dungeonCleanClearTimeTotal):
+        // the timestamp of the last dungeon completion, and whether the run
+        // since it was interrupted by a wipe (which drops the pair).
+        this.lastDungeonCompletionTime = null;
+        this.dungeonPairBroken = true;
         this.simulationTime = 0;
         this.encounterIndex = 0;
         this.eventQueue.clear();
@@ -593,6 +598,17 @@ class CombatSimulator {
             const currentDungeonCount = this.zone.dungeonsCompleted;
             if (currentDungeonCount > this.tempDungeonCount) {
                 this.tempDungeonCount = currentDungeonCount;
+                // Record the completion-to-completion interval only for a clean
+                // pair (a preceding completion with no wipe in between). This is
+                // the sim's equivalent of the tracker's key→key pair, and it is
+                // what "Avg completion time" should divide, rather than total
+                // simulated time (which carries wipes and the unfinished tail).
+                if (!this.dungeonPairBroken && this.lastDungeonCompletionTime !== null) {
+                    this.simResult.dungeonCleanClearTimeTotal += this.simulationTime - this.lastDungeonCompletionTime;
+                    this.simResult.dungeonCleanClearCount++;
+                }
+                this.lastDungeonCompletionTime = this.simulationTime;
+                this.dungeonPairBroken = false;
                 for (let i = 0; i < this.players.length; i++) {
                     this.players[i].combatDetails.currentHitpoints = this.players[i].combatDetails.maxHitpoints;
                     this.players[i].combatDetails.currentManapoints = this.players[i].combatDetails.maxManapoints;
@@ -1011,6 +1027,10 @@ class CombatSimulator {
                 this.eventQueue.addEvent(combatStartEvent);
                 return true;
             } else if (this.zone.isDungeon) {
+                // A wipe breaks the clear-time pair: the next completion started
+                // from this failed attempt's restart, not from a clean prior
+                // completion, so its interval must not enter the average.
+                this.dungeonPairBroken = true;
                 this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);
                 this.wipeLogs.index = 0;
                 this.wipeLogs.count = 0;

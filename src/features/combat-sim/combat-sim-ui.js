@@ -4792,7 +4792,15 @@ class CombatSimUI {
             html += `<span style="${valueStyle}">${formatWithSeparator(simResult.dungeonsCompleted)} / ${formatWithSeparator(simResult.dungeonsFailed)}</span>`;
             html += '</div>';
             if (simResult.dungeonsCompleted > 0) {
-                const avgTimeNs = simResult.simulatedTime / simResult.dungeonsCompleted;
+                // Prefer the clean clear-time average (completion-to-completion
+                // over consecutive successful runs), which matches the in-game
+                // dungeon tracker's number. Fall back to total time / completed
+                // when there are too few completions to form a pair — that
+                // fallback carries wipe and partial-run time and reads longer.
+                const avgTimeNs =
+                    simResult.dungeonCleanClearCount > 0
+                        ? simResult.dungeonCleanClearTimeTotal / simResult.dungeonCleanClearCount
+                        : simResult.simulatedTime / simResult.dungeonsCompleted;
                 const avgTimeSec = avgTimeNs / 1e9;
                 let avgTimeStr;
                 if (config.getSettingValue('combatSim_decimalMinutes', false)) {
