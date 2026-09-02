@@ -11,7 +11,7 @@ import domObserver from '../../core/dom-observer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { chatBlockList } from './chat-block-list.js';
-import { ANNOUNCE_RE, VALID_NAME_RE } from './chat-profile-link.js';
+import { ANNOUNCE_RE, KICK_RE, PARTY_RE, UPGRADE_RE, VALID_NAME_RE, getProfileLinkNames } from './chat-profile-link.js';
 
 const RELAY_CHANNEL = 'mwi-chat-relay';
 const SEND_CHANNEL = 'mwi-chat-send';
@@ -808,14 +808,61 @@ class PopOutChat {
   const STORAGE_KEY = 'mwi-chat-popout-layout';
   const GEOMETRY_KEY = '${POPOUT_GEOMETRY_KEY}';
   // Shared with chat-profile-link.js — same "click a name to fill /profile <name>" behavior,
-  // reusing its exact regex/name-validity rules instead of re-deriving them here.
+  // reusing its exact regexes, name-validity rule, and name-selection logic (the whole
+  // getProfileLinkNames function, interpolated by source) instead of re-deriving them here.
   const ANNOUNCE_RE = ${ANNOUNCE_RE};
+  const KICK_RE = ${KICK_RE};
+  const UPGRADE_RE = ${UPGRADE_RE};
+  const PARTY_RE = ${PARTY_RE};
   const VALID_NAME_RE = ${VALID_NAME_RE};
+  const getProfileLinkNames = ${getProfileLinkNames.toString()};
 
   function fillProfileCommand(paneObj, name) {
     if (!paneObj || !paneObj.input) return;
     paneObj.input.value = '/profile ' + name;
     paneObj.input.focus();
+  }
+
+  // Wrap each linkable name in an announcement's text into a clickable span, mirroring
+  // chat-profile-link.js's wrapping: a kick line gets both names, every other shape one.
+  function appendAnnouncementText(textEl, text, paneObj) {
+    const spans = [];
+    getProfileLinkNames(text).forEach((target) => {
+      if (!VALID_NAME_RE.test(target.name)) return;
+      let from = 0;
+      let idx;
+      while ((idx = text.indexOf(target.name, from)) !== -1) {
+        const before = text.slice(0, idx);
+        const after = text.slice(idx + target.name.length);
+        const beforeOk = !target.beforeSuffix || before.endsWith(target.beforeSuffix);
+        const afterOk = !target.afterPrefixes || target.afterPrefixes.some((p) => after.startsWith(p));
+        if (beforeOk && afterOk) {
+          spans.push({ start: idx, end: idx + target.name.length, name: target.name });
+          break;
+        }
+        from = idx + target.name.length;
+      }
+    });
+    if (spans.length === 0) {
+      textEl.textContent = text;
+      return;
+    }
+    spans.sort((a, b) => a.start - b.start);
+    let cursor = 0;
+    spans.forEach((s) => {
+      if (s.start > cursor) textEl.appendChild(document.createTextNode(text.slice(cursor, s.start)));
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'msg-name-link';
+      nameSpan.textContent = s.name;
+      nameSpan.title = 'Fill "/profile ' + s.name + '" into chat';
+      nameSpan.addEventListener('click', (e) => {
+        e.stopPropagation();
+        fillProfileCommand(paneObj, s.name);
+      });
+      textEl.appendChild(nameSpan);
+      cursor = s.end;
+    });
+    if (cursor < text.length) textEl.appendChild(document.createTextNode(text.slice(cursor)));
   }
 
   const FILTER_PRESETS = [
@@ -1224,27 +1271,10 @@ class PopOutChat {
       const textEl = document.createElement('span');
       textEl.className = 'msg-text';
 
-      // "<Name> has <verb> ..." announcements get the same clickable name as the main
-      // chat window (chat-profile-link.js) and as regular sender names below.
-      const text = msg.m || '';
-      const match = text.match(ANNOUNCE_RE);
-      const name = match ? match[1] : null;
-      const idx = name ? text.indexOf(name) : -1;
-      if (name && idx !== -1 && VALID_NAME_RE.test(name)) {
-        textEl.appendChild(document.createTextNode(text.slice(0, idx)));
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'msg-name-link';
-        nameSpan.textContent = name;
-        nameSpan.title = 'Fill "/profile ' + name + '" into chat';
-        nameSpan.addEventListener('click', (e) => {
-          e.stopPropagation();
-          fillProfileCommand(paneObj, name);
-        });
-        textEl.appendChild(nameSpan);
-        textEl.appendChild(document.createTextNode(text.slice(idx + name.length)));
-      } else {
-        textEl.textContent = text;
-      }
+      // Announcement names get the same clickable treatment as the main chat window
+      // (chat-profile-link.js) and as regular sender names below — including the kick
+      // line's two names — via the shared getProfileLinkNames logic.
+      appendAnnouncementText(textEl, msg.m || '', paneObj);
 
       row.appendChild(timeEl);
       row.appendChild(textEl);

@@ -22,13 +22,24 @@ vi.mock('./chat-block-list.js', () => ({
 }));
 
 const { PopOutChat, buildPopoutWindowFeatures, POPOUT_GEOMETRY_KEY } = await import('./pop-out-chat.js');
-const { ANNOUNCE_RE, VALID_NAME_RE } = await import('./chat-profile-link.js');
+const { ANNOUNCE_RE, KICK_RE, PARTY_RE, UPGRADE_RE, VALID_NAME_RE, getProfileLinkNames } =
+    await import('./chat-profile-link.js');
 
 describe('pop-out chat window: clickable names', () => {
     test('embeds the exact ANNOUNCE_RE and VALID_NAME_RE from chat-profile-link.js', () => {
         const html = new PopOutChat()._buildPopoutHTML();
         expect(html).toContain(`const ANNOUNCE_RE = ${ANNOUNCE_RE};`);
         expect(html).toContain(`const VALID_NAME_RE = ${VALID_NAME_RE};`);
+    });
+
+    test('embeds the kick/upgrade/party regexes and the shared getProfileLinkNames logic (not a duplicate)', () => {
+        const html = new PopOutChat()._buildPopoutHTML();
+        expect(html).toContain(`const KICK_RE = ${KICK_RE};`);
+        expect(html).toContain(`const UPGRADE_RE = ${UPGRADE_RE};`);
+        expect(html).toContain(`const PARTY_RE = ${PARTY_RE};`);
+        expect(html).toContain(`const getProfileLinkNames = ${getProfileLinkNames.toString()};`);
+        // The two-name kick case is wrapped by the shared announcement-linkifier
+        expect(html).toContain('function appendAnnouncementText(textEl, text, paneObj)');
     });
 
     test('wires up the clickable-name CSS and the shared fill helper', () => {

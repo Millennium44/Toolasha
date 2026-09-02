@@ -35,13 +35,17 @@ vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
 const {
     ANNOUNCE_RE,
     PARTY_RE,
+    KICK_RE,
+    UPGRADE_RE,
     VALID_NAME_RE,
+    getProfileLinkNames,
     markAsProfileLink,
     default: chatProfileLinkFeature,
 } = await import('./chat-profile-link.js');
 
 const nameIn = (message) => message.match(ANNOUNCE_RE)?.[1] ?? null;
 const partyNameIn = (message) => message.match(PARTY_RE)?.[1] ?? null;
+const linkedNames = (message) => getProfileLinkNames(message).map((t) => t.name);
 
 afterEach(() => {
     settings.chat_profileLink = false;
@@ -80,6 +84,68 @@ describe('the guild-wide broadcast is not a player', () => {
 
     test('a timestamp in front does not sneak it back in', () => {
         expect(nameIn('[8/6 7:42:38 AM] Guild has reached level 148!')).toBe(null);
+    });
+});
+
+describe('guild kick lines link both names', () => {
+    test('the kicked player and the kicker both get a name', () => {
+        expect(linkedNames('nutsaccio has been kicked by miku.')).toEqual(['nutsaccio', 'miku']);
+    });
+
+    test('a channel tag in front does not hide either name', () => {
+        expect(linkedNames('[Guild] nutsaccio has been kicked by miku.')).toEqual(['nutsaccio', 'miku']);
+    });
+
+    test('KICK_RE captures both names in order', () => {
+        const m = 'nutsaccio has been kicked by miku.'.match(KICK_RE);
+        expect(m?.[1]).toBe('nutsaccio');
+        expect(m?.[2]).toBe('miku');
+    });
+
+    test('the pre-change ANNOUNCE_RE did not match a kick line — the gap KICK_RE fills', () => {
+        // "been" is deliberately absent from ANNOUNCE_RE's verb allowlist, so the old
+        // single-name matcher never lit up a kick line at all.
+        expect(nameIn('nutsaccio has been kicked by miku.')).toBe(null);
+    });
+
+    test('a player quoting "kicked by" mid-sentence is left alone', () => {
+        expect(linkedNames('did you see nutsaccio has been kicked by miku lol')).toEqual([]);
+        expect(linkedNames('nutsaccio has been kicked by miku earlier today')).toEqual([]);
+    });
+
+    test('a malformed kicker token cannot slip through, but the valid kicked name still links', () => {
+        // The whole-line anchor means a bad token usually just fails the match; this guards
+        // the caller's per-name VALID_NAME_RE check directly.
+        expect(getProfileLinkNames('nutsaccio has been kicked by miku.').every((t) => VALID_NAME_RE.test(t.name))).toBe(
+            true
+        );
+    });
+});
+
+describe('guild building upgrade links the leading name', () => {
+    test('the upgrader is named', () => {
+        expect(linkedNames('RICK has upgraded Guild Brewery to level 3!')).toEqual(['RICK']);
+    });
+
+    test('a different building name still matches', () => {
+        expect(linkedNames('RICK has upgraded Guild Kitchen to level 12!')).toEqual(['RICK']);
+    });
+
+    test('UPGRADE_RE captures the leading name', () => {
+        expect('RICK has upgraded Guild Brewery to level 3!'.match(UPGRADE_RE)?.[1]).toBe('RICK');
+    });
+
+    test('the pre-change ANNOUNCE_RE did not match an upgrade line — the gap UPGRADE_RE fills', () => {
+        expect(nameIn('RICK has upgraded Guild Brewery to level 3!')).toBe(null);
+    });
+
+    test('a system "Guild has upgraded ..." line does not link the word "Guild"', () => {
+        expect(linkedNames('Guild has upgraded Guild Brewery to level 3!')).toEqual([]);
+    });
+
+    test('"upgraded" mid-sentence without the guild-building shape is left alone', () => {
+        expect(linkedNames('RICK upgraded his sword to level 3')).toEqual([]);
+        expect(linkedNames('anyone upgraded their gear yet?')).toEqual([]);
     });
 });
 
@@ -220,6 +286,65 @@ describe('end-to-end: an announcement message decorated by the feature is clicka
 
         nameSpan.dispatchEvent(new Event('click', { bubbles: true }));
         expect(input.value).toBe('/profile Briggsy99');
+
+        chatProfileLinkFeature.disable();
+    });
+
+    test('a kick line links BOTH names, each filling its own /profile command', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML =
+            '<div class="Chat_chatInputContainer"><input /></div>' +
+            '<div class="ChatMessage_chatMessage">nutsaccio has been kicked by miku.</div>';
+        const input = document.querySelector('input');
+        const messageEl = document.querySelector('.ChatMessage_chatMessage');
+        const before = messageEl.textContent;
+
+        chatProfileLinkFeature.initialize();
+
+        const spans = document.querySelectorAll('.mwi-chat-profile-name');
+        expect(Array.from(spans).map((s) => s.textContent)).toEqual(['nutsaccio', 'miku']);
+        // Text is unchanged — only the two names are wrapped
+        expect(messageEl.textContent).toBe(before);
+
+        spans[0].dispatchEvent(new Event('click', { bubbles: true }));
+        expect(input.value).toBe('/profile nutsaccio');
+        spans[1].dispatchEvent(new Event('click', { bubbles: true }));
+        expect(input.value).toBe('/profile miku');
+
+        chatProfileLinkFeature.disable();
+    });
+
+    test('an upgrade line links the leading name', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML =
+            '<div class="Chat_chatInputContainer"><input /></div>' +
+            '<div class="ChatMessage_chatMessage">RICK has upgraded Guild Brewery to level 3!</div>';
+        const input = document.querySelector('input');
+        const messageEl = document.querySelector('.ChatMessage_chatMessage');
+        const before = messageEl.textContent;
+
+        chatProfileLinkFeature.initialize();
+
+        const spans = document.querySelectorAll('.mwi-chat-profile-name');
+        expect(Array.from(spans).map((s) => s.textContent)).toEqual(['RICK']);
+        expect(messageEl.textContent).toBe(before);
+
+        spans[0].dispatchEvent(new Event('click', { bubbles: true }));
+        expect(input.value).toBe('/profile RICK');
+
+        chatProfileLinkFeature.disable();
+    });
+
+    test('a normal message containing "kicked by" or "upgraded" is never decorated', () => {
+        settings.chat_profileLink = true;
+        document.body.innerHTML =
+            '<div class="Chat_chatInputContainer"><input /></div>' +
+            '<div class="ChatMessage_chatMessage">did you see nutsaccio has been kicked by miku lol</div>' +
+            '<div class="ChatMessage_chatMessage">RICK upgraded his sword to level 3</div>';
+
+        chatProfileLinkFeature.initialize();
+
+        expect(document.querySelector('.mwi-chat-profile-name')).toBeNull();
 
         chatProfileLinkFeature.disable();
     });

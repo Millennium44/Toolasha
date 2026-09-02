@@ -46,9 +46,57 @@ const escapeForRegExp = (phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 export const PARTY_RE = new RegExp(
     `^\\s*(?:\\[[^\\]]*\\]\\s*)*([A-Za-z0-9_]+) (?:${PARTY_STATUS_PHRASES.map(escapeForRegExp).join('|')})$`
 );
+// Guild kick line: "nutsaccio has been kicked by miku." — the only announcement
+// shape with TWO player names (the kicked player and the kicker), both linkable.
+// "been kicked" is deliberately outside ANNOUNCE_RE's verb allowlist ("been" is too
+// generic), so this gets its own tightly anchored whole-line matcher: the kicker
+// group is captured too, and the end anchor keeps a player quoting "kicked by" in
+// ordinary chat from lighting up.
+export const KICK_RE = /^\s*(?:\[[^\]]*\]\s*)?([A-Za-z0-9_]+) has been kicked by ([A-Za-z0-9_]+)\.?\s*$/;
+// Guild building upgrade: "RICK has upgraded Guild Brewery to level 3!" — only the
+// leading name links. The building name varies ("Guild Brewery", "Guild Kitchen", …)
+// but always starts "Guild ", so the literal "upgraded Guild " plus the "to level N"
+// tail anchors the whole line and keeps "X upgraded his sword" out. The same
+// `(?!Guild has\b)` guard as ANNOUNCE_RE keeps a system "Guild has upgraded …" line
+// from linking the word "Guild".
+export const UPGRADE_RE =
+    /^\s*(?:\[[^\]]*\]\s*)?(?!Guild has\b)([A-Za-z0-9_]+) has upgraded Guild .+? to level \d+!?\s*$/;
 // MWI player names are a single alphanumeric/underscore token — reject anything else
 // (spaces, punctuation, etc.) so a malformed name can't produce a broken /profile command.
 export const VALID_NAME_RE = VALID_PLAYER_NAME_RE;
+
+/**
+ * The player name(s) to link in a chat line, in the order they appear, each with the
+ * surrounding context needed to locate the right occurrence when wrapping. Single source
+ * of truth shared by the main chat window and the pop-out (which interpolates this very
+ * function into its self-contained document). Names are NOT validated here — the caller
+ * runs each through {@link VALID_NAME_RE} before linking.
+ * @param {string} text - Full message text
+ * @returns {Array<{name: string, afterPrefixes?: string[], beforeSuffix?: string}>}
+ */
+export function getProfileLinkNames(text) {
+    const kick = text.match(KICK_RE);
+    if (kick) {
+        // Kicked player leads the line; the kicker follows "kicked by ".
+        return [
+            { name: kick[1], afterPrefixes: [' has '] },
+            { name: kick[2], beforeSuffix: 'kicked by ' },
+        ];
+    }
+    const upgrade = text.match(UPGRADE_RE);
+    if (upgrade) {
+        return [{ name: upgrade[1], afterPrefixes: [' has '] }];
+    }
+    const announce = text.match(ANNOUNCE_RE);
+    if (announce) {
+        return [{ name: announce[1], afterPrefixes: [' has '] }];
+    }
+    const party = text.match(PARTY_RE);
+    if (party) {
+        return [{ name: party[1], afterPrefixes: [' has ', ' is '] }];
+    }
+    return [];
+}
 
 class ChatProfileLink {
     constructor() {
@@ -111,38 +159,20 @@ class ChatProfileLink {
     }
 
     /**
-     * Wrap the leading player name of an announcement or party status message
-     * in a clickable span. Skips messages with the game's own clickable sender
-     * name. Only the name is wrapped — the message's text never changes.
+     * Wrap each linkable player name of an announcement or party status message
+     * in a clickable span. A kick line ("X has been kicked by Y.") links both
+     * names; every other shape links a single leading name. Skips messages with
+     * the game's own clickable sender name. Only the names are wrapped — the
+     * message's text never changes.
      */
     _decorateMessage(messageEl) {
         if (messageEl.dataset.mwiProfileLink) return;
         messageEl.dataset.mwiProfileLink = '1';
 
         const text = messageEl.textContent || '';
-        const match = text.match(ANNOUNCE_RE) || text.match(PARTY_RE);
-        if (!match) return;
-        const name = match[1];
-
-        // Find the text node containing the name and split it around the match
-        const nodeWalker = document.createTreeWalker(messageEl, NodeFilter.SHOW_TEXT);
-        let textNode;
-        while ((textNode = nodeWalker.nextNode())) {
-            const idx = textNode.textContent.indexOf(name);
-            if (idx === -1) continue;
-            // Only wrap when this occurrence is followed by " has " (announcements,
-            // party join/leave) or " is " (ready states), to avoid matching the
-            // name elsewhere in the sentence
-            const after = textNode.textContent.slice(idx + name.length);
-            if (!after.startsWith(' has ') && !after.startsWith(' is ')) continue;
-
-            const range = document.createRange();
-            range.setStart(textNode, idx);
-            range.setEnd(textNode, idx + name.length);
-            const span = document.createElement('span');
-            markAsProfileLink(span, name);
-            range.surroundContents(span);
-            return;
+        for (const target of getProfileLinkNames(text)) {
+            if (!VALID_NAME_RE.test(target.name)) continue;
+            wrapNameOccurrence(messageEl, target);
         }
     }
 
@@ -166,6 +196,43 @@ class ChatProfileLink {
 }
 
 const chatProfileLink = new ChatProfileLink();
+
+/**
+ * Wrap the first occurrence of `target.name` that satisfies its context guards in a
+ * clickable profile-link span, in place. The guards disambiguate which occurrence to
+ * wrap: `afterPrefixes` requires the text after the name to start with one of them,
+ * `beforeSuffix` requires the text before it to end with that string. A fresh tree walk
+ * per call keeps this correct when an earlier call has already split the text node
+ * (e.g. wrapping the kicked player before the kicker in the same line).
+ * @param {Node} root - Element to search within
+ * @param {{name: string, afterPrefixes?: string[], beforeSuffix?: string}} target
+ */
+function wrapNameOccurrence(root, { name, afterPrefixes, beforeSuffix }) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+        if (node.parentElement?.classList.contains(NAME_CLASS)) continue;
+        const content = node.textContent;
+        let from = 0;
+        let idx;
+        while ((idx = content.indexOf(name, from)) !== -1) {
+            const before = content.slice(0, idx);
+            const after = content.slice(idx + name.length);
+            const beforeOk = !beforeSuffix || before.endsWith(beforeSuffix);
+            const afterOk = !afterPrefixes || afterPrefixes.some((prefix) => after.startsWith(prefix));
+            if (beforeOk && afterOk) {
+                const range = document.createRange();
+                range.setStart(node, idx);
+                range.setEnd(node, idx + name.length);
+                const span = document.createElement('span');
+                markAsProfileLink(span, name);
+                range.surroundContents(span);
+                return;
+            }
+            from = idx + name.length;
+        }
+    }
+}
 
 /**
  * Style an element as a clickable "/profile <name>" link — the same click-to-fill behavior as
