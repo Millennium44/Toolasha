@@ -4141,6 +4141,23 @@ describe('a teardown mid-sim', () => {
         expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
     });
 
+    test('teardown forgets the run itself, not only its grid', () => {
+        // `currentLabyrinthState()` answers with `_labyrinth` before it looks at
+        // `dataManager.characterData`, so a live message left standing keeps
+        // answering for a character who has gone — supplies, floor and all. And
+        // `seedFromCharacterData()` only fills `_pathData` when it is null, so a
+        // surviving path blocks the arriving character's own from being seeded.
+        labyrinthClearRate._labyrinth = { isActive: true, currentFloor: 7, torchCount: 3 };
+        labyrinthClearRate._pathData = '[{"x":2,"y":1}]';
+        labyrinthClearRate.currentFloor = 7;
+
+        labyrinthClearRate.disable();
+
+        expect(labyrinthClearRate._labyrinth).toBeNull();
+        expect(labyrinthClearRate._pathData).toBeNull();
+        expect(labyrinthClearRate.currentFloor).toBe(0);
+    });
+
     test('teardown stops the sim in flight, not just the queue behind it', () => {
         labyrinthClearRate.simQueue = [{ monsterHrid: '/monsters/imp', roomLevel: 200, badge: null }];
 

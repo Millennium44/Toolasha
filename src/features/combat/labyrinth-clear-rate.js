@@ -494,6 +494,15 @@ class LabyrinthClearRate {
             }
 
             this.roomData = null;
+            // The grid's three companions, dropped with it. `currentLabyrinthState()`
+            // prefers `_labyrinth` over `dataManager.characterData` because a live
+            // message is the freshest thing there is — which stops being true the
+            // moment the character it described is gone. And `seedFromCharacterData()`
+            // only fills `_pathData` when it is null, so one left standing blocks the
+            // arriving character's own path from ever being seeded.
+            this._labyrinth = null;
+            this._pathData = null;
+            this.currentFloor = 0;
             this.combatCache.clear();
             this._combatCacheMeta.clear();
             this._combatCacheLoaded = false;
