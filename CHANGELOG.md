@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: a NaN-poisoned buff, and honest docs on market depth
+
+A second pass over the freshest code found one live regression from the last round: a special ability whose buff scales off a combat skill the sim tracks only indirectly (power, which folds into melee) resolved no level and multiplied the buff by NaN, silently wrecking the buffed stat for the whole fight — it now delivers the buff unscaled when there is no resolvable level, and scales exactly as before when there is. Alongside it, the crafting plan's market-depth store had its documented contract corrected to match what it actually does (a fresh price snapshot supersedes an older order-book reading, which is what keeps the thin-market check from acting on stale depth), with the test made to assert the real behaviour. The rest held: the threat, damage-over-time, teardown, and chat name-linking work all re-audited and confirmed sound.
+
 ### Clickable names on more guild lines, and two engine guards
 
 Guild chat now turns player names into profile links on two more message shapes: "X has been kicked by Y" links both names, and "X has upgraded Guild <building> to level N" links the upgrader — in the main chat and the pop-out both. Two combat-sim engine gaps are closed defensively (no change to any build that sims correctly today, correct the day the game ships something that would trip them): a self-targeted special ability's skill-scaling buff is now scaled the way an ally-targeted one already was, and a damage-over-time or heal whose duration is not a whole multiple of its tick interval can no longer deliver more than its stated total.
