@@ -354,6 +354,20 @@ class DungeonTrackerUI {
                                 </select>
                             </div>
                             <div>
+                                <label style="margin-right: 6px;">Tier:</label>
+                                <select class="toolasha-select" id="mwi-dt-filter-tier" style="
+                                    background: #333;
+                                    color: #fff;
+                                    border: 1px solid #555;
+                                    border-radius: 3px;
+                                    padding: 2px 4px;
+                                    font-size: 11px;
+                                    min-width: 80px;
+                                ">
+                                    <option value="all">All Tiers</option>
+                                </select>
+                            </div>
+                            <div>
                                 <label style="margin-right: 6px;">Team:</label>
                                 <select class="toolasha-select" id="mwi-dt-filter-team" style="
                                     background: #333;
@@ -571,6 +585,11 @@ class DungeonTrackerUI {
         // Apply dungeon filter
         if (this.state.filterDungeon !== 'all') {
             runHistory = runHistory.filter((r) => r.dungeonName === this.state.filterDungeon);
+        }
+
+        // Apply tier filter (a specific tier excludes untiered runs)
+        if (this.state.filterTier !== 'all') {
+            runHistory = runHistory.filter((r) => String(r.tier) === this.state.filterTier);
         }
 
         // Apply team filter

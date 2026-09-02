@@ -31,15 +31,21 @@ const { default: dungeonTrackerUIState } = await import('./dungeon-tracker-ui-st
 describe('hasActiveFilters', () => {
     beforeEach(() => {
         dungeonTrackerUIState.filterDungeon = 'all';
+        dungeonTrackerUIState.filterTier = 'all';
         dungeonTrackerUIState.filterTeam = 'all';
     });
 
-    test('false when both filters are all', () => {
+    test('false when all filters are all', () => {
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(false);
     });
 
     test('true when only the dungeon filter is set', () => {
         dungeonTrackerUIState.filterDungeon = 'Chimeratos Lair';
+        expect(dungeonTrackerUIState.hasActiveFilters()).toBe(true);
+    });
+
+    test('true when only the tier filter is set', () => {
+        dungeonTrackerUIState.filterTier = '2';
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(true);
     });
 
@@ -56,13 +62,15 @@ describe('hasActiveFilters', () => {
 });
 
 describe('clearFilters', () => {
-    test('resets both filters back to all', () => {
+    test('resets every filter back to all', () => {
         dungeonTrackerUIState.filterDungeon = 'Chimeratos Lair';
+        dungeonTrackerUIState.filterTier = '2';
         dungeonTrackerUIState.filterTeam = 'Solo';
 
         dungeonTrackerUIState.clearFilters();
 
         expect(dungeonTrackerUIState.filterDungeon).toBe('all');
+        expect(dungeonTrackerUIState.filterTier).toBe('all');
         expect(dungeonTrackerUIState.filterTeam).toBe('all');
         expect(dungeonTrackerUIState.hasActiveFilters()).toBe(false);
     });

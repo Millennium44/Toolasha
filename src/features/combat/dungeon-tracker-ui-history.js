@@ -201,6 +201,9 @@ class DungeonTrackerUIHistory {
             if (this.state.filterDungeon !== 'all') {
                 filteredRuns = filteredRuns.filter((r) => r.dungeonName === this.state.filterDungeon);
             }
+            if (this.state.filterTier !== 'all') {
+                filteredRuns = filteredRuns.filter((r) => String(r.tier) === this.state.filterTier);
+            }
             if (this.state.filterTeam !== 'all') {
                 filteredRuns = filteredRuns.filter((r) => r.teamKey === this.state.filterTeam);
             }
@@ -235,7 +238,10 @@ class DungeonTrackerUIHistory {
             // Update filter dropdowns
             const dungeons = [...new Set(allRuns.map((r) => r.dungeonName).filter(Boolean))].sort();
             const teams = [...new Set(allRuns.map((r) => r.teamKey).filter(Boolean))].sort();
-            this.updateFilterDropdowns(container, dungeons, teams);
+            const tiers = [...new Set(allRuns.map((r) => r.tier).filter((t) => t !== null && t !== undefined))].sort(
+                (a, b) => a - b
+            );
+            this.updateFilterDropdowns(container, dungeons, teams, tiers);
         } catch (error) {
             console.error('[Dungeon Tracker UI History] Update error:', error);
             runList.innerHTML =
@@ -249,7 +255,7 @@ class DungeonTrackerUIHistory {
      * @param {Array} dungeons - List of dungeon names
      * @param {Array} teams - List of team keys
      */
-    updateFilterDropdowns(container, dungeons, teams) {
+    updateFilterDropdowns(container, dungeons, teams, tiers = []) {
         // Update dungeon filter
         const dungeonFilter = container.querySelector('#mwi-dt-filter-dungeon');
         if (dungeonFilter) {
@@ -266,6 +272,24 @@ class DungeonTrackerUIHistory {
                 dungeonFilter.value = currentValue;
             } else {
                 this.state.filterDungeon = 'all';
+            }
+        }
+
+        // Update tier filter
+        const tierFilter = container.querySelector('#mwi-dt-filter-tier');
+        if (tierFilter) {
+            // Restore from state, not the DOM, so a saved tier survives a reload
+            // (the select is rebuilt back to "All Tiers" each render).
+            const desired = String(this.state.filterTier);
+            tierFilter.innerHTML =
+                '<option value="all">All Tiers</option>' +
+                tiers.map((tier) => `<option value="${tier}">T${tier}</option>`).join('');
+            if (desired === 'all' || tiers.map(String).includes(desired)) {
+                tierFilter.value = desired;
+            } else {
+                // The saved tier no longer exists in the data — fall back to all
+                this.state.filterTier = 'all';
+                tierFilter.value = 'all';
             }
         }
 

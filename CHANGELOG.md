@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon tracker: tiers on backfilled runs, a tier filter, and a panel that stays on top
+
+Three fixes to the dungeon tracker. Chat carries no tier, so runs rebuilt with **Backfill** came out untiered and filed under T0 — they now inherit the tier of the dungeon you're running when you press Backfill (runs of other dungeons stay untiered; re-run Clear history → Backfill to apply). The run-history filters gain a **Tier** dropdown beside Dungeon, so you can narrow to just T2 (or any tier present in your history). And a dragged, then expanded, panel was left at its collapsed HUD stacking — below the game's own combat UI — so the game's ability-cooldown numbers showed through it; expanding a moved panel now restores its on-top stacking.
+
 ### The dungeon pace chip stops reading wildly wrong
 
 The dungeon tracker timed each wave from `combatStartTime`, but that field is the combat action's start — the whole run's start — and arrives unchanged on every wave, so each recorded wave time was the cumulative elapsed since the run began (13s, 26s, 39s…) instead of the wave's own ~10s. That inflated the average wave time roughly sixtyfold, which is what drove the "pace vs your avg" chip to nonsense like −1899% and stretched the wave-based ETA. Waves are now timed from the client clock at each wave's start, so the pace and ETA read true. Run totals were never affected. A guard also heals history: a stored run whose saved average wave time dwarfs its own run total (the old artefact) now falls back to the total-derived figure, so pace against past runs is right immediately instead of only once the bad runs age out.

@@ -1494,6 +1494,51 @@ describe('rebuilding history from the chat log', () => {
         });
     });
 
+    test('a backfilled run of the dungeon being run now inherits its tier', async () => {
+        // Chat carries no tier, so the only signal is the dungeon running when
+        // Backfill is pressed — here Chimerical Den T2.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, isDone: false }];
+        chatLog([
+            { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
+            { text: '[08/04 10:00:05 AM] Key counts: [Alice - 12]' },
+            { text: '[08/04 10:04:37 AM] Key counts: [Alice - 11]' },
+        ]);
+
+        await tracker.backfillFromChatHistory();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.tier).toBe(2);
+        expect(game.savedRuns[0].run.dungeonHrid).toBe(DEN);
+    });
+
+    test('a backfilled run of a different dungeon than the one running now stays untiered', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, isDone: false }];
+        chatLog([
+            { text: '[08/04 10:00:00 AM] Battle started: Sinister Circus' },
+            { text: '[08/04 10:00:05 AM] Key counts: [Alice - 12]' },
+            { text: '[08/04 10:04:37 AM] Key counts: [Alice - 11]' },
+        ]);
+
+        await tracker.backfillFromChatHistory();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.tier).toBeUndefined();
+        expect(game.savedRuns[0].run.dungeonName).toBe('Sinister Circus');
+    });
+
+    test('with no dungeon running, a backfilled run is untiered as before', async () => {
+        game.actions = [];
+        chatLog([
+            { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
+            { text: '[08/04 10:00:05 AM] Key counts: [Alice - 12]' },
+            { text: '[08/04 10:04:37 AM] Key counts: [Alice - 11]' },
+        ]);
+
+        await tracker.backfillFromChatHistory();
+
+        expect(game.savedRuns[0].run.tier).toBeUndefined();
+    });
+
     test('a failed run is not a run', async () => {
         chatLog([
             { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },

@@ -15,6 +15,7 @@ import {
 } from '../../utils/game-text.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 /**
  * The run currently under way, parked so a refresh mid-dungeon does not lose it.
@@ -1665,6 +1666,26 @@ class DungeonTracker {
             // Sort events by timestamp
             events.sort((a, b) => a.timestamp - b.timestamp);
 
+            // Chat carries no tier, so a backfilled run is untiered and files
+            // under T0 in every tier-grouped view. The one tier signal available
+            // is the dungeon being run right now: stamp backfilled runs of that
+            // same dungeon with its tier (and hrid) so they land in the right
+            // bucket. Runs of other dungeons stay untiered. This assumes the
+            // backfilled runs of the current dungeon are the tier now being run
+            // — right for single-tier farming, and the best chat can offer.
+            const runningAction = runningCombatAction(dataManager.getCurrentActions?.());
+            const runningZoneInfo = runningAction
+                ? dataManager.getActionDetails?.(runningAction.actionHrid)?.combatZoneInfo
+                : null;
+            const currentDungeon =
+                runningZoneInfo?.isDungeon === true
+                    ? {
+                          hrid: runningAction.actionHrid,
+                          tier: runningAction.difficultyTier ?? null,
+                          name: dungeonTrackerStorage.getDungeonInfo(runningAction.actionHrid)?.name || null,
+                      }
+                    : null;
+
             // Build runs from events - only count key→key pairs (skip key→fail and key→cancel)
             let runsAdded = 0;
             const teamsSet = new Set();
@@ -1709,6 +1730,13 @@ class DungeonTracker {
                         duration: duration,
                         dungeonName: dungeonName,
                     };
+
+                    // Tag with the current dungeon's tier when the names match,
+                    // so this run stops defaulting to T0 in tier-grouped views.
+                    if (currentDungeon && currentDungeon.name && dungeonName === currentDungeon.name) {
+                        if (currentDungeon.tier !== null) run.tier = currentDungeon.tier;
+                        if (currentDungeon.hrid) run.dungeonHrid = currentDungeon.hrid;
+                    }
 
                     const saved = await dungeonTrackerStorage.saveTeamRun(teamKey, run);
                     if (saved) {

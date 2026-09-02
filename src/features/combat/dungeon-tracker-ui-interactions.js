@@ -191,6 +191,18 @@ class DungeonTrackerUIInteractions {
             });
         }
 
+        // Filter tier dropdown
+        const filterTierSelect = this.container.querySelector('#mwi-dt-filter-tier');
+        if (filterTierSelect) {
+            filterTierSelect.addEventListener('change', (e) => {
+                this.state.filterTier = e.target.value;
+                this.state.save();
+                this.updateFilterIndicator();
+                if (this.callbacks.onUpdateHistory) this.callbacks.onUpdateHistory();
+                if (this.callbacks.onUpdateChart) this.callbacks.onUpdateChart();
+            });
+        }
+
         // Filter team dropdown
         const filterTeamSelect = this.container.querySelector('#mwi-dt-filter-team');
         if (filterTeamSelect) {
@@ -237,6 +249,8 @@ class DungeonTrackerUIInteractions {
 
             const filterDungeonSelect = this.container.querySelector('#mwi-dt-filter-dungeon');
             if (filterDungeonSelect) filterDungeonSelect.value = 'all';
+            const filterTierSelect = this.container.querySelector('#mwi-dt-filter-tier');
+            if (filterTierSelect) filterTierSelect.value = 'all';
             const filterTeamSelect = this.container.querySelector('#mwi-dt-filter-team');
             if (filterTeamSelect) filterTeamSelect.value = 'all';
 
@@ -390,8 +404,14 @@ class DungeonTrackerUIInteractions {
         if (!this.state.position) {
             this.state.updatePosition(this.container);
         } else {
-            // Just update width for custom positions — same screen-width clamp
-            // as updatePosition, or collapsing on a phone re-widens the panel
+            // Just update width and stacking for custom positions — the full
+            // updatePosition (which sets both) is skipped once the user has
+            // dragged the panel, so a collapse/expand here must still move the
+            // z-index between the HUD band (collapsed, below the game's UI) and
+            // the panel band (expanded, above it). Without this an expanded
+            // dragged panel kept its collapsed Z_HUD and the game's ability
+            // cooldown numbers showed through it.
+            this.container.style.zIndex = this.state.isCollapsed ? config.Z_HUD : config.Z_FLOATING_PANEL;
             this.container.style.minWidth = this.state.isCollapsed
                 ? 'min(250px, calc(100vw - 20px))'
                 : 'min(480px, calc(100vw - 20px))';

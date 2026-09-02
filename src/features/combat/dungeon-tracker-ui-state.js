@@ -44,6 +44,7 @@ class DungeonTrackerUIState {
         // Grouping and filtering state
         this.groupBy = 'team'; // 'team' or 'dungeon'
         this.filterDungeon = 'all'; // 'all' or specific dungeon name
+        this.filterTier = 'all'; // 'all' or a specific tier number (as a string)
         this.filterTeam = 'all'; // 'all' or specific team key
 
         // Whose runs to show. The run store is deliberately shared across
@@ -76,6 +77,7 @@ class DungeonTrackerUIState {
         this.position = null;
         this.groupBy = 'team';
         this.filterDungeon = 'all';
+        this.filterTier = 'all';
         this.filterTeam = 'all';
         this.filterCharacter = CHARACTER_FILTER_MINE;
         this.expandedGroups.clear();
@@ -114,6 +116,7 @@ class DungeonTrackerUIState {
             // Load grouping/filtering state
             this.groupBy = savedState.groupBy || 'team';
             this.filterDungeon = savedState.filterDungeon || 'all';
+            this.filterTier = savedState.filterTier || 'all';
             this.filterTeam = savedState.filterTeam || 'all';
             this.filterCharacter =
                 savedState.filterCharacter === CHARACTER_FILTER_ALL ? CHARACTER_FILTER_ALL : CHARACTER_FILTER_MINE;
@@ -143,6 +146,7 @@ class DungeonTrackerUIState {
                 position: this.position,
                 groupBy: this.groupBy,
                 filterDungeon: this.filterDungeon,
+                filterTier: this.filterTier,
                 filterTeam: this.filterTeam,
                 filterCharacter: this.filterCharacter,
             },
@@ -159,7 +163,7 @@ class DungeonTrackerUIState {
      * @returns {boolean} True if the dungeon or team filter is not 'all'
      */
     hasActiveFilters() {
-        return this.filterDungeon !== 'all' || this.filterTeam !== 'all';
+        return this.filterDungeon !== 'all' || this.filterTier !== 'all' || this.filterTeam !== 'all';
     }
 
     /**
@@ -168,6 +172,7 @@ class DungeonTrackerUIState {
      */
     clearFilters() {
         this.filterDungeon = 'all';
+        this.filterTier = 'all';
         this.filterTeam = 'all';
     }
 
