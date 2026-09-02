@@ -428,11 +428,31 @@ class CombatUtilities {
         return spentHp;
     }
 
+    /**
+     * Cumulative-floor discretization of totalValue over totalTicks: the per-tick
+     * deltas sum to exactly totalValue and land the last unit on the final tick.
+     *
+     * When totalTicks is a whole number every currentTick is <= totalTicks, so the
+     * guard below never fires and the result is byte-identical to the plain floors
+     * (which already sum to Math.floor(totalValue)). But a DoT/HoT whose duration
+     * is not a whole multiple of its tick interval has a fractional totalTicks and
+     * runs ceil(totalTicks) ticks; on that final tick currentTick > totalTicks, and
+     * the plain floor would push the cumulative sum past totalValue so the effect
+     * over-delivers. Once a tick's index passes totalTicks the cumulative delivery
+     * is pinned to Math.floor(totalValue) — the exact total the whole-count case
+     * already lands on — so the summed delivery can never exceed it and the final
+     * tick lands precisely on it (computing it directly also avoids the floating
+     * point error a totalTicks*totalValue/totalTicks division would introduce).
+     * @param {number} totalValue - Total to distribute across all ticks.
+     * @param {number} totalTicks - Tick count; may be fractional.
+     * @param {number} currentTick - 1-based index of the tick being delivered.
+     * @returns {number} This tick's share of totalValue.
+     */
     static calculateTickValue(totalValue, totalTicks, currentTick) {
-        const currentSum = Math.floor((currentTick * totalValue) / totalTicks);
-        const previousSum = Math.floor(((currentTick - 1) * totalValue) / totalTicks);
+        const cumulative = (tick) =>
+            tick > totalTicks ? Math.floor(totalValue) : Math.floor((tick * totalValue) / totalTicks);
 
-        return currentSum - previousSum;
+        return cumulative(currentTick) - cumulative(currentTick - 1);
     }
 }
 

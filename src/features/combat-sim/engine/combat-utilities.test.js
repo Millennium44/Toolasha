@@ -159,3 +159,57 @@ describe('mechanics the engine does not know', () => {
         expect(getSimWarnings()).toHaveLength(1);
     });
 });
+
+describe('calculateTickValue distributes a total across ticks', () => {
+    /**
+     * Sum every tick's delivery over the ticks the engine actually runs:
+     * ceil(totalTicks), matching the `currentTick < totalTicks` reschedule guard.
+     */
+    function sumOverRun(totalValue, totalTicks) {
+        const ticks = Math.ceil(totalTicks);
+        let sum = 0;
+        const perTick = [];
+        for (let currentTick = 1; currentTick <= ticks; currentTick++) {
+            const value = CombatUtilities.calculateTickValue(totalValue, totalTicks, currentTick);
+            perTick.push(value);
+            sum += value;
+        }
+        return { sum, perTick };
+    }
+
+    test('a whole tick count sums to exactly the total', () => {
+        const { sum } = sumOverRun(100, 5);
+        expect(sum).toBe(100);
+    });
+
+    test('each whole-count tick is byte-identical to the plain cumulative floors', () => {
+        // The pre-fix formula, reproduced verbatim, must match tick for tick — for
+        // an integer total and a fractional one (a DoT total can be fractional).
+        for (const [totalValue, totalTicks] of [
+            [97, 5],
+            [100, 5],
+            [253.7, 5],
+            [88.125, 3],
+        ]) {
+            for (let currentTick = 1; currentTick <= totalTicks; currentTick++) {
+                const plain =
+                    Math.floor((currentTick * totalValue) / totalTicks) -
+                    Math.floor(((currentTick - 1) * totalValue) / totalTicks);
+                expect(CombatUtilities.calculateTickValue(totalValue, totalTicks, currentTick)).toBe(plain);
+            }
+        }
+    });
+
+    test('a fractional tick count still sums to exactly the total, never more', () => {
+        // 3.6 ticks runs ceil = 4 ticks; the pre-fix final tick over-delivered.
+        const { sum } = sumOverRun(100, 3.6);
+        expect(sum).toBe(100);
+    });
+
+    test('the final fractional tick never pushes the cumulative sum past the total', () => {
+        for (const totalTicks of [3.6, 4.2, 2.5, 5.9]) {
+            const { sum } = sumOverRun(1000, totalTicks);
+            expect(sum).toBe(1000);
+        }
+    });
+});
