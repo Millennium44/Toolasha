@@ -26,11 +26,14 @@ let activeCleanup = null;
  * @param {number} params.hours - Hours to simulate per zone
  * @param {Object} params.communityBuffs - { mooPass, comExp, comDrop }
  * @param {boolean} [params.useEarlyExit] - Skip higher tiers when both XP/hr and profit/hr decline
+ * @param {string} [params.playerHrid] - Which player the early-exit decision reads XP and profit
+ *   for. Must be the same player the ranked table shows (the caller's self), or the skip decision
+ *   prunes tiers by a figure the user never sees. Defaults to 'player1' for the solo path.
  * @param {Function} [onProgress] - Called with (percent: 0-100) for overall progress
  * @returns {Promise<Array<Object>>} Array of SimResults, one per zone (same order as input)
  */
 export async function runAllZonesSimulation(params, onProgress) {
-    const { gameData, playerDTOs, zones, hours, communityBuffs, useEarlyExit } = params;
+    const { gameData, playerDTOs, zones, hours, communityBuffs, useEarlyExit, playerHrid = 'player1' } = params;
 
     if (!zones.length) return [];
 
@@ -110,18 +113,20 @@ export async function runAllZonesSimulation(params, onProgress) {
             {
                 const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
 
-                // Sum XP across all players and all skills
+                // Only the player the table ranks by — not the party total. Summing
+                // every member's XP lets a strong teammate mask a tier that is in
+                // decline for the user, or a weak one force a skip on a tier still
+                // climbing for them; either way the decision keys on a figure the
+                // ranked results never show.
                 let totalXP = 0;
-                for (const playerXP of Object.values(simResult.experienceGained || {})) {
-                    for (const xp of Object.values(playerXP)) {
-                        totalXP += xp;
-                    }
+                for (const xp of Object.values(simResult.experienceGained?.[playerHrid] || {})) {
+                    totalXP += xp;
                 }
                 const xpPerHour = totalXP / simHours;
 
                 let profitPerHour = 0;
                 try {
-                    const revenue = calculateSimRevenue(simResult, gameData, 'player1', simHours);
+                    const revenue = calculateSimRevenue(simResult, gameData, playerHrid, simHours);
                     profitPerHour = revenue.netPerHour;
                 } catch {
                     // Revenue calculation may fail if market data is unavailable

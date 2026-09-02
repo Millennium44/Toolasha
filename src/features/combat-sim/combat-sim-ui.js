@@ -4392,7 +4392,17 @@ class CombatSimUI {
             const zones = selectedZones.map((z) => ({ zoneHrid: z.zoneHrid, difficultyTier: z.difficultyTier }));
 
             const simResults = await runAllZonesSimulation(
-                { gameData, playerDTOs, zones, hours, communityBuffs, useEarlyExit: this._earlyExitEnabled },
+                {
+                    gameData,
+                    playerDTOs,
+                    zones,
+                    hours,
+                    communityBuffs,
+                    useEarlyExit: this._earlyExitEnabled,
+                    // The early-exit decision must read the same player the ranked
+                    // table shows, or it prunes tiers by a figure the user never sees
+                    playerHrid: this._activePlayerTab || 'player1',
+                },
                 (percent) => {
                     const { text: remaining } = eta.update(percent / 100);
                     progressFill.style.width = `${percent}%`;
