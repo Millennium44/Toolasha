@@ -1,5 +1,16 @@
 // Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 import { getGameData } from './game-data.js';
+import { recordUnknown } from './sim-warnings.js';
+
+/**
+ * What a condition the engine has never heard of reads as.
+ *
+ * Distinct from every real reading, including `undefined`: a comparator asked
+ * about `undefined` answers *true* for `is_inactive`, which would fire an
+ * ability whose trigger the engine could not evaluate. The sentinel is checked
+ * before any comparator sees it.
+ */
+const UNKNOWN = Symbol('unknown trigger reading');
 
 class Trigger {
     constructor(dependencyHrid, conditionHrid, comparatorHrid, value = 0) {
@@ -15,9 +26,31 @@ class Trigger {
         return trigger;
     }
 
+    /**
+     * Whether this trigger's condition is met right now.
+     *
+     * A trigger the engine cannot evaluate — a dependency, condition or
+     * comparator the game grew after this port was written — reads as *not*
+     * met, and the run records a warning naming it (see sim-warnings.js for
+     * why: one new mechanic used to throw away every number in the run). The
+     * ability behind it simply never fires, so the result understates rather
+     * than disappearing.
+     *
+     * @param {Object} source - The unit whose trigger this is
+     * @param {Object|null} target - Its current target, if any
+     * @param {Array|null} friendlies - Its side
+     * @param {Array|null} enemies - The other side
+     * @param {number} currentTime - Simulation time in nanoseconds
+     * @returns {boolean}
+     */
     isActive(source, target, friendlies, enemies, currentTime) {
         const combatTriggerDependencyDetailMap = getGameData().combatTriggerDependencyDetailMap;
-        if (combatTriggerDependencyDetailMap[this.dependencyHrid].isSingleTarget) {
+        const dependencyDetail = combatTriggerDependencyDetailMap[this.dependencyHrid];
+        if (!dependencyDetail) {
+            recordUnknown('combat trigger dependency', this.dependencyHrid);
+            return false;
+        }
+        if (dependencyDetail.isSingleTarget) {
             return this.isActiveSingleTarget(source, target, currentTime);
         } else {
             return this.isActiveMultiTarget(friendlies, enemies, currentTime);
@@ -37,7 +70,12 @@ class Trigger {
                 dependencyValue = this.getDependencyValue(target, currentTime);
                 break;
             default:
-                throw new Error('Unknown dependencyHrid in trigger: ' + this.dependencyHrid);
+                recordUnknown('combat trigger dependency', this.dependencyHrid);
+                return false;
+        }
+
+        if (dependencyValue === UNKNOWN) {
+            return false;
         }
 
         return this.compareValue(dependencyValue);
@@ -59,7 +97,8 @@ class Trigger {
                 dependency = enemies;
                 break;
             default:
-                throw new Error('Unknown dependencyHrid in trigger: ' + this.dependencyHrid);
+                recordUnknown('combat trigger dependency', this.dependencyHrid);
+                return false;
         }
 
         if (!dependency) {
@@ -96,6 +135,9 @@ class Trigger {
                 const values = dependency
                     .filter((unit) => unit.combatDetails.currentHitpoints > 0)
                     .map((unit) => this.getDependencyValue(unit, currentTime));
+                if (values.includes(UNKNOWN)) {
+                    return false;
+                }
                 dependencyValue = values.reduce((prev, cur) => {
                     // Numbers (current_hp, missing_mp, ...) still add up; a buff
                     // object or a status boolean counts as one unit.
@@ -109,6 +151,13 @@ class Trigger {
         return this.compareValue(dependencyValue);
     }
 
+    /**
+     * The one reading this trigger's condition asks a unit for.
+     * @param {Object} source - The unit to read
+     * @param {number} currentTime - Simulation time in nanoseconds
+     * @returns {number|boolean|Object|symbol} The reading, or the UNKNOWN
+     *   sentinel for a condition this engine does not model
+     */
     getDependencyValue(source, currentTime) {
         switch (this.conditionHrid) {
             case '/combat_trigger_conditions/berserk':
@@ -183,10 +232,16 @@ class Trigger {
             case '/combat_trigger_conditions/silence_status':
                 return source.isSilenced || source.silenceExpireTime === currentTime;
             default:
-                throw new Error('Unknown conditionHrid in trigger: ' + this.conditionHrid);
+                recordUnknown('combat trigger condition', this.conditionHrid);
+                return UNKNOWN;
         }
     }
 
+    /**
+     * Apply this trigger's comparator to a reading.
+     * @param {number|boolean|Object} dependencyValue - The reading
+     * @returns {boolean} False for a comparator this engine does not model
+     */
     compareValue(dependencyValue) {
         switch (this.comparatorHrid) {
             case '/combat_trigger_comparators/greater_than_equal':
@@ -198,7 +253,8 @@ class Trigger {
             case '/combat_trigger_comparators/is_inactive':
                 return !dependencyValue;
             default:
-                throw new Error('Unknown comparatorHrid in trigger: ' + this.comparatorHrid);
+                recordUnknown('combat trigger comparator', this.comparatorHrid);
+                return false;
         }
     }
 }
