@@ -6039,6 +6039,20 @@ class LabSimUI {
         // own, silently, until they notice and touch the dropdown themselves.
         this._skillingCratesUserSet = false;
         this._combatCratesUserSet = false;
+        // Everything below is a reading of one character's build. None of it is
+        // re-derived on the way back in — `_maxLevelByMonster` is consulted only
+        // when a monster is missing from it, and the rest is simply redrawn — so
+        // left standing it becomes the arriving character's answer.
+        //
+        // `_maxLevelByMonster` is the worst of them: the highest room level that
+        // character could clear, fed straight into the next fight setup as
+        // `simMaxLevel`.
+        this._maxLevelByMonster = {};
+        this._allFightsResult = null;
+        this._upgradePlayerName = null;
+        this._houseScanNote = null;
+        this._restoredUpgradeAt = null;
+        this._restoredUpgradeMeta = null;
         // A fresh store rather than a cleared one: the runs live in storage, and
         // the next panel should read them back rather than start empty
         this._comparison = new LabComparisonStore();

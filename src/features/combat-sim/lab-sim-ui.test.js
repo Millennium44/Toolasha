@@ -1562,6 +1562,29 @@ describe('the skilling crate dropdowns follow the equipped crates', () => {
         expect(ui.panel.querySelector('#mwi-labsim-skilling-tea').value).toBe('/items/basic_tea_crate');
     });
 
+    test('tearing the panel down forgets what the departing character could clear', async () => {
+        // `_maxLevelByMonster` is the highest room level the sim found this
+        // character clearing, and it is only ever computed for a monster that is
+        // missing from it — so one that outlives the panel is handed to the
+        // arriving character's fight setup as their own `simMaxLevel`. The rest
+        // are readings of the same build that are redrawn, not re-derived.
+        ui._maxLevelByMonster = { '/monsters/cyclops': 260 };
+        ui._allFightsResult = { rows: [{ monsterHrid: '/monsters/cyclops' }] };
+        ui._upgradePlayerName = 'Departing';
+        ui._houseScanNote = '3 rooms';
+        ui._restoredUpgradeAt = 1000;
+        ui._restoredUpgradeMeta = { characterName: 'Departing' };
+
+        ui.destroy();
+
+        expect(ui._maxLevelByMonster).toEqual({});
+        expect(ui._allFightsResult).toBeNull();
+        expect(ui._upgradePlayerName).toBeNull();
+        expect(ui._houseScanNote).toBeNull();
+        expect(ui._restoredUpgradeAt).toBeNull();
+        expect(ui._restoredUpgradeMeta).toBeNull();
+    });
+
     test('combat crate dropdowns also default to the equipped crates', async () => {
         game.characterLabyrinth = {
             teaCrateItemHrid: '/items/advanced_tea_crate',
