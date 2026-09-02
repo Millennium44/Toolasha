@@ -92,7 +92,20 @@ class Zone {
             );
         }
 
-        // Random spawn path
+        // Random spawn path.
+        //
+        // The map's keys are read as exclusive ranges: a wave draws from the
+        // highest key it has reached. That is unconfirmed, and 51 ordinary waves
+        // recorded live in Chimerical Den do not fit it — species that exist only
+        // in the key-'0' table appear 27 times when the recording's ~8 key-'0'
+        // waves can supply about 15, and waves 30+ average 296 strength against
+        // this model's 353. A cumulative pool (the union of every table with
+        // key <= wave) is the obvious alternative but fits worse still: it
+        // predicts 4.3 monsters per wave against a measured 3.77, and 47-61
+        // key-'0'-only monsters against 27. The measurements point at the light
+        // tables covering a wider wave range rather than at the pools mixing, and
+        // no rule derivable from the keys reproduces that, so this stays as it is
+        // until per-wave rosters for waves 30+ settle it. See zone.test.js.
         const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;
 
         if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {
