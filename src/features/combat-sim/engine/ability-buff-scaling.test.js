@@ -114,4 +114,31 @@ describe('a self-targeted special ability buff', () => {
 
         expect(source.addBuff.mock.calls[0][0]).toBe(buff);
     });
+
+    test('does not scale to NaN when the buff names a skill combatDetails does not track', () => {
+        // combatDetails carries no `powerLevel` (power folds into meleeLevel), so
+        // a buff scaling off /skills/power resolves an undefined level; the pre-guard
+        // code multiplied by it and delivered flatBoost:NaN / ratioBoost:NaN, which
+        // poisons the buffed stat for the whole fight. With no resolvable level the
+        // buff is added unchanged, never scaled to NaN.
+        const source = caster();
+        const ability = { isSpecialAbility: true, hrid: '/abilities/test' };
+        const buff = {
+            uniqueHrid: '/buffs/test',
+            flatBoost: 5,
+            ratioBoost: 0.2,
+            duration: 1000,
+            multiplierForSkillHrid: '/skills/power',
+            multiplierPerSkillLevel: 0.1,
+        };
+        const abilityEffect = { targetType: 'self', buffs: [buff] };
+
+        CombatSimulator.prototype.processAbilityBuffEffect.call(fakeSim(), source, ability, abilityEffect);
+
+        const applied = source.addBuff.mock.calls[0][0];
+        expect(Number.isNaN(applied.flatBoost)).toBe(false);
+        expect(Number.isNaN(applied.ratioBoost)).toBe(false);
+        expect(applied.flatBoost).toBe(5);
+        expect(applied.ratioBoost).toBe(0.2);
+    });
 });

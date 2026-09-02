@@ -1632,9 +1632,19 @@ class CombatSimulator {
         if (!(ability.isSpecialAbility && buff.multiplierForSkillHrid && buff.multiplierPerSkillLevel > 0)) {
             return buff;
         }
-        const multiplier =
-            1.0 +
-            source.combatDetails[buff.multiplierForSkillHrid.split('/')[2] + 'Level'] * buff.multiplierPerSkillLevel;
+        // combatDetails tracks only stamina/intelligence/attack/melee/defense/
+        // ranged/magic levels; a buff may still name a combat skill outside that
+        // set (e.g. /skills/power, whose level combatDetails folds into melee).
+        // An unresolved level is undefined, and undefined * perSkillLevel is NaN,
+        // which the multiply below smears onto flatBoost and ratioBoost and
+        // silently poisons the buffed stat for the whole fight. No resolvable
+        // level means no scaling: return the buff unchanged, exactly as the
+        // pre-scaling self branch delivered it.
+        const skillLevel = source.combatDetails[buff.multiplierForSkillHrid.split('/')[2] + 'Level'];
+        if (!Number.isFinite(skillLevel)) {
+            return buff;
+        }
+        const multiplier = 1.0 + skillLevel * buff.multiplierPerSkillLevel;
         const currentBuff = { ...buff };
         currentBuff.flatBoost *= multiplier;
         currentBuff.ratioBoost *= multiplier;
