@@ -46,6 +46,7 @@ import {
 // with a fallback to the static import for dev single-bundle builds.
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { runningAction } from '../../utils/combat-actions.js';
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
 }
@@ -2624,7 +2625,9 @@ class TaskProfitDisplay {
         // Build a Set of actionHrids in the queue, and track which is first (active)
         const currentActions = dataManager.getCurrentActions();
         const queuedActionHrids = new Set(currentActions.map((a) => a.actionHrid));
-        const activeActionHrid = currentActions.length > 0 ? currentActions[0].actionHrid : null;
+        // queue[0] is insertion order, not the action running; a repeating action
+        // requeued to the front of the array is exactly what it mistook for active
+        const activeActionHrid = runningAction(currentActions)?.actionHrid ?? null;
 
         // Get React fiber root for quest extraction
         const rootEl = document.getElementById('root');

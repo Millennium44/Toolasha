@@ -107,6 +107,25 @@ describe('queue snapshot', () => {
         expect(queueSnapshot.getSnapshot('char1').actions[0].estimatedSeconds).toBe(500);
     });
 
+    test('lists the queue in execution order, not the array’s insertion order', async () => {
+        // A repeating action requeued to the front of the array with the
+        // highest ordinal, ahead of the one actually running: the snapshot used
+        // to list it first
+        game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
+        game.actionDetails['/actions/combat/fly'] = { name: 'Fly' };
+        game.actions = [
+            { actionHrid: '/actions/milking/basic', isDone: false, hasMaxCount: false, ordinal: 8589934588 },
+            { actionHrid: '/actions/combat/fly', isDone: false, hasMaxCount: false, ordinal: 0 },
+        ];
+        queueSnapshot.initialize();
+        await Promise.resolve();
+
+        game.dmHandlers.character_switching({ oldId: 'char1', oldName: 'Someone' });
+
+        const hrids = queueSnapshot.getSnapshot('char1').actions.map((entry) => entry.actionHrid);
+        expect(hrids).toEqual(['/actions/combat/fly', '/actions/milking/basic']);
+    });
+
     test('an infinite action contributes no seconds but is flagged', async () => {
         game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
         game.actions = [{ actionHrid: '/actions/milking/basic', isDone: false, hasMaxCount: false }];

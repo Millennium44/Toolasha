@@ -59,6 +59,7 @@ import { newKeyLedger, noteItems, sample, keyFlow, entryKeyFor } from '../../uti
 import { partyLevelGaps, isLevelGapped } from '../../utils/dungeon-level-gap.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { partyLuckPanel } from '../../utils/bundle-bridge.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
 const EXP_SECTION_SELECTOR = '[class*="BattlePanel_gainedExp"]';
@@ -255,7 +256,9 @@ class CombatDropLuck {
     _rememberContext(data) {
         try {
             const actions = dataManager.getCurrentActions();
-            const combatAction = actions.find((action) => action.actionHrid?.startsWith('/actions/combat/'));
+            // The zone actually being fought — the first combat entry in array
+            // order can be one queued behind it, and would attribute drops to it
+            const combatAction = runningCombatAction(actions);
             if (!combatAction) return;
 
             const characterId = dataManager.getCurrentCharacterId();

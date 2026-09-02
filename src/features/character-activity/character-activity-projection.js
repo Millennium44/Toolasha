@@ -66,7 +66,11 @@ function buildSegment({ actionObj, actionDetails, queuedIndex, startAt, endAt, c
  *      terminalCause is one of: 'idle' | 'action' | 'queue' | 'materials' | 'infinite' | 'unknown'
  */
 export function computeLiveProjection(now = Date.now()) {
-    const actions = (dataManager.getCurrentActions() || []).filter((action) => action && !action.isDone);
+    // Execution order is ascending ordinal; the array is insertion order, so a
+    // repeating action requeued to the front would otherwise head the projection
+    const actions = (dataManager.getCurrentActions() || [])
+        .filter((action) => action && !action.isDone)
+        .sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0));
 
     if (actions.length === 0) {
         return { segments: [], terminalCause: 'idle', terminalAt: now, certainty: 'trustworthy' };

@@ -91,11 +91,11 @@ const SINGLE_COPY_FEATURES = new Set([
 const ALLOWLIST = new Map([
     [
         'src/utils/combat-actions.js',
-        // One exported pure function over the actions array it is handed, no
-        // module state. Imported by the combat bundle (the header chips) and the
-        // sim bundle (the accuracy recorder's zone lookup); two copies pick the
-        // same running action identically to one.
-        'stateless single-function action selector; no module state to share',
+        // Pure functions over the actions array they are handed, no module
+        // state. Imported wherever a feature asks "which action is running" —
+        // combat, sim, actions, alchemy, tasks, character-activity and the
+        // queue monitor; every copy picks the same running action.
+        'stateless running-action selectors; no module state to share',
     ],
     [
         'src/utils/yield-to-browser.js',

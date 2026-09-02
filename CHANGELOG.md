@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Every "what am I doing right now" reader uses the action actually running
+
+A sweep of the same bug that mislabeled dungeon recordings and tiers earlier today found eight more readers picking "the current action" by its position in the queue array instead of by execution order. The array is insertion order, and a repeating action gets requeued to its front with a higher ordinal, so with anything queued behind a running action those readers could describe the queued one: drop luck attributed drops to the wrong zone; the sim export read the wrong zone and tier; the task panel took the first array entry as active; the alchemy profit panel priced a queued alchemy action; the enhancement display and the missing-materials button read a queued enhance's item; and the activity projection and queue snapshot listed the queue in insertion order. All eight now go through one shared "running action" helper, which the header chips, sim and dungeon tracker already use.
+
 ### The dungeon pace chip reads true at every wave, not just the last one
 
 The pace compared the average of the waves you had done so far against your whole-run average — but waves get harder through a dungeon, so at wave 10 you had only done the easy ones and it read "+50% faster" for a run that finished +5%. It now works like race splits: your cumulative time at wave N against your own historical cumulative at wave N, so it is honest from the first few waves on. To make that possible the tracker now keeps each validated party run's per-wave times in history (chat-backfilled runs never had any); the profile builds up from runs recorded after this change, with a sanity check so nothing malformed can enter it, and the old whole-run comparison stays as the fallback until then.

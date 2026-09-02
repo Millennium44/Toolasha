@@ -65,7 +65,9 @@ class QueueSnapshot {
             let totalQueueSeconds = 0;
             let hasInfiniteAction = false;
 
-            for (const action of actions) {
+            // Execution order is ascending ordinal; the array is insertion order
+            const ordered = [...actions].sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0));
+            for (const action of ordered) {
                 if (action.isDone) continue;
 
                 const actionDetails = dataManager.getActionDetails(action.actionHrid);

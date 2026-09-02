@@ -7,6 +7,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 /**
  * Warn (not block) when a GM-bridged value is older than this. No user-facing setting — a
@@ -593,13 +594,14 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         importedPlayerPositions[0] = true;
 
         // Get current combat zone and tier
-        for (const action of characterObj.characterActions || []) {
-            if (action && action.actionHrid.includes('/actions/combat/')) {
-                zone = action.actionHrid;
-                difficultyTier = action.difficultyTier || 0;
-                isZoneDungeon = clientObj?.actionDetailMap?.[action.actionHrid]?.combatZoneInfo?.isDungeon || false;
-                break;
-            }
+        // The zone being fought, by execution order: the first combat entry in
+        // array order can be one queued behind it. A finished entry still names
+        // a zone for an export taken the instant combat ends, as before.
+        const action = runningCombatAction(characterObj.characterActions, { includeFinished: true });
+        if (action) {
+            zone = action.actionHrid;
+            difficultyTier = action.difficultyTier || 0;
+            isZoneDungeon = clientObj?.actionDetailMap?.[action.actionHrid]?.combatZoneInfo?.isDungeon || false;
         }
     } else {
         let slotIndex = 1;

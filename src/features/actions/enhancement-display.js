@@ -21,6 +21,7 @@ import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tes
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -876,7 +877,10 @@ function formatEnhancementDisplay(
 
         // Try to get level from the action queue first
         const currentActions = dataManager.getCurrentActions();
-        const enhancingAction = currentActions.find((a) => a.actionHrid === '/actions/enhancing/enhance');
+        // The enhance action running now: with several items queued, the first
+        // enhance entry in array order can be a queued one, whose item this
+        // would then read
+        const enhancingAction = runningAction(currentActions, (a) => a.actionHrid === '/actions/enhancing/enhance');
         if (enhancingAction?.primaryItemHash) {
             const parts = enhancingAction.primaryItemHash.split('::');
             const lastPart = parts[parts.length - 1];

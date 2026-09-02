@@ -40,6 +40,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 /**
  * Module-level state
@@ -322,7 +323,9 @@ function processEnhancingPanel(panel) {
 function getCurrentEnhancementLevel(panel) {
     // Try action queue first
     const currentActions = dataManager.getCurrentActions();
-    const enhancingAction = currentActions.find((a) => a.actionHrid === '/actions/enhancing/enhance');
+    // The enhance action running now, not the first enhance entry in array
+    // order (a queued one, with several items lined up)
+    const enhancingAction = runningAction(currentActions, (a) => a.actionHrid === '/actions/enhancing/enhance');
     if (enhancingAction?.primaryItemHash) {
         const parts = enhancingAction.primaryItemHash.split('::');
         const lastPart = parts[parts.length - 1];

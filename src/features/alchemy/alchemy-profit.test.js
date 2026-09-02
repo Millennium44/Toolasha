@@ -79,6 +79,18 @@ afterEach(() => {
 });
 
 describe('getCurrentActionHrid', () => {
+    test('picks the running alchemy action by execution order, not the first in the array', () => {
+        // A repeating alchemy action requeued to the front of the array with
+        // the highest ordinal, ahead of the one actually running: the old
+        // first-match loop priced the queued one
+        game.currentActions = [
+            { actionHrid: '/actions/alchemy/transmute', isDone: false, ordinal: 8589934588 },
+            { actionHrid: '/actions/milking/cow', isDone: false, ordinal: 1 },
+            { actionHrid: '/actions/alchemy/coinify', isDone: false, ordinal: 0 },
+        ];
+        expect(alchemyProfit.getCurrentActionHrid()).toBe('/actions/alchemy/coinify');
+    });
+
     test('picks the alchemy action out of the queue', () => {
         game.currentActions = [{ actionHrid: '/actions/milking/cow' }, { actionHrid: '/actions/alchemy/coinify' }];
 

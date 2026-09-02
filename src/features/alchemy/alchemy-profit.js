@@ -18,6 +18,7 @@
 
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
+import { runningAction } from '../../utils/combat-actions.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 class AlchemyProfit {
@@ -31,14 +32,11 @@ class AlchemyProfit {
             const currentActions = dataManager.getCurrentActions();
             if (!currentActions || currentActions.length === 0) return null;
 
-            // Find alchemy action (type = /action_types/alchemy)
-            for (const action of currentActions) {
-                if (action.actionHrid && action.actionHrid.startsWith('/actions/alchemy/')) {
-                    return action.actionHrid;
-                }
-            }
-
-            return null;
+            // The running alchemy action, by execution order — the first alchemy
+            // entry in array order can be one queued behind it, and the panel
+            // would price that one instead
+            const action = runningAction(currentActions, (a) => a.actionHrid?.startsWith('/actions/alchemy/'));
+            return action?.actionHrid ?? null;
         } catch (error) {
             console.error('[AlchemyProfit] Failed to get current action HRID:', error);
             return null;
