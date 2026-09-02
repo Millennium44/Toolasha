@@ -1507,6 +1507,13 @@ class DungeonTracker {
             // Reset hibernation detection
             this.hibernationDetected = false;
 
+            // The five-second veto `canRestoreRecord` applies after a run
+            // completes, guarding against a record whose IndexedDB clear is
+            // still in flight. That clear is this character's, and so is the
+            // veto: carried across a switch it refuses the ARRIVING character's
+            // genuine in-progress record, which is not stale at all.
+            this._lastCompletionTime = 0;
+
             if (this.visibilityHandler) {
                 document.removeEventListener('visibilitychange', this.visibilityHandler);
                 this.visibilityHandler = null;

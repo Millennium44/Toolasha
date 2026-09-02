@@ -1570,6 +1570,20 @@ describe('switching characters', () => {
         expect(stored()).toBeUndefined();
     });
 
+    test('cleanup drops the just-completed veto that would refuse the next character', async () => {
+        // `canRestoreRecord` refuses any record for five seconds after a run
+        // completes, because that run's own record may still be being cleared.
+        // Switch characters inside those five seconds and the veto is applied
+        // to the arriving character's record instead — which is live, not
+        // stale, so their in-progress run is silently dropped.
+        tracker._lastCompletionTime = Date.now();
+
+        await tracker.cleanup();
+
+        expect(tracker._lastCompletionTime).toBe(0);
+        expect(tracker.canRestoreRecord({ battleId: 42, lastUpdateTime: Date.now() }, 42)).toBe(true);
+    });
+
     test('a record read that lands after the switch is not restored', async () => {
         game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
         mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
