@@ -1126,8 +1126,16 @@ class DungeonTracker {
             return;
         }
 
-        // Update current wave
-        this.waveStartTime = new Date(data.combatStartTime);
+        // Per-wave timing is measured from the client clock, not
+        // data.combatStartTime: that field is the combat action's start — the
+        // run's start — and is the SAME value on every wave's new_battle, not
+        // each wave's own start. Using it made every waveTimes entry the
+        // cumulative elapsed since the run began (808s, 819s, 828s, …) instead
+        // of a ~10s wave, inflating avgWaveTime ~60× and turning the pace chip
+        // and the ETA into nonsense. new_battle arrives at the wave's start, so
+        // Date.now() here is that wave's start. (The run anchor still uses
+        // combatStartTime in startDungeon, which is correct for run totals.)
+        this.waveStartTime = new Date();
         this.currentRun.currentWave = data.wave;
 
         this.notifyUpdate();

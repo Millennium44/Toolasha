@@ -31,6 +31,23 @@ describe('a stored run’s wave average', () => {
         expect(runAvgWaveMs(chatRun('Chimerical Den', 500_000), 0)).toBeNull();
         expect(runAvgWaveMs(null, MAX_WAVES)).toBeNull();
     });
+
+    test('a stated average that dwarfs the run total is the corrupt-timing artefact, so the total wins', () => {
+        // A run recorded while per-wave timing was anchored to the constant
+        // run-start: its avgWaveTime is the cumulative-elapsed garbage (~800s),
+        // tens of times the real ~10s the 500s/50-wave total implies.
+        expect(runAvgWaveMs({ avgWaveTime: 826_000, duration: 500_000 }, MAX_WAVES)).toBe(10_000);
+    });
+
+    test('a stated average close to the run total is trusted as the real measurement', () => {
+        // 9s stated against a 10s duration-derived figure is ordinary variance,
+        // not corruption — the more precise stated value stands.
+        expect(runAvgWaveMs({ avgWaveTime: 9_000, duration: 500_000 }, MAX_WAVES)).toBe(9_000);
+    });
+
+    test('with no run total to sanity-check against, a stated average is taken as given', () => {
+        expect(runAvgWaveMs({ avgWaveTime: 826_000 }, MAX_WAVES)).toBe(826_000);
+    });
 });
 
 describe('the stored average for a dungeon', () => {

@@ -293,6 +293,11 @@ describe('starting a run', () => {
     });
 
     test('a later wave while already tracking only moves the wave along', async () => {
+        // combatStartTime is the run's start, constant across waves, so the new
+        // wave is clocked from now (its own start), not from that field.
+        const clockNow = Date.parse('2026-08-04T10:07:30.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(clockNow);
         beTracking({ currentWave: 3, battleId: 42 });
 
         await tracker.onNewBattle({ wave: 4, battleId: 99, combatStartTime: '2026-08-04T10:05:00.000Z' });
@@ -301,7 +306,8 @@ describe('starting a run', () => {
         expect(tracker.currentRun.currentWave).toBe(4);
         // The battleId is refreshed so a re-login mid-dungeon still persists
         expect(tracker.currentBattleId).toBe(99);
-        expect(tracker.waveStartTime.getTime()).toBe(Date.parse('2026-08-04T10:05:00.000Z'));
+        expect(tracker.waveStartTime.getTime()).toBe(clockNow);
+        vi.useRealTimers();
     });
 
     test('a resent wave 0 while still on wave 0 only refreshes the battle, not the run', async () => {
@@ -806,6 +812,40 @@ describe('a canceled battle start', () => {
         await flush();
 
         expect(tracker.isTracking).toBe(true);
+    });
+});
+
+describe('per-wave timing', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('each wave is timed from its own start, not the constant run-start combatStartTime', async () => {
+        // The real game sends the SAME combatStartTime on every wave's
+        // new_battle — it is the combat action's (run's) start, not the wave's.
+        // Timing a wave from it makes every entry the cumulative elapsed since
+        // the run began, which is what wrecked the pace chip and the ETA.
+        const RUN_START = '2026-08-04T10:00:00.000Z';
+        const t0 = Date.parse(RUN_START);
+        vi.useFakeTimers();
+        vi.setSystemTime(t0);
+
+        beTracking({ startTime: t0, currentWave: 1, wavesCompleted: 0, maxWaves: 10, waveTimes: [] });
+
+        // Three waves, each ~10s apart on the wall clock, all carrying the same
+        // (run-start) combatStartTime.
+        for (let wave = 1; wave <= 3; wave++) {
+            vi.setSystemTime(t0 + wave * 10_000);
+            tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave, isDone: false } });
+            tracker.startWave({ wave: wave + 1, battleId: 42, combatStartTime: RUN_START });
+        }
+
+        // Per-wave gaps (~10s each), not the cumulative 10s/20s/30s the old code
+        // produced from the frozen run-start anchor.
+        expect(tracker.waveTimes).toEqual([10_000, 10_000, 10_000]);
+
+        const run = tracker.getCurrentRun();
+        expect(run.avgWaveTime).toBe(10_000);
     });
 });
 

@@ -20,6 +20,17 @@
 export const MIN_WAVES_FOR_PACE = 3;
 
 /**
+ * How far a stored run's own avgWaveTime may exceed its duration-derived wave
+ * time before it is treated as corrupt and the duration is trusted instead. A
+ * real avgWaveTime sits just under duration/maxWaves (the run total also
+ * carries inter-wave gaps), never multiples above it — a run recorded while
+ * per-wave timing was anchored to the constant run-start clocked every wave as
+ * the cumulative elapsed since the run began, leaving avgWaveTime tens of times
+ * too large. The run total was always right, so its per-wave figure heals those.
+ */
+export const STATED_AVG_SANITY_RATIO = 3;
+
+/**
  * A stored run's average wave time.
  *
  * @param {Object} run - A stored run
@@ -29,14 +40,23 @@ export const MIN_WAVES_FOR_PACE = 3;
 export function runAvgWaveMs(run, maxWaves) {
     if (!run) return null;
 
-    const stated = Number(run.avgWaveTime);
-    if (Number.isFinite(stated) && stated > 0) return stated;
-
     const duration = Number(run.duration ?? run.totalTime);
-    if (Number.isFinite(duration) && duration > 0 && Number.isFinite(maxWaves) && maxWaves > 0) {
-        return duration / maxWaves;
+    const fromDuration =
+        Number.isFinite(duration) && duration > 0 && Number.isFinite(maxWaves) && maxWaves > 0
+            ? duration / maxWaves
+            : null;
+
+    const stated = Number(run.avgWaveTime);
+    if (Number.isFinite(stated) && stated > 0) {
+        // Trust the run total over a stated average that dwarfs it — that
+        // average is the corrupt cumulative-timing artefact, not this run.
+        if (fromDuration !== null && stated > fromDuration * STATED_AVG_SANITY_RATIO) {
+            return fromDuration;
+        }
+        return stated;
     }
-    return null;
+
+    return fromDuration;
 }
 
 /**
