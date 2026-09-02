@@ -912,6 +912,13 @@ class CombatSimulator {
             );
             if (deadEnemies.length > 0) {
                 deadEnemies.forEach((enemy) => {
+                    // A missing or zero enrageTime means the monster never enrages;
+                    // dividing by it would make experienceRate NaN and silently poison
+                    // all XP, so treat it as the un-enraged base rate.
+                    if (!enemy.enrageTime) {
+                        enemy.experienceRate = 1.0;
+                        return;
+                    }
                     let aliveDuration = this.simulationTime - this.enrageBeginTime;
                     if (aliveDuration > enemy.enrageTime) {
                         aliveDuration = enemy.enrageTime;
@@ -1310,6 +1317,11 @@ class CombatSimulator {
         this.enemies
             .filter((enemy) => enemy.combatDetails.currentHitpoints > 0)
             .forEach((enemy) => {
+                // A missing or zero enrageTime means the monster never enrages;
+                // dividing by it would floor to Infinity and jump straight to max stacks.
+                if (!enemy.enrageTime) {
+                    return;
+                }
                 const nowStack = Math.min(maxEnrageStack, Math.floor(event.encounterTime / enemy.enrageTime));
 
                 if (nowStack <= 0) {

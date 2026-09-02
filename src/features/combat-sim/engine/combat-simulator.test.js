@@ -782,3 +782,45 @@ describe('dying in an ordinary zone', () => {
         expect(zone.dungeonsFailed).toBe(0);
     });
 });
+
+/**
+ * A monster with a missing or zero enrageTime must not poison XP.
+ *
+ * checkEncounterEnd divides by enrageTime to compute experienceRate; a
+ * degenerate 0/absent value made it NaN, and NaN slips past both the `=== 0`
+ * re-check and the `<= 0` warning, silently zeroing every awarded XP total.
+ */
+describe('a monster with no enrage time', () => {
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('yields finite XP instead of NaN', () => {
+        installGameData();
+        seedSimRng(7);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = 5 * ONE_SECOND;
+        sim.enrageBeginTime = 0;
+        player.reset(sim.simulationTime);
+
+        const victim = new Monster(TOAD_HRID, 0);
+        victim.reset(sim.simulationTime);
+        // Degenerate game data: enrageTime absent/zero
+        victim.enrageTime = 0;
+        victim.combatDetails.currentHitpoints = 0;
+        sim.enemies = [victim];
+
+        sim.checkEncounterEnd();
+
+        expect(victim.experienceRate).toBe(1.0);
+        const xp = sim.simResult.experienceGained.player1;
+        Object.values(xp).forEach((value) => expect(Number.isFinite(value)).toBe(true));
+        expect(xp.melee).toBeGreaterThan(0);
+    });
+});
