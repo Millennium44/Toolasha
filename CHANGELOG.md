@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Clickable names on more guild lines, and two engine guards
+
+Guild chat now turns player names into profile links on two more message shapes: "X has been kicked by Y" links both names, and "X has upgraded Guild <building> to level N" links the upgrader — in the main chat and the pop-out both. Two combat-sim engine gaps are closed defensively (no change to any build that sims correctly today, correct the day the game ships something that would trip them): a self-targeted special ability's skill-scaling buff is now scaled the way an ally-targeted one already was, and a damage-over-time or heal whose duration is not a whole multiple of its tick interval can no longer deliver more than its stated total.
+
 ### The crafting plan can craft what the market is too thin to sell you
 
 New opt-in setting (off by default): when the best crafting plan would have you buy an intermediate the market barely stocks, it crafts that leg instead. The check reads how many units are actually listed at the best ask from the pooled market data, and re-routes a buy to craft only when fewer are listed than the plan needs of that material — so it no longer tells you to buy ten of something the market has one of. It acts only on a real "fewer than N listed" reading: an item the pooled data has never seen, or a raw material with no recipe, is left as a buy, and the plan is never blocked. A re-routed leg is costed and shopping-listed at its craft path, and it respects the plan's own modes — buy-raw-only and no-processing still win where they forbid crafting.
