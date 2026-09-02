@@ -853,6 +853,22 @@ describe('opening, folding and switching', () => {
         expect(combatLevelPanel.panel).toBe(null);
     });
 
+    test('a closed panel still forgets the targets the last character was aiming at', () => {
+        // The reset used to sit behind the `if (!panel) return` guard above, so
+        // it only ran when the panel happened to be open at the moment of the
+        // switch. `targets` is keyed by skill name, which every character
+        // shares, so the arriving character opened the panel already aiming at
+        // levels the departing one had typed.
+        expect(combatLevelPanel.panel).toBe(null);
+        combatLevelPanel.targets['/skills/melee'] = 150;
+        combatLevelPanel.lookup = { from: 90, to: 120 };
+
+        dataManager.emit('character_switched', {});
+
+        expect(combatLevelPanel.targets).toEqual({});
+        expect(combatLevelPanel.lookup).toEqual({ from: null, to: null });
+    });
+
     test('switching to a character with more combat experience does not credit the gap to this session', async () => {
         // The one direction `sessionIsStale` cannot see: experience going *up*
         // across a switch looks exactly like a very good few seconds of combat.

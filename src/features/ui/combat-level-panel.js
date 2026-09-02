@@ -1735,10 +1735,17 @@ dataManager.on('character_switching', clearSessionState);
 dataManager.on('character_switched', () => {
     clearSessionState();
 
-    if (!combatLevelPanel.panel) return;
-    combatLevelPanel.hide();
+    // Before the panel guard, not after it. Both are levels one character was
+    // aiming at, keyed by skill name — which every character shares — and the
+    // early return below fires whenever the panel happens to be closed at the
+    // moment of the switch. The arriving character then opened the panel on the
+    // departing character's goals, with every "time to target" measured against
+    // a level they never chose.
     combatLevelPanel.targets = {};
     combatLevelPanel.lookup = { from: null, to: null };
+
+    if (!combatLevelPanel.panel) return;
+    combatLevelPanel.hide();
     combatLevelPanel.show();
 });
 
