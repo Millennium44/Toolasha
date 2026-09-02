@@ -20,6 +20,7 @@ import { describe, test, expect, afterEach } from 'vitest';
 import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
 import CombatStartEvent from './events/combat-start-event.js';
+import DamageOverTimeEvent from './events/damage-over-time-event.js';
 import EnemyRespawnEvent from './events/enemy-respawn-event.js';
 import { getGameData, setGameData } from './game-data.js';
 import Labyrinth from './labyrinth.js';
@@ -822,5 +823,47 @@ describe('a monster with no enrage time', () => {
         const xp = sim.simResult.experienceGained.player1;
         Object.values(xp).forEach((value) => expect(Number.isFinite(value)).toBe(true));
         expect(xp.melee).toBeGreaterThan(0);
+    });
+});
+
+/**
+ * A damage-over-time tick must never re-kill a corpse.
+ *
+ * Every melee death site reads targetWasAlive before the blow so a zero-damage
+ * hit on a downed unit is not credited as a fresh death; the DoT tick lacked
+ * that guard. It is currently unreachable (clearEventsForUnit drops queued DoT
+ * ticks on death), but one event-ordering change from double-counting a kill —
+ * and deaths[monsterHrid] prices a run's loot.
+ */
+describe('a damage-over-time tick on a corpse', () => {
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('does not count a second death on an already-dead unit', () => {
+        installGameData();
+        seedSimRng(5);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+
+        const victim = new Monster(TOAD_HRID, 0);
+        victim.reset(sim.simulationTime);
+        sim.enemies = [victim];
+
+        // Already down and already counted once
+        victim.combatDetails.currentHitpoints = 0;
+        sim.simResult.addDeath(victim);
+        expect(sim.simResult.deaths[TOAD_HRID]).toBe(1);
+
+        const tick = new DamageOverTimeEvent(sim.simulationTime, player, victim, 100, 5, 1, '/combat_styles/smash');
+        sim.processDamageOverTimeTickEvent(tick);
+
+        expect(sim.simResult.deaths[TOAD_HRID]).toBe(1);
     });
 });

@@ -1163,6 +1163,10 @@ class CombatSimulator {
     }
 
     processDamageOverTimeTickEvent(event) {
+        // Read before the tick so a corpse can never be credited as a fresh death:
+        // a tick landing on an already-dead unit does 0 damage and must not re-kill it.
+        const targetWasAlive = event.target.combatDetails.currentHitpoints > 0;
+
         const tickDamage = CombatUtilities.calculateTickValue(event.damage, event.totalTicks, event.currentTick);
         const damage = Math.min(tickDamage, event.target.combatDetails.currentHitpoints);
 
@@ -1185,7 +1189,7 @@ class CombatSimulator {
             this.eventQueue.addEvent(damageOverTimeTickEvent);
         }
 
-        if (event.target.combatDetails.currentHitpoints === 0) {
+        if (targetWasAlive && event.target.combatDetails.currentHitpoints === 0) {
             this.eventQueue.clearEventsForUnit(event.target);
             this.simResult.addDeath(event.target);
             if (!event.target.isPlayer) {
