@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### What the sim gets right and wrong about dungeon wave rosters, written down
+
+Chasing the dungeon sim's long clear times turned up a real gap in how random dungeon waves are drawn, and 138 live-recorded waves now pin down its shape. The wave-number thresholds in the spawn tables are right, and a wave really is drawn whole from one table rather than from a pool of them; what the code gets wrong is assuming it is always the highest table a wave has reached, when about one wave in six is a clean draw from a lower one. Nobody knows the rule behind that yet, and the obvious guesses trade one error for a bigger one, so the behaviour is unchanged and the evidence is recorded in the code and in tests instead of guessed at.
+
 ### A wave-by-wave diagnostic for dungeon sim timing
 
 A dungeon run that sims long could be slow to start each wave or slow to finish it, and a run total cannot tell those apart. The simulator now records, per dungeon wave, how long after the wave spawned the party landed its first hit, and a console diagnostic — `Toolasha.Debug.dungeonWaveTiming()` — lines the dungeon recording in memory up against the last dungeon simulation wave by wave: first-hit windup and fight length on each side, plus the real respawn gap. Start the recorder before a run, let it cover a full clear, run the dungeon in the Combat Sim, then call it. (The first cut of this carried the simulator's clock on the result the worker posts back, which broke every worker-run simulation; fixed before release. Its recording parser also now reads the combat feed as it actually is: a wave's `new_battle` carries the whole wave, the `battle_updated` ticks after it are deltas, and wave numbers are 1-based.)
