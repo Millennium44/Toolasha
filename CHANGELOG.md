@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The sim's dungeon clear time matches the game instead of always reading longer
+
+The Combat Sim's average dungeon completion time was total simulated time divided by dungeons completed — but the numerator also carried every failed attempt's time and the half-finished final run still going at the cutoff, while the denominator counted only clean clears, so the figure was always longer than the real in-game time. It now measures the way the dungeon tracker does: the time between one successful clear and the next, over consecutive successful runs only, so the two numbers finally describe the same thing. (The suggested cause — the sim not resetting buffs and cooldowns between runs — was checked and ruled out: it carries them forward, which would make the sim faster, not slower.)
+
 ### Audit round: a mis-weaponed import, and a zone sweep judged by the wrong player
 
 A build pasted in via a Shykai export string was equipped under a key the sim engine never reads, so every imported piece's weapon style, attack speed, charm focus and pouch slots reverted to unarmed defaults — the import fought naked-handed while looking fully geared. Generic stats survived, which is why it hid. Separately, the all-zones sweep's early-exit pruning judged a tier by the party total (and priced profit for player 1) while the table shows only your own numbers, so in a party or when you are not in the first slot it could write off a tier still climbing for you. Solo play was unaffected. The upgrade advisor's ranking and budget solver were re-audited and hold — a couple of budget edge cases gained test coverage.
