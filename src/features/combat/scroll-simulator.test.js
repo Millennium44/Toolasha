@@ -164,6 +164,42 @@ describe('scroll simulator', () => {
         expect(game.saved['scroll_simulation_char1']).toEqual({ Fishing: ['char1_scroll'] });
     });
 
+    test('a boot read the character moved under still ends up loaded and saving', async () => {
+        // `initialize()` is called once, at boot, and only the switch handler
+        // ever calls it again. A refused read that returned before registering
+        // that handler left the module dead for the session: `owner` null, so
+        // every scroll selection the player ticked was refused with nothing but
+        // a console line, and nothing simulated any scroll at all.
+        game.saved['scroll_simulation_char2'] = { __default__: ['char2_scroll'] };
+        scrollSimulator.scrollsByLoadout = {};
+        scrollSimulator.owner = null;
+        scrollSimulator.initialized = false;
+        scrollSimulator.switchHandler = null;
+        game.switchHandlers = [];
+
+        let release;
+        game.hold = new Promise((resolve) => {
+            release = resolve;
+        });
+        const boot = scrollSimulator.initialize();
+        // The id moves with no `character_switched` behind it, so nothing else
+        // is coming to make the read again
+        game.characterId = 'char2';
+        game.hold = null;
+        release();
+        await boot;
+
+        expect(scrollSimulator.owner).toBe('char2');
+        expect(scrollSimulator.getScrollsForLoadout(null)).toEqual(new Set(['char2_scroll']));
+        expect(game.switchHandlers).toHaveLength(1);
+
+        await scrollSimulator.saveScrollsForLoadout('Mining', ['char2_mining']);
+        expect(game.saved['scroll_simulation_char2']).toEqual({
+            __default__: ['char2_scroll'],
+            Mining: ['char2_mining'],
+        });
+    });
+
     test('a save is refused when the selections in memory are not this character’s', async () => {
         await scrollSimulator.saveScrollsForLoadout(null, ['char1_scroll']);
         game.characterId = 'char2';

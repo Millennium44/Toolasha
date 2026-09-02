@@ -37,6 +37,9 @@ function storageKeyFor(charId) {
     return `${STORAGE_KEY_PREFIX}_${charId}`;
 }
 
+/** How many times one `initialize()` may re-read after finding the character moved under it */
+const INIT_ATTEMPTS = 3;
+
 class ScrollSimulator {
     constructor() {
         /** @type {Object.<string, Set<string>>} loadoutName → Set of buffTypeHrids */
@@ -60,40 +63,61 @@ class ScrollSimulator {
 
     async initialize() {
         if (this.initialized) return;
-        // Captured before the read: the hydration below used to assign into
-        // whatever `scrollsByLoadout` held when it landed, so a load still in
-        // flight across a switch added the departing character's loadout
-        // selections on top of the arriving character's — simulating scroll
-        // buffs they have not bought, in every profit and XP figure on screen,
-        // and storing the union under their key on the next save.
-        const charId = currentCharId();
-        const started = this._generation;
-        const saved = await storage.getJSON(storageKeyFor(charId), 'settings', {});
-        if (this._generation !== started || currentCharId() !== charId) return;
+        // Registered before the read, not after it. The boot call is the only
+        // one anybody makes, so a read the guard below refused used to return
+        // without ever reaching this: no switch handler, `owner` left null and
+        // `initialized` left false for the rest of the session, which is every
+        // scroll selection silently unsaved and no scrolls simulated at all.
+        this._registerSwitchHandler();
 
-        // A selection saved while the read was in flight is this character's
-        // own and wins over the stored copy, as everywhere else in the codebase
-        const held = this.owner === charId ? this.scrollsByLoadout : {};
-        const next = { ...held };
-        for (const [name, arr] of Object.entries(saved)) {
-            if (Array.isArray(arr) && !(name in held)) {
-                next[name] = new Set(arr);
+        // Bounded rather than a single pass: a read that no longer speaks for
+        // the character it was made for has to be made again, and only a switch
+        // the handler above actually saw has somebody else to make it.
+        for (let attempt = 0; attempt < INIT_ATTEMPTS && !this.initialized; attempt += 1) {
+            // Captured before the read: the hydration below used to assign into
+            // whatever `scrollsByLoadout` held when it landed, so a load still in
+            // flight across a switch added the departing character's loadout
+            // selections on top of the arriving character's — simulating scroll
+            // buffs they have not bought, in every profit and XP figure on screen,
+            // and storing the union under their key on the next save.
+            const charId = currentCharId();
+            const started = this._generation;
+            const saved = await storage.getJSON(storageKeyFor(charId), 'settings', {});
+            // The switch handler is reloading for the arriving character already
+            if (this._generation !== started) return;
+            // The id moved with no switch event behind it, so nothing else will
+            if (currentCharId() !== charId) continue;
+
+            // A selection saved while the read was in flight is this character's
+            // own and wins over the stored copy, as everywhere else in the codebase
+            const held = this.owner === charId ? this.scrollsByLoadout : {};
+            const next = { ...held };
+            for (const [name, arr] of Object.entries(saved)) {
+                if (Array.isArray(arr) && !(name in held)) {
+                    next[name] = new Set(arr);
+                }
             }
+            this.scrollsByLoadout = next;
+            this.owner = charId;
+            this.initialized = true;
         }
-        this.scrollsByLoadout = next;
-        this.owner = charId;
-        this.initialized = true;
+    }
 
-        if (!this.switchHandler) {
-            this.switchHandler = async () => {
-                this._generation += 1;
-                this.scrollsByLoadout = {};
-                this.owner = null;
-                this.initialized = false;
-                await this.initialize();
-            };
-            dataManager.on('character_switched', this.switchHandler);
-        }
+    /**
+     * Listen for the switch that makes the selections in memory somebody else's.
+     * Idempotent; the listener outlives every reload it triggers.
+     * @private
+     */
+    _registerSwitchHandler() {
+        if (this.switchHandler) return;
+        this.switchHandler = async () => {
+            this._generation += 1;
+            this.scrollsByLoadout = {};
+            this.owner = null;
+            this.initialized = false;
+            await this.initialize();
+        };
+        dataManager.on('character_switched', this.switchHandler);
     }
 
     /**
