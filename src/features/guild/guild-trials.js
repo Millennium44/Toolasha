@@ -2636,6 +2636,23 @@ class GuildTrials {
             // keyed by trial name alone, and the scoreboard reads it by that name
             guildTrialStatsModal.reset?.();
             this.phase = null;
+            // The socket's own reading of the guild that has just been left.
+            // `currentTrials` is the only trial signal that arrives with the
+            // panel shut, and `_trialBudgetMs` counts its `budgetRemainingMs`
+            // down from when it landed — so the arriving character's card draws
+            // the departing guild's hour ticking away, and only stops when that
+            // hour would have run out anyway. `socketPhase` is the phase that
+            // same message implied, which `_noteLifecycle` falls back on
+            // wherever the page says nothing.
+            this.currentTrials = null;
+            this.socketPhase = null;
+            // The forecast the per-player panel echoes, and the render state
+            // that decides which card is allowed to replace it. Rebuilt every
+            // render pass from a card, so with no card of the arriving
+            // character's own there is nothing to displace the old one.
+            this.lastForecast = null;
+            this.watchedPool = null;
+            this.contextRank = 0;
             // The recorder session cached for the last-trial readout is the
             // departing character's; the arriving one is asked for afresh
             this.lastSession = null;

@@ -2954,6 +2954,26 @@ describe('the panel, end to end', () => {
         expect(guildTrials.record?.tiles?.['skilling::alchemy']).toBeUndefined();
     });
 
+    test('a character switch drops the departing guild’s socket reading of its trials', async () => {
+        // `currentTrialsData` off `guild_updated` is the one trial signal that
+        // does not need the panel open, and `_trialBudgetMs` counts its stated
+        // budget down from when it arrived. Carried across a switch it is the
+        // guild that has just been left: the arriving character's card draws
+        // that guild's hour ticking away, and stops only once the hour it
+        // stated would have elapsed. `socketPhase` says a trial is live for as
+        // long as the page says nothing to the contrary.
+        guildTrials.currentTrials = { combat: { inProgress: true, budgetRemainingMs: 600_000 }, at: now };
+        guildTrials.socketPhase = 'live';
+        guildTrials.lastForecast = { tier: 3, points: 900 };
+
+        guildTrials._forgetCharacter(222);
+
+        expect(guildTrials.currentTrials).toBeNull();
+        expect(guildTrials.socketPhase).toBeNull();
+        expect(guildTrials.lastForecast).toBeNull();
+        expect(guildTrials._trialBudgetMs('combat', now)).toBeNull();
+    });
+
     test('a watched fight feeds the pool to a card the game draws no bar on', async () => {
         // The Trials tab's combat card carries a level and no bar at all, so
         // every projection said "measuring…" for the whole hour. The spectator
