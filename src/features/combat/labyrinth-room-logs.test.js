@@ -1330,4 +1330,21 @@ describe('teardown is awaitable, so the switch waits for the log to land', () =>
         vi.useRealTimers();
         labyrinthRoomLogs.simSource = null;
     });
+
+    test('disable() forgets the accuracy snapshot and the replay verdict', async () => {
+        // Both are readings of one character's fight record. `exportAccuracy`
+        // and `exportSanitized` fall back to `lastAccuracy` when no accuracy
+        // view has been drawn, and the sanitized export stamps the *current*
+        // character's identity onto whatever it exports — so a snapshot that
+        // survives a character switch is filed as the arriving character's own
+        // fights. The replay verdict is drawn at the top of the accuracy view
+        // for the same reason.
+        labyrinthRoomLogs.lastAccuracy = { rows: [{ subjectHrid: '/monsters/cyclops' }], summary: {} };
+        labyrinthRoomLogs.replayResult = { rows: [], divergence: 0.4 };
+
+        await labyrinthRoomLogs.disable();
+
+        expect(labyrinthRoomLogs.lastAccuracy).toBeNull();
+        expect(labyrinthRoomLogs.replayResult).toBeNull();
+    });
 });

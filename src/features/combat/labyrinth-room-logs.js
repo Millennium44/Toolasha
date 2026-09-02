@@ -494,6 +494,13 @@ class LabyrinthRoomLogs {
         this.record.reset();
         labFightRecorder.forget();
         this.activeSession = null;
+        // Both are readings of the record that has just been dropped, and both
+        // are drawn and exported under whoever the panel says it belongs to —
+        // the accuracy snapshot is the fallback the two export buttons use when
+        // no view has been drawn yet, and the replay verdict sits at the top of
+        // the accuracy view until something replaces it.
+        this.lastAccuracy = null;
+        this.replayResult = null;
         this.isInitialized = false;
     }
 
