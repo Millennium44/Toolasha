@@ -2114,6 +2114,65 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.40.0](https://github.com/Millennium44/Toolasha/compare/v3.39.0...v3.40.0) (2026-09-02)
+
+### Features
+
+- crafting plan re-routes thin buy legs to craft ([a09aaaa](https://github.com/Millennium44/Toolasha/commit/a09aaaafbe1d2e9cd8354b120d6191aa47e022d9))
+- link guild kick and building-upgrade names in chat ([e77d832](https://github.com/Millennium44/Toolasha/commit/e77d832c4377afb6e41edbcebcf030246fd81aa3))
+
+### Bug Fixes
+
+- a closed combat-level panel keeps the last character's goals ([511b0ae](https://github.com/Millennium44/Toolasha/commit/511b0aeec45be42a704153b368ff260b2b1e0e34))
+- a damage-over-time tick cannot re-count a death on a downed unit ([b74dda7](https://github.com/Millennium44/Toolasha/commit/b74dda780c2ba42a8e58933bf58f8adbb412b95e))
+- a finished dungeon run vetoes the next character's restore ([24d75fe](https://github.com/Millennium44/Toolasha/commit/24d75fedb22a55c8d54b737b24ba015054484afa))
+- a hand-picked lab crate outlives the character who picked it ([faf810b](https://github.com/Millennium44/Toolasha/commit/faf810b2ae3c6123dfdaf4536f06a80ced66f2b3))
+- a monster with no enrage time no longer poisons combat XP with NaN ([ba36839](https://github.com/Millennium44/Toolasha/commit/ba368394b7402902851425c88e889f54514861ed))
+- a scroll-simulator boot read the character moved under leaves it dead for the session ([9e8897e](https://github.com/Millennium44/Toolasha/commit/9e8897e277a5d0a7f8acf30f645cc0dc25726215))
+- a threat buff no longer collapses the buffed unit's threat ([675be02](https://github.com/Millennium44/Toolasha/commit/675be02e4d6ab858ee0753378886768ab8022b8c))
+- an unmodelled combat trigger no longer aborts the whole simulation ([0175d6b](https://github.com/Millennium44/Toolasha/commit/0175d6b5d12d0e5e3a07ba6ee0c8df842bc2f375))
+- apply skill scaling to self-targeted special ability buffs ([e8fe340](https://github.com/Millennium44/Toolasha/commit/e8fe340138481497d5fd03044e75faad4e43a796))
+- cap fractional-tick DoT/HoT delivery at the total value ([b3ebb99](https://github.com/Millennium44/Toolasha/commit/b3ebb99adaecf1b154cdf9baf0a232904931c53f))
+- combat panels carry one character's tab and unit into the next ([c3bff48](https://github.com/Millennium44/Toolasha/commit/c3bff48f3d9ccb62ec8785e470bca027a6ff259e))
+- combat text forgets the health it last read when it is torn down ([0ddd764](https://github.com/Millennium44/Toolasha/commit/0ddd7644fc795d148027fd615bf80c853d15774c))
+- crafting-plan Buy Missing Materials tracks inventory live ([8b942a2](https://github.com/Millennium44/Toolasha/commit/8b942a22e1dab0ed432dc9e7867f4d012189c528))
+- DoT ticks no longer flood the dungeon wipe log and evict the killing blow ([3bd23ba](https://github.com/Millennium44/Toolasha/commit/3bd23badef8595c2654470ad467a5d128fd84bf8))
+- labyrinth entry alerts key per character so a second character is not muted ([3789f83](https://github.com/Millennium44/Toolasha/commit/3789f83383937e97591c35d9c13d2d432c7e559c))
+- overlay panel forgets its column count on close, party loot lets go of a combined view ([56d0455](https://github.com/Millennium44/Toolasha/commit/56d0455c2e2ffdeb584a04a0566606e8b4e3c050))
+- the calibration panel keeps the departing character's alchemy rates ([654b3e0](https://github.com/Millennium44/Toolasha/commit/654b3e08e86a4a1373b28d2470d4611b3764edb6))
+- the clear-rate readout answers for the character who left ([ee8d2f4](https://github.com/Millennium44/Toolasha/commit/ee8d2f4cceb6c51aa94ab292fc75643379e76e4a))
+- the lab sim keeps what the last character could clear ([4b3a150](https://github.com/Millennium44/Toolasha/commit/4b3a15046036d6801b867213ea349281e3446113))
+- the labyrinth accuracy export files one character's fights under another ([ff5c3f3](https://github.com/Millennium44/Toolasha/commit/ff5c3f3cb3ed71328eb52ddbdcb31095e57cdf5b))
+- the stat-check panel checks the departing character's build ([686cc74](https://github.com/Millennium44/Toolasha/commit/686cc74d74e2e4b2c3f4ff4cd5bcc1e1f05ef9c5))
+- the trials card counts down the guild the player just left ([5f008b5](https://github.com/Millennium44/Toolasha/commit/5f008b52cc55058e2dcf7b10701f7271c44eb67e))
+- the walk's wait budget follows a card it gave up on onto the next one ([6d00d60](https://github.com/Millennium44/Toolasha/commit/6d00d60bd454743eddc9395fc9335686efd590e3))
+- trade-history load guards on the live character, not the lagging id ([00e9457](https://github.com/Millennium44/Toolasha/commit/00e945726c9f285820df58c539635c96f855fd24))
+
+### Documentation
+
+- changelog for audit round 31 ([8c8a5e5](https://github.com/Millennium44/Toolasha/commit/8c8a5e5bdf53780675ed5d5354c21665f66f2862))
+- changelog for chat name links and the two engine guards ([b6e20c2](https://github.com/Millennium44/Toolasha/commit/b6e20c2f8c4ba08a8d5c00936a99b6fd1fa24a82))
+- changelog for the crafting-plan buy fix and engine follow-ups ([272e82c](https://github.com/Millennium44/Toolasha/commit/272e82cbf974a662d06fdb038ab6932bc704ed71))
+- changelog for the test-isolation work and its six production fixes ([cd425ee](https://github.com/Millennium44/Toolasha/commit/cd425ee0c7933597b0c966ab702e25a6a298f25b))
+- changelog for the thin-market craft reroute ([3c8a555](https://github.com/Millennium44/Toolasha/commit/3c8a5554fc25c0255b31717d83bdd8ea13146744))
+- changelog note for the second shuffle-leak pass ([80f62c5](https://github.com/Millennium44/Toolasha/commit/80f62c5846eb3600699ae1f1b2cee282f594ba5f))
+
+### Tests
+
+- eight files stop depending on the order their tests run in ([c7b5d45](https://github.com/Millennium44/Toolasha/commit/c7b5d450f5a59bfaee38aa241abb0b0748e833a7))
+- four suites that only passed in the order they were written ([cd60bf7](https://github.com/Millennium44/Toolasha/commit/cd60bf7446a64ce10d4808a5d256ff13cb0d1992))
+- keep happy-dom MutationObservers alive across a garbage collection ([0c498ab](https://github.com/Millennium44/Toolasha/commit/0c498ab73cc432871ee7a80f57d57f7bdc62ae82))
+- make five guild test files order-independent ([2606464](https://github.com/Millennium44/Toolasha/commit/2606464580a32c582253fb67e5b0046e97a3315b))
+- put back the panel state the combat-panels tests change ([1d949e5](https://github.com/Millennium44/Toolasha/commit/1d949e507d6d2d1caf7b4ced0eee793086400699))
+- put the shared minimize fixture back between tests ([cca498a](https://github.com/Millennium44/Toolasha/commit/cca498ac04b6eb59466919b4c78ae4516e5f95c4))
+- reset the sprite-sheet cache and the storage-failure switch between tests ([fe017fb](https://github.com/Millennium44/Toolasha/commit/fe017fb7bcb60774ede41ba09c2709e9167d4488))
+- reset the state four suites were leaking between their own tests ([c9af377](https://github.com/Millennium44/Toolasha/commit/c9af377171f8fdbb6a175a3fd98e3c1c9a3985a6))
+- the advisor's price lookup has a default instead of the last test's ([1f3b513](https://github.com/Millennium44/Toolasha/commit/1f3b5135760f662b646452d4c46b942fe68aaad3))
+- the Reset-label assertion builds its own panel ([60f6d8c](https://github.com/Millennium44/Toolasha/commit/60f6d8c117f705dd266015fc638c357219d95083))
+- the spectator stream's last word does not carry between guild-trials describes ([a0552e9](https://github.com/Millennium44/Toolasha/commit/a0552e9651a4388e6a313b14c90ee61e6f66097f))
+- three test files stop inheriting fixture state from each other ([e285752](https://github.com/Millennium44/Toolasha/commit/e28575274054b9e73a8461e6e11030b0028251ec))
+- two shared-mock leaks that decided the next test's answer ([b025669](https://github.com/Millennium44/Toolasha/commit/b0256699fecdfcc61272a2a6369ed5360a45b67f))
+
 ## [3.39.0](https://github.com/Millennium44/Toolasha/compare/v3.38.1...v3.39.0) (2026-09-01)
 
 ### Features
