@@ -898,6 +898,13 @@ class TaskRerollWalk {
                 if (back) return this._step('back', card, slot, `Close the menu on #${slot} (${verdict.reason})`);
                 this.tally.kept += 1;
                 this.index += 1;
+                // The wait budget belongs to the card that spent it. Before the
+                // retry above existed, an exhausted budget always stopped the
+                // walk on the same card, so it never travelled; now a card given
+                // up on is kept and the walk moves on, and a budget carried with
+                // it retired the *next* card's momentary refusal on sight — the
+                // exact behaviour the retry was added to end, one card later.
+                this.pendingRetries = 0;
                 continue;
             }
 

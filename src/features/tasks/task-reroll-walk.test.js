@@ -731,6 +731,46 @@ describe('planning a walk down the board', () => {
         expect(chipText()).toContain('Close the menu on #1 (no reroll on offer)');
     });
 
+    test("a card given up on does not spend the next card's wait budget", async () => {
+        // The retry budget used to be spent only on the card the walk was
+        // parked on — an exhausted one stopped the walk there. The skip-path
+        // retry made it travel: card #1's chooser never comes back, the walk
+        // gives up on it and moves on with nothing left, and card #2's
+        // momentary refusal — the very thing the retry exists to wait out —
+        // was retired on sight instead.
+        stored.values.taskCapCoinThreshold_7 = 80000;
+        stored.values.taskCapCowbellThreshold_7 = 1;
+        const list = board([
+            { name: 'Milking - Cow', buttons: ['Back', '20,000', '1'], quest: quest(MILKING, 1, 0) },
+            {
+                name: 'Cooking - Stew',
+                buttons: ['Back', '20,000', '1'],
+                quest: quest('/actions/cooking/stew', 1, 0),
+            },
+        ]);
+        const refused = [...list.querySelectorAll('button')].filter((button) => button.textContent === '20,000');
+        refused[0].disabled = true;
+        refused[1].disabled = true;
+
+        await walk.start();
+        vi.advanceTimersByTime(5000);
+        expect(chipText()).toContain('Close the menu on #1 (no reroll on offer)');
+
+        // The Back press lands, #1's chooser closes over a task that has since
+        // completed, and the walk keeps it and moves to #2 — whose chooser is
+        // refusing for the moment, exactly as #1's was on the first plan
+        walk.advance();
+        setButtons(list, 1, ['Go', 'Claim']);
+        vi.advanceTimersByTime(500);
+
+        expect(chipText()).not.toContain('Close the menu on #2');
+
+        // and #2's button coming back is paid, not retired
+        refused[1].disabled = false;
+        vi.advanceTimersByTime(500);
+        expect(chipText()).toContain('Reroll #2 — 20.0K🪙');
+    });
+
     test('a card that has already paid one 10K reroll rerolls again under an 80K cap', async () => {
         stored.values.taskCapCoinThreshold_7 = 80000;
         stored.values.taskCapCowbellThreshold_7 = 1;
