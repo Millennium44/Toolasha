@@ -26,6 +26,15 @@ class SimResult {
         this.playerRanOutOfManaTime = {};
         this.manaUsed = {};
         this.timeSpentAlive = [];
+        // Per dungeon wave: how long after the wave spawned the party first
+        // landed damage on it — { name: '#k', total, count } in simulation
+        // time. The windup before a wave's first hit is the one part of a run
+        // the alive time above cannot separate out, and the part a real
+        // recording can be compared against wave for wave.
+        this.waveFirstHit = [];
+        this._wave = null; // { label, spawnedAt, hitSeen } while a dungeon wave is open
+        // Injected by the simulator as () => simulationTime, so a hit can be timed
+        this.clock = null;
         this.bossSpawns = [];
         this.hitpointsSpent = {};
         this.zoneName = zone.hrid;
@@ -107,6 +116,10 @@ class SimResult {
     }
 
     updateTimeSpentAlive(name, alive, time) {
+        // A dungeon wave ('#k') opening starts its first-hit window; closing ends it
+        if (typeof name === 'string' && name.startsWith('#')) {
+            this._wave = alive ? { label: name, spawnedAt: time, hitSeen: false } : null;
+        }
         const i = this.timeSpentAlive.findIndex((e) => e.name === name);
         if (alive) {
             if (i !== -1) {
@@ -183,6 +196,32 @@ class SimResult {
         this.encounters++;
     }
 
+    /**
+     * Record the party's first damage on the open dungeon wave, once per wave.
+     * Only a player hitting a monster counts: a monster hitting a player, or
+     * thorns credited back to a monster, says nothing about the party's
+     * windup. Needs the clock the simulator injects; without it nothing is kept.
+     * @param {Object} source - The attacking unit
+     * @param {Object} target - The unit hit
+     * @param {number} hit - Damage dealt
+     */
+    _noteWaveFirstHit(source, target, hit) {
+        const wave = this._wave;
+        if (!wave || wave.hitSeen) return;
+        if (!source?.isPlayer || target?.isPlayer || !(Number(hit) > 0)) return;
+        const now = typeof this.clock === 'function' ? this.clock() : null;
+        if (!Number.isFinite(now)) return;
+        wave.hitSeen = true;
+        const delay = Math.max(0, now - wave.spawnedAt);
+        const entry = this.waveFirstHit.find((e) => e.name === wave.label);
+        if (entry) {
+            entry.total += delay;
+            entry.count += 1;
+        } else {
+            this.waveFirstHit.push({ name: wave.label, total: delay, count: 1 });
+        }
+    }
+
     addAttack(source, target, ability, hit, isCrit = false) {
         if (!this.attacks[source.hrid]) {
             this.attacks[source.hrid] = {};
@@ -201,6 +240,7 @@ class SimResult {
         this.attacks[source.hrid][target.hrid][ability][hit] += 1;
 
         if (hit !== 'miss') {
+            this._noteWaveFirstHit(source, target, hit);
             this.totalDamageDealt[source.hrid] = (this.totalDamageDealt[source.hrid] || 0) + hit;
             // Counted beside the histogram rather than in it: the histogram
             // keys are damage values, and folding crit-ness into the key would

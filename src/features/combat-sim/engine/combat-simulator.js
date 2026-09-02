@@ -148,6 +148,9 @@ class CombatSimulator {
         this.onProgress = onProgress;
         this.eventQueue = new EventQueue();
         this.simResult = new SimResult(zone, players.length);
+        // The result times a wave's first hit against the clock; only the
+        // simulator holds it
+        this.simResult.clock = () => this.simulationTime;
         this.allPlayersDead = false;
         this.encounterIndex = 0;
         this.stopRule = null;
@@ -399,6 +402,7 @@ class CombatSimulator {
         this.encounterIndex = 0;
         this.eventQueue.clear();
         this.simResult = new SimResult(this.zone, this.players.length);
+        this.simResult.clock = () => this.simulationTime;
     }
 
     processEvent(event) {

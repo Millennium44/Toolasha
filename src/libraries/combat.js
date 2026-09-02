@@ -33,7 +33,7 @@ import partyProfileButton from '../features/combat/party-profile-button.js';
 import '../features/profile/build-score-row.js';
 // Registers the Sim Accuracy overlay row and its panel; the instance is read
 // by the zone uptime harness for the sim result the check retained
-import replayCheck from '../features/combat/combat-replay-check.js';
+import replayCheck, { dungeonWaveTiming } from '../features/combat/combat-replay-check.js';
 import {
     waveHridsOf,
     nonDamagingByHrid,
@@ -226,6 +226,23 @@ toolashaRoot.Debug = {
             }
         }
         return result;
+    },
+    // Line the dungeon recording in memory up against the last dungeon
+    // simulation in the Combat Sim panel, wave by wave: how long each side took
+    // to land its first hit after the wave spawned, and how long each side's
+    // fight ran. Start the recorder before a run and let it cover a full clear.
+    dungeonWaveTiming: () => {
+        const recording = combatRecorder.recordingFile?.() ?? combatRecorder.sessionFile?.() ?? null;
+        const simResult = window.Toolasha?.Sim?.combatSimUI?._lastSimResult ?? null;
+        if (!recording?.ticks?.length) {
+            console.warn('[DungeonWaveTiming] No recording in memory — start the recorder before a dungeon run.');
+            return null;
+        }
+        if (!simResult?.isDungeon) {
+            console.warn('[DungeonWaveTiming] The last simulation is not a dungeon — run one in the Combat Sim panel.');
+            return null;
+        }
+        return dungeonWaveTiming({ recording, simResult });
     },
     // Run the Sim Accuracy check from the console — the same run the panel's
     // Check button starts, retained sim result included. The zone uptime

@@ -370,6 +370,20 @@ function mergeSimResults(results) {
                 }
             }
         }
+
+        // Per-wave first-hit windup, summed the same way
+        if (r.waveFirstHit) {
+            if (!merged.waveFirstHit) merged.waveFirstHit = [];
+            for (const entry of r.waveFirstHit) {
+                const existing = merged.waveFirstHit.find((e) => e.name === entry.name);
+                if (existing) {
+                    existing.total += entry.total;
+                    existing.count += entry.count;
+                } else {
+                    merged.waveFirstHit.push({ ...entry });
+                }
+            }
+        }
     }
 
     return merged;

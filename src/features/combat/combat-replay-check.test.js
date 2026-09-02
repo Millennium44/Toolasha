@@ -133,6 +133,8 @@ import replayCheck, {
     replayFights,
     busiestPlayer,
     observeRecording,
+    waveTimingFromRecording,
+    dungeonWaveTiming,
     aggregateObservations,
     predictFromSim,
     deviationPct,
@@ -2717,5 +2719,83 @@ describe('observations and history survive a failed read and a second tab', () =
 
         expect(store.data.get(OBSERVATIONS_KEY)).toEqual([]);
         expect(store.data.get(HISTORY_KEY)).toEqual([]);
+    });
+});
+
+describe('per-wave timing of a dungeon recording', () => {
+    /** Two waves of one monster each, then the announcement of a third so wave 2 has a gap */
+    function dungeonTicks() {
+        return [
+            { at: 0, type: 'new_battle', payload: { wave: 0, mMap: { m: { cHP: 100, mHP: 100 } } } },
+            { at: 500, type: 'battle_updated', payload: { mMap: { m: { cHP: 100, mHP: 100 } } } }, // undamaged yet
+            { at: 2_900, type: 'battle_updated', payload: { mMap: { m: { cHP: 60, mHP: 100 } } } }, // first hit
+            { at: 6_000, type: 'battle_updated', payload: { mMap: { m: { cHP: 0, mHP: 100 } } } }, // kill
+            { at: 9_000, type: 'new_battle', payload: { wave: 1, mMap: { m2: { cHP: 200, mHP: 200 } } } }, // 3.0s gap
+            { at: 10_000, type: 'battle_updated', payload: { mMap: { m2: { cHP: 150, mHP: 200 } } } },
+            { at: 14_000, type: 'battle_updated', payload: { mMap: { m2: { cHP: 0, mHP: 200 } } } },
+            { at: 17_000, type: 'new_battle', payload: { wave: 2, mMap: {} } },
+        ];
+    }
+
+    test('reads each wave’s spawn→first-hit, spawn→last-tick and the respawn gap off the ticks', () => {
+        expect(waveTimingFromRecording({ ticks: dungeonTicks() })).toEqual([
+            { wave: 0, spawnToFirstHitMs: 2_900, spawnToLastTickMs: 6_000, newBattleToNextMs: 9_000, gapMs: 3_000 },
+            { wave: 1, spawnToFirstHitMs: 1_000, spawnToLastTickMs: 5_000, newBattleToNextMs: 8_000, gapMs: 3_000 },
+            { wave: 2, spawnToFirstHitMs: null, spawnToLastTickMs: null, newBattleToNextMs: null, gapMs: null },
+        ]);
+    });
+
+    test('a battle with no wave field (a normal zone) is not a wave', () => {
+        const ticks = [
+            { at: 0, type: 'new_battle', payload: { mMap: { m: { cHP: 10, mHP: 10 } } } },
+            { at: 1_000, type: 'battle_updated', payload: { mMap: { m: { cHP: 5, mHP: 10 } } } },
+        ];
+        expect(waveTimingFromRecording({ ticks })).toEqual([]);
+        expect(waveTimingFromRecording(null)).toEqual([]);
+    });
+
+    test('lines waves up against the sim by label, wave w against #w+1, and averages per wave', () => {
+        vi.spyOn(console, 'table').mockImplementation(() => {});
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        const NS = 1e9;
+        const simResult = {
+            isDungeon: true,
+            dungeonsCompleted: 10,
+            // one run's worth of ns per wave: #1 fought 6.5s, first hit at 3.7s; #2 5.2s, first hit at 3.5s
+            timeSpentAlive: [
+                { name: '#1', timeSpentAlive: 6.5 * NS, count: 1 },
+                { name: '#2', timeSpentAlive: 5.2 * NS, count: 1 },
+            ],
+            waveFirstHit: [
+                { name: '#1', total: 3.7 * NS, count: 1 },
+                { name: '#2', total: 3.5 * NS, count: 1 },
+            ],
+        };
+
+        const { rows, summary } = dungeonWaveTiming({ recording: { ticks: dungeonTicks() }, simResult });
+
+        // new_battle wave 0 is the sim's #1: the off-by-one that once made every
+        // elite wave look under-modelled
+        expect(rows[0]).toEqual({
+            wave: 1,
+            runs: 1,
+            realFirstHitMs: 2_900,
+            simFirstHitMs: 3_700,
+            windupDeltaMs: 800,
+            realFightMs: 6_000,
+            simFightMs: 6_500,
+            fightDeltaMs: 500,
+            realGapMs: 3_000,
+        });
+        expect(rows[1]).toMatchObject({ wave: 2, realFirstHitMs: 1_000, simFirstHitMs: 3_500, windupDeltaMs: 2_500 });
+        // the third wave has no sim entry and no ticks, so it compares nothing
+        expect(rows[2]).toMatchObject({ wave: 3, simFightMs: null, realFightMs: null });
+        expect(summary).toMatchObject({
+            wavesCompared: 2,
+            simRuns: 10,
+            meanWindupDeltaMs: 1_650,
+            meanRealGapMs: 3_000,
+        });
+        vi.restoreAllMocks();
     });
 });

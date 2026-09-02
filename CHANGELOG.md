@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A wave-by-wave diagnostic for dungeon sim timing
+
+A dungeon run that sims long could be slow to start each wave or slow to finish it, and a run total cannot tell those apart. The simulator now records, per dungeon wave, how long after the wave spawned the party landed its first hit, and a console diagnostic — `Toolasha.Debug.dungeonWaveTiming()` — lines the dungeon recording in memory up against the last dungeon simulation wave by wave: first-hit windup and fight length on each side, plus the real respawn gap. Start the recorder before a run, let it cover a full clear, run the dungeon in the Combat Sim, then call it.
+
 ### Every "what am I doing right now" reader uses the action actually running
 
 A sweep of the same bug that mislabeled dungeon recordings and tiers earlier today found eight more readers picking "the current action" by its position in the queue array instead of by execution order. The array is insertion order, and a repeating action gets requeued to its front with a higher ordinal, so with anything queued behind a running action those readers could describe the queued one: drop luck attributed drops to the wrong zone; the sim export read the wrong zone and tier; the task panel took the first array entry as active; the alchemy profit panel priced a queued alchemy action; the enhancement display and the missing-materials button read a queued enhance's item; and the activity projection and queue snapshot listed the queue in insertion order. All eight now go through one shared "running action" helper, which the header chips, sim and dungeon tracker already use.
