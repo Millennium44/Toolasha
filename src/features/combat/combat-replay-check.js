@@ -3184,55 +3184,59 @@ export default replayCheck;
 /**
  * Per-wave timing of a dungeon recording, read straight off its raw ticks.
  *
- * A dungeon fires one `new_battle` per wave (its `wave` field is 0-based), so
- * each wave's spawn is the tick that announced it, its first hit is the first
- * `battle_updated` in which any monster is below full health, and the respawn
- * gap is the time from its last tick to the next wave's announcement. These
- * are the quantities the simulator cannot be checked against from a run
- * total alone — a run that reads long could be slow to *start* each wave or
- * slow to *finish* it, and only per-wave timing tells the two apart.
+ * The feed's shape decides how this must read it. A dungeon's `new_battle`
+ * carries the whole new wave in its payload, every monster at full health:
+ * that tick *is* the spawn. The `battle_updated` ticks that follow are
+ * deltas, each listing only the monsters that changed, so no later tick shows
+ * the whole wave, a tick with no monster changes at all is common, and a
+ * monster that died can echo once more at zero. So the wave's roster is taken
+ * from the announcement, each member is followed by id to its death, the
+ * first hit is the first delta showing a roster member below full, the fight
+ * ends when the last roster member reaches zero, and the respawn gap runs
+ * from that death to the next announcement. Reading a delta as a snapshot
+ * (waiting for "every monster at full") never sees the spawn.
  *
  * @param {Object} recording - From `combatRecorder.recordingFile()` / `sessionFile()`
- * @returns {Array<{wave: number, spawnToFirstHitMs: number|null, spawnToLastTickMs: number|null, newBattleToNextMs: number|null, gapMs: number|null}>}
+ * @returns {Array<{wave: number, spawnToFirstHitMs: number|null, spawnToFightEndMs: number|null, newBattleToNextMs: number|null, gapMs: number|null}>}
  */
 export function waveTimingFromRecording(recording) {
     const ticks = recording?.ticks || [];
     const hp = (m) => [Number(m?.cHP ?? m?.currentHitpoints), Number(m?.mHP ?? m?.maxHitpoints)];
-    const damaged = (mMap) =>
-        Object.values(mMap || {}).some((m) => {
-            const [current, max] = hp(m);
-            return Number.isFinite(current) && Number.isFinite(max) && current < max;
-        });
+    const roster = (payload) => payload?.mMap ?? payload?.monsters ?? {};
 
     const waves = [];
     let current = null;
-    let lastTickAt = null;
     for (const tick of ticks) {
         if (tick?.type === 'new_battle') {
             if (current) {
-                current.newBattleToNextMs = tick.at - current.spawnAt;
-                current.gapMs = lastTickAt !== null ? tick.at - lastTickAt : null;
+                current.nextNewBattleAt = tick.at;
                 waves.push(current);
             }
             const wave = tick.payload?.wave;
+            const ids = Object.keys(roster(tick.payload));
             current =
-                wave === undefined
+                wave === undefined || ids.length === 0
                     ? null
                     : {
                           wave,
                           spawnAt: tick.at,
-                          firstHitMs: null,
-                          lastTickAt: null,
-                          newBattleToNextMs: null,
-                          gapMs: null,
+                          ids: new Set(ids),
+                          alive: new Set(ids),
+                          firstHitAt: null,
+                          fightEndAt: null,
+                          nextNewBattleAt: null,
                       };
             continue;
         }
-        if (tick?.type === 'battle_updated' && current) {
-            current.lastTickAt = tick.at;
-            lastTickAt = tick.at;
-            if (current.firstHitMs === null && damaged(tick.payload?.mMap ?? tick.payload?.monsters)) {
-                current.firstHitMs = tick.at - current.spawnAt;
+        if (tick?.type !== 'battle_updated' || !current) continue;
+        for (const [id, monster] of Object.entries(roster(tick.payload))) {
+            if (!current.ids.has(id)) continue;
+            const [health, max] = hp(monster);
+            if (!Number.isFinite(health) || !Number.isFinite(max)) continue;
+            if (current.firstHitAt === null && health < max) current.firstHitAt = tick.at;
+            if (health <= 0 && current.alive.has(id)) {
+                current.alive.delete(id);
+                if (current.alive.size === 0 && current.fightEndAt === null) current.fightEndAt = tick.at;
             }
         }
     }
@@ -3240,18 +3244,20 @@ export function waveTimingFromRecording(recording) {
 
     return waves.map((w) => ({
         wave: w.wave,
-        spawnToFirstHitMs: w.firstHitMs,
-        spawnToLastTickMs: w.lastTickAt !== null ? w.lastTickAt - w.spawnAt : null,
-        newBattleToNextMs: w.newBattleToNextMs,
-        gapMs: w.gapMs,
+        spawnToFirstHitMs: w.firstHitAt !== null ? w.firstHitAt - w.spawnAt : null,
+        spawnToFightEndMs: w.fightEndAt !== null ? w.fightEndAt - w.spawnAt : null,
+        newBattleToNextMs: w.nextNewBattleAt !== null ? w.nextNewBattleAt - w.spawnAt : null,
+        gapMs: w.fightEndAt !== null && w.nextNewBattleAt !== null ? w.nextNewBattleAt - w.fightEndAt : null,
     }));
 }
 
 /**
  * Line a dungeon recording up against a simulation of the same dungeon, wave
  * by wave: how long each side took to land its first hit after the wave
- * spawned, and how long each side's fight ran. The simulator labels waves
- * `#1..#N` while `new_battle.wave` is 0-based, so wave w is compared to `#w+1`.
+ * spawned, how long each side's fight ran, and the damage phase between
+ * them. Both sides number waves from 1 — the simulator labels them `#1..#N`
+ * and `new_battle.wave` is 1-based (a dungeon's fixed elite waves land on
+ * the same numbers as its spawn table) — so wave w is compared to `#w`.
  *
  * Simulation times are nanoseconds and are averaged per wave over every run
  * that reached it; recording times are milliseconds and are averaged over the
@@ -3279,7 +3285,7 @@ export function dungeonWaveTiming({ recording, simResult } = {}) {
         const bucket = byWave.get(w.wave) || { wave: w.wave, runs: 0, firstHit: [], fight: [], gap: [] };
         bucket.runs += 1;
         if (Number.isFinite(w.spawnToFirstHitMs)) bucket.firstHit.push(w.spawnToFirstHitMs);
-        if (Number.isFinite(w.spawnToLastTickMs)) bucket.fight.push(w.spawnToLastTickMs);
+        if (Number.isFinite(w.spawnToFightEndMs)) bucket.fight.push(w.spawnToFightEndMs);
         if (Number.isFinite(w.gapMs)) bucket.gap.push(w.gapMs);
         byWave.set(w.wave, bucket);
     }
@@ -3287,13 +3293,17 @@ export function dungeonWaveTiming({ recording, simResult } = {}) {
     const rows = [...byWave.values()]
         .sort((a, b) => a.wave - b.wave)
         .map((bucket) => {
-            const label = `#${bucket.wave + 1}`;
+            const label = `#${bucket.wave}`;
             const realFirst = mean(bucket.firstHit);
             const simFirstHit = simFirst(label);
             const realFight = mean(bucket.fight);
             const simFight = simAlive(label);
+            // The damage phase, first hit to last kill, is where a run that starts
+            // and respawns on time can still run long
+            const realDamage = realFight !== null && realFirst !== null ? realFight - realFirst : null;
+            const simDamage = simFight !== null && simFirstHit !== null ? simFight - simFirstHit : null;
             return {
-                wave: bucket.wave + 1,
+                wave: bucket.wave,
                 runs: bucket.runs,
                 realFirstHitMs: round(realFirst),
                 simFirstHitMs: round(simFirstHit),
@@ -3301,6 +3311,9 @@ export function dungeonWaveTiming({ recording, simResult } = {}) {
                 realFightMs: round(realFight),
                 simFightMs: round(simFight),
                 fightDeltaMs: round(simFight !== null && realFight !== null ? simFight - realFight : null),
+                realDamagePhaseMs: round(realDamage),
+                simDamagePhaseMs: round(simDamage),
+                damagePhaseDeltaMs: round(simDamage !== null && realDamage !== null ? simDamage - realDamage : null),
                 realGapMs: round(mean(bucket.gap)),
             };
         });
@@ -3311,6 +3324,7 @@ export function dungeonWaveTiming({ recording, simResult } = {}) {
         simRuns: simResult?.dungeonsCompleted ?? null,
         meanWindupDeltaMs: round(mean(deltas('windupDeltaMs'))),
         meanFightDeltaMs: round(mean(deltas('fightDeltaMs'))),
+        meanDamagePhaseDeltaMs: round(mean(deltas('damagePhaseDeltaMs'))),
         meanRealGapMs: round(mean(deltas('realGapMs'))),
         meanRealFirstHitMs: round(mean(deltas('realFirstHitMs'))),
         meanSimFirstHitMs: round(mean(deltas('simFirstHitMs'))),

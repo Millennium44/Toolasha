@@ -2726,22 +2726,38 @@ describe('per-wave timing of a dungeon recording', () => {
     /** Two waves of one monster each, then the announcement of a third so wave 2 has a gap */
     function dungeonTicks() {
         return [
-            { at: 0, type: 'new_battle', payload: { wave: 0, mMap: { m: { cHP: 100, mHP: 100 } } } },
+            { at: 0, type: 'new_battle', payload: { wave: 1, mMap: { m: { cHP: 100, mHP: 100 } } } },
             { at: 500, type: 'battle_updated', payload: { mMap: { m: { cHP: 100, mHP: 100 } } } }, // undamaged yet
             { at: 2_900, type: 'battle_updated', payload: { mMap: { m: { cHP: 60, mHP: 100 } } } }, // first hit
             { at: 6_000, type: 'battle_updated', payload: { mMap: { m: { cHP: 0, mHP: 100 } } } }, // kill
-            { at: 9_000, type: 'new_battle', payload: { wave: 1, mMap: { m2: { cHP: 200, mHP: 200 } } } }, // 3.0s gap
+            { at: 9_000, type: 'new_battle', payload: { wave: 2, mMap: { m2: { cHP: 200, mHP: 200 } } } }, // 3.0s gap
             { at: 10_000, type: 'battle_updated', payload: { mMap: { m2: { cHP: 150, mHP: 200 } } } },
             { at: 14_000, type: 'battle_updated', payload: { mMap: { m2: { cHP: 0, mHP: 200 } } } },
-            { at: 17_000, type: 'new_battle', payload: { wave: 2, mMap: {} } },
+            { at: 17_000, type: 'new_battle', payload: { wave: 3, mMap: {} } },
         ];
     }
 
-    test('reads each wave’s spawn→first-hit, spawn→last-tick and the respawn gap off the ticks', () => {
+    test('reads each wave’s spawn→first-hit, spawn→last-kill and the respawn gap off delta ticks', () => {
+        // The third announcement carries no monsters, so it is not a wave
         expect(waveTimingFromRecording({ ticks: dungeonTicks() })).toEqual([
-            { wave: 0, spawnToFirstHitMs: 2_900, spawnToLastTickMs: 6_000, newBattleToNextMs: 9_000, gapMs: 3_000 },
-            { wave: 1, spawnToFirstHitMs: 1_000, spawnToLastTickMs: 5_000, newBattleToNextMs: 8_000, gapMs: 3_000 },
-            { wave: 2, spawnToFirstHitMs: null, spawnToLastTickMs: null, newBattleToNextMs: null, gapMs: null },
+            { wave: 1, spawnToFirstHitMs: 2_900, spawnToFightEndMs: 6_000, newBattleToNextMs: 9_000, gapMs: 3_000 },
+            { wave: 2, spawnToFirstHitMs: 1_000, spawnToFightEndMs: 5_000, newBattleToNextMs: 8_000, gapMs: 3_000 },
+        ]);
+    });
+
+    test('a previous wave’s corpse echoing at zero, and a tick with no monster changes, are not this wave’s hits', () => {
+        // Delta ticks: the old wave's monster echoes 0/100 after the new wave is
+        // announced, then a tick with nothing about monsters, then the wave's own
+        // first hit and its kill
+        const ticks = [
+            { at: 0, type: 'new_battle', payload: { wave: 4, mMap: { n: { cHP: 500, mHP: 500 } } } },
+            { at: 200, type: 'battle_updated', payload: { mMap: { m: { cHP: 0, mHP: 100 } } } },
+            { at: 400, type: 'battle_updated', payload: { pMap: {} } },
+            { at: 1_000, type: 'battle_updated', payload: { mMap: { n: { cHP: 300, mHP: 500 } } } },
+            { at: 4_000, type: 'battle_updated', payload: { mMap: { n: { cHP: 0, mHP: 500 } } } },
+        ];
+        expect(waveTimingFromRecording({ ticks })).toEqual([
+            { wave: 4, spawnToFirstHitMs: 1_000, spawnToFightEndMs: 4_000, newBattleToNextMs: null, gapMs: null },
         ]);
     });
 
@@ -2754,7 +2770,7 @@ describe('per-wave timing of a dungeon recording', () => {
         expect(waveTimingFromRecording(null)).toEqual([]);
     });
 
-    test('lines waves up against the sim by label, wave w against #w+1, and averages per wave', () => {
+    test('lines waves up against the sim by label, wave w against #w, and averages per wave', () => {
         vi.spyOn(console, 'table').mockImplementation(() => {});
         vi.spyOn(console, 'log').mockImplementation(() => {});
         const NS = 1e9;
@@ -2774,8 +2790,8 @@ describe('per-wave timing of a dungeon recording', () => {
 
         const { rows, summary } = dungeonWaveTiming({ recording: { ticks: dungeonTicks() }, simResult });
 
-        // new_battle wave 0 is the sim's #1: the off-by-one that once made every
-        // elite wave look under-modelled
+        // new_battle.wave and the sim's labels are both 1-based: pairing them
+        // one apart once made every elite wave look under-modelled
         expect(rows[0]).toEqual({
             wave: 1,
             runs: 1,
@@ -2785,15 +2801,19 @@ describe('per-wave timing of a dungeon recording', () => {
             realFightMs: 6_000,
             simFightMs: 6_500,
             fightDeltaMs: 500,
+            realDamagePhaseMs: 3_100,
+            simDamagePhaseMs: 2_800,
+            damagePhaseDeltaMs: -300,
             realGapMs: 3_000,
         });
         expect(rows[1]).toMatchObject({ wave: 2, realFirstHitMs: 1_000, simFirstHitMs: 3_500, windupDeltaMs: 2_500 });
-        // the third wave has no sim entry and no ticks, so it compares nothing
-        expect(rows[2]).toMatchObject({ wave: 3, simFightMs: null, realFightMs: null });
+        // the third announcement carried no monsters, so it is not a wave
+        expect(rows).toHaveLength(2);
         expect(summary).toMatchObject({
             wavesCompared: 2,
             simRuns: 10,
             meanWindupDeltaMs: 1_650,
+            meanDamagePhaseDeltaMs: -1_300,
             meanRealGapMs: 3_000,
         });
         vi.restoreAllMocks();
