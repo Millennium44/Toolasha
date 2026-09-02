@@ -95,17 +95,19 @@ class Zone {
         // Random spawn path.
         //
         // The map's keys are read as exclusive ranges: a wave draws from the
-        // highest key it has reached. That is unconfirmed, and 51 ordinary waves
-        // recorded live in Chimerical Den do not fit it — species that exist only
-        // in the key-'0' table appear 27 times when the recording's ~8 key-'0'
-        // waves can supply about 15, and waves 30+ average 296 strength against
-        // this model's 353. A cumulative pool (the union of every table with
-        // key <= wave) is the obvious alternative but fits worse still: it
-        // predicts 4.3 monsters per wave against a measured 3.77, and 47-61
-        // key-'0'-only monsters against 27. The measurements point at the light
-        // tables covering a wider wave range rather than at the pools mixing, and
-        // no rule derivable from the keys reproduces that, so this stays as it is
-        // until per-wave rosters for waves 30+ settle it. See zone.test.js.
+        // highest key it has reached, and only from that one. 138 ordinary waves
+        // of Chimerical Den recorded live confirm the ranges themselves -- no
+        // monster ever appears below its own key's wave, and the key-30 species
+        // first show up on wave 31 -- and confirm that a wave is drawn whole from
+        // a single table: not one of the 138 mixes species the way a pooled union
+        // of the eligible tables would, which such a union does to 57-85% of its
+        // waves. What the recording does not support is "only the highest key":
+        // 23 of the 138 waves are complete, well-formed draws from a strictly
+        // lower table, so this code gives them probability zero. The measured rate
+        // is ~1/7 per lower table and no rule derivable from the keys produces it,
+        // and adopting the measured rate outright would turn band 30's +14% HP
+        // error into -5% while pushing band 10 from -5% to -13%, so the reading
+        // stays as it is until the selection rule is known. See zone.test.js.
         const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;
 
         if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {

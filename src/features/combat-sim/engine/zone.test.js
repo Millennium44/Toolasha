@@ -284,6 +284,18 @@ describe('dungeon waves', () => {
         expect([31, 32, 41, 49].map(bandOf)).toEqual(Array(4).fill(LATE));
     });
 
+    test('no table is drawn from before the wave its key names', () => {
+        seedSimRng(11);
+        const species = waveSpecies(installBandedDungeon(), 50);
+
+        // Confirmed against 138 live Chimerical Den waves: a species never
+        // appears below its own key's wave, and the key-30 species first show up
+        // on wave 31. Only the upper bound of this rule is in doubt.
+        expect(species.slice(0, 9)).not.toContain(MID);
+        expect(species.slice(0, 9)).not.toContain(LATE);
+        expect(species.slice(0, 29)).not.toContain(LATE);
+    });
+
     test('the counter wraps at maxWaves and records the clear', () => {
         seedSimRng(11);
         const zone = installBandedDungeon();
