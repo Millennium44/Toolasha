@@ -192,11 +192,14 @@ describe('boss cadence', () => {
  * wave its table may be drawn from, a wave is drawn whole from exactly one
  * eligible table, each eligible table BELOW the highest one reached is drawn
  * with probability 1/7, and a draw that would break `maxTotalStrength` ends the
- * wave. The 1/7 comes from a maximum-likelihood mixture fit over 498 ordinary
- * waves of Chimerical Den (297), Enchanted Fortress (106) and Sinister Circus
+ * wave. The 1/7 comes from a maximum-likelihood mixture fit over 2431 ordinary
+ * waves of Chimerical Den (2230), Enchanted Fortress (106) and Sinister Circus
  * (95), against the spawn tables as read from the live game client -- pooled
- * estimate 0.1487, 95% profile interval [0.121, 0.179] (see the note in
- * zone.js); the overflow rule is still an inference. Anything that changes either has to be deliberate rather
+ * estimate 0.1349, 95% profile interval [0.1227, 0.1477], which still contains
+ * 1/7 = 0.1429 (cost 0.75 log-likelihood) but excludes 0.15 and 1/6. The weight
+ * is flat across lower tables: a taper with distance below the current key buys
+ * dLL = +0.82 for one parameter, p = 0.20 (see the note in zone.js). The
+ * overflow rule is still an inference. Anything that changes either has to be deliberate rather
  * than incidental.
  */
 describe('dungeon waves', () => {
@@ -304,12 +307,16 @@ describe('dungeon waves', () => {
     });
 
     test('each eligible lower table takes about a seventh of the waves', () => {
-        // Measured, not documented: 61 of 498 ordinary waves recorded in
+        // Measured, not documented: 310 of 2431 ordinary waves recorded in
         // Chimerical Den, Enchanted Fortress and Sinister Circus are clean draws
         // from a strictly lower table, and the per-table share does not shrink as
         // more tables become eligible — which is what rules out the eligible
-        // tables sharing one budget between them, by dLL = +5.36 (212:1) on the
-        // same single parameter. See the note in zone.js.
+        // tables sharing one budget between them, by dLL = +19.71 (3.6e8:1) on
+        // the same single parameter. Nor does it taper with distance below the
+        // current key: dLL = +0.82 for that extra parameter, p = 0.20, with
+        // Chimerical band 30's own 896 waves putting one step below at 0.135
+        // [0.111, 0.161] and two steps at 0.122 [0.102, 0.144]. See the note in
+        // zone.js.
         seedSimRng(20260903);
         const zone = installBandedDungeon();
         const runs = 400;
@@ -357,7 +364,7 @@ describe('dungeon waves', () => {
         seedSimRng(11);
         const species = waveSpecies(installBandedDungeon(), 50);
 
-        // Confirmed against 498 live waves across Chimerical Den, Enchanted
+        // Confirmed against 2431 live waves across Chimerical Den, Enchanted
         // Fortress and Sinister Circus: a species never appears below its own
         // key's wave, and the top-table species first show up on the wave after
         // that key.

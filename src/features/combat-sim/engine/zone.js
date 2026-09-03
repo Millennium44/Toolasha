@@ -102,18 +102,18 @@ class Zone {
         //
         // The map's keys gate which tables a wave may draw from, and a wave is
         // drawn whole from exactly ONE of them. Measured against the tables as
-        // read from the live game client, over 498 ordinary (non-fixed) dungeon
-        // waves in three dungeons: Chimerical Den (keys 0/10/30) 297 waves, from
-        // a 138-wave party-of-2 recording plus a 159-wave solo spawn census;
+        // read from the live game client, over 2431 ordinary (non-fixed) dungeon
+        // waves in three dungeons: Chimerical Den (keys 0/10/30) 2230 waves, from
+        // a 2092-wave solo spawn census plus a 138-wave party-of-2 recording;
         // Enchanted Fortress (keys 0/20/40) 106 census waves, solo; and Sinister
         // Circus (keys 0/15/40) 95 waves, solo. No monster ever appears below
         // its own key's wave, and not one roster mixes species the way a pooled
         // union of the eligible tables would -- a union that would have to
         // explain most of the waves it cannot.
         //
-        // The table is NOT always the highest eligible one. 61 of those 498
+        // The table is NOT always the highest eligible one. 310 of those 2431
         // waves are complete, well-formed draws from a strictly lower table, so
-        // a highest-only reading gives them probability zero: 12 and 13 of the
+        // a highest-only reading gives them probability zero: 107 and 167 of the
         // census's Chimerical bands 10 and 30, 7 and 16 of the party
         // recording's, 8 of Enchanted Fortress band 40, and 5 of Sinister
         // Circus band 40. That much is not a fit, it is arithmetic.
@@ -128,44 +128,60 @@ class Zone {
         // strength caps differ) but far more weakly than a disjoint pair would.
         //
         // Fitting per band per dungeon puts a constant weight on each eligible
-        // LOWER table: 0.166 (Chimerical band 10), 0.099 (Enchanted band 20),
-        // 0.136 (Sinister band 15), and on the two-lower-table bands 0.090/0.200
-        // (Chimerical 30), 0.080/0.220 (Enchanted 40), 0.205/0.165 (Sinister 40).
-        // The share per table does not shrink as more become eligible, so the
-        // tables do not split a fixed budget: pooled, a fixed per-table weight
-        // beats a normalized share by dLL = +5.36 on the same single parameter,
-        // odds of 212:1 (dAIC = dBIC = 10.7), up from +3.9 (49:1) on the older
-        // two dungeons alone, and it wins in each dungeon separately (+2.10
+        // LOWER table: 0.144 (Chimerical band 10), 0.099 (Enchanted band 20),
+        // 0.136 (Sinister band 15), and on the two-lower-table bands 0.125/0.140
+        // (Chimerical 30), 0.080/0.220 (Enchanted 40), 0.205/0.165 (Sinister 40),
+        // quoted two-steps-below first. The share per table does not shrink as
+        // more become eligible, so the tables do not split a fixed budget:
+        // pooled, a fixed per-table weight beats a normalized share (s = 0.199)
+        // by dLL = +19.71 on the same single parameter, odds of 3.6e8:1
+        // (dAIC = dBIC = 39.4), and it wins in each dungeon separately (+16.51
         // Chimerical, +1.50 Enchanted, +1.93 Sinister) and in every
-        // leave-one-dungeon-out subset (+3.2 to +3.9). A free weight per band
-        // per dungeon buys only dLL = +4.40 for eight more parameters
-        // (chi2 = 8.81, df 8, p = 0.36), so one parameter is adequate.
+        // leave-one-dungeon-out subset (+3.2 to +18.2). A free weight per band
+        // per dungeon buys only dLL = +2.78 for eight more parameters
+        // (chi2 = 5.56, df 8, p = 0.70), so one parameter is adequate.
         //
         // So: each eligible lower table is drawn with LOWER_TABLE_RATE, the
-        // current one takes the remainder. The pooled estimate is 0.1487 with a
-        // 95% profile interval of [0.121, 0.179] -- almost exactly the 0.149 the
-        // two-dungeon fit gave -- and 1/7 sits inside it at a cost of 0.08
-        // log-likelihood, so 1/7 stays. Against the recordings this moves the
-        // modelled mean wave HP from +10.6% to -0.2% (Chimerical band 30, census),
-        // +3.6% to +0.6% (Chimerical band 10, census), +13.4% to +2.2%
+        // current one takes the remainder. The pooled estimate is 0.1349 with a
+        // 95% profile interval of [0.1227, 0.1477], five times tighter than the
+        // [0.121, 0.179] the 498-wave fit gave. 1/7 = 0.1429 still sits inside
+        // it, at a cost of 0.75 log-likelihood (chi2 = 1.50, p = 0.22), so 1/7
+        // stays -- but it is now near the upper edge, and 0.15 and 1/6 are
+        // excluded outright. Against the recordings this moves the modelled mean
+        // wave HP from +9.9% to -0.8% (Chimerical band 30, census, n = 832),
+        // +3.5% to +0.4% (Chimerical band 10, n = 837), +13.4% to +2.2%
         // (Enchanted band 40) and +16.1% to +6.1% (Sinister band 40), at the cost
         // of +0.6% to -1.5% in Enchanted band 20 and +0.7% to -1.3% in Sinister
         // band 15 -- both regressions smaller than those bands' own sampling
-        // error (+-2.4% and +-1.8%).
+        // error (+-2.4% and +-1.8%). The two Chimerical gains are now 12 and 7
+        // times their sampling error (+-0.8% and +-0.5%).
         //
-        // One caveat and two residuals. The caveat: letting the weight depend on
-        // how far below the current key a table sits now buys dLL = +1.80 for
-        // one extra parameter (0.174 one step below, 0.109 two steps;
-        // chi2 = 3.61, df 1, p = 0.058), where the two-dungeon fit saw +0.01.
-        // That is not significant and the three dungeons disagree on its sign
-        // (Sinister band 40 runs the other way), but if it is real the flat rule
-        // slightly over-weights the two-steps-below table. The residuals: with
-        // only ONE table eligible, band 0 runs 2.4% short on monsters and 3.5%
-        // short on HP in Sinister Circus and 3.2% LONG on monsters in Enchanted
-        // Fortress, which no mixture weight can explain and the overflow reading
-        // below cannot either; and Sinister band 40 is still +6.1% on HP after
-        // the fix. Something in the draw loop itself is still slightly wrong.
-        // See zone.test.js.
+        // The distance question is settled: the weight does NOT taper. Letting
+        // it depend on how far below the current key a table sits gives 0.142
+        // one step below and 0.124 two steps, dLL = +0.82 for the extra
+        // parameter (chi2 = 1.64, df 1, p = 0.20) -- the 498-wave fit had this at
+        // p = 0.058, and six times the data pushed it back towards nothing.
+        // Chimerical band 30 alone now estimates the two weights separately
+        // (896 waves): 0.135 [0.111, 0.161] one step below, 0.122 [0.102, 0.144]
+        // two steps, intervals that overlap over most of their length. The other
+        // two dungeons still disagree on the sign (Sinister runs the other way)
+        // and neither is significant on its own. Flat it is.
+        //
+        // Two residuals remain, neither of which any table-choice rule can
+        // explain. With only ONE table eligible, Chimerical band 0 is now exact
+        // on the means (423 waves: -0.0% monsters, -0.2% HP), which retires the
+        // 2-3% band-0 gap as a claim about the draw loop's arithmetic; but
+        // Enchanted band 0 is still +3.2% on monsters and Sinister band 0 still
+        // -2.4%, both on 24-32 waves and both within 1.5 sigma, and neither
+        // dataset grew. What did sharpen is species composition inside band 0:
+        // against equal rates, Chimerical band 0 gives chi2 = 22.7 on 13 species
+        // (Monte-Carlo p = 0.027, sea_snail +25%, frog and slimy short) and
+        // Enchanted band 0 chi2 = 15.8 on 7 (p = 0.016, abyssal_imp +86%). The
+        // Chimerical pattern half-replicates across the two halves of its own
+        // waves (r = +0.46) but not against the party recording (r = -0.36), so
+        // it is a hint, not a finding. And Sinister band 40 is still +6.1% on HP
+        // after the fix. Something in the draw loop itself may still be slightly
+        // wrong. See zone.test.js.
         const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;
 
         if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {
