@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dungeon tracker no longer tracks a dungeon you only queued
+
+Adding a dungeon to the queue while fighting something else started a run: the panel appeared, the clock ran, and it counted waves of whatever zone was actually being fought, at the queued copy's difficulty rather than the real one. Two things had to line up for it — any unfinished dungeon anywhere in the queue armed the tracker, and the check that would have caught it only trusted the running action when that action was itself a dungeon, so a normal zone fell through to the queued one. The tracker now arms and starts only for the dungeon actually running, takes its tier from there too, and the two run-restore paths were tightened the same way, since either could adopt a queued dungeon on page load. A dungeon leaving someone else's queue can also no longer wipe a live run.
+
 ### A spawn census you can leave running
 
 Working out why dungeon clears sim long has needed full combat recordings: megabytes for half an hour, capped by a timer, capturing far more than the question needs. The new spawn census keeps only the part that matters, which monsters turned up in each wave, and it does that by counting rather than logging: a wave whose roster it has seen before at that wave number costs one increment, so the store grows with the variety of what you fight instead of with how long you play. It also keeps enough per wave number to state a mean clear time with an error bar, from three running numbers rather than a timestamp per wave, and one observed health figure per monster per tier so that never has to be worked out again. It is off by default and lives under Settings; turn it on, play normally, then export from the console with `Toolasha.Debug.spawnCensusExport()`. The export carries the spawn tables in force at the time, so the file can be analysed long afterwards without the game open.
