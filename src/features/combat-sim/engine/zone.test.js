@@ -192,10 +192,11 @@ describe('boss cadence', () => {
  * wave its table may be drawn from, a wave is drawn whole from exactly one
  * eligible table, each eligible table BELOW the highest one reached is drawn
  * with probability 1/7, and a draw that would break `maxTotalStrength` ends the
- * wave. The 1/7 comes from a maximum-likelihood mixture fit over 138 ordinary
- * waves of Chimerical Den and 95 of Sinister Circus, against the spawn tables as
- * read from the live game client (see the note in zone.js); the overflow rule is
- * still an inference. Anything that changes either has to be deliberate rather
+ * wave. The 1/7 comes from a maximum-likelihood mixture fit over 498 ordinary
+ * waves of Chimerical Den (297), Enchanted Fortress (106) and Sinister Circus
+ * (95), against the spawn tables as read from the live game client -- pooled
+ * estimate 0.1487, 95% profile interval [0.121, 0.179] (see the note in
+ * zone.js); the overflow rule is still an inference. Anything that changes either has to be deliberate rather
  * than incidental.
  */
 describe('dungeon waves', () => {
@@ -303,11 +304,12 @@ describe('dungeon waves', () => {
     });
 
     test('each eligible lower table takes about a seventh of the waves', () => {
-        // Measured, not documented: 28 of 233 ordinary waves recorded in
-        // Chimerical Den and Sinister Circus are clean draws from a strictly
-        // lower table, and the per-table share does not shrink as more tables
-        // become eligible — which is what rules out the eligible tables sharing
-        // one budget between them. See the note in zone.js.
+        // Measured, not documented: 61 of 498 ordinary waves recorded in
+        // Chimerical Den, Enchanted Fortress and Sinister Circus are clean draws
+        // from a strictly lower table, and the per-table share does not shrink as
+        // more tables become eligible — which is what rules out the eligible
+        // tables sharing one budget between them, by dLL = +5.36 (212:1) on the
+        // same single parameter. See the note in zone.js.
         seedSimRng(20260903);
         const zone = installBandedDungeon();
         const runs = 400;
@@ -355,9 +357,10 @@ describe('dungeon waves', () => {
         seedSimRng(11);
         const species = waveSpecies(installBandedDungeon(), 50);
 
-        // Confirmed against 138 live Chimerical Den waves and 95 Sinister Circus
-        // waves: a species never appears below its own key's wave, and the
-        // top-table species first show up on the wave after that key.
+        // Confirmed against 498 live waves across Chimerical Den, Enchanted
+        // Fortress and Sinister Circus: a species never appears below its own
+        // key's wave, and the top-table species first show up on the wave after
+        // that key.
         expect(species.slice(0, 9)).not.toContain(MID);
         expect(species.slice(0, 9)).not.toContain(LATE);
         expect(species.slice(0, 29)).not.toContain(LATE);

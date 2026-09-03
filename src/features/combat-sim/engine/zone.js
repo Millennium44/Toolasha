@@ -101,48 +101,71 @@ class Zone {
         // Random spawn path.
         //
         // The map's keys gate which tables a wave may draw from, and a wave is
-        // drawn whole from exactly ONE of them. Both halves are measured against
-        // the tables as read from the live game client, across 138 ordinary
-        // waves of Chimerical Den (keys 0/10/30, party of 2) and 95 ordinary
-        // waves of Sinister Circus (keys 0/15/40, solo): no monster ever appears
-        // below its own key's wave, and not one roster mixes species the way a
-        // pooled union of the eligible tables would -- a union that would have to
-        // explain 57-85% of the waves it cannot.
+        // drawn whole from exactly ONE of them. Measured against the tables as
+        // read from the live game client, over 498 ordinary (non-fixed) dungeon
+        // waves in three dungeons: Chimerical Den (keys 0/10/30) 297 waves, from
+        // a 138-wave party-of-2 recording plus a 159-wave solo spawn census;
+        // Enchanted Fortress (keys 0/20/40) 106 census waves, solo; and Sinister
+        // Circus (keys 0/15/40) 95 waves, solo. No monster ever appears below
+        // its own key's wave, and not one roster mixes species the way a pooled
+        // union of the eligible tables would -- a union that would have to
+        // explain most of the waves it cannot.
         //
-        // What the recordings also show is that the table is NOT always the
-        // highest eligible one. 28 of those 233 waves are complete, well-formed
-        // draws from a strictly lower table, which a highest-only reading gives
-        // probability zero. Fitting a mixture by maximum likelihood puts a
-        // constant weight on each eligible LOWER table -- 0.130 with one lower
-        // table in Chimerical Den's band 10, 0.136 in Sinister Circus's band 15,
-        // and 0.125/0.165 and 0.204/0.164 on the two lower tables of their top
-        // bands. The share per lower table does not shrink as more become
-        // eligible, so the tables do not split a fixed budget: pooling both
-        // dungeons, a fixed per-table weight beats a normalized share by
-        // dLL = +3.9 (49:1) on the same single parameter, and beats it in each
-        // dungeon separately (+2.1 and +1.9). Nor does the weight depend on how
-        // far below the current key a table sits (fitting the one- and two-step
-        // weights apart gives 0.148 and 0.153, dLL = +0.01 for the extra
-        // parameter), and a free weight per band per dungeon buys only
-        // dLL = +0.7 for five more parameters.
+        // The table is NOT always the highest eligible one. 61 of those 498
+        // waves are complete, well-formed draws from a strictly lower table, so
+        // a highest-only reading gives them probability zero: 12 and 13 of the
+        // census's Chimerical bands 10 and 30, 7 and 16 of the party
+        // recording's, 8 of Enchanted Fortress band 40, and 5 of Sinister
+        // Circus band 40. That much is not a fit, it is arithmetic.
+        //
+        // How much weight each lower table carries is a fit. The likelihood is
+        // exact per roster -- the probability the draw loop below produces that
+        // multiset from a given table, overflow termination included -- so a
+        // lower draw that could equally have come from the current table simply
+        // contributes no evidence either way instead of false confidence. That
+        // matters for Enchanted Fortress, whose key-40 and key-20 tables share
+        // every species: band 40 still discriminates them (their rates and
+        // strength caps differ) but far more weakly than a disjoint pair would.
+        //
+        // Fitting per band per dungeon puts a constant weight on each eligible
+        // LOWER table: 0.166 (Chimerical band 10), 0.099 (Enchanted band 20),
+        // 0.136 (Sinister band 15), and on the two-lower-table bands 0.090/0.200
+        // (Chimerical 30), 0.080/0.220 (Enchanted 40), 0.205/0.165 (Sinister 40).
+        // The share per table does not shrink as more become eligible, so the
+        // tables do not split a fixed budget: pooled, a fixed per-table weight
+        // beats a normalized share by dLL = +5.36 on the same single parameter,
+        // odds of 212:1 (dAIC = dBIC = 10.7), up from +3.9 (49:1) on the older
+        // two dungeons alone, and it wins in each dungeon separately (+2.10
+        // Chimerical, +1.50 Enchanted, +1.93 Sinister) and in every
+        // leave-one-dungeon-out subset (+3.2 to +3.9). A free weight per band
+        // per dungeon buys only dLL = +4.40 for eight more parameters
+        // (chi2 = 8.81, df 8, p = 0.36), so one parameter is adequate.
         //
         // So: each eligible lower table is drawn with LOWER_TABLE_RATE, the
-        // current one takes the remainder. The pooled estimate is 0.149 with a
-        // 95% profile interval of [0.110, 0.193], and 1/7 sits inside it at a
-        // cost of 0.05 log-likelihood, so 1/7 is what is used. Adopting it moves
-        // the modelled mean wave HP from +13.7% to -6.0% (Chimerical band 30) and
-        // +16.2% to +6.1% (Sinister band 40) against the recordings, at the cost
-        // of -6.0% to -15.2% in Chimerical band 10, whose own sampling error is
-        // +-8.9%, and +0.7% to -1.3% in Sinister band 15 against +-1.8%.
+        // current one takes the remainder. The pooled estimate is 0.1487 with a
+        // 95% profile interval of [0.121, 0.179] -- almost exactly the 0.149 the
+        // two-dungeon fit gave -- and 1/7 sits inside it at a cost of 0.08
+        // log-likelihood, so 1/7 stays. Against the recordings this moves the
+        // modelled mean wave HP from +10.6% to -0.2% (Chimerical band 30, census),
+        // +3.6% to +0.6% (Chimerical band 10, census), +13.4% to +2.2%
+        // (Enchanted band 40) and +16.1% to +6.1% (Sinister band 40), at the cost
+        // of +0.6% to -1.5% in Enchanted band 20 and +0.7% to -1.3% in Sinister
+        // band 15 -- both regressions smaller than those bands' own sampling
+        // error (+-2.4% and +-1.8%).
         //
-        // Two residuals this does not touch, both in Sinister Circus. Band 0 runs
-        // 2.4% short on monsters and 3.5% short on HP with only ONE table
-        // eligible, so no mixture weight can explain it and the overflow reading
-        // below cannot either -- with maxSpawnCount 4 and strengths of 50-70
-        // against a 250 cap, the only draw that can overflow is the last one,
-        // where ending the wave and skipping the draw are the same thing. And
-        // band 40 is still +6.1% on HP after the fix. Something in the draw loop
-        // itself is still slightly wrong. See zone.test.js.
+        // One caveat and two residuals. The caveat: letting the weight depend on
+        // how far below the current key a table sits now buys dLL = +1.80 for
+        // one extra parameter (0.174 one step below, 0.109 two steps;
+        // chi2 = 3.61, df 1, p = 0.058), where the two-dungeon fit saw +0.01.
+        // That is not significant and the three dungeons disagree on its sign
+        // (Sinister band 40 runs the other way), but if it is real the flat rule
+        // slightly over-weights the two-steps-below table. The residuals: with
+        // only ONE table eligible, band 0 runs 2.4% short on monsters and 3.5%
+        // short on HP in Sinister Circus and 3.2% LONG on monsters in Enchanted
+        // Fortress, which no mixture weight can explain and the overflow reading
+        // below cannot either; and Sinister band 40 is still +6.1% on HP after
+        // the fix. Something in the draw loop itself is still slightly wrong.
+        // See zone.test.js.
         const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;
 
         if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {
