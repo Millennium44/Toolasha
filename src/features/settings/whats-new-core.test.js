@@ -51,6 +51,11 @@ describe('how the update is described', () => {
         expect(describeUpdate(MINE, MINE_NEXT)).toBe('Updated 2.88.0 → 2.89.0');
     });
 
+    test('the same version on the same fork is not "Updated X → X"', () => {
+        // A dev build, or a release that adds settings without a version bump
+        expect(describeUpdate(MINE, MINE)).toBe('New in 2.88.0');
+    });
+
     test('a build that does not say who it is still compares sanely', () => {
         expect(identityChanged(MINE, buildIdentity({}))).toBe(true);
         expect(buildIdentity({}).fork).toBe('unknown-fork');

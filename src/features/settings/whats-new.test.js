@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
     copiedFrom: null,
     copySucceeds: true,
     knownCount: 1,
+    openSettingsCalls: [],
 }));
 
 vi.mock('../../utils/choice-dialog.js', () => ({
@@ -124,6 +125,15 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
+// openSettings drives the real game's DOM to switch tabs and scroll a row into
+// view — none of which exists here, so the fallback-control test drives this
+// mock instead of the real settings panel.
+vi.mock('../ui/command-palette.js', () => ({
+    openSettings: async (...args) => {
+        mocks.openSettingsCalls.push(args);
+    },
+}));
+
 const { default: whatsNew, renderForkMarkdown, COPY_FROM_CHARACTER, NO_CHANGE } = await import('./whats-new.js');
 const { SETTING_PRESETS, DEFAULT_PRESET_ID } = await import('./setting-presets.js');
 const { conservativeOverrides } = await import('./whats-new-core.js');
@@ -149,6 +159,7 @@ beforeEach(() => {
     mocks.copiedFrom = null;
     mocks.copySucceeds = true;
     mocks.knownCount = 1;
+    mocks.openSettingsCalls = [];
     whatsNew._pending = null;
     virtualChangelog.text = '';
     delete whatsNew._pickSourceCharacter; // restore the real method if a test replaced it
@@ -277,6 +288,30 @@ describe('the popup shows the overview only to newcomers', () => {
         expect(whatsNew.panel.textContent).not.toContain('overview-marker-text');
         expect(whatsNew.panel.textContent).not.toContain('Toolasha — at a glance');
         whatsNew.close();
+    });
+});
+
+describe('the fallback control for a non-inline-editable setting', () => {
+    const base = { headline: 'x', forkChanged: false, turnedOff: new Set(), isNewcomer: false };
+
+    test('a button type gets a clickable control that closes the dialog and opens settings', async () => {
+        mocks.definitions = { spawnCensusExport: { type: 'button', label: 'Export census' } };
+
+        whatsNew._buildPanel({ ...base, newIds: ['spawnCensusExport'] });
+        // The header's × and the footer's Close button are also <button>s, so
+        // find the row's control by its own text rather than the first match
+        const control = [...whatsNew.panel.querySelectorAll('button')].find(
+            (button) => button.textContent === 'Open in Settings'
+        );
+        // The row's control is a real button, not a dead span
+        expect(control).toBeTruthy();
+        expect(control.textContent).not.toBe('in Settings');
+
+        control.click();
+
+        // Closing happens synchronously, before openSettings is even awaited
+        expect(whatsNew.panel).toBeNull();
+        expect(mocks.openSettingsCalls).toEqual([['', 'spawnCensusExport']]);
     });
 });
 

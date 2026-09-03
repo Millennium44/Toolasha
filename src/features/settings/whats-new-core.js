@@ -50,15 +50,24 @@ export function identityChanged(stored, current) {
  * because "switched from Celasha/Toolasha 2.88.0" answers a question that
  * "updated to 2.88.0" would actively hide — the number may not even change.
  *
+ * A same-fork, same-version case exists too — a dev build, or any release that
+ * adds settings without a version bump — and "Updated 3.40.0 → 3.40.0" would
+ * be nonsense there: nothing about the *version* updated. The popup still only
+ * appears because there is something new to show, so it is described as that:
+ * `New in 3.40.0`, true whether this is a dev build or a real release.
+ *
  * @param {{fork: string, version: string}|null} stored - Previous identity
  * @param {{fork: string, version: string}} current - This build
- * @returns {string} e.g. `Updated 2.88.0 → 2.89.0` or
+ * @returns {string} e.g. `Updated 2.88.0 → 2.89.0`, `New in 2.88.0`, or
  *   `Switched from Celasha/Toolasha 2.88.0`
  */
 export function describeUpdate(stored, current) {
     if (!stored) return `Version ${current.version}`;
     if (stored.fork !== current.fork) {
         return `Switched from ${stored.fork} ${stored.version} (now ${current.fork} ${current.version})`;
+    }
+    if (stored.version === current.version) {
+        return `New in ${current.version}`;
     }
     return `Updated ${stored.version} → ${current.version}`;
 }

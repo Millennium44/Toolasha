@@ -34,6 +34,7 @@ import {
     conservativeOverrides,
 } from './whats-new-core.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { openSettings } from '../ui/command-palette.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { toolashaRoot } from '../../utils/bundle-bridge.js';
 import forkChangelog from 'virtual:fork-changelog';
@@ -1026,12 +1027,26 @@ class WhatsNew {
             control.value = config.getSettingValue(id, definition.default ?? '');
             control.addEventListener('change', () => config.setSetting(id, control.value));
         } else {
-            control = document.createElement('span');
-            control.textContent = 'in Settings';
-            control.style.color = COLORS.dim;
-            control.style.fontSize = '11px';
+            control = document.createElement('button');
+            control.type = 'button';
+            control.textContent = 'Open in Settings';
+            Object.assign(control.style, {
+                background: 'none',
+                border: 'none',
+                padding: '0',
+                color: COLORS.accent,
+                fontSize: '11px',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+            });
+            control.addEventListener('mouseenter', () => (control.style.color = COLORS.text));
+            control.addEventListener('mouseleave', () => (control.style.color = COLORS.accent));
+            control.addEventListener('click', () => {
+                this.close();
+                openSettings('', id);
+            });
         }
-        if (control.tagName !== 'SPAN') {
+        if (control.tagName !== 'SPAN' && control.tagName !== 'BUTTON') {
             Object.assign(control.style, {
                 background: '#1a1a2e',
                 color: COLORS.text,
