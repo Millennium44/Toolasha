@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dungeon tracker follows you when you switch dungeons
+
+Switching from one dungeon to another mid-session left the tracker on the old one: the panel kept the previous dungeon's name, its run count and its average, while counting the waves of the dungeon actually being fought — reading "Chimerical Den, Wave 61/50" during Pirate Cove wave 61 of 65. Underneath was older breakage. The branch meant to notice a dungeon starting tested for wave 0, but the game numbers waves from 1, so it had never once run; tracking only ever began when nothing was being tracked, and nothing afterwards asked whether the run's dungeon was still the one in front of you. A dungeon leaving the queue used to reset tracking and hide it. The tracker now checks the running dungeon on every wave and moves the run across when it changes, discarding the interrupted one rather than banking a half-length run into your averages, and a first wave is recognised as a first wave.
+
 ### The dungeon tracker no longer tracks a dungeon you only queued
 
 Adding a dungeon to the queue while fighting something else started a run: the panel appeared, the clock ran, and it counted waves of whatever zone was actually being fought, at the queued copy's difficulty rather than the real one. Two things had to line up for it — any unfinished dungeon anywhere in the queue armed the tracker, and the check that would have caught it only trusted the running action when that action was itself a dungeon, so a normal zone fell through to the queued one. The tracker now arms and starts only for the dungeon actually running, takes its tier from there too, and the two run-restore paths were tightened the same way, since either could adopt a queued dungeon on page load. A dungeon leaving someone else's queue can also no longer wipe a live run.
