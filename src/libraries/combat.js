@@ -22,6 +22,7 @@ import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-ch
 import combatSummary from '../features/combat/combat-summary.js';
 import combatBattleCounter from '../features/combat/combat-battle-counter.js';
 import combatBossEta from '../features/combat/combat-boss-eta.js';
+import spawnCensus from '../features/combat/spawn-census.js';
 import combatDropLuck from '../features/combat/combat-drop-luck.js';
 import { partyLuckPanel } from '../features/combat/party-luck-panel.js';
 import combatDPS from '../features/combat/combat-dps.js';
@@ -125,6 +126,7 @@ toolashaRoot.Combat = {
     combatSummary,
     combatBattleCounter,
     combatBossEta,
+    spawnCensus,
     combatDropLuck,
     partyLuckPanel,
     combatDPS,
@@ -445,6 +447,33 @@ toolashaRoot.Debug = {
         );
         console.table(rows);
         return rows;
+    },
+    // The spawn census: what the wave tally has counted so far, and the file
+    // that carries it out of the browser. Turn the Spawn Census setting on and
+    // fight; nothing is shown in game, so this is how you read it.
+    spawnCensus: () => {
+        const summary = spawnCensus.summary();
+        if (!summary.wavesSeen) {
+            console.warn('[SpawnCensus] Nothing counted yet — turn the Spawn Census setting on and fight a zone.');
+            return summary;
+        }
+        console.log(
+            `[SpawnCensus] ${summary.wavesSeen} waves since ${summary.startedAt}, ${summary.distinctRosters} distinct rosters` +
+                (summary.evictedRows ? `, ${summary.evictedRows} rows evicted at the cap` : '')
+        );
+        console.table(summary.zones);
+        return summary;
+    },
+    // Download the census as JSON — the counts, the duration aggregates, the
+    // observed monster hitpoints and the spawn tables in force, so the analysis
+    // needs neither the game nor this script.
+    spawnCensusExport: async () => {
+        await spawnCensus.flush();
+        if (!spawnCensus.downloadExport()) {
+            console.warn('[SpawnCensus] Nothing counted yet — nothing to export.');
+            return false;
+        }
+        return true;
     },
     guildXp: () => guildXPTracker.debugState(),
 };

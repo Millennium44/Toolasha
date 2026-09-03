@@ -2286,6 +2286,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays "Battle #N" for regular zones or "Wave N" for dungeons in the top-left action panel',
             },
+            spawnCensus: {
+                id: 'spawnCensus',
+                label: 'Spawn Census: Tally which monsters each combat wave contains',
+                type: 'checkbox',
+                default: false,
+                help: "Counts how often each set of monsters appears at each zone, difficulty and wave number, so the simulator's wave-draw rule can be checked against what the game actually does. Identical waves share one row and a counter, so weeks of play cost about a megabyte and nothing is written per battle. Shows nothing in game — the data comes out through Toolasha.Debug.spawnCensusExport()",
+            },
             combatBossEta: {
                 id: 'combatBossEta',
                 label: 'Show battles/time until the boss is defeated next to the battle counter',
