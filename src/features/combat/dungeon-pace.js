@@ -220,3 +220,127 @@ export function paceChip(percent) {
     if (percent < 0) return { text: `pace −${Math.abs(percent)}% vs your avg`, tone: 'bad' };
     return { text: 'pace even with your avg', tone: 'dim' };
 }
+
+/**
+ * Recovering a party run's true start from the chat log.
+ *
+ * A run the tracker picked up at wave 48 has no start of its own, but in a
+ * party the server timestamps every "Key counts" message, and the newest one
+ * still in chat is normally this run's start — the same message that ended the
+ * previous run. "Normally" is the problem: the player may have idled between
+ * runs, switched dungeons, or left the tab open overnight, in which case the
+ * newest message is hours old and belongs to something else entirely. These
+ * two checks are what stands between that and a fabricated run in history.
+ */
+
+/**
+ * How much longer than the longest run you have on record for this dungeon and
+ * tier a recovered start may imply. A run is bounded from above by the party's
+ * worst night, and your own worst night is the only figure available that knows
+ * anything about this dungeon; 1.5× leaves room for a party slower than any you
+ * have recorded without admitting an anchor a whole run too early (which, at any
+ * wave, implies at least ~2× the run).
+ */
+export const RECOVERY_DURATION_SLACK = 1.5;
+
+/**
+ * The bound with no history to derive one from. The longest dungeon in the game
+ * is 65 waves at roughly half a minute each — a little over half an hour — so
+ * 45 minutes admits a slow party of a dungeon you have never finished while
+ * still refusing a chat log left open across a lunch break.
+ */
+export const RECOVERY_FALLBACK_MAX_MS = 45 * 60 * 1000;
+
+/**
+ * How far the implied elapsed time may sit either side of the stored cumulative
+ * at the wave reached. Run-to-run variance on the same dungeon and tier is
+ * large — party composition and drop rolls swing a run by tens of percent — so
+ * a tight band would throw away honest recoveries; 2× is generous enough that a
+ * real run has to be twice or half its usual pace to be refused. It is still
+ * decisive against the failure this guards: an anchor one run too early implies
+ * roughly a whole extra run's time on top of the waves actually done, which is
+ * 2.3× at the last quarter of a dungeon and far more earlier on.
+ */
+export const RECOVERY_WAVE_TOLERANCE = 2;
+
+/**
+ * The longest a run of this dungeon may plausibly have taken, from history.
+ *
+ * @param {Array<Object>} runs - Stored runs, already narrowed to the character
+ * @param {Object} current - The live run's identity
+ * @param {string|null} current.dungeonName - Which dungeon
+ * @param {number|null} current.tier - Its tier, where known
+ * @returns {number|null} Milliseconds, or null without usable history
+ */
+export function plausibleMaxRunMs(runs, { dungeonName, tier } = {}) {
+    if (!dungeonName || dungeonName === 'Unknown') return null;
+
+    let longest = null;
+    for (const run of runs || []) {
+        if (!run || run.dungeonName !== dungeonName) continue;
+        if (tier !== null && tier !== undefined && run.tier !== null && run.tier !== undefined && run.tier !== tier) {
+            continue;
+        }
+        const duration = Number(run.duration ?? run.totalTime);
+        if (!Number.isFinite(duration) || duration <= 0) continue;
+        if (longest === null || duration > longest) longest = duration;
+    }
+
+    if (longest === null) return null;
+    return longest * RECOVERY_DURATION_SLACK;
+}
+
+/**
+ * Whether a chat anchor can be believed as this run's start.
+ *
+ * @param {Object} candidate - The anchor under test
+ * @param {number} candidate.impliedElapsedMs - Now minus the anchor
+ * @param {number} candidate.currentWave - The wave the run is on (1-based)
+ * @param {number|null} candidate.maxWaves - The dungeon's wave count
+ * @param {Array<Object>} candidate.runs - Stored runs, narrowed to the character
+ * @param {string|null} candidate.dungeonName - Which dungeon
+ * @param {number|null} candidate.tier - Its tier, where known
+ * @returns {{credible: boolean, reason: string}} Why, for the log
+ */
+export function assessRecoveredStart({ impliedElapsedMs, currentWave, maxWaves, runs, dungeonName, tier } = {}) {
+    if (!Number.isFinite(impliedElapsedMs) || impliedElapsedMs <= 0) {
+        return { credible: false, reason: 'anchor is not in the past' };
+    }
+
+    // 1. Plausibility — could this dungeon have taken that long at all?
+    const bound = plausibleMaxRunMs(runs, { dungeonName, tier }) ?? RECOVERY_FALLBACK_MAX_MS;
+    if (impliedElapsedMs > bound) {
+        return {
+            credible: false,
+            reason: `implied ${Math.round(impliedElapsedMs / 1000)}s is beyond the plausible ${Math.round(bound / 1000)}s for this dungeon`,
+        };
+    }
+
+    // 2. Wave consistency — does that long match the waves actually done?
+    // The run is *inside* currentWave, so the waves finished are currentWave - 1
+    // and the stored cumulative at that wave is what the elapsed should resemble.
+    const profile = historyCumulativeProfile(runs, { dungeonName, tier, maxWaves });
+    const wavesDone = Number(currentWave) - 1;
+    const expected =
+        Array.isArray(profile) && Number.isFinite(wavesDone) && wavesDone >= 1 && wavesDone < profile.length
+            ? profile[wavesDone]
+            : null;
+
+    if (expected !== null && expected > 0) {
+        if (impliedElapsedMs > expected * RECOVERY_WAVE_TOLERANCE) {
+            return {
+                credible: false,
+                reason: `implied ${Math.round(impliedElapsedMs / 1000)}s is more than ${RECOVERY_WAVE_TOLERANCE}× the ${Math.round(expected / 1000)}s your history reaches wave ${wavesDone} in`,
+            };
+        }
+        if (impliedElapsedMs < expected / RECOVERY_WAVE_TOLERANCE) {
+            return {
+                credible: false,
+                reason: `implied ${Math.round(impliedElapsedMs / 1000)}s is under 1/${RECOVERY_WAVE_TOLERANCE} of the ${Math.round(expected / 1000)}s your history reaches wave ${wavesDone} in`,
+            };
+        }
+        return { credible: true, reason: 'plausible and consistent with the waves completed' };
+    }
+
+    return { credible: true, reason: 'plausible; no per-wave history to check it against' };
+}

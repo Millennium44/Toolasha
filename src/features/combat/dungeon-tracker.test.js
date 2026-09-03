@@ -29,6 +29,7 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     dmHandlers: {},
     savedRuns: [],
+    historyRuns: [],
 }));
 
 const mockStorage = vi.hoisted(() => {
@@ -90,6 +91,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
         getDungeonInfo: (hrid) => game.dungeonInfo[hrid] ?? null,
         getTeamKey: (names) => [...names].sort().join(','),
+        getRunsForCharacter: async () => game.historyRuns,
         saveTeamRun: vi.fn(async (teamKey, run) => {
             game.savedRuns.push({ teamKey, run });
             return true;
@@ -222,6 +224,7 @@ beforeEach(() => {
     game.wsHandlers = {};
     game.dmHandlers = {};
     game.savedRuns = [];
+    game.historyRuns = [];
     resetTracker();
 });
 
@@ -2462,5 +2465,227 @@ describe('banking a solo run', () => {
         expect(game.savedRuns[0].teamKey).toBe('Alice,Bob');
         expect(game.savedRuns[0].run.duration).toBe(272_000);
         expect(game.savedRuns[0].run.validated).toBe(true);
+    });
+});
+
+describe('recovering a partial party run’s start from chat', () => {
+    // A 65-wave dungeon so the live case — a refresh at wave 48 — can be played
+    // out at the wave numbers it actually happens at.
+    const MAX_WAVES = 65;
+    const RUN_MS = 1_800_000; // half an hour, six times over in history
+    const WAVE_MS = RUN_MS / MAX_WAVES; // ~27.7s
+    const NOW = Date.parse('2026-08-04T12:00:00.000Z');
+    /** Stored cumulative at wave 47 — where a run on wave 48 has got to */
+    const AT_WAVE_47 = WAVE_MS * 47;
+
+    function history(count = 6) {
+        return Array.from({ length: count }, (_, i) => ({
+            dungeonName: 'Chimerical Den',
+            tier: 1,
+            duration: RUN_MS,
+            waveTimes: Array.from({ length: MAX_WAVES }, () => WAVE_MS),
+            avgWaveTime: WAVE_MS,
+            timestamp: new Date(NOW - (i + 1) * 86_400_000).toISOString(),
+        }));
+    }
+
+    /** The refresh: tracking picks the run up at wave 48, then scans the chat. */
+    async function joinAtWave48({ anchorAgoMs = null, runs = history() } = {}) {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        game.dungeonInfo[DEN] = { name: 'Chimerical Den', maxWaves: MAX_WAVES };
+        game.historyRuns = runs;
+        beTracking({
+            tier: 1,
+            startTime: NOW - 40_000, // we noticed forty seconds ago
+            currentWave: 48,
+            maxWaves: MAX_WAVES,
+            wavesCompleted: 0,
+            joinedMidRun: true,
+            joinedAtWave: 48,
+        });
+        tracker.recentChatMessages =
+            anchorAgoMs === null
+                ? []
+                : [
+                      {
+                          m: 'systemChatMessage.partyKeyCount',
+                          t: new Date(NOW - anchorAgoMs).toISOString(),
+                          systemMetadata: JSON.stringify({
+                              keyCountString: 'Key counts: [Alice - 12], [Marketcow - 8]',
+                          }),
+                      },
+                  ];
+        tracker.scanExistingChatMessages();
+        await flush();
+    }
+
+    test('a plausible recent key count gives the run its real start back', async () => {
+        // Twenty-two minutes in at wave 48, against a history that reaches wave 47
+        // in about twenty-one and a half.
+        await joinAtWave48({ anchorAgoMs: 1_320_000 });
+
+        expect(tracker.currentRun.startRecovered).toBe(true);
+        expect(tracker.currentRun.recoveredStartTime).toBe(NOW - 1_320_000);
+
+        const run = tracker.getCurrentRun();
+        // A real elapsed, from the server's own timestamp — not the forty seconds
+        // we happen to have been watching
+        expect(run.totalElapsed).toBe(1_320_000);
+        expect(run.elapsedIsSinceNoticed).toBe(false);
+        expect(run.startRecovered).toBe(true);
+    });
+
+    test('and banks on completion with the server-derived duration', async () => {
+        await joinAtWave48({ anchorAgoMs: 1_320_000 });
+        tracker.currentRun.wavesCompleted = MAX_WAVES - 1;
+        tracker.currentRun.currentWave = MAX_WAVES;
+
+        // The party's completion "Key counts", five minutes later
+        vi.setSystemTime(NOW + 300_000);
+        tracker.onChatMessage(
+            keyCountsData(new Date(NOW + 300_000).toISOString(), 'Key counts: [Alice - 11], [Marketcow - 7]')
+        );
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        const { teamKey, run } = game.savedRuns[0];
+        expect(teamKey).toBe('Alice,Marketcow');
+        expect(run.duration).toBe(1_320_000 + 300_000);
+        expect(run.timestamp).toBe(new Date(NOW - 1_320_000).toISOString());
+        expect(run.validated).toBe(true);
+        expect(run.source).toBe('chat');
+        // The tail's wave times are the hard late waves; banking them would bias
+        // the wave average and misplace a wave-48 split as wave 1
+        expect(run.waveTimes).toEqual([]);
+        expect(run.avgWaveTime).toBe(0);
+    });
+
+    test('with no chat evidence at all the run stays partial and is not banked', async () => {
+        await joinAtWave48({ anchorAgoMs: null });
+
+        expect(tracker.currentRun.startRecovered).toBeUndefined();
+        expect(tracker.firstKeyCountTimestamp).toBeNull();
+        expect(tracker.getCurrentRun().elapsedIsSinceNoticed).toBe(true);
+        expect(tracker.getCurrentRun().totalElapsed).toBe(40_000);
+
+        tracker.currentRun.wavesCompleted = MAX_WAVES - 1;
+        tracker.currentRun.currentWave = MAX_WAVES;
+        tracker.currentRun.keyCountsMap = { Alice: 12, Marketcow: 8 };
+        vi.setSystemTime(NOW + 300_000);
+        tracker.onChatMessage(
+            keyCountsData(new Date(NOW + 300_000).toISOString(), 'Key counts: [Alice - 11], [Marketcow - 7]')
+        );
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('an implausibly old anchor is refused: no dungeon takes three hours', async () => {
+        // A chat log left open over lunch — the newest key count belongs to a run
+        // that finished long ago.
+        await joinAtWave48({ anchorAgoMs: 3 * 60 * 60 * 1000 });
+
+        expect(tracker.currentRun.startRecovered).toBeUndefined();
+        const run = tracker.getCurrentRun();
+        expect(run.elapsedIsSinceNoticed).toBe(true);
+        expect(run.totalElapsed).toBe(40_000);
+    });
+
+    test('with no history the fallback bound still refuses an hour-old anchor', async () => {
+        await joinAtWave48({ anchorAgoMs: 60 * 60 * 1000, runs: [] });
+
+        expect(tracker.currentRun.startRecovered).toBeUndefined();
+        expect(tracker.getCurrentRun().elapsedIsSinceNoticed).toBe(true);
+    });
+
+    test('an anchor inconsistent with the waves done is refused', async () => {
+        // Forty-four minutes: inside the plausible bound (1.5× a thirty-minute
+        // run), but more than twice the ~21.5 minutes history reaches wave 47 in.
+        // This is what an anchor one run too early looks like.
+        expect(2_650_000).toBeLessThan(RUN_MS * 1.5);
+        expect(2_650_000).toBeGreaterThan(AT_WAVE_47 * 2);
+        await joinAtWave48({ anchorAgoMs: 2_650_000 });
+
+        expect(tracker.currentRun.startRecovered).toBeUndefined();
+        expect(tracker.getCurrentRun().elapsedIsSinceNoticed).toBe(true);
+    });
+
+    test('an anchor far too recent for the waves done is refused too', async () => {
+        // Two minutes at wave 48 — an anchor from something that is not this run
+        await joinAtWave48({ anchorAgoMs: 120_000 });
+
+        expect(tracker.currentRun.startRecovered).toBeUndefined();
+        expect(tracker.getCurrentRun().elapsedIsSinceNoticed).toBe(true);
+    });
+
+    test('the recovery rides along in the in-progress record and survives a refresh', async () => {
+        await joinAtWave48({ anchorAgoMs: 1_320_000 });
+        await tracker.saveInProgressRun();
+
+        expect(stored().startRecovered).toBe(true);
+        expect(stored().recoveredStartTime).toBe(NOW - 1_320_000);
+        expect(stored().joinedMidRun).toBe(true);
+
+        resetTracker();
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        const restored = await tracker.restoreInProgressRun(42);
+
+        expect(restored).toBe(true);
+        expect(tracker.joinedMidRun).toBe(true);
+        expect(tracker.currentRun.startRecovered).toBe(true);
+        const run = tracker.getCurrentRun();
+        expect(run.startRecovered).toBe(true);
+        expect(run.elapsedIsSinceNoticed).toBe(false);
+        expect(run.totalElapsed).toBe(1_320_000);
+    });
+
+    test('a solo run joined part-way is still refused — there is nothing to recover from', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        game.dungeonInfo[DEN] = { name: 'Chimerical Den', maxWaves: MAX_WAVES };
+        game.historyRuns = history();
+        beTracking({
+            tier: 1,
+            startTime: NOW - 40_000,
+            currentWave: MAX_WAVES,
+            maxWaves: MAX_WAVES,
+            wavesCompleted: MAX_WAVES - 1,
+            joinedMidRun: true,
+            joinedAtWave: 48,
+        });
+        // Solo: no party chat at all, so nothing for the scan to anchor on
+        tracker.recentChatMessages = [];
+        tracker.scanExistingChatMessages();
+        await flush();
+
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: MAX_WAVES, isDone: true } });
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+        expect(tracker.currentRun).toBeNull();
+    });
+
+    test('a run that was never partial is untouched by any of this', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        game.historyRuns = history();
+        beTracking({
+            waveTimes: [3000],
+            maxWaves: 10,
+            wavesCompleted: 10,
+            keyCountsMap: { Alice: 12, Bob: 8 },
+            anchoredAt: '2026-08-04T10:00:00.000Z',
+        });
+
+        expect(tracker.getCurrentRun().startRecovered).toBe(false);
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Alice - 11], [Bob - 7]'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].run.duration).toBe(272_000);
+        expect(game.savedRuns[0].run.validated).toBe(true);
+        expect(game.savedRuns[0].run.waveTimes).toEqual([3000]);
     });
 });

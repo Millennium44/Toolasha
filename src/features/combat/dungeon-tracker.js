@@ -16,6 +16,7 @@ import {
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
+import { assessRecoveredStart } from './dungeon-pace.js';
 
 /**
  * The run currently under way, parked so a refresh mid-dungeon does not lose it.
@@ -158,6 +159,12 @@ class DungeonTracker {
             // Carried so a refresh does not launder a partial run into a whole one
             joinedMidRun: this.currentRun.joinedMidRun === true,
             joinedAtWave: this.currentRun.joinedAtWave ?? null,
+            // A partial run whose real start was recovered from party chat, and
+            // the anchor it was recovered to. Saved so a second refresh restores
+            // the recovery rather than re-deriving it against a chat log that has
+            // since scrolled — the same message may no longer be there.
+            startRecovered: this.currentRun.startRecovered === true,
+            recoveredStartTime: this.currentRun.recoveredStartTime ?? null,
         };
 
         return writeScoped(IN_PROGRESS_KEY, stateToSave, 'settings', true);
@@ -273,6 +280,8 @@ class DungeonTracker {
             hibernationDetected: saved.hibernationDetected || false,
             joinedMidRun: saved.joinedMidRun === true,
             joinedAtWave: saved.joinedAtWave ?? null,
+            startRecovered: saved.startRecovered === true,
+            recoveredStartTime: saved.recoveredStartTime ?? null,
         };
 
         this.notifyUpdate();
@@ -438,6 +447,8 @@ class DungeonTracker {
                 hibernationDetected: saved.hibernationDetected || false,
                 joinedMidRun: saved.joinedMidRun === true,
                 joinedAtWave: saved.joinedAtWave ?? null,
+                startRecovered: saved.startRecovered === true,
+                recoveredStartTime: saved.recoveredStartTime ?? null,
             };
 
             // Trigger UI update to show immediately
@@ -662,6 +673,13 @@ class DungeonTracker {
                     }
                 }
 
+                // A run picked up part-way through has no start of its own, but
+                // in a party the anchor just found is the server's own timestamp
+                // for one — see recoverPartyStart for when it may be believed.
+                if (this.joinedMidRun && this.firstKeyCountTimestamp && !this.currentRun.startRecovered) {
+                    this.recoverPartyStart();
+                }
+
                 this.notifyUpdate();
                 this.saveInProgressRun(); // Persist to IndexedDB
             } else if (!this.currentRun) {
@@ -670,6 +688,75 @@ class DungeonTracker {
         } catch (error) {
             console.error('[Dungeon Tracker] Error scanning existing messages:', error);
         }
+    }
+
+    /**
+     * Recover a partial party run's true start from the chat anchor.
+     *
+     * The anchor is a "Key counts" timestamp, not "Battle started": key counts
+     * are what every banked party duration is already measured between, and in
+     * a repeating dungeon the same key-count message ends one run and begins the
+     * next (see `pendingNextRunFirstKeyCount`), so it marks a *run* boundary.
+     * "Battle started" marks the party's combat action beginning, which in a
+     * queue of twenty runs fires once, twenty runs ago.
+     *
+     * The newest key count in chat is normally this run's start — but not always,
+     * so two history-derived checks stand in front of it (`assessRecoveredStart`).
+     * When either refuses, nothing here changes: the run stays partial, shows
+     * "Watched:", and is not banked, exactly as before this method existed.
+     *
+     * @returns {Promise<boolean>} True when the start was recovered
+     */
+    async recoverPartyStart() {
+        const run = this.currentRun;
+        if (!run || !this.joinedMidRun || run.startRecovered) {
+            return false;
+        }
+
+        const anchor = this.firstKeyCountTimestamp;
+        if (!anchor) {
+            return false;
+        }
+
+        // Identity captured before the storage read and verified after it: a
+        // character switch mid-await would otherwise stamp this character's run
+        // with a verdict reached against somebody else's history, and write the
+        // recovery onto whatever run has replaced it.
+        const owner = currentOwner();
+        const dungeonHrid = run.dungeonHrid;
+        const dungeonName = dungeonTrackerStorage.getDungeonInfo(dungeonHrid)?.name ?? null;
+
+        let runs = [];
+        try {
+            runs = (await dungeonTrackerStorage.getRunsForCharacter?.('mine')) || [];
+        } catch (error) {
+            console.warn('[Dungeon Tracker] Could not read history to check a recovered start:', error);
+            return false;
+        }
+
+        if (currentOwner() !== owner) return false;
+        if (this.currentRun !== run || !this.isTracking) return false;
+        if (this.firstKeyCountTimestamp !== anchor) return false;
+
+        const verdict = assessRecoveredStart({
+            impliedElapsedMs: Date.now() - anchor,
+            currentWave: run.currentWave,
+            maxWaves: run.maxWaves,
+            runs,
+            dungeonName,
+            tier: run.tier,
+        });
+
+        if (!verdict.credible) {
+            console.info('[Dungeon Tracker] Chat anchor rejected as this run’s start:', verdict.reason);
+            return false;
+        }
+
+        run.startRecovered = true;
+        run.recoveredStartTime = anchor;
+        this.notifyUpdate();
+        this.saveInProgressRun();
+        return true;
     }
 
     /**
@@ -1429,14 +1516,22 @@ class DungeonTracker {
         // fiction — so *both* candidate durations are the length of the tail we
         // happened to watch, not the run. Reporting either would put a 90-second
         // Pirate Cove in front of the user and, in a party, into history.
+        //
+        // Unless the party's chat gave the start back (`recoverPartyStart`): the
+        // server-timestamped key count that opened the run is a better start than
+        // a whole run watched on the wall clock, so such a run is timed, banked
+        // and validated like any other party run. Its *tracked* duration stays
+        // null — we still only wall-clocked the tail.
         const joinedMidRun = completedRunData.joinedMidRun === true;
+        const startRecovered = completedRunData.startRecovered === true;
+        const unrecoveredPartial = joinedMidRun && !startRecovered;
         const trackedTotalTime = joinedMidRun ? null : endTime - completedRunData.startTime;
 
         // Get server-validated duration from party messages
         // Require a strictly later completion timestamp: first === last means only the
         // run-start key count was seen (no completion message), not a real 0ms run
         const partyMessageDuration =
-            !joinedMidRun && firstTimestamp && lastTimestamp && lastTimestamp > firstTimestamp
+            !unrecoveredPartial && firstTimestamp && lastTimestamp && lastTimestamp > firstTimestamp
                 ? lastTimestamp - firstTimestamp
                 : null;
         const validated = partyMessageDuration !== null;
@@ -1470,6 +1565,7 @@ class DungeonTracker {
             keyCountMessages: completedKeyCountMessages, // Store key data for history
             keyCountsMap: completedRunData.keyCountsMap, // Include for backward compatibility
             joinedMidRun, // Run was already under way when tracking began; durations are null
+            startRecovered, // ...unless its start came back from the party chat log
         };
 
         // Auto-save completed run to history if we have complete data
@@ -1496,9 +1592,12 @@ class DungeonTracker {
         // A party run that saw only its start message stays unsaved as before: it
         // has server evidence, just not enough of it, and the wall clock is not a
         // substitute for the half of it that is missing.
-        const canBankSolo = !validated && firstTimestamp === null && !hibernated && Boolean(soloName);
+        // `!joinedMidRun` as well as the anchor test: recovery is a party-chat
+        // mechanism and a solo run has no server timestamps to recover from, so a
+        // partial solo run stays refused however the rest of this lines up.
+        const canBankSolo = !joinedMidRun && !validated && firstTimestamp === null && !hibernated && Boolean(soloName);
 
-        if (!joinedMidRun && completedRunData.dungeonHrid && (canBankParty || canBankSolo)) {
+        if (!unrecoveredPartial && completedRunData.dungeonHrid && (canBankParty || canBankSolo)) {
             try {
                 // A party's roster comes from the key counts. A solo run has none,
                 // so the team is the one character who ran it — a one-name team key,
@@ -1524,8 +1623,12 @@ class DungeonTracker {
                     // Per-wave times feed the split-time pace profile; without
                     // them history is only a whole-run average, which reads the
                     // easy early waves as a huge lead
-                    waveTimes: completedWaveTimes,
-                    avgWaveTime,
+                    // A recovered run watched only its tail, so its wave times are
+                    // the hard late waves and nothing else. Banking them would bias
+                    // the wave average high and describe a wave-48 split as wave 1.
+                    // The duration is the whole run and is kept; the waves are not.
+                    waveTimes: startRecovered ? [] : completedWaveTimes,
+                    avgWaveTime: startRecovered ? 0 : avgWaveTime,
                     validated: canBankParty,
                     // Unchanged for a party run; a solo run says which clock timed it
                     source: canBankParty ? 'chat' : 'tracker',
@@ -1600,10 +1703,16 @@ class DungeonTracker {
         // log finds one at all — may belong to an earlier run. Neither is this run's
         // start, so the panel is handed the one figure that is true (time since we
         // picked the run up) and told plainly that that is what it is.
+        //
+        // Unless the party's chat handed us the run's real start and it survived
+        // both checks in `assessRecoveredStart` — then the anchor is better
+        // evidence than our own clock ever was, and the run is a whole one.
         const joinedMidRun = this.currentRun.joinedMidRun === true;
-        const runStartTime = joinedMidRun
-            ? this.currentRun.startTime
-            : this.firstKeyCountTimestamp || this.currentRun.startTime;
+        const startRecovered = this.currentRun.startRecovered === true;
+        const runStartTime =
+            joinedMidRun && !startRecovered
+                ? this.currentRun.startTime
+                : this.currentRun.recoveredStartTime || this.firstKeyCountTimestamp || this.currentRun.startTime;
         const totalElapsed = now - runStartTime;
         const currentWaveElapsed = this.waveStartTime ? now - this.waveStartTime.getTime() : 0;
 
@@ -1640,9 +1749,12 @@ class DungeonTracker {
             // The run was already under way when tracking began
             joinedMidRun,
             joinedAtWave: this.currentRun.joinedAtWave ?? null,
+            // Its start came back from the party's own chat timestamps
+            startRecovered,
             // `totalElapsed` is time since tracking noticed the run, NOT its duration.
-            // Never label it as the run's elapsed time.
-            elapsedIsSinceNoticed: joinedMidRun,
+            // Never label it as the run's elapsed time. A recovered run is measured
+            // from a real start, so this is false and the panel says "Elapsed:".
+            elapsedIsSinceNoticed: joinedMidRun && !startRecovered,
         };
     }
 

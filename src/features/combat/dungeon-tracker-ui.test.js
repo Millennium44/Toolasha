@@ -184,6 +184,20 @@ describe('a run joined part-way through', () => {
         expect(titleOf('#mwi-dt-time-label')).toBe('Time since dungeon started');
     });
 
+    test('a recovered start is presented as an ordinary run, with the source in the tooltip', async () => {
+        // The party's chat gave the real start back, so the figure is the run's
+        // own elapsed time and the "joined W48" caveat has nothing left to warn about
+        await ui.update(
+            run({ joinedMidRun: true, joinedAtWave: 48, elapsedIsSinceNoticed: false, startRecovered: true }),
+            false
+        );
+
+        expect(text('#mwi-dt-dungeon-name')).toBe('Pirate Cove (T1)');
+        expect(text('#mwi-dt-time-label')).toBe('Elapsed:');
+        expect(titleOf('#mwi-dt-time-label')).toContain('recovered from the party chat log');
+        expect(titleOf('#mwi-dt-time-label')).toContain('wave 48');
+    });
+
     test('the pace chip stays down: two waves timed at wave 48 are not a run’s first two', async () => {
         await ui.update(
             run({ joinedMidRun: true, joinedAtWave: 48, elapsedIsSinceNoticed: true, waveTimes: [3000, 4000] }),

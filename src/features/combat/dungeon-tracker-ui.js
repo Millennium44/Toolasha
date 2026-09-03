@@ -548,7 +548,10 @@ class DungeonTrackerUI {
         if (dungeonName) {
             // A run picked up part-way through says so next to the name: its
             // figures cover the tail of the run, not the whole of it
-            const partial = run.joinedMidRun && run.joinedAtWave ? ` · joined W${run.joinedAtWave}` : '';
+            // ...unless the party's chat gave the run's real start back, in which
+            // case it is a whole run again and says nothing special here.
+            const partial =
+                run.joinedMidRun && run.joinedAtWave && !run.startRecovered ? ` · joined W${run.joinedAtWave}` : '';
             if (run.dungeonName && run.tier !== null) {
                 dungeonName.textContent = `${run.dungeonName} (T${run.tier})${partial}`;
             } else {
@@ -580,6 +583,14 @@ class DungeonTrackerUI {
                 timeLabel.title = run.joinedAtWave
                     ? `Time since Toolasha picked this run up at wave ${run.joinedAtWave} — not the run's duration`
                     : "Time since Toolasha picked this run up — not the run's duration";
+            } else if (run.startRecovered) {
+                // A whole run again, timed from the server's own timestamp for its
+                // start. The tooltip says where that start came from; the label
+                // does not, because the figure means what it always means.
+                timeLabel.textContent = 'Elapsed: ';
+                timeLabel.title = run.joinedAtWave
+                    ? `Time since this run started — start recovered from the party chat log after joining at wave ${run.joinedAtWave}`
+                    : 'Time since this run started — start recovered from the party chat log';
             } else if (run.hibernationDetected) {
                 timeLabel.textContent = 'Chat: ';
                 timeLabel.title = 'Using party chat timestamps (computer sleep detected)';
