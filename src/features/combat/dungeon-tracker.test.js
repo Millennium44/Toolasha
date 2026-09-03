@@ -21,6 +21,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     characterId: 'market123',
+    characterName: 'Marketcow',
     gameMode: 'standard',
     actions: [],
     actionDetails: {},
@@ -72,6 +73,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentActions: () => game.actions,
         getActionDetails: (hrid) => game.actionDetails[hrid] ?? null,
         getCurrentCharacterId: () => game.characterId,
+        getCurrentCharacterName: () => game.characterName,
         getCurrentCharacterGameMode: () => game.gameMode,
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
@@ -137,6 +139,8 @@ function beTracking({
     keyCountsMap = {},
     anchoredAt = null,
     restored = false,
+    joinedMidRun = false,
+    joinedAtWave = null,
 } = {}) {
     tracker.isTracking = true;
     // A run picked back up from storage never saw its own start message; one started
@@ -148,7 +152,18 @@ function beTracking({
     // from; seed it to the same instant so a test can measure a wave off it.
     tracker.lastWaveEndTime = startTime;
     tracker.waveTimes = waveTimes;
-    tracker.currentRun = { dungeonHrid, tier, startTime, currentWave, maxWaves, wavesCompleted, keyCountsMap };
+    tracker.joinedMidRun = joinedMidRun;
+    tracker.currentRun = {
+        dungeonHrid,
+        tier,
+        startTime,
+        currentWave,
+        maxWaves,
+        wavesCompleted,
+        keyCountsMap,
+        joinedMidRun,
+        joinedAtWave: joinedMidRun ? (joinedAtWave ?? currentWave) : null,
+    };
     if (anchoredAt !== null) {
         // What the post-start chat scan leaves behind: the run's own start
         // message, seen and recorded, so the next one is the completion.
@@ -175,6 +190,7 @@ function resetTracker() {
     tracker.pendingNextRunFirstKeyCount = null;
     tracker.battleStartedTimestamp = null;
     tracker.restoredMidRun = false;
+    tracker.joinedMidRun = false;
     tracker.characterId = null;
     tracker.recentChatMessages = [];
     tracker._lastCompletionTime = 0;
@@ -190,6 +206,7 @@ beforeEach(() => {
     mockStorage.reset();
     _resetAdoptionCache();
     game.characterId = 'market123';
+    game.characterName = 'Marketcow';
     game.gameMode = 'standard';
     game.actions = [];
     game.actionDetails = {
@@ -2142,5 +2159,225 @@ describe('wave 1 as a dungeon start', () => {
 
         expect(tracker.isTracking).toBe(false);
         expect(tracker.currentRun).toBeNull();
+    });
+});
+
+describe('a run joined part-way through', () => {
+    test('a first wave above 1 flags the run partial and records where it was picked up', async () => {
+        // The live case: a refresh at wave 48 of a 65-wave Pirate Cove. The next
+        // new_battle is the tracker's first sight of the run.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 8, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.joinedMidRun).toBe(true);
+        expect(tracker.currentRun.joinedMidRun).toBe(true);
+        expect(tracker.currentRun.joinedAtWave).toBe(8);
+    });
+
+    test('its elapsed figure is time since we noticed, and is labelled as such', () => {
+        const t0 = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(t0 + 90_000);
+        // startTime is when tracking began, 90s ago — not when the run began
+        beTracking({ startTime: t0, currentWave: 48, wavesCompleted: 0, joinedMidRun: true, joinedAtWave: 48 });
+
+        const run = tracker.getCurrentRun();
+        expect(run.joinedMidRun).toBe(true);
+        expect(run.joinedAtWave).toBe(48);
+        // The number is honest about what it measures, and the flag stops the
+        // panel presenting it as the run's duration
+        expect(run.elapsedIsSinceNoticed).toBe(true);
+        expect(run.totalElapsed).toBe(90_000);
+    });
+
+    test('a chat anchor does not become the partial run’s start time', () => {
+        // A scan of the party log can turn up a "Key counts" from a run we did not
+        // watch. For a whole run that anchor is the truth; for this one it is a
+        // guess at a start we never saw, so it is not used.
+        const t0 = Date.parse('2026-08-04T10:00:00.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(t0 + 60_000);
+        beTracking({ startTime: t0, currentWave: 20, joinedMidRun: true, joinedAtWave: 20 });
+        tracker.firstKeyCountTimestamp = t0 - 900_000; // fifteen minutes before we looked
+
+        expect(tracker.getCurrentRun().totalElapsed).toBe(60_000);
+    });
+
+    test('reaching the final wave in a party does not bank it', async () => {
+        // Without the flag this is the worst case: the key-count fallback anchors
+        // on the moment we noticed, so the run looks server-validated at a
+        // fraction of its real length and lands in history and the averages.
+        beTracking({
+            maxWaves: 10,
+            wavesCompleted: 9,
+            currentWave: 10,
+            keyCountsMap: { Alice: 12, Bob: 8 },
+            joinedMidRun: true,
+            joinedAtWave: 7,
+        });
+        const completions = [];
+        tracker.onUpdate((_run, completed) => {
+            if (completed) completions.push(completed);
+        });
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Alice - 11], [Bob - 7]'));
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+        expect(completions).toHaveLength(1);
+        expect(completions[0].joinedMidRun).toBe(true);
+        // No duration is reported at all, rather than an invented one
+        expect(completions[0].totalTime).toBeNull();
+        expect(completions[0].trackedDuration).toBeNull();
+        expect(completions[0].partyMessageDuration).toBeNull();
+        expect(completions[0].validated).toBe(false);
+    });
+
+    test('reaching the final wave solo does not bank it either', async () => {
+        beTracking({ maxWaves: 10, wavesCompleted: 9, currentWave: 10, joinedMidRun: true, joinedAtWave: 7 });
+
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 10, isDone: true } });
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('a run that starts at wave 1 is not partial and keeps its start time', async () => {
+        const runStart = Date.parse('2026-08-04T10:03:20.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(runStart);
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.joinedMidRun).toBe(false);
+        expect(tracker.currentRun.joinedMidRun).toBe(false);
+        expect(tracker.currentRun.joinedAtWave).toBeNull();
+
+        vi.setSystemTime(runStart + 30_000);
+        const run = tracker.getCurrentRun();
+        expect(run.elapsedIsSinceNoticed).toBe(false);
+        expect(run.totalElapsed).toBe(30_000);
+    });
+
+    test('the flag rides along in the in-progress record, so a refresh cannot launder it', async () => {
+        beTracking({ battleId: 42, joinedMidRun: true, joinedAtWave: 7, currentWave: 7 });
+        await tracker.saveInProgressRun();
+        expect(stored().joinedMidRun).toBe(true);
+        expect(stored().joinedAtWave).toBe(7);
+
+        resetTracker();
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        const restored = await tracker.restoreInProgressRun(42);
+
+        expect(restored).toBe(true);
+        expect(tracker.joinedMidRun).toBe(true);
+        expect(tracker.currentRun.joinedMidRun).toBe(true);
+        expect(tracker.getCurrentRun().elapsedIsSinceNoticed).toBe(true);
+    });
+
+    test('a record from a whole run restores as a whole run', async () => {
+        // restoredMidRun means "read back from storage", which is not the same as
+        // partial: the record carries the run's real start time.
+        beTracking({ battleId: 42, currentWave: 4 });
+        await tracker.saveInProgressRun();
+        expect(stored().joinedMidRun).toBe(false);
+
+        resetTracker();
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
+        await tracker.restoreInProgressRun(42);
+
+        expect(tracker.restoredMidRun).toBe(true);
+        expect(tracker.joinedMidRun).toBe(false);
+        expect(tracker.getCurrentRun().elapsedIsSinceNoticed).toBe(false);
+    });
+
+    test('the page-load pickup of a whole run is not partial either', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 42,
+            dungeonHrid: DEN,
+            tier: 1,
+            startTime: Date.now() - 120_000,
+            currentWave: 5,
+            maxWaves: 10,
+            wavesCompleted: 4,
+            waveTimes: [3000],
+            lastUpdateTime: Date.now(),
+        });
+
+        await tracker.checkForActiveDungeon();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.joinedMidRun).toBe(false);
+    });
+});
+
+describe('the provisional card on page load', () => {
+    test('a running dungeon with no restorable record is named, without a run behind it', async () => {
+        // The refresh that showed nothing for a whole wave: a saved record for a
+        // different dungeon, correctly declined, left the panel blank for ~35s.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 9,
+            dungeonHrid: LAIR,
+            lastUpdateTime: Date.now(),
+        });
+        const seen = [];
+        tracker.onUpdate((run) => seen.push(run));
+
+        await tracker.checkForActiveDungeon();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+        expect(tracker.getPendingDungeon()).toEqual({
+            dungeonHrid: DEN,
+            dungeonName: 'Chimerical Den',
+            tier: 1,
+            maxWaves: 10,
+            pending: true,
+        });
+        // The panel is told to look: the update carries no run, and the card is
+        // read off getPendingDungeon
+        expect(seen).toEqual([null]);
+        // Display only: no run was started and the other dungeon's record was
+        // left exactly as it was, not overwritten with a run that never began
+        expect(stored()).toEqual({ battleId: 9, dungeonHrid: LAIR, lastUpdateTime: expect.any(Number) });
+    });
+
+    test('a stale record leaves the same provisional card', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, isDone: false }];
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_market123`, {
+            battleId: 42,
+            dungeonHrid: DEN,
+            lastUpdateTime: Date.now() - 11 * 60 * 1000,
+        });
+
+        await tracker.checkForActiveDungeon();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.getPendingDungeon()).toMatchObject({ dungeonName: 'Chimerical Den', tier: 2, pending: true });
+    });
+
+    test('nothing pending once the real run starts', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        await tracker.checkForActiveDungeon();
+        expect(tracker.getPendingDungeon()).not.toBeNull();
+
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.getPendingDungeon()).toBeNull();
+    });
+
+    test('no dungeon running, no card', async () => {
+        game.actions = [{ actionHrid: FLY, isDone: false }];
+        await tracker.checkForActiveDungeon();
+        expect(tracker.getPendingDungeon()).toBeNull();
     });
 });

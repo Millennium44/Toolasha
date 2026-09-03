@@ -70,6 +70,14 @@ class DungeonTracker {
         // sees is the completion; a run started here has that message still to come.
         this.restoredMidRun = false;
 
+        // True when tracking picked the run up part-way through its waves — a
+        // refresh at wave 48 of 65, say. Such a run has no true start time: its
+        // `startTime` is when we noticed it, not when it began. Nothing derived
+        // from that clock may be presented as the run's duration, and the run is
+        // never banked to history. Distinct from `restoredMidRun`, which is a run
+        // read back from its own saved record and *does* carry a real start.
+        this.joinedMidRun = false;
+
         // Hibernation detection (for UI time label switching)
         this.hibernationDetected = false;
         this.timerRegistry = createTimerRegistry();
@@ -147,6 +155,9 @@ class DungeonTracker {
             battleStartedTimestamp: this.battleStartedTimestamp,
             keyCountMessages: this.keyCountMessages,
             hibernationDetected: this.hibernationDetected,
+            // Carried so a refresh does not launder a partial run into a whole one
+            joinedMidRun: this.currentRun.joinedMidRun === true,
+            joinedAtWave: this.currentRun.joinedAtWave ?? null,
         };
 
         return writeScoped(IN_PROGRESS_KEY, stateToSave, 'settings', true);
@@ -247,6 +258,10 @@ class DungeonTracker {
         // Restore hibernation detection flag
         this.hibernationDetected = saved.hibernationDetected || false;
 
+        // See the page-load restore: a restored record keeps whatever it was, and
+        // a record of a run that started at wave 1 is not partial.
+        this.joinedMidRun = saved.joinedMidRun === true;
+
         this.currentRun = {
             dungeonHrid: saved.dungeonHrid,
             tier: saved.tier,
@@ -256,6 +271,8 @@ class DungeonTracker {
             wavesCompleted: saved.wavesCompleted,
             keyCountsMap: saved.keyCountsMap || {},
             hibernationDetected: saved.hibernationDetected || false,
+            joinedMidRun: saved.joinedMidRun === true,
+            joinedAtWave: saved.joinedAtWave ?? null,
         };
 
         this.notifyUpdate();
@@ -382,6 +399,9 @@ class DungeonTracker {
                     dungeonHrid: dungeonAction.actionHrid,
                     tier: dungeonAction.difficultyTier,
                 };
+                // No run, no start time, nothing written — but the panel can say
+                // which dungeon is running instead of sitting blank for a whole wave.
+                this.notifyUpdate();
                 return;
             }
 
@@ -402,6 +422,11 @@ class DungeonTracker {
             // Restore hibernation detection flag (the run's elapsed time may be wrong)
             this.hibernationDetected = saved.hibernationDetected || false;
 
+            // A record written by a run that began at wave 1 restores as a whole
+            // run with a real start; only a record that was already partial stays
+            // partial. Restoring is not itself joining mid-run.
+            this.joinedMidRun = saved.joinedMidRun === true;
+
             this.currentRun = {
                 dungeonHrid: saved.dungeonHrid,
                 tier: saved.tier,
@@ -411,6 +436,8 @@ class DungeonTracker {
                 wavesCompleted: saved.wavesCompleted,
                 keyCountsMap: saved.keyCountsMap || {},
                 hibernationDetected: saved.hibernationDetected || false,
+                joinedMidRun: saved.joinedMidRun === true,
+                joinedAtWave: saved.joinedAtWave ?? null,
             };
 
             // Trigger UI update to show immediately
@@ -421,6 +448,9 @@ class DungeonTracker {
                 dungeonHrid: dungeonAction.actionHrid,
                 tier: dungeonAction.difficultyTier,
             };
+            // Same as above: a display-only announcement. Waves run ~35s, so
+            // without this the panel is blank until the next one starts.
+            this.notifyUpdate();
         }
     }
 
@@ -1199,6 +1229,14 @@ class DungeonTracker {
         // Reset hibernation detection for new run
         this.hibernationDetected = false;
 
+        // Waves are 1-based, so anything above 1 means the run was already under
+        // way when tracking began — a refresh mid-dungeon is the usual cause.
+        // `startTime` above is when we noticed, and at wave 48 of 65 that reads as
+        // a 90-second Pirate Cove. The flag keeps that number out of anywhere it
+        // would be taken for the run's duration, and keeps the run out of history.
+        const joinedMidRun = typeof data.wave === 'number' && data.wave > 1;
+        this.joinedMidRun = joinedMidRun;
+
         this.currentRun = {
             dungeonHrid: dungeonHrid,
             tier: tier,
@@ -1207,6 +1245,8 @@ class DungeonTracker {
             maxWaves: maxWaves,
             wavesCompleted: 0, // No waves completed yet (will update as waves complete)
             hibernationDetected: false, // Track if computer sleep detected during this run
+            joinedMidRun, // No true start time; see above
+            joinedAtWave: joinedMidRun ? data.wave : null,
         };
 
         this.notifyUpdate();
@@ -1368,6 +1408,7 @@ class DungeonTracker {
         this.keyCountMessages = [];
         this.currentBattleId = null;
         this.restoredMidRun = false;
+        this.joinedMidRun = false;
 
         // Guard: mark completion time synchronously so restoreInProgressRun() rejects stale reads
         this._lastCompletionTime = Date.now();
@@ -1376,13 +1417,23 @@ class DungeonTracker {
         await this.clearInProgressRun();
 
         const endTime = Date.now();
-        const trackedTotalTime = endTime - completedRunData.startTime;
+
+        // A run joined part-way through has no start to measure from. Its
+        // `startTime` is when tracking noticed it, and in a party the key-count
+        // fallback in onChatMessage anchors `firstKeyCountTimestamp` on that same
+        // fiction — so *both* candidate durations are the length of the tail we
+        // happened to watch, not the run. Reporting either would put a 90-second
+        // Pirate Cove in front of the user and, in a party, into history.
+        const joinedMidRun = completedRunData.joinedMidRun === true;
+        const trackedTotalTime = joinedMidRun ? null : endTime - completedRunData.startTime;
 
         // Get server-validated duration from party messages
         // Require a strictly later completion timestamp: first === last means only the
         // run-start key count was seen (no completion message), not a real 0ms run
         const partyMessageDuration =
-            firstTimestamp && lastTimestamp && lastTimestamp > firstTimestamp ? lastTimestamp - firstTimestamp : null;
+            !joinedMidRun && firstTimestamp && lastTimestamp && lastTimestamp > firstTimestamp
+                ? lastTimestamp - firstTimestamp
+                : null;
         const validated = partyMessageDuration !== null;
 
         // Use party message duration if available (authoritative), otherwise use tracked duration
@@ -1413,11 +1464,15 @@ class DungeonTracker {
             waveTimes: completedWaveTimes,
             keyCountMessages: completedKeyCountMessages, // Store key data for history
             keyCountsMap: completedRunData.keyCountsMap, // Include for backward compatibility
+            joinedMidRun, // Run was already under way when tracking began; durations are null
         };
 
         // Auto-save completed run to history if we have complete data
         // Only saves runs completed during live tracking (Option A)
-        if (validated && completedRunData.keyCountsMap && completedRunData.dungeonHrid) {
+        // `validated` is already false for a partial run, but the exclusion is the
+        // point rather than a side effect: a run whose start was never seen must not
+        // reach history, the run averages, the pace profile or the ROI board.
+        if (!joinedMidRun && validated && completedRunData.keyCountsMap && completedRunData.dungeonHrid) {
             try {
                 // Extract team from keyCountsMap
                 const team = Object.keys(completedRunData.keyCountsMap).sort();
@@ -1486,6 +1541,7 @@ class DungeonTracker {
         this.battleStartedTimestamp = null;
         this.pendingNextRunFirstKeyCount = null;
         this.restoredMidRun = false;
+        this.joinedMidRun = false;
 
         // Clear saved state (await to ensure it completes)
         await this.clearInProgressRun();
@@ -1505,7 +1561,15 @@ class DungeonTracker {
         // Calculate current elapsed time
         // Use firstKeyCountTimestamp (server-validated start) if available, otherwise use tracked start time
         const now = Date.now();
-        const runStartTime = this.firstKeyCountTimestamp || this.currentRun.startTime;
+        // A run joined part-way has no start to measure from. Its own startTime is
+        // when tracking noticed it, and the chat anchor — when a scan of the party
+        // log finds one at all — may belong to an earlier run. Neither is this run's
+        // start, so the panel is handed the one figure that is true (time since we
+        // picked the run up) and told plainly that that is what it is.
+        const joinedMidRun = this.currentRun.joinedMidRun === true;
+        const runStartTime = joinedMidRun
+            ? this.currentRun.startTime
+            : this.firstKeyCountTimestamp || this.currentRun.startTime;
         const totalElapsed = now - runStartTime;
         const currentWaveElapsed = this.waveStartTime ? now - this.waveStartTime.getTime() : 0;
 
@@ -1539,6 +1603,40 @@ class DungeonTracker {
             estimatedTimeRemaining,
             keyCountsMap: this.currentRun.keyCountsMap || {}, // Party member key counts
             hibernationDetected: this.hibernationDetected || this.currentRun.hibernationDetected || false,
+            // The run was already under way when tracking began
+            joinedMidRun,
+            joinedAtWave: this.currentRun.joinedAtWave ?? null,
+            // `totalElapsed` is time since tracking noticed the run, NOT its duration.
+            // Never label it as the run's elapsed time.
+            elapsedIsSinceNoticed: joinedMidRun,
+        };
+    }
+
+    /**
+     * The dungeon the character is running while there is no run to show for it.
+     *
+     * Page load with a dungeon in progress and no restorable record leaves the
+     * tracker armed but not tracking, and waves run around thirty-five seconds —
+     * so the panel used to sit blank for the best part of a minute. This is what
+     * it says instead: the dungeon's name and tier, and nothing that pretends to
+     * be a run. No run is started, no time is invented, nothing is written; the
+     * real run replaces it as soon as the next `new_battle` arrives.
+     *
+     * @returns {{dungeonHrid: string, dungeonName: string, tier: number|null,
+     *   maxWaves: number|null, pending: true}|null} The provisional card, or null
+     */
+    getPendingDungeon() {
+        if (this.isTracking || !this.pendingDungeonInfo?.dungeonHrid) {
+            return null;
+        }
+
+        const info = dungeonTrackerStorage.getDungeonInfo(this.pendingDungeonInfo.dungeonHrid);
+        return {
+            dungeonHrid: this.pendingDungeonInfo.dungeonHrid,
+            dungeonName: info?.name ?? 'Unknown',
+            tier: this.pendingDungeonInfo.tier ?? null,
+            maxWaves: info?.maxWaves ?? null,
+            pending: true,
         };
     }
 
@@ -1634,6 +1732,7 @@ class DungeonTracker {
             this.battleStartedTimestamp = null;
             this.pendingNextRunFirstKeyCount = null;
             this.restoredMidRun = false;
+            this.joinedMidRun = false;
             this.recentChatMessages = [];
 
             // Reset hibernation detection

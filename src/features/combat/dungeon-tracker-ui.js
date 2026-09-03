@@ -96,8 +96,17 @@ class DungeonTrackerUI {
                 this.show();
                 this.update(currentRun);
             } else {
-                // No active dungeon
-                this.hide();
+                // A dungeon may be running with no run to show for it yet — page
+                // load part-way through, with nothing restorable saved. Say which
+                // dungeon, provisionally, rather than showing an empty screen for
+                // the thirty-odd seconds until the next wave starts.
+                const pending = dungeonTracker.getPendingDungeon();
+                if (pending) {
+                    this.show();
+                    this.showPending(pending);
+                } else {
+                    this.hide();
+                }
             }
         };
 
@@ -481,6 +490,50 @@ class DungeonTrackerUI {
     }
 
     /**
+     * Draw the provisional card for a dungeon that is running but not yet tracked.
+     *
+     * Name and tier only. Every figure that would need a run behind it — elapsed,
+     * wave number, progress, pace — is blanked rather than guessed, and the note
+     * in place of the wave counter says why.
+     *
+     * @param {{dungeonName: string, tier: number|null}} pending - From `getPendingDungeon`
+     */
+    showPending(pending) {
+        if (!this.container || !pending) return;
+
+        const dungeonName = this.container.querySelector('#mwi-dt-dungeon-name');
+        if (dungeonName) {
+            dungeonName.textContent =
+                pending.tier === null || pending.tier === undefined
+                    ? pending.dungeonName
+                    : `${pending.dungeonName} (T${pending.tier})`;
+        }
+
+        const waveCounter = this.container.querySelector('#mwi-dt-wave-counter');
+        if (waveCounter) {
+            waveCounter.textContent = 'waiting for next wave';
+            waveCounter.title = 'This run was already under way when the page loaded';
+        }
+
+        const timeLabel = this.container.querySelector('#mwi-dt-time-label');
+        if (timeLabel) {
+            timeLabel.textContent = 'Elapsed: ';
+            timeLabel.title = 'Not known yet — this run started before the page loaded';
+        }
+
+        const currentTime = this.container.querySelector('#mwi-dt-current-time');
+        if (currentTime) currentTime.textContent = '--:--';
+
+        const progressBar = this.container.querySelector('#mwi-dt-progress-bar');
+        if (progressBar) progressBar.style.width = '0%';
+        const progressText = this.container.querySelector('#mwi-dt-progress-text');
+        if (progressText) progressText.textContent = '';
+
+        const paceElement = this.container.querySelector('#mwi-dt-pace');
+        if (paceElement) paceElement.style.display = 'none';
+    }
+
+    /**
      * Update UI with current run data
      * @param {Object} run - Current run state
      * @param {boolean} refreshHistory - Also refresh stored-history stats and the run list (skip on 1 Hz tick)
@@ -493,8 +546,11 @@ class DungeonTrackerUI {
         // Update dungeon name and tier
         const dungeonName = this.container.querySelector('#mwi-dt-dungeon-name');
         if (dungeonName) {
+            // A run picked up part-way through says so next to the name: its
+            // figures cover the tail of the run, not the whole of it
+            const partial = run.joinedMidRun && run.joinedAtWave ? ` · joined W${run.joinedAtWave}` : '';
             if (run.dungeonName && run.tier !== null) {
-                dungeonName.textContent = `${run.dungeonName} (T${run.tier})`;
+                dungeonName.textContent = `${run.dungeonName} (T${run.tier})${partial}`;
             } else {
                 dungeonName.textContent = 'Dungeon Loading...';
             }
@@ -504,6 +560,7 @@ class DungeonTrackerUI {
         const waveCounter = this.container.querySelector('#mwi-dt-wave-counter');
         if (waveCounter && run.maxWaves) {
             waveCounter.textContent = `Wave ${run.currentWave}/${run.maxWaves}`;
+            waveCounter.title = '';
         }
 
         // Update current elapsed time
@@ -515,7 +572,15 @@ class DungeonTrackerUI {
         // Update time label based on hibernation detection
         const timeLabel = this.container.querySelector('#mwi-dt-time-label');
         if (timeLabel) {
-            if (run.hibernationDetected) {
+            // A run joined part-way has no known start, and this figure is only
+            // how long we have been watching. Labelled as such — the alternative
+            // was a wave-48 Pirate Cove claiming to be ninety seconds old.
+            if (run.elapsedIsSinceNoticed) {
+                timeLabel.textContent = 'Watched: ';
+                timeLabel.title = run.joinedAtWave
+                    ? `Time since Toolasha picked this run up at wave ${run.joinedAtWave} — not the run's duration`
+                    : "Time since Toolasha picked this run up — not the run's duration";
+            } else if (run.hibernationDetected) {
                 timeLabel.textContent = 'Chat: ';
                 timeLabel.title = 'Using party chat timestamps (computer sleep detected)';
             } else {
@@ -681,7 +746,9 @@ class DungeonTrackerUI {
         if (!paceElement) return;
 
         let chip = null;
-        if (config.getSetting('dungeonPace')) {
+        // A partial run's wave count is not its position in the dungeon: two waves
+        // timed at wave 50 would be compared against the first two of a whole run.
+        if (config.getSetting('dungeonPace') && !run.joinedMidRun) {
             const mine = filterRunsForCharacter(allRuns, 'mine', currentCharacter());
             const identity = { dungeonName: run.dungeonName, tier: run.tier, maxWaves: run.maxWaves };
 
