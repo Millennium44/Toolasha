@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A run the tracker joined part-way no longer invents a duration
+
+Picking a run up mid-flight — after a refresh, say — used to start its clock at that moment and then present the result as the run's duration, so a dungeon twenty minutes in could read as ninety seconds. Worse, in a party that fabricated time could be written to history as if the server had confirmed it, quietly skewing your averages, the pace chip and the ROI board. Such a run is now marked as joined at its wave, shows what it watched rather than a duration it never saw, and is never banked. The flag survives a refresh, so a partial run cannot come back looking whole. The panel also shows the dungeon's name straight away on page load instead of staying blank until the next wave.
+
+### Solo dungeon runs are recorded at last
+
+History only ever kept runs a party's key-count messages could vouch for, so anyone running dungeons alone built no history at all. A solo run is now saved when the tracker watched the whole thing, timed by this client's clock and marked as such — history shows a small marker beside the time and the CSV gained a column for it — so it is never mistaken for a server-checked figure. Runs interrupted, joined late, or timed across a sleeping tab are still refused, since their clock cannot be trusted.
+
 ### The dungeon tracker follows you when you switch dungeons
 
 Switching from one dungeon to another mid-session left the tracker on the old one: the panel kept the previous dungeon's name, its run count and its average, while counting the waves of the dungeon actually being fought — reading "Chimerical Den, Wave 61/50" during Pirate Cove wave 61 of 65. Underneath was older breakage. The branch meant to notice a dungeon starting tested for wave 0, but the game numbers waves from 1, so it had never once run; tracking only ever began when nothing was being tracked, and nothing afterwards asked whether the run's dungeon was still the one in front of you. A dungeon leaving the queue used to reset tracking and hide it. The tracker now checks the running dungeon on every wave and moves the run across when it changes, discarding the interrupted one rather than banking a half-length run into your averages, and a first wave is recognised as a first wave.
