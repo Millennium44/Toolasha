@@ -4,6 +4,10 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import domObserver from './dom-observer.js';
+// Read through the instance, which is the path production takes: this module
+// and performance-monitor.js are in different bundles, so the counter is
+// reached as a property of the monitor rather than as a named import.
+import performanceMonitor from '../utils/performance-monitor.js';
 
 beforeEach(() => {
     document.body.innerHTML = '';
@@ -103,6 +107,31 @@ describe('register / onClass matching', () => {
         return Promise.resolve().then(() => {
             expect(secondCallback).toHaveBeenCalled();
         });
+    });
+});
+
+describe('debounce re-arm counter', () => {
+    test('counts one re-arm per dispatched node, not per fire', () => {
+        // This is the number that sizes timer churn for the whole script: the
+        // debounce re-arms (clearTimeout + setTimeout) once per *node handed to
+        // the handler*, so under combat churn the creation rate follows DOM
+        // mutation volume while the callback fires at most once per delay.
+        // Nothing could see that before, which is why the tracing wrapper's
+        // per-creation cost went unmeasured for so long.
+        vi.useFakeTimers();
+        const callback = vi.fn();
+        domObserver.register('Counted', callback, { debounce: true, debounceDelay: 50 });
+        const handler = domObserver.handlers.find((h) => h.name === 'Counted');
+
+        const before = performanceMonitor.timerCounters.domRearm;
+        for (let i = 0; i < 25; i++) {
+            domObserver.debouncedCallback(handler, document.createElement('div'), {});
+        }
+        expect(performanceMonitor.timerCounters.domRearm - before).toBe(25);
+
+        vi.advanceTimersByTime(50);
+        expect(callback).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
     });
 });
 

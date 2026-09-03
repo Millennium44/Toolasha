@@ -353,6 +353,8 @@ class PFormancePanel {
                 this.activitySectionCollapsed = v;
             })
         );
+        const churn = this._createTimerChurnLine(pm);
+        if (churn) this.contentEl.appendChild(churn);
         // Only once the overlay has reported a row — a session with the
         // overlay off has no section to show
         if (overlayRowEntries.length) {
@@ -367,6 +369,52 @@ class PFormancePanel {
                 this.stallSectionCollapsed = v;
             })
         );
+    }
+
+    /**
+     * How many timers the page is creating, and how much of that is the shared
+     * DOM observer re-arming debounces.
+     *
+     * The rolling stats above only show timers that *ticked* expensively, which
+     * says nothing about creation rate — and creation is where the tracing
+     * wrapper's cost lived (it used to capture a stack per creation, for every
+     * user, whether or not anybody was measuring). The observer re-arms a
+     * debounce per dispatched node, so this is the number that says whether
+     * that matters on a given machine in a given activity. Counted always, so
+     * the figure covers the session rather than just the time since the panel
+     * opened; the per-second column is measured between refreshes.
+     * @param {Object} pm - The performance monitor
+     * @returns {HTMLElement|null} The line, or null if the counters are absent
+     * @private
+     */
+    _createTimerChurnLine(pm) {
+        const counters = pm?.timerCounters;
+        if (!counters) return null;
+
+        const now = Date.now();
+        const total = counters.interval + counters.timeout;
+        const previous = this._churnSample;
+        this._churnSample = { at: now, total, domRearm: counters.domRearm };
+
+        let rate = '';
+        if (previous && now > previous.at) {
+            const seconds = (now - previous.at) / 1000;
+            const created = ((total - previous.total) / seconds).toFixed(1);
+            const rearmed = ((counters.domRearm - previous.domRearm) / seconds).toFixed(1);
+            rate = ` — now ${created}/s created, ${rearmed}/s of them observer re-arms`;
+        }
+
+        const line = document.createElement('div');
+        line.textContent =
+            `Timer churn: ${total} created (${counters.timeout} timeout, ${counters.interval} interval), ` +
+            `${counters.domRearm} observer debounce re-arms, ${counters.named} named${rate}`;
+        Object.assign(line.style, {
+            padding: '2px 6px 6px',
+            fontSize: '11px',
+            color: COLORS.textDim,
+            whiteSpace: 'normal',
+        });
+        return line;
     }
 
     /**
@@ -462,6 +510,8 @@ class PFormancePanel {
             stats: pm.getAllStats(),
             stalls: pm.getStalls?.() || [],
             worstStallMs: pm.getWorstStallMs?.() || 0,
+            // Creation rate, which no duration in `stats` can show
+            timerCounters: pm.timerCounters ? { ...pm.timerCounters } : null,
             environment: {
                 script: scriptBuildLabel() || 'unknown',
                 cores: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 'unknown',

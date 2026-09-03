@@ -478,13 +478,67 @@ export function timerCallSite(stack = new Error().stack || '') {
 }
 
 /**
+ * How much timer churn the page is actually producing, as plain counters.
+ *
+ * The traced wrappers below used to name every timer at creation — a
+ * `new Error().stack` plus a regex parse, about 10µs, on every `setTimeout`
+ * and `setInterval` on the page, whether or not anybody was measuring. What
+ * nothing could answer was how often that ran: the shared DOM observer
+ * re-arms a debounce per *dispatched node* (`dom-observer.js`
+ * `debouncedCallback`), so the rate tracks DOM mutation volume, which during
+ * combat is high and was never counted.
+ *
+ * These are counted always, measuring on or off, because a counter you have to
+ * turn on cannot tell you what a normal session looks like. Incrementing a
+ * property on a plain object allocates nothing and captures no stack, which is
+ * the whole point — anything heavier here would be the bug it exists to size.
+ *
+ * - `interval` / `timeout`: creations that went through the wrappers
+ * - `domRearm`: shared-observer debounce re-arms, the multiplier on the above
+ * - `named`: creations whose call site was actually captured (measuring on)
+ */
+export const timerCounters = {
+    interval: 0,
+    timeout: 0,
+    domRearm: 0,
+    named: 0,
+};
+
+// Also hung off the monitor instance: the pformance panel reaches the monitor
+// through the published global (`bundle-bridge.js`), not through this module,
+// because it can be opened from a popped-out window with its own module graph.
+performanceMonitor.timerCounters = timerCounters;
+
+/**
+ * The best name a timer can be given at tick time, when its creation stack is
+ * long gone.
+ *
+ * A timer created while measuring was off was never named, and its call site
+ * is unrecoverable — the stack at tick time is the event loop, not the caller.
+ * The function's own name survives (production builds keep them), so a timer
+ * that starts ticking after the panel opens still reports under something
+ * readable rather than vanishing. The `@?` says the line number is the part
+ * that is missing, in the same shape `timerCallSite` returns.
+ * @param {Function} handler - The timer callback
+ * @returns {string} e.g. `_startRefreshing@?`
+ */
+function lateTimerName(handler) {
+    const name = handler.name;
+    return `${name && name !== 'anonymous' ? name : 'anon'}@?`;
+}
+
+/**
  * Every interval this script creates reports into the rolling stats.
  *
  * The stall ledger can only name work that was measured, and hand-picking
  * which intervals to instrument is how the 2026-08-29 hunt kept finding
  * "nothing instrumented overlapped it". Wrapping the sandbox's setInterval
- * catches them all — the game is untouched, it has its own window — and the
- * wrapper costs one `enabled` check per tick while measuring is off.
+ * catches them all — the game is untouched, it has its own window — and while
+ * measuring is off the wrapper costs one `enabled` check per tick plus one
+ * counter increment per creation. It used to also name every creation, which
+ * meant a stack capture and a regex parse on every `setTimeout` on the page
+ * for every user at boot; see `timerCounters` above for what that cost and
+ * what is given up by deferring it.
  */
 export function installIntervalTracing(target = globalThis) {
     // Each timer is wrapped on its own merits: if the page (or a library)
@@ -495,9 +549,19 @@ export function installIntervalTracing(target = globalThis) {
     if (typeof original === 'function' && !original.__toolashaTraced) {
         const traced = function traced(handler, delay, ...args) {
             if (typeof handler !== 'function') return original.call(this, handler, delay, ...args);
-            const name = `interval:${timerCallSite()}`;
+            timerCounters.interval += 1;
+            // Naming costs a stack capture and a regex parse (~10µs) and this
+            // runs for every timer the page creates, so it is paid only while
+            // the numbers are being collected. A timer created before the panel
+            // opened is named from its function at first tick instead.
+            let name = null;
+            if (performanceMonitor.enabled) {
+                timerCounters.named += 1;
+                name = `interval:${timerCallSite()}`;
+            }
             const wrapped = function (...tickArgs) {
                 if (!performanceMonitor.enabled) return handler.apply(this, tickArgs);
+                if (name === null) name = `interval:${lateTimerName(handler)}`;
                 const startedAt = performance.now();
                 try {
                     return handler.apply(this, tickArgs);
@@ -518,9 +582,17 @@ export function installIntervalTracing(target = globalThis) {
     if (typeof originalTimeout === 'function' && !originalTimeout.__toolashaTraced) {
         const tracedTimeout = function tracedTimeout(handler, delay, ...args) {
             if (typeof handler !== 'function') return originalTimeout.call(this, handler, delay, ...args);
-            const name = `timeout:${timerCallSite()}`;
+            timerCounters.timeout += 1;
+            // See the interval wrapper above: no stack capture while measuring
+            // is off, which is nearly always and is where the cost lived.
+            let name = null;
+            if (performanceMonitor.enabled) {
+                timerCounters.named += 1;
+                name = `timeout:${timerCallSite()}`;
+            }
             const wrapped = function (...tickArgs) {
                 if (!performanceMonitor.enabled) return handler.apply(this, tickArgs);
+                if (name === null) name = `timeout:${lateTimerName(handler)}`;
                 const startedAt = performance.now();
                 try {
                     return handler.apply(this, tickArgs);

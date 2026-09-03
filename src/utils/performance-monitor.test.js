@@ -2,7 +2,7 @@
  * Tests for Performance Monitor
  */
 import { describe, test, expect, beforeEach, vi } from 'vitest';
-import performanceMonitor, { installIntervalTracing, timerCallSite } from './performance-monitor.js';
+import performanceMonitor, { installIntervalTracing, timerCallSite, timerCounters } from './performance-monitor.js';
 
 describe('PerformanceMonitor', () => {
     beforeEach(() => {
@@ -640,5 +640,157 @@ describe('stall attribution on the monotonic clock', () => {
         for (let i = 0; i < 400; i++) performanceMonitor.noteEvent(`ws:n${i}`);
         expect(performanceMonitor.events.length).toBe(300);
         expect(performanceMonitor.events[0].name).toBe('ws:n100');
+    });
+});
+
+describe('timer tracing does no work while measuring is off', () => {
+    /** A fake timer host that records registrations and lets tests fire ticks by hand. */
+    function makeTarget() {
+        const registered = { interval: [], timeout: [] };
+        return {
+            registered,
+            setInterval(handler, delay, ...args) {
+                registered.interval.push({ handler, delay, args });
+                return 111;
+            },
+            setTimeout(handler, delay, ...args) {
+                registered.timeout.push({ handler, delay, args });
+                return 222;
+            },
+        };
+    }
+
+    /**
+     * Burn past the wrapper's 1ms recording floor, so the tick is actually
+     * written into the rolling stats under whatever name it ended up with.
+     */
+    function spin() {
+        const until = performance.now() + 2;
+        while (performance.now() < until) {
+            /* deliberate */
+        }
+    }
+
+    beforeEach(() => {
+        performanceMonitor.reset();
+        performanceMonitor._tabVisible = true;
+        timerCounters.interval = 0;
+        timerCounters.timeout = 0;
+        timerCounters.domRearm = 0;
+        timerCounters.named = 0;
+    });
+
+    test('no stack is captured when a timer is created with measuring off', () => {
+        // The wrapper used to name every creation unconditionally: a
+        // `new Error().stack` plus a regex parse, roughly 10µs, for every
+        // `setTimeout` on the page for every user from boot. Nothing about
+        // that work is useful until somebody is measuring.
+        performanceMonitor.enabled = false;
+        const target = makeTarget();
+        installIntervalTracing(target);
+
+        const captureStack = vi.spyOn(globalThis, 'Error');
+
+        target.setTimeout(function work() {}, 10);
+        target.setInterval(function tick() {}, 10);
+
+        expect(captureStack).not.toHaveBeenCalled();
+        captureStack.mockRestore();
+    });
+
+    test('the creation is still counted, so the rate is visible without measuring', () => {
+        performanceMonitor.enabled = false;
+        const target = makeTarget();
+        installIntervalTracing(target);
+
+        target.setTimeout(() => {}, 10);
+        target.setTimeout(() => {}, 10);
+        target.setInterval(() => {}, 10);
+
+        expect(timerCounters.timeout).toBe(2);
+        expect(timerCounters.interval).toBe(1);
+        // Nothing was named, which is the whole point of the counter pair
+        expect(timerCounters.named).toBe(0);
+    });
+
+    test('a non-function handler is not counted — it never gets a wrapper', () => {
+        performanceMonitor.enabled = false;
+        const target = makeTarget();
+        installIntervalTracing(target);
+
+        target.setTimeout('code()', 10);
+        expect(timerCounters.timeout).toBe(0);
+    });
+
+    test('naming still happens at creation when measuring is on', () => {
+        performanceMonitor.enabled = true;
+        const target = makeTarget();
+        installIntervalTracing(target);
+
+        target.setInterval(function tick() {
+            spin();
+        }, 10);
+        target.registered.interval[0].handler();
+
+        expect(timerCounters.named).toBe(1);
+        const names = [...performanceMonitor.measurements.keys()].filter((n) => n.startsWith('interval:'));
+        // A real call site, with a line number — not the degraded late name
+        expect(names.length).toBe(1);
+        expect(names[0]).not.toMatch(/@\?$/);
+    });
+
+    test('a timer created before the panel opened is named from its function at first tick', () => {
+        // Its creation stack is gone and unrecoverable — the stack at tick time
+        // is the event loop. The function name survives, so the timer still
+        // shows up under something readable instead of vanishing from the
+        // panel; `@?` marks the line number as the part that is missing.
+        performanceMonitor.enabled = false;
+        const target = makeTarget();
+        installIntervalTracing(target);
+        target.setInterval(function _startRefreshing() {
+            spin();
+        }, 10);
+
+        performanceMonitor.enabled = true;
+        const tick = target.registered.interval[0].handler;
+        tick();
+
+        expect([...performanceMonitor.measurements.keys()]).toContain('interval:_startRefreshing@?');
+    });
+
+    test('the late name is computed once, not on every tick', () => {
+        performanceMonitor.enabled = false;
+        const target = makeTarget();
+        installIntervalTracing(target);
+        target.setTimeout(function poll() {
+            spin();
+        }, 10);
+
+        performanceMonitor.enabled = true;
+        const tick = target.registered.timeout[0].handler;
+        tick();
+        tick();
+
+        const names = [...performanceMonitor.measurements.keys()].filter((n) => n.startsWith('timeout:'));
+        expect(names).toEqual(['timeout:poll@?']);
+    });
+
+    test('an anonymous handler created with measuring off still gets a usable name', () => {
+        performanceMonitor.enabled = false;
+        const target = makeTarget();
+        installIntervalTracing(target);
+        target.setTimeout(
+            Object.defineProperty(() => spin(), 'name', { value: '' }),
+            10
+        );
+
+        performanceMonitor.enabled = true;
+        target.registered.timeout[0].handler();
+
+        expect([...performanceMonitor.measurements.keys()]).toContain('timeout:anon@?');
+    });
+
+    test('the counters hang off the monitor, which is how the panel reaches them', () => {
+        expect(performanceMonitor.timerCounters).toBe(timerCounters);
     });
 });

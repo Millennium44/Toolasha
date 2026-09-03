@@ -369,7 +369,20 @@ class DOMObserver {
             }
         }
 
-        // Clear existing timer and set a new one
+        // Clear existing timer and set a new one. Counted because this is the
+        // multiplier on timer creation across the whole script: a re-arm per
+        // *dispatched node*, not per fire, so the rate follows DOM mutation
+        // volume — high through combat — and nothing could see it before.
+        // A property increment, so counting it costs nothing measurable.
+        //
+        // Off the monitor instance rather than through the named export: this
+        // module and performance-monitor.js are in different production
+        // bundles, so a named import here compiles to a property read on
+        // `Toolasha.Core.performanceMonitor` anyway (see
+        // libraries/cross-bundle-globals.test.js), and the guard keeps a
+        // counter that is somehow absent from breaking DOM dispatch.
+        const counters = performanceMonitor.timerCounters;
+        if (counters) counters.domRearm += 1;
         if (this.debounceTimers.has(handler)) {
             clearTimeout(this.debounceTimers.get(handler));
         }
