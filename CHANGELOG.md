@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A spawn census you can leave running
+
+Working out why dungeon clears sim long has needed full combat recordings: megabytes for half an hour, capped by a timer, capturing far more than the question needs. The new spawn census keeps only the part that matters, which monsters turned up in each wave, and it does that by counting rather than logging: a wave whose roster it has seen before at that wave number costs one increment, so the store grows with the variety of what you fight instead of with how long you play. It also keeps enough per wave number to state a mean clear time with an error bar, from three running numbers rather than a timestamp per wave, and one observed health figure per monster per tier so that never has to be worked out again. It is off by default and lives under Settings; turn it on, play normally, then export from the console with `Toolasha.Debug.spawnCensusExport()`. The export carries the spawn tables in force at the time, so the file can be analysed long afterwards without the game open.
+
 ### What the sim gets right and wrong about dungeon wave rosters, written down
 
 Chasing the dungeon sim's long clear times turned up a real gap in how random dungeon waves are drawn, and 138 live-recorded waves now pin down its shape. The wave-number thresholds in the spawn tables are right, and a wave really is drawn whole from one table rather than from a pool of them; what the code gets wrong is assuming it is always the highest table a wave has reached, when about one wave in six is a clean draw from a lower one. Nobody knows the rule behind that yet, and the obvious guesses trade one error for a bigger one, so the behaviour is unchanged and the evidence is recorded in the code and in tests instead of guessed at.
