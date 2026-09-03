@@ -238,12 +238,15 @@ describe('recognising a dungeon', () => {
 });
 
 describe('starting a run', () => {
-    test('wave 0 starts a run from the queued dungeon action', async () => {
+    test('wave 0 starts a run from the running dungeon action', async () => {
         // The run starts now, not at combatStartTime — that field is the combat
         // action's start, hours stale in continuous queued combat.
         const runStart = Date.parse('2026-08-04T10:03:20.000Z');
         vi.useFakeTimers();
         vi.setSystemTime(runStart);
+        // dataManager folds endCharacterActions into its queue before emitting,
+        // so the tracker sees the post-update queue.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, ordinal: 0, isDone: false }];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
         expect(tracker.pendingDungeonInfo).toEqual({ dungeonHrid: DEN, tier: 2 });
 
@@ -382,6 +385,7 @@ describe('starting a run', () => {
         vi.useFakeTimers();
         vi.setSystemTime(freshStart);
         beTracking({ currentWave: 0, wavesCompleted: 0, battleId: 42 });
+        game.actions = [{ actionHrid: LAIR, difficultyTier: 1, ordinal: 0, isDone: false }];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 1, isDone: false }] });
 
         await tracker.onNewBattle({ wave: 0, battleId: 100, combatStartTime: '2026-08-04T11:00:00.000Z' });
@@ -390,6 +394,148 @@ describe('starting a run', () => {
         expect(tracker.currentRun.dungeonHrid).toBe(LAIR);
         // Clocked from now, not the stale combatStartTime
         expect(tracker.currentRun.startTime).toBe(freshStart);
+    });
+});
+
+describe('a dungeon that is only queued', () => {
+    // Observed live: a character fighting Golem Cave (a normal zone) with Sinister
+    // Circus sitting at queue position 2, not started, made the tracker panel appear
+    // and start counting — "Sinister Circus (T0), Elapsed 00:37, Wave 0/60" — with
+    // the timer running against Golem Cave's battles. The queue is insertion order,
+    // so "the first unfinished dungeon in the array" is not "the dungeon running".
+
+    test('queueing a dungeon behind a running normal zone does not arm the tracker', () => {
+        game.actions = [
+            { actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false },
+            { actionHrid: LAIR, difficultyTier: 2, ordinal: 2, isDone: false },
+        ];
+
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 2, isDone: false }] });
+
+        expect(tracker.pendingDungeonInfo).toBeNull();
+    });
+
+    test('a battle from the running normal zone does not start the queued dungeon', async () => {
+        game.actions = [
+            { actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false },
+            { actionHrid: LAIR, difficultyTier: 2, ordinal: 2, isDone: false },
+        ];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 2, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 0, battleId: 77, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+    });
+
+    test('even a pending record left over from before cannot start a run off a normal zone', async () => {
+        // Belt and braces: whatever armed it, the running action has the last word.
+        tracker.pendingDungeonInfo = { dungeonHrid: LAIR, tier: 2 };
+        game.actions = [{ actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 0, battleId: 78, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.pendingDungeonInfo).toBeNull();
+    });
+
+    test('a dungeon queued behind a different running dungeon does not start the wrong one', async () => {
+        game.actions = [
+            { actionHrid: DEN, difficultyTier: 3, ordinal: 1, isDone: false },
+            { actionHrid: LAIR, difficultyTier: 0, ordinal: 2, isDone: false },
+        ];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 0, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 0, battleId: 79, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+        expect(tracker.currentRun.tier).toBe(3);
+        expect(tracker.currentRun.maxWaves).toBe(10);
+    });
+
+    test('a requeued repeat at array position 0 does not displace the running action', async () => {
+        // A repeating action that has run many times is requeued to the *front* of
+        // the array with a *higher* ordinal, so actions[0] is the queued copy.
+        game.actions = [
+            { actionHrid: LAIR, difficultyTier: 0, ordinal: 8589934587, isDone: false },
+            { actionHrid: DEN, difficultyTier: 2, ordinal: 4, isDone: false },
+        ];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
+
+        expect(tracker.pendingDungeonInfo).toEqual({ dungeonHrid: DEN, tier: 2 });
+
+        await tracker.onNewBattle({ wave: 0, battleId: 80, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+        expect(tracker.currentRun.tier).toBe(2);
+    });
+
+    test('the running dungeon still starts normally from behind other queued actions', async () => {
+        game.actions = [
+            { actionHrid: DEN, difficultyTier: 5, ordinal: 2, isDone: false },
+            { actionHrid: FLY, difficultyTier: 0, ordinal: 9, isDone: false },
+        ];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 5, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 0, battleId: 81, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+        expect(tracker.currentRun.tier).toBe(5);
+    });
+
+    test('a queued dungeon leaving the queue does not end the run in progress', () => {
+        beTracking({ dungeonHrid: DEN, currentWave: 4, wavesCompleted: 3 });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, ordinal: 1, isDone: false }];
+
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 0, isDone: true }] });
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+        expect(tracker.currentRun.wavesCompleted).toBe(3);
+    });
+
+    test('page load does not adopt a dungeon that is only queued', async () => {
+        game.actions = [
+            { actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false },
+            { actionHrid: LAIR, difficultyTier: 2, ordinal: 2, isDone: false },
+        ];
+
+        await tracker.checkForActiveDungeon();
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.pendingDungeonInfo).toBeNull();
+    });
+
+    test('a saved record is not restored onto a dungeon that is only queued', async () => {
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_${game.characterId}`, {
+            dungeonHrid: LAIR,
+            tier: 2,
+            battleId: 55,
+            startTime: Date.now() - 60_000,
+            currentWave: 4,
+            maxWaves: 12,
+            wavesCompleted: 3,
+            waveTimes: [],
+        });
+        game.actions = [
+            { actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false },
+            { actionHrid: LAIR, difficultyTier: 2, ordinal: 2, isDone: false },
+        ];
+
+        const restored = await tracker.restoreInProgressRun(55);
+        await flush();
+
+        expect(restored).toBe(false);
+        expect(tracker.isTracking).toBe(false);
+        expect(stored()).toBeUndefined();
     });
 });
 
@@ -814,6 +960,7 @@ describe('a canceled battle start', () => {
         // then Battle ended a second later. The canceled start must not stay
         // armed as a run's beginning, or the next key count — minutes of
         // party-forming later — reads as its completion.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false }];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: false }] });
         await tracker.onNewBattle({ wave: 0, battleId: 9, combatStartTime: '2026-08-04T10:26:30.000Z' });
         tracker.onChatMessage(keyCountsData('2026-08-04T10:26:30.000Z', '[Aster - 95] [Briar - 42]'));

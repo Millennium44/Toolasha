@@ -218,11 +218,14 @@ class DungeonTracker {
             return false;
         }
 
-        // Verify dungeon action is still active
-        const currentActions = dataManager.getCurrentActions();
-        const dungeonAction = currentActions.find((a) => this.isDungeonAction(a.actionHrid) && !a.isDone);
+        // Verify the saved dungeon is the action actually *running*. The queue is
+        // insertion order, so "the first unfinished dungeon in the array" can be
+        // one merely queued behind the fight in progress — restoring on that
+        // resurrects a finished run, or attributes this fight to a dungeon the
+        // character has not entered.
+        const running = runningCombatAction(dataManager.getCurrentActions());
 
-        if (!dungeonAction || dungeonAction.actionHrid !== saved.dungeonHrid) {
+        if (!running || !this.isDungeonAction(running.actionHrid) || running.actionHrid !== saved.dungeonHrid) {
             await this.clearInProgressRun();
             return false;
         }
@@ -353,13 +356,13 @@ class DungeonTracker {
         // await — have to be one character's; see `restoreInProgressRun`
         const owner = currentOwner();
 
-        // Get current actions from dataManager
-        const currentActions = dataManager.getCurrentActions();
+        // The dungeon the character is *running*, not the first one sitting in the
+        // queue: a dungeon queued behind a normal zone (or behind another dungeon)
+        // is not in progress, and arming or restoring on it starts a run that
+        // never began and times it against somebody else's battles.
+        const dungeonAction = runningCombatAction(dataManager.getCurrentActions());
 
-        // Find active dungeon action
-        const dungeonAction = currentActions.find((a) => this.isDungeonAction(a.actionHrid) && !a.isDone);
-
-        if (!dungeonAction) {
+        if (!dungeonAction || !this.isDungeonAction(dungeonAction.actionHrid)) {
             return;
         }
 
@@ -644,22 +647,37 @@ class DungeonTracker {
      * @param {Object} data - actions_updated message data
      */
     onActionsUpdated(data) {
+        // The action the game is actually running, by execution order. dataManager
+        // folds `endCharacterActions` into its queue before emitting, so this is
+        // already the post-update queue. Merely *queueing* a dungeon must not arm
+        // the tracker: a dungeon added at position 2 while the character fights a
+        // normal zone used to start a run there and then, timing it against the
+        // zone's battles and showing the queued copy's tier.
+        const runningNow = runningCombatAction(dataManager.getCurrentActions?.());
+
         // Check if any dungeon action was added or removed
         if (data.endCharacterActions) {
             for (const action of data.endCharacterActions) {
                 // Check if this is a dungeon action using explicit verification
                 if (this.isDungeonAction(action.actionHrid)) {
                     if (action.isDone === false) {
-                        // Dungeon action added to queue - store info for when new_battle fires
+                        // Only the running dungeon arms tracking, and it arms with its
+                        // own tier — a second queued copy of the same dungeon at another
+                        // tier must not overwrite it.
+                        if (!runningNow || runningNow.actionHrid !== action.actionHrid) {
+                            continue;
+                        }
+
+                        // Dungeon action is running - store info for when new_battle fires
                         this.pendingDungeonInfo = {
-                            dungeonHrid: action.actionHrid,
-                            tier: action.difficultyTier,
+                            dungeonHrid: runningNow.actionHrid,
+                            tier: runningNow.difficultyTier,
                         };
 
                         // If already tracking (somehow), update immediately
                         if (this.isTracking && this.currentRun && !this.currentRun.dungeonHrid) {
-                            this.currentRun.dungeonHrid = action.actionHrid;
-                            this.currentRun.tier = action.difficultyTier;
+                            this.currentRun.dungeonHrid = runningNow.actionHrid;
+                            this.currentRun.tier = runningNow.difficultyTier;
 
                             const dungeonInfo = dungeonTrackerStorage.getDungeonInfo(action.actionHrid);
                             if (dungeonInfo) {
@@ -668,7 +686,13 @@ class DungeonTracker {
                             }
                         }
                     } else if (action.isDone === true && this.isTracking && this.currentRun) {
-                        // Dungeon action marked as done (completion or flee)
+                        // Dungeon action marked as done (completion or flee).
+                        // A *different* dungeon finishing or being dropped from the
+                        // queue says nothing about the run in progress; ending on it
+                        // would throw away a live run's waves and timings.
+                        if (this.currentRun.dungeonHrid && this.currentRun.dungeonHrid !== action.actionHrid) {
+                            continue;
+                        }
 
                         // If we don't have dungeon info yet, grab it from this action
                         if (!this.currentRun.dungeonHrid) {
@@ -1059,8 +1083,18 @@ class DungeonTracker {
         // showed the panel as T0 while the game fought T2. runningCombatAction
         // picks the lowest-ordinal unfinished combat action, which is the one
         // being run.
+        //
+        // It is equally authoritative about *whether* a dungeon is running at all.
+        // When the running action is a normal zone, this battle is that zone's, and
+        // any dungeon in the queue is merely waiting its turn — falling through to
+        // pendingDungeonInfo here started a Sinister Circus run off a Golem Cave
+        // battle and ran its timer against Golem Cave's fights.
         const running = runningCombatAction(dataManager.getCurrentActions());
-        if (running && this.isDungeonAction(running.actionHrid)) {
+        if (running) {
+            if (!this.isDungeonAction(running.actionHrid)) {
+                this.pendingDungeonInfo = null;
+                return; // Not in a dungeon - this battle belongs to a normal zone
+            }
             dungeonHrid = running.actionHrid;
             tier = running.difficultyTier;
             this.pendingDungeonInfo = null;
