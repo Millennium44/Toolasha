@@ -2291,7 +2291,14 @@ export const settingsGroups = {
                 label: 'Spawn Census: Tally which monsters each combat wave contains',
                 type: 'checkbox',
                 default: false,
-                help: "Counts how often each set of monsters appears at each zone, difficulty and wave number, so the simulator's wave-draw rule can be checked against what the game actually does. Identical waves share one row and a counter, so weeks of play cost about a megabyte and nothing is written per battle. Shows nothing in game — the data comes out through Toolasha.Debug.spawnCensusExport()",
+                help: "Counts how often each set of monsters appears at each zone, difficulty and wave number, so the simulator's wave-draw rule can be checked against what the game actually does. Identical waves share one row and a counter, so weeks of play cost about a megabyte and nothing is written per battle. Shows nothing in game — use the Export button below to get the data out.",
+            },
+            spawnCensusExport: {
+                id: 'spawnCensusExport',
+                label: 'Spawn Census: Export the recorded data',
+                type: 'button',
+                buttonLabel: 'Export census',
+                help: 'Downloads a JSON file of everything counted above - the wave rosters, durations and observed monster hitpoints. No character or account data is in it. Works whether the checkbox above is on or off, so turning it off does not lock away what was already collected.',
             },
             combatBossEta: {
                 id: 'combatBossEta',

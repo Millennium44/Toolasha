@@ -16,6 +16,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { detectedModeLabel } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
+import spawnCensus from '../combat/spawn-census.js';
 import whatsNew from './whats-new.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -523,6 +524,9 @@ class SettingsUI {
             if (e.target.classList.contains('toolasha-setting-action-btn')) {
                 if (e.target.dataset.settingId === 'enhanceSim_resetProDefaults') {
                     this.resetEnhanceSimToProDefaults(e.target);
+                }
+                if (e.target.dataset.settingId === 'spawnCensusExport') {
+                    this.exportSpawnCensus(e.target);
                 }
             }
         });
@@ -1542,6 +1546,51 @@ class SettingsUI {
             setTimeout(() => {
                 if (button.isConnected) button.textContent = label;
             }, 1500);
+        }
+    }
+
+    /**
+     * Download the Spawn Census export, the same file `Toolasha.Debug.spawnCensusExport()`
+     * produces, from a settings button so contributing data doesn't need the console.
+     *
+     * Works regardless of whether the `spawnCensus` checkbox is currently on - someone may
+     * have switched it off but still wants what was already collected, so this button carries
+     * no `disabledBy`. The only thing that blocks it is having nothing recorded yet, which is
+     * reported on the button itself rather than silently downloading an empty file.
+     *
+     * @param {HTMLElement} [button] - The pressed button, for a moment's feedback
+     */
+    async exportSpawnCensus(button) {
+        const label = button?.textContent;
+        const flash = (text) => {
+            if (!button) return;
+            button.textContent = text;
+            setTimeout(() => {
+                if (button.isConnected) button.textContent = label;
+            }, 2000);
+        };
+
+        // If the feature was off when this page loaded, nothing was hydrated from
+        // storage into memory (initialize() bails before load() in that case) - a
+        // prior session's data would otherwise look like it was never collected.
+        // Only when memory is still empty: if it already holds anything, that data
+        // came from this session's own recording or an earlier load, and re-reading
+        // the same on-disk record would double-count it (hydrate() is additive).
+        if (!spawnCensus.initialized && spawnCensus.rosters.size === 0) {
+            await spawnCensus.load();
+        }
+
+        await spawnCensus.flush();
+        const waveCount = spawnCensus.summary().wavesSeen;
+        if (!waveCount) {
+            flash('Nothing recorded yet');
+            return;
+        }
+
+        if (spawnCensus.downloadExport()) {
+            flash(`Exported ${waveCount.toLocaleString()} waves ✓`);
+        } else {
+            flash('Nothing recorded yet');
         }
     }
 

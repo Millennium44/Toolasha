@@ -44,6 +44,16 @@ const mocks = vi.hoisted(() => ({
     cacheClears: 0,
 }));
 
+/** Controllable stand-in for the census singleton the export button drives. */
+const censusMock = vi.hoisted(() => ({
+    initialized: true,
+    rosterSize: 0,
+    wavesSeen: 0,
+    downloadResult: false,
+    loadCalls: 0,
+    flushCalls: 0,
+}));
+
 vi.mock('../../utils/mobile.js', () => ({
     hasCoarsePointer: () => mocks.coarsePointer,
     isMobileMode: () => mocks.coarsePointer,
@@ -72,6 +82,13 @@ const schema = {
         settings: {
             actionBar_enabled: { id: 'actionBar_enabled', label: 'Action bar', type: 'checkbox', default: true },
             combatSim: { id: 'combatSim', label: 'Combat simulator', type: 'checkbox', default: true },
+            spawnCensus: { id: 'spawnCensus', label: 'Spawn Census', type: 'checkbox', default: false },
+            spawnCensusExport: {
+                id: 'spawnCensusExport',
+                label: 'Spawn Census: Export the recorded data',
+                type: 'button',
+                buttonLabel: 'Export census',
+            },
             mobileMode: {
                 id: 'mobileMode',
                 label: 'Mobile mode',
@@ -234,6 +251,26 @@ vi.mock('../../core/settings-storage.js', () => ({
 // Everything below is a neighbour the panel merely holds a button for
 vi.mock('../../api/marketplace.js', () => ({ default: { clearCacheAndRefetch: async () => true } }));
 vi.mock('../combat/scroll-simulator-ui.js', () => ({ default: { openDefaultsPopup: () => {} } }));
+vi.mock('../combat/spawn-census.js', () => ({
+    default: {
+        get initialized() {
+            return censusMock.initialized;
+        },
+        rosters: {
+            get size() {
+                return censusMock.rosterSize;
+            },
+        },
+        load: async () => {
+            censusMock.loadCalls += 1;
+        },
+        flush: async () => {
+            censusMock.flushCalls += 1;
+        },
+        summary: () => ({ wavesSeen: censusMock.wavesSeen }),
+        downloadExport: () => censusMock.downloadResult,
+    },
+}));
 vi.mock('../dev/pformance-panel.js', () => ({
     default: { show: () => {}, toggle: () => mocks.toggled.push('pformance') },
 }));
@@ -334,6 +371,12 @@ beforeEach(() => {
     mocks.loadGate = null;
     mocks.cacheClears = 0;
     mocks.settingsMap = {};
+    censusMock.initialized = true;
+    censusMock.rosterSize = 0;
+    censusMock.wavesSeen = 0;
+    censusMock.downloadResult = false;
+    censusMock.loadCalls = 0;
+    censusMock.flushCalls = 0;
     for (const group of Object.values(schema)) {
         for (const [id, definition] of Object.entries(group.settings)) {
             mocks.settingsMap[id] = { id, type: 'checkbox', isTrue: definition.default ?? false };
@@ -1094,5 +1137,84 @@ describe('editing a gear row', () => {
 
         const stored = mocks.written.findLast(([id]) => id === 'enhanceSim_gear_enhancer')[1];
         expect(stored).toEqual({ enabled: true, tier: 'holy', level: 15 });
+    });
+});
+
+describe('the spawn census export button', () => {
+    /** @returns {HTMLElement} The export button the schema's `button` row renders */
+    function exportButton() {
+        return document.querySelector('.toolasha-setting-action-btn[data-setting-id="spawnCensusExport"]');
+    }
+
+    test('renders enabled regardless of the checkbox, since off-but-collected data is still worth exporting', () => {
+        mocks.settingsMap['spawnCensus'].isTrue = true;
+        drawPanel();
+        expect(row('spawnCensusExport').style.pointerEvents).toBe('');
+        expect(row('spawnCensusExport').style.opacity).toBe('');
+
+        mocks.settingsMap['spawnCensus'].isTrue = false;
+        settingsUI.applyDisabledByState();
+        expect(row('spawnCensusExport').style.pointerEvents).toBe('');
+        expect(row('spawnCensusExport').style.opacity).toBe('');
+    });
+
+    test('clicking flushes and downloads, and reports how many waves went out', async () => {
+        censusMock.wavesSeen = 42;
+        censusMock.downloadResult = true;
+        drawPanel();
+
+        exportButton().click();
+        await settle();
+
+        expect(censusMock.flushCalls).toBe(1);
+        expect(exportButton().textContent).toContain('42');
+    });
+
+    test('an empty census reports nothing recorded rather than downloading an empty file', async () => {
+        censusMock.wavesSeen = 0;
+        drawPanel();
+
+        exportButton().click();
+        await settle();
+
+        expect(exportButton().textContent).toBe('Nothing recorded yet');
+    });
+
+    test('when this session never loaded the census, memory is hydrated from storage before checking', async () => {
+        censusMock.initialized = false;
+        censusMock.rosterSize = 0;
+        censusMock.wavesSeen = 5;
+        censusMock.downloadResult = true;
+        drawPanel();
+
+        exportButton().click();
+        await settle();
+
+        expect(censusMock.loadCalls).toBe(1);
+    });
+
+    test('does not re-load from storage when this session already holds census data', async () => {
+        censusMock.initialized = false;
+        censusMock.rosterSize = 3;
+        censusMock.wavesSeen = 5;
+        censusMock.downloadResult = true;
+        drawPanel();
+
+        exportButton().click();
+        await settle();
+
+        expect(censusMock.loadCalls).toBe(0);
+    });
+
+    test('does not re-load from storage while the census is actively recording this session', async () => {
+        censusMock.initialized = true;
+        censusMock.rosterSize = 0;
+        censusMock.wavesSeen = 0;
+        drawPanel();
+
+        exportButton().click();
+        await settle();
+
+        expect(censusMock.loadCalls).toBe(0);
     });
 });
