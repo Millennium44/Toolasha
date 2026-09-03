@@ -2206,72 +2206,67 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.41.0](https://github.com/Millennium44/Toolasha/compare/v3.40.0...v3.41.0) (2026-09-03)
 
-
 ### Features
 
-* add Spawn Census export button to settings ([dcff395](https://github.com/Millennium44/Toolasha/commit/dcff395a1526268233ece2ac332e688ae07aea13))
-* dungeon tracker records solo runs, timed by the wall clock ([a56f289](https://github.com/Millennium44/Toolasha/commit/a56f28947feea6b11469158ec2ae1946bdfe560e))
-* dungeon tracker tier tagging, tier filter, and on-top panel fix ([85a67e3](https://github.com/Millennium44/Toolasha/commit/85a67e3b9408a583e12c89c89f098232907c131d))
-* dungeon-aware combat header and a second dungeon clear-time number ([ef9f513](https://github.com/Millennium44/Toolasha/commit/ef9f51339f2e120b704ba9fe1de91a72cb945480))
-* **dungeon-tracker:** recover a partial party run's start from chat ([1c8b9ab](https://github.com/Millennium44/Toolasha/commit/1c8b9abbbb7aa15a4bf5bb438973634d22c48ced))
-* per-wave first-hit timing in the sim and a dungeon wave-timing diagnostic ([4c4819a](https://github.com/Millennium44/Toolasha/commit/4c4819afe9c614d45318b6141ef3335bb6272cb6))
-* spawn census tallies which monsters each combat wave contains ([bcac5d8](https://github.com/Millennium44/Toolasha/commit/bcac5d8efae28469d7c0a3d0b563d83ce65594b2))
-* split-time dungeon pace, honest at every wave ([5cc8310](https://github.com/Millennium44/Toolasha/commit/5cc8310aaf756d91933766e9e15eea5f86ff660e))
-
+- add Spawn Census export button to settings ([dcff395](https://github.com/Millennium44/Toolasha/commit/dcff395a1526268233ece2ac332e688ae07aea13))
+- dungeon tracker records solo runs, timed by the wall clock ([a56f289](https://github.com/Millennium44/Toolasha/commit/a56f28947feea6b11469158ec2ae1946bdfe560e))
+- dungeon tracker tier tagging, tier filter, and on-top panel fix ([85a67e3](https://github.com/Millennium44/Toolasha/commit/85a67e3b9408a583e12c89c89f098232907c131d))
+- dungeon-aware combat header and a second dungeon clear-time number ([ef9f513](https://github.com/Millennium44/Toolasha/commit/ef9f51339f2e120b704ba9fe1de91a72cb945480))
+- **dungeon-tracker:** recover a partial party run's start from chat ([1c8b9ab](https://github.com/Millennium44/Toolasha/commit/1c8b9abbbb7aa15a4bf5bb438973634d22c48ced))
+- per-wave first-hit timing in the sim and a dungeon wave-timing diagnostic ([4c4819a](https://github.com/Millennium44/Toolasha/commit/4c4819afe9c614d45318b6141ef3335bb6272cb6))
+- spawn census tallies which monsters each combat wave contains ([bcac5d8](https://github.com/Millennium44/Toolasha/commit/bcac5d8efae28469d7c0a3d0b563d83ce65594b2))
+- split-time dungeon pace, honest at every wave ([5cc8310](https://github.com/Millennium44/Toolasha/commit/5cc8310aaf756d91933766e9e15eea5f86ff660e))
 
 ### Bug Fixes
 
-* a skill-scaled special ability buff cannot poison the buffed stat with NaN ([dc1929e](https://github.com/Millennium44/Toolasha/commit/dc1929eadb7759e17f3e07a952bc87f6f16c0ab7))
-* all-zones early exit reads the ranked player, not player1 ([d068a22](https://github.com/Millennium44/Toolasha/commit/d068a226fcdd391bd98fb8f45e9d89897d7f3750))
-* **combat-sim:** draw dungeon waves from lower spawn tables at the measured rate ([818c6a3](https://github.com/Millennium44/Toolasha/commit/818c6a31edf6379294e5239d17d279dd78178f91))
-* dungeon pace times each wave from its own start, not the run's ([a834ee6](https://github.com/Millennium44/Toolasha/commit/a834ee6cb299782afa812c738bd5406561085b6b))
-* dungeon sim avg completion time matches in-game clear time ([8fed2ec](https://github.com/Millennium44/Toolasha/commit/8fed2ecdd27ccd87dca3902880bb8c660896c012))
-* dungeon tracker no longer claims a duration for a run it joined part-way ([4076bee](https://github.com/Millennium44/Toolasha/commit/4076beeda67641c0e3e80b1e1e64f847d936194f))
-* dungeon tracker reads the tier of the running dungeon, not a queued copy ([c05a09d](https://github.com/Millennium44/Toolasha/commit/c05a09d68e431ec7dd384b2896f7ffa268072605))
-* dungeon tracker starts a run for a merely queued dungeon ([f98470c](https://github.com/Millennium44/Toolasha/commit/f98470c62eaba447e33b0457750f1cc9443db0ee))
-* dungeon tracker times waves from the run's real start, completion to completion ([31b7ab8](https://github.com/Millennium44/Toolasha/commit/31b7ab8b9be48cac6d241a83e62e58f831cba8dc))
-* dungeon wave-timing diagnostic reads the combat feed's delta ticks ([9ee96ff](https://github.com/Millennium44/Toolasha/commit/9ee96ffc57077025f9065d768aa2ee90e0be30e6))
-* every "current action" reader uses the action actually running ([479a83f](https://github.com/Millennium44/Toolasha/commit/479a83f8251f5cb4a6a5cf37c9229a4b3f326459))
-* follow the dungeon tracker onto a dungeon the character switched to ([0e94e5b](https://github.com/Millennium44/Toolasha/commit/0e94e5b5b6966091d5f201596ada15701b53e1ea))
-* keep the sim's clock off the result the worker posts back ([f7c9c57](https://github.com/Millennium44/Toolasha/commit/f7c9c57a3b1bca932bff6ace9e64d6c4b980407e))
-* make what's-new dialog links to settings actually work ([3497d27](https://github.com/Millennium44/Toolasha/commit/3497d272b55e90f7fae947d808d9da9fb3e46f16))
-* Shykai import equips by location key the engine never reads ([06af200](https://github.com/Millennium44/Toolasha/commit/06af200e235193f2cd118249d32c9c4390905dce))
-* the reroll walk chip sits below the game modal layer ([4f96b83](https://github.com/Millennium44/Toolasha/commit/4f96b83860141697f44bd7a080644ba4188b7379))
-
+- a skill-scaled special ability buff cannot poison the buffed stat with NaN ([dc1929e](https://github.com/Millennium44/Toolasha/commit/dc1929eadb7759e17f3e07a952bc87f6f16c0ab7))
+- all-zones early exit reads the ranked player, not player1 ([d068a22](https://github.com/Millennium44/Toolasha/commit/d068a226fcdd391bd98fb8f45e9d89897d7f3750))
+- **combat-sim:** draw dungeon waves from lower spawn tables at the measured rate ([818c6a3](https://github.com/Millennium44/Toolasha/commit/818c6a31edf6379294e5239d17d279dd78178f91))
+- dungeon pace times each wave from its own start, not the run's ([a834ee6](https://github.com/Millennium44/Toolasha/commit/a834ee6cb299782afa812c738bd5406561085b6b))
+- dungeon sim avg completion time matches in-game clear time ([8fed2ec](https://github.com/Millennium44/Toolasha/commit/8fed2ecdd27ccd87dca3902880bb8c660896c012))
+- dungeon tracker no longer claims a duration for a run it joined part-way ([4076bee](https://github.com/Millennium44/Toolasha/commit/4076beeda67641c0e3e80b1e1e64f847d936194f))
+- dungeon tracker reads the tier of the running dungeon, not a queued copy ([c05a09d](https://github.com/Millennium44/Toolasha/commit/c05a09d68e431ec7dd384b2896f7ffa268072605))
+- dungeon tracker starts a run for a merely queued dungeon ([f98470c](https://github.com/Millennium44/Toolasha/commit/f98470c62eaba447e33b0457750f1cc9443db0ee))
+- dungeon tracker times waves from the run's real start, completion to completion ([31b7ab8](https://github.com/Millennium44/Toolasha/commit/31b7ab8b9be48cac6d241a83e62e58f831cba8dc))
+- dungeon wave-timing diagnostic reads the combat feed's delta ticks ([9ee96ff](https://github.com/Millennium44/Toolasha/commit/9ee96ffc57077025f9065d768aa2ee90e0be30e6))
+- every "current action" reader uses the action actually running ([479a83f](https://github.com/Millennium44/Toolasha/commit/479a83f8251f5cb4a6a5cf37c9229a4b3f326459))
+- follow the dungeon tracker onto a dungeon the character switched to ([0e94e5b](https://github.com/Millennium44/Toolasha/commit/0e94e5b5b6966091d5f201596ada15701b53e1ea))
+- keep the sim's clock off the result the worker posts back ([f7c9c57](https://github.com/Millennium44/Toolasha/commit/f7c9c57a3b1bca932bff6ace9e64d6c4b980407e))
+- make what's-new dialog links to settings actually work ([3497d27](https://github.com/Millennium44/Toolasha/commit/3497d272b55e90f7fae947d808d9da9fb3e46f16))
+- Shykai import equips by location key the engine never reads ([06af200](https://github.com/Millennium44/Toolasha/commit/06af200e235193f2cd118249d32c9c4390905dce))
+- the reroll walk chip sits below the game modal layer ([4f96b83](https://github.com/Millennium44/Toolasha/commit/4f96b83860141697f44bd7a080644ba4188b7379))
 
 ### Performance Improvements
 
-* class-filter six unfiltered shared DOM handlers ([e856a7a](https://github.com/Millennium44/Toolasha/commit/e856a7ab8647e6af8e1f405ffcca09df58b26fa7))
-* stop naming timers when nobody is measuring, and count the churn ([11e7b09](https://github.com/Millennium44/Toolasha/commit/11e7b09109867992b8cadcaa8a1c2e14fe5449e2))
-
+- class-filter six unfiltered shared DOM handlers ([e856a7a](https://github.com/Millennium44/Toolasha/commit/e856a7ab8647e6af8e1f405ffcca09df58b26fa7))
+- stop naming timers when nobody is measuring, and count the churn ([11e7b09](https://github.com/Millennium44/Toolasha/commit/11e7b09109867992b8cadcaa8a1c2e14fe5449e2))
 
 ### Documentation
 
-* changelog for audit round 32 ([1253077](https://github.com/Millennium44/Toolasha/commit/1253077059bc1c6ecc744eb301d97a20f4ada51e))
-* changelog for audit round 33 ([5731db3](https://github.com/Millennium44/Toolasha/commit/5731db3900b72f09415ab911204e433644cb94c0))
-* changelog for recovering a partial party run's start from chat ([da894c5](https://github.com/Millennium44/Toolasha/commit/da894c50e6584230608842bcc67b9f76a4efbfae))
-* changelog for the DOM handler filters and timer tracing ([f468cf9](https://github.com/Millennium44/Toolasha/commit/f468cf9cdbd0ee084d4344fd87be9cb6111ae668))
-* changelog for the dungeon clear-time fix ([5d853cf](https://github.com/Millennium44/Toolasha/commit/5d853cf1c135323a4397c52eaddd294b3eb768b3))
-* changelog for the dungeon spawn-table rule ([41ee9bf](https://github.com/Millennium44/Toolasha/commit/41ee9bf005507c61c983cdd9b5612f35b5c577c9))
-* changelog for the dungeon-switch tracker fix ([bee0012](https://github.com/Millennium44/Toolasha/commit/bee0012c58307f3d2eaaee760c6ccf5e184b948b))
-* changelog for the partial-run and solo-run tracker changes ([986b3c3](https://github.com/Millennium44/Toolasha/commit/986b3c391e3f9b92bcfcd4e811d4a22e90a2609d))
-* changelog for the queued-dungeon tracker fix ([263b1a8](https://github.com/Millennium44/Toolasha/commit/263b1a83508088a73676fe77a8cf8bb9a01f36fd))
-* changelog for the spawn census ([f40d9a9](https://github.com/Millennium44/Toolasha/commit/f40d9a906d0389da7e82fac84055a9ad502435fe))
-* changelog for the spawn census export button ([81a43af](https://github.com/Millennium44/Toolasha/commit/81a43af7f4e10e66b4f34f8215c3ccbab7122ccc))
-* changelog for the what's-new settings links ([70ef337](https://github.com/Millennium44/Toolasha/commit/70ef3378fa2506429a393a3aae8a189e1bc59cdb))
-* **combat-sim:** refit the dungeon lower-table rate on 2431 waves and settle the distance question ([ac63908](https://github.com/Millennium44/Toolasha/commit/ac63908c54dcbc46aec431e37c363c50a22ff8de))
-* **combat-sim:** refit the dungeon lower-table rate on 3078 waves across four dungeons ([987d8b0](https://github.com/Millennium44/Toolasha/commit/987d8b0afc2f2ddad26a1defda20f1f4675ac663))
-* **combat-sim:** refit the dungeon lower-table rate on 498 waves across three dungeons ([d1b5527](https://github.com/Millennium44/Toolasha/commit/d1b5527c6c0d996e971ea35d5e98b9d2602569e5))
-* **combat-sim:** refit the dungeon lower-table rate on client-read spawn tables ([2832bf1](https://github.com/Millennium44/Toolasha/commit/2832bf1d402d433489179ee1a4afec6a98b97edc))
-* correct mooket depth-retention contract and cover thin-market memo reroute ([6cfab39](https://github.com/Millennium44/Toolasha/commit/6cfab39a2e83c12a9898f30690b3c2ce6ec85579))
-* record what the dungeon wave-roster measurements settled ([1378417](https://github.com/Millennium44/Toolasha/commit/1378417aae40cc63db9d772f79134434753810b3))
-
+- changelog for audit round 32 ([1253077](https://github.com/Millennium44/Toolasha/commit/1253077059bc1c6ecc744eb301d97a20f4ada51e))
+- changelog for audit round 33 ([5731db3](https://github.com/Millennium44/Toolasha/commit/5731db3900b72f09415ab911204e433644cb94c0))
+- changelog for recovering a partial party run's start from chat ([da894c5](https://github.com/Millennium44/Toolasha/commit/da894c50e6584230608842bcc67b9f76a4efbfae))
+- changelog for the DOM handler filters and timer tracing ([f468cf9](https://github.com/Millennium44/Toolasha/commit/f468cf9cdbd0ee084d4344fd87be9cb6111ae668))
+- changelog for the dungeon clear-time fix ([5d853cf](https://github.com/Millennium44/Toolasha/commit/5d853cf1c135323a4397c52eaddd294b3eb768b3))
+- changelog for the dungeon spawn-table rule ([41ee9bf](https://github.com/Millennium44/Toolasha/commit/41ee9bf005507c61c983cdd9b5612f35b5c577c9))
+- changelog for the dungeon-switch tracker fix ([bee0012](https://github.com/Millennium44/Toolasha/commit/bee0012c58307f3d2eaaee760c6ccf5e184b948b))
+- changelog for the partial-run and solo-run tracker changes ([986b3c3](https://github.com/Millennium44/Toolasha/commit/986b3c391e3f9b92bcfcd4e811d4a22e90a2609d))
+- changelog for the queued-dungeon tracker fix ([263b1a8](https://github.com/Millennium44/Toolasha/commit/263b1a83508088a73676fe77a8cf8bb9a01f36fd))
+- changelog for the spawn census ([f40d9a9](https://github.com/Millennium44/Toolasha/commit/f40d9a906d0389da7e82fac84055a9ad502435fe))
+- changelog for the spawn census export button ([81a43af](https://github.com/Millennium44/Toolasha/commit/81a43af7f4e10e66b4f34f8215c3ccbab7122ccc))
+- changelog for the what's-new settings links ([70ef337](https://github.com/Millennium44/Toolasha/commit/70ef3378fa2506429a393a3aae8a189e1bc59cdb))
+- **combat-sim:** refit the dungeon lower-table rate on 2431 waves and settle the distance question ([ac63908](https://github.com/Millennium44/Toolasha/commit/ac63908c54dcbc46aec431e37c363c50a22ff8de))
+- **combat-sim:** refit the dungeon lower-table rate on 3078 waves across four dungeons ([987d8b0](https://github.com/Millennium44/Toolasha/commit/987d8b0afc2f2ddad26a1defda20f1f4675ac663))
+- **combat-sim:** refit the dungeon lower-table rate on 498 waves across three dungeons ([d1b5527](https://github.com/Millennium44/Toolasha/commit/d1b5527c6c0d996e971ea35d5e98b9d2602569e5))
+- **combat-sim:** refit the dungeon lower-table rate on client-read spawn tables ([2832bf1](https://github.com/Millennium44/Toolasha/commit/2832bf1d402d433489179ee1a4afec6a98b97edc))
+- correct mooket depth-retention contract and cover thin-market memo reroute ([6cfab39](https://github.com/Millennium44/Toolasha/commit/6cfab39a2e83c12a9898f30690b3c2ce6ec85579))
+- record what the dungeon wave-roster measurements settled ([1378417](https://github.com/Millennium44/Toolasha/commit/1378417aae40cc63db9d772f79134434753810b3))
 
 ### Tests
 
-* cover budget planner zero/below-cheapest edges ([59eb42b](https://github.com/Millennium44/Toolasha/commit/59eb42b21694632ec6107997a6ea4a5bcecb2008))
-* pin dungeon wave-table selection and strength-overflow behaviour ([3dbab3f](https://github.com/Millennium44/Toolasha/commit/3dbab3f223c39775db88cda0da8dc12349140bc3))
-* pin that dungeon waves never draw below a table's key ([3ce6ae8](https://github.com/Millennium44/Toolasha/commit/3ce6ae81f10e5a3ed39a7a7fcb04304bc79d5b33))
+- cover budget planner zero/below-cheapest edges ([59eb42b](https://github.com/Millennium44/Toolasha/commit/59eb42b21694632ec6107997a6ea4a5bcecb2008))
+- pin dungeon wave-table selection and strength-overflow behaviour ([3dbab3f](https://github.com/Millennium44/Toolasha/commit/3dbab3f223c39775db88cda0da8dc12349140bc3))
+- pin that dungeon waves never draw below a table's key ([3ce6ae8](https://github.com/Millennium44/Toolasha/commit/3ce6ae81f10e5a3ed39a7a7fcb04304bc79d5b33))
 
 ## [3.40.0](https://github.com/Millennium44/Toolasha/compare/v3.39.0...v3.40.0) (2026-09-02)
 

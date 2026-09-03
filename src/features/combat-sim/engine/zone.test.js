@@ -333,9 +333,7 @@ describe('dungeon waves', () => {
             return drawn.filter((one) => one === hrid).length / drawn.length;
         };
         const wavesIn = (from, to) => {
-            const local = Array.from({ length: to - from + 1 }, (_, i) => from + i).filter(
-                (wave) => wave % 5 !== 0
-            );
+            const local = Array.from({ length: to - from + 1 }, (_, i) => from + i).filter((wave) => wave % 5 !== 0);
             return Array.from({ length: runs }, (_, run) => run * 50).flatMap((offset) =>
                 local.map((wave) => offset + wave)
             );
