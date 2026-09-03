@@ -109,6 +109,22 @@ function removeOverlays() {
     }
 }
 
+/**
+ * The DOM this feature annotates, as classes the shared observer can filter on.
+ *
+ * `annotateLoadout` reads nothing outside
+ * `LoadoutsPanel_selectedLoadout … LoadoutsPanel_equipment`, so the
+ * `LoadoutsPanel_` prefix covers the panel opening, a different loadout being
+ * selected and the equipment block being rebuilt. `Item_item` is there for the
+ * narrower case of one slot's icon being remounted inside an otherwise
+ * untouched equipment block — the callback bails after a single
+ * `querySelector` when no loadout is open, so the extra firings are cheap and
+ * the alternative is a badge that silently stops updating.
+ *
+ * Registered without a filter this ran for every element inserted anywhere.
+ */
+export const LOADOUT_WATCH_CLASSES = ['LoadoutsPanel_', 'Item_item'];
+
 let unregisterHandler = null;
 let unregisterReady = null;
 let itemsUpdatedHandler = null;
@@ -133,8 +149,9 @@ function scheduleRefresh() {
 function initialize() {
     if (!config.getSetting('loadoutEnhancementDisplay')) return;
 
-    unregisterHandler = domObserver.register(
+    unregisterHandler = domObserver.onClass(
         'LoadoutEnhancementDisplay',
+        LOADOUT_WATCH_CLASSES,
         () => {
             annotateLoadout();
         },

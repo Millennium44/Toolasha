@@ -11,6 +11,18 @@ import domObserver from '../../core/dom-observer.js';
 const REGEX_COMBAT_TASK = /(?:Kill|Defeat)\s*-\s*(.+)$/;
 
 /**
+ * The DOM this feature annotates, as classes the shared observer can filter on.
+ *
+ * `RandomTask_name` is the task-card name node `addTaskIndices` writes into.
+ * The rest cover `addMapIndices`, whose targets are the combat panel's vertical
+ * zone tabs: `CombatPanel_tabsComponentContainer` when the panel is (re)built,
+ * `MuiTabs-vertical` when the tab strip alone is replaced, and `MuiTab-root`
+ * when a single zone button is inserted into an existing strip. Both callbacks
+ * re-scan the whole document, so any one of these firing is enough.
+ */
+const ZONE_INDEX_CLASSES = ['RandomTask_name', 'CombatPanel_tabsComponentContainer', 'MuiTabs-vertical', 'MuiTab-root'];
+
+/**
  * ZoneIndices class manages zone index display on maps and tasks
  */
 class ZoneIndices {
@@ -75,9 +87,11 @@ class ZoneIndices {
             this.buildMonsterZoneCache();
         }
 
-        // Register with centralized observer with debouncing enabled
-        this.unregisterObserver = domObserver.register(
+        // Register with centralized observer, debounced and class-filtered.
+        // Unfiltered this ran for every element inserted anywhere on the page.
+        this.unregisterObserver = domObserver.onClass(
             'ZoneIndices',
+            ZONE_INDEX_CLASSES,
             () => {
                 if (this.taskMapIndexEnabled) {
                     this.addTaskIndices();
@@ -345,4 +359,5 @@ const zoneIndices = new ZoneIndices();
 
 zoneIndices.setupSettingListener();
 
+export { ZONE_INDEX_CLASSES };
 export default zoneIndices;

@@ -49,6 +49,13 @@ const NAV = '[class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.ma
  * badge features do.
  */
 const BADGE = `${NAV} [class*="NavigationBar_badge__"]:not([class*="NavigationBar_ocean"])`;
+/**
+ * The badge, as a class the shared observer can filter on. `_attach` only ever
+ * looks at `BADGE` above, and every rebuild of it — whether the badge alone or
+ * the whole nav item around it — inserts a node carrying this class.
+ * Unfiltered this handler ran for every element inserted anywhere on the page.
+ */
+export const BADGE_CLASSES = ['NavigationBar_badge__'];
 
 /**
  * The element the number actually lives in.
@@ -331,7 +338,9 @@ class MarketplaceBadgeFilter {
      */
     _watch() {
         if (!this.unwatchAdded) {
-            this.unwatchAdded = domObserver.register('MarketplaceBadge', () => this._attach(), { debounce: true });
+            this.unwatchAdded = domObserver.onClass('MarketplaceBadge', BADGE_CLASSES, () => this._attach(), {
+                debounce: true,
+            });
         }
         // @run-at document-start: a badge rendered before the shared observer attaches to
         // document.body is invisible to it, so the catch-up waits for the observer's

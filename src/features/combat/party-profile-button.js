@@ -33,13 +33,33 @@ import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-com
 const BUTTON_ID = 'toolasha-party-profile-button';
 const OBSERVER_KEY = 'PartyProfileButton';
 
+/**
+ * The DOM this feature watches, as classes the shared observer can filter on.
+ *
+ * `findPopupTabRow` only ever looks at `[role="tablist"]` rows, and the game's
+ * MUI tab strips carry MUI's own un-hashed `MuiTabs-flexContainer` on exactly
+ * that div (the marketplace tab code matches `.MuiTabs-flexContainer[role=
+ * "tablist"]` for the same reason). `MuiTabs-root` is the wrapper, included so
+ * a rebuild that replaces the wrapper without separately inserting the
+ * flexContainer still lands. These are framework classes, not the hashed
+ * `ClassName_x__hash` game ones the header comment warns about, so they are as
+ * stable across game builds as `role="tablist"` itself.
+ *
+ * Registered without a filter this ran for every element inserted anywhere on
+ * the page, and every run swept the document for tab rows.
+ */
+export const POPUP_TAB_CLASSES = ['MuiTabs-flexContainer', 'MuiTabs-root'];
+
 /** "<name> - Lv.127" → captures the name. Accepts a hyphen or en dash. */
 const NAME_LEVEL_RE = /^\s*(.+?)\s*[-–]\s*Lv\.?\s*\d+\s*$/i;
 
 let unregister = null;
 
 function initialize() {
-    unregister = domObserver.register(OBSERVER_KEY, tryInject, { debounce: true, debounceDelay: 150 });
+    unregister = domObserver.onClass(OBSERVER_KEY, POPUP_TAB_CLASSES, tryInject, {
+        debounce: true,
+        debounceDelay: 150,
+    });
 }
 
 function cleanup() {

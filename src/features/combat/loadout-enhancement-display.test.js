@@ -55,6 +55,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
         register: () => () => {},
+        onClass: () => () => {},
         // Mirrors the real DOMObserver.onReady in its already-attached steady state
         onReady: (name, callback) => {
             callback();

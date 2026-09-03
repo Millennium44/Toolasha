@@ -9,6 +9,16 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 
 /**
+ * The DOM this feature annotates, as a class the shared observer can filter on.
+ *
+ * `addItemLevels` only ever looks at `Item_itemContainer__… > Item_item__…`
+ * icons, and `Item_item` is a substring of both hashed names, so one entry
+ * covers the container and the icon alike — whichever of the two the game
+ * happens to insert. Anything without it cannot contain an icon this touches.
+ */
+const ITEM_ICON_CLASSES = ['Item_item'];
+
+/**
  * EquipmentLevelDisplay class adds level overlays to equipment icons
  */
 class EquipmentLevelDisplay {
@@ -63,9 +73,11 @@ class EquipmentLevelDisplay {
             return;
         }
 
-        // Register with centralized DOM observer with debouncing
-        this.unregisterHandler = domObserver.register(
+        // Register with centralized DOM observer, debounced and class-filtered.
+        // Unfiltered this ran for every element inserted anywhere on the page.
+        this.unregisterHandler = domObserver.onClass(
             'EquipmentLevelDisplay',
+            ITEM_ICON_CLASSES,
             () => {
                 this.addItemLevels();
             },
@@ -335,4 +347,5 @@ const equipmentLevelDisplay = new EquipmentLevelDisplay();
 
 equipmentLevelDisplay.setupSettingListener();
 
+export { ITEM_ICON_CLASSES };
 export default equipmentLevelDisplay;

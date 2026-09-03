@@ -76,6 +76,23 @@ const POLL_MS = 1000;
 const MARKETPLACE_SELECTOR = '[class*="MarketplacePanel_marketplacePanel"]';
 
 /**
+ * What the tab watcher has to see for the History tab to be put back.
+ *
+ * `ensureTabButton` only ever cares about the marketplace's own MUI tab strip,
+ * so the watcher needs to fire when that strip — or the panel that owns it —
+ * is (re)inserted, and never otherwise. `MuiTabs-flexContainer` is the class
+ * MUI puts on the `role="tablist"` div itself, which is what `findMarketTabBar`
+ * already keys off; `MuiTabs-root` is its wrapper, included so a rebuild that
+ * replaces the wrapper without a separately-inserted flexContainer still lands.
+ * `MarketplacePanel_marketplacePanel` covers the panel opening as a whole.
+ *
+ * Registered without a filter this ran for every element inserted anywhere on
+ * the page — including all of combat — and each run did a document-wide
+ * `querySelectorAll` plus a layout read.
+ */
+export const TAB_WATCH_CLASSES = ['MuiTabs-flexContainer', 'MuiTabs-root', 'MarketplacePanel_marketplacePanel'];
+
+/**
  * The watched items, per character, through a curated persisted record
  * (`utils/persisted-record.js`): once read back, the list in hand is the list
  * and a removal sticks; before that a save folds the stored list under it by
@@ -204,9 +221,10 @@ class MarketHistoryPanel {
 
         // The tab bar is rebuilt whenever the marketplace re-renders, so the
         // button has to be put back rather than added once. Through the shared
-        // observer, debounced: a private observer over the whole body ran the
-        // tab-bar search (layout reads included) on every mutation on the page.
-        this.tabWatcher = domObserver.register('MarketHistoryTab', () => this.ensureTabButton(), {
+        // observer, debounced and class-filtered: a private observer over the whole body ran the
+        // tab-bar search (layout reads included) on every mutation on the page, and an unfiltered
+        // shared handler still ran it for every element inserted anywhere, combat included.
+        this.tabWatcher = domObserver.onClass('MarketHistoryTab', TAB_WATCH_CLASSES, () => this.ensureTabButton(), {
             debounce: true,
             debounceDelay: 200,
         });
