@@ -3,6 +3,12 @@ import { randomSpawn } from './rng.js';
 import { getGameData } from './game-data.js';
 import Monster from './monster.js';
 
+/**
+ * Chance a dungeon wave is drawn from any one table below the highest it has
+ * reached. Measured, not documented — see the note in `getNextWave`.
+ */
+const LOWER_TABLE_RATE = 1 / 7;
+
 class Zone {
     constructor(hrid, difficultyTier) {
         this.hrid = hrid;
@@ -94,20 +100,40 @@ class Zone {
 
         // Random spawn path.
         //
-        // The map's keys are read as exclusive ranges: a wave draws from the
-        // highest key it has reached, and only from that one. 138 ordinary waves
-        // of Chimerical Den recorded live confirm the ranges themselves -- no
-        // monster ever appears below its own key's wave, and the key-30 species
-        // first show up on wave 31 -- and confirm that a wave is drawn whole from
-        // a single table: not one of the 138 mixes species the way a pooled union
-        // of the eligible tables would, which such a union does to 57-85% of its
-        // waves. What the recording does not support is "only the highest key":
-        // 23 of the 138 waves are complete, well-formed draws from a strictly
-        // lower table, so this code gives them probability zero. The measured rate
-        // is ~1/7 per lower table and no rule derivable from the keys produces it,
-        // and adopting the measured rate outright would turn band 30's +14% HP
-        // error into -5% while pushing band 10 from -5% to -13%, so the reading
-        // stays as it is until the selection rule is known. See zone.test.js.
+        // The map's keys gate which tables a wave may draw from, and a wave is
+        // drawn whole from exactly ONE of them. Both halves are measured: across
+        // 138 ordinary waves of Chimerical Den (keys 0/10/30, party of 2) and 95
+        // ordinary waves of Sinister Circus (keys 0/15/40, solo) no monster ever
+        // appears below its own key's wave, and not one roster mixes species the
+        // way a pooled union of the eligible tables would -- a union that would
+        // have to explain 57-85% of the waves it cannot.
+        //
+        // What the recordings also show is that the table is NOT always the
+        // highest eligible one. 28 of those 233 waves are complete, well-formed
+        // draws from a strictly lower table, which a highest-only reading gives
+        // probability zero. Fitting a mixture by maximum likelihood puts a
+        // constant weight on each eligible LOWER table -- 0.130 with one lower
+        // table in Chimerical Den's band 10, 0.133 in Sinister Circus's band 15,
+        // and 0.125/0.165 and 0.205/0.159 on the two lower tables of their top
+        // bands. The share per lower table does not shrink as more become
+        // eligible, so the tables do not split a fixed budget: pooling both
+        // dungeons, a fixed per-table weight beats a normalized share by
+        // dLL = +3.9 (49:1) on the same single parameter, and beats it in each
+        // dungeon separately (+2.1 and +1.9). Nor does the weight depend on how
+        // far below the current key a table sits (fitting the one- and two-step
+        // weights apart gives 0.145 and 0.153, dLL = +0.01 for the extra
+        // parameter), and a free weight per band per dungeon buys only
+        // dLL = +0.7 for five more parameters.
+        //
+        // So: each eligible lower table is drawn with LOWER_TABLE_RATE, the
+        // current one takes the remainder. The pooled estimate is 0.149 with a
+        // 95% profile interval of [0.110, 0.193], and 1/7 sits inside it at a
+        // cost of 0.04 log-likelihood, so 1/7 is what is used. Adopting it moves
+        // the modelled mean wave HP from +13.5% to -6.2% (Chimerical band 30),
+        // +15.9% to +6.1% (Sinister band 40) and +2.2% to 0.0% (Sinister band
+        // 15) against the recordings, at the cost of -5.9% to -15.1% in
+        // Chimerical band 10, whose own sampling error is +-8.9%. See
+        // zone.test.js.
         const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;
 
         if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {
@@ -124,17 +150,23 @@ class Zone {
             return [];
         }
 
+        const eligibleKeys = waveKeys.filter((key) => waveNum >= key);
+
         let monsterSpawns = null;
 
-        if (waveNum >= waveKeys[waveKeys.length - 1]) {
-            monsterSpawns = randomSpawnInfoMap[waveKeys[waveKeys.length - 1]];
-        } else {
-            for (let i = 0; i < waveKeys.length - 1; i++) {
-                if (waveNum >= waveKeys[i] && waveNum < waveKeys[i + 1]) {
-                    monsterSpawns = randomSpawnInfoMap[waveKeys[i]];
-                    break;
+        if (eligibleKeys.length > 0) {
+            let chosenKey = eligibleKeys[eligibleKeys.length - 1];
+            const lowerCount = eligibleKeys.length - 1;
+
+            if (lowerCount > 0) {
+                const roll = randomSpawn();
+                if (roll < LOWER_TABLE_RATE * lowerCount) {
+                    const index = Math.min(Math.floor(roll / LOWER_TABLE_RATE), lowerCount - 1);
+                    chosenKey = eligibleKeys[index];
                 }
             }
+
+            monsterSpawns = randomSpawnInfoMap[chosenKey];
         }
 
         // Fallback to first available spawn info if no range matched

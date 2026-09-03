@@ -188,11 +188,14 @@ describe('boss cadence', () => {
 /**
  * Dungeon waves: which table a wave draws from, and what a strength overflow does.
  *
- * These pin the current reading of `randomSpawnInfoMap` — keys are exclusive
- * ranges, and a draw that would break `maxTotalStrength` ends the wave. Both are
- * inferences, not documented rules, and 51 ordinary waves recorded live in
- * Chimerical Den disagree with the first of them (see the note in zone.js), so
- * anything that changes them has to be deliberate rather than incidental.
+ * These pin the measured reading of `randomSpawnInfoMap`: a key is the earliest
+ * wave its table may be drawn from, a wave is drawn whole from exactly one
+ * eligible table, each eligible table BELOW the highest one reached is drawn
+ * with probability 1/7, and a draw that would break `maxTotalStrength` ends the
+ * wave. The 1/7 comes from a maximum-likelihood mixture fit over 138 ordinary
+ * waves of Chimerical Den and 95 of Sinister Circus (see the note in zone.js);
+ * the overflow rule is still an inference. Anything that changes either has to
+ * be deliberate rather than incidental.
  */
 describe('dungeon waves', () => {
     const DUNGEON_HRID = '/actions/combat/test_dungeon';
@@ -273,24 +276,86 @@ describe('dungeon waves', () => {
         expect(species[9]).toBe(FIXED);
     });
 
-    test('a random wave draws from the highest-keyed table it has reached', () => {
+    test('a random wave usually draws from the highest-keyed table it has reached', () => {
         seedSimRng(11);
         const species = waveSpecies(installBandedDungeon(), 50);
 
-        // waves 1-9 -> key 0, 10-29 -> key 10, 30-50 -> key 30; every fifth wave is fixed
+        // waves 1-9 -> key 0 only, 10-29 -> usually key 10, 30-50 -> usually key 30
         const bandOf = (wave) => species[wave - 1];
-        expect([1, 2, 3, 4, 6, 7, 8, 9].map(bandOf)).toEqual(Array(8).fill(EARLY));
-        expect([11, 12, 19, 28, 29].map(bandOf)).toEqual(Array(5).fill(MID));
-        expect([31, 32, 41, 49].map(bandOf)).toEqual(Array(4).fill(LATE));
+        const ordinary = (from, to) =>
+            Array.from({ length: to - from + 1 }, (_, i) => from + i)
+                .filter((wave) => wave % 5 !== 0)
+                .map(bandOf);
+        expect(ordinary(1, 9)).toEqual(Array(8).fill(EARLY));
+        const mid = ordinary(11, 29);
+        expect(mid.filter((one) => one === MID).length).toBeGreaterThan(mid.length / 2);
+        const late = ordinary(31, 49);
+        expect(late.filter((one) => one === LATE).length).toBeGreaterThan(late.length / 2);
+    });
+
+    test('before a second table is eligible the wave is not a lottery', () => {
+        // One eligible table means no choice to make, so every seed agrees.
+        for (const seed of [1, 2, 3, 4, 5]) {
+            seedSimRng(seed);
+            expect(waveSpecies(installBandedDungeon(), 4)).toEqual(Array(4).fill(EARLY));
+        }
+    });
+
+    test('each eligible lower table takes about a seventh of the waves', () => {
+        // Measured, not documented: 28 of 233 ordinary waves recorded in
+        // Chimerical Den and Sinister Circus are clean draws from a strictly
+        // lower table, and the per-table share does not shrink as more tables
+        // become eligible. See the note in zone.js.
+        seedSimRng(20260903);
+        const zone = installBandedDungeon();
+        const runs = 400;
+        const species = waveSpecies(zone, 50 * runs);
+
+        const share = (waves, hrid) => {
+            const drawn = waves.map((wave) => species[wave - 1]);
+            return drawn.filter((one) => one === hrid).length / drawn.length;
+        };
+        const wavesIn = (from, to) => {
+            const local = Array.from({ length: to - from + 1 }, (_, i) => from + i).filter(
+                (wave) => wave % 5 !== 0
+            );
+            return Array.from({ length: runs }, (_, run) => run * 50).flatMap((offset) =>
+                local.map((wave) => offset + wave)
+            );
+        };
+
+        // One lower table eligible: it takes ~1/7, the current one the rest.
+        const mid = wavesIn(10, 29);
+        expect(share(mid, EARLY)).toBeGreaterThan(0.11);
+        expect(share(mid, EARLY)).toBeLessThan(0.17);
+        expect(share(mid, LATE)).toBe(0);
+
+        // Two lower tables eligible: each still takes ~1/7, so the current table
+        // keeps ~5/7 rather than the ~6/7 a shared budget would leave it.
+        const late = wavesIn(30, 49);
+        expect(share(late, EARLY)).toBeGreaterThan(0.11);
+        expect(share(late, EARLY)).toBeLessThan(0.17);
+        expect(share(late, MID)).toBeGreaterThan(0.11);
+        expect(share(late, MID)).toBeLessThan(0.17);
+        expect(share(late, LATE)).toBeGreaterThan(0.66);
+        expect(share(late, LATE)).toBeLessThan(0.77);
+    });
+
+    test('the table choice replays from the seed', () => {
+        seedSimRng(99);
+        const first = waveSpecies(installBandedDungeon(), 150);
+
+        seedSimRng(99);
+        expect(waveSpecies(installBandedDungeon(), 150)).toEqual(first);
     });
 
     test('no table is drawn from before the wave its key names', () => {
         seedSimRng(11);
         const species = waveSpecies(installBandedDungeon(), 50);
 
-        // Confirmed against 138 live Chimerical Den waves: a species never
-        // appears below its own key's wave, and the key-30 species first show up
-        // on wave 31. Only the upper bound of this rule is in doubt.
+        // Confirmed against 138 live Chimerical Den waves and 95 Sinister Circus
+        // waves: a species never appears below its own key's wave, and the
+        // top-table species first show up on the wave after that key.
         expect(species.slice(0, 9)).not.toContain(MID);
         expect(species.slice(0, 9)).not.toContain(LATE);
         expect(species.slice(0, 29)).not.toContain(LATE);
@@ -302,6 +367,7 @@ describe('dungeon waves', () => {
         waveSpecies(zone, 50);
 
         expect(zone.dungeonsCompleted).toBe(0);
+        // Wave 1 again: only the key-0 table is eligible, whatever the roll.
         expect(zone.getNextWave()[0].hrid).toBe(EARLY);
         expect(zone.dungeonsCompleted).toBe(1);
     });
