@@ -26,6 +26,10 @@ Switching from one dungeon to another mid-session left the tracker on the old on
 
 Adding a dungeon to the queue while fighting something else started a run: the panel appeared, the clock ran, and it counted waves of whatever zone was actually being fought, at the queued copy's difficulty rather than the real one. Two things had to line up for it — any unfinished dungeon anywhere in the queue armed the tracker, and the check that would have caught it only trusted the running action when that action was itself a dungeon, so a normal zone fell through to the queued one. The tracker now arms and starts only for the dungeon actually running, takes its tier from there too, and the two run-restore paths were tightened the same way, since either could adopt a queued dungeon on page load. A dungeon leaving someone else's queue can also no longer wipe a live run.
 
+### What's new takes you to the setting it is telling you about
+
+A new setting the dialog cannot show inline — a button, say — used to sit under a dim "in Settings" label that told you where to look and left you to find it. It is now a link that closes the dialog and opens Settings with that setting scrolled to and highlighted. The header also stops claiming "Updated 3.40.0 to 3.40.0" when nothing about the version changed and it is simply showing you what is new in the one you have.
+
 ### The spawn census exports from settings, no console needed
 
 The census's data used to come out only through a console command, which is a barrier for anyone being asked to contribute a file. There is now an Export button beside the setting. It works whether the census is switched on or not, so turning it off does not lock away what was already collected, and it says how many waves it wrote rather than handing over a file silently — or tells you nothing has been recorded yet instead of downloading an empty one.
