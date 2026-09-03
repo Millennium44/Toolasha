@@ -101,39 +101,48 @@ class Zone {
         // Random spawn path.
         //
         // The map's keys gate which tables a wave may draw from, and a wave is
-        // drawn whole from exactly ONE of them. Both halves are measured: across
-        // 138 ordinary waves of Chimerical Den (keys 0/10/30, party of 2) and 95
-        // ordinary waves of Sinister Circus (keys 0/15/40, solo) no monster ever
-        // appears below its own key's wave, and not one roster mixes species the
-        // way a pooled union of the eligible tables would -- a union that would
-        // have to explain 57-85% of the waves it cannot.
+        // drawn whole from exactly ONE of them. Both halves are measured against
+        // the tables as read from the live game client, across 138 ordinary
+        // waves of Chimerical Den (keys 0/10/30, party of 2) and 95 ordinary
+        // waves of Sinister Circus (keys 0/15/40, solo): no monster ever appears
+        // below its own key's wave, and not one roster mixes species the way a
+        // pooled union of the eligible tables would -- a union that would have to
+        // explain 57-85% of the waves it cannot.
         //
         // What the recordings also show is that the table is NOT always the
         // highest eligible one. 28 of those 233 waves are complete, well-formed
         // draws from a strictly lower table, which a highest-only reading gives
         // probability zero. Fitting a mixture by maximum likelihood puts a
         // constant weight on each eligible LOWER table -- 0.130 with one lower
-        // table in Chimerical Den's band 10, 0.133 in Sinister Circus's band 15,
-        // and 0.125/0.165 and 0.205/0.159 on the two lower tables of their top
+        // table in Chimerical Den's band 10, 0.136 in Sinister Circus's band 15,
+        // and 0.125/0.165 and 0.204/0.164 on the two lower tables of their top
         // bands. The share per lower table does not shrink as more become
         // eligible, so the tables do not split a fixed budget: pooling both
         // dungeons, a fixed per-table weight beats a normalized share by
         // dLL = +3.9 (49:1) on the same single parameter, and beats it in each
         // dungeon separately (+2.1 and +1.9). Nor does the weight depend on how
         // far below the current key a table sits (fitting the one- and two-step
-        // weights apart gives 0.145 and 0.153, dLL = +0.01 for the extra
+        // weights apart gives 0.148 and 0.153, dLL = +0.01 for the extra
         // parameter), and a free weight per band per dungeon buys only
         // dLL = +0.7 for five more parameters.
         //
         // So: each eligible lower table is drawn with LOWER_TABLE_RATE, the
         // current one takes the remainder. The pooled estimate is 0.149 with a
         // 95% profile interval of [0.110, 0.193], and 1/7 sits inside it at a
-        // cost of 0.04 log-likelihood, so 1/7 is what is used. Adopting it moves
-        // the modelled mean wave HP from +13.5% to -6.2% (Chimerical band 30),
-        // +15.9% to +6.1% (Sinister band 40) and +2.2% to 0.0% (Sinister band
-        // 15) against the recordings, at the cost of -5.9% to -15.1% in
-        // Chimerical band 10, whose own sampling error is +-8.9%. See
-        // zone.test.js.
+        // cost of 0.05 log-likelihood, so 1/7 is what is used. Adopting it moves
+        // the modelled mean wave HP from +13.7% to -6.0% (Chimerical band 30) and
+        // +16.2% to +6.1% (Sinister band 40) against the recordings, at the cost
+        // of -6.0% to -15.2% in Chimerical band 10, whose own sampling error is
+        // +-8.9%, and +0.7% to -1.3% in Sinister band 15 against +-1.8%.
+        //
+        // Two residuals this does not touch, both in Sinister Circus. Band 0 runs
+        // 2.4% short on monsters and 3.5% short on HP with only ONE table
+        // eligible, so no mixture weight can explain it and the overflow reading
+        // below cannot either -- with maxSpawnCount 4 and strengths of 50-70
+        // against a 250 cap, the only draw that can overflow is the last one,
+        // where ending the wave and skipping the draw are the same thing. And
+        // band 40 is still +6.1% on HP after the fix. Something in the draw loop
+        // itself is still slightly wrong. See zone.test.js.
         const randomSpawnInfoMap = this.dungeonSpawnInfo.randomSpawnInfoMap;
 
         if (!randomSpawnInfoMap || typeof randomSpawnInfoMap !== 'object') {

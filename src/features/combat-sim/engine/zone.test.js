@@ -193,9 +193,10 @@ describe('boss cadence', () => {
  * eligible table, each eligible table BELOW the highest one reached is drawn
  * with probability 1/7, and a draw that would break `maxTotalStrength` ends the
  * wave. The 1/7 comes from a maximum-likelihood mixture fit over 138 ordinary
- * waves of Chimerical Den and 95 of Sinister Circus (see the note in zone.js);
- * the overflow rule is still an inference. Anything that changes either has to
- * be deliberate rather than incidental.
+ * waves of Chimerical Den and 95 of Sinister Circus, against the spawn tables as
+ * read from the live game client (see the note in zone.js); the overflow rule is
+ * still an inference. Anything that changes either has to be deliberate rather
+ * than incidental.
  */
 describe('dungeon waves', () => {
     const DUNGEON_HRID = '/actions/combat/test_dungeon';
@@ -305,7 +306,8 @@ describe('dungeon waves', () => {
         // Measured, not documented: 28 of 233 ordinary waves recorded in
         // Chimerical Den and Sinister Circus are clean draws from a strictly
         // lower table, and the per-table share does not shrink as more tables
-        // become eligible. See the note in zone.js.
+        // become eligible — which is what rules out the eligible tables sharing
+        // one budget between them. See the note in zone.js.
         seedSimRng(20260903);
         const zone = installBandedDungeon();
         const runs = 400;
