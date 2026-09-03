@@ -482,6 +482,10 @@ class DungeonTrackerStorage {
      * @param {string} run.dungeonName - Dungeon name (from Phase 2)
      * @param {string|null} [run.dungeonHrid] - Dungeon action, where the recording route knew it
      * @param {number|null} [run.tier] - Difficulty tier, where the recording route knew it
+     * @param {boolean} [run.validated] - False for a run timed by the client's own clock
+     *   (a solo run, which has no party "Key counts" messages to time it by). Defaults
+     *   to true, which is what every party and backfill run has always been.
+     * @param {string} [run.source] - Where the run came from: 'chat' (default) or 'tracker'
      * @returns {Promise<boolean>} Success status
      */
     async saveTeamRun(teamKey, run) {
@@ -552,8 +556,10 @@ class DungeonTrackerStorage {
                 team: team,
                 teamKey: teamKey,
                 duration: run.duration,
-                validated: true,
-                source: 'chat',
+                // A solo run is timed by the wall clock, not the server's own
+                // timestamps, and says so — see the tracker's solo save path
+                validated: run.validated !== false,
+                source: run.source || 'chat',
                 waveTimes: Array.isArray(run.waveTimes) && run.waveTimes.length > 0 ? [...run.waveTimes] : null,
                 avgWaveTime: Number.isFinite(run.avgWaveTime) ? run.avgWaveTime : null,
                 keyCountsMap: run.keyCountsMap || null, // Include key counts if available

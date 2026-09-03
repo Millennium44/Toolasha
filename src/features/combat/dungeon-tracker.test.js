@@ -1156,6 +1156,10 @@ describe('finishing a run', () => {
             keyCountsMap: { Alice: 11, Bob: 7 },
             waveTimes: [3000, 5000, 4000],
             avgWaveTime: 4000,
+            // The party's "Key counts" messages timed this one, so it is stored as
+            // server-validated — the distinction a solo run's wall-clock time lacks
+            validated: true,
+            source: 'chat',
         });
     });
 
@@ -2379,5 +2383,84 @@ describe('the provisional card on page load', () => {
         game.actions = [{ actionHrid: FLY, isDone: false }];
         await tracker.checkForActiveDungeon();
         expect(tracker.getPendingDungeon()).toBeNull();
+    });
+});
+
+describe('banking a solo run', () => {
+    /** Take a whole run from wave 1 to its last wave, solo — no party messages. */
+    async function soloRun({
+        maxWaves = 10,
+        startAt = Date.parse('2026-08-04T10:00:00.000Z'),
+        lengthMs = 300_000,
+    } = {}) {
+        vi.useFakeTimers();
+        vi.setSystemTime(startAt);
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T09:00:00.000Z' });
+        await flush();
+        tracker.currentRun.maxWaves = maxWaves;
+        tracker.currentRun.currentWave = maxWaves;
+        tracker.currentRun.wavesCompleted = maxWaves - 1;
+        vi.setSystemTime(startAt + lengthMs);
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: maxWaves, isDone: true } });
+        await flush();
+    }
+
+    test('a whole run watched end to end is saved, on the wall clock, marked unvalidated', async () => {
+        // Solo runs used to be discarded outright — there are no party "Key counts"
+        // messages to validate them, so a solo player built no history at all.
+        await soloRun();
+
+        expect(game.savedRuns).toHaveLength(1);
+        const { teamKey, run } = game.savedRuns[0];
+        // A party of one: the same shape a real party key would take, so it groups,
+        // filters and prices (team size 1) alongside party runs
+        expect(teamKey).toBe('Marketcow');
+        expect(run.duration).toBe(300_000);
+        expect(run.timestamp).toBe('2026-08-04T10:00:00.000Z');
+        expect(run.validated).toBe(false);
+        expect(run.source).toBe('tracker');
+        expect(run.dungeonName).toBe('Chimerical Den');
+        expect(run.tier).toBe(1);
+    });
+
+    test('a hibernated run is not saved: the wall clock is all it has', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:00:00.000Z'));
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T09:00:00.000Z' });
+        await flush();
+        tracker.hibernationDetected = true;
+        tracker.currentRun.hibernationDetected = true;
+        tracker.currentRun.wavesCompleted = 9;
+        tracker.currentRun.currentWave = 10;
+        vi.setSystemTime(Date.parse('2026-08-04T14:00:00.000Z')); // four hours of sleep in the middle
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 10, isDone: true } });
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('with no character name to record it under, nothing is saved', async () => {
+        game.characterName = null;
+        await soloRun();
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('a party run still wins on the server’s own timestamps', async () => {
+        beTracking({
+            waveTimes: [3000],
+            maxWaves: 10,
+            wavesCompleted: 10,
+            keyCountsMap: { Alice: 12, Bob: 8 },
+            anchoredAt: '2026-08-04T10:00:00.000Z',
+        });
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Alice - 11], [Bob - 7]'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+        expect(game.savedRuns[0].teamKey).toBe('Alice,Bob');
+        expect(game.savedRuns[0].run.duration).toBe(272_000);
+        expect(game.savedRuns[0].run.validated).toBe(true);
     });
 });

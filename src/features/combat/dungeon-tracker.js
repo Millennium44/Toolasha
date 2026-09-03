@@ -1386,6 +1386,11 @@ class DungeonTracker {
         const completedKeyCountMessages = [...this.keyCountMessages];
         const firstTimestamp = this.firstKeyCountTimestamp;
         const lastTimestamp = this.lastKeyCountTimestamp;
+        // Both read before the awaits below: a character switch in the middle would
+        // otherwise stamp this run with the arriving character's name, and read a
+        // hibernation flag that has already been reset for somebody else's run.
+        const hibernated = this.hibernationDetected === true || completedRunData.hibernationDetected === true;
+        const soloName = dataManager.getCurrentCharacterName?.() ?? null;
 
         // Carry the completion timestamp forward as the next run's start anchor.
         // This avoids the scanExistingChatMessages race condition where the scan
@@ -1469,13 +1474,37 @@ class DungeonTracker {
 
         // Auto-save completed run to history if we have complete data
         // Only saves runs completed during live tracking (Option A)
-        // `validated` is already false for a partial run, but the exclusion is the
-        // point rather than a side effect: a run whose start was never seen must not
-        // reach history, the run averages, the pace profile or the ROI board.
-        if (!joinedMidRun && validated && completedRunData.keyCountsMap && completedRunData.dungeonHrid) {
+        // What may be banked, and on what evidence.
+        //
+        // A party run is timed by the server's own "Key counts" timestamps and is
+        // saved as validated, exactly as it always has been.
+        //
+        // A solo run has no such messages, and used to be discarded outright — a
+        // solo player built no history at all. It is saved on the wall clock
+        // instead, marked `validated: false`, but only when this client watched
+        // the whole of it: from wave 1 (never the `joinedMidRun` case, whose
+        // start we never saw) through to completion, on a clock we can stand
+        // behind (never a hibernated run, whose elapsed time may be wildly wrong
+        // and which has no server timestamps to check it against).
+        //
+        // The exclusion of a partial run is the point rather than a side effect of
+        // `validated` already being false for one: a run whose start was never
+        // seen must not reach history, the run averages, the pace profile or the
+        // ROI board by either route.
+        const canBankParty = validated && Boolean(completedRunData.keyCountsMap);
+        // Solo means no party "Key counts" message was seen for this run at all.
+        // A party run that saw only its start message stays unsaved as before: it
+        // has server evidence, just not enough of it, and the wall clock is not a
+        // substitute for the half of it that is missing.
+        const canBankSolo = !validated && firstTimestamp === null && !hibernated && Boolean(soloName);
+
+        if (!joinedMidRun && completedRunData.dungeonHrid && (canBankParty || canBankSolo)) {
             try {
-                // Extract team from keyCountsMap
-                const team = Object.keys(completedRunData.keyCountsMap).sort();
+                // A party's roster comes from the key counts. A solo run has none,
+                // so the team is the one character who ran it — a one-name team key,
+                // which is what a party of one would have produced anyway, so it
+                // groups, filters and prices (team size 1) alongside the rest.
+                const team = canBankParty ? Object.keys(completedRunData.keyCountsMap).sort() : [soloName];
                 const teamKey = dungeonTrackerStorage.getTeamKey(team);
 
                 // Get dungeon name from HRID
@@ -1484,8 +1513,10 @@ class DungeonTracker {
 
                 // Build run object in unified format
                 const runToSave = {
-                    timestamp: new Date(firstTimestamp).toISOString(), // Use party message timestamp
-                    duration: partyMessageDuration, // Server-validated duration
+                    // Party: the server's own start timestamp. Solo: when tracking
+                    // saw wave 1 begin, which for a whole-run sighting is the start.
+                    timestamp: new Date(canBankParty ? firstTimestamp : completedRunData.startTime).toISOString(),
+                    duration: canBankParty ? partyMessageDuration : trackedTotalTime,
                     dungeonName: dungeonName,
                     dungeonHrid: completedRunData.dungeonHrid,
                     tier: completedRunData.tier,
@@ -1495,6 +1526,9 @@ class DungeonTracker {
                     // easy early waves as a huge lead
                     waveTimes: completedWaveTimes,
                     avgWaveTime,
+                    validated: canBankParty,
+                    // Unchanged for a party run; a solo run says which clock timed it
+                    source: canBankParty ? 'chat' : 'tracker',
                 };
 
                 // Save to database (with duplicate detection)

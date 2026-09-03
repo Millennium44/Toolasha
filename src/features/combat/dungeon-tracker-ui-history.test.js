@@ -158,6 +158,7 @@ describe('the CSV export', () => {
                 team: 'Aster, Briar',
                 teamSize: 2,
                 keyCounts: 'Aster: 2; Briar: 3',
+                validated: true,
             },
             {
                 timestamp: '2026-08-03T09:30:00.000Z',
@@ -167,6 +168,9 @@ describe('the CSV export', () => {
                 team: 'Solo',
                 teamSize: 1,
                 keyCounts: '',
+                // Only an explicit `validated: false` is unvalidated; a legacy run
+                // carrying no such field is left as the trusted kind it always was
+                validated: true,
             },
         ]);
     });

@@ -22,6 +22,7 @@ export const DUNGEON_RUN_CSV_COLUMNS = [
     { key: 'team', label: 'Team' },
     { key: 'teamSize', label: 'Team Size' },
     { key: 'keyCounts', label: 'Key Counts' },
+    { key: 'validated', label: 'Server-timed' },
 ];
 
 /**
@@ -64,6 +65,9 @@ export function buildRunHistoryRows(runs) {
             team: team.length ? team.join(', ') : 'Solo',
             teamSize: team.length || 1,
             keyCounts,
+            // Party runs are timed by the server's own "Key counts" timestamps;
+            // a solo run only has this client's wall clock behind it
+            validated: run.validated !== false,
         };
     });
 }
@@ -593,6 +597,13 @@ class DungeonTrackerUIHistory {
         runs.forEach((run, index) => {
             const runNumber = runs.length - index;
             const timeStr = this.formatTime(run.duration || run.totalTime || 0);
+            // A solo run is timed by this client's clock rather than the server's
+            // party timestamps. Marked, so the two are never read as equal evidence.
+            const clientTimed = run.validated === false;
+            const timeMark = clientTimed
+                ? ' <span style="color: #ffc107; font-size: 9px;" title="Timed by this client’s clock ' +
+                  '(solo run — no party timestamps to check it against)">~</span>'
+                : '';
             const dateObj = new Date(run.timestamp);
             const dateTime = formatDateTime(dateObj);
             const dungeonLabel = run.dungeonName || 'Unknown';
@@ -609,7 +620,7 @@ class DungeonTrackerUIHistory {
                 " data-run-timestamp="${run.timestamp}">
                     <span style="color: #aaa; min-width: 25px;">#${runNumber}</span>
                     <span style="color: #fff; flex: 1; text-align: center;">
-                        ${timeStr} <span style="color: #888; font-size: 9px;">(${dateTime})</span>
+                        ${timeStr}${timeMark} <span style="color: #888; font-size: 9px;">(${dateTime})</span>
                     </span>
                     ${this.renderDeltaMarker(delta)}
                     <span style="color: #888; margin-right: 6px; font-size: 9px;">${this.escapeHtml(dungeonLabel)}</span>
