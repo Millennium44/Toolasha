@@ -238,7 +238,7 @@ describe('recognising a dungeon', () => {
 });
 
 describe('starting a run', () => {
-    test('wave 0 starts a run from the running dungeon action', async () => {
+    test('wave 1 starts a run from the running dungeon action', async () => {
         // The run starts now, not at combatStartTime — that field is the combat
         // action's start, hours stale in continuous queued combat.
         const runStart = Date.parse('2026-08-04T10:03:20.000Z');
@@ -250,7 +250,7 @@ describe('starting a run', () => {
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
         expect(tracker.pendingDungeonInfo).toEqual({ dungeonHrid: DEN, tier: 2 });
 
-        await tracker.onNewBattle({ wave: 0, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(true);
@@ -259,7 +259,7 @@ describe('starting a run', () => {
             dungeonHrid: DEN,
             tier: 2,
             startTime: runStart,
-            currentWave: 0,
+            currentWave: 1,
             maxWaves: 10,
             wavesCompleted: 0,
             hibernationDetected: false,
@@ -270,7 +270,7 @@ describe('starting a run', () => {
     test('with no pending info it falls back to the active action list', async () => {
         game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
 
-        await tracker.onNewBattle({ wave: 0, battleId: 7, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 7, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.currentRun.dungeonHrid).toBe(DEN);
@@ -288,7 +288,7 @@ describe('starting a run', () => {
             { actionHrid: DEN, difficultyTier: 0, ordinal: 8589934587, isDone: false },
         ];
 
-        await tracker.onNewBattle({ wave: 0, battleId: 5, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 5, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.currentRun.tier).toBe(2);
@@ -310,7 +310,7 @@ describe('starting a run', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         tracker.pendingDungeonInfo = { dungeonHrid: FLY, tier: 0 };
 
-        await tracker.onNewBattle({ wave: 0, battleId: 3, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 3, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(false);
@@ -321,7 +321,7 @@ describe('starting a run', () => {
 
     test('no dungeon anywhere means no run', async () => {
         game.actions = [{ actionHrid: FLY, isDone: false }];
-        await tracker.onNewBattle({ wave: 0, battleId: 3, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 3, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
         expect(tracker.isTracking).toBe(false);
     });
@@ -350,15 +350,15 @@ describe('starting a run', () => {
         vi.useRealTimers();
     });
 
-    test('a resent wave 0 while still on wave 0 only refreshes the battle, not the run', async () => {
+    test('a resent wave 1 while still on wave 1 only refreshes the battle, not the run', async () => {
         // `new_battle` has no reconnect dedupe (see websocket.js), so a drop and
         // reconnect that catches the run still on its own first wave resends
-        // this same wave 0 rather than a real dungeon start. Restarting the run
+        // this same wave 1 rather than a real dungeon start. Restarting the run
         // here used to wipe wavesCompleted, waveTimes and the party-message
         // timestamps the run had already collected, and moved its recorded
         // start time to whenever the reconnect happened.
         beTracking({
-            currentWave: 0,
+            currentWave: 1,
             wavesCompleted: 0,
             battleId: 42,
             waveTimes: [1000],
@@ -366,29 +366,29 @@ describe('starting a run', () => {
         });
         const keptStartTime = tracker.currentRun.startTime;
 
-        await tracker.onNewBattle({ wave: 0, battleId: 99, combatStartTime: '2026-08-04T10:05:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 99, combatStartTime: '2026-08-04T10:05:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(true);
         expect(tracker.currentRun.startTime).toBe(keptStartTime);
-        expect(tracker.currentRun.currentWave).toBe(0);
+        expect(tracker.currentRun.currentWave).toBe(1);
         expect(tracker.waveTimes).toEqual([1000]);
         expect(tracker.firstKeyCountTimestamp).toBe(Date.parse('2026-08-04T10:00:05.000Z'));
         // The battleId still refreshes, same as any other reconnect mid-run
         expect(tracker.currentBattleId).toBe(99);
     });
 
-    test('but a genuinely new dungeon queued while wave 0 is still open starts fresh', async () => {
-        // The one case a resent wave 0 must NOT be swallowed: actions_updated
+    test('but a genuinely new dungeon queued while wave 1 is still open starts fresh', async () => {
+        // The one case a resent wave 1 must NOT be swallowed: actions_updated
         // queued a real new dungeon action before this new_battle arrived
         const freshStart = Date.parse('2026-08-04T11:02:45.000Z');
         vi.useFakeTimers();
         vi.setSystemTime(freshStart);
-        beTracking({ currentWave: 0, wavesCompleted: 0, battleId: 42 });
+        beTracking({ currentWave: 1, wavesCompleted: 0, battleId: 42 });
         game.actions = [{ actionHrid: LAIR, difficultyTier: 1, ordinal: 0, isDone: false }];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 1, isDone: false }] });
 
-        await tracker.onNewBattle({ wave: 0, battleId: 100, combatStartTime: '2026-08-04T11:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 100, combatStartTime: '2026-08-04T11:00:00.000Z' });
         await flush();
 
         expect(tracker.currentRun.dungeonHrid).toBe(LAIR);
@@ -422,7 +422,7 @@ describe('a dungeon that is only queued', () => {
         ];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 2, isDone: false }] });
 
-        await tracker.onNewBattle({ wave: 0, battleId: 77, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 77, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(false);
@@ -434,7 +434,7 @@ describe('a dungeon that is only queued', () => {
         tracker.pendingDungeonInfo = { dungeonHrid: LAIR, tier: 2 };
         game.actions = [{ actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false }];
 
-        await tracker.onNewBattle({ wave: 0, battleId: 78, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 78, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(false);
@@ -448,7 +448,7 @@ describe('a dungeon that is only queued', () => {
         ];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 0, isDone: false }] });
 
-        await tracker.onNewBattle({ wave: 0, battleId: 79, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 79, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(true);
@@ -468,7 +468,7 @@ describe('a dungeon that is only queued', () => {
 
         expect(tracker.pendingDungeonInfo).toEqual({ dungeonHrid: DEN, tier: 2 });
 
-        await tracker.onNewBattle({ wave: 0, battleId: 80, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 80, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.currentRun.dungeonHrid).toBe(DEN);
@@ -482,7 +482,7 @@ describe('a dungeon that is only queued', () => {
         ];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 5, isDone: false }] });
 
-        await tracker.onNewBattle({ wave: 0, battleId: 81, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 81, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(true);
@@ -962,7 +962,7 @@ describe('a canceled battle start', () => {
         // party-forming later — reads as its completion.
         game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false }];
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: false }] });
-        await tracker.onNewBattle({ wave: 0, battleId: 9, combatStartTime: '2026-08-04T10:26:30.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 9, combatStartTime: '2026-08-04T10:26:30.000Z' });
         tracker.onChatMessage(keyCountsData('2026-08-04T10:26:30.000Z', '[Aster - 95] [Briar - 42]'));
         await flush();
         expect(tracker.isTracking).toBe(true);
@@ -1047,7 +1047,7 @@ describe('per-wave timing', () => {
         vi.setSystemTime(runStart);
         game.actions = [{ actionHrid: DEN, difficultyTier: 2, ordinal: 0, isDone: false }];
 
-        await tracker.onNewBattle({ wave: 0, battleId: 7, combatStartTime: staleCombatStart });
+        await tracker.onNewBattle({ wave: 1, battleId: 7, combatStartTime: staleCombatStart });
         await flush();
         expect(tracker.currentRun.startTime).toBe(runStart);
 
@@ -1185,7 +1185,7 @@ describe('finishing a run', () => {
         expect(tracker.pendingNextRunFirstKeyCount).toBe(completion);
 
         game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
-        await tracker.onNewBattle({ wave: 0, battleId: 43, combatStartTime: '2026-08-04T10:04:33.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 43, combatStartTime: '2026-08-04T10:04:33.000Z' });
         await flush();
 
         expect(tracker.firstKeyCountTimestamp).toBe(completion);
@@ -1237,7 +1237,7 @@ describe('finishing a run', () => {
 
         // The next run anchors on its own key count, and is measured on its own
         game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
-        await tracker.onNewBattle({ wave: 0, battleId: 43, combatStartTime: '2026-08-04T10:05:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 43, combatStartTime: '2026-08-04T10:05:00.000Z' });
         await flush();
 
         expect(tracker.firstKeyCountTimestamp).toBeNull();
@@ -1491,7 +1491,7 @@ describe('waking the computer back up', () => {
         tracker.hibernationDetected = true;
         game.actions = [{ actionHrid: DEN, difficultyTier: 0, isDone: false }];
 
-        await tracker.onNewBattle({ wave: 0, battleId: 5, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await tracker.onNewBattle({ wave: 1, battleId: 5, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.hibernationDetected).toBe(false);
@@ -1982,12 +1982,12 @@ describe('switching characters', () => {
 });
 
 describe('a character switch inside onNewBattle', () => {
-    test('a wave 0 landing across a switch does not start the departing character’s run on the arriving one', async () => {
+    test('a wave 1 landing across a switch does not start the departing character’s run on the arriving one', async () => {
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
 
         // The switch lands in `clearInProgressRun`'s round trip, between the
         // message arriving and `startDungeon` reading it
-        const pending = tracker.onNewBattle({ wave: 0, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        const pending = tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
         game.characterId = 'iron456';
         await pending;
         await flush();
@@ -2006,6 +2006,138 @@ describe('a character switch inside onNewBattle', () => {
         const pending = tracker.onNewBattle({ wave: 4, battleId: 77, combatStartTime: '2026-08-04T10:05:00.000Z' });
         game.characterId = 'iron456';
         await pending;
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.currentRun).toBeNull();
+    });
+});
+
+describe('the running dungeon changing under a live run', () => {
+    // Observed live: the panel read "Chimerical Den (T0), Wave 61/50" while the
+    // character was fighting Pirate Cove wave 61 of 65 — a wave number that no
+    // 50-wave dungeon can reach. The run's identity came from the dungeon that
+    // had been left behind and the wave number from the one now running, because
+    // nothing between `startDungeon` and `completeDungeon` ever asks whether the
+    // dungeon under the run is still the one the game is running.
+
+    /** The queue as it looked live: the running dungeon last in the array, lowest ordinal. */
+    function queueSwitchedTo(runningHrid, queuedHrid) {
+        game.actions = [
+            { actionHrid: queuedHrid, difficultyTier: 0, ordinal: 8589934584, isDone: false },
+            { actionHrid: runningHrid, difficultyTier: 0, ordinal: 8589934583, isDone: false },
+        ];
+    }
+
+    test('a wave from a different running dungeon moves the run onto it', async () => {
+        beTracking({ dungeonHrid: DEN, tier: 0, currentWave: 5, maxWaves: 10, wavesCompleted: 4 });
+        queueSwitchedTo(LAIR, DEN);
+
+        // Wave 11 is impossible in the 10-wave Den and ordinary in the 12-wave Circus.
+        await tracker.onNewBattle({ wave: 11, battleId: 99, combatStartTime: '2026-08-04T11:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(LAIR);
+        expect(tracker.currentRun.maxWaves).toBe(12);
+        expect(tracker.currentRun.currentWave).toBe(11);
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+        expect(tracker.currentBattleId).toBe(99);
+        // The panel can no longer read a wave past the end of its own dungeon.
+        expect(tracker.currentRun.currentWave).toBeLessThanOrEqual(tracker.currentRun.maxWaves);
+    });
+
+    test('the abandoned run is discarded, not banked as a short run', async () => {
+        beTracking({ dungeonHrid: DEN, tier: 0, currentWave: 5, maxWaves: 10, wavesCompleted: 4, waveTimes: [1000] });
+        queueSwitchedTo(LAIR, DEN);
+
+        await tracker.onNewBattle({ wave: 11, battleId: 99, combatStartTime: '2026-08-04T11:00:00.000Z' });
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(0);
+        // None of the departed run's timings leak into the new one.
+        expect(tracker.waveTimes).toEqual([]);
+        expect(stored().dungeonHrid).toBe(LAIR);
+    });
+
+    test('the same dungeon carrying on is left alone', async () => {
+        beTracking({ dungeonHrid: DEN, tier: 0, currentWave: 5, maxWaves: 10, wavesCompleted: 4, waveTimes: [1000] });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 3, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 6, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+        expect(tracker.currentRun.wavesCompleted).toBe(4);
+        expect(tracker.waveTimes).toEqual([1000]);
+    });
+
+    test('a different dungeon leaving the queue still does not kill the live run', () => {
+        // The guard this pairs with: a queued dungeon being dropped or finished
+        // says nothing about the run in progress.
+        beTracking({ dungeonHrid: DEN, wavesCompleted: 4, maxWaves: 10 });
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, isDone: true }] });
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+    });
+});
+
+describe('wave 1 as a dungeon start', () => {
+    // The game numbers waves from 1; the fresh-start branch used to test
+    // `wave === 0`, so it never ran and tracking only ever began by accident.
+
+    test('wave 1 with a dungeon armed starts a run', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 2, ordinal: 0, isDone: false }];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 2, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun).toMatchObject({ dungeonHrid: DEN, tier: 2, currentWave: 1, wavesCompleted: 0 });
+    });
+
+    test('wave 1 of the next run starts it over rather than appending to the last', async () => {
+        // The previous run's end was never seen; actions_updated has armed the
+        // dungeon that is now running, which is what marks this a real start.
+        beTracking({ dungeonHrid: DEN, currentWave: 10, maxWaves: 10, wavesCompleted: 9, waveTimes: [1000, 2000] });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 3, isDone: false }];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 1, battleId: 500, combatStartTime: '2026-08-04T11:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.wavesCompleted).toBe(0);
+        expect(tracker.currentRun.currentWave).toBe(1);
+        expect(tracker.currentBattleId).toBe(500);
+        expect(tracker.waveTimes).toEqual([]);
+    });
+
+    test('a resent wave 1 does not restart the run', async () => {
+        // `new_battle` is in SKIP_DEDUP_TYPES, so a reconnect on the first wave
+        // resends it verbatim; treating that as a start would wipe the run.
+        const start = Date.parse('2026-08-04T10:00:00.000Z');
+        beTracking({ dungeonHrid: DEN, startTime: start, currentWave: 1, maxWaves: 10, wavesCompleted: 3 });
+        tracker.waveTimes = [1234, 5678];
+        tracker.pendingDungeonInfo = null;
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 3, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(start);
+        expect(tracker.currentRun.wavesCompleted).toBe(3);
+        expect(tracker.waveTimes).toEqual([1234, 5678]);
+    });
+
+    test('wave 1 of a queued-but-not-running dungeon still starts nothing', async () => {
+        game.actions = [
+            { actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false },
+            { actionHrid: LAIR, difficultyTier: 2, ordinal: 2, isDone: false },
+        ];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 2, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 1, battleId: 77, combatStartTime: '2026-08-04T10:00:00.000Z' });
         await flush();
 
         expect(tracker.isTracking).toBe(false);

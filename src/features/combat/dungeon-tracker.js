@@ -1011,11 +1011,43 @@ class DungeonTracker {
         // completion lands in their history as a run they never made.
         const owner = currentOwner();
 
-        // Wave 0 = first wave = dungeon start
-        if (data.wave === 0) {
+        // The dungeon the game is actually running. Nothing between startDungeon
+        // and completeDungeon used to ask whether it was still the one under the
+        // run, so a switch left the run's identity on the dungeon that had been
+        // left behind while its wave number came from the one now running: the
+        // panel read "Chimerical Den (T0), Wave 61/50" during Pirate Cove wave 61
+        // of 65. The old escape hatch was accidental — a dungeon leaving the
+        // queue reset tracking, and the next battle restarted it correctly — and
+        // it went away with the (correct) guard that stops a *different* dungeon
+        // going done from destroying a live run.
+        const running = runningCombatAction(dataManager.getCurrentActions?.());
+        if (
+            this.isTracking &&
+            this.currentRun?.dungeonHrid &&
+            running &&
+            this.isDungeonAction(running.actionHrid) &&
+            running.actionHrid !== this.currentRun.dungeonHrid
+        ) {
+            // The abandoned run was interrupted, not completed. resetTracking is
+            // the same discard the flee/death early-exit path uses: it drops the
+            // run without writing it to history (a half-length run would poison
+            // the averages and the ROI board) and clears the saved record.
+            await this.resetTracking();
+            if (currentOwner() !== owner) return;
+            this.startDungeon(data);
+            return;
+        }
+
+        // Wave 1 = first wave = dungeon start. The game's waves are 1-based —
+        // verified against every recorded wave across all four dungeons, whose
+        // minimum is 1 and whose maximum is each dungeon's own maxWaves — so the
+        // `wave === 0` this used to test never arrived and the whole branch was
+        // dead code. (`action_completed` is the one place a 0 does show up: the
+        // final wave's completion carries wave: 0, handled in onActionCompleted.)
+        if (data.wave === 1) {
             // `new_battle` has no dedupe or replay guard (see websocket.js's
             // SKIP_DEDUP_TYPES), so a reconnect that catches the run still on
-            // its own first wave resends this same wave 0 rather than a real
+            // its own first wave resends this same wave 1 rather than a real
             // dungeon start. Already tracking, with no new dungeon queued by
             // actions_updated, means this is that resend — treat it like any
             // other wave update instead of wiping wavesCompleted, waveTimes
@@ -1026,9 +1058,20 @@ class DungeonTracker {
                 return;
             }
 
-            // Clear any stale saved state first (in case previous run didn't clear properly)
-            await this.clearInProgressRun();
-            if (currentOwner() !== owner) return;
+            if (!this.isTracking) {
+                // A reload or reconnect can land on wave 1 with the run's own
+                // record still saved; restoring keeps its key-count anchor and
+                // wave times. restoreInProgressRun matches on battleId and on the
+                // running action, and clears the record itself when it does not
+                // match — so a genuinely new run falls through to a fresh start.
+                const restored = await this.restoreInProgressRun(battleId);
+                if (currentOwner() !== owner) return;
+                if (restored) return;
+            } else {
+                // Clear any stale saved state first (in case previous run didn't clear properly)
+                await this.clearInProgressRun();
+                if (currentOwner() !== owner) return;
+            }
 
             // Start fresh dungeon
             this.startDungeon(data);
@@ -1050,7 +1093,6 @@ class DungeonTracker {
             // the tier cannot change mid-run, so if the running action is this
             // same dungeon at a different tier, the run's tier is the bug. Fixes
             // the live panel and the tier this run is eventually saved under.
-            const running = runningCombatAction(dataManager.getCurrentActions());
             if (
                 running &&
                 this.currentRun &&
