@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A party run picked up mid-way gets its real start back from chat
+
+A run joined after a refresh had no honest duration, so it was shown as watched-only and never recorded. In a party it does have one: the key-count message that ended the previous run is this run's start, it is stamped by the server, and it is still sitting in the chat log. The tracker now reads it back and treats the run as any other, so refreshing mid-dungeon no longer costs you the run. It only accepts an anchor that could plausibly belong to this run — no longer than half again your slowest recorded run of that dungeon, and consistent with the waves you have actually finished — and refuses rather than guesses when either check fails, leaving the run watched-only as before. The verdict is remembered, so a second refresh does not re-decide it against a chat log that has scrolled. Solo runs are unaffected: they have no server timestamps to recover.
+
 ### A run the tracker joined part-way no longer invents a duration
 
 Picking a run up mid-flight — after a refresh, say — used to start its clock at that moment and then present the result as the run's duration, so a dungeon twenty minutes in could read as ninety seconds. Worse, in a party that fabricated time could be written to history as if the server had confirmed it, quietly skewing your averages, the pace chip and the ROI board. Such a run is now marked as joined at its wave, shows what it watched rather than a duration it never saw, and is never banked. The flag survives a refresh, so a partial run cannot come back looking whole. The panel also shows the dungeon's name straight away on page load instead of staying blank until the next wave.
