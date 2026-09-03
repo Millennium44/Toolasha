@@ -192,15 +192,20 @@ describe('boss cadence', () => {
  * wave its table may be drawn from, a wave is drawn whole from exactly one
  * eligible table, each eligible table BELOW the highest one reached is drawn
  * with probability 1/7, and a draw that would break `maxTotalStrength` ends the
- * wave. The 1/7 comes from a maximum-likelihood mixture fit over 2431 ordinary
- * waves of Chimerical Den (2230), Enchanted Fortress (106) and Sinister Circus
- * (95), against the spawn tables as read from the live game client -- pooled
- * estimate 0.1349, 95% profile interval [0.1227, 0.1477], which still contains
- * 1/7 = 0.1429 (cost 0.75 log-likelihood) but excludes 0.15 and 1/6. The weight
- * is flat across lower tables: a taper with distance below the current key buys
- * dLL = +0.82 for one parameter, p = 0.20 (see the note in zone.js). The
- * overflow rule is still an inference. Anything that changes either has to be deliberate rather
- * than incidental.
+ * wave. The 1/7 comes from a maximum-likelihood mixture fit over 3078 ordinary
+ * waves of Chimerical Den (2609), Pirate Cove (268), Enchanted Fortress (106)
+ * and Sinister Circus (95), against the spawn tables as read from the live game
+ * client -- pooled estimate 0.1335, 95% profile interval [0.1226, 0.1448],
+ * which still contains 1/7 = 0.1429 (cost 1.32 log-likelihood, p = 0.10) but
+ * excludes 0.15 and 1/6. 1/7 is kept over the estimate because the two are
+ * indistinguishable on predicted mean wave hitpoints (summed squared
+ * standardized error 6.0 either way over the eight multi-table bands, against
+ * 292.8 for the highest-only engine) and differ by 0.4% of a dungeon's
+ * random-wave HP. The weight is flat across lower tables: a taper with distance
+ * below the current key buys dLL = +1.19 for one parameter, p = 0.12, and the
+ * raw counts that appear to favour a taper are a detectability artefact (see
+ * the note in zone.js). The overflow rule is still an inference. Anything that
+ * changes either has to be deliberate rather than incidental.
  */
 describe('dungeon waves', () => {
     const DUNGEON_HRID = '/actions/combat/test_dungeon';
@@ -307,16 +312,17 @@ describe('dungeon waves', () => {
     });
 
     test('each eligible lower table takes about a seventh of the waves', () => {
-        // Measured, not documented: 310 of 2431 ordinary waves recorded in
-        // Chimerical Den, Enchanted Fortress and Sinister Circus are clean draws
-        // from a strictly lower table, and the per-table share does not shrink as
-        // more tables become eligible — which is what rules out the eligible
-        // tables sharing one budget between them, by dLL = +19.71 (3.6e8:1) on
-        // the same single parameter. Nor does it taper with distance below the
-        // current key: dLL = +0.82 for that extra parameter, p = 0.20, with
-        // Chimerical band 30's own 896 waves putting one step below at 0.135
-        // [0.111, 0.161] and two steps at 0.122 [0.102, 0.144]. See the note in
-        // zone.js.
+        // Measured, not documented: 384 of 3078 ordinary waves recorded in
+        // Chimerical Den, Pirate Cove, Enchanted Fortress and Sinister Circus are
+        // clean draws from a strictly lower table, and the per-table share does
+        // not shrink as more tables become eligible — which is what rules out the
+        // eligible tables sharing one budget between them, by dLL = +24.23
+        // (3.3e10:1) on the same single parameter, in every dungeon separately
+        // and in every leave-one-dungeon-out subset. Nor does it taper with
+        // distance below the current key: dLL = +1.19 for that extra parameter,
+        // p = 0.12, with Chimerical band 30's own 1048 waves putting one step
+        // below at 0.140 [0.117, 0.164] and two steps at 0.122 [0.103, 0.142].
+        // See the note in zone.js.
         seedSimRng(20260903);
         const zone = installBandedDungeon();
         const runs = 400;
@@ -364,10 +370,11 @@ describe('dungeon waves', () => {
         seedSimRng(11);
         const species = waveSpecies(installBandedDungeon(), 50);
 
-        // Confirmed against 2431 live waves across Chimerical Den, Enchanted
-        // Fortress and Sinister Circus: a species never appears below its own
-        // key's wave, and the top-table species first show up on the wave after
-        // that key.
+        // Confirmed against 3078 live waves across Chimerical Den, Pirate Cove,
+        // Enchanted Fortress and Sinister Circus: a species never appears below
+        // its own key's wave, and the top-table species first show up on the wave
+        // after that key — a key-20 species is first seen on wave 21 in both
+        // Pirate Cove and Enchanted Fortress, never on wave 20.
         expect(species.slice(0, 9)).not.toContain(MID);
         expect(species.slice(0, 9)).not.toContain(LATE);
         expect(species.slice(0, 29)).not.toContain(LATE);
