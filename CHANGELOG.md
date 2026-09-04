@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon keys can be priced as you actually get them, and the setting reaches everything it claimed to
+
+Key pricing gains two options beside ask and bid: follow whatever the profit calculator is set to, or value a key at what it costs you to craft one. The setting can also be cycled straight from the dungeon card in the consumables panel, which is the same global setting rather than a copy — the chip says so, since changing it also moves net worth, item tooltips, combat income and the ROI board.
+
+Getting there turned up a quieter problem. Six places read that setting by using it directly as a lookup into a price list, so anything other than ask or bid found nothing and fell back to the ask while appearing to honour your choice. Net worth, the inventory badges, item tooltips, the combat breakdown and the chest risk model all did this. They now resolve the setting properly, so the new options work everywhere the help text promises — and that help text has been rewritten to name every feature it governs, having listed three of seven.
+
+
 ### Plan any number of dungeon runs, and see whether crafting the keys beats buying them
 
 The readiness card's run count only cycled a fixed list, so a plan of 2,753 runs was not expressible and cycling from one silently restarted at 1. The count can now be typed and is remembered, while the chip still cycles for anyone who preferred that. And the missing-keys figure no longer assumes you would buy finished keys: it prices crafting them against buying them, says which is cheaper and by how much, states the pricing basis it used for both sides, and reports the bench time without pretending time is gold. When a material or the market has no price, it says so rather than showing a free craft.
