@@ -35,7 +35,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { formatLargeNumber } from '../../utils/formatters.js';
+import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
@@ -856,14 +856,23 @@ class ConsumablesPanel {
 
         if (model.keys) {
             const short = model.keys.shortfall;
+            // What is missing, in the figure the rest of the script uses for a
+            // shortfall: the count to go and buy, not the count to end up
+            // holding. Only for you — a party member's shortfall is stated on
+            // their own line, but it is not a number anyone else can act on,
+            // and a "to buy" against someone else's inventory would read as a
+            // job for the player that is not theirs to do.
             section.appendChild(
                 this._readinessLine(
                     model.keys.itemName,
                     short > 0
-                        ? `${model.keys.held} held · ${short} short of ${model.keys.runsPlanned}`
-                        : `${model.keys.held} held · covers ${model.keys.runsPlanned}`,
+                        ? `${formatWithSeparator(model.keys.held)} held · covers ${formatWithSeparator(model.keys.runsCovered)} · ${formatWithSeparator(short)} to buy`
+                        : `${formatWithSeparator(model.keys.held)} held · covers ${formatWithSeparator(model.keys.runsPlanned)}`,
                     short > 0 ? ROW_COLORS.bad : ROW_COLORS.good,
-                    'One entry key per clear, counted from your inventory. This one is exact.'
+                    short > 0
+                        ? `One entry key per clear, counted from your inventory. ${formatWithSeparator(short)} more ` +
+                              `to buy or craft for ${formatWithSeparator(model.keys.runsPlanned)} runs. This one is exact.`
+                        : 'One entry key per clear, counted from your inventory. This one is exact.'
                 )
             );
         }
@@ -895,9 +904,10 @@ class ConsumablesPanel {
                 section.appendChild(
                     this._readinessLine(
                         label,
-                        `${formatLargeNumber(member.keysHeld)} keys · food unknown`,
+                        `${formatWithSeparator(member.keysHeld)} keys · food unknown`,
                         short ? ROW_COLORS.bad : COLORS.textDim,
-                        `Keys stated by ${member.keysFrom} — one per clear, so they cover ${member.keyRunsCovered} ` +
+                        `Keys stated by ${member.keysFrom} — one per clear, so they cover ` +
+                            `${formatWithSeparator(member.keyRunsCovered)} ` +
                             'runs. Their food and drinks are only in the battle payload and are still unread.'
                     )
                 );
@@ -907,7 +917,7 @@ class ConsumablesPanel {
             const runs =
                 limit.runs === null
                     ? shortDuration(limit.secondsLeft)
-                    : `${formatLargeNumber(limit.runs)} run${limit.runs === 1 ? '' : 's'}`;
+                    : `${formatWithSeparator(limit.runs)} run${limit.runs === 1 ? '' : 's'}`;
             section.appendChild(
                 this._readinessLine(
                     label,
@@ -925,7 +935,7 @@ class ConsumablesPanel {
             const when =
                 first.runsCovered === null
                     ? shortDuration(first.secondsLeft)
-                    : `${formatLargeNumber(first.runsCovered)} run${first.runsCovered === 1 ? '' : 's'}`;
+                    : `${formatWithSeparator(first.runsCovered)} run${first.runsCovered === 1 ? '' : 's'}`;
             // The sample size is on the face of it, not only in the tooltip:
             // "you stop first" out of one readable member is a much weaker
             // claim than out of five, and it must look it. A member counted

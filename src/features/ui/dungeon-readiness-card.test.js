@@ -229,21 +229,44 @@ describe('when the card appears at all', () => {
 });
 
 describe('the key line, which is the one exact figure', () => {
-    test('counts the inventory and names the shortfall for the plan', async () => {
+    test('counts the inventory and names what is missing for the plan', async () => {
         inParty();
         store.data.consumablesDungeonRuns = 10;
         await render();
 
         expect(text()).toContain('Chimerical Entry Key');
-        expect(text()).toContain('4 held · 6 short of 10');
+        // The count to go and buy, not the count to end up holding
+        expect(text()).toContain('4 held · covers 4 · 6 to buy');
     });
 
-    test('enough keys say so instead', async () => {
+    test('enough keys say so, and nothing is offered to buy', async () => {
         inParty();
         store.data.consumablesDungeonRuns = 3;
         await render();
 
         expect(text()).toContain('4 held · covers 3');
+        expect(text()).not.toContain('to buy');
+    });
+
+    test('a large pile keeps its exact figure rather than being rounded to K', async () => {
+        inParty();
+        keysInBag(9053);
+        store.data.consumablesDungeonRuns = 50;
+        await render();
+
+        expect(text()).toContain('9,053 held · covers 50');
+    });
+
+    test("another member's shortfall is shown as coverage, never as a shopping list", async () => {
+        inParty();
+        tracking({ dungeonHrid: DEN, keyCountsMap: { Me: 4, Ally: 3 } });
+        store.data.consumablesDungeonRuns = 10;
+        await render();
+
+        const body = text();
+        expect(body).toContain('3 keys · food unknown');
+        // One "to buy" on the card, and it is yours
+        expect(body.match(/to buy/g)).toHaveLength(1);
     });
 });
 
