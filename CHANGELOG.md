@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Plan any number of dungeon runs, and see whether crafting the keys beats buying them
+
+The readiness card's run count only cycled a fixed list, so a plan of 2,753 runs was not expressible and cycling from one silently restarted at 1. The count can now be typed and is remembered, while the chip still cycles for anyone who preferred that. And the missing-keys figure no longer assumes you would buy finished keys: it prices crafting them against buying them, says which is cheaper and by how much, states the pricing basis it used for both sides, and reports the bench time without pretending time is gold. When a material or the market has no price, it says so rather than showing a free craft.
+
+
 ### The dungeon readiness card can see your party's keys, and your own
 
 The card called every other party member "Unknown player — not in party data", while the game's own key-count message in party chat had been naming them and stating their exact entry key count all along. It now reads that message: every member appears by name with the keys they hold and the runs those cover. Food and drinks for anyone but you are still genuinely unreadable before the key is spent, so a member with counted keys still counts as only partly read and never shows green — the count is a ceiling on their runs, not their stopping point.
