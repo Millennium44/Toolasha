@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: the spawn census was miscounting, and a finished run could land on the wrong character
+
+The census shipped counting some waves twice and losing others. Switching character re-read the stored tally into a tally that was still full, doubling everything; two tabs on one account each wrote the whole record back, so whichever flushed last erased the other's waves since it loaded; and the run boundary between two dungeon runs was being filed as if it were the last wave's duration. It also identified monsters by "not a player" rather than by being a monster, which is a weaker guarantee than a file you send to someone else deserves. Counts now hydrate once, tabs merge instead of overwrite, only real monsters are counted, and the export records a fingerprint of the spawn tables so a mid-collection game patch is visible rather than silent. Anything exported before this is not worth analysing.
+
+A dungeon run that finished while you were switching characters was banked under the arriving character — gone from the history of whoever ran it, and skewing the other one's averages for good. A queue edit while a run was on its first wave could make a reconnect look like a fresh start and wipe the run's progress. A dungeon cancelled after a refresh left the panel naming it for the rest of the session.
+
+On the performance side, yesterday's class filters accidentally made two handlers worse: a debounced handler re-expanded its own batch, so opening a full inventory ran the equipment-level pass hundreds of times instead of once. The party profile button's filter now anchors on the popup's modal, which another feature already relies on, rather than assuming the tab row's framework classes. The panel-size handler no longer runs on every element inserted anywhere for players who have never resized a panel. And the dungeon spawn rule keeps a dungeon's own band drawable in a hypothetical dungeon with seven or more lower tables, where the arithmetic would otherwise have excluded it entirely.
+
+
 ### A party run picked up mid-way gets its real start back from chat
 
 A run joined after a refresh had no honest duration, so it was shown as watched-only and never recorded. In a party it does have one: the key-count message that ended the previous run is this run's start, it is stamped by the server, and it is still sitting in the chat log. The tracker now reads it back and treats the run as any other, so refreshing mid-dungeon no longer costs you the run. It only accepts an anchor that could plausibly belong to this run — no longer than half again your slowest recorded run of that dungeon, and consistent with the waves you have actually finished — and refuses rather than guesses when either check fails, leaving the run watched-only as before. The verdict is remembered, so a second refresh does not re-decide it against a chat log that has scrolled. Solo runs are unaffected: they have no server timestamps to recover.
