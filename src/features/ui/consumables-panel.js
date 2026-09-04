@@ -1198,9 +1198,17 @@ class ConsumablesPanel {
         const time = plan.craftSeconds ? `, about ${shortDuration(plan.craftSeconds)} at the bench` : '';
         const saved = plan.saves > 0 ? `, saving ${gold(plan.saves)}` : '';
 
+        // On the craft basis the route was not chosen by the comparison, and
+        // saying "cheaper to craft" over a craft that costs more than the
+        // market would be the line arguing against the figure beside it.
+        const verdict =
+            plan.costBasis === 'craft' && plan.cheaper === 'craft'
+                ? 'costed as crafted, your key pricing mode'
+                : `cheaper to ${plan.cheaper}`;
+
         return this._readinessNote(
             `${formatWithSeparator(plan.shortfall)} short: ${craft} vs ${buy}, both at ${basis} — ` +
-                `cheaper to ${plan.cheaper}${saved}${time}.`,
+                `${verdict}${saved}${time}.`,
             plan.saves > 0 ? COLORS.accent : COLORS.textDim
         );
     }

@@ -424,6 +424,62 @@ describe('keyShortfallCost', () => {
         // A costing that never arrived is the same three-state answer
         expect(keyShortfallCost({ shortfall: 5, cost: null })).toMatchObject({ cheaper: null, total: null });
     });
+
+    test('the craft basis takes the craft route even when buying is cheaper', () => {
+        const plan = keyShortfallCost({
+            shortfall: 4,
+            cost: cost({ basis: 'craft', cheaper: 'craft', buyPrice: 500, craftCost: 900 }),
+        });
+
+        expect(plan.costBasis).toBe('craft');
+        expect(plan.cheaper).toBe('craft');
+        expect(plan.total).toBe(3600);
+        // Not "saving 1600": the route taken is the dearer one, and the card
+        // words it as a stated preference rather than a bargain
+        expect(plan.saves).toBeNull();
+    });
+
+    test('the craft basis still reports a saving when the craft really is cheaper', () => {
+        const plan = keyShortfallCost({
+            shortfall: 4,
+            cost: cost({ basis: 'craft', cheaper: 'craft' }),
+        });
+
+        expect(plan.cheaper).toBe('craft');
+        expect(plan.saves).toBe(1600);
+    });
+
+    test('a craft-basis costing that fell back to buying is priced as a buy', () => {
+        const plan = keyShortfallCost({
+            shortfall: 3,
+            cost: cost({ basis: 'craft', cheaper: 'buy', craftCost: null }),
+        });
+
+        expect(plan.costBasis).toBe('craft');
+        expect(plan.cheaper).toBe('buy');
+        expect(plan.craftTotal).toBeNull();
+        expect(plan.total).toBe(3000);
+    });
+
+    test('a stated route with no price behind it falls back to the comparison', () => {
+        const plan = keyShortfallCost({
+            shortfall: 3,
+            cost: cost({ basis: 'craft', cheaper: 'craft', craftCost: null }),
+        });
+
+        // 'craft' with a null craft cost would put a null total on the line
+        expect(plan.cheaper).toBe('buy');
+        expect(plan.total).toBe(3000);
+    });
+
+    test('the market basis is unchanged: the cheaper of the two wins', () => {
+        expect(keyShortfallCost({ shortfall: 2, cost: cost() })).toMatchObject({
+            costBasis: 'market',
+            cheaper: 'craft',
+            total: 1200,
+            saves: 800,
+        });
+    });
 });
 
 describe('the key plan on the built model', () => {

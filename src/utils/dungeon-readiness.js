@@ -118,11 +118,19 @@ export function nextRunStep(current, steps) {
  * key market the materials are routinely cheaper than the key — so the figure
  * worth showing is both totals and which one wins.
  *
- * Nothing here decides which route is cheaper: `cost` arrives from
+ * Nothing here decides which route to take: `cost` arrives from
  * `utils/key-cost.js`, which already priced both sides **on one basis** and
- * named the winner. Re-deciding it would be the exact failure the own-use line
- * was fixed for — one side quoted at ask, the other at the user's mode — and
- * would let this card disagree with the ROI board about the same key.
+ * named the route its `cheaper` field carries. Re-deciding it would be the
+ * exact failure the own-use line was fixed for — one side quoted at ask, the
+ * other at the user's mode — and would let this card disagree with the ROI
+ * board about the same key. It would also overrule the craft pricing mode,
+ * whose whole point is to take the craft cost where the market undercuts it.
+ *
+ * `costBasis` says which of those two happened, so the card can word the line
+ * as a comparison or as a stated preference rather than always claiming the
+ * cheaper route won. `saves` is only filled in when the route taken really is
+ * the cheaper of the two; on the craft basis it can be the dearer one, and
+ * "saving" would then be a lie about the reader's own gold.
  *
  * A route that cannot be priced is null, never zero. When neither can be, the
  * whole plan is null and the card says the key cannot be costed: a free craft
@@ -133,8 +141,8 @@ export function nextRunStep(current, steps) {
  * @param {Object|null} input.cost - From `describeKeyCost`
  * @returns {{shortfall: number, buyEach: number|null, craftEach: number|null, buyTotal: number|null,
  *   craftTotal: number|null, cheaper: 'buy'|'craft'|null, total: number|null, saves: number|null,
- *   priceBasis: 'ask'|'bid', craftSeconds: number|null}|null} Null when there is no shortfall
- *   to price; a plan with `cheaper: null` when neither route could be priced
+ *   priceBasis: 'ask'|'bid', costBasis: 'market'|'craft', craftSeconds: number|null}|null} Null when
+ *   there is no shortfall to price; a plan with `cheaper: null` when neither route could be priced
  */
 export function keyShortfallCost({ shortfall = 0, cost = null } = {}) {
     const missing = Math.max(0, Math.floor(Number(shortfall) || 0));
@@ -144,6 +152,7 @@ export function keyShortfallCost({ shortfall = 0, cost = null } = {}) {
     const buyEach = each(cost?.buyPrice);
     const craftEach = each(cost?.craftCost);
     const priceBasis = cost?.pricingMode === 'bid' ? 'bid' : 'ask';
+    const costBasis = cost?.basis === 'craft' ? 'craft' : 'market';
     const times = (value) => (value === null ? null : value * missing);
 
     const plan = {
@@ -156,6 +165,7 @@ export function keyShortfallCost({ shortfall = 0, cost = null } = {}) {
         total: null,
         saves: null,
         priceBasis,
+        costBasis,
         craftSeconds: null,
     };
 
@@ -163,9 +173,16 @@ export function keyShortfallCost({ shortfall = 0, cost = null } = {}) {
 
     // A tie goes to buying, the way `describeKeyCost` calls it: the two cost
     // the same gold and only one of them also costs the player an afternoon
-    plan.cheaper = craftEach === null ? 'buy' : buyEach === null ? 'craft' : craftEach < buyEach ? 'craft' : 'buy';
+    const cheapest = craftEach === null ? 'buy' : buyEach === null ? 'craft' : craftEach < buyEach ? 'craft' : 'buy';
+    // The costing's own verdict wins, but only where it names a route this
+    // shortfall could actually be filled by: a stale or unpriceable side would
+    // otherwise put a null total on the line.
+    const stated = cost?.cheaper === 'craft' ? craftEach !== null : cost?.cheaper === 'buy' ? buyEach !== null : false;
+    plan.cheaper = stated ? cost.cheaper : cheapest;
     plan.total = plan.cheaper === 'craft' ? plan.craftTotal : plan.buyTotal;
-    if (buyEach !== null && craftEach !== null) plan.saves = Math.abs(plan.buyTotal - plan.craftTotal);
+    if (buyEach !== null && craftEach !== null && plan.cheaper === cheapest) {
+        plan.saves = Math.abs(plan.buyTotal - plan.craftTotal);
+    }
     if (plan.cheaper === 'craft' && Number.isFinite(cost?.craftSeconds) && cost.craftSeconds > 0) {
         plan.craftSeconds = cost.craftSeconds * missing;
     }
