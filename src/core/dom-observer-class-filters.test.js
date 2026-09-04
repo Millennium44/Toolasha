@@ -143,6 +143,21 @@ describe('PartyProfileButton', () => {
         ).toBe(1);
     });
 
+    test('fires for the modal the popup arrives in, whatever its tab row is built from', () => {
+        // `guild-loadout-capture.js` watches this same battle-unit popup through
+        // `Modal_modalContent`/`Modal_modalContainer`, which is the only part of
+        // this popup's markup any shipped feature actually pins down. Nothing
+        // names its tab row, so the MUI entries are inference and this is not.
+        expect(
+            runsFor(
+                POPUP_TAB_CLASSES,
+                '<div class="Modal_modalContainer__3B9iF"><div class="Modal_modalContent__1Iyfg">' +
+                    '<div class="SomeUnknown_tabRow__x1" role="tablist">' +
+                    '<button>Battle Info</button><button>Stats</button></div></div></div>'
+            )
+        ).toBeGreaterThan(0);
+    });
+
     test('no longer fires for combat DOM', () => {
         for (const html of COMBAT_NOISE) expect(runsFor(POPUP_TAB_CLASSES, html)).toBe(0);
     });

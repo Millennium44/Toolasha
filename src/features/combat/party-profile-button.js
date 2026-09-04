@@ -36,19 +36,35 @@ const OBSERVER_KEY = 'PartyProfileButton';
 /**
  * The DOM this feature watches, as classes the shared observer can filter on.
  *
- * `findPopupTabRow` only ever looks at `[role="tablist"]` rows, and the game's
- * MUI tab strips carry MUI's own un-hashed `MuiTabs-flexContainer` on exactly
- * that div (the marketplace tab code matches `.MuiTabs-flexContainer[role=
- * "tablist"]` for the same reason). `MuiTabs-root` is the wrapper, included so
- * a rebuild that replaces the wrapper without separately inserting the
- * flexContainer still lands. These are framework classes, not the hashed
- * `ClassName_x__hash` game ones the header comment warns about, so they are as
- * stable across game builds as `role="tablist"` itself.
+ * The popup is a modal, and `guild-loadout-capture.js` watches this same
+ * battle-unit popup — same "<name> - Lv.N" header, same Battle Info and Stats
+ * tabs — through `Modal_modalContent` / `Modal_modalContainer`. That pair is
+ * therefore the one entry here backed by a shipped feature rather than by
+ * inference, so it leads: whatever the tab row inside turns out to be built
+ * from, the modal around it is inserted when the popup opens.
+ *
+ * The MUI pair is kept behind it for the narrower case of the tab strip alone
+ * being rebuilt inside a modal that is already open. `findPopupTabRow` looks at
+ * `[role="tablist"]` rows, and the game's tab strips are MUI Tabs — the
+ * marketplace tab code matches `.MuiTabs-flexContainer[role="tablist"]`, the
+ * combat panel's zone tabs are `div.MuiTabs-root.MuiTabs-vertical` — so this is
+ * very probably what the popup's row is too. "Very probably" is the reason it
+ * is not the only entry: a filter that is wrong here does not throw, it just
+ * stops the button appearing, and nothing in the codebase names the popup's
+ * inner markup.
+ *
+ * `Modal_modalContent` is already watched by WelcomeBackValue, so it costs the
+ * shared subtree query nothing to add.
  *
  * Registered without a filter this ran for every element inserted anywhere on
  * the page, and every run swept the document for tab rows.
  */
-export const POPUP_TAB_CLASSES = ['MuiTabs-flexContainer', 'MuiTabs-root'];
+export const POPUP_TAB_CLASSES = [
+    'Modal_modalContent',
+    'Modal_modalContainer',
+    'MuiTabs-flexContainer',
+    'MuiTabs-root',
+];
 
 /** "<name> - Lv.127" → captures the name. Accepts a hyphen or en dash. */
 const NAME_LEVEL_RE = /^\s*(.+?)\s*[-–]\s*Lv\.?\s*\d+\s*$/i;
