@@ -230,9 +230,19 @@ class Zone {
             const lowerCount = eligibleKeys.length - 1;
 
             if (lowerCount > 0) {
+                // The rate is capped at an equal share of every eligible table.
+                // Uncapped, seven eligible lower tables claim 7 x 1/7 = exactly
+                // 1 of the roll (1/7 * 7 === 1 in doubles), so the current
+                // table -- the wave's own band -- would stop being drawn at all
+                // and the last lower table would absorb its share. The cap
+                // degrades that to a uniform draw over all eligible tables
+                // instead. It never binds below seven lower tables, so it
+                // cannot move any dungeon in the game today: the deepest has
+                // three tables.
+                const rate = Math.min(LOWER_TABLE_RATE, 1 / eligibleKeys.length);
                 const roll = randomSpawn();
-                if (roll < LOWER_TABLE_RATE * lowerCount) {
-                    const index = Math.min(Math.floor(roll / LOWER_TABLE_RATE), lowerCount - 1);
+                if (roll < rate * lowerCount) {
+                    const index = Math.min(Math.floor(roll / rate), lowerCount - 1);
                     chosenKey = eligibleKeys[index];
                 }
             }

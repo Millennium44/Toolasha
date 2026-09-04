@@ -7,7 +7,7 @@
 
 import { describe, test, expect, afterEach } from 'vitest';
 import { setGameData } from './game-data.js';
-import { clearSimRng, random, seedSimRng } from './rng.js';
+import { clearSimRng, random, randomSpawn, seedSimRng } from './rng.js';
 import Zone from './zone.js';
 
 const ZONE_HRID = '/actions/combat/test_zone';
@@ -95,6 +95,25 @@ describe('Zone spawns with a seeded RNG', () => {
         }
 
         expect(interleaved).toEqual(clean);
+    });
+
+    test('a normal zone spends exactly one spawn draw per monster slot', () => {
+        // The dungeon table rule spends an extra spawn draw per wave, but only
+        // on the dungeon path. A normal zone must walk the spawn stream at the
+        // rate it always did, or every seeded comparison against a recorded run
+        // shifts by a draw per encounter.
+        installGameData();
+
+        seedSimRng(31);
+        rollEncounters(20);
+        const afterEncounters = randomSpawn();
+
+        seedSimRng(31);
+        for (let draw = 0; draw < 20 * 3; draw++) randomSpawn();
+
+        // 3 draws per encounter: maxSpawnCount 3, and 3 x strength 2 exactly
+        // fills maxTotalStrength 6, so no wave ends early
+        expect(randomSpawn()).toBe(afterEncounters);
     });
 
     test('unseeded runs stay independent samples', () => {
@@ -215,6 +234,8 @@ describe('dungeon waves', () => {
     const FIXED = '/monsters/fixed';
     const CHEAP = '/monsters/cheap';
     const HEAVY = '/monsters/heavy';
+    /** Eight interchangeable species, one per table, for the many-table cases. */
+    const TABLE_SPECIES = Array.from({ length: 8 }, (_, key) => `/monsters/table_${key}`);
 
     /**
      * One entry per band, each band a single identifiable species so a wave's
@@ -238,7 +259,7 @@ describe('dungeon waves', () => {
      * @returns {Zone}
      */
     function installDungeon(dungeonInfo) {
-        const hrids = [EARLY, MID, LATE, FIXED, CHEAP, HEAVY];
+        const hrids = [EARLY, MID, LATE, FIXED, CHEAP, HEAVY, ...TABLE_SPECIES];
         setGameData({
             actionDetailMap: {
                 [DUNGEON_HRID]: {
@@ -354,6 +375,72 @@ describe('dungeon waves', () => {
         expect(share(late, MID)).toBeLessThan(0.17);
         expect(share(late, LATE)).toBeGreaterThan(0.66);
         expect(share(late, LATE)).toBeLessThan(0.77);
+    });
+
+    test('three eligible lower tables each still take a seventh, with no boundary bias', () => {
+        // The lower table is picked by `floor(roll / rate)`, which partitions
+        // the roll into equal-width slices, so the three must come out equal to
+        // within sampling error rather than one edge slice being fatter.
+        const flat = { 0: band(EARLY), 1: band(MID), 2: band(LATE), 3: band(CHEAP) };
+        seedSimRng(4321);
+        const zone = installDungeon({ maxWaves: 1000, fixedSpawnsMap: {}, randomSpawnInfoMap: flat });
+
+        const counts = {};
+        for (let i = 0; i < 70000; i++) {
+            const hrid = zone.getNextWave()[0].hrid;
+            if (zone.encountersKilled - 1 >= 4) counts[hrid] = (counts[hrid] || 0) + 1;
+        }
+        const total = Object.values(counts).reduce((sum, one) => sum + one, 0);
+
+        for (const lower of [EARLY, MID, LATE]) {
+            expect(counts[lower] / total).toBeGreaterThan(0.13);
+            expect(counts[lower] / total).toBeLessThan(0.155);
+        }
+        expect(counts[CHEAP] / total).toBeGreaterThan(0.55);
+        expect(counts[CHEAP] / total).toBeLessThan(0.59);
+    });
+
+    test('seven eligible lower tables do not squeeze the current one out', () => {
+        // 1/7 * 7 === 1 exactly in doubles, so an uncapped rate spends the whole
+        // roll on the lower tables: the wave's own band is never drawn and the
+        // last lower table absorbs its share. No dungeon has eight tables, but a
+        // rule that silently deletes the top band if one ever does is not a
+        // rule. Capped, the draw degrades to uniform over all eight.
+        const tables = {};
+        for (let key = 0; key < 8; key++) {
+            tables[key] = band(`/monsters/table_${key}`);
+        }
+        seedSimRng(1);
+        const zone = installDungeon({ maxWaves: 1000, fixedSpawnsMap: {}, randomSpawnInfoMap: tables });
+
+        const counts = {};
+        for (let i = 0; i < 24000; i++) {
+            const hrid = zone.getNextWave()[0].hrid;
+            if (zone.encountersKilled - 1 >= 8) counts[hrid] = (counts[hrid] || 0) + 1;
+        }
+        const total = Object.values(counts).reduce((sum, one) => sum + one, 0);
+
+        // Pre-cap this was 0 of ~20000 waves.
+        expect(counts['/monsters/table_7'] / total).toBeGreaterThan(0.1);
+        for (let key = 0; key < 8; key++) {
+            expect(counts[`/monsters/table_${key}`] / total).toBeGreaterThan(0.1);
+            expect(counts[`/monsters/table_${key}`] / total).toBeLessThan(0.15);
+        }
+    });
+
+    test('the cap leaves six lower tables exactly where they were', () => {
+        // 1 / 7 eligible tables === LOWER_TABLE_RATE, so the cap is a no-op at
+        // six lower tables and below — every live dungeon, which has three
+        // tables at most. Pinned from the pre-cap engine, same seed, same rolls.
+        const tables = {};
+        for (let key = 0; key < 7; key++) {
+            tables[key] = band(`/monsters/table_${key}`);
+        }
+        seedSimRng(31337);
+        const zone = installDungeon({ maxWaves: 1000, fixedSpawnsMap: {}, randomSpawnInfoMap: tables });
+        const drawn = Array.from({ length: 60 }, () => zone.getNextWave()[0].hrid.slice(-1)).join('');
+
+        expect(drawn).toBe('113330026100233341563344056442203361152062005421110204056353');
     });
 
     test('the table choice replays from the seed', () => {

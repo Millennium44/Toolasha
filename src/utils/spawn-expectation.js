@@ -34,6 +34,16 @@
  * itself does when it draws (`totalWeight * random()` in `engine/zone.js`). Read
  * as bare probabilities they only happen to work when the table sums to 1.
  *
+ * ONE table. A dungeon wave does not come from one: `combat-sim/engine/zone.js`
+ * draws each eligible table below the highest the wave has reached with
+ * probability 1/7 and the highest with the remainder, so in a three-table
+ * dungeon's top band 2/7 of waves come from a lower table. Passing a single
+ * `randomSpawnInfoMap` entry here therefore answers "given the wave came from
+ * this table", not "given the wave is at this depth" — a caller that wants the
+ * latter has to mix the map's entries at those weights itself. Both callers
+ * today (`combat-drop-model.js`, `expected-kills.js`) bail out on dungeons
+ * before they get here, so nothing depends on the mixture yet.
+ *
  * @param {Object} randomSpawnInfo - `combatZoneInfo.fightInfo.randomSpawnInfo`, or an
  *   entry of a dungeon's `randomSpawnInfoMap`: `{ spawns, maxSpawnCount, maxTotalStrength }`
  * @returns {Object<string, number>} Monster hrid → expected count per wave. Empty when
