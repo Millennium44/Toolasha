@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The own-use tooltip line prices both halves the way you asked, and says which
+
+"Own use: make vs buy" costed your materials under whichever pricing mode you had chosen, then always priced the buy alternative at the ask. On bid-based modes that compared a cheap side against an expensive one and leaned toward "make it yourself" on the spread alone. Both halves now follow the same mode, and the line states the basis it used, so "buy" no longer has to be assumed. Anyone on the default hybrid mode sees no change, since hybrid buys at ask on both sides already; the modes that quote bids are the ones that were wrong.
+
+
 ### Audit round: the spawn census was miscounting, and a finished run could land on the wrong character
 
 The census shipped counting some waves twice and losing others. Switching character re-read the stored tally into a tally that was still full, doubling everything; two tabs on one account each wrote the whole record back, so whichever flushed last erased the other's waves since it loaded; and the run boundary between two dungeon runs was being filed as if it were the last wave's duration. It also identified monsters by "not a player" rather than by being a monster, which is a weaker guarantee than a file you send to someone else deserves. Counts now hydrate once, tabs merge instead of overwrite, only real monsters are counted, and the export records a fingerprint of the spawn tables so a mid-collection game patch is visible rather than silent. Anything exported before this is not worth analysing.
