@@ -1169,7 +1169,16 @@ class DungeonTracker {
             // actions_updated, means this is that resend — treat it like any
             // other wave update instead of wiping wavesCompleted, waveTimes
             // and the party-message timestamps and starting the run over.
-            if (this.isTracking && !this.pendingDungeonInfo) {
+            //
+            // The battle id settles it outright where the message carries one:
+            // the same battle resent is the same battle, and a genuinely new
+            // run is a new one. `pendingDungeonInfo` alone is not enough,
+            // because `endCharacterActions` carries existing actions alongside
+            // new ones — any queue edit during wave 1 re-arms it for the
+            // dungeon already being tracked, and the resend then reads as a
+            // start.
+            const sameBattle = data.battleId !== undefined && data.battleId === this.currentBattleId;
+            if (this.isTracking && (sameBattle || !this.pendingDungeonInfo)) {
                 this.currentBattleId = data.battleId;
                 this.startWave(data);
                 return;

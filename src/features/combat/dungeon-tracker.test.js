@@ -2154,6 +2154,26 @@ describe('wave 1 as a dungeon start', () => {
         expect(tracker.waveTimes).toEqual([1234, 5678]);
     });
 
+    test('a resent wave 1 is still a resend when the queue re-announced the running dungeon', async () => {
+        // `endCharacterActions` carries existing actions alongside new ones, so any
+        // queue edit mid-run re-arms `pendingDungeonInfo` for the dungeon already
+        // being tracked. That is not a new run pending, and reading it as one wipes
+        // wavesCompleted, waveTimes and the party timestamps on a reconnect. The
+        // battle is the same battle, and its id says so.
+        const start = Date.parse('2026-08-04T10:00:00.000Z');
+        beTracking({ dungeonHrid: DEN, startTime: start, currentWave: 1, maxWaves: 10, wavesCompleted: 3 });
+        tracker.waveTimes = [1234, 5678];
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 3, isDone: false }];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T10:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.startTime).toBe(start);
+        expect(tracker.currentRun.wavesCompleted).toBe(3);
+        expect(tracker.waveTimes).toEqual([1234, 5678]);
+    });
+
     test('wave 1 of a queued-but-not-running dungeon still starts nothing', async () => {
         game.actions = [
             { actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false },
