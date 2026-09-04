@@ -11,6 +11,7 @@ import {
     buildReadiness,
     parseRunsPlanned,
     nextRunStep,
+    keyShortfallCost,
     MAX_RUNS_PLANNED,
     UNKNOWN_CONSUMABLES,
     UNKNOWN_KEYS,
@@ -357,5 +358,97 @@ describe('nextRunStep', () => {
 
     test('a typed count above every step wraps rather than sticking', () => {
         expect(nextRunStep(2753, STEPS)).toBe(1);
+    });
+});
+
+describe('keyShortfallCost', () => {
+    const cost = (over) => ({
+        itemHrid: '/items/chimerical_entry_key',
+        pricingMode: 'ask',
+        buyPrice: 1000,
+        craftCost: 600,
+        craftSeconds: 20,
+        ...over,
+    });
+
+    test('nothing missing is nothing to price', () => {
+        expect(keyShortfallCost({ shortfall: 0, cost: cost() })).toBeNull();
+    });
+
+    test('both totals are reported, and the cheaper route named', () => {
+        const plan = keyShortfallCost({ shortfall: 10, cost: cost() });
+        expect(plan).toMatchObject({
+            shortfall: 10,
+            buyTotal: 10000,
+            craftTotal: 6000,
+            cheaper: 'craft',
+            total: 6000,
+            saves: 4000,
+            priceBasis: 'ask',
+            craftSeconds: 200,
+        });
+    });
+
+    test('buying wins when the recipe costs more', () => {
+        const plan = keyShortfallCost({ shortfall: 4, cost: cost({ craftCost: 1500 }) });
+        expect(plan).toMatchObject({ cheaper: 'buy', total: 4000, saves: 2000 });
+        // The bench time belongs to a route nobody is being sent down
+        expect(plan.craftSeconds).toBeNull();
+    });
+
+    test('a tie goes to buying, since only one route also costs an afternoon', () => {
+        expect(keyShortfallCost({ shortfall: 3, cost: cost({ craftCost: 1000 }) }).cheaper).toBe('buy');
+    });
+
+    test('the bid basis is carried through rather than assumed', () => {
+        const plan = keyShortfallCost({ shortfall: 2, cost: cost({ pricingMode: 'bid', buyPrice: 400 }) });
+        expect(plan).toMatchObject({ priceBasis: 'bid', cheaper: 'buy', total: 800 });
+    });
+
+    test('an unpriceable recipe is unpriced, never a free craft', () => {
+        const plan = keyShortfallCost({ shortfall: 5, cost: cost({ craftCost: null }) });
+        expect(plan.craftTotal).toBeNull();
+        expect(plan.cheaper).toBe('buy');
+        expect(plan.saves).toBeNull();
+    });
+
+    test('an empty market leaves crafting as the only route', () => {
+        const plan = keyShortfallCost({ shortfall: 5, cost: cost({ buyPrice: null }) });
+        expect(plan.buyTotal).toBeNull();
+        expect(plan).toMatchObject({ cheaper: 'craft', total: 3000 });
+    });
+
+    test('neither side priced says so instead of picking a winner', () => {
+        const plan = keyShortfallCost({ shortfall: 5, cost: cost({ buyPrice: null, craftCost: null }) });
+        expect(plan).toMatchObject({ shortfall: 5, cheaper: null, total: null, buyTotal: null, craftTotal: null });
+        // A costing that never arrived is the same three-state answer
+        expect(keyShortfallCost({ shortfall: 5, cost: null })).toMatchObject({ cheaper: null, total: null });
+    });
+});
+
+describe('the key plan on the built model', () => {
+    const dungeon = { actionHrid: '/actions/combat/chimerical_den', name: 'Chimerical Den', tier: 2 };
+
+    test('the shortfall is priced both ways from the costing the caller passed in', () => {
+        const model = buildReadiness({
+            dungeon,
+            runsPlanned: 10,
+            keys: keyReadiness({ itemHrid: '/items/chimerical_entry_key', held: 4, runsPlanned: 10 }),
+            keyCost: { pricingMode: 'ask', buyPrice: 1000, craftCost: 600, craftSeconds: 20 },
+            members: [],
+        });
+        expect(model.keys.shortfall).toBe(6);
+        expect(model.keyPlan).toMatchObject({ shortfall: 6, buyTotal: 6000, craftTotal: 3600, cheaper: 'craft' });
+    });
+
+    test('enough keys held leaves nothing to price', () => {
+        const model = buildReadiness({
+            dungeon,
+            runsPlanned: 2,
+            keys: keyReadiness({ itemHrid: '/items/chimerical_entry_key', held: 4, runsPlanned: 2 }),
+            keyCost: { pricingMode: 'ask', buyPrice: 1000, craftCost: 600 },
+            members: [],
+        });
+        expect(model.keyPlan).toBeNull();
     });
 });

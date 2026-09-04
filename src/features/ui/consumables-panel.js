@@ -74,6 +74,7 @@ import {
     typicalRunSeconds,
     MAX_RUNS_PLANNED,
 } from '../../utils/dungeon-readiness.js';
+import { describeKeyCost } from '../../utils/key-cost.js';
 import { partyLintWarnings } from '../../utils/party-lint.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { registerCommand } from '../../utils/command-registry.js';
@@ -206,6 +207,9 @@ const REFRESH_MS = 5000;
 const DUNGEON_RUN_STEPS = [1, 3, 5, 10, 25, 50, 100, 250, 500, 1000];
 const DEFAULT_DUNGEON_RUNS = 100;
 
+/** How long a key's buy-versus-craft costing is reused before it is re-priced */
+const KEY_COST_TTL_MS = 60_000;
+
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.97)',
     headerBg: 'rgba(20, 30, 24, 0.9)',
@@ -258,6 +262,8 @@ class ConsumablesPanel {
         this._labFightAttemptsOwner = null;
         /** Same purpose as `_idlePinsGeneration`, for `_refreshStoredReadings()` */
         this._storedReadingsGeneration = 0;
+        /** The entry key's buy-versus-craft costing, and when it was priced */
+        this._keyCostCache = null;
         // The same mechanism the missing-materials features use: park a quantity,
         // and the buy modal fills itself in when it appears
         this.autofill = createAutofillManager('Consumables');
@@ -378,8 +384,12 @@ class ConsumablesPanel {
             DEFAULT_DUNGEON_RUNS;
         this._dungeonHistory = (await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => [])) || [];
         this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
-        // Everything the readiness memo is a function of has just been re-read
+        // Everything the readiness memo is a function of has just been re-read.
+        // The key costing goes with it: a craft cost is this character's own —
+        // artisan tea, efficiency and gear all move it — so an alt must not
+        // inherit the figure priced for whoever was logged in before.
         this._readinessMemo = null;
+        this._keyCostCache = null;
     }
 
     /**
@@ -623,6 +633,33 @@ class ConsumablesPanel {
     }
 
     /**
+     * What one entry key costs to buy and to craft, cached for a minute.
+     *
+     * `describeKeyCost` walks the recipe through the crafting planner against
+     * this character's own efficiency and artisan bonus, which is far too much
+     * work for a panel that redraws every five seconds — and the answer moves
+     * only when the market does. A minute is short enough that a key bought
+     * mid-session reprices, long enough that the redraw clock never pays for it.
+     *
+     * @param {string|null} keyHrid - The dungeon's entry key
+     * @returns {Object|null} From `describeKeyCost`, or null when it cannot run
+     */
+    _keyCost(keyHrid) {
+        if (!keyHrid) return null;
+        const cached = this._keyCostCache;
+        if (cached?.keyHrid === keyHrid && Date.now() - cached.at < KEY_COST_TTL_MS) return cached.cost;
+
+        let cost = null;
+        try {
+            cost = describeKeyCost(keyHrid);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Pricing the entry key failed:', error);
+        }
+        this._keyCostCache = { keyHrid, at: Date.now(), cost };
+        return cost;
+    }
+
+    /**
      * The party's entry keys, as the game itself stated them.
      *
      * Every run the game posts a key-count message to party chat naming each
@@ -827,6 +864,11 @@ class ConsumablesPanel {
         // counts.
         const keyHrid = dungeonEntryKey(context.actionHrid, dataManager.getActionDetails?.(context.actionHrid));
         const keysHeld = keyHrid ? heldInInventory(dataManager.getInventory?.(), keyHrid) : 0;
+        // Priced before the signature is built rather than after it is matched:
+        // a key that reprices changes what the card says, so the costing has to
+        // be part of what the memo is a function of. `_keyCost` is a cache hit
+        // on almost every redraw, so this is a map lookup, not a recipe walk.
+        const keyCost = this._keyCost(keyHrid);
 
         const signature = [
             context.actionHrid,
@@ -844,6 +886,7 @@ class ConsumablesPanel {
                 .sort()
                 .join(','),
             keysHeld,
+            `${keyCost?.pricingMode ?? '?'}:${keyCost?.buyPrice ?? '?'}:${keyCost?.craftCost ?? '?'}`,
             Object.entries(context.keyCounts)
                 .map(([who, count]) => `${who}=${count}`)
                 .sort()
@@ -910,6 +953,7 @@ class ConsumablesPanel {
             dungeon: { actionHrid: context.actionHrid, name: context.name, tier: context.tier },
             runsPlanned: this.dungeonRuns,
             keys,
+            keyCost,
             members,
             lint: lint.warnings,
             lintScope: scopeParts.length ? `${scopeParts.join('; ')}.` : '',
@@ -994,6 +1038,13 @@ class ConsumablesPanel {
 
         if (model.keys) {
             const short = model.keys.shortfall;
+            const plan = model.keyPlan;
+            // The shortfall used to say "to buy" unconditionally, which quietly
+            // recommended the more expensive route whenever the recipe was
+            // cheaper than the thin key market. With no costing at all it still
+            // says "to buy": that is the route the reader can always take, and
+            // naming a craft nothing has priced would be the worse guess.
+            const route = plan?.cheaper === 'craft' ? 'to craft' : 'to buy';
             // What is missing, in the figure the rest of the script uses for a
             // shortfall: the count to go and buy, not the count to end up
             // holding. Only for you — a party member's shortfall is stated on
@@ -1004,7 +1055,7 @@ class ConsumablesPanel {
                 this._readinessLine(
                     model.keys.itemName,
                     short > 0
-                        ? `${formatWithSeparator(model.keys.held)} held · covers ${formatWithSeparator(model.keys.runsCovered)} · ${formatWithSeparator(short)} to buy`
+                        ? `${formatWithSeparator(model.keys.held)} held · covers ${formatWithSeparator(model.keys.runsCovered)} · ${formatWithSeparator(short)} ${route}`
                         : `${formatWithSeparator(model.keys.held)} held · covers ${formatWithSeparator(model.keys.runsPlanned)}`,
                     short > 0 ? ROW_COLORS.bad : ROW_COLORS.good,
                     short > 0
@@ -1013,6 +1064,8 @@ class ConsumablesPanel {
                         : 'One entry key per clear, counted from your inventory. This one is exact.'
                 )
             );
+            const routeNote = this._keyRouteNote(plan);
+            if (routeNote) section.appendChild(routeNote);
         }
 
         for (const member of model.members) {
@@ -1105,6 +1158,51 @@ class ConsumablesPanel {
         for (const note of model.footnotes) section.appendChild(this._readinessNote(note, COLORS.textDim));
 
         return section;
+    }
+
+    /**
+     * Why the shortfall says buy or craft, with both totals.
+     *
+     * Both totals every time rather than only the winner's, because "96 to
+     * craft" on its own is an instruction, and the reader is owed the number it
+     * beat. The basis is on the face of the line for the same reason the own-use
+     * tooltip puts it there: the two figures are only comparable because they
+     * came off the same side of the book, and a reader who cannot see which side
+     * has to assume.
+     *
+     * A route nobody could price is stated as unpriced, never as zero. A key
+     * with no market and no priceable recipe gets the line that says so — the
+     * one thing this must not do is imply a free craft and send somebody to a
+     * bench that cannot be stocked.
+     *
+     * @param {Object|null} plan - From `keyShortfallCost`
+     * @returns {HTMLElement|null} Null when there is no shortfall to explain
+     */
+    _keyRouteNote(plan) {
+        if (!plan) return null;
+
+        const gold = (value) => `${formatLargeNumber(Math.round(value))}c`;
+        const basis = plan.priceBasis === 'bid' ? 'bid' : 'ask';
+
+        if (plan.cheaper === null) {
+            return this._readinessNote(
+                `Neither route can be priced for the missing ${formatWithSeparator(plan.shortfall)}: no ${basis} on ` +
+                    'the market, and the recipe has a material with no price. Nothing here is free — it is unknown.',
+                COLORS.textDim
+            );
+        }
+
+        const buy = plan.buyTotal === null ? `buy unpriced (no ${basis})` : `buy ${gold(plan.buyTotal)}`;
+        const craft =
+            plan.craftTotal === null ? 'craft unpriced (a material has no price)' : `craft ${gold(plan.craftTotal)}`;
+        const time = plan.craftSeconds ? `, about ${shortDuration(plan.craftSeconds)} at the bench` : '';
+        const saved = plan.saves > 0 ? `, saving ${gold(plan.saves)}` : '';
+
+        return this._readinessNote(
+            `${formatWithSeparator(plan.shortfall)} short: ${craft} vs ${buy}, both at ${basis} — ` +
+                `cheaper to ${plan.cheaper}${saved}${time}.`,
+            plan.saves > 0 ? COLORS.accent : COLORS.textDim
+        );
     }
 
     /**

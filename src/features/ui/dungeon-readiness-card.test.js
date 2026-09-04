@@ -14,6 +14,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({ data: {} }));
 const settings = vi.hoisted(() => ({ values: {} }));
+const keys = vi.hoisted(() => ({ cost: null, calls: 0 }));
 const game = vi.hoisted(() => ({
     items: {},
     actionDetail: null,
@@ -81,6 +82,15 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
+// The key's buy-versus-craft costing. Mocked because the real one walks the
+// recipe through the crafting planner against the logged-in character; what
+// the card owes the reader is the same either way, and it is the card under test.
+vi.mock('../../utils/key-cost.js', () => ({
+    describeKeyCost: () => {
+        keys.calls += 1;
+        return keys.cost;
+    },
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({ initialize: () => {}, setQuantity: () => {} }),
@@ -189,7 +199,30 @@ const render = async () => {
     consumablesPanel._render();
 };
 
+/**
+ * What one entry key costs, as `describeKeyCost` would state it.
+ *
+ * Both sides always come off the one basis, because that is the invariant the
+ * card is allowed to rely on: the costing decides the mode and applies it to
+ * the market lookup and the recipe alike.
+ */
+const keyCosts = ({ buy = 1000, craft = 600, mode = 'ask', craftSeconds = 20 } = {}) => {
+    keys.cost = {
+        itemHrid: KEY,
+        itemName: 'Chimerical Entry Key',
+        pricingMode: mode,
+        buyPrice: buy,
+        craftCost: craft,
+        craftSeconds,
+        cheaper: craft !== null && (buy === null || craft < buy) ? 'craft' : 'buy',
+        unitCost: craft !== null && (buy === null || craft < buy) ? craft : buy,
+        savings: buy !== null && craft !== null ? Math.abs(buy - craft) : 0,
+    };
+};
+
 beforeEach(() => {
+    keys.cost = null;
+    keys.calls = 0;
     store.data = {};
     settings.values = {};
     game.items = {};
@@ -604,5 +637,94 @@ describe('typing an exact run count', () => {
 
         consumablesPanel._cycleDungeonRuns();
         expect(consumablesPanel.dungeonRuns).toBe(1);
+    });
+});
+
+describe('buying the missing keys against crafting them', () => {
+    test('crafting cheaper is named on the line and shown against the buy total', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        keyCosts({ buy: 1000, craft: 600 });
+        await render();
+
+        const body = text();
+        // Six missing: the route on the key line, and both totals under it
+        expect(body).toContain('6 to craft');
+        expect(body).toContain('craft 4Kc vs buy 6Kc');
+        expect(body).toContain('cheaper to craft');
+        expect(body).toContain('saving 2Kc');
+        expect(body).toContain('at the bench');
+        expect(body).toContain('both at ask');
+    });
+
+    test('buying cheaper keeps the line saying buy', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        keyCosts({ buy: 600, craft: 1000 });
+        await render();
+
+        const body = text();
+        expect(body).toContain('6 to buy');
+        expect(body).toContain('cheaper to buy');
+    });
+
+    test('a patient-buy basis prices both sides on the bid and says so', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        keyCosts({ buy: 400, craft: 900, mode: 'bid' });
+        await render();
+
+        const body = text();
+        expect(body).toContain('both at bid');
+        expect(body).not.toContain('both at ask');
+        expect(body).toContain('cheaper to buy');
+    });
+
+    test('an unpriceable material bails rather than showing a free craft', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        keyCosts({ buy: 1000, craft: null });
+        await render();
+
+        const body = text();
+        expect(body).toContain('craft unpriced');
+        expect(body).toContain('cheaper to buy');
+        // A craft that could not be priced is never the cheaper route
+        expect(body).not.toContain('cheaper to craft');
+        expect(body).not.toContain('craft 0');
+    });
+
+    test('neither route priceable says so instead of costing one at zero', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        keyCosts({ buy: null, craft: null });
+        await render();
+
+        const body = text();
+        expect(body).toContain('Neither route can be priced');
+        expect(body).not.toContain('cheaper to');
+        // The shortfall itself is still exact, and still says what to go and get
+        expect(body).toContain('6 to buy');
+    });
+
+    test('enough keys held prices nothing', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 3;
+        keyCosts();
+        await render();
+
+        expect(text()).not.toContain('cheaper to');
+    });
+
+    test('the costing is not re-run on the refresh clock', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        keyCosts();
+        await render();
+
+        const after = keys.calls;
+        consumablesPanel._render();
+        consumablesPanel._render();
+        expect(keys.calls).toBe(after);
     });
 });

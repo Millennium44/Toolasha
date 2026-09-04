@@ -56,6 +56,11 @@ const utilsExternalGlobals = new Map([
     // of memoised summaries, reached from the actions and sim bundles
     [normalize(join(__dirname, 'src/utils/calibration-badge.js')), 'Toolasha.Utils.calibrationBadge'],
     [normalize(join(__dirname, 'src/utils/class-weapon.js')), 'Toolasha.Utils.classWeapon'],
+    // What an entry key costs bought against crafted: the ROI board (combat)
+    // ranks dungeons with it and the consumables panel's readiness card (ui)
+    // prices its key shortfall with it. One copy so the two cannot quote
+    // different costs for the same key, and so its craft memo is shared.
+    [normalize(join(__dirname, 'src/utils/key-cost.js')), 'Toolasha.Utils.keyCost'],
     [normalize(join(__dirname, 'src/utils/damage-board.js')), 'Toolasha.Utils.damageBoard'],
     [normalize(join(__dirname, 'src/utils/efficiency.js')), 'Toolasha.Utils.efficiency'],
     [normalize(join(__dirname, 'src/utils/profit-helpers.js')), 'Toolasha.Utils.profitHelpers'],

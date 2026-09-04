@@ -92,6 +92,9 @@ import * as liquidityCap from '../utils/liquidity-cap.js';
 // The calibration badges beside the forecasts, shared so the actions and sim
 // bundles read one cached ledger (see utils/calibration-badge.js).
 import * as calibrationBadge from '../utils/calibration-badge.js';
+// The buy-versus-craft costing for dungeon keys, shared so the ROI board
+// (combat) and the readiness card (ui) quote one figure for the same key.
+import * as keyCost from '../utils/key-cost.js';
 // Everything below was surfaced by scripts/check-bundle-sharing.mjs: reachable
 // from two or more production bundles, so it must be exported here (and mapped
 // in utilsExternalGlobals) or every bundle silently carries its own copy.
@@ -233,6 +236,7 @@ toolashaRoot.Utils = {
     toast,
     liquidityCap,
     calibrationBadge,
+    keyCost,
     actionContext,
     adoptionConsent,
     alchemyFees,

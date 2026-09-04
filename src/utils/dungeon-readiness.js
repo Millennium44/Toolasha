@@ -111,6 +111,68 @@ export function nextRunStep(current, steps) {
 }
 
 /**
+ * Buying the missing keys against crafting them.
+ *
+ * The shortfall figure on the key line says how many keys are not in the bag,
+ * and until now it implied a purchase. Entry keys have a recipe, and on a thin
+ * key market the materials are routinely cheaper than the key — so the figure
+ * worth showing is both totals and which one wins.
+ *
+ * Nothing here decides which route is cheaper: `cost` arrives from
+ * `utils/key-cost.js`, which already priced both sides **on one basis** and
+ * named the winner. Re-deciding it would be the exact failure the own-use line
+ * was fixed for — one side quoted at ask, the other at the user's mode — and
+ * would let this card disagree with the ROI board about the same key.
+ *
+ * A route that cannot be priced is null, never zero. When neither can be, the
+ * whole plan is null and the card says the key cannot be costed: a free craft
+ * is the one answer that would send somebody to a bench for nothing.
+ *
+ * @param {Object} input - The shortfall and what a key costs
+ * @param {number} input.shortfall - Keys missing, from `keyReadiness`
+ * @param {Object|null} input.cost - From `describeKeyCost`
+ * @returns {{shortfall: number, buyEach: number|null, craftEach: number|null, buyTotal: number|null,
+ *   craftTotal: number|null, cheaper: 'buy'|'craft'|null, total: number|null, saves: number|null,
+ *   priceBasis: 'ask'|'bid', craftSeconds: number|null}|null} Null when there is no shortfall
+ *   to price; a plan with `cheaper: null` when neither route could be priced
+ */
+export function keyShortfallCost({ shortfall = 0, cost = null } = {}) {
+    const missing = Math.max(0, Math.floor(Number(shortfall) || 0));
+    if (!missing) return null;
+
+    const each = (value) => (Number.isFinite(value) && value > 0 ? value : null);
+    const buyEach = each(cost?.buyPrice);
+    const craftEach = each(cost?.craftCost);
+    const priceBasis = cost?.pricingMode === 'bid' ? 'bid' : 'ask';
+    const times = (value) => (value === null ? null : value * missing);
+
+    const plan = {
+        shortfall: missing,
+        buyEach,
+        craftEach,
+        buyTotal: times(buyEach),
+        craftTotal: times(craftEach),
+        cheaper: null,
+        total: null,
+        saves: null,
+        priceBasis,
+        craftSeconds: null,
+    };
+
+    if (buyEach === null && craftEach === null) return plan;
+
+    // A tie goes to buying, the way `describeKeyCost` calls it: the two cost
+    // the same gold and only one of them also costs the player an afternoon
+    plan.cheaper = craftEach === null ? 'buy' : buyEach === null ? 'craft' : craftEach < buyEach ? 'craft' : 'buy';
+    plan.total = plan.cheaper === 'craft' ? plan.craftTotal : plan.buyTotal;
+    if (buyEach !== null && craftEach !== null) plan.saves = Math.abs(plan.buyTotal - plan.craftTotal);
+    if (plan.cheaper === 'craft' && Number.isFinite(cost?.craftSeconds) && cost.craftSeconds > 0) {
+        plan.craftSeconds = cost.craftSeconds * missing;
+    }
+    return plan;
+}
+
+/**
  * How many whole runs a stock covers, given how long a run takes.
  *
  * Whole runs, floored: half a run of food is not a run, and a party that stops
@@ -466,6 +528,8 @@ export function readinessFootnotes(model) {
  * @param {Object} input.dungeon - `{actionHrid, name, tier}`
  * @param {number} input.runsPlanned - The plan
  * @param {Object|null} input.keys - From `keyReadiness`
+ * @param {Object|null} [input.keyCost] - From `utils/key-cost.js`'s `describeKeyCost`, for
+ *   the shortfall's buy-versus-craft line; pricing is game state, so it arrives from the caller
  * @param {Array<Object>} input.members - From `memberReadiness`
  * @param {Array<string>} [input.lint] - Gear/aura warnings, already worded
  * @param {string} [input.lintScope] - What the lint was allowed to look at
@@ -476,6 +540,7 @@ export function buildReadiness({
     dungeon,
     runsPlanned = 1,
     keys = null,
+    keyCost = null,
     members = [],
     lint = [],
     lintScope = '',
@@ -487,6 +552,7 @@ export function buildReadiness({
         runSeconds: runLength?.seconds ?? null,
         runSamples: runLength?.samples ?? 0,
         keys,
+        keyPlan: keyShortfallCost({ shortfall: keys?.shortfall ?? 0, cost: keyCost }),
         members: members || [],
         lint: lint || [],
         lintScope,
@@ -506,6 +572,7 @@ export default {
     MAX_RUNS_PLANNED,
     parseRunsPlanned,
     nextRunStep,
+    keyShortfallCost,
     runsCovered,
     typicalRunSeconds,
     keyReadiness,
