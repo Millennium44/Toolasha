@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dungeon readiness card can see your party's keys, and your own
+
+The card called every other party member "Unknown player — not in party data", while the game's own key-count message in party chat had been naming them and stating their exact entry key count all along. It now reads that message: every member appears by name with the keys they hold and the runs those cover. Food and drinks for anyone but you are still genuinely unreadable before the key is spent, so a member with counted keys still counts as only partly read and never shows green — the count is a ceiling on their runs, not their stopping point.
+
+Your own keys were missing from the check entirely, which meant the card could name your coffee as the thing that stops you while four entry keys sat in the bag. The key line now also says how many more to buy when you are short of the planned runs, and the plan defaults to 100 runs rather than 5, which is roughly a day of dungeoning and matches the horizon the rest of the panel already used.
+
+
 ### The own-use tooltip line prices both halves the way you asked, and says which
 
 "Own use: make vs buy" costed your materials under whichever pricing mode you had chosen, then always priced the buy alternative at the ask. On bid-based modes that compared a cheap side against an expensive one and leaned toward "make it yourself" on the spread alone. Both halves now follow the same mode, and the line states the basis it used, so "buy" no longer has to be assumed. Anyone on the default hybrid mode sees no change, since hybrid buys at ask on both sides already; the modes that quote bids are the ones that were wrong.
