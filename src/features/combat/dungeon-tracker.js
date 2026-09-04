@@ -1478,6 +1478,14 @@ class DungeonTracker {
         // hibernation flag that has already been reset for somebody else's run.
         const hibernated = this.hibernationDetected === true || completedRunData.hibernationDetected === true;
         const soloName = dataManager.getCurrentCharacterName?.() ?? null;
+        // Who ran this. `saveTeamRun` stamps `recordedBy` from whoever is current
+        // when it runs, and it runs after `clearInProgressRun`'s storage round
+        // trip below — so a switch landing in that gap files this run under the
+        // arriving character. `runMatchesCharacter` trusts the stamp absolutely,
+        // so the run then never appears for whoever actually ran it, and skews
+        // every per-character average, the pace profile and the ROI board of one
+        // who was never in it.
+        const owner = currentOwner();
 
         // Carry the completion timestamp forward as the next run's start anchor.
         // This avoids the scanExistingChatMessages race condition where the scan
@@ -1507,6 +1515,12 @@ class DungeonTracker {
 
         // Clear saved in-progress state (async - may not complete before next restore attempt)
         await this.clearInProgressRun();
+        // The state above is already this run's own copy, but everything below
+        // writes: to history under the current character, and to a panel that
+        // now belongs to somebody else. Neither is this run's to touch any more.
+        if (currentOwner() !== owner) {
+            return;
+        }
 
         const endTime = Date.now();
 

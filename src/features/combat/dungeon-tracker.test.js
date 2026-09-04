@@ -2689,3 +2689,70 @@ describe('recovering a partial party run’s start from chat', () => {
         expect(game.savedRuns[0].run.waveTimes).toEqual([3000]);
     });
 });
+
+describe('a character switch inside completeDungeon', () => {
+    // `completeDungeon` reads the hibernation flag and the solo character's name
+    // before its awaits, but the *recorder stamp* is read inside
+    // `dungeonTrackerStorage.saveTeamRun`, which is called after
+    // `clearInProgressRun`'s storage round trip. A switch landing in that gap
+    // stamps this run with the arriving character: it vanishes from the history
+    // of whoever ran it and appears, permanently, under one who was never in it.
+
+    /** Flip the character part-way through the completion's storage clear. */
+    function switchInsideTheClear(newId, newName) {
+        mockStorage.delete.mockImplementationOnce(async (key, storeName = 'settings') => {
+            mockStorage.storeFor(storeName).delete(key);
+            game.characterId = newId;
+            game.characterName = newName;
+            return true;
+        });
+    }
+
+    test('a party run completing across a switch is not banked under the arriving character', async () => {
+        beTracking({
+            waveTimes: [3000],
+            maxWaves: 10,
+            wavesCompleted: 10,
+            keyCountsMap: { Alice: 12, Bob: 8 },
+            anchoredAt: '2026-08-04T10:00:00.000Z',
+        });
+        switchInsideTheClear('iron456', 'Ironcow');
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Alice - 11], [Bob - 7]'));
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('a solo run completing across a switch is not banked under the arriving character', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(Date.parse('2026-08-04T10:00:00.000Z'));
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        await tracker.onNewBattle({ wave: 1, battleId: 42, combatStartTime: '2026-08-04T09:00:00.000Z' });
+        await flush();
+        tracker.currentRun.currentWave = 10;
+        tracker.currentRun.wavesCompleted = 9;
+        vi.setSystemTime(Date.parse('2026-08-04T10:05:00.000Z'));
+        switchInsideTheClear('iron456', 'Ironcow');
+
+        tracker.onActionCompleted({ endCharacterAction: { actionHrid: DEN, wave: 10, isDone: true } });
+        await flush();
+
+        expect(game.savedRuns).toEqual([]);
+    });
+
+    test('with nobody switching the run is banked as before', async () => {
+        beTracking({
+            waveTimes: [3000],
+            maxWaves: 10,
+            wavesCompleted: 10,
+            keyCountsMap: { Alice: 12, Bob: 8 },
+            anchoredAt: '2026-08-04T10:00:00.000Z',
+        });
+
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:04:32.000Z', 'Key counts: [Alice - 11], [Bob - 7]'));
+        await flush();
+
+        expect(game.savedRuns).toHaveLength(1);
+    });
+});
