@@ -74,7 +74,13 @@ import {
     typicalRunSeconds,
     MAX_RUNS_PLANNED,
 } from '../../utils/dungeon-readiness.js';
-import { describeKeyCost } from '../../utils/key-cost.js';
+import {
+    KEY_PRICING_MODES,
+    KEY_PRICING_SETTING,
+    describeKeyCost,
+    invalidateKeyCostCache,
+    resolveKeyPricing,
+} from '../../utils/key-cost.js';
 import { partyLintWarnings } from '../../utils/party-lint.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { registerCommand } from '../../utils/command-registry.js';
@@ -209,6 +215,20 @@ const DEFAULT_DUNGEON_RUNS = 100;
 
 /** How long a key's buy-versus-craft costing is reused before it is re-priced */
 const KEY_COST_TTL_MS = 60_000;
+
+/**
+ * What each stored key pricing mode is called on the card's chip.
+ *
+ * Short enough for a chip, and deliberately the same vocabulary the Settings
+ * page uses, so somebody who cycles the chip and then goes looking for the
+ * setting recognises what they changed.
+ */
+const KEY_PRICING_LABELS = {
+    ask: 'ask',
+    bid: 'bid',
+    synced: 'synced',
+    craft: 'craft cost',
+};
 
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.97)',
@@ -646,8 +666,14 @@ class ConsumablesPanel {
      */
     _keyCost(keyHrid) {
         if (!keyHrid) return null;
+        // Part of the cache identity, not just of the answer: a key priced at
+        // ask is not the same costing as the same key priced at craft cost, and
+        // a mode changed on the Settings page must not read stale for a minute.
+        const pricing = this._keyPricingMode();
         const cached = this._keyCostCache;
-        if (cached?.keyHrid === keyHrid && Date.now() - cached.at < KEY_COST_TTL_MS) return cached.cost;
+        if (cached?.keyHrid === keyHrid && cached.pricing === pricing && Date.now() - cached.at < KEY_COST_TTL_MS) {
+            return cached.cost;
+        }
 
         let cost = null;
         try {
@@ -655,8 +681,81 @@ class ConsumablesPanel {
         } catch (error) {
             console.error('[ConsumablesPanel] Pricing the entry key failed:', error);
         }
-        this._keyCostCache = { keyHrid, at: Date.now(), cost };
+        this._keyCostCache = { keyHrid, pricing, at: Date.now(), cost };
         return cost;
+    }
+
+    /**
+     * The key pricing mode as stored, resolved so an unknown value has a name.
+     * @returns {string} One of `KEY_PRICING_MODES`
+     */
+    _keyPricingMode() {
+        return resolveKeyPricing().setting;
+    }
+
+    /**
+     * Move the key pricing setting on to the next mode.
+     *
+     * This writes the same `profitCalc_keyPricingMode` the Settings page writes
+     * — there is no per-panel copy of it, because a card that valued keys
+     * differently from net worth and the ROI board would be the disagreement
+     * this whole setting exists to prevent. The chip says so on its face and in
+     * its tooltip; see `_keyPricingChip`.
+     *
+     * The costing is cached on both sides of the bundle boundary, so both
+     * caches are dropped here rather than waiting out their minute: the shared
+     * craft-basis memo in `key-cost.js`, and this panel's own. The readiness
+     * memo goes with them because its signature is a function of the costing.
+     */
+    _cycleKeyPricingMode() {
+        const modes = KEY_PRICING_MODES;
+        // `indexOf` of an unrecognised stored value is -1, which lands on the
+        // first mode — the same place `resolveKeyPricing` puts it
+        const next = modes[(modes.indexOf(this._keyPricingMode()) + 1) % modes.length];
+        config.setSetting(KEY_PRICING_SETTING, next);
+
+        invalidateKeyCostCache();
+        this._keyCostCache = null;
+        this._readinessMemo = null;
+        this._render();
+    }
+
+    /**
+     * The chip that cycles the key pricing mode.
+     *
+     * Built to look and behave like the run-count chip beside it — same box,
+     * same click-to-cycle — because a third control style in one heading is a
+     * thing to learn rather than a thing to use.
+     *
+     * What it must not be is a chip that looks local and is global. The gear
+     * marks it as a settings control, the label names the mode in the Settings
+     * page's own words, and the tooltip states outright which setting is being
+     * written and what else moves when it does.
+     *
+     * @returns {HTMLElement}
+     */
+    _keyPricingChip() {
+        const mode = this._keyPricingMode();
+        const chip = document.createElement('button');
+        Object.assign(chip.style, {
+            background: 'rgba(255, 255, 255, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.accent,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '1px 8px',
+        });
+        chip.textContent = `⚙ keys: ${KEY_PRICING_LABELS[mode] || mode}`;
+        chip.title =
+            `Key pricing: ${KEY_PRICING_LABELS[mode] || mode}. Click to cycle.\n\n` +
+            'This is the global "Key pricing mode" setting, not a setting for this card — changing it here ' +
+            'also changes your net worth, item tooltips, combat income and the dungeon ROI board.';
+        chip.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._cycleKeyPricingMode();
+        });
+        return chip;
     }
 
     /**
@@ -886,7 +985,8 @@ class ConsumablesPanel {
                 .sort()
                 .join(','),
             keysHeld,
-            `${keyCost?.pricingMode ?? '?'}:${keyCost?.buyPrice ?? '?'}:${keyCost?.craftCost ?? '?'}`,
+            `${keyCost?.pricingMode ?? '?'}:${keyCost?.basis ?? '?'}:` +
+                `${keyCost?.buyPrice ?? '?'}:${keyCost?.craftCost ?? '?'}`,
             Object.entries(context.keyCounts)
                 .map(([who, count]) => `${who}=${count}`)
                 .sort()
@@ -1033,7 +1133,10 @@ class ConsumablesPanel {
             this._editDungeonRuns(heading);
         });
 
-        heading.append(name, runsBtn, editBtn);
+        // Only in this heading: the setting is global, but the reason to reach
+        // for it is in front of you here, and nowhere else in this panel is
+        // a key being priced.
+        heading.append(name, runsBtn, editBtn, this._keyPricingChip());
         section.appendChild(heading);
 
         if (model.keys) {

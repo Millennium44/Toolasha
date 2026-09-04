@@ -14,7 +14,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({ data: {} }));
 const settings = vi.hoisted(() => ({ values: {} }));
-const keys = vi.hoisted(() => ({ cost: null, calls: 0 }));
+const keys = vi.hoisted(() => ({ cost: null, calls: 0, invalidations: 0 }));
 const game = vi.hoisted(() => ({
     items: {},
     actionDetail: null,
@@ -86,9 +86,27 @@ vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
 // recipe through the crafting planner against the logged-in character; what
 // the card owes the reader is the same either way, and it is the card under test.
 vi.mock('../../utils/key-cost.js', () => ({
+    KEY_PRICING_MODES: ['ask', 'bid', 'synced', 'craft'],
+    KEY_PRICING_SETTING: 'profitCalc_keyPricingMode',
+    // The stored setting decides which costing comes back, so a test can prove
+    // the card re-priced rather than redrew the same numbers
     describeKeyCost: () => {
         keys.calls += 1;
-        return keys.cost;
+        return typeof keys.cost === 'function'
+            ? keys.cost(settings.values.profitCalc_keyPricingMode ?? 'ask')
+            : keys.cost;
+    },
+    invalidateKeyCostCache: () => {
+        keys.invalidations += 1;
+    },
+    resolveKeyPricing: () => {
+        const stored = settings.values.profitCalc_keyPricingMode;
+        const setting = ['ask', 'bid', 'synced', 'craft'].includes(stored) ? stored : 'ask';
+        return {
+            setting,
+            priceSide: setting === 'bid' ? 'bid' : 'ask',
+            basis: setting === 'craft' ? 'craft' : 'market',
+        };
     },
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
@@ -223,6 +241,7 @@ const keyCosts = ({ buy = 1000, craft = 600, mode = 'ask', craftSeconds = 20 } =
 beforeEach(() => {
     keys.cost = null;
     keys.calls = 0;
+    keys.invalidations = 0;
     store.data = {};
     settings.values = {};
     game.items = {};
@@ -726,5 +745,104 @@ describe('buying the missing keys against crafting them', () => {
         consumablesPanel._render();
         consumablesPanel._render();
         expect(keys.calls).toBe(after);
+    });
+});
+
+describe('changing the key pricing mode from the card', () => {
+    const chip = () =>
+        [...consumablesPanel.bodyEl.querySelectorAll('button')].find((el) => el.textContent.startsWith('⚙ keys:'));
+    const click = async () => {
+        chip().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        await settled();
+    };
+
+    /**
+     * A costing that answers differently per mode, so a stale read is visible.
+     *
+     * Crafting costs more than buying here on purpose: only the craft basis
+     * takes it, so the note's wording is proof of which basis the card priced on.
+     */
+    const perMode = () => {
+        keys.cost = (mode) => ({
+            itemHrid: KEY,
+            itemName: 'Chimerical Entry Key',
+            pricingMode: mode === 'bid' ? 'bid' : 'ask',
+            basis: mode === 'craft' ? 'craft' : 'market',
+            buyPrice: 500,
+            craftCost: 900,
+            craftSeconds: 20,
+            cheaper: mode === 'craft' ? 'craft' : 'buy',
+            unitCost: mode === 'craft' ? 900 : 500,
+            savings: 400,
+        });
+    };
+
+    test('the chip names the mode and says the setting it writes is the global one', async () => {
+        inParty();
+        keyCosts();
+        await render();
+
+        expect(chip().textContent).toBe('⚙ keys: ask');
+        expect(chip().title).toContain('global');
+        expect(chip().title).toContain('net worth');
+    });
+
+    test('it is only on the card, so a panel with no dungeon section has none', async () => {
+        game.characterData = { character: { id: 'char1', name: 'Me' } };
+        await render();
+
+        expect(chip()).toBeUndefined();
+    });
+
+    test('clicking it writes the global setting rather than a per-panel copy', async () => {
+        inParty();
+        keyCosts();
+        await render();
+
+        await click();
+        expect(settings.values.profitCalc_keyPricingMode).toBe('bid');
+        expect(chip().textContent).toBe('⚙ keys: bid');
+
+        await click();
+        expect(settings.values.profitCalc_keyPricingMode).toBe('synced');
+
+        await click();
+        expect(settings.values.profitCalc_keyPricingMode).toBe('craft');
+
+        // ...and round, so the chip can always reach every mode
+        await click();
+        expect(settings.values.profitCalc_keyPricingMode).toBe('ask');
+    });
+
+    test('a stored mode nobody recognises cycles from ask rather than sticking', async () => {
+        inParty();
+        keyCosts();
+        settings.values.profitCalc_keyPricingMode = 'midpoint-ish';
+        await render();
+
+        expect(chip().textContent).toBe('⚙ keys: ask');
+        await click();
+        expect(settings.values.profitCalc_keyPricingMode).toBe('bid');
+    });
+
+    test('the card re-prices on the new basis instead of serving the cached costing', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 10;
+        settings.values.profitCalc_keyPricingMode = 'synced';
+        perMode();
+        await render();
+
+        expect(text()).toContain('cheaper to buy');
+        const priced = keys.calls;
+
+        await click();
+
+        expect(settings.values.profitCalc_keyPricingMode).toBe('craft');
+        // The shared craft-basis memo in key-cost.js is dropped too, not just
+        // this panel's own — both outlive a click by a minute otherwise
+        expect(keys.invalidations).toBeGreaterThan(0);
+        expect(keys.calls).toBeGreaterThan(priced);
+        expect(text()).toContain('costed as crafted, your key pricing mode');
+        expect(text()).not.toContain('cheaper to buy');
     });
 });
