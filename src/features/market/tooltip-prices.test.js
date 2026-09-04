@@ -197,6 +197,7 @@ describe('own-use make vs buy', () => {
         materialCostPerHour: 3_500_000,
         totalTeaCostPerHour: 500_000,
         itemPrice: { ask: 50_000, bid: 45_000 },
+        pricingMode: 'hybrid',
         ...overrides,
     });
 
@@ -216,9 +217,18 @@ describe('own-use make vs buy', () => {
         expect(compared.cheaper).toBe('even');
     });
 
-    test('within a percent of the ask no winner is called', () => {
+    test('within a percent of the buy price no winner is called', () => {
         const compared = ownUseCompare(data({ itemPrice: { ask: 40_300, bid: 0 } }));
         expect(compared.cheaper).toBe('even');
+        // The band is a percent of the buy side whichever book it came from, so
+        // on a bid basis it narrows with the number it qualifies: 40.3K is
+        // within a percent of itself, 40.5K is not once the reference is 40.0K
+        const bidBand = ownUseCompare(data({ pricingMode: 'patientBuy', itemPrice: { ask: 99_999, bid: 40_300 } }));
+        expect(bidBand.cheaper).toBe('even');
+        const outsideBidBand = ownUseCompare(
+            data({ pricingMode: 'patientBuy', itemPrice: { ask: 99_999, bid: 40_500 } })
+        );
+        expect(outsideBidBand.cheaper).toBe('make');
     });
 
     test('an item with no asks still prices the making of it', () => {
@@ -226,6 +236,61 @@ describe('own-use make vs buy', () => {
         expect(compared.make).toBe(40_000);
         expect(compared.buy).toBeNull();
         expect(ownUseLine(compared).text).toBe('Own use: make ≈40.0K (no asks)');
+    });
+
+    test('each pricing mode buys on the side that mode would actually pay', () => {
+        // getPricingMode's buy column: conservative/hybrid insta-buy at ask,
+        // optimistic/patientBuy wait at bid
+        for (const mode of ['conservative', 'hybrid']) {
+            const compared = ownUseCompare(data({ pricingMode: mode }));
+            expect(compared.priceBasis).toBe('ask');
+            expect(compared.buy).toBe(50_000);
+        }
+        for (const mode of ['optimistic', 'patientBuy']) {
+            const compared = ownUseCompare(data({ pricingMode: mode }));
+            expect(compared.priceBasis).toBe('bid');
+            expect(compared.buy).toBe(45_000);
+        }
+    });
+
+    test('a mode nobody recognises, or none at all, lands on ask like the make side did', () => {
+        // config's mock answers getSettingValue with the caller's fallback,
+        // which for profitCalc_pricingMode is 'hybrid'
+        expect(ownUseCompare(data({ pricingMode: undefined })).priceBasis).toBe('ask');
+        expect(ownUseCompare(data({ pricingMode: 'sideways' })).priceBasis).toBe('ask');
+    });
+
+    test('the line names the book the buy figure came from', () => {
+        expect(ownUseLine(ownUseCompare(data({ pricingMode: 'hybrid' }))).text).toContain('buy 50.0K (ask)');
+        expect(ownUseLine(ownUseCompare(data({ pricingMode: 'optimistic' }))).text).toContain('buy 45.0K (bid)');
+        // The even line declares it too — it is still a claim about two prices
+        const even = ownUseCompare(data({ pricingMode: 'optimistic', itemPrice: { ask: 50_000, bid: 40_000 } }));
+        expect(ownUseLine(even).text).toBe('Own use: make ≈40.0K vs buy 40.0K (bid) — even');
+    });
+
+    test('a missing price under a bid mode says the bids are missing, not that buying is free', () => {
+        // An ask sitting right there is no substitute: nobody is bidding, and
+        // reading the other book would quote a price this mode never pays
+        const compared = ownUseCompare(data({ pricingMode: 'optimistic', itemPrice: { ask: 50_000, bid: 0 } }));
+        expect(compared.buy).toBeNull();
+        expect(compared.saves).toBeNull();
+        expect(compared.cheaper).toBeNull();
+        expect(ownUseLine(compared).text).toBe('Own use: make ≈40.0K (no bids)');
+        // And the mirror: an ask mode ignores a healthy bid
+        const askSide = ownUseCompare(data({ pricingMode: 'conservative', itemPrice: { ask: 0, bid: 45_000 } }));
+        expect(askSide.buy).toBeNull();
+        expect(ownUseLine(askSide).text).toBe('Own use: make ≈40.0K (no asks)');
+    });
+
+    test('a bid mode does not tilt the verdict toward making by costing the alternative at ask', () => {
+        // Materials came in at bid upstream, so the bench is cheap; quoting the
+        // alternative at ask would have called this 'make' on the spread alone
+        const compared = ownUseCompare(
+            data({ pricingMode: 'patientBuy', materialCostPerHour: 3_800_000, itemPrice: { ask: 50_000, bid: 41_000 } })
+        );
+        expect(compared.buy).toBe(41_000);
+        expect(compared.cheaper).toBe('buy');
+        expect(compared.saves).toBe(2_000);
     });
 
     test('a make side that cannot be priced says nothing at all', () => {
@@ -260,7 +325,9 @@ describe('own-use make vs buy', () => {
     });
 
     test('the line carries the saving and the percent of the price avoided', () => {
-        expect(ownUseLine(ownUseCompare(data())).text).toBe('Own use: make ≈40.0K vs buy 50.0K — save 10.0K (20%)');
+        expect(ownUseLine(ownUseCompare(data())).text).toBe(
+            'Own use: make ≈40.0K vs buy 50.0K (ask) — save 10.0K (20%)'
+        );
         // Buying at 50K instead of making at 80K avoids the 80K — the saving
         // is measured against what the cheaper choice spares you
         const buyingWins = ownUseCompare(data({ materialCostPerHour: 7_500_000 }));

@@ -111,15 +111,41 @@ function levelAtExperience(table, experience) {
  * TooltipPrices class handles injecting market prices into item tooltips
  */
 /**
+ * The order-book side a `profitCalc_pricingMode` buys at.
+ *
+ * Same table `getPricingMode` applies for `{ context: 'profit', side: 'buy' }`,
+ * duplicated rather than called because this module holds a plain profitData
+ * object, not an item hrid. Acquiring is always a buy, so only the buy column
+ * matters: 'conservative' and 'hybrid' insta-buy at ask, 'optimistic' and
+ * 'patientBuy' wait at bid. An unrecognised mode falls to ask exactly as
+ * `getPricingMode` does, so the two halves still agree.
+ *
+ * @param {string|undefined} pricingMode - `profitData.pricingMode`
+ * @returns {'ask'|'bid'}
+ */
+function ownUseBuyBasis(pricingMode) {
+    const mode = pricingMode || config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+    return mode === 'optimistic' || mode === 'patientBuy' ? 'bid' : 'ask';
+}
+
+/**
  * Buying versus making, for an item that will be consumed rather than sold.
  *
  * Every profit figure in this module is a seller's: the crafted output is
  * priced at market minus the sales tax, because the question is "should I
  * craft this to sell". A dungeon key or a meal is never sold, so that tax
- * belongs on neither side here — buying costs the ask you actually pay, and
- * making costs the materials and teas your own bench burns per finished item
- * (efficiency and Gourmet included, which is why the per-hour figures are the
- * ones divided: teas amortize over the extra actions efficiency repeats).
+ * belongs on neither side here — buying costs whatever acquiring it costs
+ * under the user's pricing mode, and making costs the materials and teas your
+ * own bench burns per finished item (efficiency and Gourmet included, which is
+ * why the per-hour figures are the ones divided: teas amortize over the extra
+ * actions efficiency repeats).
+ *
+ * Both sides are quoted on that one mode. The make side already is, because
+ * every material and tea was resolved at `{ context: 'profit', side: 'buy' }`;
+ * the buy side reads the same mode off `profitData.pricingMode` so the
+ * comparison cannot be half optimistic and half conservative. Costing the
+ * materials at bid while quoting the alternative at ask would tilt every such
+ * line toward "make is cheaper" by the width of the spread.
  *
  * Deliberately not the same model as the dungeon ROI board's `describeKeyCost`:
  * that one prices a replacement key from materials alone, each sourced at the
@@ -132,8 +158,10 @@ function levelAtExperience(table, experience) {
  * @param {Object|null} [actionDetail] - The producing action's detail, for the
  *   multi-output gate; null skips that gate rather than failing it
  * @returns {{make: number, buy: number|null, saves: number|null,
- *   cheaper: 'make'|'buy'|'even'|null}|null} The comparison, or null when the
- *   make side cannot be priced
+ *   cheaper: 'make'|'buy'|'even'|null, priceBasis: 'ask'|'bid'}|null} The
+ *   comparison, or null when the make side cannot be priced. `priceBasis` is
+ *   the order-book side the buy figure came from — and would have come from
+ *   had one been listed, so a null `buy` can still say which book was empty.
  */
 export function ownUseCompare(profitData, actionDetail = null) {
     // A recipe with several outputs bills its whole bench spend to whichever
@@ -158,14 +186,17 @@ export function ownUseCompare(profitData, actionDetail = null) {
     }
     const make = spendPerHour / madePerHour;
 
-    const buy = Number(profitData?.itemPrice?.ask);
-    if (!(buy > 0)) return { make, buy: null, saves: null, cheaper: null };
+    const priceBasis = ownUseBuyBasis(profitData?.pricingMode);
+    const buy = Number(profitData?.itemPrice?.[priceBasis]);
+    if (!(buy > 0)) return { make, buy: null, saves: null, cheaper: null, priceBasis };
 
     const saves = Math.abs(buy - make);
-    // Within a percent of the ask the two are the same decision, and calling a
-    // winner on that margin is precision the inputs do not have
+    // Within a percent of the price you would pay the two are the same
+    // decision, and calling a winner on that margin is precision the inputs do
+    // not have. The band tracks the buy side deliberately: on a bid basis the
+    // reference is lower, so the band narrows with the number it qualifies.
     const cheaper = saves < buy * 0.01 ? 'even' : make < buy ? 'make' : 'buy';
-    return { make, buy, saves, cheaper };
+    return { make, buy, saves, cheaper, priceBasis };
 }
 
 /**
@@ -176,10 +207,14 @@ export function ownUseCompare(profitData, actionDetail = null) {
 export function ownUseLine(comparison) {
     if (!comparison) return null;
     const make = formatKMB(comparison.make);
+    const basis = comparison.priceBasis === 'bid' ? 'bid' : 'ask';
     if (comparison.buy === null) {
-        return { text: `Own use: make ≈${make} (no asks)`, color: config.COLOR_TOOLTIP_INFO };
+        return { text: `Own use: make ≈${make} (no ${basis}s)`, color: config.COLOR_TOOLTIP_INFO };
     }
-    const buy = formatKMB(comparison.buy);
+    // The basis rides on the buy figure rather than the end of the line: it
+    // qualifies that number and nothing else, and the reader can no longer
+    // assume ask.
+    const buy = `${formatKMB(comparison.buy)} (${basis})`;
     if (comparison.cheaper === 'even') {
         return { text: `Own use: make ≈${make} vs buy ${buy} — even`, color: config.COLOR_TOOLTIP_INFO };
     }
@@ -867,8 +902,9 @@ class TooltipPrices {
             const line = ownUseLine(ownUseCompare(profitData, ownUseAction));
             if (line) {
                 const title =
-                    'Buying at the current ask vs crafting at your own bench cost per item (materials + teas, ' +
-                    'your efficiency and Gourmet). No sales tax on either side — a consumed item is never sold.';
+                    'Buying vs crafting at your own bench cost per item (materials + teas, your efficiency and ' +
+                    'Gourmet). Both sides use your profit pricing mode, so the buy figure is the ask or the bid ' +
+                    'that mode would pay. No sales tax on either side — a consumed item is never sold.';
                 html += `<div style="color: ${line.color}; margin-top: 4px;" title="${title}">${line.text}</div>`;
             }
         }
