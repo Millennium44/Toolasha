@@ -158,15 +158,34 @@ class PanelSizeMemory {
         document.addEventListener('pointerdown', this.onPointerDown, true);
         document.addEventListener('pointerup', this.onPointerUp, true);
 
-        // The game re-renders panels on navigation, which drops inline styles;
-        // reapply whenever the DOM settles
+        this.restore();
+
+        this._loadSaved();
+    }
+
+    /**
+     * Reapply the remembered size whenever the DOM settles — the game re-renders
+     * panels on navigation, which drops inline styles.
+     *
+     * Registered only once there is a size to reapply. This handler carries no
+     * class filter, so the shared observer runs it for every element inserted
+     * anywhere on the page and re-arms a 250 ms debounce — one `clearTimeout`
+     * plus one `setTimeout` per inserted node, which through combat is the
+     * largest single contributor to `timerCounters.domRearm`. For anyone who has
+     * never dragged a panel divider that bought nothing at all: `restore()`
+     * returns on its first line while `saved` is null.
+     *
+     * There is no filter to use instead. The element is remembered as a
+     * structural path rather than by class (see `buildElementPath`), precisely
+     * so a game update cannot invalidate it, so there is no class to watch.
+     * @private
+     */
+    _watchDom() {
+        if (this.unregisterObserver || !this.isInitialized) return;
         this.unregisterObserver = domObserver.register('PanelSizeMemory', () => this.restore(), {
             debounce: true,
             debounceDelay: 250,
         });
-        this.restore();
-
-        this._loadSaved();
     }
 
     /**
@@ -186,6 +205,7 @@ class PanelSizeMemory {
         // newer size — either way the stored one is stale now.
         if (!this.isInitialized || this.saved || this.dragging) return;
         this.saved = saved;
+        if (saved) this._watchDom();
         this.restore();
     }
 
@@ -234,6 +254,7 @@ class PanelSizeMemory {
      */
     async persist(entry) {
         this.saved = entry;
+        this._watchDom();
         try {
             await storage.set(STORAGE_KEY, entry);
         } catch (error) {

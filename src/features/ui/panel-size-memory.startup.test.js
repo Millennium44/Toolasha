@@ -54,7 +54,6 @@ describe('initialize does not wait on storage', () => {
         const returned = panelSizeMemory.initialize();
 
         expect(returned).toBeUndefined();
-        expect(domObserver.register).toHaveBeenCalledTimes(1);
         expect(state.release).toBeTypeOf('function');
     });
 
@@ -65,6 +64,35 @@ describe('initialize does not wait on storage', () => {
 
         state.release(SAVED);
         await vi.waitFor(() => expect(panel.style.width).toBe('420px'));
+    });
+
+    test('the unfiltered re-apply handler is registered only once there is a size to re-apply', async () => {
+        // It has no class filter, so the shared observer runs it — and re-arms
+        // its 250 ms debounce — for every element inserted anywhere on the page.
+        // `restore()` returns on its first line while `saved` is null, so for
+        // anyone who has never dragged a divider that was pure churn.
+        panelSizeMemory.initialize();
+        expect(domObserver.register).not.toHaveBeenCalled();
+
+        state.release(SAVED);
+        await vi.waitFor(() => expect(domObserver.register).toHaveBeenCalledTimes(1));
+    });
+
+    test('a stored null leaves the re-apply handler unregistered', async () => {
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(domObserver.register).not.toHaveBeenCalled();
+    });
+
+    test('a drag registers the handler for a session that started with nothing stored', async () => {
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+
+        await instance.persist(SAVED);
+        expect(domObserver.register).toHaveBeenCalledTimes(1);
     });
 
     test('a teardown while the read is in flight restores nothing', async () => {
