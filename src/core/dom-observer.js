@@ -480,16 +480,36 @@ class DOMObserver {
         // `callback` stays a self-contained matcher so the handler can be driven
         // directly (tests, manual re-scans); the observer itself dispatches
         // through `onMatch` and the shared subtree query instead
+        const debounce = options.debounce || false;
         const matcher = (node) => {
             const className = typeof node.className === 'string' ? node.className : '';
             if (classMatches(classArray, className)) {
                 callback(node);
                 return; // Only call once per node
             }
-            if (node.childElementCount > 0) {
+            if (node.childElementCount === 0) return;
+            // A debounced handler is collapsed to one call, which is the whole
+            // point of debouncing it: `_dispatch` hands it the inserted
+            // container and this resolves the match, so fanning out over every
+            // match here undoes the collapse. The inventory panel arrives as
+            // one container holding ~200 item tiles, each carrying both
+            // `Item_itemContainer` and `Item_item` — 400 matches for
+            // `EquipmentLevelDisplay`'s one watched class, and its callback
+            // ignores the argument and re-scans the whole document every time.
+            // Every debounced class handler in the codebase but one takes no
+            // argument at all for exactly that reason.
+            if (debounce) {
                 for (const targetClass of classArray) {
-                    node.querySelectorAll(`[class*="${targetClass}"]`).forEach((match) => callback(match));
+                    const match = node.querySelector(`[class*="${targetClass}"]`);
+                    if (match) {
+                        callback(match);
+                        return;
+                    }
                 }
+                return;
+            }
+            for (const targetClass of classArray) {
+                node.querySelectorAll(`[class*="${targetClass}"]`).forEach((match) => callback(match));
             }
         };
 
@@ -498,7 +518,7 @@ class DOMObserver {
             callback: matcher,
             onMatch: callback,
             classes: classArray,
-            debounce: options.debounce || false,
+            debounce,
             debounceDelay: options.debounceDelay,
             debounceMaxWait: options.debounceMaxWait,
         });

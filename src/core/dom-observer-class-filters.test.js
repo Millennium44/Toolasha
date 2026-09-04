@@ -187,6 +187,103 @@ describe('MarketplaceBadge', () => {
     });
 });
 
+/**
+ * Hand `classes` an inserted container the way a childList mutation would, with
+ * the handler registered debounced — which is how all six of these actually
+ * register — and report how many times the callback ran once the debounce fired.
+ * @param {string[]} classes - The watched class list
+ * @param {string} html - The inserted subtree
+ * @returns {Promise<number>} How many times the handler ran
+ */
+async function debouncedRunsFor(classes, html) {
+    let hits = 0;
+    const unregister = domObserver.onClass(
+        'UnderTest',
+        classes,
+        () => {
+            hits += 1;
+        },
+        { debounce: true, debounceDelay: 5 }
+    );
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    const node = holder.firstElementChild;
+    document.body.appendChild(node);
+    domObserver.dispatch(node, {});
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    unregister();
+    return hits;
+}
+
+describe('a debounced class handler is collapsed to one call per burst', () => {
+    /** An inventory-shaped container: `count` tiles, each with two `Item_item` matches. */
+    const tiles = (count) =>
+        '<div class="Inventory_items__6SXv0">' +
+        '<div class="Item_itemContainer__x7kH1"><div class="Item_item__2De2O Item_clickable__3viV6"></div></div>'.repeat(
+            count
+        ) +
+        '</div>';
+
+    test('EquipmentLevelDisplay runs once for a panel of item tiles, not once per tile', async () => {
+        // Every tile carries `Item_itemContainer__` *and* `Item_item__`, both of
+        // which the one watched substring matches, so the fan-out was two calls
+        // per tile — and `addItemLevels` re-queries the whole document each time.
+        // Registered through `register()` this was one call for the container.
+        expect(await debouncedRunsFor(ITEM_ICON_CLASSES, tiles(50))).toBe(1);
+    });
+
+    test('LoadoutEnhancementDisplay runs once for a loadout panel of equipment slots', async () => {
+        const loadout =
+            '<div class="LoadoutsPanel_panel__9aQ2z">' +
+            '<div class="LoadoutsPanel_selectedLoadout__1t7Ck">' +
+            '<div class="LoadoutsPanel_equipment__2s0Cn">' +
+            '<div class="Item_itemContainer__x7kH1"><div class="Item_item__2De2O"></div></div>'.repeat(10) +
+            '</div></div></div>';
+        // Two watched classes here, and `annotateLoadout` clears and re-injects
+        // every overlay in the panel on each run.
+        expect(await debouncedRunsFor(LOADOUT_WATCH_CLASSES, loadout)).toBe(1);
+    });
+
+    test('ZoneIndices runs once for a combat panel full of zone tabs', async () => {
+        const panel =
+            '<div class="MainPanel_subPanelContainer__1i-H9">' +
+            '<div class="CombatPanel_tabsComponentContainer__GsQlg"><div class="MuiTabs-root MuiTabs-vertical">' +
+            '<button class="MuiButtonBase-root MuiTab-root"><span class="MuiBadge-root"></span></button>'.repeat(12) +
+            '</div></div></div>';
+        expect(await debouncedRunsFor(ZONE_INDEX_CLASSES, panel)).toBe(1);
+    });
+
+    test('MarketHistoryTab runs once for a marketplace panel, not once per watched class', async () => {
+        expect(
+            await debouncedRunsFor(
+                TAB_WATCH_CLASSES,
+                '<div class="MainPanel_panel__1Zbdt">' +
+                    '<div class="MarketplacePanel_marketplacePanel__1eAsx">' +
+                    '<div class="MuiTabs-root"><div class="MuiTabs-flexContainer" role="tablist">' +
+                    '<button class="MuiTab-root">Market Listings</button></div></div>' +
+                    '</div></div>'
+            )
+        ).toBe(1);
+    });
+
+    test('PartyProfileButton runs once for a popup carrying both watched classes', async () => {
+        expect(
+            await debouncedRunsFor(
+                POPUP_TAB_CLASSES,
+                '<div class="Modal_modalContainer__3B9iF"><div class="MuiTabs-root">' +
+                    '<div class="MuiTabs-flexContainer" role="tablist">' +
+                    '<button>Battle Info</button><button>Stats</button></div></div></div>'
+            )
+        ).toBe(1);
+    });
+
+    test('an undebounced handler still gets every match, one call each', async () => {
+        // The collapse is a property of the debounce, not of `onClass`: features
+        // that ask for a call per matching element still get one.
+        expect(runsFor(ITEM_ICON_CLASSES, tiles(3))).toBe(6);
+    });
+});
+
 describe('every audited handler carries a usable class list', () => {
     test('none of the six is left with an empty or malformed filter', () => {
         const lists = [

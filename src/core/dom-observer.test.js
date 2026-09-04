@@ -364,7 +364,12 @@ describe('dispatch', () => {
         expect(domObserver._selector()).toBeNull();
     });
 
-    test('a debounced class handler is handed the container and matches for itself when it fires', () => {
+    test('a debounced class handler fires once for the container, not once per match', () => {
+        // The debounce exists to collapse a burst into one call; resolving every
+        // match when it fires put the fan-out straight back. A container holding
+        // 200 matches (an inventory panel of item tiles) ran the callback 200
+        // times, and every debounced class handler in the codebase but one takes
+        // no argument and re-scans the document from scratch.
         vi.useFakeTimers();
         const seen = [];
         domObserver.onClass('D', 'Foo_item', (el) => seen.push(el.className), { debounce: true, debounceDelay: 20 });
@@ -374,8 +379,18 @@ describe('dispatch', () => {
         domObserver.dispatch(container, {});
         expect(seen).toEqual([]);
         vi.advanceTimersByTime(20);
-        expect(seen).toEqual(['Foo_item__1', 'Foo_item__2']);
+        expect(seen).toEqual(['Foo_item__1']);
         vi.useRealTimers();
+    });
+
+    test('an undebounced class handler still gets one call per matching descendant', () => {
+        const seen = [];
+        domObserver.onClass('U', 'Foo_item', (el) => seen.push(el.className));
+        const container = document.createElement('div');
+        container.innerHTML = '<div class="Foo_item__1"></div><div class="Foo_item__2"></div>';
+
+        domObserver.dispatch(container, {});
+        expect(seen).toEqual(['Foo_item__1', 'Foo_item__2']);
     });
 
     // A handler that unregisters during a dispatch used to shorten the array the
