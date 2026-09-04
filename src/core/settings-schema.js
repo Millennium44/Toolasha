@@ -1609,8 +1609,22 @@ export const settingsGroups = {
                 label: 'Key pricing mode',
                 type: 'select',
                 default: 'ask',
-                options: ['ask', 'bid'],
-                help: 'Whether to use ask (instant buy) or bid (patient buy) prices when valuing dungeon keys in tooltips, networth, and combat income calculations.',
+                options: [
+                    { value: 'ask', label: 'Ask (instant buy)' },
+                    { value: 'bid', label: 'Bid (patient buy)' },
+                    { value: 'synced', label: 'Same as the profit calculation pricing mode' },
+                    { value: 'craft', label: 'What it costs you to craft one' },
+                ],
+                help:
+                    'How a dungeon key is valued everywhere the script prices one: item tooltips, net worth and the ' +
+                    'inventory badges, combat income and the key-cost breakdown, the dungeon ROI board, the chest ' +
+                    'risk-of-ruin model, and the consumables panel’s dungeon readiness card. Changing it moves your ' +
+                    'net worth and your combat profit/hr, not only the dungeon card. “Same as the profit calculation ' +
+                    'pricing mode” follows that setting’s buy side — keys are only ever bought, so its sell side has ' +
+                    'nothing to say here. “What it costs you to craft one” values a key at your own crafting cost ' +
+                    'instead of a market price, with the materials priced on that same buy side; a key you cannot ' +
+                    'craft, or whose recipe has a material with no price, falls back to its market price rather than ' +
+                    'being counted as free.',
             },
             profitCalc_liquidityCap: {
                 id: 'profitCalc_liquidityCap',

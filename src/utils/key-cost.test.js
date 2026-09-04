@@ -17,7 +17,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const settings = vi.hoisted(() => ({ keyPricingMode: 'ask' }));
+const settings = vi.hoisted(() => ({ keyPricingMode: 'ask', pricingMode: 'hybrid' }));
 
 const game = vi.hoisted(() => ({ initClientData: null, itemDetails: {} }));
 
@@ -29,7 +29,9 @@ const market = vi.hoisted(() => ({
 const buffs = vi.hoisted(() => ({ actionStats: { actionTime: 60, totalEfficiency: 0 } }));
 
 vi.mock('../core/config.js', () => ({
-    default: { getSettingValue: () => settings.keyPricingMode },
+    default: {
+        getSettingValue: (id) => (id === 'profitCalc_pricingMode' ? settings.pricingMode : settings.keyPricingMode),
+    },
 }));
 
 vi.mock('../core/data-manager.js', () => ({
@@ -47,6 +49,10 @@ vi.mock('../api/marketplace.js', () => ({
 }));
 
 vi.mock('./market-data.js', () => ({
+    // The real rule, kept to the two modes these tests use: hybrid buys at the
+    // ask, patientBuy at the bid.
+    getPricingMode: (context, side) =>
+        context === 'profit' && side === 'buy' && settings.pricingMode === 'patientBuy' ? 'bid' : 'ask',
     getItemPrice: (hrid, options = {}) => {
         const entry = market.book[hrid];
         if (!entry) return null;
@@ -60,7 +66,15 @@ vi.mock('./tea-parser.js', () => ({ parseArtisanBonus: () => 0, getDrinkConcentr
 
 vi.mock('./action-calculator.js', () => ({ calculateActionStats: () => buffs.actionStats }));
 
-const { describeKeyCost, describeKeyCosts, formatKeyCostNote, getKeyPricingMode } = await import('./key-cost.js');
+const {
+    describeKeyCost,
+    describeKeyCosts,
+    formatKeyCostNote,
+    getKeyPricingMode,
+    getKeyUnitCost,
+    invalidateKeyCostCache,
+    resolveKeyPricing,
+} = await import('./key-cost.js');
 
 const ESSENCE = '/items/chimerical_essence';
 const CHEST_KEY = '/items/chimerical_chest_key';
@@ -81,6 +95,8 @@ function essenceRecipe(itemHrid, count = 5) {
 
 beforeEach(() => {
     settings.keyPricingMode = 'ask';
+    settings.pricingMode = 'hybrid';
+    invalidateKeyCostCache();
     buffs.actionStats = { actionTime: 60, totalEfficiency: 0 };
 
     game.itemDetails = {
@@ -248,5 +264,155 @@ describe('getKeyPricingMode', () => {
     test('falls back to ask when the setting is unset', () => {
         settings.keyPricingMode = '';
         expect(getKeyPricingMode()).toBe('ask');
+    });
+
+    test('never answers with the raw setting, so a price map lookup cannot come back undefined', () => {
+        settings.keyPricingMode = 'craft';
+        expect(['ask', 'bid']).toContain(getKeyPricingMode());
+
+        settings.keyPricingMode = 'synced';
+        settings.pricingMode = 'patientBuy';
+        expect(getKeyPricingMode()).toBe('bid');
+    });
+});
+
+describe('resolveKeyPricing', () => {
+    test('the two stored modes the setting shipped with are passed through untouched', () => {
+        settings.keyPricingMode = 'ask';
+        expect(resolveKeyPricing()).toEqual({ setting: 'ask', priceSide: 'ask', basis: 'market' });
+
+        settings.keyPricingMode = 'bid';
+        expect(resolveKeyPricing()).toEqual({ setting: 'bid', priceSide: 'bid', basis: 'market' });
+    });
+
+    test('a legacy stored mode ignores the general pricing setting entirely', () => {
+        settings.keyPricingMode = 'ask';
+        settings.pricingMode = 'patientBuy';
+
+        expect(resolveKeyPricing().priceSide).toBe('ask');
+        expect(describeKeyCost(CHEST_KEY).buyPrice).toBe(8000);
+    });
+
+    test('synced follows the general setting buy side', () => {
+        settings.keyPricingMode = 'synced';
+
+        settings.pricingMode = 'hybrid';
+        expect(resolveKeyPricing()).toEqual({ setting: 'synced', priceSide: 'ask', basis: 'market' });
+
+        settings.pricingMode = 'patientBuy';
+        expect(resolveKeyPricing()).toEqual({ setting: 'synced', priceSide: 'bid', basis: 'market' });
+    });
+
+    test('craft prices its materials on the general buy side', () => {
+        settings.keyPricingMode = 'craft';
+
+        settings.pricingMode = 'hybrid';
+        expect(resolveKeyPricing()).toEqual({ setting: 'craft', priceSide: 'ask', basis: 'craft' });
+
+        settings.pricingMode = 'patientBuy';
+        expect(resolveKeyPricing()).toEqual({ setting: 'craft', priceSide: 'bid', basis: 'craft' });
+    });
+
+    test('a stored value nobody recognises lands on ask instead of breaking key valuation', () => {
+        settings.keyPricingMode = 'midpoint-ish';
+        expect(resolveKeyPricing()).toEqual({ setting: 'ask', priceSide: 'ask', basis: 'market' });
+        expect(describeKeyCost(CHEST_KEY).buyPrice).toBe(8000);
+    });
+});
+
+describe('the synced pricing mode', () => {
+    test('values a key the way the general setting buys', () => {
+        settings.keyPricingMode = 'synced';
+        settings.pricingMode = 'patientBuy';
+
+        const cost = describeKeyCost(CHEST_KEY);
+
+        expect(cost.basis).toBe('market');
+        expect(cost.pricingMode).toBe('bid');
+        expect(cost.buyPrice).toBe(4000);
+        expect(cost.craftCost).toBe(4500);
+        // Same answer 'bid' gives, which is the point of syncing
+        expect(cost.unitCost).toBe(4000);
+    });
+});
+
+describe('the craft pricing mode', () => {
+    test('takes the craft cost even when the market is cheaper', () => {
+        settings.keyPricingMode = 'craft';
+        // Ask 8000 against 5000 of essence: the market basis would still prefer
+        // the craft here, so drop the key's ask below the recipe to prove the
+        // basis is deciding rather than the comparison.
+        market.book[CHEST_KEY] = { ask: 1000, bid: 900 };
+
+        const cost = describeKeyCost(CHEST_KEY);
+
+        expect(cost.basis).toBe('craft');
+        expect(cost.buyPrice).toBe(1000);
+        expect(cost.craftCost).toBe(5000);
+        expect(cost.cheaper).toBe('craft');
+        expect(cost.unitCost).toBe(5000);
+    });
+
+    test('reports a recipe with an unpriced material as unpriced, and falls back to the market', () => {
+        settings.keyPricingMode = 'craft';
+        delete market.book[ESSENCE];
+
+        const cost = describeKeyCost(CHEST_KEY);
+
+        // Never a partial total with a free material in it
+        expect(cost.craftCost).toBeNull();
+        // ...and never a free key either: the replacement cost is what is left
+        expect(cost.cheaper).toBe('buy');
+        expect(cost.unitCost).toBe(8000);
+    });
+
+    test('falls back to the market for a key that has no recipe at all', () => {
+        settings.keyPricingMode = 'craft';
+
+        const cost = describeKeyCost(ENTRY_KEY);
+
+        expect(cost.craftCost).toBeNull();
+        expect(cost.cheaper).toBe('buy');
+        expect(cost.unitCost).toBe(20000);
+    });
+
+    test('a key with no recipe and no market is still uncosted, not free', () => {
+        settings.keyPricingMode = 'craft';
+
+        const cost = describeKeyCost(SINISTER_KEY);
+
+        expect(cost.unitCost).toBeNull();
+    });
+});
+
+describe('getKeyUnitCost', () => {
+    test('is the market side on every market basis', () => {
+        expect(getKeyUnitCost(CHEST_KEY)).toBe(8000);
+
+        settings.keyPricingMode = 'bid';
+        invalidateKeyCostCache();
+        expect(getKeyUnitCost(CHEST_KEY)).toBe(4000);
+
+        settings.keyPricingMode = 'synced';
+        settings.pricingMode = 'patientBuy';
+        expect(getKeyUnitCost(CHEST_KEY)).toBe(4000);
+    });
+
+    test('is the craft cost on the craft basis', () => {
+        settings.keyPricingMode = 'craft';
+        expect(getKeyUnitCost(CHEST_KEY)).toBe(5000);
+    });
+
+    test('is null, never zero, for a key nothing can price', () => {
+        expect(getKeyUnitCost(SINISTER_KEY)).toBeNull();
+        expect(getKeyUnitCost(null)).toBeNull();
+    });
+
+    test('caches the craft basis per market side, so changing the setting is not a stale read', () => {
+        settings.keyPricingMode = 'craft';
+        expect(getKeyUnitCost(CHEST_KEY)).toBe(5000);
+
+        settings.pricingMode = 'patientBuy';
+        expect(getKeyUnitCost(CHEST_KEY)).toBe(4500);
     });
 });

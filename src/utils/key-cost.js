@@ -44,18 +44,75 @@ import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { describeCraft } from '../features/crafting-plan/craft-arbitrage-adapter.js';
+import { getPricingMode } from './market-data.js';
 import { coinFormatter, timeReadable } from './formatters.js';
 
-/** The setting that says which side of the book a key is priced from */
+/** The setting that says how a key is valued */
 export const KEY_PRICING_SETTING = 'profitCalc_keyPricingMode';
 
 /**
- * Which market price a key is bought at, per the user's setting.
+ * What the key pricing setting can be stored as.
+ *
+ * `ask` and `bid` are the two the setting shipped with and are never given new
+ * meanings: a profile carrying either must keep valuing keys exactly as it did.
+ * `synced` and `craft` are the additions.
+ */
+export const KEY_PRICING_MODES = ['ask', 'bid', 'synced', 'craft'];
+
+/** Where an unrecognised stored value lands, and the setting's own default */
+const DEFAULT_KEY_PRICING_MODE = 'ask';
+
+/**
+ * The stored setting turned into the two things a costing actually needs.
+ *
+ * The setting answers two separate questions that used to be one: *which side
+ * of the book* a key's market price comes from, and *whether a market price is
+ * the basis at all*. Splitting them here means every consumer resolves them the
+ * same way instead of each reading the raw string and indexing a price map with
+ * it — which is what `synced` and `craft` would have silently broken, since
+ * `prices['craft']` is `undefined` and the `?? prices.ask` fallbacks would have
+ * hidden that behind a plausible number.
+ *
+ * `synced` follows `profitCalc_pricingMode`'s **buy** side through
+ * `getPricingMode`, the one authority on that setting. Keys are only ever
+ * bought, so the general setting's sell side has nothing to say here.
+ *
+ * `craft` resolves a market side too: the recipe's materials still have to be
+ * priced off one side of the book, and it follows the general setting's buy
+ * side for the same reason `synced` does — the user expressed a basis
+ * preference there and none here.
+ *
+ * An unrecognised stored value falls back to `ask` rather than being passed
+ * through. Five features value keys through this; a typo in a hand-edited
+ * profile must not take all five out.
+ *
+ * @returns {{setting: string, priceSide: 'ask'|'bid', basis: 'market'|'craft'}}
+ */
+export function resolveKeyPricing() {
+    const stored = config.getSettingValue(KEY_PRICING_SETTING);
+    const setting = KEY_PRICING_MODES.includes(stored) ? stored : DEFAULT_KEY_PRICING_MODE;
+
+    if (setting === 'ask' || setting === 'bid') {
+        return { setting, priceSide: setting, basis: 'market' };
+    }
+
+    // `getPricingMode` can answer 'average' for modes this setting has no
+    // equivalent of; a key is bought at one side or the other, so anything that
+    // is not 'bid' buys at the ask.
+    const side = getPricingMode('profit', 'buy') === 'bid' ? 'bid' : 'ask';
+    return { setting, priceSide: side, basis: setting === 'craft' ? 'craft' : 'market' };
+}
+
+/**
+ * Which market price a key's materials and market quote are taken at.
+ *
+ * Always a real side of the book — never the raw setting — so a caller can hand
+ * it straight to a price map without the lookup coming back undefined.
  *
  * @returns {string} 'ask' (instant buy) or 'bid' (patient buy)
  */
 export function getKeyPricingMode() {
-    return config.getSettingValue(KEY_PRICING_SETTING) || 'ask';
+    return resolveKeyPricing().priceSide;
 }
 
 /**
@@ -78,7 +135,7 @@ function buyPriceFor(keyHrid, mode) {
 }
 
 /**
- * What one key costs, bought and crafted, and which of those is cheaper.
+ * What one key costs, bought and crafted, and which of those the setting takes.
  *
  * Either side may be missing and the result is still usable: a key with no
  * recipe reports `craftCost: null` and settles on buying, a key nobody is
@@ -86,23 +143,49 @@ function buyPriceFor(keyHrid, mode) {
  * missing `unitCost` is null, which is the caller's signal that this key cannot
  * be costed at all rather than that it is free.
  *
+ * ## What the basis changes
+ *
+ * On the `market` basis — every mode but `craft` — `unitCost` is the cheaper of
+ * the two, which is what this has always reported and what `ask` and `bid` must
+ * keep reporting.
+ *
+ * On the `craft` basis `unitCost` is the craft cost even when the market is
+ * cheaper, because the user has said they make their own keys and wants them
+ * valued at what they actually pay. Two things that basis does **not** do:
+ *
+ * - It never part-prices a recipe. `describeCraft` rejects a recipe outright
+ *   when a material has no price, so `craftCost` is null rather than a total
+ *   with a free material in it. A missing material is unknown, never zero.
+ * - It never leaves a costable key uncosted. When the recipe is missing or
+ *   unpriceable the market quote is used instead and `cheaper` reports `'buy'`,
+ *   so a display and a net worth both get the honest replacement cost rather
+ *   than a null that every `?? 0` downstream would turn into a free key. Only
+ *   when the market has nothing either is `unitCost` null.
+ *
  * @param {string} keyHrid - Key item HRID
  * @param {Object} [options] - Costing options
- * @param {string} [options.mode] - Pricing mode; defaults to the user's setting
+ * @param {string} [options.mode] - Market side ('ask'/'bid'); defaults to the resolved setting
+ * @param {string} [options.basis] - 'market' or 'craft'; defaults to the resolved setting, and
+ *   to 'market' when `mode` was given on its own
  * @param {Map} [options.memo] - Shared unit-cost memo, for costing several keys
  * @param {Map} [options.actionStats] - Shared action-stats cache, same purpose
- * @returns {{itemHrid: string, itemName: string, pricingMode: string, buyPrice: number|null,
- *   craftCost: number|null, craftSeconds: number|null, craftActionHrid: string|null,
- *   cheaper: string|null, unitCost: number|null, savings: number}}
+ * @returns {{itemHrid: string, itemName: string, pricingMode: string, basis: string,
+ *   buyPrice: number|null, craftCost: number|null, craftSeconds: number|null,
+ *   craftActionHrid: string|null, cheaper: string|null, unitCost: number|null, savings: number}}
  */
 export function describeKeyCost(keyHrid, options = {}) {
-    const mode = options.mode || getKeyPricingMode();
+    const resolved = resolveKeyPricing();
+    const mode = options.mode || resolved.priceSide;
+    // An explicit `mode` with no `basis` is a caller asking for a market side,
+    // which is what every pre-existing caller of this meant.
+    const basis = options.basis || (options.mode ? 'market' : resolved.basis);
     const itemName = dataManager.getItemDetails(keyHrid)?.name || keyHrid;
 
     const empty = {
         itemHrid: keyHrid,
         itemName,
         pricingMode: mode,
+        basis,
         buyPrice: null,
         craftCost: null,
         craftSeconds: null,
@@ -137,21 +220,72 @@ export function describeKeyCost(keyHrid, options = {}) {
     else if (buyPrice === null) cheaper = 'craft';
     else cheaper = craftCost < buyPrice ? 'craft' : 'buy';
 
-    const unitCost = cheaper === 'craft' ? craftCost : buyPrice;
+    // The craft basis overrides the comparison, but only where there is a craft
+    // cost to override it with — see the fallback rule above.
+    const route = basis === 'craft' && craftCost !== null ? 'craft' : cheaper;
+
+    const unitCost = route === 'craft' ? craftCost : buyPrice;
     const savings = buyPrice !== null && craftCost !== null ? Math.abs(buyPrice - craftCost) : 0;
 
     return {
         itemHrid: keyHrid,
         itemName,
         pricingMode: mode,
+        basis,
         buyPrice,
         craftCost,
         craftSeconds,
         craftActionHrid: craft?.actionHrid ?? null,
-        cheaper,
+        cheaper: route,
         unitCost,
         savings,
     };
+}
+
+/**
+ * How long a craft-basis unit cost is reused before the recipe is walked again.
+ *
+ * Only the craft basis is cached. A market lookup is a map read; a craft cost
+ * walks the recipe through the crafting planner against this character, which
+ * is far too much work for a badge pass over an inventory or a panel that
+ * redraws on a timer.
+ */
+const CRAFT_COST_TTL_MS = 60_000;
+
+/** `keyHrid|priceSide` to `{at, unitCost}`; keyed on the side so a setting change misses */
+const craftCostCache = new Map();
+
+/**
+ * What one key is worth under the user's setting, as a single number.
+ *
+ * For the callers that only ever wanted "what does this key cost me" — the
+ * chest-key deductions in net worth, the inventory badges and the item tooltip,
+ * and the chest risk-of-ruin model. Each used to read the raw setting and index
+ * a price map with it, which resolves nothing: `prices['synced']` is undefined
+ * and the `?? ask` beside it would have answered every non-market mode with the
+ * ask while looking like it had honoured the setting.
+ *
+ * @param {string} keyHrid - Key item HRID
+ * @returns {number|null} Gold per key, or null when neither route can be priced
+ */
+export function getKeyUnitCost(keyHrid) {
+    if (!keyHrid) return null;
+
+    const { priceSide, basis } = resolveKeyPricing();
+    if (basis !== 'craft') return buyPriceFor(keyHrid, priceSide);
+
+    const cacheKey = `${keyHrid}|${priceSide}`;
+    const cached = craftCostCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < CRAFT_COST_TTL_MS) return cached.unitCost;
+
+    const { unitCost } = describeKeyCost(keyHrid, { mode: priceSide, basis: 'craft' });
+    craftCostCache.set(cacheKey, { at: Date.now(), unitCost });
+    return unitCost;
+}
+
+/** Drop the craft-basis cache, for a surface that has just changed the setting. */
+export function invalidateKeyCostCache() {
+    craftCostCache.clear();
 }
 
 /**
@@ -210,4 +344,14 @@ export function formatKeyCostNote(cost, options = {}) {
     return `${buyPart} ea — no recipe, using bought`;
 }
 
-export default { KEY_PRICING_SETTING, getKeyPricingMode, describeKeyCost, describeKeyCosts, formatKeyCostNote };
+export default {
+    KEY_PRICING_SETTING,
+    KEY_PRICING_MODES,
+    resolveKeyPricing,
+    getKeyPricingMode,
+    getKeyUnitCost,
+    invalidateKeyCostCache,
+    describeKeyCost,
+    describeKeyCosts,
+    formatKeyCostNote,
+};
