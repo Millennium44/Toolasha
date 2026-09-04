@@ -172,6 +172,29 @@ const GEOMETRY_KEY = 'consumablesPanel';
 const DEFAULT_PANEL = { width: 520, height: 420 };
 const REFRESH_MS = 5000;
 
+/**
+ * How many runs the readiness card is sized for, and what the header button
+ * cycles through.
+ *
+ * The old default of five was smaller than any stock anybody actually holds: a
+ * food pile good for thousands of runs and a key pile in the thousands both
+ * came back "covers 5", which is the card answering a question nobody asked.
+ * The plan is only informative when it reaches far enough to touch something.
+ *
+ * A hundred is a day of continuous dungeoning at the run lengths this card
+ * already measures — `typicalRunSeconds` puts a party dungeon run in the
+ * ten-minute range, so 144 runs is a full day and a hundred is the round
+ * figure just inside it. That also lines the card up with the rest of the
+ * panel, whose consumable target defaults to one day: both halves now plan
+ * against the same horizon instead of quietly disagreeing by a factor of
+ * thirty.
+ *
+ * Every step the old list offered is still in this one, so a target somebody
+ * has already picked keeps working and keeps cycling from where it is.
+ */
+const DUNGEON_RUN_STEPS = [1, 3, 5, 10, 25, 50, 100, 250, 500, 1000];
+const DEFAULT_DUNGEON_RUNS = 100;
+
 const COLORS = {
     background: 'rgba(8, 10, 20, 0.97)',
     headerBg: 'rgba(20, 30, 24, 0.9)',
@@ -336,7 +359,9 @@ class ConsumablesPanel {
         // The dungeon readiness card: how many runs to plan for, the recorded
         // run history that turns "hours of food" into "runs of food", and the
         // captured profiles that are the only pre-run window onto anybody else
-        this._dungeonRuns = Number(await storage.get('consumablesDungeonRuns', 'settings', 5)) || 5;
+        this._dungeonRuns =
+            Number(await storage.get('consumablesDungeonRuns', 'settings', DEFAULT_DUNGEON_RUNS)) ||
+            DEFAULT_DUNGEON_RUNS;
         this._dungeonHistory = (await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => [])) || [];
         this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
         // Everything the readiness memo is a function of has just been re-read
@@ -484,12 +509,18 @@ class ConsumablesPanel {
 
     /** How many runs the readiness card is sized for */
     get dungeonRuns() {
-        return this._dungeonRuns || 5;
+        return this._dungeonRuns || DEFAULT_DUNGEON_RUNS;
     }
 
-    /** Cycle the run target and remember it, the way the labyrinth block does */
+    /**
+     * Cycle the run target and remember it, the way the labyrinth block does.
+     *
+     * A stored target that is not one of the steps — nothing writes one today,
+     * but a hand-edited setting could — starts the cycle at the first step
+     * rather than being silently rewritten on load.
+     */
     _cycleDungeonRuns() {
-        const steps = [1, 3, 5, 10, 25, 50];
+        const steps = DUNGEON_RUN_STEPS;
         this._dungeonRuns = steps[(steps.indexOf(this.dungeonRuns) + 1) % steps.length];
         this._readinessMemo = null;
         storage.set('consumablesDungeonRuns', this._dungeonRuns, 'settings').catch(() => {});

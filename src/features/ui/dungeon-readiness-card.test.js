@@ -436,6 +436,48 @@ describe('the checks that a captured profile does make possible', () => {
     });
 });
 
+describe('how many runs the card is sized for', () => {
+    test('a day of dungeoning is the default, not five runs', async () => {
+        inParty();
+        await render();
+
+        expect(text()).toContain('100 runs');
+        expect(consumablesPanel.dungeonRuns).toBe(100);
+    });
+
+    test('a target already chosen survives the new default', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 3;
+        await render();
+
+        expect(consumablesPanel.dungeonRuns).toBe(3);
+        expect(text()).toContain('3 runs');
+    });
+
+    test('the old steps still cycle, and the list now reaches past them', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 25;
+        await render();
+
+        const seen = [];
+        for (let i = 0; i < 4; i += 1) {
+            consumablesPanel._cycleDungeonRuns();
+            seen.push(consumablesPanel.dungeonRuns);
+        }
+        expect(seen).toEqual([50, 100, 250, 500]);
+        expect(store.data.consumablesDungeonRuns).toBe(500);
+    });
+
+    test('the cycle wraps rather than running off the end', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 1000;
+        await render();
+
+        consumablesPanel._cycleDungeonRuns();
+        expect(consumablesPanel.dungeonRuns).toBe(1);
+    });
+});
+
 describe('the card is not rebuilt on the refresh clock', () => {
     test('a redraw with nothing changed reuses the model it already built', async () => {
         inParty();
