@@ -344,6 +344,19 @@ describe('the party key counts the game itself broadcasts', () => {
         expect(body).toContain('unknown — not in party data');
     });
 
+    test('a battle payload from another dungeon does not lend this card its names', async () => {
+        inParty();
+        game.characterData.partyInfo.partySlotMap = {};
+        game.latest = {
+            durationSeconds: 60,
+            actionHrid: '/actions/combat/pirate_cove',
+            players: [{ name: 'Me' }, { name: 'Ally' }],
+        };
+        await render();
+
+        expect(text()).not.toContain('Ally');
+    });
+
     test('a tracked run of another dungeon does not lend this card its counts', async () => {
         inParty();
         tracking({ dungeonHrid: '/actions/combat/pirate_cove', keyCountsMap: { Ally: 3 } });

@@ -523,13 +523,20 @@ class ConsumablesPanel {
 
     /**
      * The names the running battle knows, for a party chat has not named yet.
+     *
+     * Guarded on the dungeon for the same reason the key counts are: the
+     * collector keeps the last battle it saw, and last night's party is not
+     * this one. A snapshot with no action recorded is not trusted to be this
+     * dungeon's either.
+     *
+     * @param {string} actionHrid - The dungeon the card is about
      * @returns {Array<string>}
      */
-    _battleNames() {
+    _battleNames(actionHrid) {
         try {
-            return (combatStatsDataCollector.getLatestData?.()?.players || [])
-                .map((player) => player?.name)
-                .filter(Boolean);
+            const data = combatStatsDataCollector.getLatestData?.();
+            if (data?.actionHrid !== actionHrid) return [];
+            return (data.players || []).map((player) => player?.name).filter(Boolean);
         } catch {
             return [];
         }
@@ -578,7 +585,7 @@ class ConsumablesPanel {
         if (detail?.combatZoneInfo?.isDungeon !== true) return null;
 
         const keyCounts = this._partyKeyCounts(actionHrid);
-        const roster = mergePartyRoster(slotMembers, [...Object.keys(keyCounts), ...this._battleNames()]);
+        const roster = mergePartyRoster(slotMembers, [...Object.keys(keyCounts), ...this._battleNames(actionHrid)]);
 
         return {
             actionHrid,
