@@ -63,7 +63,14 @@ import {
     buyStrategy,
 } from '../../utils/consumable-forecast.js';
 import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
-import { buildReadiness, keyReadiness, memberReadiness, typicalRunSeconds } from '../../utils/dungeon-readiness.js';
+import {
+    buildReadiness,
+    keyReadiness,
+    memberLimit,
+    memberReadiness,
+    mergePartyRoster,
+    typicalRunSeconds,
+} from '../../utils/dungeon-readiness.js';
 import { partyLintWarnings } from '../../utils/party-lint.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { registerCommand } from '../../utils/command-registry.js';
@@ -83,7 +90,7 @@ import { estimateFillSeconds } from '../../utils/order-book.js';
 import { openShoppingList } from './consumables-shopping-list.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
-import { queueLengthEstimator } from '../../utils/bundle-bridge.js';
+import { dungeonTracker, queueLengthEstimator } from '../../utils/bundle-bridge.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 
@@ -490,6 +497,45 @@ class ConsumablesPanel {
     }
 
     /**
+     * The party's entry keys, as the game itself stated them.
+     *
+     * Every run the game posts a key-count message to party chat naming each
+     * member and the keys they have left, and the dungeon tracker parses it.
+     * Read through the bridge because the tracker is a websocket-fed singleton
+     * in the combat bundle: this bundle's own copy would have heard nothing.
+     *
+     * Guarded on the dungeon, because a tracked run of a *different* dungeon
+     * would hand this card counts of the wrong key.
+     *
+     * @param {string} actionHrid - The dungeon the card is about
+     * @returns {Object} Name to key count; empty when no message has arrived
+     */
+    _partyKeyCounts(actionHrid) {
+        try {
+            const run = dungeonTracker()?.getCurrentRun?.();
+            if (!run || run.dungeonHrid !== actionHrid) return {};
+            return run.keyCountsMap || {};
+        } catch (error) {
+            console.error('[ConsumablesPanel] Reading the party key counts failed:', error);
+            return {};
+        }
+    }
+
+    /**
+     * The names the running battle knows, for a party chat has not named yet.
+     * @returns {Array<string>}
+     */
+    _battleNames() {
+        try {
+            return (combatStatsDataCollector.getLatestData?.()?.players || [])
+                .map((player) => player?.name)
+                .filter(Boolean);
+        } catch {
+            return [];
+        }
+    }
+
+    /**
      * Which dungeon this character is about to run, and who with.
      *
      * The live action queue is preferred over `partyInfo` because `partyInfo`
@@ -498,6 +544,12 @@ class ConsumablesPanel {
      * since. The queue is kept current but only speaks for you, so the party
      * block is the fallback and is marked as such.
      *
+     * The roster is not the slot map alone: `partySlotMap` is `{}` for the
+     * whole of a battle, so mid-run the card had a party it could not name. The
+     * key-count message names everyone and states their keys together, so it
+     * leads; the battle payload names them without keys and follows, for the
+     * window before the first key-count message of the run arrives.
+     *
      * @returns {Object|null} Null when this is not a dungeon
      */
     _dungeonContext() {
@@ -505,7 +557,7 @@ class ConsumablesPanel {
         if (!characterData) return null;
 
         const slots = characterData.partyInfo?.partySlotMap || null;
-        const roster = slots ? Object.values(slots).filter((member) => member?.characterID) : [];
+        const slotMembers = slots ? Object.values(slots).filter(Boolean) : [];
 
         const live = (dataManager.getCurrentActions?.() || []).find(
             (action) => action.actionHrid?.startsWith('/actions/combat/') && !action.isDone
@@ -525,11 +577,15 @@ class ConsumablesPanel {
         const detail = dataManager.getActionDetails?.(actionHrid);
         if (detail?.combatZoneInfo?.isDungeon !== true) return null;
 
+        const keyCounts = this._partyKeyCounts(actionHrid);
+        const roster = mergePartyRoster(slotMembers, [...Object.keys(keyCounts), ...this._battleNames()]);
+
         return {
             actionHrid,
             tier,
             stale,
             roster,
+            keyCounts,
             name: detail.name || actionHrid.split('/').pop(),
             characterId: characterData.character?.id ?? null,
             selfName: characterData.character?.name || 'You',
@@ -655,6 +711,10 @@ class ConsumablesPanel {
                 .sort()
                 .join(','),
             keysHeld,
+            Object.entries(context.keyCounts)
+                .map(([who, count]) => `${who}=${count}`)
+                .sort()
+                .join(','),
         ].join('|');
         if (this._readinessMemo?.signature === signature) return this._readinessMemo.model;
 
@@ -664,9 +724,10 @@ class ConsumablesPanel {
         // The key row never uses the measured pile: `_keyForecast`'s rate is
         // derived from chests dropped this session, and before the run there is
         // no session. One key per clear is arithmetic, and is enough.
+        const keyName = (keyHrid && dataManager.getItemDetails?.(keyHrid)?.name) || '';
         const keys = keyReadiness({
             itemHrid: keyHrid,
-            itemName: keyHrid ? dataManager.getItemDetails?.(keyHrid)?.name : '',
+            itemName: keyName,
             held: keysHeld,
             runsPlanned: this.dungeonRuns,
         });
@@ -687,6 +748,11 @@ class ConsumablesPanel {
                 level = this._combatLevelOf(profile?.profile?.characterSkills);
             }
 
+            // Your own pile is in the inventory and exact; everyone else's is
+            // whatever the party's key-count message last stated for them
+            const stated = Number(context.keyCounts?.[name]);
+            const heldKeys = isSelf ? keysHeld : Number.isFinite(stated) ? stated : null;
+
             return memberReadiness({
                 name,
                 isSelf,
@@ -694,6 +760,9 @@ class ConsumablesPanel {
                 forecasts: seen?.forecasts || null,
                 runSeconds: runLength?.seconds ?? null,
                 measuredFrom: seen ? 'last measured battle' : null,
+                keysHeld: keyHrid ? heldKeys : null,
+                keyName: keyName || 'entry keys',
+                keysFrom: isSelf ? 'your inventory' : 'the party key-count message',
             });
         });
 
@@ -794,7 +863,9 @@ class ConsumablesPanel {
 
         for (const member of model.members) {
             const label = member.isSelf ? `${member.name} (you)` : member.name;
-            if (member.unknown) {
+            const limit = memberLimit(member);
+
+            if (!limit.source) {
                 section.appendChild(
                     this._readinessLine(
                         label,
@@ -808,17 +879,36 @@ class ConsumablesPanel {
                 continue;
             }
 
+            const short = limit.runs !== null && limit.runs < model.runsPlanned;
+
+            // Keys without food is half a reading, and must not go green: the
+            // number is exact, but it is a ceiling on their runs, not their
+            // stopping point. Their food could take the party down first.
+            if (member.unknown) {
+                section.appendChild(
+                    this._readinessLine(
+                        label,
+                        `${formatLargeNumber(member.keysHeld)} keys · food unknown`,
+                        short ? ROW_COLORS.bad : COLORS.textDim,
+                        `Keys stated by ${member.keysFrom} — one per clear, so they cover ${member.keyRunsCovered} ` +
+                            'runs. Their food and drinks are only in the battle payload and are still unread.'
+                    )
+                );
+                continue;
+            }
+
             const runs =
-                member.runsCovered === null
-                    ? shortDuration(member.secondsLeft)
-                    : `${member.runsCovered} run${member.runsCovered === 1 ? '' : 's'}`;
-            const enough = member.runsCovered === null || member.runsCovered >= model.runsPlanned;
+                limit.runs === null
+                    ? shortDuration(limit.secondsLeft)
+                    : `${formatLargeNumber(limit.runs)} run${limit.runs === 1 ? '' : 's'}`;
             section.appendChild(
                 this._readinessLine(
                     label,
-                    `${runs}${member.limitedBy ? ` · ${member.limitedBy}` : ''}`,
-                    enough ? ROW_COLORS.good : ROW_COLORS.bad,
-                    `Measured from the ${member.measuredFrom}, converted with your recorded run length.`
+                    `${runs}${limit.label ? ` · ${limit.label}` : ''}`,
+                    short ? ROW_COLORS.bad : ROW_COLORS.good,
+                    limit.source === 'keys'
+                        ? `Their keys run out before their food does — stated by ${member.keysFrom}.`
+                        : `Measured from the ${member.measuredFrom}, converted with your recorded run length.`
                 )
             );
         }
@@ -828,16 +918,22 @@ class ConsumablesPanel {
             const when =
                 first.runsCovered === null
                     ? shortDuration(first.secondsLeft)
-                    : `${first.runsCovered} run${first.runsCovered === 1 ? '' : 's'}`;
+                    : `${formatLargeNumber(first.runsCovered)} run${first.runsCovered === 1 ? '' : 's'}`;
+            // The sample size is on the face of it, not only in the tooltip:
+            // "you stop first" out of one readable member is a much weaker
+            // claim than out of five, and it must look it. A member counted
+            // only by their keys is called out separately rather than folded
+            // into "read", because their food is still the open question.
+            const scope = [];
+            if (first.known < first.total) scope.push(`${first.known} of ${first.total} read`);
+            if (first.partial) scope.push(`keys only for ${first.partial}`);
             section.appendChild(
                 this._readinessLine(
                     'Stops first',
-                    // The sample size is on the face of it, not only in the
-                    // tooltip: "you stop first" out of one readable member is a
-                    // much weaker claim than out of five, and it must look it
-                    `${first.name} in ${when}${first.known < first.total ? ` (${first.known} of ${first.total} read)` : ''}`,
+                    `${first.name} in ${when}${scope.length ? ` (${scope.join(', ')})` : ''}`,
                     COLORS.text,
-                    `Out of ${first.known} of ${first.total} member${first.total === 1 ? '' : 's'} whose supplies could be read.`
+                    `Out of ${first.known} of ${first.total} member${first.total === 1 ? '' : 's'} whose food could ` +
+                        `be read${first.partial ? `, and ${first.partial} whose keys were counted but whose food was not` : ''}.`
                 )
             );
         }

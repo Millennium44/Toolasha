@@ -241,6 +241,16 @@ export function dungeonTrackerStorage() {
 }
 
 /**
+ * The dungeon tracker the websocket feeds. Its current run holds the party's
+ * key counts, parsed from the game's own chat message; another bundle's copy
+ * has never heard a message and holds nothing.
+ * @returns {Object|null} The tracker, or null when the combat bundle is absent
+ */
+export function dungeonTracker() {
+    return toolashaRoot()?.Combat?.dungeonTracker || null;
+}
+
+/**
  * The combat recorder the websocket actually feeds.
  * @returns {Object|null} The recorder, or null when the combat bundle is absent
  */

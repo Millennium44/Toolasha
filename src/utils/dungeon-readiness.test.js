@@ -4,10 +4,13 @@ import {
     typicalRunSeconds,
     keyReadiness,
     memberReadiness,
+    memberLimit,
     whoStopsFirst,
     levelGapWarnings,
+    mergePartyRoster,
     buildReadiness,
     UNKNOWN_CONSUMABLES,
+    UNKNOWN_KEYS,
 } from './dungeon-readiness.js';
 
 const RUN = 600;
@@ -114,6 +117,71 @@ describe('memberReadiness', () => {
     });
 });
 
+describe('a member whose keys are known but whose food is not', () => {
+    test('keeps the keys and stays unread', () => {
+        const row = memberReadiness({ name: 'Ally', forecasts: null, keysHeld: 3, keyName: 'Chimerical Entry Key' });
+        // The keys are exact and the food is still missing: both have to survive
+        expect(row).toMatchObject({ keysHeld: 3, keyRunsCovered: 3, keysUnknown: null, unknown: UNKNOWN_CONSUMABLES });
+    });
+
+    test('no key count is an unknown of its own, not a zero', () => {
+        const row = memberReadiness({ name: 'Ally', forecasts: null });
+        expect(row).toMatchObject({ keysHeld: null, keyRunsCovered: null, keysUnknown: UNKNOWN_KEYS });
+    });
+});
+
+describe('memberLimit', () => {
+    const food = (secondsLeft, runSeconds) =>
+        memberReadiness({ name: 'Me', forecasts: [{ name: 'Cake', secondsLeft }], runSeconds });
+
+    test('keys bind when they run out before the food does', () => {
+        const row = { ...food(6000, RUN), keysHeld: 3, keyRunsCovered: 3, keyName: 'Key' };
+        expect(memberLimit(row)).toMatchObject({ runs: 3, source: 'keys', label: 'Key' });
+    });
+
+    test('food binds when it is the shorter of the two, and ties go to food', () => {
+        expect(memberLimit({ ...food(6000, RUN), keysHeld: 20, keyRunsCovered: 20 })).toMatchObject({
+            runs: 10,
+            source: 'food',
+        });
+        expect(memberLimit({ ...food(6000, RUN), keysHeld: 10, keyRunsCovered: 10 })).toMatchObject({
+            source: 'food',
+        });
+    });
+
+    test('with no run length the two are in different units and keys are not ranked', () => {
+        const row = { ...food(6000, null), keysHeld: 3, keyRunsCovered: 3 };
+        expect(memberLimit(row)).toMatchObject({ runs: null, secondsLeft: 6000, source: 'food' });
+    });
+
+    test('keys alone are a limit; nothing at all is not', () => {
+        const bare = memberReadiness({ name: 'Ally', forecasts: null, keysHeld: 4 });
+        expect(memberLimit(bare)).toMatchObject({ runs: 4, source: 'keys' });
+        expect(memberLimit(memberReadiness({ name: 'Stranger' }))).toMatchObject({ source: null });
+    });
+});
+
+describe('mergePartyRoster', () => {
+    test('an empty slot map mid-battle is filled from the names the run stated', () => {
+        expect(mergePartyRoster([], ['Ally', 'Me'])).toEqual([
+            { characterID: null, characterName: 'Ally' },
+            { characterID: null, characterName: 'Me' },
+        ]);
+    });
+
+    test('named slots win, and a name already in them is not added twice', () => {
+        const roster = mergePartyRoster([{ characterID: 'c1', characterName: 'Me' }], ['Me', 'Ally']);
+        expect(roster).toHaveLength(2);
+        expect(roster[0]).toMatchObject({ characterID: 'c1', characterName: 'Me' });
+        expect(roster[1]).toMatchObject({ characterID: null, characterName: 'Ally' });
+    });
+
+    test('a nameless slot no name accounts for stays on the card as an unknown', () => {
+        const roster = mergePartyRoster([{ characterID: 'c1' }, { characterID: 'c2' }], ['Ally']);
+        expect(roster.map((member) => member.characterName)).toEqual(['Ally', '']);
+    });
+});
+
 describe('whoStopsFirst', () => {
     test('the soonest of the members that could be read, and says how many that was', () => {
         const rows = [
@@ -127,6 +195,49 @@ describe('whoStopsFirst', () => {
     test('nobody readable is null rather than a guess', () => {
         expect(whoStopsFirst([memberReadiness({ name: 'Stranger', forecasts: null })])).toBeNull();
         expect(whoStopsFirst([])).toBeNull();
+    });
+
+    test('a member counted only by their keys is partial, never read', () => {
+        const rows = [
+            memberReadiness({
+                name: 'Me',
+                isSelf: true,
+                forecasts: [{ name: 'Cake', secondsLeft: 6000 }],
+                runSeconds: RUN,
+            }),
+            memberReadiness({ name: 'Ally', forecasts: null, keysHeld: 3, keyName: 'Key' }),
+        ];
+        expect(whoStopsFirst(rows)).toMatchObject({
+            name: 'Ally',
+            runsCovered: 3,
+            source: 'keys',
+            limitedBy: 'Key',
+            known: 1,
+            partial: 1,
+            total: 2,
+        });
+    });
+
+    test('keys that outlast the food leave the food verdict standing', () => {
+        const rows = [
+            memberReadiness({
+                name: 'Me',
+                isSelf: true,
+                forecasts: [{ name: 'Cake', secondsLeft: 6000 }],
+                runSeconds: RUN,
+                keysHeld: 400,
+            }),
+            memberReadiness({ name: 'Ally', forecasts: null, keysHeld: 900 }),
+        ];
+        expect(whoStopsFirst(rows)).toMatchObject({ name: 'Me', source: 'food', known: 1, partial: 1, total: 2 });
+    });
+
+    test('keys are not ranked against a food figure that has no run length', () => {
+        const rows = [
+            memberReadiness({ name: 'Me', isSelf: true, forecasts: [{ name: 'Cake', secondsLeft: 60 }] }),
+            memberReadiness({ name: 'Ally', forecasts: null, keysHeld: 1 }),
+        ];
+        expect(whoStopsFirst(rows)).toMatchObject({ name: 'Me', source: 'food' });
     });
 });
 
@@ -177,8 +288,19 @@ describe('buildReadiness', () => {
         expect(model.levelGap.warnings[0].name).toBe('Ally');
         expect(model.runSeconds).toBe(RUN);
         expect(model.footnotes.some((note) => note.includes('after the key is spent'))).toBe(true);
+        expect(model.footnotes.some((note) => note.includes('key-count message'))).toBe(false);
         expect(model.footnotes).toContain('Gear is read from captured profiles only.');
         expect(model.footnotes.some((note) => note.includes('how long one takes'))).toBe(false);
+    });
+
+    test('a stated key count is sourced in a footnote, since it is the one member figure there is', () => {
+        const model = buildReadiness({
+            dungeon,
+            runsPlanned: 10,
+            members: [memberReadiness({ name: 'Ally', forecasts: null, keysHeld: 40 })],
+        });
+        expect(model.footnotes.some((note) => note.includes('key-count message'))).toBe(true);
+        expect(model.stopsFirst).toMatchObject({ known: 0, partial: 1, total: 1 });
     });
 
     test('no run history footnotes the missing conversion', () => {

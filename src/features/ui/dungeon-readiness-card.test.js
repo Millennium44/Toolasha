@@ -6,7 +6,8 @@
  * What these cover is the honesty of the card: that it says "unknown" with a
  * reason for everything the pre-run payload does not carry, that it never
  * renders an unreadable member as if they were stocked, and that the keys —
- * the one figure that is exact before the run — are exact.
+ * the one figure that is exact before the run — are exact, for the party as
+ * well as for you, without a counted key pile ever passing for a read member.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -95,6 +96,15 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
 
 const { consumablesPanel } = await import('./consumables-panel.js');
 
+/**
+ * What the dungeon tracker's current run holds, reached the way the panel
+ * reaches it: `window.Toolasha.Combat`, because the tracker is a
+ * websocket-fed singleton in another bundle.
+ */
+const tracking = (run) => {
+    window.Toolasha = { Combat: { dungeonTracker: { getCurrentRun: () => run } } };
+};
+
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 const text = () => consumablesPanel.bodyEl.textContent;
 
@@ -137,6 +147,11 @@ const inParty = () => {
         tier: 0,
         duration: 600_000,
     }));
+};
+
+/** Put a different number of entry keys in the bag than `inParty`'s four */
+const keysInBag = (count) => {
+    game.inventory = game.inventory.map((entry) => (entry.itemHrid === KEY ? { ...entry, count } : entry));
 };
 
 /** What the last battle measured for the logged-in character only */
@@ -188,6 +203,7 @@ beforeEach(() => {
     game.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
     game.equipment = new Map();
     game.abilities = [];
+    delete window.Toolasha;
     consumablesPanel.hide({ remember: false });
 });
 
@@ -232,7 +248,7 @@ describe('the key line, which is the one exact figure', () => {
 });
 
 describe('what the lobby cannot see', () => {
-    test('every member is unknown before anything has been measured', async () => {
+    test('every member with no key count is unknown before anything has been measured', async () => {
         inParty();
         await render();
 
@@ -240,7 +256,10 @@ describe('what the lobby cannot see', () => {
         expect(body).toContain('Me (you)');
         expect(body).toContain('Ally');
         expect(body).toContain('Stranger');
-        expect(body.match(/unknown — not in party data/g)).toHaveLength(3);
+        // Your own keys are in your inventory, so your line is never blank —
+        // but your food is still unmeasured and the line says so
+        expect(body).toContain('4 keys · food unknown');
+        expect(body.match(/unknown — not in party data/g)).toHaveLength(2);
     });
 
     test('the reason is footnoted, not left to be inferred', async () => {
@@ -251,6 +270,7 @@ describe('what the lobby cannot see', () => {
 
     test('a member the last battle measured is shown in runs; the rest stay unknown', async () => {
         inParty();
+        keysInBag(500);
         measuredSelf();
         await render();
 
@@ -262,6 +282,18 @@ describe('what the lobby cannot see', () => {
         expect(body.match(/unknown — not in party data/g)).toHaveLength(2);
     });
 
+    test('a key pile shorter than the food is what stops you, and says so', async () => {
+        inParty();
+        measuredSelf();
+        store.data.consumablesDungeonRuns = 10;
+        await render();
+
+        const body = text();
+        // Four keys against twelve runs of coffee: the keys bind
+        expect(body).toContain('4 runs · Chimerical Entry Key');
+        expect(body).toContain('Stops first');
+    });
+
     test('with no recorded run length the coverage stays in time and says why', async () => {
         inParty();
         measuredSelf();
@@ -271,6 +303,53 @@ describe('what the lobby cannot see', () => {
         const body = text();
         expect(body).not.toContain('12 runs');
         expect(body).toContain('how long one takes');
+    });
+});
+
+describe('the party key counts the game itself broadcasts', () => {
+    test("a member's stated keys are shown, and their food is still unknown", async () => {
+        inParty();
+        tracking({ dungeonHrid: DEN, keyCountsMap: { Me: 4, Ally: 3 } });
+        store.data.consumablesDungeonRuns = 10;
+        await render();
+
+        const body = text();
+        expect(body).toContain('3 keys · food unknown');
+        // Counting a member's keys does not count them as read
+        expect(body).toContain('keys only for');
+        expect(body).toContain('key-count message in party chat');
+        // The member chat said nothing about is still plainly unknown
+        expect(body).toContain('unknown — not in party data');
+    });
+
+    test('an emptied slot map mid-battle still names the party', async () => {
+        inParty();
+        game.characterData.partyInfo.partySlotMap = {};
+        tracking({ dungeonHrid: DEN, keyCountsMap: { Me: 4, Ally: 3 } });
+        await render();
+
+        const body = text();
+        expect(body).toContain('Ally');
+        expect(body).not.toContain('Unknown player');
+    });
+
+    test('the battle payload names a party no key count has arrived for yet', async () => {
+        inParty();
+        game.characterData.partyInfo.partySlotMap = {};
+        game.latest = { durationSeconds: 60, actionHrid: DEN, players: [{ name: 'Me' }, { name: 'Ally' }] };
+        await render();
+
+        const body = text();
+        expect(body).toContain('Ally');
+        expect(body).toContain('unknown — not in party data');
+    });
+
+    test('a tracked run of another dungeon does not lend this card its counts', async () => {
+        inParty();
+        tracking({ dungeonHrid: '/actions/combat/pirate_cove', keyCountsMap: { Ally: 3 } });
+        await render();
+
+        expect(text()).not.toContain('3 keys');
     });
 });
 
