@@ -9,6 +9,9 @@ import {
     levelGapWarnings,
     mergePartyRoster,
     buildReadiness,
+    parseRunsPlanned,
+    nextRunStep,
+    MAX_RUNS_PLANNED,
     UNKNOWN_CONSUMABLES,
     UNKNOWN_KEYS,
 } from './dungeon-readiness.js';
@@ -308,5 +311,51 @@ describe('buildReadiness', () => {
         expect(model.runSeconds).toBeNull();
         expect(model.footnotes.some((note) => note.includes('how long one takes'))).toBe(true);
         expect(model.stopsFirst).toBeNull();
+    });
+});
+
+describe('parseRunsPlanned', () => {
+    test('a whole count is taken as typed', () => {
+        expect(parseRunsPlanned('2753')).toBe(2753);
+        expect(parseRunsPlanned(4)).toBe(4);
+    });
+
+    test('the separators the card itself prints are read back', () => {
+        expect(parseRunsPlanned('2,753')).toBe(2753);
+        expect(parseRunsPlanned(' 1 000 ')).toBe(1000);
+    });
+
+    test('zero, negatives and fractions are not run counts', () => {
+        for (const raw of ['0', '-5', '2.5', '1e3', '0x10', 'ten', '', '   ', null, undefined, {}]) {
+            expect(parseRunsPlanned(raw)).toBeNull();
+        }
+    });
+
+    test('the bound rejects rather than clamps, so a typo changes nothing', () => {
+        expect(parseRunsPlanned(String(MAX_RUNS_PLANNED))).toBe(MAX_RUNS_PLANNED);
+        expect(parseRunsPlanned(String(MAX_RUNS_PLANNED + 1))).toBeNull();
+        expect(parseRunsPlanned('1000000')).toBeNull();
+    });
+});
+
+describe('nextRunStep', () => {
+    const STEPS = [1, 3, 5, 10, 25, 50, 100, 250, 500, 1000];
+
+    test('a preset steps to the one above it', () => {
+        expect(nextRunStep(25, STEPS)).toBe(50);
+        expect(nextRunStep(1, STEPS)).toBe(3);
+    });
+
+    test('the top wraps to the bottom', () => {
+        expect(nextRunStep(1000, STEPS)).toBe(1);
+    });
+
+    test('a typed count between steps goes up, not back to the start', () => {
+        expect(nextRunStep(60, STEPS)).toBe(100);
+        expect(nextRunStep(4, STEPS)).toBe(5);
+    });
+
+    test('a typed count above every step wraps rather than sticking', () => {
+        expect(nextRunStep(2753, STEPS)).toBe(1);
     });
 });

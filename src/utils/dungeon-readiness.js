@@ -54,6 +54,63 @@ export const UNKNOWN_KEYS = 'no key count in party chat yet';
 export const KEYS_PER_RUN = 1;
 
 /**
+ * The largest run count the plan will accept.
+ *
+ * A hundred thousand runs is over a year of continuous dungeoning at the
+ * ten-minute run lengths this card measures, so nothing above it is a plan —
+ * it is a typo, and a typo that would price a shortfall in the trillions and
+ * paint every line red. The bound is deliberately far above the largest figure
+ * anybody has actually held (a food pile good for a few thousand runs), so it
+ * rejects nonsense without ever refusing an honest number.
+ */
+export const MAX_RUNS_PLANNED = 100000;
+
+/**
+ * A typed run count, or nothing.
+ *
+ * Rejects rather than clamps: silently turning a mistyped 1000000 into 100000
+ * would answer a question the player did not ask, and the caller's contract is
+ * that a rejected entry leaves the stored plan exactly as it was. Separators
+ * are tolerated because the card prints them, so "2,753" is what a player
+ * copying a figure off their own card will type back.
+ *
+ * @param {string|number} raw - Whatever was typed
+ * @returns {number|null} A whole run count in 1..{@link MAX_RUNS_PLANNED}, or null
+ */
+export function parseRunsPlanned(raw) {
+    if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+    const text = String(raw)
+        .trim()
+        .replace(/[,\s_]/g, '');
+    // `Number('')` is 0 and `Number('0x10')` is 16; neither is a run count
+    if (!/^\d+$/.test(text)) return null;
+    const runs = Number(text);
+    if (!Number.isFinite(runs) || runs < 1 || runs > MAX_RUNS_PLANNED) return null;
+    return Math.floor(runs);
+}
+
+/**
+ * The next preset above where the plan is now.
+ *
+ * Strictly greater rather than "the step after this one's index", because a
+ * typed count is usually not a step at all: from 2,753 the index lookup misses
+ * and the old cycle restarted at the first step, which reads as the button
+ * having forgotten the number the player just typed. Stepping up past the
+ * current value keeps the cycle monotone from wherever it starts, and the wrap
+ * back to the smallest step is then the one deliberate jump.
+ *
+ * @param {number} current - The plan now, typed or cycled
+ * @param {Array<number>} steps - The presets, ascending
+ * @returns {number} The next preset, wrapping at the top
+ */
+export function nextRunStep(current, steps) {
+    const ladder = (steps || []).filter((step) => Number.isFinite(step) && step > 0).sort((a, b) => a - b);
+    if (!ladder.length) return Math.max(1, Math.floor(Number(current) || 1));
+    const now = Number(current) || 0;
+    return ladder.find((step) => step > now) ?? ladder[0];
+}
+
+/**
  * How many whole runs a stock covers, given how long a run takes.
  *
  * Whole runs, floored: half a run of food is not a run, and a party that stops
@@ -446,6 +503,9 @@ export default {
     UNKNOWN_LEVEL,
     UNKNOWN_KEYS,
     KEYS_PER_RUN,
+    MAX_RUNS_PLANNED,
+    parseRunsPlanned,
+    nextRunStep,
     runsCovered,
     typicalRunSeconds,
     keyReadiness,

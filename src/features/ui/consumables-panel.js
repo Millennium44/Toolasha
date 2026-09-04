@@ -69,7 +69,10 @@ import {
     memberLimit,
     memberReadiness,
     mergePartyRoster,
+    nextRunStep,
+    parseRunsPlanned,
     typicalRunSeconds,
+    MAX_RUNS_PLANNED,
 } from '../../utils/dungeon-readiness.js';
 import { partyLintWarnings } from '../../utils/party-lint.js';
 import { combatLevel } from '../../utils/combat-level.js';
@@ -191,6 +194,14 @@ const REFRESH_MS = 5000;
  *
  * Every step the old list offered is still in this one, so a target somebody
  * has already picked keeps working and keeps cycling from where it is.
+ *
+ * The ladder stays roughly geometric rather than filling in the linear middle
+ * (75, 200, 300, 400) now that any count can be typed: a preset list is for
+ * reaching the right *order of magnitude* in one or two clicks, and an exact
+ * figure — four keys, 2,753 runs of food — is a thing to type, not a thing to
+ * click twelve times towards. Ten steps that span 1 to 1000 do that; ten steps
+ * that span 5 to 500 spend four of themselves inside one decade and still
+ * cannot reach either end.
  */
 const DUNGEON_RUN_STEPS = [1, 3, 5, 10, 25, 50, 100, 250, 500, 1000];
 const DEFAULT_DUNGEON_RUNS = 100;
@@ -359,8 +370,11 @@ class ConsumablesPanel {
         // The dungeon readiness card: how many runs to plan for, the recorded
         // run history that turns "hours of food" into "runs of food", and the
         // captured profiles that are the only pre-run window onto anybody else
+        // Through the same validator the typed box uses: a stored value is not
+        // more trustworthy than a typed one — it *was* a typed one, and a
+        // hand-edited setting could be anything
         this._dungeonRuns =
-            Number(await storage.get('consumablesDungeonRuns', 'settings', DEFAULT_DUNGEON_RUNS)) ||
+            parseRunsPlanned(await storage.get('consumablesDungeonRuns', 'settings', DEFAULT_DUNGEON_RUNS)) ??
             DEFAULT_DUNGEON_RUNS;
         this._dungeonHistory = (await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => [])) || [];
         this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
@@ -513,18 +527,99 @@ class ConsumablesPanel {
     }
 
     /**
-     * Cycle the run target and remember it, the way the labyrinth block does.
+     * Adopt a run target and remember it, the way the labyrinth block does.
      *
-     * A stored target that is not one of the steps — nothing writes one today,
-     * but a hand-edited setting could — starts the cycle at the first step
-     * rather than being silently rewritten on load.
+     * The one place the plan is written, so the cycle and the typed box cannot
+     * drift on what counts as valid or on what gets stored. A value the
+     * validator rejects is not written and not applied: the stored plan is left
+     * exactly as it was, which is what makes a mistyped entry harmless.
+     *
+     * @param {string|number} value - A typed or cycled run count
+     * @returns {boolean} Whether it was accepted
+     */
+    _setDungeonRuns(value) {
+        const runs = parseRunsPlanned(value);
+        if (runs === null) return false;
+        this._dungeonRuns = runs;
+        this._readinessMemo = null;
+        storage.set('consumablesDungeonRuns', runs, 'settings').catch(() => {});
+        this._render();
+        return true;
+    }
+
+    /**
+     * Cycle the run target up to the next preset.
+     *
+     * A typed target is almost never one of the steps, so the cycle steps up
+     * *past* where the plan is rather than looking its index up — see
+     * `nextRunStep`. That keeps the button useful after a number was typed
+     * instead of silently discarding it back to the bottom of the ladder.
      */
     _cycleDungeonRuns() {
-        const steps = DUNGEON_RUN_STEPS;
-        this._dungeonRuns = steps[(steps.indexOf(this.dungeonRuns) + 1) % steps.length];
-        this._readinessMemo = null;
-        storage.set('consumablesDungeonRuns', this._dungeonRuns, 'settings').catch(() => {});
-        this._render();
+        this._setDungeonRuns(nextRunStep(this.dungeonRuns, DUNGEON_RUN_STEPS));
+    }
+
+    /**
+     * The inline editor for the run target.
+     *
+     * An input in the heading rather than `window.prompt`, which a userscript
+     * context blocks often enough to be unreliable — the same call the layout
+     * bar and the market watchlist chips both make. Seeded with the current
+     * plan, so a glance-and-Enter changes nothing and typing over the seed is
+     * the case somebody opened it for. Enter commits, Escape leaves the plan
+     * untouched, and blur commits the way the other two editors do.
+     *
+     * The chip beside it still cycles, so nothing got slower for anybody who
+     * was happy clicking through the presets.
+     *
+     * @param {HTMLElement} heading - The card heading to draw the input into
+     */
+    _editDungeonRuns(heading) {
+        if (heading.querySelector('input')) return;
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.value = String(this.dungeonRuns);
+        input.title = `How many runs to check against — 1 to ${formatWithSeparator(MAX_RUNS_PLANNED)}`;
+        Object.assign(input.style, {
+            background: 'rgba(255, 255, 255, 0.06)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.text,
+            fontSize: '11px',
+            padding: '1px 4px',
+            width: '64px',
+        });
+
+        let settled = false;
+        const commit = () => {
+            if (settled) return;
+            settled = true;
+            // A rejected entry is not an instruction to change anything, so the
+            // box simply closes and the card redraws the plan it already had
+            if (!this._setDungeonRuns(input.value)) {
+                input.remove();
+                this._render();
+            }
+        };
+
+        input.addEventListener('click', (event) => event.stopPropagation());
+        input.addEventListener('keydown', (event) => {
+            // Kept off the game, which listens for keys on the document
+            event.stopPropagation();
+            if (event.key === 'Enter') commit();
+            else if (event.key === 'Escape') {
+                settled = true;
+                input.remove();
+                this._render();
+            }
+        });
+        input.addEventListener('blur', () => commit());
+
+        heading.appendChild(input);
+        input.focus();
+        input.select();
     }
 
     /**
@@ -875,14 +970,26 @@ class ConsumablesPanel {
             fontSize: '11px',
             padding: '1px 8px',
         });
-        runsBtn.textContent = `${model.runsPlanned} run${model.runsPlanned === 1 ? '' : 's'}`;
-        runsBtn.title = 'How many runs to check against. Click to cycle.';
+        runsBtn.textContent = `${formatWithSeparator(model.runsPlanned)} run${model.runsPlanned === 1 ? '' : 's'}`;
+        runsBtn.title = 'How many runs to check against. Click to cycle the presets.';
         runsBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             this._cycleDungeonRuns();
         });
 
-        heading.append(name, runsBtn);
+        // Typing is offered next to the cycle rather than instead of it: the
+        // presets reach an order of magnitude in a click, and no list of ten
+        // covers a plan that runs from four keys to a few thousand runs of food
+        const editBtn = document.createElement('span');
+        editBtn.textContent = '✎';
+        editBtn.title = `Type an exact number of runs (1 to ${formatWithSeparator(MAX_RUNS_PLANNED)})`;
+        editBtn.style.cssText = `cursor:pointer; font-size:11px; line-height:1; color:${COLORS.accent};`;
+        editBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._editDungeonRuns(heading);
+        });
+
+        heading.append(name, runsBtn, editBtn);
         section.appendChild(heading);
 
         if (model.keys) {

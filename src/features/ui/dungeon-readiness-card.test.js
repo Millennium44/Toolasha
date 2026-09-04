@@ -513,3 +513,96 @@ describe('the card is not rebuilt on the refresh clock', () => {
         expect(consumablesPanel._readinessModel([])).toBeNull();
     });
 });
+
+describe('typing an exact run count', () => {
+    /** The ✎ beside the cycling chip, and the box it opens */
+    const editButton = () => [...consumablesPanel.bodyEl.querySelectorAll('span')].find((el) => el.textContent === '✎');
+    const box = () => consumablesPanel.bodyEl.querySelector('input[inputmode="numeric"]');
+
+    const type = async (value) => {
+        editButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        const input = box();
+        input.value = value;
+        input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await settled();
+        return input;
+    };
+
+    test('a count no preset offers is taken and remembered', async () => {
+        inParty();
+        await render();
+
+        await type('2753');
+
+        expect(consumablesPanel.dungeonRuns).toBe(2753);
+        expect(store.data.consumablesDungeonRuns).toBe(2753);
+        expect(text()).toContain('2,753 runs');
+    });
+
+    test('it survives a reload', async () => {
+        inParty();
+        await render();
+        await type('2753');
+
+        // The same stored settings read back the way a fresh page load reads them
+        await consumablesPanel.loadSettings();
+        consumablesPanel._render();
+
+        expect(consumablesPanel.dungeonRuns).toBe(2753);
+        expect(text()).toContain('2,753 runs');
+    });
+
+    test('a stored count that was never valid falls back rather than being trusted', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = -12;
+        await render();
+
+        expect(consumablesPanel.dungeonRuns).toBe(100);
+    });
+
+    test('an entry that is not a run count leaves the stored plan alone', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 25;
+        await render();
+
+        for (const bad of ['0', '-3', 'lots', '1000000']) {
+            await type(bad);
+            expect(consumablesPanel.dungeonRuns).toBe(25);
+            expect(store.data.consumablesDungeonRuns).toBe(25);
+        }
+        expect(text()).toContain('25 runs');
+    });
+
+    test('Escape leaves the plan exactly as it was', async () => {
+        inParty();
+        store.data.consumablesDungeonRuns = 50;
+        await render();
+
+        editButton().dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+        const input = box();
+        input.value = '7';
+        input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        await settled();
+
+        expect(consumablesPanel.dungeonRuns).toBe(50);
+        expect(store.data.consumablesDungeonRuns).toBe(50);
+    });
+
+    test('cycling from a typed count steps up rather than forgetting it', async () => {
+        inParty();
+        await render();
+        await type('60');
+
+        consumablesPanel._cycleDungeonRuns();
+        expect(consumablesPanel.dungeonRuns).toBe(100);
+    });
+
+    test('cycling past the top of the ladder wraps, from a typed count too', async () => {
+        inParty();
+        await render();
+        await type('2753');
+
+        consumablesPanel._cycleDungeonRuns();
+        expect(consumablesPanel.dungeonRuns).toBe(1);
+    });
+});
