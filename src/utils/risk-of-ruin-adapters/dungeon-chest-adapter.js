@@ -20,8 +20,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import marketAPI from '../../api/marketplace.js';
-import config from '../../core/config.js';
+import { getKeyUnitCost } from '../key-cost.js';
 import expectedValueCalculator from '../../features/market/expected-value-calculator.js';
 import { calculatePriceAfterTax } from '../profit-helpers.js';
 import { createSeededRng, drawFromDistribution } from '../risk-of-ruin-engine.js';
@@ -33,21 +32,25 @@ import {
 const COIN_HRID = '/items/coin';
 const DEFAULT_EMPIRICAL_SAMPLE_SIZE = 5000;
 
-function getKeyPricingMode() {
-    return config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
-}
-
+/**
+ * What one key costs the player, per the key pricing setting.
+ *
+ * Zero only when nothing can price the key at all — `getKeyUnitCost` already
+ * refuses to invent a number, and a chest whose key is unpriceable is better
+ * modelled as free than as an arbitrary guess at its cost.
+ *
+ * @param {string} keyHrid - Key item HRID
+ * @returns {number} Gold per key
+ */
 function getKeyPrice(keyHrid) {
-    const priceData = marketAPI.getPrice(keyHrid);
-    if (!priceData) return 0;
-    const priceKey = getKeyPricingMode();
-    return priceData[priceKey] ?? priceData.ask ?? 0;
+    return getKeyUnitCost(keyHrid) ?? 0;
 }
 
 /**
  * Gold cost to open one chest: entry key (regular, non-refinement chests only) + chest key,
  * priced via the existing profitCalc_keyPricingMode setting — the same model
- * combat-stats-calculator.js's calculateKeyCosts() already uses.
+ * combat-stats-calculator.js's calculateKeyCosts() already uses, resolved through
+ * `utils/key-cost.js` so the craft and synced modes mean here what they mean there.
  * @param {string} containerHrid
  * @returns {number}
  */

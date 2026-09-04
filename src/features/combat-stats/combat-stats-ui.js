@@ -16,7 +16,7 @@ import {
     formatPercentage,
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
-import { formatKeyCostNote } from '../../utils/key-cost.js';
+import { formatKeyCostNote, getKeyPricingMode, resolveKeyPricing } from '../../utils/key-cost.js';
 import { shortDuration } from '../../utils/overlay-format.js';
 import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
 import { readScoped } from '../../utils/character-key.js';
@@ -230,7 +230,7 @@ class CombatStatsUI {
     shareStatsToChat(stats) {
         // Get chat message format from config (use getSettingValue for template type)
         const messageTemplate = config.getSettingValue('combatStatsChatMessage');
-        const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
+        const priceKey = getKeyPricingMode();
 
         // Convert array format to string if needed
         let message = '';
@@ -672,7 +672,7 @@ class CombatStatsUI {
                 copyButton.style.background = '#4a4a4a';
             };
             copyButton.onclick = () => {
-                const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
+                const priceKey = getKeyPricingMode();
                 const useKMB = isAbbreviationEnabled();
                 const formatNum = (num) =>
                     useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num));
@@ -850,7 +850,7 @@ class CombatStatsUI {
                 ? coinFormatter(Math.round(num))
                 : new Intl.NumberFormat('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(num);
 
-        const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
+        const priceKey = getKeyPricingMode();
 
         // Chest EVs scaled by the player's own measured luck must say so on
         // every figure that carries them — income, and the profit built on it
@@ -1164,16 +1164,22 @@ class CombatStatsUI {
                         } else if (row.breakdown && row.breakdown.length > 0) {
                             // Add key pricing note if applicable
                             if (row.showKeyPricingNote) {
-                                const keyPricing = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
+                                const keyPricing = resolveKeyPricing();
                                 const keyPricingNote = document.createElement('div');
                                 keyPricingNote.style.cssText = `
                                     font-size: 11px;
                                     color: #aaa;
                                     margin-bottom: 6px;
                                 `;
+                                // The costing rule is not always "the cheaper of the two":
+                                // on the craft basis the user has asked for the craft cost
+                                // even where the market undercuts it, and saying otherwise
+                                // would misdescribe the very number underneath this note.
+                                const side = keyPricing.priceSide === 'bid' ? 'Bid (patient buy)' : 'Ask (instant buy)';
                                 keyPricingNote.textContent =
-                                    `Pricing: ${keyPricing === 'bid' ? 'Bid (patient buy)' : 'Ask (instant buy)'}` +
-                                    ' · each key costed at the cheaper of buying and crafting';
+                                    keyPricing.basis === 'craft'
+                                        ? `Pricing: ${side} · each key costed at what it costs you to craft one`
+                                        : `Pricing: ${side} · each key costed at the cheaper of buying and crafting`;
                                 breakdownDiv.appendChild(keyPricingNote);
                             }
 

@@ -16,6 +16,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
+import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 
@@ -414,12 +415,7 @@ class InventoryBadgeManager {
                     let netValue = evData.expectedValue;
 
                     const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
-                    if (chestKeyHrid) {
-                        const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
-                        const keyPrices = marketAPI.getPrice(chestKeyHrid);
-                        const keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
-                        netValue -= keyPrice;
-                    }
+                    if (chestKeyHrid) netValue -= getKeyUnitCost(chestKeyHrid) ?? 0;
 
                     itemElem.dataset.askPrice = netValue;
                     itemElem.dataset.bidPrice = netValue;

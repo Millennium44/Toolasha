@@ -34,6 +34,7 @@ import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profi
 import dom from '../../utils/dom.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
+import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -501,10 +502,8 @@ class TooltipPrices {
                 let keyPrice = 0;
                 const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                 if (chestKeyHrid) {
-                    const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
-                    const keyPrices = marketAPI.getPrice(chestKeyHrid);
                     const keyDetails = dataManager.getItemDetails(chestKeyHrid);
-                    keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
+                    keyPrice = getKeyUnitCost(chestKeyHrid) ?? 0;
                     this.injectExpectedValueDisplay(
                         tooltipElement,
                         evData,

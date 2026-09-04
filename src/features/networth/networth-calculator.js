@@ -26,6 +26,7 @@ import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { refreshMarketValues, marketValueFor, reconcileBook } from '../../utils/market-values.js';
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
+import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -207,10 +208,10 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
                 // Deduct chest key cost for dungeon chests
                 const chestKeyHrid = DUNGEON_CHEST_CHEST_KEYS[itemHrid];
                 if (chestKeyHrid) {
-                    const keyPricingSetting = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
-                    const keyPrices = marketAPI.getPrice(chestKeyHrid);
-                    const keyPrice = keyPrices?.[keyPricingSetting] ?? keyPrices?.ask ?? 0;
-                    netValue -= keyPrice;
+                    // Through the key pricing resolver, not the raw setting: an
+                    // unresolved 'synced' or 'craft' indexes nothing on the price
+                    // map and would quietly deduct the ask instead
+                    netValue -= getKeyUnitCost(chestKeyHrid) ?? 0;
                 }
 
                 return netValue;
