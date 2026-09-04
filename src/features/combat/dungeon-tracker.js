@@ -772,6 +772,16 @@ class DungeonTracker {
         // zone's battles and showing the queued copy's tier.
         const runningNow = runningCombatAction(dataManager.getCurrentActions?.());
 
+        // Disarm a pending dungeon the character is no longer running. Nothing
+        // else does: `startDungeon` and `resetTracking` both clear it, but both
+        // need a run, and the page-load provisional card is armed with no run
+        // behind it. Cancel that dungeon and the panel went on naming it —
+        // "waiting for next wave" — for the rest of the session.
+        if (this.pendingDungeonInfo && runningNow?.actionHrid !== this.pendingDungeonInfo.dungeonHrid) {
+            this.pendingDungeonInfo = null;
+            this.notifyUpdate();
+        }
+
         // Check if any dungeon action was added or removed
         if (data.endCharacterActions) {
             for (const action of data.endCharacterActions) {

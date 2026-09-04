@@ -2390,6 +2390,32 @@ describe('the provisional card on page load', () => {
         expect(tracker.getPendingDungeon()).toMatchObject({ dungeonName: 'Chimerical Den', tier: 2, pending: true });
     });
 
+    test('the card goes away when the dungeon it names stops running', async () => {
+        // Nothing else clears the provisional arm: it is set on page load with no
+        // run behind it, and only `startDungeon` and `resetTracking` — both of
+        // which need a run — ever cleared it. Cancel the dungeon and go fishing
+        // and the panel went on announcing a dungeon that had left the queue.
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
+        await tracker.checkForActiveDungeon();
+        expect(tracker.getPendingDungeon()).not.toBeNull();
+
+        game.actions = [{ actionHrid: FLY, difficultyTier: null, ordinal: 1, isDone: false }];
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 1, isDone: true }] });
+
+        expect(tracker.getPendingDungeon()).toBeNull();
+    });
+
+    test('the card survives the queue merely being edited under it', async () => {
+        game.actions = [{ actionHrid: DEN, difficultyTier: 1, ordinal: 1, isDone: false }];
+        await tracker.checkForActiveDungeon();
+
+        tracker.onActionsUpdated({
+            endCharacterActions: [{ actionHrid: '/actions/cheesesmithing/cheese_gauntlets', isDone: false }],
+        });
+
+        expect(tracker.getPendingDungeon()).toMatchObject({ dungeonHrid: DEN, pending: true });
+    });
+
     test('nothing pending once the real run starts', async () => {
         game.actions = [{ actionHrid: DEN, difficultyTier: 1, isDone: false }];
         await tracker.checkForActiveDungeon();
