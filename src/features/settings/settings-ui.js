@@ -1573,12 +1573,11 @@ class SettingsUI {
         // If the feature was off when this page loaded, nothing was hydrated from
         // storage into memory (initialize() bails before load() in that case) - a
         // prior session's data would otherwise look like it was never collected.
-        // Only when memory is still empty: if it already holds anything, that data
-        // came from this session's own recording or an earlier load, and re-reading
-        // the same on-disk record would double-count it (hydrate() is additive).
-        if (!spawnCensus.initialized && spawnCensus.rosters.size === 0) {
-            await spawnCensus.load();
-        }
+        // Unconditional now that load() is idempotent: the previous "only when
+        // memory is empty" guard was still true for a second press that arrived
+        // while the first read was in flight, and hydrate() is additive, so two
+        // quick presses doubled every count and then flushed the doubled copy.
+        await spawnCensus.load();
 
         await spawnCensus.flush();
         const waveCount = spawnCensus.summary().wavesSeen;

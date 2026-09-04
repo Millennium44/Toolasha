@@ -19,6 +19,7 @@ const game = vi.hoisted(() => ({
     actionDetails: {},
     wsHandlers: {},
     stored: null,
+    readFails: false,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -36,7 +37,10 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async () => game.stored,
+        getJSON: async () => {
+            if (game.readFails) throw new Error('store closed');
+            return game.stored;
+        },
         setJSON: async (key, value) => {
             game.stored = value;
             return true;
@@ -55,6 +59,7 @@ import spawnCensus, {
     monstersOf,
     rosterKey,
     durationStats,
+    isNextWave,
     shortHrid,
     MAX_ROSTER_ROWS,
     NO_WAVE,
@@ -89,6 +94,7 @@ beforeEach(async () => {
     vi.setSystemTime(1_700_000_000_000);
     game.setting = true;
     game.stored = null;
+    game.readFails = false;
     game.actions = [];
     game.wsHandlers = {};
     game.actionDetails = {
@@ -412,5 +418,311 @@ describe('wiring', () => {
         expect(shortHrid('/monsters/rat')).toBe('rat');
         expect(shortHrid(undefined)).toBe('');
         expect(rosterKey('/actions/combat/x', 1, 2, [])).toBe('x|1|2|');
+    });
+});
+
+describe('hydrating exactly once', () => {
+    test('a character switch does not double every count', async () => {
+        battle(['rat'], { wave: 1 });
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+
+        // What a character switch does: disable() then initialize() on the same
+        // singleton, whose maps are still full. hydrate() is additive, so a
+        // second read of the record it has just written doubles everything —
+        // and the doubled numbers look exactly as plausible as the real ones.
+        await spawnCensus.disable();
+        await spawnCensus.initialize();
+
+        expect(spawnCensus.rosters.get('chimerical_den|0|1|rat').n).toBe(2);
+        expect(spawnCensus.waves).toBe(2);
+    });
+
+    test('two switches in a row do not quadruple it either', async () => {
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+
+        for (let i = 0; i < 2; i++) {
+            await spawnCensus.disable();
+            await spawnCensus.initialize();
+        }
+
+        expect(spawnCensus.waves).toBe(1);
+    });
+
+    test('two reads racing each other hydrate once between them', async () => {
+        battle(['rat'], { wave: 1 });
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+        const written = game.stored;
+
+        // The settings Export button reads storage when memory looks empty; two
+        // quick presses both see it empty while the first read is in flight.
+        spawnCensus._reset();
+        game.stored = written;
+        await Promise.all([spawnCensus.load(), spawnCensus.load()]);
+
+        expect(spawnCensus.rosters.get('chimerical_den|0|1|rat').n).toBe(2);
+        expect(spawnCensus.waves).toBe(2);
+    });
+
+    test('a read that failed is retried rather than counted as done', async () => {
+        spawnCensus._reset();
+        game.readFails = true;
+        await spawnCensus.load();
+        expect(spawnCensus.loaded).toBe(false);
+
+        game.readFails = false;
+        game.stored = { version: 1, waves: 4, rosters: { 'chimerical_den|0|1|rat': [4, 1, 2] } };
+        await spawnCensus.load();
+        expect(spawnCensus.waves).toBe(4);
+    });
+});
+
+describe('sharing one account-wide record between tabs', () => {
+    test("another tab's counts are folded in, not overwritten", async () => {
+        battle(['rat'], { wave: 1 });
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+
+        // A second tab — the same account, a different character — loaded the
+        // same record and has since written three more of the same wave.
+        const otherTab = JSON.parse(JSON.stringify(game.stored));
+        otherTab.rosters['chimerical_den|0|1|rat'][0] += 3;
+        otherTab.waves += 3;
+        game.stored = otherTab;
+
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+
+        // Writing this tab's own copy over that would have thrown the other
+        // tab's three waves away and left five looking like three.
+        expect(game.stored.rosters['chimerical_den|0|1|rat'][0]).toBe(6);
+        expect(game.stored.waves).toBe(6);
+    });
+
+    test('a tab does not fold in its own writes', async () => {
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+
+        expect(game.stored.rosters['chimerical_den|0|1|rat'][0]).toBe(3);
+        expect(game.stored.waves).toBe(3);
+    });
+
+    test('a duration another tab recorded is added to the aggregate, not replaced', async () => {
+        const base = 1_700_000_000_000;
+        battle(['rat'], { wave: 1, at: base });
+        battle(['rat'], { wave: 2, at: base + 1000 });
+        await spawnCensus.flush();
+
+        const otherTab = JSON.parse(JSON.stringify(game.stored));
+        otherTab.durations['chimerical_den|0|1'] = [3, 3000, 3_000_000];
+        game.stored = otherTab;
+
+        battle(['rat'], { wave: 3, at: base + 3000 });
+        await spawnCensus.flush();
+
+        // One span of 1000 here, two more of 1000 from the other tab.
+        expect(game.stored.durations['chimerical_den|0|1']).toEqual([3, 3000, 3_000_000]);
+    });
+});
+
+describe('nothing off an account can reach the file', () => {
+    test('a unit that is not a monster hrid is not counted, flag or no flag', () => {
+        game.wsHandlers.new_battle({
+            wave: 1,
+            mMap: {
+                0: { hrid: '/players/SomeCharacterName', combatDetails: { maxHitpoints: 5000 } },
+                1: { hrid: '/characters/12345', combatDetails: { maxHitpoints: 5000 } },
+                2: monster('rat'),
+            },
+        });
+
+        // `isPlayer` is a flag the payload has to set; the roster is built from a
+        // prefix the payload cannot forge into a name.
+        expect([...spawnCensus.rosters.keys()]).toEqual(['chimerical_den|0|1|rat']);
+        expect(JSON.stringify(spawnCensus.exportFile())).not.toContain('SomeCharacterName');
+        expect([...spawnCensus.hrids.keys()].sort()).toEqual(['chimerical_den', 'rat']);
+    });
+
+    test('monstersOf accepts only /monsters/ hrids', () => {
+        expect(monstersOf({ monsters: [{ hrid: '/players/Bob' }, { combatMonsterHrid: '/monsters/rat' }] })).toEqual([
+            { hrid: '/monsters/rat', maxHitpoints: null },
+        ]);
+        expect(monstersOf({ monsters: [{ hrid: 12345 }] })).toEqual([]);
+    });
+
+    test('the export carries hrids, tiers, waves and counts and nothing else', () => {
+        battle(['rat', 'frog'], { wave: 1 });
+        const file = spawnCensus.exportFile();
+
+        expect(Object.keys(file).sort()).toEqual([
+            'conventions',
+            'distinctRosters',
+            'durations',
+            'evictedRows',
+            'exportedAt',
+            'monsterHitpoints',
+            'retainedFrom',
+            'rosters',
+            'rowCap',
+            'spawnTableFingerprints',
+            'spawnTables',
+            'startedAt',
+            'type',
+            'version',
+            'wavesSeen',
+        ]);
+        expect(Object.keys(file.rosters[0]).sort()).toEqual([
+            'count',
+            'difficultyTier',
+            'firstSeen',
+            'lastSeen',
+            'monsterHrids',
+            'wave',
+            'zoneHrid',
+        ]);
+    });
+});
+
+describe('a malformed payload is never fatal', () => {
+    test('nothing thrown, nothing counted, for any of these', () => {
+        const hostile = [
+            undefined,
+            null,
+            {},
+            { wave: 1 },
+            { wave: 1, monsters: null },
+            { wave: 1, monsters: 'rat' },
+            { wave: 1, monsters: 7 },
+            { wave: 1, monsters: [null, undefined, {}, { hrid: null }] },
+            { wave: 1, mMap: { 0: null } },
+            { wave: '4', mMap: { 0: monster('rat') } },
+            { wave: -3, mMap: { 0: monster('rat') } },
+            { wave: 1e12, mMap: { 0: monster('rat') } },
+            { wave: 1, mMap: { 0: { hrid: '/monsters/rat', combatDetails: { maxHitpoints: 'lots' } } } },
+        ];
+
+        for (const payload of hostile) {
+            expect(() => game.wsHandlers.new_battle(payload)).not.toThrow();
+        }
+
+        // Only the well-formed ones landed, and each is its own row.
+        expect([...spawnCensus.rosters.keys()].sort()).toEqual([
+            'chimerical_den|0|-3|rat',
+            'chimerical_den|0|1000000000000|rat',
+            'chimerical_den|0|1|rat',
+            'chimerical_den|0|4|rat',
+        ]);
+        // A hitpoints field that is not a number is unknown, not zero.
+        expect(spawnCensus.monsterHp.get('chimerical_den|0|rat')).toBe(1000);
+    });
+
+    test('an enormous roster is one row like any other', () => {
+        const names = Array.from({ length: 500 }, (_, i) => `mob${i}`);
+        expect(() => battle(names, { wave: 1 })).not.toThrow();
+        expect(spawnCensus.rosters.size).toBe(1);
+        expect(spawnCensus.exportFile().rosters[0].monsterHrids).toHaveLength(500);
+    });
+});
+
+describe('durations belong to one run', () => {
+    test('the gap across a run boundary is not the last wave taking four minutes', () => {
+        const base = 1_700_000_000_000;
+        battle(['rat'], { wave: 49 });
+        battle(['rat'], { wave: 50, at: base + 1000 });
+        // The run ends, the chest opens, the next run starts four minutes later:
+        // under the ten-minute cap, and nothing like a wave.
+        battle(['rat'], { wave: 1, at: base + 1000 + 4 * 60_000 });
+
+        expect(spawnCensus.durations.has('chimerical_den|0|50')).toBe(false);
+        expect(spawnCensus.durations.get('chimerical_den|0|49').n).toBe(1);
+    });
+
+    test('a zone stopped and started again is not one long wave', () => {
+        const base = 1_700_000_000_000;
+        inZone(ZONE);
+        game.actions[0].id = 'action-1';
+        battle(['fly'], { wave: 1, at: base });
+
+        // Same zone, same tier, a new queue entry: the action was restarted.
+        inZone(ZONE);
+        game.actions[0].id = 'action-2';
+        battle(['fly'], { wave: 1, at: base + 3 * 60_000 });
+
+        expect(spawnCensus.durations.size).toBe(0);
+    });
+
+    test('isNextWave allows a repeat and the next wave, and nothing else', () => {
+        expect(isNextWave(3, 4)).toBe(true);
+        expect(isNextWave(3, 3)).toBe(true);
+        expect(isNextWave(50, 1)).toBe(false);
+        expect(isNextWave(3, 7)).toBe(false);
+        expect(isNextWave(NO_WAVE, NO_WAVE)).toBe(true);
+        expect(isNextWave(NO_WAVE, 1)).toBe(false);
+    });
+});
+
+describe('what the retained window says', () => {
+    test('retainedFrom is null while nothing has been evicted', async () => {
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+        const written = game.stored;
+
+        spawnCensus._reset();
+        spawnCensus.hydrate(written);
+
+        expect(spawnCensus.retainedFrom).toBeNull();
+    });
+
+    test('after a merge it is the earliest firstSeen actually held', () => {
+        const base = 1_700_000_000_000;
+        spawnCensus._reset();
+        spawnCensus.hydrate({
+            version: 1,
+            evicted: 5,
+            waves: 2,
+            retainedFrom: base + 60_000,
+            rosters: { 'chimerical_den|0|1|rat': [1, base / 1000 + 60, base / 1000 + 60] },
+        });
+        spawnCensus.hydrate({
+            version: 1,
+            evicted: 0,
+            waves: 1,
+            retainedFrom: base + 90_000,
+            rosters: { 'chimerical_den|0|2|frog': [1, base / 1000, base / 1000] },
+        });
+
+        // The union holds a row first seen at `base`, so claiming the retained
+        // sample starts a minute later understates what the file contains.
+        expect(spawnCensus.retainedFrom).toBe(base);
+    });
+});
+
+describe('the tables the counts were drawn from', () => {
+    test('a table that changes mid-collection leaves two fingerprints', () => {
+        battle(['rat'], { wave: 1 });
+        const first = [...spawnCensus.tableHashes.get('chimerical_den')];
+        expect(first).toHaveLength(1);
+
+        // A game patch, and a later session of the same census.
+        game.actionDetails[DUNGEON].combatZoneInfo.dungeonInfo.maxWaves = 60;
+        spawnCensus.fingerprinted.clear();
+        battle(['rat'], { wave: 2 });
+
+        expect(spawnCensus.tableHashes.get('chimerical_den')).toHaveLength(2);
+        expect(spawnCensus.exportFile().spawnTableFingerprints[DUNGEON]).toHaveLength(2);
+    });
+
+    test('an unchanged table is fingerprinted once however many sessions see it', () => {
+        battle(['rat'], { wave: 1 });
+        spawnCensus.fingerprinted.clear();
+        battle(['rat'], { wave: 2 });
+
+        expect(spawnCensus.tableHashes.get('chimerical_den')).toHaveLength(1);
     });
 });

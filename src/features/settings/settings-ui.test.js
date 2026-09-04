@@ -1193,8 +1193,13 @@ describe('the spawn census export button', () => {
         expect(censusMock.loadCalls).toBe(1);
     });
 
-    test('does not re-load from storage when this session already holds census data', async () => {
-        censusMock.initialized = false;
+    test('asks the census to load whatever its state, since load() is idempotent', async () => {
+        // The button used to skip the read whenever memory held anything, which
+        // was the only thing standing between a second press and a doubled
+        // count - and it was still true for a press that arrived while the first
+        // read was in flight. The census now refuses the second read itself
+        // (spawn-census.test.js proves it), so the button simply always asks.
+        censusMock.initialized = true;
         censusMock.rosterSize = 3;
         censusMock.wavesSeen = 5;
         censusMock.downloadResult = true;
@@ -1202,19 +1207,9 @@ describe('the spawn census export button', () => {
 
         exportButton().click();
         await settle();
-
-        expect(censusMock.loadCalls).toBe(0);
-    });
-
-    test('does not re-load from storage while the census is actively recording this session', async () => {
-        censusMock.initialized = true;
-        censusMock.rosterSize = 0;
-        censusMock.wavesSeen = 0;
-        drawPanel();
-
         exportButton().click();
         await settle();
 
-        expect(censusMock.loadCalls).toBe(0);
+        expect(censusMock.loadCalls).toBe(2);
     });
 });
