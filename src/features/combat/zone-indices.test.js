@@ -5,7 +5,7 @@
  * observer fired on the reinsert, which reinserted, forever — and every
  * cycle yanked a React-owned node out from under a pending click.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -15,9 +15,28 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getInitClientData: () => null } }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { register: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: { register: () => () => {}, onClass: () => () => {}, onReady: () => () => {} },
+}));
+vi.mock('../../core/websocket.js', () => {
+    const handlers = new Map();
+    return {
+        default: {
+            on: (type, fn) => {
+                if (!handlers.has(type)) handlers.set(type, new Set());
+                handlers.get(type).add(fn);
+            },
+            off: (type, fn) => handlers.get(type)?.delete(fn),
+            _emit: (type, data) => {
+                for (const fn of handlers.get(type) ?? []) fn(data);
+            },
+            _count: (type) => handlers.get(type)?.size ?? 0,
+        },
+    };
+});
 
 import zoneIndices from './zone-indices.js';
+import webSocketHook from '../../core/websocket.js';
 
 /** A task card name element as the game draws it. */
 function nameEl(text) {
@@ -142,5 +161,67 @@ describe('addMapIndices', () => {
 
         // The new tab is third in the row — it must read "3.", not repeat "1."
         expect(fresh.querySelector('span.script_mapIndex').textContent).toBe('3. ');
+    });
+});
+
+describe('quests_updated', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        zoneIndices.disable();
+        zoneIndices.initialize();
+        zoneIndices.monsterZoneCache = new Map([
+            ['jerry', 3],
+            ['sherlock', 2],
+        ]);
+    });
+
+    afterEach(() => {
+        zoneIndices.disable();
+        vi.useRealTimers();
+    });
+
+    // The regression: a reroll rewrites the card's text in place, so no node
+    // carrying a watched class is inserted and the class-filtered shared
+    // observer never re-fires. Nothing here touches childList.
+    it('relabels a rerolled card with no DOM insertion at all', () => {
+        vi.useFakeTimers();
+        const el = nameEl('Defeat - Jerry');
+        zoneIndices.addTaskIndices();
+        expect(el.querySelector('span.script_taskMapIndex').textContent).toBe('Z3');
+
+        el.childNodes[0].textContent = 'Defeat - Sherlock';
+        webSocketHook._emit('quests_updated', {});
+        vi.advanceTimersByTime(2000);
+
+        expect(el.querySelector('span.script_taskMapIndex').textContent).toBe('Z2');
+        expect(el.querySelectorAll('span.script_taskMapIndex')).toHaveLength(1);
+    });
+
+    it('does not relabel at event time — the game has not redrawn yet', () => {
+        vi.useFakeTimers();
+        const el = nameEl('Defeat - Jerry');
+        zoneIndices.addTaskIndices();
+
+        webSocketHook._emit('quests_updated', {});
+        // The card still reads the old name at this point, exactly as it does
+        // in the game; relabelling now would just rewrite Z3.
+        expect(el.querySelector('span.script_taskMapIndex').textContent).toBe('Z3');
+        el.childNodes[0].textContent = 'Defeat - Sherlock';
+        vi.advanceTimersByTime(250);
+        expect(el.querySelector('span.script_taskMapIndex').textContent).toBe('Z2');
+    });
+
+    it('unsubscribes and drops pending passes on disable', () => {
+        vi.useFakeTimers();
+        const el = nameEl('Defeat - Jerry');
+        zoneIndices.addTaskIndices();
+
+        webSocketHook._emit('quests_updated', {});
+        zoneIndices.disable();
+        expect(webSocketHook._count('quests_updated')).toBe(0);
+
+        el.textContent = 'Defeat - Sherlock';
+        vi.advanceTimersByTime(2000);
+        expect(el.querySelector('span.script_taskMapIndex')).toBeNull();
     });
 });

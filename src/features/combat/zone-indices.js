@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import webSocketHook from '../../core/websocket.js';
 
 // Compiled regex pattern (created once, reused for performance)
 const REGEX_COMBAT_TASK = /(?:Kill|Defeat)\s*-\s*(.+)$/;
@@ -23,12 +24,31 @@ const REGEX_COMBAT_TASK = /(?:Kill|Defeat)\s*-\s*(.+)$/;
 const ZONE_INDEX_CLASSES = ['RandomTask_name', 'CombatPanel_tabsComponentContainer', 'MuiTabs-vertical', 'MuiTab-root'];
 
 /**
+ * How long after `quests_updated` the relabel runs.
+ *
+ * The hook fires while the message is being delivered, before the game's own
+ * handler has re-rendered the board, so a relabel at event time reads the old
+ * name back. The same 250 ms wait every other task feature uses (task-icons,
+ * task-profit-display).
+ */
+const QUESTS_REDRAW_DELAY_MS = 250;
+
+/**
+ * A second pass for a card the game had not finished redrawing at 250 ms.
+ * `addTaskIndices` touches the DOM only when the label actually changes, so a
+ * card that is already correct costs nothing here.
+ */
+const QUESTS_SETTLE_DELAY_MS = 1000;
+
+/**
  * ZoneIndices class manages zone index display on maps and tasks
  */
 class ZoneIndices {
     constructor() {
         this.unregisterObserver = null; // Unregister function from centralized observer
         this.unregisterReady = null;
+        this.unregisterQuests = null;
+        this.questsTimers = [];
         this.isActive = false;
         this.monsterZoneCache = null; // Cache monster name -> zone index mapping
         this.taskMapIndexEnabled = false;
@@ -115,8 +135,55 @@ class ZoneIndices {
             }
         });
 
+        // A reroll rewrites the task card's name text in place — the card is
+        // not remounted, so no node carrying a watched class is inserted and
+        // the shared observer (childList/subtree only, see dom-observer.js)
+        // never re-fires. The label kept the previous task's zone until
+        // something else rebuilt the board, which is why tabbing out of the
+        // panel and back "fixed" it. The quest list changing is the
+        // authoritative signal that the labels are stale, so take it directly.
+        const questsHandler = () => {
+            this.scheduleTaskIndexRefresh();
+        };
+        webSocketHook.on('quests_updated', questsHandler);
+        this.unregisterQuests = () => webSocketHook.off('quests_updated', questsHandler);
+
         this.isActive = true;
         this.isInitialized = true;
+    }
+
+    /**
+     * Relabel task cards once the game has redrawn them.
+     *
+     * Only the task labels: the combat panel's zone tabs are a fixed list that
+     * a quest update cannot change, so `addMapIndices` has no reason to re-run
+     * here.
+     */
+    scheduleTaskIndexRefresh() {
+        if (!this.taskMapIndexEnabled) {
+            return;
+        }
+        this.clearQuestsTimers();
+        for (const delay of [QUESTS_REDRAW_DELAY_MS, QUESTS_SETTLE_DELAY_MS]) {
+            this.questsTimers.push(
+                setTimeout(() => {
+                    if (this.taskMapIndexEnabled) {
+                        this.addTaskIndices();
+                    }
+                }, delay)
+            );
+        }
+    }
+
+    /**
+     * Drop any pending relabel passes.
+     * @private
+     */
+    clearQuestsTimers() {
+        for (const timer of this.questsTimers) {
+            clearTimeout(timer);
+        }
+        this.questsTimers = [];
     }
 
     /**
@@ -330,6 +397,13 @@ class ZoneIndices {
                 this.unregisterReady();
                 this.unregisterReady = null;
             }
+
+            if (this.unregisterQuests) {
+                this.unregisterQuests();
+                this.unregisterQuests = null;
+            }
+
+            this.clearQuestsTimers();
 
             // Remove all added indices
             const taskIndices = document.querySelectorAll('span.script_taskMapIndex');
