@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The task zone number updates when you reroll
+
+Rerolling a task left the old zone number beside the new task until you tabbed away and back. Yesterday's performance work gave that label's handler a class filter, and the shared page watcher only notices elements being *inserted* — a reroll rewrites the task's text in place, so nothing fired. It had been relying on unrelated page activity to re-run it. It now listens for the game's own quest update, which is what every other task feature already uses and is a far better signal than incidental churn. The other five filtered handlers were checked for the same shape: each either has its own watcher for in-place changes or cannot be affected.
+
+
 ### Dungeon keys can be priced as you actually get them, and the setting reaches everything it claimed to
 
 Key pricing gains two options beside ask and bid: follow whatever the profit calculator is set to, or value a key at what it costs you to craft one. The setting can also be cycled straight from the dungeon card in the consumables panel, which is the same global setting rather than a copy — the chip says so, since changing it also moves net worth, item tooltips, combat income and the ROI board.
