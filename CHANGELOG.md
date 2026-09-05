@@ -8,8 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The task zone number updates when you reroll
 
-Rerolling a task left the old zone number beside the new task until you tabbed away and back. Yesterday's performance work gave that label's handler a class filter, and the shared page watcher only notices elements being *inserted* — a reroll rewrites the task's text in place, so nothing fired. It had been relying on unrelated page activity to re-run it. It now listens for the game's own quest update, which is what every other task feature already uses and is a far better signal than incidental churn. The other five filtered handlers were checked for the same shape: each either has its own watcher for in-place changes or cannot be affected.
-
+Rerolling a task left the old zone number beside the new task until you tabbed away and back. Yesterday's performance work gave that label's handler a class filter, and the shared page watcher only notices elements being _inserted_ — a reroll rewrites the task's text in place, so nothing fired. It had been relying on unrelated page activity to re-run it. It now listens for the game's own quest update, which is what every other task feature already uses and is a far better signal than incidental churn. The other five filtered handlers were checked for the same shape: each either has its own watcher for in-place changes or cannot be affected.
 
 ### Dungeon keys can be priced as you actually get them, and the setting reaches everything it claimed to
 
@@ -17,11 +16,9 @@ Key pricing gains two options beside ask and bid: follow whatever the profit cal
 
 Getting there turned up a quieter problem. Six places read that setting by using it directly as a lookup into a price list, so anything other than ask or bid found nothing and fell back to the ask while appearing to honour your choice. Net worth, the inventory badges, item tooltips, the combat breakdown and the chest risk model all did this. They now resolve the setting properly, so the new options work everywhere the help text promises — and that help text has been rewritten to name every feature it governs, having listed three of seven.
 
-
 ### Plan any number of dungeon runs, and see whether crafting the keys beats buying them
 
 The readiness card's run count only cycled a fixed list, so a plan of 2,753 runs was not expressible and cycling from one silently restarted at 1. The count can now be typed and is remembered, while the chip still cycles for anyone who preferred that. And the missing-keys figure no longer assumes you would buy finished keys: it prices crafting them against buying them, says which is cheaper and by how much, states the pricing basis it used for both sides, and reports the bench time without pretending time is gold. When a material or the market has no price, it says so rather than showing a free craft.
-
 
 ### The dungeon readiness card can see your party's keys, and your own
 
@@ -29,11 +26,9 @@ The card called every other party member "Unknown player — not in party data",
 
 Your own keys were missing from the check entirely, which meant the card could name your coffee as the thing that stops you while four entry keys sat in the bag. The key line now also says how many more to buy when you are short of the planned runs, and the plan defaults to 100 runs rather than 5, which is roughly a day of dungeoning and matches the horizon the rest of the panel already used.
 
-
 ### The own-use tooltip line prices both halves the way you asked, and says which
 
 "Own use: make vs buy" costed your materials under whichever pricing mode you had chosen, then always priced the buy alternative at the ask. On bid-based modes that compared a cheap side against an expensive one and leaned toward "make it yourself" on the spread alone. Both halves now follow the same mode, and the line states the basis it used, so "buy" no longer has to be assumed. Anyone on the default hybrid mode sees no change, since hybrid buys at ask on both sides already; the modes that quote bids are the ones that were wrong.
-
 
 ### Audit round: the spawn census was miscounting, and a finished run could land on the wrong character
 
@@ -42,7 +37,6 @@ The census shipped counting some waves twice and losing others. Switching charac
 A dungeon run that finished while you were switching characters was banked under the arriving character — gone from the history of whoever ran it, and skewing the other one's averages for good. A queue edit while a run was on its first wave could make a reconnect look like a fresh start and wipe the run's progress. A dungeon cancelled after a refresh left the panel naming it for the rest of the session.
 
 On the performance side, yesterday's class filters accidentally made two handlers worse: a debounced handler re-expanded its own batch, so opening a full inventory ran the equipment-level pass hundreds of times instead of once. The party profile button's filter now anchors on the popup's modal, which another feature already relies on, rather than assuming the tab row's framework classes. The panel-size handler no longer runs on every element inserted anywhere for players who have never resized a panel. And the dungeon spawn rule keeps a dungeon's own band drawable in a hypothetical dungeon with seven or more lower tables, where the arithmetic would otherwise have excluded it entirely.
-
 
 ### A party run picked up mid-way gets its real start back from chat
 
@@ -2241,6 +2235,49 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
+
+## [3.42.0](https://github.com/Millennium44/Toolasha/compare/v3.41.0...v3.42.0) (2026-09-05)
+
+### Features
+
+- **consumables:** cycle the key pricing mode from the dungeon readiness card ([e1d568e](https://github.com/Millennium44/Toolasha/commit/e1d568e33940fc252aa68e13b26b4e72d3e89bbd))
+- price the dungeon key shortfall as craft versus buy ([3088150](https://github.com/Millennium44/Toolasha/commit/3088150f30d52d5d4aa7f771da9a56fb85e5e31c))
+- **pricing:** add synced and craft-cost dungeon key pricing modes ([6db28ff](https://github.com/Millennium44/Toolasha/commit/6db28ff153745b144684e4692db188152a8d9626))
+- **readiness:** let the key shortfall plan honour the craft pricing basis ([cdc62c9](https://github.com/Millennium44/Toolasha/commit/cdc62c9c0955b4f918b12f722178d7fb01090f8e))
+- **readiness:** name how many entry keys are missing for the planned runs ([1d701ec](https://github.com/Millennium44/Toolasha/commit/1d701eca837e2418c67daba14552ca37b8906a43))
+- **readiness:** plan dungeon runs against a day by default, with steps up to 1000 ([69534b2](https://github.com/Millennium44/Toolasha/commit/69534b29a4542aa792f56bf9e962b3b6ff88836a))
+- **readiness:** show every party member's entry keys from the game's key-count message ([548823a](https://github.com/Millennium44/Toolasha/commit/548823a7b0c84d92cc840c4bb9dbf64426d03e87))
+- type an exact dungeon run count on the readiness card ([449acbe](https://github.com/Millennium44/Toolasha/commit/449acbeb314172efed55b41f33fed9f060e4aebb))
+
+### Bug Fixes
+
+- a completion landing across a character switch is banked under the arriving character ([57bcf2c](https://github.com/Millennium44/Toolasha/commit/57bcf2c675a055893844ecb94b6e742ca70f05f5))
+- a queue edit during wave 1 turns a reconnect's resend back into a run restart ([4463489](https://github.com/Millennium44/Toolasha/commit/446348972363c3c91526428405742efa4627634d))
+- anchor PartyProfileButton's filter on the popup's modal, not only its tabs ([82d150d](https://github.com/Millennium44/Toolasha/commit/82d150d25dec2750a85c2d6791f83dbe682ecfed))
+- **combat-sim:** keep a dungeon's own band drawable when many tables are eligible ([66a4ea4](https://github.com/Millennium44/Toolasha/commit/66a4ea4cad3ca2a0bbeaa48849992b792bacfe4f))
+- price both sides of the own-use tooltip line on the chosen pricing mode ([5d5dfca](https://github.com/Millennium44/Toolasha/commit/5d5dfca12f18bd6c3888c0ab1b549a5ddc070b85))
+- **readiness:** ignore a battle payload recorded in a different dungeon ([9b800a7](https://github.com/Millennium44/Toolasha/commit/9b800a7c18fc9f30fde3d21397268e68206ace0e))
+- spawn census counted some waves twice, lost others, and could name a character ([cb43a9b](https://github.com/Millennium44/Toolasha/commit/cb43a9be77a238cf9695e88ee48390f3b7d749ae))
+- the provisional dungeon card outlives the dungeon it names ([c7a2208](https://github.com/Millennium44/Toolasha/commit/c7a220869444f13d371989965dcf2be10704a226))
+- zone index stays stale after a task reroll ([76eb3ca](https://github.com/Millennium44/Toolasha/commit/76eb3ca4e6072dca95a52cbd4049a95e0c8e9c2d))
+
+### Code Refactoring
+
+- **pricing:** resolve the key pricing setting instead of indexing a price map with it ([4a6f86b](https://github.com/Millennium44/Toolasha/commit/4a6f86b7c6e2d69062a72c4cb1ac425e96b8fd04))
+
+### Performance Improvements
+
+- collapse a debounced class handler to one call per burst ([c49e459](https://github.com/Millennium44/Toolasha/commit/c49e45965e0e1753fb02d5ce201064bf610bc82b))
+- register PanelSizeMemory's re-apply handler only when it has a size ([dd161b6](https://github.com/Millennium44/Toolasha/commit/dd161b6375e63ed6d678f05b1d97d325760a042d))
+
+### Documentation
+
+- changelog for audit round 28 ([ad92a1e](https://github.com/Millennium44/Toolasha/commit/ad92a1ec3b20dcd3014e470677c59fe0defe3c3f))
+- changelog for the dungeon readiness party keys work ([f6dad3f](https://github.com/Millennium44/Toolasha/commit/f6dad3fb8259458f02889b509beb01b9fd455164))
+- changelog for the key pricing modes and panel control ([20a60cc](https://github.com/Millennium44/Toolasha/commit/20a60cc7e48c58d5a1e61a79d88af7dcd6ca5c34))
+- changelog for the own-use pricing mode fix ([2fc7a1e](https://github.com/Millennium44/Toolasha/commit/2fc7a1ee4df2d6755aa746f9d0edb61755ba283f))
+- changelog for the typeable run count and craft-vs-buy keys ([be6544f](https://github.com/Millennium44/Toolasha/commit/be6544f22ce2116406efaa635b91b8110a8b86c4))
+- changelog for the zone index reroll fix ([f15c9b3](https://github.com/Millennium44/Toolasha/commit/f15c9b3a332ff6cfec370e9644f665e51ffaec3f))
 
 ## [3.41.0](https://github.com/Millennium44/Toolasha/compare/v3.40.0...v3.41.0) (2026-09-03)
 
