@@ -386,6 +386,91 @@ describe('the acting ability, tick by tick', () => {
     });
 });
 
+describe('a swing landing while a non-damaging ability is prepared', () => {
+    const ABILITIES = {
+        '/abilities/toughness': {
+            abilityEffects: [
+                {
+                    effectType: '/ability_effect_types/buff',
+                    targetType: 'self',
+                    buffs: [{ typeHrid: '/buff_types/armor' }],
+                },
+            ],
+        },
+        '/abilities/smack': {
+            abilityEffects: [
+                {
+                    effectType: '/ability_effect_types/damage',
+                    targetType: 'enemy',
+                    combatStyleHrid: '/combat_styles/smash',
+                    damageType: '/damage_types/physical',
+                },
+            ],
+        },
+    };
+
+    /** A started fight whose one player is preparing `ability` */
+    const preparing = (ability) => {
+        const state = newAttributionState();
+        attributeTick(tick({ 0: monster(1000, 0) }, { 0: { cMP: 100 } }), state);
+        noteActions(state, { 0: { abilityHrid: ability } });
+        return state;
+    };
+
+    test('a hit is the auto-attack, not the buff', () => {
+        // KikiMeter's field report: Toughness and Invincible showing damage
+        const state = preparing('/abilities/toughness');
+        const [event] = attributeTick(tick({ 0: monster(800, 1) }, { 0: { cMP: 100 } }), state, {
+            abilityDetailMap: ABILITIES,
+        });
+
+        expect(event).toMatchObject({ amount: 200, isDot: false, action: 'auto' });
+    });
+
+    test('so is a miss', () => {
+        const state = preparing('/abilities/toughness');
+        const [event] = attributeTick(tick({ 0: monster(1000, 1) }, { 0: { cMP: 100 } }), state, {
+            abilityDetailMap: ABILITIES,
+        });
+
+        expect(event).toMatchObject({ isMiss: true, action: 'auto' });
+    });
+
+    test('a damaging ability keeps its label', () => {
+        const state = preparing('/abilities/smack');
+        const [event] = attributeTick(tick({ 0: monster(800, 1) }, { 0: { cMP: 90 } }), state, {
+            abilityDetailMap: ABILITIES,
+        });
+
+        expect(event.action).toBe('/abilities/smack');
+    });
+
+    test('an ability the game data does not know is not guessed at', () => {
+        const state = preparing('/abilities/something_new');
+        const [event] = attributeTick(tick({ 0: monster(800, 1) }, { 0: { cMP: 100 } }), state, {
+            abilityDetailMap: ABILITIES,
+        });
+
+        expect(event.action).toBe('/abilities/something_new');
+    });
+
+    test('without game data the label is what it always was', () => {
+        const state = preparing('/abilities/toughness');
+        const [event] = attributeTick(tick({ 0: monster(800, 1) }, { 0: { cMP: 100 } }), state);
+
+        expect(event.action).toBe('/abilities/toughness');
+    });
+
+    test('a bleed tick keeps its own label', () => {
+        const state = preparing('/abilities/toughness');
+        const [event] = attributeTick(tick({ 0: monster(900, 0) }, { 0: { cMP: 100 } }), state, {
+            abilityDetailMap: ABILITIES,
+        });
+
+        expect(event).toMatchObject({ isDot: true, action: 'dot' });
+    });
+});
+
 describe('the presence rung, and the party-of-one rung below it', () => {
     test('a spectated tick credits the only unit in it — that is whose action it is', () => {
         // From the guild trial capture: the boss lost 1,405 health on a tick

@@ -120,6 +120,8 @@
  * by ZhuLiMoon (MIT) — see `third-party/kikimeter/`. The code is Toolasha's own.
  */
 
+import { abilityProfile } from './class-inference.js';
+
 /**
  * A fresh set of the counters a tick is measured against.
  * @returns {Object}
@@ -358,11 +360,35 @@ export function findCaster(pMap, state, options) {
 export const DOT_ACTION = 'dot';
 
 /**
+ * The label a swing is filed under.
+ *
+ * What was being prepared, except an ability the game data says deals no damage:
+ * a hit that lands while a player is preparing Toughness or a heal is the
+ * auto-attack that ran before the cast, and filing it under the buff credits a
+ * rotation row with damage the ability cannot do. KikiMeter reached the same
+ * correction in the field ("Toughness/Invincible showing damage"). An ability
+ * the data does not know, or no data at all, keeps its label — guessing would be
+ * worse than the bug.
+ *
+ * @param {string} [action] - From `state.actions`
+ * @param {Object} [abilityDetailMap] - Game data; without it nothing is relabelled
+ * @returns {string}
+ */
+function swingLabel(action, abilityDetailMap) {
+    const label = action || 'idle';
+    if (!abilityDetailMap) return label;
+    const profile = abilityProfile(label, abilityDetailMap);
+    return profile && !profile.damages ? 'auto' : label;
+}
+
+/**
  * The hits in one tick.
  *
  * @param {Object} tick - A `battle_updated` payload
  * @param {Object} state - From `newAttributionState`, mutated
- * @param {Object} [options] - Passed to {@link findActors}; `{soloFallback, collisionThreshold}`
+ * @param {Object} [options] - Passed to {@link findActors}; `{soloFallback, collisionThreshold}`, plus
+ * @param {Object} [options.abilityDetailMap] - Game data. When given, a swing credited while the
+ *   player was preparing an ability with no damaging effect is labelled `auto` instead
  * @returns {Array<Object>} Hits as
  *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, isDot, weight, action}`, and
  *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
@@ -373,6 +399,7 @@ export const DOT_ACTION = 'dot';
 export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
     const { actors } = findActors(pMap, state, options);
+    const abilityDetailMap = options?.abilityDetailMap;
     const events = [];
     const weight = actors.length ? 1 / actors.length : 0;
 
@@ -451,7 +478,7 @@ export function attributeTick(tick, state, options) {
                 isHeal: change < 0,
                 isDot: false,
                 weight,
-                action: state.actions[actor] || 'idle',
+                action: swingLabel(state.actions[actor], abilityDetailMap),
             });
         }
     }
