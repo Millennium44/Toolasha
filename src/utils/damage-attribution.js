@@ -161,6 +161,17 @@ export function newAttributionState() {
  * the player has already begun the next thing. Updating first credits every hit
  * to the ability that follows it.
  *
+ * ## An entry that names neither is not a statement of idleness
+ *
+ * The tick never sends `isAutoAtk: false`: across every recording the two
+ * fields are mutually exclusive and one of them is simply absent the rest of the
+ * time (70 of 1,766 entries in the five-player run carry neither). Reading that
+ * absence as `idle` filed the player's next landed hit under a label the
+ * non-damaging filter drops — and on the five-player run all 12 such hits
+ * (4,671 damage) had the player's own attack counter rising on or just before
+ * the tick. So an entry with neither field keeps the action already known;
+ * only an explicit `false` with no ability, or no history at all, reads idle.
+ *
  * @param {Object} state - From `newAttributionState`, mutated
  * @param {Object} players - A `new_battle` player list or a tick's `pMap`
  */
@@ -171,9 +182,11 @@ export function noteActions(state, players) {
         // party where one member happens to be alone in this tick
         state.party[index] = true;
         const ability = player?.preparingAbilityHrid || player?.abilityHrid;
-        const auto = player?.isPreparingAutoAttack || player?.isAutoAtk;
+        const auto = player?.isPreparingAutoAttack ?? player?.isAutoAtk;
 
-        state.actions[index] = ability ? ability : auto ? 'auto' : 'idle';
+        if (ability) state.actions[index] = ability;
+        else if (auto) state.actions[index] = 'auto';
+        else if (auto === false || !state.actions[index]) state.actions[index] = 'idle';
     }
 }
 

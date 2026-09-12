@@ -33,9 +33,10 @@ import recording from './__fixtures__/combat-five.json';
  *
  * @param {boolean} creditWhoeverIsAlone - Whether to use the old bottom rung,
  *   which credited the only character in the tick
+ * @param {boolean} filterNonDamaging - The panel's "Filter Nondamage" toggle
  * @returns {{dealt: Object, names: Object, dropped: number, seen: number}}
  */
-function replay(creditWhoeverIsAlone = false) {
+function replay(creditWhoeverIsAlone = false, filterNonDamaging = true) {
     const state = newAttributionState();
     const dealt = {};
     const names = {};
@@ -72,7 +73,7 @@ function replay(creditWhoeverIsAlone = false) {
             dropped += event.amount || 0;
         }
 
-        foldEvents(dealt, events, { filterNonDamaging: true, nameOf: (index) => battle[index] || null });
+        foldEvents(dealt, events, { filterNonDamaging, nameOf: (index) => battle[index] || null });
         noteActions(state, tick.payload.pMap);
     }
 
@@ -92,6 +93,17 @@ describe('five people fighting', () => {
     test('every point of damage is credited to somebody', () => {
         expect(seen).toBeGreaterThan(100_000);
         expect(dropped).toBe(0);
+    });
+
+    test('the non-damaging filter drops no counter-confirmed hit', () => {
+        // 70 `pMap` entries here name neither an ability nor an auto-attack, and
+        // reading that as idle let the filter drop 12 real hits — 4,671 damage
+        // whose owner's own attack counter rose on or just before the tick
+        const { dealt: unfiltered } = replay(false, false);
+        const sum = (tally) => Object.values(tally).reduce((total, player) => total + player.damage, 0);
+
+        expect(sum(dealt)).toBe(sum(unfiltered));
+        for (const player of Object.values(dealt)) expect(player.byAbility.idle).toBeUndefined();
     });
 
     test('no single character is credited with most of the party', () => {

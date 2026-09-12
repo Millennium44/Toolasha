@@ -335,6 +335,25 @@ describe('the acting ability, tick by tick', () => {
         expect(state.actions['0']).toBe('auto');
     });
 
+    test('an entry naming neither an ability nor an auto-attack keeps the action already known', () => {
+        // The tick omits `isAutoAtk` rather than sending false. Reading the
+        // absence as idle dropped real, counter-confirmed hits through the
+        // non-damaging filter: 12 of them, 4,671 damage, on the five-player run
+        const state = newAttributionState();
+        noteActions(state, { 0: { isAutoAtk: true }, 1: { abilityHrid: '/abilities/entangle' } });
+        noteActions(state, { 0: { cHP: 100, atkCounter: 4 }, 1: { cHP: 90, atkCounter: 9 } });
+
+        expect(state.actions).toMatchObject({ 0: 'auto', 1: '/abilities/entangle' });
+    });
+
+    test('an explicit false with no ability, or no history at all, is still idle', () => {
+        const state = newAttributionState();
+        noteActions(state, { 0: { isAutoAtk: true } });
+        noteActions(state, { 0: { isAutoAtk: false }, 1: { cHP: 100 } });
+
+        expect(state.actions).toMatchObject({ 0: 'idle', 1: 'idle' });
+    });
+
     test('a hit is credited to what was prepared before it, not after', () => {
         // The ability that lands on this tick was cast before the payload
         // arrived; by now the player has started the next one. Reading the
