@@ -8,6 +8,8 @@ import {
     foldEvents,
     isDamagingAction,
     foldEnemies,
+    foldTeam,
+    UNATTRIBUTED_ACTION,
 } from './damage-attribution.js';
 
 const monster = (cHP, dmgCounter = 0, critCounter = 0) => ({ cHP, dmgCounter, critCounter });
@@ -811,6 +813,94 @@ describe('a collision too big to adjudicate', () => {
             actors: ['5'],
             shared: false,
         });
+    });
+});
+
+describe('damage nobody could be credited with', () => {
+    const party = (count) => Object.fromEntries([...Array(count)].map((_, index) => [index, { cHP: 100, cMP: 50 }]));
+
+    /** A trial-path state whose one monster starts at `hp` */
+    const spectated = (hp = 10_000) => {
+        const state = newAttributionState();
+        attributeTick({ pMap: party(3), mMap: { 0: monster(hp, 1) } }, state, { soloFallback: false });
+        return state;
+    };
+
+    test('is dropped unless the caller asks for it', () => {
+        const state = spectated();
+        expect(attributeTick({ pMap: {}, mMap: { 0: monster(9_000, 1) } }, state, { soloFallback: false })).toEqual([]);
+    });
+
+    test('is its own event when asked for, bleed or hit', () => {
+        const state = spectated();
+        const options = { soloFallback: false, unattributed: true };
+        const [bleed] = attributeTick({ pMap: {}, mMap: { 0: monster(9_000, 1) } }, state, options);
+        const [hit] = attributeTick({ pMap: {}, mMap: { 0: monster(8_500, 2, 1) } }, state, options);
+
+        expect(bleed).toMatchObject({
+            playerIndex: null,
+            amount: 1_000,
+            isUnattributed: true,
+            isDot: true,
+            weight: 1,
+            action: UNATTRIBUTED_ACTION,
+        });
+        expect(hit).toMatchObject({ amount: 500, isUnattributed: true, isDot: false, isCrit: true });
+    });
+
+    test('a miss or a heal nobody owns is not emitted', () => {
+        const state = spectated();
+        const options = { soloFallback: false, unattributed: true };
+
+        expect(attributeTick({ pMap: {}, mMap: { 0: monster(10_000, 2) } }, state, options)).toEqual([]);
+        expect(attributeTick({ pMap: {}, mMap: { 0: monster(10_400, 3) } }, state, options)).toEqual([]);
+    });
+
+    test('a personal small collision with no swinger yet is unattributed too', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: party(2), mMap: { 0: monster(1_000, 0) } }, state);
+        const events = attributeTick({ pMap: party(2), mMap: { 0: monster(700, 1) } }, state, { unattributed: true });
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ playerIndex: null, amount: 300, isUnattributed: true });
+    });
+
+    test('never reaches a player row, and the enemy still took it', () => {
+        const state = spectated();
+        const events = attributeTick({ pMap: {}, mMap: { 0: monster(9_000, 1) } }, state, {
+            soloFallback: false,
+            unattributed: true,
+        });
+
+        expect(foldEvents({}, events, { filterNonDamaging: false })).toEqual({});
+        const enemies = foldEnemies({}, events, () => 'Trial Badger');
+        expect(enemies['Trial Badger']).toMatchObject({ damage: 1_000, unattributedDamage: 1_000, hits: 0 });
+    });
+
+    test('the team total is every point of health lost, with the unattributed share named', () => {
+        const state = spectated();
+        const options = { soloFallback: false, unattributed: true };
+        const team = {};
+        const players = {};
+        const ticks = [
+            // Owned by the one player present
+            { pMap: { 1: { cHP: 100, cMP: 50 } }, mMap: { 0: monster(9_600, 2) } },
+            // Split between two
+            { pMap: party(2), mMap: { 0: monster(9_000, 3) } },
+            // Nobody present
+            { pMap: {}, mMap: { 0: monster(8_750, 3) } },
+            // A miss, which moves nothing
+            { pMap: { 2: { cHP: 100, cMP: 50 } }, mMap: { 0: monster(8_750, 4) } },
+        ];
+        for (const payload of ticks) {
+            const events = attributeTick(payload, state, options);
+            foldTeam(team, events);
+            foldEvents(players, events, { filterNonDamaging: false });
+        }
+
+        expect(team).toEqual({ damage: 1_250, attributed: 1_000, unattributed: 250, unattributedEvents: 1 });
+        const rows = Object.values(players).reduce((sum, row) => sum + row.damage, 0);
+        expect(rows).toBeCloseTo(team.attributed, 9);
     });
 });
 

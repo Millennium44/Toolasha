@@ -378,6 +378,17 @@ export function findCaster(pMap, state, options) {
 export const DOT_ACTION = 'dot';
 
 /**
+ * The label health lost on a tick that credits no player is filed under.
+ *
+ * A zero-present spectated tick, or a small collision in a party with no known
+ * swinger: the monster really lost the health, and dropping it silently is what
+ * made a board total (the sum of players) disagree with the boss bar. With
+ * `unattributed: true` such damage is emitted as its own event so a tracker can
+ * show the team total as all health lost plus an explicit "unattributed" line.
+ */
+export const UNATTRIBUTED_ACTION = 'unattributed';
+
+/**
  * The label a swing is filed under.
  *
  * What was being prepared, except an ability the game data says deals no damage:
@@ -407,6 +418,9 @@ function swingLabel(action, abilityDetailMap) {
  * @param {Object} [options] - Passed to {@link findActors}; `{soloFallback, collisionThreshold}`, plus
  * @param {Object} [options.abilityDetailMap] - Game data. When given, a swing credited while the
  *   player was preparing an ability with no damaging effect is labelled `auto` instead
+ * @param {boolean} [options.unattributed] - Emit health lost on a tick that credits nobody as
+ *   `{playerIndex: null, isUnattributed: true, action: UNATTRIBUTED_ACTION, weight: 1}` rather
+ *   than dropping it. Off by default, because a caller iterating events must skip a null player
  * @returns {Array<Object>} Hits as
  *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, isDot, weight, action}`, and
  *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
@@ -418,6 +432,7 @@ export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
     const { actors } = findActors(pMap, state, options);
     const abilityDetailMap = options?.abilityDetailMap;
+    const emitUnattributed = options?.unattributed === true;
     const events = [];
     const weight = actors.length ? 1 / actors.length : 0;
 
@@ -458,8 +473,6 @@ export function attributeTick(tick, state, options) {
             events.push({ monsterIndex: index, isKill: true });
         }
 
-        if (!actors.length) continue;
-
         const change = beforeHealth - health;
         // A hit is the counter rising. Health falling without it is a bleed
         // ticking or a reflect firing — real damage, and the actor rungs name
@@ -467,6 +480,26 @@ export function attributeTick(tick, state, options) {
         // class rather than discarded. It is emphatically not a swing, which is
         // why it carries no crit, miss or ability of its own.
         const hit = beforeDamage !== undefined && damageCount > beforeDamage;
+
+        if (!actors.length) {
+            // Only lost health: a miss or a heal with no owner has no total to join
+            if (emitUnattributed && change > 0) {
+                events.push({
+                    playerIndex: null,
+                    monsterIndex: index,
+                    amount: change,
+                    isCrit: hit && beforeCrits !== undefined && critCount > beforeCrits,
+                    isMiss: false,
+                    isHeal: false,
+                    isDot: !hit,
+                    isUnattributed: true,
+                    weight: 1,
+                    action: UNATTRIBUTED_ACTION,
+                });
+            }
+            continue;
+        }
+
         if (!hit) {
             if (!(change > 0)) continue;
             for (const actor of actors) {
@@ -544,8 +577,9 @@ export function isDamagingAction(action, nonDamaging = NON_DAMAGING) {
 export function foldEvents(tally, events, { filterNonDamaging = true, nonDamaging, nameOf } = {}) {
     for (const event of events || []) {
         // A death is not a swing, and counting it as one would add a phantom
-        // hit to whoever happened to be casting
-        if (event.isKill) continue;
+        // hit to whoever happened to be casting. Unattributed damage has no
+        // player row to land in — `foldTeam` is where it is counted
+        if (event.isKill || event.isUnattributed) continue;
 
         const player = (tally[event.playerIndex] = tally[event.playerIndex] || {
             damage: 0,
@@ -654,8 +688,12 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
  *
  * @param {Object} tally - `{}` or a previous return, mutated
  * @param {Array<Object>} events - From `attributeTick`
+ * Unattributed damage (see {@link UNATTRIBUTED_ACTION}) is counted here like any
+ * other — the monster lost the health whoever dealt it — and also named in an
+ * `unattributedDamage` subtotal that appears once there is any.
+ *
  * @param {Function} nameOf - `(monsterIndex) => string|null`
- * @returns {Object} Monster name → `{damage, dotDamage, hits, crits, misses, kills, byAbility}`
+ * @returns {Object} Monster name → `{damage, dotDamage, hits, crits, misses, kills, byAbility, unattributedDamage?}`
  */
 export function foldEnemies(tally, events, nameOf) {
     for (const event of events || []) {
@@ -685,6 +723,7 @@ export function foldEnemies(tally, events, nameOf) {
         });
 
         const weight = Number.isFinite(event.weight) && event.weight > 0 ? event.weight : 1;
+        if (event.isUnattributed) enemy.unattributedDamage = (enemy.unattributedDamage || 0) + event.amount;
         if (event.isMiss) {
             enemy.misses += weight;
             ability.misses += weight;
@@ -705,4 +744,41 @@ export function foldEnemies(tally, events, nameOf) {
         }
     }
     return tally;
+}
+
+/**
+ * Fold events into the team's totals.
+ *
+ * The board's team figure used to be the sum of its player rows, so health a
+ * tick could credit to nobody fell out of it silently. This is the whole of
+ * what the monsters lost — attributed and unattributed — with the unattributed
+ * share named, so a tracker can show "team total" and an "unattributed" line
+ * that add up. It needs events from `attributeTick(..., {unattributed: true})`;
+ * without them `unattributed` stays 0 and `damage` equals the attributed sum.
+ *
+ * Deliberately ignores the non-damaging filter: that decides which rows a
+ * player's damage is shown in, not whether the monster lost the health.
+ *
+ * @param {Object} team - `{}` or a previous return, mutated
+ * @param {Array<Object>} events - From `attributeTick`
+ * @returns {{damage: number, attributed: number, unattributed: number, unattributedEvents: number}}
+ */
+export function foldTeam(team, events) {
+    team.damage = team.damage || 0;
+    team.attributed = team.attributed || 0;
+    team.unattributed = team.unattributed || 0;
+    team.unattributedEvents = team.unattributedEvents || 0;
+
+    for (const event of events || []) {
+        if (event.isKill || event.isMiss || event.isHeal) continue;
+        const amount = Number(event.amount) || 0;
+        team.damage += amount;
+        if (event.isUnattributed) {
+            team.unattributed += amount;
+            team.unattributedEvents += 1;
+        } else {
+            team.attributed += amount;
+        }
+    }
+    return team;
 }
