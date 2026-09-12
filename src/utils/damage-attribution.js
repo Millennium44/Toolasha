@@ -236,10 +236,19 @@ export const COLLISION_SPLIT_THRESHOLD = 3;
  *   there is no party statement and the rung would fire off whichever slot happened to appear
  *   first. The presence rung above it is unaffected — it reads this tick's own payload
  * @param {number} [options.collisionThreshold] - Overrides {@link COLLISION_SPLIT_THRESHOLD}
+ * @param {boolean} [options.lastSwingFallback] - Whether an unresolved tick with at most
+ *   `collisionThreshold` players present goes to the last swinger. Defaults to `soloFallback`:
+ *   on a spectated trial the last lone riser can be anyone in a 57-slot wave and is usually not
+ *   in the tick at all, so there the tick is split among those present and a tick nobody is
+ *   present in credits nobody
  * @returns {{actors: string[], shared: boolean}} The players the tick belongs to, and whether
  *   it is being divided between them rather than owned by one
  */
-export function findActors(pMap, state, { soloFallback = true, collisionThreshold = COLLISION_SPLIT_THRESHOLD } = {}) {
+export function findActors(
+    pMap,
+    state,
+    { soloFallback = true, collisionThreshold = COLLISION_SPLIT_THRESHOLD, lastSwingFallback = soloFallback } = {}
+) {
     const indices = Object.keys(pMap || {});
     const swung = [];
     const spent = [];
@@ -329,8 +338,17 @@ export function findActors(pMap, state, { soloFallback = true, collisionThreshol
     // thing to one slot for no reason a player could point at.
     if (indices.length > collisionThreshold) return { actors: [...indices], shared: true };
 
-    // The last character to swing — still the fallback for the small collision,
-    // where a handful of people is a guess rather than a bias.
+    // Without a known party the last swinger is not a guess about a handful of
+    // people: on a 150,642-tick trial, 261 of the 268 small unresolved damage
+    // ticks went to a `lastSwing` who was not in the tick at all. Those present
+    // share it, and a tick with nobody present is nobody's.
+    if (!lastSwingFallback) {
+        return indices.length > 1 ? { actors: [...indices], shared: true } : { actors: [], shared: false };
+    }
+
+    // The last character to swing — still the fallback for the small collision
+    // in this client's own fight, where a handful of people is a guess rather
+    // than a bias.
     return state.lastSwing ? one(state.lastSwing) : { actors: [], shared: false };
 }
 

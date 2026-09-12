@@ -596,12 +596,52 @@ describe('a collision too big to adjudicate', () => {
         return state;
     };
 
-    test('a small one still falls to the last swinger', () => {
+    test('a small one in this client’s own fight still falls to the last swinger', () => {
         const state = seeded(3);
-        const { actors, shared } = findActors(crowd(3), state, { soloFallback: false });
+        const { actors, shared } = findActors(crowd(3), state);
 
         expect(shared).toBe(false);
         expect(actors).toEqual(['0']);
+    });
+
+    test('a small one on a spectated trial is split among those present', () => {
+        // Deliberately reversed for the trial path. The last lone riser in a
+        // 57-slot wave is usually not in the tick: 261 of 268 small unresolved
+        // damage ticks on a real trial went to an absent `lastSwing`
+        const state = seeded(3);
+        state.lastSwing = '41';
+        const { actors, shared } = findActors(crowd(3), state, { soloFallback: false });
+
+        expect(shared).toBe(true);
+        expect(actors).toEqual(['0', '1', '2']);
+    });
+
+    test('and the split conserves the tick’s damage', () => {
+        const state = seeded(2);
+        state.lastSwing = '41';
+        const events = attributeTick({ pMap: crowd(2), mMap: { 0: monster(9_400, 2) } }, state, {
+            soloFallback: false,
+        });
+
+        expect(events.map((event) => event.playerIndex)).toEqual(['0', '1']);
+        expect(events.reduce((sum, event) => sum + event.amount, 0)).toBeCloseTo(600, 9);
+        expect(events.every((event) => event.weight === 0.5)).toBe(true);
+    });
+
+    test('a spectated tick with nobody present credits nobody', () => {
+        const state = seeded(3);
+        state.lastSwing = '41';
+        const events = attributeTick({ pMap: {}, mMap: { 0: monster(9_000, 2) } }, state, { soloFallback: false });
+
+        expect(events.filter((event) => event.playerIndex !== undefined)).toEqual([]);
+    });
+
+    test('the last swinger can still be asked for explicitly', () => {
+        const state = seeded(3);
+        expect(findActors(crowd(3), state, { soloFallback: false, lastSwingFallback: true })).toEqual({
+            actors: ['0'],
+            shared: false,
+        });
     });
 
     test('a big one is split equally between everybody present', () => {
