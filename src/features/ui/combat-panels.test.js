@@ -1081,3 +1081,28 @@ describe('the Record button in the DPs header', () => {
         expect(recorder.setRecordTarget).not.toHaveBeenCalled();
     });
 });
+
+describe('kills on the DPs table', () => {
+    test('a Kills column carries each player’s owned kills, and each enemy row its share of them', () => {
+        state.breakdown.players[0].kills = 7;
+        state.breakdown.players[0].enemies[0].kills = 5;
+        dpsPanel.show();
+        collapseDpsRows();
+
+        expect(dpsPanel.panel.textContent).toContain('Kills');
+        const row = dpsPlayerRow();
+        expect(row.lastElementChild.textContent).toBe('7');
+
+        row.click();
+        const enemyRow = [...dpsPanel.panel.querySelectorAll('div')].find(
+            (el) => el.style.display === 'grid' && el.firstElementChild?.textContent.includes('Rat')
+        );
+        expect(enemyRow.lastElementChild.textContent).toBe('5');
+        expect(dpsPanel.panel.textContent).not.toContain(FAILED);
+    });
+
+    test('a breakdown from before kills existed draws a zero, not a crash', () => {
+        dpsPanel.show();
+        expect(dpsPlayerRow().lastElementChild.textContent).toBe('0');
+    });
+});

@@ -168,6 +168,9 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
                 value: row.damage || 0,
                 perSecond: row.dps ?? null,
                 classTag: row.classTag || null,
+                kills: row.kills ?? null,
+                detail:
+                    row.kills > 0 ? `${formatWithSeparator(row.kills)} ${row.kills === 1 ? 'kill' : 'kills'}` : null,
             })),
             dealtRun.seconds || 0
         );

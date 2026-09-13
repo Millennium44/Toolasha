@@ -679,3 +679,72 @@ describe('the engine as the tracker wires it', () => {
         expect(actions).not.toContain('/abilities/toughness');
     });
 });
+
+describe('kills per player', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+        tracker.default.initialize();
+    });
+
+    afterEach(() => {
+        tracker.default.cleanup();
+        vi.useRealTimers();
+    });
+
+    const announce = (players) =>
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players,
+            monsters: {
+                0: { name: 'Eye', combatDetails: { maxHitpoints: 100 }, currentHitpoints: 100 },
+                1: { name: 'Rat', combatDetails: { maxHitpoints: 100 }, currentHitpoints: 100 },
+            },
+        });
+
+    test('the owner of the killing tick gets the kill, filed under the monster too', () => {
+        announce({
+            0: { name: 'Alice', isPreparingAutoAttack: true },
+            1: { name: 'Bob', isPreparingAutoAttack: true },
+        });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, mMap: {} });
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2 }, 1: { atkCounter: 1 } },
+            mMap: { 0: { cHP: 0, dmgCounter: 1, mHP: 100 } },
+        });
+
+        const alice = damageBreakdown().players.find((row) => row.name === 'Alice');
+        expect(alice.kills).toBe(1);
+        expect(alice.enemies.find((row) => row.name === 'Eye').kills).toBe(1);
+        expect(damageBreakdown().unownedKills).toBe(0);
+        expect(damageBreakdown().enemies.find((row) => row.name === 'Eye').kills).toBe(1);
+    });
+
+    test('a kill on a tick split across a crowd is the monster’s and nobody’s', () => {
+        const names = ['A', 'B', 'C', 'D'];
+        announce(Object.fromEntries(names.map((name, index) => [index, { name, isPreparingAutoAttack: true }])));
+        const everyone = Object.fromEntries(names.map((_, index) => [index, { cMP: 100 }]));
+        listeners.battle_updated({ battleId: 1, pMap: everyone, mMap: {} });
+        listeners.battle_updated({ battleId: 1, pMap: everyone, mMap: { 1: { cHP: 0, dmgCounter: 1, mHP: 100 } } });
+
+        const breakdown = damageBreakdown();
+        expect(breakdown.players.every((row) => row.kills === 0)).toBe(true);
+        expect(breakdown.unownedKills).toBe(1);
+        expect(breakdown.enemies.find((row) => row.name === 'Rat').kills).toBe(1);
+    });
+
+    test('a new run forgets them', () => {
+        announce({ 0: { name: 'Alice', isPreparingAutoAttack: true } });
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 1 } },
+            mMap: { 0: { cHP: 0, dmgCounter: 1, mHP: 100 } },
+        });
+        expect(damageBreakdown().players[0].kills).toBe(1);
+
+        tracker.resetDamageTracker();
+        expect(damageBreakdown().players).toEqual([]);
+        expect(damageBreakdown().unownedKills).toBe(0);
+    });
+});

@@ -638,7 +638,7 @@ const expandedRows = new Set([
  */
 const DPS_COLUMNS =
     'minmax(72px, 1.7fr) minmax(38px, 0.7fr) minmax(74px, 1.35fr) ' +
-    'minmax(32px, 0.55fr) minmax(62px, 1.05fr) minmax(58px, 1fr) minmax(58px, 1fr)';
+    'minmax(32px, 0.55fr) minmax(62px, 1.05fr) minmax(58px, 1fr) minmax(58px, 1fr) minmax(30px, 0.5fr)';
 
 /**
  * One line of the damage table.
@@ -647,7 +647,7 @@ const DPS_COLUMNS =
  * row and the ability rows underneath it, and a table that does not line up is
  * a table you read one cell at a time.
  *
- * @param {Array<{text: string, color?: string, bold?: boolean, align?: string}>} cells - Seven of them
+ * @param {Array<{text: string, color?: string, bold?: boolean, align?: string}>} cells - Eight of them
  * @param {Object} [options] - `{dim, indent}`
  * @returns {HTMLElement}
  */
@@ -1068,6 +1068,7 @@ export const dpsPanel = new CombatPanel({
                 { text: 'Hit' },
                 { text: 'Crit' },
                 { text: 'Miss' },
+                { text: 'Kills' },
             ],
             { dim: true }
         );
@@ -1094,6 +1095,10 @@ export const dpsPanel = new CombatPanel({
                 { text: countAndShare(player.hits, swings), color: ROW_COLORS.good },
                 { text: countAndShare(player.crits, player.hits), color: ROW_COLORS.gold },
                 { text: countAndShare(player.misses, swings), color: ROW_COLORS.bad },
+                // A killing blow on a tick this player owned outright; a shared
+                // tick's kill is nobody's, so the column can sum short of the
+                // enemy kills
+                { text: formatWithSeparator(player.kills || 0) },
             ]);
             row.style.cursor = 'pointer';
             row.title = dotNote(player) + 'Click for the per-ability breakdown.';
@@ -1123,6 +1128,7 @@ export const dpsPanel = new CombatPanel({
                             { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
                             { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },
                             { text: countAndShare(ability.misses, attempts), color: ROW_COLORS.bad },
+                            { text: '' },
                         ],
                         { dim: true, indent: 14 }
                     )
@@ -1147,6 +1153,7 @@ export const dpsPanel = new CombatPanel({
                         { text: countAndShare(enemy.hits, enemySwings), color: ROW_COLORS.good },
                         { text: countAndShare(enemy.crits, enemy.hits), color: ROW_COLORS.gold },
                         { text: countAndShare(enemy.misses, enemySwings), color: ROW_COLORS.bad },
+                        { text: formatWithSeparator(enemy.kills || 0) },
                     ],
                     { indent: 10 }
                 );
@@ -1178,6 +1185,7 @@ export const dpsPanel = new CombatPanel({
                                 { text: countAndShare(ability.hits, attempts), color: ROW_COLORS.good },
                                 { text: countAndShare(ability.crits, ability.hits), color: ROW_COLORS.gold },
                                 { text: countAndShare(ability.misses, attempts), color: ROW_COLORS.bad },
+                                { text: '' },
                             ],
                             { dim: true, indent: 24 }
                         )

@@ -150,6 +150,8 @@ export function boardTabsHTML(tabs, active) {
  * - `measuredValue` puts the plugin's own live figure next to an authoritative
  *   one, with the gap between them — both halves of the comparison, on screen.
  *
+ * - `detail` is a short extra reading for the sub-line ("4 kills"), escaped.
+ *
  * @param {Object} row - From {@link rankRows}
  * @param {Object} [options] - Drawing options
  * @param {string} [options.color] - Bar and figure ink
@@ -185,7 +187,8 @@ export function boardRowHTML(row, { color = BOARD_COLORS.accent, tagHTML = '' } 
         `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
         `</div>` +
         `<div style="display:flex; gap:6px; color:${dim}; font-size:10px;">` +
-        `<span title="meas: what the plugin's own live stream measured for this player, and how far that ran from the game's reported figure">${label}${comparison}</span>` +
+        `<span title="meas: what the plugin's own live stream measured for this player, and how far that ran from the game's reported figure">${label}${comparison}` +
+        `${row?.detail ? ` · ${escapeText(row.detail)}` : ''}</span>` +
         `<span style="margin-left:auto;">${row?.share === null || row?.share === undefined ? '—' : `${row.share.toFixed(1)}%`}</span>` +
         `</div></div>`
     );
@@ -240,14 +243,21 @@ export function boardButtonsHTML(actions) {
 export function boardLines(heading, rows) {
     return [
         heading,
-        ...(rows || []).map(
-            (row) =>
+        ...(rows || []).map((row) => {
+            // Either figure may be missing; the bracket holds whichever exist
+            // rather than opening or closing on its own
+            const inside = [
+                row.perSecond === null || row.perSecond === undefined
+                    ? null
+                    : `${formatWithSeparator(Math.round(row.perSecond))}/s`,
+                row.share === null || row.share === undefined ? null : `${row.share.toFixed(1)}%`,
+            ].filter(Boolean);
+            return (
                 `${row.rank}. ${row.name} — ${formatWithSeparator(Math.round(row.value || 0))}` +
-                (row.perSecond === null || row.perSecond === undefined
-                    ? ''
-                    : ` (${formatWithSeparator(Math.round(row.perSecond))}/s`) +
-                (row.share === null || row.share === undefined ? ')' : `, ${row.share.toFixed(1)}%)`)
-        ),
+                (inside.length ? ` (${inside.join(', ')})` : '') +
+                (row.detail ? ` · ${row.detail}` : '')
+            );
+        }),
     ].join('\n');
 }
 

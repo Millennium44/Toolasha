@@ -105,6 +105,16 @@ let labyrinthSession = newLabyrinthSessionState();
 let enemyTally = {};
 
 /**
+ * Player index → `{total, byEnemy}`: the kills whose killing tick that player
+ * owned outright. A shared tick, or one nobody could be credited with, is
+ * counted in `unownedKills` instead — whole kills, never fractions of one.
+ */
+let kills = {};
+
+/** Kills whose killing tick had no single owner; with the player kills they add up to the enemy kills */
+let unownedKills = 0;
+
+/**
  * This fight only, cleared when the next one starts.
  *
  * The session tally answers "how has this run gone"; a portrait wants "how is
@@ -213,6 +223,8 @@ export function resetDamageTracker() {
     castLogs = {};
     sheets = {};
     enemyTally = {};
+    kills = {};
+    unownedKills = 0;
     battle = { players: {}, enemies: {}, seconds: 0 };
     battleHP = {};
     manaSeries = {};
@@ -404,6 +416,8 @@ export function damageBreakdown() {
             accuracy: swings > 0 ? entry.hits / swings : null,
             critRate: entry.hits > 0 ? entry.crits / entry.hits : null,
             dps: measurable ? entry.damage / seconds : null,
+            // Killing blows this player's tick owned outright
+            kills: kills[index]?.total || 0,
             abilities: Object.entries(entry.byAbility)
                 .map(([action, stats]) => ({ action, ...stats }))
                 .sort((a, b) => b.damage - a.damage),
@@ -411,6 +425,7 @@ export function damageBreakdown() {
                 .map(([name, stats]) => ({
                     name,
                     ...stats,
+                    kills: kills[index]?.byEnemy?.[name] || 0,
                     dps: measurable ? stats.damage / seconds : null,
                     abilities: Object.entries(stats.byAbility || {})
                         .map(([action, ability]) => ({ action, ...ability }))
@@ -452,6 +467,7 @@ export function damageBreakdown() {
         seconds,
         startedAt,
         logging,
+        unownedKills,
         players: players.sort((a, b) => b.damage - a.damage),
         enemies: enemies.sort((a, b) => b.damage - a.damage),
     };
@@ -789,6 +805,20 @@ export default {
                 const nameOf = (index) => monsters[index]?.name || null;
                 foldEvents(tally, events, { filterNonDamaging, nameOf });
                 foldEnemies(enemyTally, events, nameOf);
+
+                // Credited only to a tick's sole owner, so a kill on a shared or
+                // ownerless tick stays a kill of the monster and nobody's
+                for (const event of events) {
+                    if (!event.isKill) continue;
+                    if (event.killerIndex === null || event.killerIndex === undefined) {
+                        unownedKills += 1;
+                        continue;
+                    }
+                    const entry = (kills[event.killerIndex] ||= { total: 0, byEnemy: {} });
+                    entry.total += 1;
+                    const name = nameOf(event.monsterIndex);
+                    if (name) entry.byEnemy[name] = (entry.byEnemy[name] || 0) + 1;
+                }
 
                 // The same events again, by slot and for this fight only. Folded
                 // here rather than derived from the session tally because the

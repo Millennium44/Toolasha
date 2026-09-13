@@ -251,3 +251,17 @@ describe('the rest of the shell', () => {
         expect(escapeText(null)).toBe('');
     });
 });
+
+describe('a row’s extra reading', () => {
+    test('rides the sub-line and the copy, escaped, and is absent when not given', () => {
+        const { rows } = rankRows([
+            { name: 'Alice', value: 300, detail: '4 kills <b>' },
+            { name: 'Bob', value: 100 },
+        ]);
+
+        expect(boardRowHTML(rows[0])).toContain(' · 4 kills &lt;b&gt;');
+        expect(boardRowHTML(rows[1])).not.toContain(' · ');
+        expect(boardLines('Head', rows)).toContain('1. Alice — 300 (75.0%) · 4 kills <b>');
+        expect(boardLines('Head', rows)).toContain('2. Bob — 100 (25.0%)\n'.trim());
+    });
+});

@@ -786,3 +786,22 @@ describe('the shell the panel is built from', () => {
         expect(switchListeners()).toBe(before);
     });
 });
+
+describe('kills on the damage board', () => {
+    test('each row says how many killing blows it owned, and the copy says it too', () => {
+        opts.dealt = {
+            seconds: 100,
+            players: [
+                { name: 'Alice', damage: 7500, dps: 75, kills: 4 },
+                { name: 'Bob', damage: 2500, dps: 25, kills: 1 },
+                { name: 'Cara', damage: 1000, dps: 10, kills: 0 },
+            ],
+        };
+
+        const text = board().textContent;
+        expect(text).toContain('4 kills');
+        expect(text).toContain('1 kill');
+        expect(text).not.toContain('0 kills');
+        expect(panelText('damage')).toContain('1. Alice — 7,500 (75/s, 68.2%) · 4 kills');
+    });
+});
