@@ -253,6 +253,16 @@ class GuildTrialRecorder {
          * disk when this session's `initialize` ran.
          */
         this.pendingReconcile = null;
+        /**
+         * A session that was still open — never `stop()`-ped — when the page
+         * last went away, kept only long enough for the next {@link start} to
+         * decide whether it is the same trial resuming. `guild-trial-damage.js`
+         * keeps its own live tally across a refresh, so the total is never
+         * wrong; without this, the *session* `start()` opens next is a brand
+         * new one with empty `snapshots`, and the graph that reads them
+         * restarts from zero for a trial that never actually restarted.
+         */
+        this._priorSession = null;
     }
 
     /**
@@ -317,6 +327,9 @@ class GuildTrialRecorder {
         // The damage module is reset right after this; any totals arriving
         // later belong to the next character's trial
         this.pendingReconcile = null;
+        // Belongs to the character being left; the arriving one has its own
+        // key, and its own storage to be asked about, not this one's guess
+        this._priorSession = null;
         this.session = null;
         this.lastActivityAt = 0;
         this.phase = null;
@@ -341,18 +354,61 @@ class GuildTrialRecorder {
     start(reason, at = Date.now()) {
         if (this.recording) return this.session;
 
+        const weekStart = trialWeekStart(at);
+        const seeded = this._takePriorSnapshots(weekStart);
+
         this.session = {
             startedAt: at,
             endedAt: null,
             startedBy: reason,
             endedBy: null,
-            weekStart: trialWeekStart(at),
+            weekStart,
             characterId: dataManager.getCurrentCharacterId?.() ?? null,
-            snapshots: [],
+            // Set once an encounter is known this trial week; kept from here
+            // on so a refresh has something of its own to match the next
+            // session against — see `_takePriorSnapshots`
+            encounter: seeded?.encounter ?? null,
+            snapshots: seeded ? [...seeded.snapshots] : [],
         };
         this.lastActivityAt = at;
         this._snapshot(at);
         return this.session;
+    }
+
+    /**
+     * Whether the trial a page reload cut off mid-flight is the one about to
+     * be recorded again, and if so, what to seed the new session's series
+     * with.
+     *
+     * `guild-trial-damage.js` keeps its own cumulative tally across a refresh,
+     * so the *totals* a session ends up folding are never wrong either way.
+     * What a fresh session cannot reconstruct on its own is the *series* —
+     * `session.snapshots`, which the trial DPS graph reads — so a session left
+     * with `endedAt: null` when the page went away (a refresh, not a proper
+     * `stop()`) hands its snapshots on to the next one over the same trial.
+     * Matched on the trial week and, once either side knows one, the
+     * encounter — the same identity {@link _foldContext} uses for the ledger
+     * fold — so a different trial in the same guild this week never lends its
+     * history to this one. Consumed once: `_priorSession` is cleared here
+     * whether or not it matched, so a second trial started this same page
+     * load gets nothing to seed from.
+     *
+     * @param {number} weekStart - The trial week the new session belongs to
+     * @returns {{snapshots: Array<Object>, encounter: string|null}|null}
+     */
+    _takePriorSnapshots(weekStart) {
+        const prior = this._priorSession;
+        this._priorSession = null;
+        if (!prior || prior.endedAt) return null;
+        if (!Number.isFinite(prior.weekStart) || prior.weekStart !== weekStart) return null;
+
+        const encounter = this._foldContext(this._breakdown(), { weekStart }).encounter;
+        if (prior.encounter && encounter && prior.encounter !== encounter) return null;
+
+        return {
+            snapshots: Array.isArray(prior.snapshots) ? prior.snapshots : [],
+            encounter: prior.encounter || encounter || null,
+        };
     }
 
     /**
@@ -792,6 +848,16 @@ class GuildTrialRecorder {
         if (!this.session) return;
 
         const breakdown = guildTrialDamage.breakdown?.();
+
+        // Remembered once known, and kept even past the trial ending — it is
+        // this session's own identity now, for the next one to match itself
+        // against if a reload cuts this one off before it is `stop()`-ped;
+        // see `_takePriorSnapshots`
+        if (!this.session.encounter) {
+            const encounter = this._foldContext(breakdown, this.session).encounter;
+            if (encounter) this.session.encounter = encounter;
+        }
+
         if (!breakdown?.players?.length) return;
 
         const snapshot = thinBreakdown(breakdown, at);
@@ -864,12 +930,13 @@ class GuildTrialRecorder {
     }
 
     /**
-     * Pick up a reconcile still waiting on the game's totals when the page
-     * last closed.
+     * Pick up whatever this guild's key held when the page last closed: a
+     * reconcile still waiting on the game's totals, or a session that was
+     * still open when it went away.
      *
-     * Fired once from `initialize`, not awaited by it: nothing here may race
-     * ahead of a session already started by the time it resolves, and nothing
-     * here may land after `forget`/a guild switch made it stale.
+     * Fired once from `initialize`, not awaited by it — see the call site for
+     * why nothing here may race ahead of a session already started, or land
+     * after this recorder has moved on to a different character or guild.
      *
      * @returns {Promise<void>}
      */
@@ -885,21 +952,28 @@ class GuildTrialRecorder {
             if (this.session) return;
 
             const { session, pendingReconcile } = this._unwrap(stored);
-            if (!session || !session.endedAt) return;
+            if (!session) return;
 
-            // Closed, and still waiting on the game's own totals when the
-            // page went away: pick up exactly where the tab that stopped it
-            // left off, so the stats can still patch the snapshot and the
-            // ledger fold once when they arrive
-            if (pendingReconcile && this._pendingIsFresh(pendingReconcile, session)) {
-                this.session = pendingReconcile.session || session;
-                this.pendingReconcile = {
-                    session: this.session,
-                    context: pendingReconcile.context,
-                    guildName: pendingReconcile.guildName,
-                    characterId: pendingReconcile.characterId,
-                    armedAt: pendingReconcile.armedAt,
-                };
+            if (session.endedAt) {
+                // Closed, and still waiting on the game's own totals when the
+                // page went away: pick up exactly where the tab that stopped
+                // it left off, so the stats can still patch the snapshot and
+                // the ledger fold once when they arrive
+                if (pendingReconcile && this._pendingIsFresh(pendingReconcile, session)) {
+                    this.session = pendingReconcile.session || session;
+                    this.pendingReconcile = {
+                        session: this.session,
+                        context: pendingReconcile.context,
+                        guildName: pendingReconcile.guildName,
+                        characterId: pendingReconcile.characterId,
+                        armedAt: pendingReconcile.armedAt,
+                    };
+                }
+            } else {
+                // Still open when the page went away: not resumed outright — a
+                // fresh session is still what `start` makes — but its
+                // snapshots seed the next one over the same trial
+                this._priorSession = session;
             }
         } catch (error) {
             console.error('[GuildTrialRecorder] Restoring the saved session failed:', error);

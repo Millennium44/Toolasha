@@ -893,6 +893,80 @@ describe('a reload while the game’s totals are still in flight', () => {
     });
 });
 
+describe('a trial cut short by a reload keeps its history', () => {
+    // C: the recorder's own `snapshots` used to start over at `[]` whenever a
+    // fresh session was made, even though `guild-trial-damage.js` keeps its
+    // cumulative tally across a refresh. The graph reading `session.snapshots`
+    // restarted at zero for a trial that never actually restarted.
+    const reload = async () => {
+        guildTrialRecorder.session = null;
+        guildTrialRecorder.pendingReconcile = null;
+        guildTrialRecorder._priorSession = null;
+        await guildTrialRecorder._restoreFromStorage();
+    };
+
+    test('the same trial resumes with its snapshots carried forward', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+        game.breakdown = breakdown({ encounter: 'badger', totalDamage: 600_000 });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+        const before = guildTrialRecorder.session.snapshots;
+        expect(before.length).toBeGreaterThan(1);
+
+        // Never stopped — a reload, not a proper end
+        await reload();
+        expect(guildTrialRecorder._priorSession).not.toBeNull();
+
+        game.breakdown = breakdown({ encounter: 'badger', totalDamage: 700_000 });
+        guildTrialRecorder.noteActivity('trial-fight');
+
+        expect(guildTrialRecorder.session).not.toBeNull();
+        expect(guildTrialRecorder.session.snapshots.length).toBeGreaterThanOrEqual(before.length);
+        expect(guildTrialRecorder.session.snapshots[0]).toEqual(before[0]);
+        // Consumed once: a second trial this same page load gets nothing
+        expect(guildTrialRecorder._priorSession).toBeNull();
+    });
+
+    test('a different encounter the same week does not inherit the history', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        await reload();
+        game.breakdown = breakdown({ encounter: 'swarm' });
+        guildTrialRecorder.noteActivity('trial-fight');
+
+        expect(guildTrialRecorder.session.snapshots).toHaveLength(1);
+    });
+
+    test('a different trial week does not inherit the history', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        await reload();
+        vi.setSystemTime(now + 7 * 86_400_000);
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight', now + 7 * 86_400_000);
+
+        expect(guildTrialRecorder.session.snapshots).toHaveLength(1);
+    });
+
+    test('an already-ended prior session is not treated as cut short', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+
+        await reload();
+        expect(guildTrialRecorder._priorSession).toBeNull();
+
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.start('button');
+
+        expect(guildTrialRecorder.session.snapshots).toHaveLength(1);
+    });
+});
+
 describe('restarting', () => {
     test('ends the old session and opens a new one in a single gesture', () => {
         guildTrialRecorder.start('button');
