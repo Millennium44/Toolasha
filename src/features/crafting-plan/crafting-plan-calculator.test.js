@@ -324,6 +324,28 @@ describe('artisan requirement mode', () => {
         expect(computeBestCraftingPlan(LEATHER, 150).children[0].quantity).toBe(405); // ceil(2.7 × 150)
     });
 
+    test('an owned-intermediate remainder that crosses hybrid’s 100-action threshold re-rounds for its own size', () => {
+        settings.values.actions_artisanMaterialMode = 'hybrid';
+
+        // 25 boots need 150 leather crafts — 150 ≥ 100, so the tree above is
+        // priced/sized at hybrid's expected-value rounding: ceil(2.7 × 150) = 405
+        // cowhide (see the boots child's quantity below).
+        const plan = computeBestCraftingPlan(BOOTS, 25);
+        const leather = plan.children[0];
+        expect(leather.actionsNeeded).toBe(150);
+        expect(leather.children[0].quantity).toBe(405);
+
+        // Owning 110 of the 150 leather leaves a remainder of 40 actions — under
+        // 100, so hybrid re-rounds THAT remainder at worst-case: ceil(2.7) × 40 =
+        // 120. Linearly scaling the full run's 405 by 40/150 gives 108 instead,
+        // which is what this test used to see and is 12 cowhide short of what
+        // the 40 remaining leather crafts (rounded up each) actually need.
+        const missing = collectMissingMaterials(plan, [{ itemHrid: LEATHER, count: 110 }]);
+        expect(missing).toEqual([
+            { itemHrid: COWHIDE, itemName: 'Cowhide', missing: 120, required: 120, isTradeable: true },
+        ]);
+    });
+
     test('the upgrade item is one per craft whatever the mode', () => {
         settings.values.actions_artisanMaterialMode = 'worst-case';
         game.itemDetails['/items/reinforced_boots'] = { name: 'Reinforced Boots', isTradable: true };

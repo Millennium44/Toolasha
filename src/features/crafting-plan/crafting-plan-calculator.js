@@ -250,8 +250,8 @@ export function computeBestCraftingPlan(
             outputCount: cachedUnitCost.outputCount || 1,
             children:
                 cachedUnitCost.strategy === 'craft'
-                    ? cachedUnitCost.childrenTemplate.map((c) =>
-                          computeBestCraftingPlan(
+                    ? cachedUnitCost.childrenTemplate.map((c) => ({
+                          ...computeBestCraftingPlan(
                               c.itemHrid,
                               memoChildQuantity(c, quantity, cachedUnitCost.outputCount || 1),
                               mode,
@@ -265,8 +265,14 @@ export function computeBestCraftingPlan(
                               skipProcessing,
                               thinMarket,
                               getAskQty
-                          )
-                      )
+                          ),
+                          // Lets collectMissingMaterials re-derive an owned-intermediate
+                          // remainder's exact input count under the artisan mode's own
+                          // rounding instead of linearly scaling an already-rounded total.
+                          ...(c.countPerAction !== undefined
+                              ? { craftInputMeta: { countPerAction: c.countPerAction, artisanBonus: c.artisanBonus } }
+                              : { isUpgradeItem: true }),
+                      }))
                     : [],
         };
     }
@@ -470,9 +476,10 @@ export function computeBestCraftingPlan(
         children = [];
         if (action.inputItems) {
             for (const input of action.inputItems) {
-                const inputQty = artisanInputTotal(input.count || 1, artisanBonus, actionsNeeded, artisanMode);
-                children.push(
-                    computeBestCraftingPlan(
+                const inputCountPerAction = input.count || 1;
+                const inputQty = artisanInputTotal(inputCountPerAction, artisanBonus, actionsNeeded, artisanMode);
+                children.push({
+                    ...computeBestCraftingPlan(
                         input.itemHrid,
                         inputQty,
                         mode,
@@ -486,13 +493,17 @@ export function computeBestCraftingPlan(
                         skipProcessing,
                         thinMarket,
                         getAskQty
-                    )
-                );
+                    ),
+                    // Lets collectMissingMaterials re-derive an owned-intermediate
+                    // remainder's exact input count under the artisan mode's own
+                    // rounding instead of linearly scaling an already-rounded total.
+                    craftInputMeta: { countPerAction: inputCountPerAction, artisanBonus },
+                });
             }
         }
         if (action.upgradeItemHrid) {
-            children.push(
-                computeBestCraftingPlan(
+            children.push({
+                ...computeBestCraftingPlan(
                     action.upgradeItemHrid,
                     actionsNeeded,
                     mode,
@@ -506,8 +517,9 @@ export function computeBestCraftingPlan(
                     skipProcessing,
                     thinMarket,
                     getAskQty
-                )
-            );
+                ),
+                isUpgradeItem: true,
+            });
         }
     }
 
@@ -578,10 +590,11 @@ export function collectMissingMaterials(plan, inventory) {
         stock.set(row.itemHrid, (stock.get(row.itemHrid) || 0) + (row.count || 0));
     }
     const creditedToCrafts = new Map(); // itemHrid → units the tree's craft nodes took
+    const artisanMode = getArtisanMaterialMode();
 
-    (function walk(node, scale, isRoot) {
+    (function walk(node, scale, isRoot, quantityOverride) {
         if (!node) return;
-        const quantity = node.quantity * scale;
+        const quantity = quantityOverride !== undefined ? quantityOverride : node.quantity * scale;
 
         if (node.strategy === 'buy') {
             if (node.itemHrid === '/items/coin' || !(quantity > 0)) return;
@@ -594,6 +607,9 @@ export function collectMissingMaterials(plan, inventory) {
         // A craft node without a quantity carries no scale of its own; walk it
         // through untouched rather than crediting against a number that is not there.
         let childScale = scale;
+        // Whole actions the remainder actually costs, when known — see below. Carried
+        // out of the `if` so the children loop can re-derive from it directly.
+        let actionsForRemainder = null;
         if (!isRoot && node.quantity > 0) {
             const held = stock.get(node.itemHrid) || 0;
             const used = Math.min(held, quantity);
@@ -615,7 +631,7 @@ export function collectMissingMaterials(plan, inventory) {
             // materials under them bought for nothing. Nodes built without an
             // `outputCount` (hand-assembled plans) keep the ratio as the upper bound it is.
             if (node.actionsNeeded > 0) {
-                const actionsForRemainder =
+                actionsForRemainder =
                     node.outputCount > 0
                         ? Math.ceil(remaining / node.outputCount)
                         : Math.ceil(node.actionsNeeded * (remaining / node.quantity));
@@ -625,7 +641,24 @@ export function collectMissingMaterials(plan, inventory) {
             }
         }
 
-        for (const child of node.children || []) walk(child, childScale, false);
+        for (const child of node.children || []) {
+            // A remainder sized in whole actions re-derives each recipe-scaled child at
+            // the artisan mode's own rounding for THAT many actions, rather than
+            // linearly scaling a total that was rounded for the full run's action count.
+            // Hybrid mode rounds differently on either side of its 100-action threshold,
+            // so a full run of 150 (expected-value) with a 40-action remainder (still
+            // worst-case) disagree, and the linear scale silently kept the wrong one.
+            if (actionsForRemainder !== null && child.craftInputMeta) {
+                const { countPerAction, artisanBonus: childArtisanBonus } = child.craftInputMeta;
+                const childQty = artisanInputTotal(countPerAction, childArtisanBonus, actionsForRemainder, artisanMode);
+                walk(child, 1, false, childQty);
+            } else if (actionsForRemainder !== null && child.isUpgradeItem) {
+                // Upgrade items are never reduced or rounded — exactly one per action.
+                walk(child, 1, false, actionsForRemainder);
+            } else {
+                walk(child, childScale, false);
+            }
+        }
     })(plan, 1, true);
 
     const missing = [];
