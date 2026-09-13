@@ -98,6 +98,9 @@ export function playerLine(player, support, rank) {
     if (Number.isFinite(player.share)) parts.push(`${player.share.toFixed(0)}%`);
     if (Number.isFinite(player.dps)) parts.push(`${whole(player.dps)}/s`);
 
+    const kills = Number(player.kills) || 0;
+    if (kills > 0) parts.push(`${kills} kill${kills === 1 ? '' : 's'}`);
+
     const healed = support?.healingDone || 0;
     if (healed > 0) parts.push(`healed ${whole(healed)}`);
 
@@ -165,6 +168,9 @@ export function gameReportRows(gameStats, breakdown) {
                     damage,
                     share: total > 0 ? (damage / total) * 100 : null,
                     dps: null,
+                    // The post-trial stats state a total, never a kill count —
+                    // kills exist only on the stream's own attribution
+                    kills: streamPlayers.get(key)?.kills ?? 0,
                     deaths: streamPlayers.get(key)?.deaths ?? streamSupport.get(key)?.deaths ?? 0,
                 },
                 support: {
@@ -175,6 +181,38 @@ export function gameReportRows(gameStats, breakdown) {
             };
         })
         .sort((a, b) => b.player.damage - a.player.damage);
+}
+
+/** Casters named before the report summarises the tail, in the "Healing by caster" line */
+const MAX_REPORT_CASTERS = 5;
+
+/**
+ * "Healing by caster": every heal credited to whoever could have cast it — the
+ * scoreboard's own generous attribution (its By caster tab), not a second
+ * measurement. The post-trial stats state one healing total per member and
+ * never who cast it, so this always reads the stream's support rows, even in
+ * a report that otherwise prefers the game's own totals for damage and
+ * healing done.
+ *
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @returns {string[]} Lines, or an empty array when nothing was credited
+ */
+export function casterReportLines(breakdown) {
+    const rows = (breakdown?.support?.players || [])
+        .filter((row) => (row?.healingByCaster || 0) > 0)
+        .sort((a, b) => (b.healingByCaster || 0) - (a.healingByCaster || 0));
+    const unplaced = breakdown?.support?.unplacedCasterHealing || 0;
+    if (!rows.length && !(unplaced > 0)) return [];
+
+    const lines = [];
+    if (rows.length) {
+        const top = rows.slice(0, MAX_REPORT_CASTERS);
+        const names = top.map((row) => `${row.name} ${whole(row.healingByCaster)}`).join(', ');
+        const rest = rows.length - top.length;
+        lines.push(`Healing by caster · ${names}${rest > 0 ? `, +${rest} more` : ''}`);
+    }
+    if (unplaced > 0) lines.push(`No caster in sight · ${whole(unplaced)}`);
+    return lines;
 }
 
 /**
@@ -229,6 +267,7 @@ export function buildGuildReport({
 
         const healed = gameRows.reduce((sum, row) => sum + row.support.healingDone, 0);
         if (healed > 0) lines.push(`Healing · ${whole(healed)}`);
+        lines.push(...casterReportLines(breakdown));
         if (gameRows.some((row) => row.support.damageTaken > 0)) lines.push(TAKEN_BASIS_GAME);
 
         const close = describeShortfall({ tier, ...(shortfall || {}) });
@@ -317,6 +356,7 @@ export function buildGuildReport({
                 (unattributed > 0 ? ` · ${whole(unattributed)} unattributed (regen, or two healers at once)` : '')
         );
     }
+    lines.push(...casterReportLines(breakdown));
     if (ranked.some((player) => (supportFor(player.index)?.damageTaken || 0) > 0)) lines.push(TAKEN_BASIS_STREAM);
 
     const close = describeShortfall({ tier, ...(shortfall || {}) });

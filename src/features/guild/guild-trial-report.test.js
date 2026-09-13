@@ -11,6 +11,7 @@ import { describe, test, expect } from 'vitest';
 
 import {
     buildGuildReport,
+    casterReportLines,
     describeShortfall,
     MAX_REPORT_PLAYERS,
     playerLine,
@@ -125,6 +126,43 @@ describe('describeShortfall', () => {
     });
 });
 
+describe('casterReportLines', () => {
+    test('nothing credited to anyone is no lines at all', () => {
+        expect(casterReportLines({ support: { players: [] } })).toEqual([]);
+        expect(casterReportLines(null)).toEqual([]);
+    });
+
+    test('ranks casters by what they were credited with, and names the top few', () => {
+        const lines = casterReportLines({
+            support: {
+                players: [
+                    { name: 'Ada', healingByCaster: 1000 },
+                    { name: 'Tib', healingByCaster: 5000 },
+                    { name: 'Moo', healingByCaster: 0 },
+                ],
+            },
+        });
+
+        expect(lines).toEqual(['Healing by caster · Tib 5,000, Ada 1,000']);
+    });
+
+    test('a long tail is summarised rather than named in full', () => {
+        const players = Array.from({ length: 7 }, (_, index) => ({
+            name: `P${index}`,
+            healingByCaster: 100 - index,
+        }));
+        const [line] = casterReportLines({ support: { players } });
+
+        expect(line).toContain('P0 100, P1 99, P2 98, P3 97, P4 96');
+        expect(line).toContain('+2 more');
+    });
+
+    test('"no caster in sight" gets its own line, even with no named casters at all', () => {
+        const lines = casterReportLines({ support: { players: [], unplacedCasterHealing: 4_200 } });
+        expect(lines).toEqual(['No caster in sight · 4,200']);
+    });
+});
+
 describe('playerLine', () => {
     test('mentions only what happened', () => {
         const line = playerLine(
@@ -154,6 +192,17 @@ describe('playerLine', () => {
         expect(line).toContain('healed 150,000');
         expect(line).toContain('ran dry 3× (~4m)');
     });
+
+    test('kills are only mentioned when there were any', () => {
+        expect(playerLine({ name: 'Tib', damage: 10, deaths: 0 }, null, 1)).not.toContain('kill');
+
+        const one = playerLine({ name: 'Tib', damage: 10, deaths: 0, kills: 1 }, null, 1);
+        expect(one).toContain('1 kill');
+        expect(one).not.toContain('1 kills');
+
+        const many = playerLine({ name: 'Tib', damage: 10, deaths: 0, kills: 3 }, null, 1);
+        expect(many).toContain('3 kills');
+    });
 });
 
 describe('buildGuildReport', () => {
@@ -175,6 +224,49 @@ describe('buildGuildReport', () => {
         expect(report).toContain('Healing · 150,000 attributed');
         expect(report).toContain('83% into T4');
         expect(report).toContain('this client’s own battle feed');
+    });
+
+    test('a player’s kills ride on their own line, only when they have any', () => {
+        const report = buildGuildReport({
+            breakdown: breakdown({
+                players: [
+                    { index: '0', name: 'Tib', damage: 600_000, dps: 1250, share: 60, deaths: 1, kills: 2 },
+                    { index: '1', name: 'Moo', damage: 400_000, dps: 833, share: 40, deaths: 0, kills: 0 },
+                ],
+            }),
+        });
+
+        expect(report).toContain('1. Tib · 600,000 dmg · 60% · 1,250/s · 2 kills · took 200,000 · died 1×');
+        expect(report.split('\n').find((line) => line.startsWith('2. Moo'))).not.toContain('kill');
+    });
+
+    test('healing by caster is its own section, drawn from the stream even over the game’s totals', () => {
+        const report = buildGuildReport({
+            breakdown: breakdown({
+                support: {
+                    players: [
+                        { index: '0', name: 'Tib', healingDone: 0, damageTaken: 200_000, healingByCaster: 90_000 },
+                        {
+                            index: '1',
+                            name: 'Moo',
+                            healingDone: 150_000,
+                            damageTaken: 0,
+                            healingByCaster: 150_000,
+                        },
+                    ],
+                    totals: { healingDone: 150_000 },
+                    unattributedHealing: 25_000,
+                    unplacedCasterHealing: 5_000,
+                },
+            }),
+            gameStats: [
+                { name: 'Tib', damage: 800_000, healing: 0, damageTaken: 400_000 },
+                { name: 'Moo', damage: 400_000, healing: 300_000, damageTaken: 20_000 },
+            ],
+        });
+
+        expect(report).toContain('Healing by caster · Moo 150,000, Tib 90,000');
+        expect(report).toContain('No caster in sight · 5,000');
     });
 
     test('says how much of the party the split covers when it is only a part', () => {
