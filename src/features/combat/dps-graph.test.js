@@ -28,9 +28,11 @@ vi.mock('../../core/websocket.js', () => ({
     },
 }));
 vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => opts.breakdown }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { isBossMonster: (hrid) => hrid === '/monsters/crystal_colossus' },
+}));
 
 const {
-    BOSS_ENRAGE_NS,
     isBossBattle,
     sampleDamage,
     startDpsSampler,
@@ -85,8 +87,9 @@ afterEach(() => {
 
 describe('what a boss is', () => {
     test('an enrage timer past three minutes; exactly three is an ordinary monster', () => {
-        expect(isBossBattle({ monsters: { 0: { enrageTimerDuration: 600_000_000_000 } } })).toBe(true);
-        expect(isBossBattle({ monsters: { 0: { enrageTimerDuration: BOSS_ENRAGE_NS } } })).toBe(false);
+        expect(isBossBattle({ monsters: [{ hrid: '/monsters/crystal_colossus' }] })).toBe(true);
+        // A zone's ordinary spawns can carry a long enrage timer too (Pirate Cove's enrage at 600 s)
+        expect(isBossBattle({ monsters: [{ hrid: '/monsters/anchor_shark', enrageTimerDuration: 6e11 }] })).toBe(false);
         expect(isBossBattle({})).toBe(false);
     });
 
@@ -95,7 +98,7 @@ describe('what a boss is', () => {
         vi.setSystemTime(T0);
         opts.breakdown = reading([{ index: '0', name: 'Abe', damage: 0 }]);
         startDpsSampler();
-        opts.ws.get('new_battle')({ monsters: { 0: { enrageTimerDuration: 600_000_000_000 } } });
+        opts.ws.get('new_battle')({ monsters: [{ hrid: '/monsters/crystal_colossus' }] });
 
         for (let i = 1; i <= 5; i++) {
             opts.breakdown = reading([{ index: '0', name: 'Abe', damage: i * 200 }]);

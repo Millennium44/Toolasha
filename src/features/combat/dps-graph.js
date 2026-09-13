@@ -15,18 +15,19 @@
  *
  * ## What a boss is
  *
- * KikiMeter's rule (ZhuLiMoon, MIT): a `new_battle` whose monsters include one
- * with an enrage timer longer than three minutes. Ordinary monsters enrage at
- * exactly 180 s and bosses later (Crystal Colossus: 600 s). Nothing else on
- * this client flags a boss battle: `combat-boss-eta.js` counts battles to the
- * zone's boss cycle, which says when one is due rather than whether this fight
- * is one.
+ * A `new_battle` whose monsters include one listed in any zone's `bossSpawns`
+ * (`dataManager.isBossMonster`). KikiMeter's enrage-timer rule (longer than
+ * 180 s marks a boss) does not hold: on the test server Pirate Cove's ordinary
+ * spawns enrage at 600 s and its elite spawns at 180 s, so it shaded every
+ * wave. `combat-boss-eta.js` counts battles to the zone's boss cycle, which says
+ * when one is due rather than whether this fight is one.
  *
  * Runs only while the Per-player panel feature is on and the graph setting is
  * on; the panel starts and stops it.
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { damageBreakdown } from './damage-tracker.js';
 import { BOARD_COLORS, boardNoteHTML } from '../../utils/damage-board.js';
@@ -34,9 +35,6 @@ import { dpsGraphSVG, graphButtonsHTML, PARTY_COLOR } from '../../utils/dps-grap
 import { BUCKET_MS, newDpsSeries, noteTotals, seriesView } from '../../utils/dps-series.js';
 import { playerColor, resolveRosterColors } from '../../utils/player-colors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-
-/** An enrage timer longer than this (nanoseconds) marks a boss */
-export const BOSS_ENRAGE_NS = 180_000_000_000;
 
 /** The graph's views, in button order */
 export const GRAPH_VIEWS = [
@@ -58,7 +56,7 @@ const timers = createTimerRegistry();
  * @returns {boolean}
  */
 export function isBossBattle(data) {
-    return Object.values(data?.monsters || {}).some((monster) => Number(monster?.enrageTimerDuration) > BOSS_ENRAGE_NS);
+    return Object.values(data?.monsters || {}).some((monster) => dataManager.isBossMonster(monster?.hrid));
 }
 
 /**
