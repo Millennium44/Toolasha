@@ -3025,7 +3025,8 @@ class GuildTrialDamage {
         this.pendingLive = null;
         if (scope !== 'ok') return false;
         const characterId = dataManager.getCurrentCharacterId?.() ?? null;
-        if (!isRestorable(saved, { kind: LIVE_KIND, characterId, now })) return false;
+        const maxAgeMs = this._endedSaveMaxAgeMs(saved, now);
+        if (!isRestorable(saved, { kind: LIVE_KIND, characterId, now, maxAgeMs })) return false;
         if (signal && !this._liveFightMatches(saved, signal, now)) return false;
         // Ticks folded before the read came back merge only into the wave they were taken from
         const sameWave =
@@ -3033,6 +3034,27 @@ class GuildTrialDamage {
         if (this.spectator.ticks > 0 && !sameWave) return false;
         this._adoptLive(saved, now);
         return true;
+    }
+
+    /**
+     * How old a saved live tally may be and still be adopted.
+     *
+     * A trial the game itself declared over has no stream left to prove it
+     * stale or fresh — the ordinary twenty-minute window exists only because an
+     * old, unproven save might belong to a different fight. Once the game has
+     * spoken, that risk is gone for the rest of the trial week the ending fell
+     * in (the same week boundary {@link _reconcilable} pairs late game totals
+     * against): the board is good until the week rolls over, however long ago
+     * the page was closed. A save from an earlier trial week, or one the game
+     * never declared over, keeps the ordinary window.
+     *
+     * @param {Object} saved - As read back
+     * @param {number} now - Clock
+     * @returns {number|undefined} Max age in ms, or undefined for the ordinary window
+     */
+    _endedSaveMaxAgeMs(saved, now) {
+        if (saved.endedByGame !== true || !Number.isFinite(saved.endedAt)) return undefined;
+        return trialWeekStart(now) === trialWeekStart(saved.endedAt) ? Number.POSITIVE_INFINITY : undefined;
     }
 
     /**

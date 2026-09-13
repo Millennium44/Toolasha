@@ -331,6 +331,69 @@ describe('an ended trial', () => {
         expect(breakdown.endedByGame).toBe(true);
         expect(breakdown.restored).not.toBeNull();
     });
+
+    test('a save the game ended 43 minutes ago, same trial week, is restored anyway', async () => {
+        tierOneAndSave();
+        game.wsHandlers.end_guild_battle({ battleId: 1, trialHrid: '/guild_trials/badger' });
+        vi.advanceTimersByTime(LIVE_SESSION_PERSIST_MS);
+
+        await reload({ shutMs: 43 * 60_000 });
+
+        const breakdown = guildTrialDamage.breakdown();
+        expect(damageOf('Alpha')).toBe(1000);
+        expect(breakdown.endedByGame).toBe(true);
+        expect(breakdown.active).toBe(false);
+        expect(breakdown.frozen).toBe(true);
+        expect(breakdown.restored).not.toBeNull();
+    });
+
+    test('a save the game ended in the previous trial week is not restored', async () => {
+        tierOneAndSave();
+        game.wsHandlers.end_guild_battle({ battleId: 1, trialHrid: '/guild_trials/badger' });
+        vi.advanceTimersByTime(LIVE_SESSION_PERSIST_MS);
+
+        // Eight days on: the weekly Friday 00:00 UTC reset has rolled over at least once
+        await reload({ shutMs: 8 * 24 * 60 * 60 * 1000 });
+
+        swing(1, 10, 900_000, 10);
+        const breakdown = guildTrialDamage.breakdown();
+        expect(damageOf('Alpha')).toBe(0);
+        expect(breakdown.endedByGame).toBe(false);
+        expect(breakdown.restored).toBeNull();
+    });
+
+    test('a still-running save 21 minutes old keeps the ordinary window', async () => {
+        tierOneAndSave();
+
+        // Not ended by the game: the ordinary twenty-minute limit still applies
+        await reload({ shutMs: 21 * 60_000 });
+
+        swing(1, 10, 900_000, 10);
+        const breakdown = guildTrialDamage.breakdown();
+        expect(damageOf('Alpha')).toBe(0);
+        expect(breakdown.restored).toBeNull();
+    });
+
+    test('a new trial fight replaces a restored ended trial the normal way', async () => {
+        tierOneAndSave();
+        game.wsHandlers.end_guild_battle({ battleId: 1, trialHrid: '/guild_trials/badger' });
+        vi.advanceTimersByTime(LIVE_SESSION_PERSIST_MS);
+
+        await reload({ shutMs: 43 * 60_000 });
+        expect(guildTrialDamage.breakdown().endedByGame).toBe(true);
+        expect(damageOf('Alpha')).toBe(1000);
+
+        // A genuinely different fight: another encounter than the restored trial's
+        game.wsHandlers.new_guild_battle(opening(1, '2026-09-12T13:00:00Z', 'Trial Chameleon'));
+        swing(1, 1, 1_000_000, 0);
+        vi.advanceTimersByTime(1000);
+        swing(1, 2, 999_000, 1);
+
+        const breakdown = guildTrialDamage.breakdown();
+        expect(breakdown.endedByGame).toBe(false);
+        expect(breakdown.active).toBe(true);
+        expect(damageOf('Alpha')).toBe(1000);
+    });
 });
 
 describe('ending it on purpose', () => {
