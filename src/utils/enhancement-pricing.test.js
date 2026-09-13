@@ -20,6 +20,11 @@ const game = vi.hoisted(() => ({
     actions: {},
     equipment: new Map(),
     drinks: [],
+    // When set, this is what resolveActionContext reports instead of `drinks` —
+    // lets a test tell the raw slot read and the resolved (in-stock) context
+    // apart, to prove production cost follows the latter. `undefined` (the
+    // default) mirrors `drinks`, which is all every other test here needs.
+    resolvedDrinks: undefined,
     buffVersion: 0,
 }));
 
@@ -30,6 +35,15 @@ vi.mock('../core/data-manager.js', () => ({
         getActionDrinkSlots: () => game.drinks,
         getBuffStateVersion: () => game.buffVersion,
     },
+}));
+// This module's own concern is the production-cost formula, not the in-stock
+// filtering resolveActionContext itself does (that is action-context.test.js's
+// job) — bypass straight to whatever the test set up, defaulting to `drinks`.
+vi.mock('./action-context.js', () => ({
+    resolveActionContext: () => ({
+        equipment: new Map(game.equipment),
+        drinks: game.resolvedDrinks !== undefined ? game.resolvedDrinks : game.drinks,
+    }),
 }));
 vi.mock('../api/marketplace.js', () => ({ default: { on: () => {} } }));
 vi.mock('./market-data.js', () => ({
@@ -55,6 +69,7 @@ beforeEach(() => {
     game.actions = {};
     game.equipment = new Map();
     game.drinks = [];
+    game.resolvedDrinks = undefined;
     // Monotonic across tests, never reset: the memo maps are module state and
     // survive between tests, so rewinding the version would revive their entries
     game.buffVersion++;
@@ -196,6 +211,21 @@ describe('production-cost memo invalidation', () => {
         game.drinks = [{ itemHrid: '/items/artisan_tea' }];
         game.buffVersion++;
         expect(getProductionCost('/items/drink_mat')).toBe(450);
+    });
+
+    test('a slotted tea resolveActionContext drops (out of stock, no longer buffed) gives no discount', () => {
+        // The raw slot read (`game.drinks`) still names the tea — production
+        // cost used to read that directly and keep crediting the discount
+        // forever. `resolveActionContext` is what actually decides whether a
+        // slotted tea still applies, so this pins that its answer — not the
+        // raw slot — is what the cost follows.
+        makeRecipe('/items/stale_mat', '/items/stale_ore');
+        game.items['/items/artisan_tea'] = ARTISAN_TEA;
+        game.drinks = [{ itemHrid: '/items/artisan_tea' }];
+        game.resolvedDrinks = [];
+        game.buffVersion++;
+
+        expect(getProductionCost('/items/stale_mat')).toBe(500);
     });
 
     test('a gear change recomputes the fallback', () => {

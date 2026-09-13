@@ -12,6 +12,7 @@ import { findProducingAction } from '../../utils/production-index.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { INVENTORY_LOCATION } from '../../utils/inventory-reservations.js';
 import { artisanInputTotal, getArtisanMaterialMode, usesWorstCaseRounding } from '../../utils/artisan-material-mode.js';
 
@@ -88,10 +89,12 @@ function findProductionAction(itemHrid) {
 export function getArtisanBonus(actionType) {
     try {
         const gameData = dataManager.getInitClientData();
-        const equipment = dataManager.getEquipment();
         const itemDetailMap = gameData?.itemDetailMap || {};
+        // resolveActionContext drops a drink that is slotted but out of stock and no
+        // longer buffed, matching the Missing Materials panel — a raw slot/equipment
+        // read kept crediting the discount after the tea was gone.
+        const { equipment, drinks: activeDrinks } = resolveActionContext(actionType);
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        const activeDrinks = dataManager.getActionDrinkSlots(actionType);
         return parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
     } catch {
         return 0;

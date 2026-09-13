@@ -23,6 +23,7 @@ import { getDrinkConcentration, parseArtisanBonus } from '../../utils/tea-parser
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 import { affordableActions } from '../../utils/material-calculator.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 /**
@@ -362,11 +363,12 @@ class MaxProduceable {
             return null;
         }
 
-        // Get Artisan Tea reduction if active (applies to input materials only, not upgrade items)
-        const equipment = dataManager.getEquipment();
+        // Get Artisan Tea reduction if active (applies to input materials only, not upgrade items).
+        // resolveActionContext drops a drink that is slotted but out of stock and no longer
+        // buffed, matching the Missing Materials panel.
         const itemDetailMap = gameData?.itemDetailMap || dataManager.getInitClientData()?.itemDetailMap || {};
+        const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
         const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
         // Calculate max crafts per input (using O(1) Map lookup instead of O(n) array find)

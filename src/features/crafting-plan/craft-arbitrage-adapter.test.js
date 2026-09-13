@@ -42,6 +42,14 @@ vi.mock('../../utils/tea-parser.js', () => ({
     getDrinkConcentration: () => 0,
 }));
 
+// parseArtisanBonus above ignores its arguments, so what resolveActionContext
+// returns is not what this suite is pinning — only that calling it does not
+// throw (the real one reaches a loadout-snapshot feature module this suite
+// never mocks).
+vi.mock('../../utils/action-context.js', () => ({
+    resolveActionContext: () => ({ equipment: new Map(), drinks: [] }),
+}));
+
 vi.mock('../../utils/action-calculator.js', () => ({ calculateActionStats: () => game.stats }));
 
 const { describeCraft, describeCrafts, isCraftable } = await import('./craft-arbitrage-adapter.js');

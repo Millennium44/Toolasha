@@ -693,11 +693,7 @@ class ActionTimeDisplay {
             const { actionTime, totalEfficiency } = timeData;
 
             if (isInfinite) {
-                const equipment = dataManager.getEquipment();
-                const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-                const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-                const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
-                const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+                const artisanBonus = this.getArtisanBonusForAction(actionDetails);
 
                 const limitResult = this.calculateMaterialLimit(
                     actionDetails,
@@ -1269,9 +1265,7 @@ class ActionTimeDisplay {
             // Get inventory and calculate Artisan bonus
             const inventory = dataManager.getInventory();
             const inventoryLookup = this.buildInventoryLookup(inventory);
-            const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-            const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
-            const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+            const artisanBonus = this.getArtisanBonusForAction(actionDetails);
 
             // Calculate max actions based on materials and costs
             const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, artisanBonus, action);
@@ -2427,10 +2421,12 @@ class ActionTimeDisplay {
      * @returns {number} Reduction as a 0-1 decimal
      */
     getArtisanBonusForAction(actionDetails) {
-        const equipment = dataManager.getEquipment();
         const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+        // resolveActionContext drops a drink that is slotted but out of stock and no
+        // longer buffed — a raw equipment/slot read would keep crediting the
+        // discount after the tea is gone, contradicting the Missing Materials panel.
+        const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
         const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-        const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
         return parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
     }
 
@@ -2915,11 +2911,7 @@ class ActionTimeDisplay {
                         }
                     } else if (isInfinite) {
                         // Check for material limit on infinite actions
-                        const equipment = dataManager.getEquipment();
-                        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-                        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-                        const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
-                        const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+                        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
 
                         // Calculate action stats to get efficiency
                         const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
@@ -3110,11 +3102,7 @@ class ActionTimeDisplay {
 
                     // Calculate material limit for infinite actions
                     if (isInfinite) {
-                        const equipment = dataManager.getEquipment();
-                        const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
-                        const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-                        const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
-                        const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+                        const artisanBonus = this.getArtisanBonusForAction(actionDetails);
 
                         const limitResult = this.calculateMaterialLimit(
                             actionDetails,
