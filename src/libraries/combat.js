@@ -80,6 +80,11 @@ import manaTracker from '../features/combat/mana-tracker.js';
 // what sits at that global is the module itself
 import * as damageTracker from '../features/combat/damage-tracker.js';
 import * as damageTakenTracker from '../features/combat/damage-taken-tracker.js';
+// Same reasoning as damageTracker above: rotation-tracker.js has only named
+// exports (rotationAudit, start/stopRotationTracker), so it is a namespace
+// rather than a default. Its sibling trackers were already reachable off
+// Toolasha.Combat; this one never was.
+import * as rotationTracker from '../features/combat/rotation-tracker.js';
 import abilityDictionaryButton from '../features/abilities/ability-dictionary-button.js';
 import chestKeyMarketButton from '../features/inventory/chest-key-market-button.js';
 
@@ -162,6 +167,7 @@ toolashaRoot.Combat = {
     manaTracker,
     damageTracker,
     damageTakenTracker,
+    rotationTracker,
     abilityDictionaryButton,
     chestKeyMarketButton,
     combatScore,
