@@ -627,11 +627,37 @@ describe('a trial that has already ended', () => {
         expect(guildTrialRecorder.recording).toBe(true);
     });
 
-    test('a breakdown from an earlier week lends a session no trial identity', () => {
-        game.breakdown = breakdown({ active: false, encounter: 'badger', spectator: { lastAt: now - 7 * 86_400_000 } });
+    test('a breakdown from an earlier week lends a session no trial identity, roster or participant count', () => {
+        // B: roster and participants used to be read off the breakdown
+        // unconditionally, so a skilling hour that opened right after last
+        // week's combat trial ended folded that trial's whole roster in
+        game.breakdown = breakdown({
+            active: false,
+            encounter: 'badger',
+            spectator: { lastAt: now - 7 * 86_400_000 },
+            roster: { 0: 'Tib', 1: 'Moo' },
+            participants: 2,
+        });
         guildTrialRecorder.start('button');
         guildTrialRecorder.stop('button');
         expect(game.accrued[0].encounter).toBeNull();
+        expect(game.accrued[0].roster).toEqual([]);
+        expect(game.accrued[0].participants).toBeNull();
+    });
+
+    test('a breakdown from this week hands the session its roster and participant count', () => {
+        game.breakdown = breakdown({
+            active: false,
+            encounter: 'badger',
+            spectator: { lastAt: now },
+            roster: { 0: 'Tib', 1: { name: 'Moo' } },
+            participants: 2,
+        });
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+        expect(game.accrued[0].encounter).toBe('badger');
+        expect(game.accrued[0].roster).toEqual(['Tib', 'Moo']);
+        expect(game.accrued[0].participants).toBe(2);
     });
 });
 

@@ -397,6 +397,13 @@ class GuildTrialRecorder {
      * not give a later session that fight's identity, where it would collide
      * with this week's fold of the same encounter.
      *
+     * The roster and the participant count are gated on the same check as the
+     * encounter, and for the same reason: both are read straight off the
+     * breakdown with no week of their own, so a stale breakdown handed them to
+     * a session just as readily as it handed it a stale encounter. A skilling
+     * hour that opened right after last week's combat trial ended was folding
+     * that fight's whole roster into this week's skilling attendance.
+     *
      * @param {Object} breakdown - `guildTrialDamage.breakdown()`
      * @param {Object} session - The session being folded
      * @returns {{encounter: string|null, tier: number|null, roster: Array<string>, participants: number|null}}
@@ -410,10 +417,12 @@ class GuildTrialRecorder {
         return {
             encounter: thisWeek ? (breakdown?.encounter ?? null) : null,
             tier: breakdown?.tier ?? null,
-            roster: Object.values(breakdown?.roster || {})
-                .map((entry) => (typeof entry === 'string' ? entry : entry?.name))
-                .filter((name) => typeof name === 'string' && name),
-            participants: breakdown?.participants ?? null,
+            roster: thisWeek
+                ? Object.values(breakdown?.roster || {})
+                      .map((entry) => (typeof entry === 'string' ? entry : entry?.name))
+                      .filter((name) => typeof name === 'string' && name)
+                : [],
+            participants: thisWeek ? (breakdown?.participants ?? null) : null,
         };
     }
 
