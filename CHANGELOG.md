@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Escape closes only the menu in front
+
+- Pressing Escape with a player's colour and class menu open could close the Per-player panel behind it as well, and the panel stayed shut after a reload, because a held key's repeats were each taken as another Escape. Repeats are ignored now, so one press closes one thing.
+
 ### Reported: Worst-case artisan mode still left the last craft short
 
 - The crafting plan's shopping list, its Buy Missing Materials button and the guided and task crafting walks never read "Missing materials: Artisan requirement mode" and always bought the averaged amount, so with Worst-case selected a run could still end one craft short. They now use the chosen mode, like the action panel's Missing Materials button.
