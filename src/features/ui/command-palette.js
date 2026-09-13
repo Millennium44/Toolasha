@@ -357,6 +357,60 @@ export async function openSettings(search = '', settingId = '') {
 const TRIAL_BLOCK_SELECTOR = '.mwi-trial-info';
 
 /**
+ * Whether `el` sits inside a floating dialog — a modal, popup, popover,
+ * tooltip or overlay — rather than in the page itself.
+ *
+ * Duplicated from `guild-trials-scrape.js`'s `inFloatingDialog` for the same
+ * reason {@link TRIAL_BLOCK_SELECTOR} is: this file reaches other features
+ * through the page, never through an import that could be copied across a
+ * bundle boundary.
+ *
+ * @param {Element} el - Element to test
+ * @returns {boolean} Whether `el` is inside a floating dialog
+ */
+function inFloatingDialog(el) {
+    const dialogClasses = ['Modal_', 'Dialog', 'Popup', 'Popover', 'Tooltip', 'Overlay'];
+    for (let node = el; node; node = node.parentElement) {
+        if (node.getAttribute?.('role') === 'dialog') return true;
+        if (node.getAttribute?.('aria-modal') === 'true') return true;
+
+        const className = typeof node.className === 'string' ? node.className : '';
+        if (className && dialogClasses.some((fragment) => className.includes(fragment))) return true;
+    }
+    return false;
+}
+
+/**
+ * The guild panel's own tab strip — Overview, Members, Trials and the rest.
+ *
+ * Found by role, never by the shared Tabs component's class: that class
+ * prefix is carried by the strip's wrapper (`TabsComponent_tabsContainer`)
+ * and by its panels container as well as by the tabs themselves, so a
+ * substring match lands on the wrapper first — and the wrapper's own
+ * `textContent` contains every tab's label, so `pattern.test(...)` on it
+ * matched too. That is what made this entry click the wrapper instead of a
+ * tab and leave the page sitting on whatever it already showed. Two other
+ * `role="tablist"` strips are refused: one inside a floating dialog (the
+ * trial stats modal reuses the same Tabs component for its per-member tabs)
+ * and one inside a tab's own content.
+ *
+ * Duplicated from `guild-trials.js`'s `guildPanelTabList` for the same
+ * cross-bundle reason as {@link inFloatingDialog} above.
+ *
+ * @param {Element} panel - The guild panel
+ * @returns {Element|null} The `role="tablist"` element, or null
+ */
+function guildPanelTabList(panel) {
+    for (const list of panel?.querySelectorAll?.('[role="tablist"]') || []) {
+        if (inFloatingDialog(list)) continue;
+        const content = list.closest('[class*="TabsComponent_tabPanelsContainer"]');
+        if (content && panel.contains(content)) continue;
+        return list;
+    }
+    return null;
+}
+
+/**
  * Show the player the guild trial analysis, wherever it currently is.
  *
  * There is no trials *panel* to toggle. The pace, the ETA and the payout
@@ -393,7 +447,10 @@ export async function openGuildTrials() {
         // who signed up — and In Progress is where the pool bar and the pace are.
         // Somebody asking the palette for the trial figures wants the live one,
         // so In Progress is preferred and Trials is only the fallback.
-        const tabs = [...panel.querySelectorAll('[class*="TabsComponent_tab"]')];
+        const tabList = guildPanelTabList(panel);
+        const tabs = tabList
+            ? [...tabList.querySelectorAll('[role="tab"]')].filter((tab) => tab.closest('[role="tablist"]') === tabList)
+            : [];
         const named = (pattern) => tabs.find((tab) => pattern.test((tab.textContent || '').trim()));
         const trialsTab = named(/in\s*progress/i) || named(/trial/i);
         trialsTab?.click();

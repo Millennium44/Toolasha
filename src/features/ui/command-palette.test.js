@@ -585,18 +585,30 @@ describe('the Guild Trials entry', () => {
         const panel = document.createElement('div');
         panel.className = 'GuildPanel_guildPanel__a';
 
+        // The live guild page wraps the tabs in a `TabsComponent_tabsContainer`
+        // div that also carries the `TabsComponent_tab` class fragment and, since
+        // it comes first and contains every tab, is what
+        // `[class*="TabsComponent_tab"]` used to match — and it has nothing
+        // listening for a click, which is the bug: the wrapper is not the switch.
+        // Real tabs are `role="tab"` buttons inside a `role="tablist"` strip.
+        const tabsContainer = document.createElement('div');
+        tabsContainer.className = 'TabsComponent_tabsContainer__x';
+        tabsContainer.setAttribute('role', 'tablist');
+
         // The live guild page has both, in this order, and they are different
         // pages: Trials is the sign-up sheet, In Progress is where the pool bar
         // and the pace figures are
         const tab = (label) => {
             const el = document.createElement('div');
             el.className = 'TabsComponent_tab__b';
+            el.setAttribute('role', 'tab');
             el.textContent = label;
             el.addEventListener('click', () => clicks.push(label.toLowerCase()));
             return el;
         };
 
-        panel.append(tab('Members'), tab('Trials'), tab('In Progress'));
+        tabsContainer.append(tab('Members'), tab('Trials'), tab('In Progress'));
+        panel.appendChild(tabsContainer);
 
         let block = null;
         if (withBlock) {
@@ -843,18 +855,107 @@ describe('the Guild Trials entry, on a page with both tabs', () => {
 
         const panel = document.createElement('div');
         panel.className = 'GuildPanel_guildPanel__a';
+        const tabsContainer = document.createElement('div');
+        tabsContainer.className = 'TabsComponent_tabsContainer__x';
+        tabsContainer.setAttribute('role', 'tablist');
         const trials = document.createElement('div');
         trials.className = 'TabsComponent_tab__b';
+        trials.setAttribute('role', 'tab');
         trials.textContent = 'Trials';
         trials.addEventListener('click', () => clicks.push('trials'));
+        tabsContainer.appendChild(trials);
         const block = document.createElement('div');
         block.className = 'mwi-trial-info';
         block.scrollIntoView = vi.fn();
-        panel.append(trials, block);
+        panel.append(tabsContainer, block);
         document.body.appendChild(panel);
 
         expect(await openGuildTrials()).toBe(true);
         expect(clicks).toEqual(['guild', 'trials']);
+    });
+
+    test('clicks the tab itself, never the tabs-container wrapper the substring class also matches', async () => {
+        // Regression for the bug this file's fix addresses: `[class*=
+        // "TabsComponent_tab"]` matches the strip's wrapper too, and the wrapper
+        // comes first in document order with every tab's text inside it, so the
+        // old lookup picked it and .click() on it did nothing.
+        const clicks = [];
+        const link = document.createElement('a');
+        link.className = 'NavigationBar_minorNavigationLink__xyz';
+        link.textContent = 'Guild';
+        link.addEventListener('click', () => clicks.push('guild'));
+        document.body.appendChild(link);
+
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__a';
+        const tabsContainer = document.createElement('div');
+        tabsContainer.className = 'TabsComponent_tabsContainer__x';
+        tabsContainer.setAttribute('role', 'tablist');
+        tabsContainer.addEventListener('click', () => clicks.push('wrapper'));
+
+        const inProgress = document.createElement('div');
+        inProgress.className = 'TabsComponent_tab__b';
+        inProgress.setAttribute('role', 'tab');
+        inProgress.textContent = 'In Progress';
+        inProgress.addEventListener('click', (event) => {
+            event.stopPropagation();
+            clicks.push('in progress');
+        });
+        tabsContainer.appendChild(inProgress);
+        panel.appendChild(tabsContainer);
+
+        const block = document.createElement('div');
+        block.className = 'mwi-trial-info';
+        block.scrollIntoView = vi.fn();
+        panel.appendChild(block);
+        document.body.appendChild(panel);
+
+        expect(await openGuildTrials()).toBe(true);
+        expect(clicks).toEqual(['guild', 'in progress']);
+    });
+
+    test('ignores a role="tablist" inside a floating dialog, such as the trial stats modal', async () => {
+        const clicks = [];
+        const link = document.createElement('a');
+        link.className = 'NavigationBar_minorNavigationLink__xyz';
+        link.textContent = 'Guild';
+        link.addEventListener('click', () => clicks.push('guild'));
+        document.body.appendChild(link);
+
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__a';
+
+        // A modal's own tab strip, nested inside the guild panel — must be
+        // skipped in favor of the panel's real tab strip below it
+        const dialog = document.createElement('div');
+        dialog.setAttribute('role', 'dialog');
+        const dialogTabs = document.createElement('div');
+        dialogTabs.setAttribute('role', 'tablist');
+        const dialogTab = document.createElement('div');
+        dialogTab.setAttribute('role', 'tab');
+        dialogTab.textContent = 'In Progress';
+        dialogTab.addEventListener('click', () => clicks.push('dialog tab'));
+        dialogTabs.appendChild(dialogTab);
+        dialog.appendChild(dialogTabs);
+        panel.appendChild(dialog);
+
+        const tabsContainer = document.createElement('div');
+        tabsContainer.setAttribute('role', 'tablist');
+        const realTab = document.createElement('div');
+        realTab.setAttribute('role', 'tab');
+        realTab.textContent = 'In Progress';
+        realTab.addEventListener('click', () => clicks.push('real tab'));
+        tabsContainer.appendChild(realTab);
+        panel.appendChild(tabsContainer);
+
+        const block = document.createElement('div');
+        block.className = 'mwi-trial-info';
+        block.scrollIntoView = vi.fn();
+        panel.appendChild(block);
+        document.body.appendChild(panel);
+
+        expect(await openGuildTrials()).toBe(true);
+        expect(clicks).toEqual(['guild', 'real tab']);
     });
 });
 
