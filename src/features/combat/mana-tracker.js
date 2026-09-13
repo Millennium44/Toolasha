@@ -88,6 +88,14 @@ export default {
 
         onNewBattle = () => recordFight(tally);
         onAbility = (data) => {
+            // A spectated guild trial's own casts ride this same message,
+            // flagged `isGuildBattle` (KikiMeter reads the same flag off it).
+            // `new_battle` never fires for a trial being watched, so those
+            // casts would add mana with no fight ever recorded to divide it
+            // by — inflating Mana/fight and every per-ability share for
+            // whoever happens to be spectating one.
+            if (data?.isGuildBattle) return;
+
             // The message carries either the ability object or its hrid, and
             // both shapes have been seen in the wild
             const abilityHrid = data?.ability?.abilityHrid || data?.ability;

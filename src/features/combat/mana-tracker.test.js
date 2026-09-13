@@ -85,6 +85,22 @@ describe('mana tracker wiring', () => {
         expect(summary.mana).toBe(0);
     });
 
+    test('a spectated guild trial’s casts are ignored', () => {
+        // No new_battle ever fires for a trial being watched, so these casts
+        // would add mana with no fight to divide it by — inflating
+        // Mana/fight and every per-ability share
+        game.abilityDetailMap['/abilities/fireball'] = { manaCost: 15 };
+        manaTracker.initialize();
+
+        game.handlers['battle_consumable_ability_updated']({
+            ability: '/abilities/fireball',
+            isGuildBattle: true,
+        });
+
+        expect(manaSpend().abilities).toHaveLength(0);
+        expect(manaSpend().mana).toBe(0);
+    });
+
     test('a malformed ability payload is ignored rather than crashing', () => {
         manaTracker.initialize();
 
