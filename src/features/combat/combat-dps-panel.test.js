@@ -230,8 +230,8 @@ describe('what the board says about its figures', () => {
 
         const text = body.textContent;
         expect(text).toContain('received, not healing done');
-        // The absent thing said outright rather than left to be inferred
-        expect(text).toContain('no caster to credit');
+        // And points at where the caster is credited instead
+        expect(text).toContain('the Healing done tab credits the caster');
     });
 
     test('the taken tab says its figure is a floor, not the game’s own', () => {
@@ -484,7 +484,7 @@ describe('the rotation tab', () => {
     });
 
     test('is a tab of its own, after the party ones', () => {
-        expect(TABS.map((entry) => entry.key)).toEqual(['damage', 'taken', 'healed', 'rotation']);
+        expect(TABS.map((entry) => entry.key)).toEqual(['damage', 'taken', 'healed', 'healing', 'rotation']);
     });
 
     test('says nothing is being watched until a battle names your slot', () => {
@@ -846,3 +846,54 @@ describe('the damage board’s team total', () => {
 function boardText() {
     return board().textContent;
 }
+
+describe('the healing done tab', () => {
+    beforeEach(() => {
+        opts.dealt = {
+            seconds: 100,
+            players: [{ name: 'Tank', damage: 5000, dps: 50, classTag: { key: 'tank', short: 'TANK' } }],
+            healing: {
+                total: 4000,
+                regen: 900,
+                revived: 2000,
+                shared: 100,
+                players: [
+                    { name: 'Healer', healing: 3000, hps: 30, abilities: [] },
+                    { name: 'Tank', healing: 1000, hps: 10, abilities: [] },
+                ],
+            },
+        };
+    });
+
+    test('sits beside the received tab and ranks what each player cast', () => {
+        expect(TABS.findIndex((entry) => entry.key === 'healing')).toBe(
+            TABS.findIndex((entry) => entry.key === 'healed') + 1
+        );
+
+        const { rows, total } = panelRows('healing');
+        expect(rows.map((row) => [row.name, row.value, row.perSecond])).toEqual([
+            ['Healer', 3000, 30],
+            ['Tank', 1000, 10],
+        ]);
+        expect(total).toBe(4000);
+        // The class comes from the damage row where the healing row has none
+        expect(rows[1].classTag.key).toBe('tank');
+    });
+
+    test('draws HPS and says what it leaves out', () => {
+        feature._setTab('healing');
+        const text = board().textContent;
+
+        expect(text).toContain('party hps');
+        expect(text).toContain('credited to whoever cast it');
+        expect(text).toContain('revives are left out');
+        expect(text).toContain('Healer');
+        expect(text).not.toContain('could not be drawn');
+        expect(panelText('healing')).toContain('Party healing done — 4,000 total, 40/s');
+    });
+
+    test('an older breakdown with no healing is an empty tab, not a crash', () => {
+        opts.dealt = { seconds: 100, players: [] };
+        expect(panelRows('healing').rows).toEqual([]);
+    });
+});

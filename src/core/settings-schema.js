@@ -2473,7 +2473,7 @@ export const settingsGroups = {
                 label: 'Per-player panel: Rank the party’s damage during normal combat',
                 type: 'checkbox',
                 default: false,
-                help: 'The guild trial’s per-player board, for ordinary party and solo fights: damage, damage taken and health restored per member, ranked with shares and rates. Opens from a “Per-player” button on the battle panel. Damage is inferred from health lost per tick and a tick two players both hit on is shared between them, so a share is an attribution rather than a measurement — the panel says so. Off by default',
+                help: 'The guild trial’s per-player board, for ordinary party and solo fights: damage (with kills), damage taken, health restored and healing done per member, ranked with shares and rates. Opens from a “Per-player” button on the battle panel. Damage and healing are inferred from health moving per tick and credited by attack counters, presence and mana, so a share is an attribution rather than a measurement — the panel says so. Off by default',
             },
             portraitDps: {
                 id: 'portraitDps',

@@ -100,3 +100,49 @@ describe('the team total against the table', () => {
         expect(Math.round(rows + breakdown.team.unattributed + breakdown.team.filtered)).toBe(lost);
     });
 });
+
+describe('healing done', () => {
+    /** Every health rise a recording shows, revives excepted, counted straight off `pMap` */
+    function rises(recording) {
+        const last = {};
+        let total = 0;
+        for (const tick of recording.ticks) {
+            if (tick.type !== 'battle_updated') continue;
+            for (const [index, player] of Object.entries(tick.payload.pMap || {})) {
+                const health = Number(player?.cHP);
+                if (!Number.isFinite(health)) continue;
+                if (last[index] > 0 && health > last[index]) total += health - last[index];
+                last[index] = health;
+            }
+        }
+        return total;
+    }
+
+    // Credited plus regeneration is every rise: nothing is dropped, and
+    // regeneration is never on a row. The healer on the five-player run is the
+    // one with the heal on their bar
+    test.each([
+        ['combat-dungeon', dungeon, 246, 74],
+        ['combat-five', five, 2197, 1618],
+        ['combat-party', party, 291, 1450],
+        ['combat-refresh', refresh, 185, 130],
+        ['combat-run', run, 758, 197],
+    ])('%s', (_name, recording, credited, regen) => {
+        const { healing } = replay(recording);
+
+        expect(Math.round(healing.total)).toBe(credited);
+        expect(Math.round(healing.regen)).toBe(regen);
+        expect(Math.round(healing.total + healing.regen)).toBe(rises(recording));
+        expect(healing.shared).toBe(0);
+    });
+
+    test('combat-five: the healer’s row is Rejuvenate first', () => {
+        const { healing } = replay(five);
+        const healer = healing.players[0];
+
+        expect(healer.index).toBe('1');
+        expect(Math.round(healer.healing)).toBe(2067);
+        expect(healer.abilities[0].action).toBe('/abilities/rejuvenate');
+        expect(Math.round(healer.abilities[0].healing)).toBe(1150);
+    });
+});

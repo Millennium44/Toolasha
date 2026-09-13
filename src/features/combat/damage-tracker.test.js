@@ -813,3 +813,49 @@ describe('the team total', () => {
         expect(team.damage).toBe(rows() + team.unattributed + team.filtered);
     });
 });
+
+describe('healing done', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+        tracker.default.initialize();
+    });
+
+    afterEach(() => {
+        tracker.default.cleanup();
+        vi.useRealTimers();
+    });
+
+    test('a heal lands on the healer’s row, a regeneration tick lands nowhere, and a healer with no damage is listed', () => {
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: {
+                    name: 'Healer',
+                    currentHitpoints: 1000,
+                    currentManapoints: 500,
+                    preparingAbilityHrid: '/abilities/heal',
+                },
+                1: { name: 'Tank', currentHitpoints: 400, currentManapoints: 500, isPreparingAutoAttack: true },
+            },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1, cMP: 500, cHP: 1000 } }, mMap: {} });
+        vi.setSystemTime(Date.now() + 1000);
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2, cMP: 400, cHP: 1000 }, 1: { cHP: 700, mHP: 2000, cMP: 500 } },
+            mMap: {},
+        });
+        vi.setSystemTime(Date.now() + 1000);
+        listeners.battle_updated({ battleId: 1, pMap: { 1: { cHP: 750, mHP: 2000, cMP: 520 } }, mMap: {} });
+
+        const { healing, players } = damageBreakdown();
+        expect(healing.players).toHaveLength(1);
+        expect(healing.players[0]).toMatchObject({ name: 'Healer', healing: 300 });
+        expect(healing.players[0].abilities).toEqual([{ action: '/abilities/heal', healing: 300 }]);
+        expect(healing.regen).toBe(50);
+        expect(healing.total).toBe(300);
+        expect(players.find((row) => row.name === 'Healer')).toBeUndefined();
+    });
+});

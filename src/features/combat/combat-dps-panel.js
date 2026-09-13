@@ -16,21 +16,19 @@
  * genuinely different: which tracker feeds which tab, and what each figure
  * honestly is.
  *
- * ## Three tabs, and the third one is not "healing done"
+ * ## Four tabs, and the third and fourth are not the same healing
  *
  * - **Damage** — `damageBreakdown()`. Per player, including damage-over-time
  *   and reflect, which move a monster's health with no swing behind them.
  * - **Taken** — `takenBreakdown()`. Health actually lost, after mitigation, and
  *   a floor at that: damage healed on the same tick was never visible.
- * - **Healed** — the same tracker's `regen`, which is health *restored*: a
- *   heal, a life-steal and the game's own regeneration are one number here
- *   because nothing on the wire separates them. It is therefore healing
- *   **received**, not healing done, and it is labelled that way rather than
- *   being quietly ranked as if it credited a healer. The run side exposes no
- *   per-caster healing at all — that only exists for a spectated trial, where
- *   the stream carries a lone caster to attribute a rise to.
+ * - **Healed** — the taken tracker's `regen`, which is health *restored*: a
+ *   heal, a life-steal and the game's own regeneration are one number here,
+ *   filed under whoever received it. Healing **received**, labelled that way.
+ * - **Healing done** — `damageBreakdown().healing`, the same rises credited to
+ *   the caster with regeneration and revives held out (`utils/healing-done.js`).
  *
- * ## A fourth tab that is not about the party at all
+ * ## And a tab that is not about the party at all
  *
  * - **Rotation** — your own abilities, from `rotation-tracker.js`. Three tabs of
  *   "who is carrying this" answer nothing you can act on mid-fight; the one
@@ -114,6 +112,7 @@ export const TABS = [
     { key: 'damage', label: 'Damage' },
     { key: 'taken', label: 'Taken' },
     { key: 'healed', label: 'Healed' },
+    { key: 'healing', label: 'Healing done' },
     { key: 'rotation', label: 'Rotation' },
 ];
 
@@ -194,6 +193,23 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
         if (row?.name && row.classTag) classByName[row.name] = row.classTag;
     }
 
+    if (which === 'healing') {
+        const healing = dealtRun.healing || {};
+        const board = rankRows(
+            (healing.players || []).map((row) => ({
+                name: row.name,
+                value: row.healing || 0,
+                perSecond: row.hps ?? null,
+                classTag: row.classTag || classByName[row.name] || null,
+            })),
+            dealtRun.seconds || 0
+        );
+        board.regen = healing.regen || 0;
+        board.revived = healing.revived || 0;
+        board.shared = healing.shared || 0;
+        return board;
+    }
+
     const run = taken() || {};
     const rows = (run.players || []).map((row) => ({
         name: row.name,
@@ -248,9 +264,17 @@ const NOTES = {
         strong: 'Health restored — received, not healing done.',
         color: BOARD_COLORS.accent,
         detail:
-            'A heal, a life-steal and the zone’s own regeneration are one number here, because nothing on the ' +
-            'wire separates them. Ranking this does not say who healed: the run feed carries no caster to credit ' +
-            'a rise to, and inventing one would be worse than saying so.',
+            'A heal, a life-steal and the zone’s own regeneration are one number here, filed under whoever’s ' +
+            'health went up. Ranking this does not say who healed — the Healing done tab credits the caster.',
+    },
+    healing: {
+        strong: 'Healing done — credited to whoever cast it.',
+        color: BOARD_COLORS.good,
+        detail:
+            'A rise goes to a lone heal cast on the tick, then the one player on it (a life-steal or self-heal), ' +
+            'then a lone ability cast (an on-cast proc), then a lone mana drop; with none of those it is split ' +
+            'evenly among the players present. Regeneration — health rising with mana, or by a player’s own ' +
+            'regeneration amount — and revives are left out.',
     },
 };
 
@@ -643,7 +667,12 @@ export function panelText(which, sources) {
 
     const board = panelRows(which, sources);
     const { rows, seconds } = board;
-    const label = which === 'healed' ? 'health restored' : which === 'taken' ? 'damage taken' : 'damage';
+    const label =
+        {
+            healed: 'health restored',
+            healing: 'healing done',
+            taken: 'damage taken',
+        }[which] || 'damage';
 
     if (!rows.length) return `Party ${label}: nothing measured yet.`;
 
@@ -698,7 +727,7 @@ export function drawBoard(body, sources) {
     const total = board.team ?? board.total;
     const perSecond = board.team === undefined ? board.perSecond : board.teamPerSecond;
     const note = NOTES[tab] || NOTES.damage;
-    const unit = tab === 'healed' ? 'hps' : 'dps';
+    const unit = tab === 'healed' || tab === 'healing' ? 'hps' : 'dps';
 
     // Player colours and class overrides — utils/player-menu.js
     resolveRosterColors(rows.map((row) => row.name));

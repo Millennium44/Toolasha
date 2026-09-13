@@ -49,6 +49,7 @@ import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js
 import { ownWeaponHrid } from '../../utils/class-weapon.js';
 import { abilityActionLabel } from '../../utils/damage-board.js';
 import { newLabyrinthSessionState, noteLabyrinthUpdate, labyrinthSessionKey } from '../../utils/labyrinth-session.js';
+import { foldHealingTick, newHealingState, resetHealingBaselines, seedHealingState } from '../../utils/healing-done.js';
 import {
     newReflectState,
     noteReflectBuffs,
@@ -121,6 +122,9 @@ let unownedKills = 0;
  * team headline has to be, with the uncredited share named beside it.
  */
 let team = {};
+
+/** Healing credited to whoever did it — see `utils/healing-done.js` */
+let healState = newHealingState();
 
 /**
  * This fight only, cleared when the next one starts.
@@ -234,6 +238,7 @@ export function resetDamageTracker() {
     kills = {};
     unownedKills = 0;
     team = {};
+    healState = newHealingState();
     battle = { players: {}, enemies: {}, seconds: 0 };
     battleHP = {};
     manaSeries = {};
@@ -494,6 +499,26 @@ export function damageBreakdown() {
         logging,
         unownedKills,
         team: teamRow,
+        // A player who only healed has no damage row, so healing is its own list
+        healing: {
+            total: healState.total,
+            regen: healState.regen,
+            revived: healState.revived,
+            shared: healState.shared,
+            hps: measurable ? healState.total / seconds : null,
+            players: Object.entries(healState.players)
+                .map(([index, row]) => ({
+                    index,
+                    name: names[index] || `Player ${Number(index) + 1}`,
+                    classTag: classes[index] || null,
+                    healing: row.healing,
+                    hps: measurable ? row.healing / seconds : null,
+                    abilities: Object.entries(row.byAbility)
+                        .map(([action, amount]) => ({ action, healing: amount }))
+                        .sort((a, b) => b.healing - a.healing),
+                }))
+                .sort((a, b) => b.healing - a.healing),
+        },
         players: players.sort((a, b) => b.damage - a.damage),
         enemies: enemies.sort((a, b) => b.damage - a.damage),
     };
@@ -651,6 +676,7 @@ export default {
                 noteCasts(players);
                 noteSheets(players);
                 noteReflectBuffs(reflect, players);
+                seedHealingState(healState, players);
 
                 // Player health is the reflect rung's "hurt this tick" baseline.
                 // Seeded where stated, and a slot not stated is dropped: a stale
@@ -752,6 +778,7 @@ export default {
                         state.dmgCounter = {};
                         state.critCounter = {};
                         state.playersHP = {};
+                        resetHealingBaselines(healState);
                     }
 
                     // This-fight-only totals belong to the battle that just ended,
@@ -871,6 +898,10 @@ export default {
                 // only once at `new_battle` froze the label at whatever was
                 // being prepared when the fight began, which credited the whole
                 // fight to one ability — and to the wrong one.
+                // Before the actions move on: a heal that landed now was cast by
+                // what was being prepared going into this tick
+                foldHealingTick(healState, data?.pMap, state.actions, abilityDetailMap);
+
                 noteActions(state, data?.pMap);
                 noteCasts(data?.pMap);
                 noteReflectCasts(reflect, data?.pMap, now);
