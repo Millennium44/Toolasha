@@ -174,6 +174,11 @@ afterEach(() => {
 });
 
 describe('thinBreakdown', () => {
+    test('each snapshot says which tier and wave was being fought', () => {
+        expect(thinBreakdown({ tier: 7, wave: 2, players: [] }, now)).toMatchObject({ tier: 7, wave: 2 });
+        expect(thinBreakdown({ players: [] }, now)).toMatchObject({ tier: null, wave: null });
+    });
+
     test('keeps what a series needs and drops what repeats', () => {
         const snapshot = thinBreakdown(breakdown(), now);
 

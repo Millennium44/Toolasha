@@ -132,6 +132,10 @@ export function thinBreakdown(breakdown, at) {
         fights: breakdown?.fights ?? 0,
         totalDamage: breakdown?.totalDamage ?? 0,
         partyDps: breakdown?.partyDps ?? null,
+        // The tier and wave being fought when it was taken, so a chart drawn from
+        // the snapshots can mark tier boundaries nobody had a panel open for
+        tier: breakdown?.tier ?? null,
+        wave: breakdown?.wave ?? null,
         players: (breakdown?.players || []).map((player) => {
             const row = supportOf(player.index);
             // Every figure below is cumulative for the session, as the live
