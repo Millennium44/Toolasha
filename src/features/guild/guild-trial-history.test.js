@@ -11,7 +11,13 @@
 
 import { describe, test, expect } from 'vitest';
 
-import { FOREIGN_CYCLE_REASON, describeCycleAge, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
+import {
+    FOREIGN_CYCLE_REASON,
+    describeCycleAge,
+    pastCycles,
+    pastWeekLine,
+    summariseArchivedCycle,
+} from './guild-trial-history.js';
 import { trialWeekStart } from './guild-trials-math.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -54,6 +60,37 @@ function cycle(overrides = {}) {
         ...overrides,
     };
 }
+
+describe('pastCycles', () => {
+    /** A week archived off zeroed cards: a tile that states nothing */
+    const emptyTiles = {
+        'skilling::milking': { name: 'Milking', kind: 'skilling', points: 0, samples: [], tiers: [] },
+    };
+
+    test('one per week, keeping the copy that states the most, and never this week’s own', () => {
+        const emptyLastWeek = cycle({ tiles: emptyTiles });
+        const emptyThisWeek = cycle({ weekStart: trialWeekStart(now), tiles: emptyTiles });
+        const foreignThisWeek = cycle({ weekStart: trialWeekStart(now), reason: FOREIGN_CYCLE_REASON });
+
+        const kept = pastCycles(
+            [emptyLastWeek, cycle(), emptyLastWeek, emptyThisWeek, emptyThisWeek, emptyThisWeek, foreignThisWeek],
+            now
+        );
+
+        // Last week once, with its results rather than an empty copy; this
+        // week's own not at all; another guild's week kept, and labelled apart
+        expect(kept).toHaveLength(2);
+        expect(pastWeekLine(summariseArchivedCycle(kept[0], { now }))).toBe(
+            'Last week · combat T5 · skilling T6 · 1,800 pts · — tokens each'
+        );
+        expect(kept[1].reason).toBe(FOREIGN_CYCLE_REASON);
+    });
+
+    test('an archive written before cycles carried a week is never merged away', () => {
+        const old = cycle({ weekStart: undefined, archivedAt: lastWeek });
+        expect(pastCycles([old, old], now)).toHaveLength(2);
+    });
+});
 
 describe('describeCycleAge', () => {
     test('counts week boundaries, not elapsed days', () => {

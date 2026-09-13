@@ -564,6 +564,35 @@ describe('archiving a finished cycle', () => {
         expect(after.history[0].tiles).toBeDefined();
     });
 
+    test('archiving a week already held keeps one entry, the one that states more', () => {
+        const withPoints = (record, points) => ({
+            ...record,
+            tiles: { 'skilling::milking': { ...record.tiles['skilling::milking'], points } },
+        });
+        let held = archiveCycle(withPoints(sampled([10, 20]), 840), 'a new cycle is scheduled', now);
+
+        // Zeroed cards sampled back into the same week's record and archived
+        // again, pass after pass
+        for (let pass = 1; pass <= MAX_ARCHIVED_CYCLES + 2; pass += 1) {
+            held = archiveCycle({ ...held, tiles: sampled([pass]).tiles }, 'a new cycle is scheduled', now + pass);
+        }
+        expect(held.history).toHaveLength(1);
+        expect(held.history[0].tiles['skilling::milking'].points).toBe(840);
+
+        // A fuller reading of the same week does replace it…
+        const fuller = archiveCycle(withPoints({ ...held, ...sampled([30]) }, 1200), 'a new cycle is scheduled', now);
+        expect(fuller.history).toHaveLength(1);
+        expect(fuller.history[0].tiles['skilling::milking'].points).toBe(1200);
+
+        // …and another week is its own entry
+        const nextWeek = archiveCycle(
+            { ...sampled([40]), history: fuller.history, weekStart: thisWeek + 7 * 24 * 60 * 60 * 1000 },
+            'a new cycle is scheduled',
+            now
+        );
+        expect(nextWeek.history).toHaveLength(2);
+    });
+
     test('only the last few cycles are kept', () => {
         let held = sampled([10]);
         for (let cycle = 0; cycle < MAX_ARCHIVED_CYCLES + 3; cycle += 1) {

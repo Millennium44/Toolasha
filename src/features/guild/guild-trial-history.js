@@ -100,6 +100,78 @@ function clearedTier(tile) {
 }
 
 /**
+ * How much an archived cycle states, for choosing between two archives of one week.
+ *
+ * Stated points first, then how many tiles stated a tier, then how many samples
+ * were kept — so a copy of a week archived off zeroed cards never outranks the
+ * archive holding that week's results.
+ *
+ * @param {Object} cycle - An archived cycle
+ * @returns {number[]} `[points, tieredTiles, samples]`, compared in that order
+ */
+export function cycleWeight(cycle) {
+    let points = 0;
+    let tiered = 0;
+    let samples = 0;
+    for (const tile of Object.values(cycle?.tiles || {})) {
+        if (Number.isFinite(tile?.points)) points += tile.points;
+        if (clearedTier(tile) !== null) tiered += 1;
+        samples += Array.isArray(tile?.samples) ? tile.samples.length : 0;
+    }
+    return [points, tiered, samples];
+}
+
+/**
+ * Whether one archive of a week states at least as much as another.
+ * @param {Object} candidate - The archive that would replace
+ * @param {Object} held - The archive already kept
+ * @returns {boolean}
+ */
+export function statesAsMuch(candidate, held) {
+    const a = cycleWeight(candidate);
+    const b = cycleWeight(held);
+    for (let i = 0; i < a.length; i += 1) {
+        if (a[i] !== b[i]) return a[i] > b[i];
+    }
+    return true;
+}
+
+/**
+ * The archived cycles a "Past weeks" line is drawn for, oldest first.
+ *
+ * One per week: of several archives of the same week, the one that states the
+ * most is kept (see {@link cycleWeight}) — a mid-week archive loop once filed four
+ * empty copies of one week and pushed the real weeks out of the four-cycle
+ * history. And never the current week's own cycle, which is the live record and
+ * not a past week. A cycle archived off another guild's record is kept either
+ * way, and apart from this guild's own week.
+ *
+ * @param {Array<Object>} history - `record.history`
+ * @param {number} [now] - Clock, in ms
+ * @returns {Array<Object>} The cycles to summarise
+ */
+export function pastCycles(history, now = Date.now()) {
+    const thisWeek = trialWeekStart(now);
+    const kept = [];
+    for (const cycle of Array.isArray(history) ? history : []) {
+        if (!cycle || typeof cycle !== 'object') continue;
+        const foreign = cycle.reason === FOREIGN_CYCLE_REASON;
+        const week = Number.isFinite(cycle.weekStart) ? cycle.weekStart : null;
+        if (!foreign && week !== null && week >= thisWeek) continue;
+
+        const index =
+            week === null
+                ? -1
+                : kept.findIndex(
+                      (held) => held.weekStart === week && (held.reason === FOREIGN_CYCLE_REASON) === foreign
+                  );
+        if (index === -1) kept.push(cycle);
+        else if (statesAsMuch(cycle, kept[index])) kept[index] = cycle;
+    }
+    return kept;
+}
+
+/**
  * One archived cycle, reduced to the figures a week line prints.
  *
  * `points` is the sum of the Guild Points the cards themselves stated — the

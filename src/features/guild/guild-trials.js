@@ -187,7 +187,7 @@ import {
     tileKey,
     tilePersonalStats,
 } from './guild-trials-store.js';
-import { FOREIGN_CYCLE_REASON, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
+import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 /** Class every injected element carries, so cleanup is one query */
@@ -3605,8 +3605,25 @@ class GuildTrials {
         const recordClaimsProgress = held.some(
             (tile) => tile.samples?.length || tile.tier || Object.keys(tile.pointsByTier || {}).length
         );
+        // …except that "Scheduled" is also what the header says for the rest of
+        // the trial week once this week's cycle has finished: the week runs from
+        // Friday 00:00 UTC, the cycle is held on one day of it, and after its
+        // combat trial ends the cards are zeroed and the next cycle is scheduled.
+        // A record stamped as this guild's, for this week (a record of any other
+        // week never reaches here — `_render` starts that one empty), holding
+        // progress, is that finished cycle — the one the "Last trial" block is
+        // drawn from — and not a stale copy. Archiving it threw the week away
+        // mid-week, reset the damage module before the game's totals had been
+        // fetched, and, as the zeroed cards were sampled back into the same
+        // week's record and archived again on later passes, filled the history
+        // with empty copies of this week. A countdown reaching into a later week
+        // says the same of a record with no provenance stamp.
+        const nextStartsAt = Number.isFinite(status?.startsInMs) ? now + status.startsInMs : null;
+        const nextCycleLaterWeek =
+            nextStartsAt !== null && trialWeekStart(nextStartsAt) > (this.record.weekStart ?? trialWeekStart(now));
+        const finishedThisWeek = provenance === 'own' || nextCycleLaterWeek;
 
-        if (scheduled && cardsStateNothing && recordClaimsProgress) {
+        if (scheduled && cardsStateNothing && recordClaimsProgress && !finishedThisWeek) {
             console.warn('[GuildTrials] Archiving a finished cycle: the panel says the next one is scheduled');
             // Summarized before the reset below: `storedStats` outlives a reset
             // by design, but the week-guarded blob behind it is discarded the
@@ -4120,7 +4137,9 @@ class GuildTrials {
      * @returns {Array<Object>} One summary per archived cycle
      */
     _pastWeekSummaries(now = Date.now(), bonuses = null) {
-        const history = Array.isArray(this.record?.history) ? this.record.history : [];
+        // One line per past week — a history already holding repeated archives
+        // of one week, or this week's own, draws neither twice nor as "This week"
+        const history = pastCycles(this.record?.history, now);
         if (!history.length) return [];
 
         const resolved = bonuses || this._payoutBonuses();

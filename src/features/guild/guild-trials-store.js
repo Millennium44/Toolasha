@@ -49,6 +49,7 @@ import {
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
+import { statesAsMuch } from './guild-trial-history.js';
 
 /** Object store the records live in — shared with the guild XP history */
 const STORE_NAME = 'guildHistory';
@@ -291,7 +292,14 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null 
         // than a cycle that attributed nothing. `archivedAccuracyTrend` keeps
         // those two apart and says "no accuracy data" for the former
         if (accuracy && typeof accuracy === 'object' && Object.keys(accuracy).length) entry.accuracy = accuracy;
-        history.push(entry);
+        // One entry per week and reason. Archiving a week already held keeps
+        // whichever copy states more: appending let a week archived over and
+        // over push every real week out of the capped history
+        const same = Number.isFinite(entry.weekStart)
+            ? history.findIndex((held) => held?.weekStart === entry.weekStart && held?.reason === reason)
+            : -1;
+        if (same === -1) history.push(entry);
+        else if (statesAsMuch(entry, history[same])) history[same] = entry;
     }
 
     return {

@@ -2294,6 +2294,55 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('Banked5 tiers');
     });
 
+    test('this week’s own finished cycle is kept while the header says the next one is scheduled', async () => {
+        // The live report: the combat trial had just ended mid-week, the header
+        // read "Scheduled" for next week's cycle and the cards were zeroed. The
+        // record — stamped as this guild's, for this week — was archived as a
+        // stale copy, and the zeroed cards sampled back in were archived again
+        // on each pass, until four empty "This week" lines filled the history.
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'New Guild';
+        game.store = {};
+        await trialsFeature.initialize();
+        guildTrials.guildName = 'New Guild';
+
+        guildTrials.record = {
+            weekStart: guildTrials.record.weekStart,
+            guildName: 'New Guild',
+            tiles: {
+                'skilling::milking': {
+                    name: 'Milking',
+                    kind: 'skilling',
+                    tier: 19,
+                    pointsByTier: { 19: 6072 },
+                    samples: [{ t: now - 60_000, readings: [{ current: 100, max: 200 }] }],
+                    tiers: [],
+                },
+            },
+            history: [],
+        };
+
+        document.body.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'GuildPanel_trialsContent__a';
+        root.innerHTML =
+            '<div class="GuildPanel_eventStatusRow__b">Scheduled Wed 04:00 PM 2h 24m</div>' +
+            '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Milking</div>' +
+            '<div class="GuildPanel_tileSummary__e">Lv.130</div><div>0 pts</div>' +
+            '<div>1/22 signed up</div></div>';
+        document.body.appendChild(root);
+
+        for (let pass = 0; pass < 4; pass += 1) {
+            vi.setSystemTime(now + pass * 5000);
+            fire();
+        }
+
+        expect(guildTrials.record.history || []).toHaveLength(0);
+        expect(guildTrials.record.tiles['skilling::milking'].pointsByTier[19]).toBe(6072);
+        expect(text()).not.toContain('This week');
+    });
+
     describe('the record cannot be wiped by a failed read or a stale copy', () => {
         const KEY = 'guildTrials_Milky Way';
         const sample = (t) => ({ t, readings: [{ current: t % 1000, max: 4000 }] });
@@ -2378,7 +2427,10 @@ describe('the panel, end to end', () => {
         });
 
         test('archiving a cycle is the one save that may lose tiles, and a stale copy cannot bring them back', async () => {
-            guildTrials.record = storedRecord([now - 20_000]);
+            // A record with no provenance stamp: the one kind the header's
+            // "Scheduled" still archives this week (a record stamped as this
+            // guild's is this week's own finished cycle, and is kept)
+            guildTrials.record = { ...storedRecord([now - 20_000]), guildName: null };
             guildTrials.lastRecordSaveAt = 0;
             game.store[KEY] = storedRecord([now - 20_000]);
 
@@ -2681,6 +2733,31 @@ describe('the panel, end to end', () => {
         expect(text()).toContain('2 weeks ago · combat T0 · skilling — · 0 pts · — tokens each');
         // Newest first
         expect(text().indexOf('Last week')).toBeLessThan(text().indexOf('2 weeks ago'));
+    });
+
+    test('one line per past week and none for this week, however often a week was archived', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        const zeroed = {
+            'skilling::milking': {
+                name: 'Milking',
+                kind: 'skilling',
+                tier: 19,
+                points: 0,
+                pointsByTier: {},
+                samples: [],
+                tiers: [],
+            },
+        };
+        const emptyThisWeek = archivedWeek({ archivedAt: now - 60_000, weekStart: trialWeekStart(now), tiles: zeroed });
+        guildTrials.record = {
+            ...guildTrials.record,
+            history: [archivedWeek(), archivedWeek({ tiles: zeroed }), emptyThisWeek, emptyThisWeek, emptyThisWeek],
+        };
+        fire(root);
+
+        expect(text()).not.toContain('This week');
+        expect(text().split('Last week ·')).toHaveLength(2);
+        expect(text()).toContain('Last week · combat T5 · skilling T6 · 1,800 pts');
     });
 
     test('a past week’s tokens are derived once the buildings are known, and marked as derived', () => {
