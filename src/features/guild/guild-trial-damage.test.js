@@ -113,6 +113,7 @@ const {
     guildTrialDamage,
     isTrialBattle,
     MIN_SECONDS,
+    liveBossDebuffs,
     liveTrialSplit,
     REFLECT_WINDOW_MS,
     SPECTATED_TRIAL_NOTE,
@@ -3391,5 +3392,83 @@ describe('reflect and unattributed damage on the spectated stream', () => {
             kills: 0,
             unownedKills: 0,
         });
+    });
+});
+
+describe('debuff timers on the spectated boss', () => {
+    const at = new Date('2026-08-03T16:00:00Z').getTime();
+    const detailMap = {
+        '/abilities/ice_spear': {
+            name: 'Ice Spear',
+            abilityEffects: [
+                {
+                    targetType: 'enemy',
+                    effectType: '/ability_effect_types/damage',
+                    buffs: [
+                        { uniqueHrid: '/buff_uniques/ice_spear', typeHrid: '/buff_types/attack_speed', duration: 8e9 },
+                    ],
+                },
+            ],
+        },
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = { abilityDetailMap: detailMap };
+        game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Chameleon']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        game.clientData = {};
+    });
+
+    const tick = (tier, pMap, mMap, offsetMs) => {
+        vi.setSystemTime(at + offsetMs);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ battleId: 9, tier, pMap, mMap });
+    };
+    const boss = (hp, dmg, fields = {}) => ({
+        0: { cHP: hp, mHP: 650_000, dmgCounter: dmg, critCounter: 0, ...fields },
+    });
+    const iceSpearLands = () => {
+        tick(3, { 0: { atkCounter: 1, cHP: 5000, abilityHrid: '/abilities/ice_spear' } }, boss(650_000, 0), 0);
+        tick(3, { 0: { atkCounter: 2, cHP: 5000 } }, boss(640_000, 1), 250);
+    };
+
+    test('an Ice Spear seen landing puts its game-data timer on the boss while the stream is live', () => {
+        iceSpearLands();
+
+        expect(liveBossDebuffs(at + 1000).get('0')).toEqual([
+            expect.objectContaining({ key: '/abilities/ice_spear', kind: 'debuff', expiresAt: at + 8250 }),
+        ]);
+        expect(liveBossDebuffs(at + 250 + TRIAL_BADGE_WINDOW_MS + 1)).toBeNull();
+    });
+
+    test('a new wave forgets the last wave’s boss timers', () => {
+        iceSpearLands();
+        tick(4, { 0: { atkCounter: 9, cHP: 5000 } }, boss(650_000, 0), 500);
+
+        expect(liveBossDebuffs(at + 600).size).toBe(0);
+    });
+
+    test('a stun is standing for as long as the stream states it', () => {
+        tick(3, { 0: { atkCounter: 1, cHP: 5000 } }, boss(650_000, 0), 0);
+        tick(3, {}, boss(650_000, 0, { isStunned: true }), 250);
+        expect(liveBossDebuffs(at + 300).get('0')[0]).toMatchObject({ kind: 'stun', expiresAt: null });
+
+        tick(3, {}, boss(649_000, 1), 2250);
+        expect(liveBossDebuffs(at + 2300).size).toBe(0);
+    });
+
+    test('a client that never spectated has no boss timers to draw', () => {
+        expect(liveBossDebuffs(at)).toBeNull();
     });
 });

@@ -109,6 +109,7 @@ import {
 } from '../../utils/damage-attribution.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
+import { activeBossDebuffs, newBossDebuffState, noteBossDebuffTick } from './guild-trial-boss-debuffs.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import { isMonsterUnit } from './guild-loadouts.js';
 import { autoAttackDps } from './guild-trial-forecast.js';
@@ -850,6 +851,8 @@ class GuildTrialDamage {
         this.team = {};
         /** Slot → `{hrid, at}`, the last reflect cast seen — see {@link REFLECT_WINDOW_MS} */
         this.reflectCasts = {};
+        /** The wave's boss debuff timers — see `guild-trial-boss-debuffs.js` */
+        this.bossDebuffs = newBossDebuffState();
         this.playersHP = {};
         this.seconds = 0;
         /**
@@ -1678,6 +1681,9 @@ class GuildTrialDamage {
             this._nameUnits(pMap, now);
             this._noteClassEvidence(pMap);
             this._readPool(mMap, tier, now);
+            // Boss debuff timers compare this tick against the engine's baselines,
+            // so they run before `attributeTick` moves them
+            noteBossDebuffTick(this.bossDebuffs, { pMap, mMap, attribution: this.state, now });
 
             // Before `noteActions`, exactly as the ordinary path does it: the hit
             // that lands on this tick was cast by what was prepared before it.
@@ -2060,6 +2066,7 @@ class GuildTrialDamage {
         // to its last occupant's health would read as struck
         this.state.playersHP = {};
         this.reflectCasts = {};
+        this.bossDebuffs = newBossDebuffState();
         this.support.lastHP = {};
         this.support.lastMP = {};
         this.support.lastHealAt = {};
@@ -2948,6 +2955,23 @@ export function liveTrialSplit(now = Date.now(), instance = guildTrialDamage) {
     const report = instance.breakdown?.();
     if (!report?.measured) return null;
     return { players: report.players, partyDps: report.partyDps ?? null, seconds: report.seconds };
+}
+
+/**
+ * The debuffs standing on each boss of the spectated wave, while the stream is live.
+ *
+ * Null rather than an empty map once the stream has been quiet for
+ * {@link TRIAL_BADGE_WINDOW_MS}, for the same reason {@link liveTrialSplit} is:
+ * a timer on a fight nobody is being fed is a guess about a stale boss.
+ *
+ * @param {number} [now=Date.now()] - Clock, injectable for tests
+ * @param {Object} [instance] - The tracker, injectable for tests
+ * @returns {Map<string, Array<Object>>|null} Boss slot → effects
+ */
+export function liveBossDebuffs(now = Date.now(), instance = guildTrialDamage) {
+    const lastAt = instance?.spectator?.lastAt || 0;
+    if (!lastAt || now - lastAt > TRIAL_BADGE_WINDOW_MS || !instance.bossDebuffs) return null;
+    return activeBossDebuffs(instance.bossDebuffs, now);
 }
 
 export default guildTrialDamage;

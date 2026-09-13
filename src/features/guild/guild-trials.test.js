@@ -226,6 +226,9 @@ vi.mock('./guild-trial-skilling.js', () => ({
         snapshot: () => ({ updates: game.skilling, ended: game.skillingEnded }),
     },
 }));
+vi.mock('./guild-trial-boss-debuffs-ui.js', () => ({
+    default: { initialize: vi.fn(), cleanup: vi.fn() },
+}));
 vi.mock('./guild-trial-scoreboard.js', () => ({
     default: {
         toggle: () => (game.scoreboardToggles += 1),

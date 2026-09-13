@@ -3402,6 +3402,17 @@ export const settingsGroups = {
                     'player. Turning it off stops that at once, without a reload: an open recording is closed and ' +
                     'filed, the live figures are dropped, and nothing more is read until it is turned back on.',
             },
+            guildTrialBossDebuffs: {
+                id: 'guildTrialBossDebuffs',
+                label: 'Guild Trials: Show debuff timers on the trial boss',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Draws the debuffs the party has on the boss, with a countdown, on the boss tile in the In ' +
+                    'Progress fight view. The trial stream carries no buff state, so a timer starts when a ' +
+                    'debuffing ability is seen to hit, for the duration the game data gives it; a stun is shown ' +
+                    'for as long as the stream says the boss is stunned.',
+            },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',
                 label: 'Guild Trials: Record a trial automatically when one starts',

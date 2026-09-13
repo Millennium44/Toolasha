@@ -145,6 +145,7 @@ import guildTrialRecorder, {
     trialExportIsEmpty,
 } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
+import guildTrialBossDebuffsUI from './guild-trial-boss-debuffs-ui.js';
 import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
 import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
@@ -2449,6 +2450,7 @@ class GuildTrials {
         // recognised without the tab having been opened this session.
         if (config.getSetting('guildTrialTracking', true)) guildTrialDamage.initialize();
         this._followTracking();
+        guildTrialBossDebuffsUI.initialize();
         guildTrialSkilling.initialize();
         guildTrialStatsModal.initialize();
         guildTrialAlerts.initialize?.();
@@ -4759,6 +4761,7 @@ class GuildTrials {
         this.samplerId = null;
         this.lastTickAt = 0;
         guildTrialDamage.cleanup();
+        guildTrialBossDebuffsUI.cleanup();
         guildTrialSkilling.cleanup();
         guildTrialStatsModal.cleanup();
         guildTrialRecorder.cleanup();
