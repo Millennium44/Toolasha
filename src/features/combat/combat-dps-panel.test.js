@@ -26,6 +26,20 @@ const opts = vi.hoisted(() => ({
     handlers: [],
     readyHandlers: [],
     domReady: true,
+    stored: new Map(),
+}));
+
+// Saved sessions live in IndexedDB; an in-memory map stands in for it
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: async (key, _store, fallback) => (opts.stored.has(key) ? opts.stored.get(key) : fallback),
+        set: async (key, value) => {
+            opts.stored.set(key, value);
+            return true;
+        },
+        delete: async (key) => opts.stored.delete(key),
+        ready: Promise.resolve(true),
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -1008,5 +1022,141 @@ describe('a row opens into its breakdown', () => {
     test('a row with nothing to break down is not offered as a button', () => {
         feature._setTab('healed');
         expect(board().querySelector('[data-expand]')).toBeNull();
+    });
+});
+
+const { buildCombatEntry } = await import('./combat-history.js');
+const { saveHistoryEntry, _resetMeterHistory } = await import('./meter-history.js');
+const { savedEntryText } = await import('./combat-dps-panel.js');
+
+describe('saved sessions', () => {
+    /** A finished run, as the recorder saves one */
+    const savedRun = (zone = 'Swamp Planet', startedAt = 1000) =>
+        buildCombatEntry(
+            {
+                at: startedAt + 130_000,
+                zone,
+                dealt: {
+                    seconds: 120,
+                    startedAt,
+                    team: { damage: 10_000, unattributed: 0, filtered: 0 },
+                    players: [
+                        {
+                            name: 'Tank',
+                            damage: 6000,
+                            dps: 50,
+                            kills: 3,
+                            abilities: [
+                                { action: 'auto', damage: 4000, hits: 30, crits: 3, misses: 10 },
+                                { action: '/abilities/spike_shell', damage: 2000, hits: 0, crits: 0, misses: 0 },
+                            ],
+                        },
+                        { name: 'Dps', damage: 4000, dps: 33, abilities: [] },
+                    ],
+                    healing: { total: 900, players: [{ name: 'Healer', healing: 900, hps: 7.5, abilities: [] }] },
+                },
+                taken: {
+                    seconds: 120,
+                    players: [{ name: 'Tank', damage: 500, dps: 4, regen: 40, hps: 0.3 }],
+                    enemies: [{ name: 'Eye', players: [{ name: 'Tank', damage: 500, hits: 5, min: 90, max: 110 }] }],
+                },
+                audit: null,
+            },
+            {
+                bucketMs: 2000,
+                keys: ['0'],
+                names: { 0: 'Tank' },
+                points: [
+                    { t: 0, party: 40, players: { 0: 40 }, boss: false },
+                    { t: 2000, party: 60, players: { 0: 60 }, boss: true },
+                    { t: 4000, party: 50, players: { 0: 50 }, boss: false },
+                ],
+            }
+        );
+
+    const click = (body, selector) => body.querySelector(selector).click();
+
+    beforeEach(() => {
+        opts.stored = new Map();
+        _resetMeterHistory();
+        // What the trackers say now, which a saved board must not show
+        opts.dealt = { seconds: 10, players: [{ name: 'LiveOne', damage: 50, dps: 5, abilities: [] }] };
+        opts.taken = { seconds: 10, players: [] };
+    });
+
+    afterEach(() => feature._resetTab());
+
+    test('History lists what was saved; one opens as the same board, read-only, on every tab', async () => {
+        await saveHistoryEntry(savedRun(), 'default');
+        const body = board();
+        expect(body.textContent).toContain('LiveOne');
+
+        click(body, '[data-action="history"]');
+        await vi.waitFor(() => expect(body.textContent).toContain('Swamp Planet'));
+        expect(body.textContent).toContain('10.0K team damage');
+
+        click(body, '[data-history-open]');
+        await vi.waitFor(() => expect(body.querySelector('[data-history-banner]')).not.toBeNull());
+        expect(body.textContent).toContain('Viewing saved session');
+        expect(body.textContent).toContain('Tank');
+        expect(body.textContent).not.toContain('LiveOne');
+        expect(body.textContent).toContain('3 kills');
+        expect(body.querySelector('[data-dps-graph] svg')).not.toBeNull();
+        expect(body.querySelector('[data-dps-graph] rect[data-band]')).not.toBeNull();
+
+        // The per-ability rows open from the snapshot
+        click(body, '[data-expand="damage:Tank"]');
+        expect(body.textContent).toContain('spike shell');
+
+        // Every tab draws from it, and the banner stays
+        click(body, '[data-tab="taken"]');
+        click(body, '[data-expand="taken:Tank"]');
+        expect(body.textContent).toContain('Eye');
+        expect(body.querySelector('[data-history-banner]')).not.toBeNull();
+        click(body, '[data-tab="healing"]');
+        expect(body.textContent).toContain('Healer');
+        click(body, '[data-tab="damage"]');
+
+        click(body, '[data-action="live"]');
+        expect(body.querySelector('[data-history-banner]')).toBeNull();
+        expect(body.textContent).toContain('LiveOne');
+        expect(body.textContent).not.toContain('could not be drawn');
+    });
+
+    test('star, rename and delete from the list', async () => {
+        await saveHistoryEntry(savedRun('Swamp Planet', 1000), 'default');
+        await saveHistoryEntry(savedRun('Aqua Planet', 9000), 'default');
+        const body = board();
+        click(body, '[data-action="history"]');
+        await vi.waitFor(() => expect(body.querySelectorAll('[data-history-row]')).toHaveLength(2));
+
+        click(body, '[data-history-star="combat_1000"]');
+        await vi.waitFor(() => expect(body.querySelector('[data-history-star="combat_1000"]').textContent).toBe('★'));
+
+        click(body, '[data-history-rename="combat_9000"]');
+        const input = body.querySelector('[data-history-label="combat_9000"]');
+        input.value = 'Farm night';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await vi.waitFor(() => expect(body.textContent).toContain('Farm night'));
+
+        click(body, '[data-history-delete="combat_1000"]');
+        expect(body.querySelector('[data-history-delete="combat_1000"]').textContent).toBe('Delete?');
+        click(body, '[data-history-delete="combat_1000"]');
+        await vi.waitFor(() => expect(body.querySelectorAll('[data-history-row]')).toHaveLength(1));
+        expect(body.textContent).not.toContain('could not be drawn');
+    });
+
+    test('a saved session copies as text: damage, healing done and taken', () => {
+        const text = savedEntryText(savedRun(), { name: 'Farm night' });
+        expect(text).toContain('Saved session — Farm night');
+        expect(text).toContain('Party damage — 10,000 total');
+        expect(text).toContain('1. Tank — 6,000');
+        expect(text).toContain('Party healing done — 900 total');
+        expect(text).toContain('Party damage taken — 500 total');
+    });
+
+    test('with the setting off the live board offers no History', () => {
+        opts.enabled = false;
+        expect(board().querySelector('[data-action="history"]')).toBeNull();
     });
 });

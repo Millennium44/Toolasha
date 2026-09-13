@@ -65,6 +65,17 @@ import { damageBreakdown, actionLabel } from './damage-tracker.js';
 import { takenBreakdown } from './damage-taken-tracker.js';
 import { rotationAudit, startRotationTracker, stopRotationTracker } from './rotation-tracker.js';
 import { dpsGraphHTML, startDpsSampler, stopDpsSampler, wireDpsGraph } from './dps-graph.js';
+import { savedCombatGraphHTML, startCombatHistory, stopCombatHistory, wireSavedCombatGraph } from './combat-history.js';
+import {
+    cachedHistoryIndex,
+    ensureHistoryLoaded,
+    entryHeading,
+    historyEnabled,
+    historyListHTML,
+    historyUiState,
+    savedBannerHTML,
+    wireHistoryList,
+} from './meter-history.js';
 import { createPanel } from '../../utils/simple-panel.js';
 import {
     BOARD_COLORS,
@@ -853,13 +864,24 @@ function reconcileParts(board) {
  * @param {Object} [sources] - As {@link panelRows}
  */
 export function drawBoard(body, sources) {
+    // Saved-session history — meter-history.js. A saved board carries its own
+    // banner and graph; a live one offers the list
+    const banner = sources?.bannerHTML || '';
+    const historyButton = sources?.saved
+        ? [{ key: 'history', label: 'History' }]
+        : historyEnabled()
+          ? [{ key: 'history', label: 'History' }]
+          : [];
+
     if (tab === 'rotation') {
         body.innerHTML =
+            banner +
             boardTabsHTML(TABS, tab) +
             rotationHTML((sources?.audit || rotationAudit)(), scope) +
             boardButtonsHTML([
                 { key: 'copy', label: 'Copy stats' },
                 { key: 'copy-variance', label: 'Copy variances' },
+                ...historyButton,
             ]);
         wireBoard(body, sources);
         return;
@@ -897,6 +919,7 @@ export function drawBoard(body, sources) {
           'no seconds to divide by, which is why a rate can be dashed while a total is not.</div>';
 
     body.innerHTML =
+        banner +
         boardHeadHTML({
             value: perSecond,
             label: `party ${unit}`,
@@ -904,15 +927,109 @@ export function drawBoard(body, sources) {
             color: BOARD_COLORS.accent,
         }) +
         boardTabsHTML(TABS, tab) +
-        // DPS-over-time graph — dps-graph.js
-        (tab === 'damage' ? dpsGraphHTML() : '') +
+        // DPS-over-time graph — dps-graph.js, or the saved session's own
+        (tab === 'damage' ? (sources?.graphHTML ? sources.graphHTML() : dpsGraphHTML()) : '') +
         boardNoteHTML(note.strong, { color: note.color, strong: true }) +
         boardNoteHTML(note.detail) +
         reconcile +
         list +
-        boardButtonsHTML([{ key: 'copy', label: 'Copy stats' }]);
+        boardButtonsHTML([{ key: 'copy', label: 'Copy stats' }, ...historyButton]);
 
     wireBoard(body, sources);
+}
+
+/** Whether the panel is showing the saved-sessions list rather than a board */
+let historyOpen = false;
+
+/** The saved session drawn instead of the live board: `{entry, summary}`, or null */
+let viewing = null;
+
+/**
+ * The sources a saved session redraws the board from, in place of the trackers.
+ *
+ * @param {Object} entry - A combat body from `combat-history.js`
+ * @param {Object|null} [summary] - Its list summary, for the user's name
+ * @returns {Object} Sources for {@link drawBoard} and {@link panelRows}
+ */
+export function savedSources(entry, summary = null) {
+    const audit = entry?.audit || { tracking: false, fight: null, session: null, history: [] };
+    return {
+        saved: true,
+        dealt: () => entry?.dealt || { seconds: 0, players: [] },
+        taken: () => entry?.taken || { seconds: 0, players: [] },
+        audit: () => audit,
+        graphHTML: () => savedCombatGraphHTML(entry?.graph),
+        bannerHTML: savedBannerHTML(entry, summary),
+        wire: wireSavedCombatGraph,
+    };
+}
+
+/**
+ * A saved session as plain text: its heading, then damage, healing done and taken.
+ * @param {Object} entry - A combat body
+ * @param {Object|null} [summary] - Its list summary
+ * @returns {string}
+ */
+export function savedEntryText(entry, summary = null) {
+    const sources = savedSources(entry, summary);
+    return [
+        entryHeading(entry, summary),
+        panelText('damage', sources),
+        panelText('healing', sources),
+        panelText('taken', sources),
+    ].join('\n\n');
+}
+
+/**
+ * The saved-sessions list, drawn into the panel body.
+ * @param {HTMLElement} body - The panel body
+ */
+function drawHistoryList(body) {
+    const redraw = () => {
+        if (body.isConnected) drawPanel(body);
+    };
+    const index = cachedHistoryIndex('combat');
+    if (index === null) ensureHistoryLoaded('combat', redraw);
+
+    body.innerHTML =
+        historyListHTML(index, { type: 'combat', ...historyUiState('combat') }) +
+        boardButtonsHTML([{ key: 'live', label: 'Back to live', color: BOARD_COLORS.accent }]);
+
+    wireHistoryList(body, {
+        type: 'combat',
+        redraw,
+        onOpen: (entry, summary) => {
+            if (!historyOpen) return;
+            historyOpen = false;
+            viewing = { entry, summary };
+            expanded.clear();
+            redraw();
+        },
+        copyText: savedEntryText,
+    });
+    body.querySelectorAll('[data-action="live"]').forEach((button) => {
+        button.addEventListener('click', () => {
+            historyOpen = false;
+            viewing = null;
+            drawPanel(body);
+        });
+    });
+}
+
+/**
+ * Draw whatever the panel is showing: the live board, a saved session, or the list.
+ * @param {HTMLElement} body - The panel body
+ */
+export function drawPanel(body) {
+    if (historyOpen) {
+        drawHistoryList(body);
+        return;
+    }
+    if (viewing) {
+        drawBoard(body, savedSources(viewing.entry, viewing.summary));
+        return;
+    }
+    drawBoard(body);
 }
 
 /**
@@ -928,7 +1045,23 @@ export function drawBoard(body, sources) {
 function wireBoard(body, sources) {
     // Player colour and class menu — utils/player-menu.js
     wirePlayerMenu(body, () => drawBoard(body, sources));
-    wireDpsGraph(body, () => drawBoard(body, sources));
+    if (sources?.wire) sources.wire(body, () => drawBoard(body, sources));
+    else wireDpsGraph(body, () => drawBoard(body, sources));
+    // Saved-session history — meter-history.js
+    body.querySelector('[data-action="history"]')?.addEventListener('click', () => {
+        historyOpen = true;
+        viewing = null;
+        expanded.clear();
+        drawPanel(body);
+    });
+    body.querySelectorAll('[data-action="live"]').forEach((button) => {
+        button.addEventListener('click', () => {
+            historyOpen = false;
+            viewing = null;
+            expanded.clear();
+            drawPanel(body);
+        });
+    });
     body.querySelectorAll('[data-tab]').forEach((button) => {
         button.addEventListener('click', () => {
             tab = button.dataset.tab;
@@ -991,7 +1124,7 @@ export function getPanel() {
             // block that manages its own spacing, as it does in the trial panel
             body.style.display = 'block';
             body.style.padding = '8px 10px';
-            drawBoard(body);
+            drawPanel(body);
         },
     });
     return panel;
@@ -1109,6 +1242,8 @@ export default {
         // with the panel rather than carrying a setting of its own
         startRotationTracker();
         startDpsSampler();
+        // Saved-session history — combat-history.js reads the trackers from outside
+        startCombatHistory();
         const onArea = (el) => {
             if (el && !inGuildPanel(el)) lastArea = el;
             inject();
@@ -1133,6 +1268,11 @@ export default {
             unregister = null;
             unregisterReady?.();
             unregisterReady = null;
+            // Before the rotation tracker stops: the run in hand is saved off
+            // the last reading, which is the character's that is leaving
+            stopCombatHistory();
+            historyOpen = false;
+            viewing = null;
             stopRotationTracker();
             stopDpsSampler();
             closePlayerMenu();
@@ -1166,6 +1306,8 @@ export default {
         tab = 'damage';
         scope = 'session';
         expanded.clear();
+        historyOpen = false;
+        viewing = null;
     },
     /** Show a tab directly — for tests, which cannot click one */
     _setTab: (which, which2) => {

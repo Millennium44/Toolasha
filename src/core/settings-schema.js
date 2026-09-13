@@ -2503,6 +2503,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own colour. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. Needs the Per-player panel on for normal fights',
             },
+            combatMeterHistory: {
+                id: 'combatMeterHistory',
+                label: 'Meter history: Keep finished sessions on the Per-player panel and trial damage board',
+                type: 'checkbox',
+                default: true,
+                help: 'Saves each finished session so it can be opened again from a History button: on the Per-player panel when a run ends (a zone or party change, Reset, a character switch) after 30 seconds of fighting, and on the trial damage board once per trial, with the game’s own totals when they arrive. A saved session redraws the same board read-only — every tab, the per-ability rows and the graph. The last ten per character are kept, plus up to thirty you star; each can be renamed, copied as text or deleted. Stored on this device, per character. Needs the Per-player panel on for normal fights',
+            },
             combatClassOverride: {
                 id: 'combatClassOverride',
                 label: 'Class override: Click a player’s class on the damage boards to set it by hand',
