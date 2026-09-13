@@ -96,7 +96,7 @@ import { classTagIconHTML } from '../../utils/class-weapon.js';
 import { MIN_SECONDS } from '../../utils/rotation-audit.js';
 import { closePlayerMenu, playerMarkersHTML, playerRowColor, wirePlayerMenu } from '../../utils/player-menu.js';
 import { resolveRosterColors } from '../../utils/player-colors.js';
-import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -894,6 +894,30 @@ export function panelText(which, sources) {
 }
 
 /**
+ * A one-line note when the live run was carried over a page refresh.
+ *
+ * `damageBreakdown().restored` is set once, at the reload that adopted a saved
+ * session (`damage-tracker.js`'s `adoptPendingRestore`), and never again until
+ * the next refresh — so a reader watching the board fill back in after a
+ * reload has something on screen saying *why* the numbers did not start at
+ * zero, rather than wondering whether the run before the refresh is still
+ * being counted. Never drawn for a saved History session: `savedSources`
+ * marks those `saved: true`, and a saved board is a fixed snapshot that no
+ * refresh of *this* page could have interrupted.
+ *
+ * @param {Object|null} dealtRun - From `damageBreakdown`
+ * @returns {string} HTML, or '' when the run was not restored
+ */
+function restoredNoteHTML(dealtRun) {
+    const at = dealtRun?.restored?.at;
+    if (!Number.isFinite(at)) return '';
+    // The house clock — whichever 12/24-hour reading the user's own settings
+    // (or their device's own locale, on Automatic) say to draw
+    const time = formatDateTime(new Date(at), { includeDate: false, includeSeconds: false });
+    return boardNoteHTML(`Continued after a page refresh at ${escapeText(time)}.`, { color: BOARD_COLORS.dim });
+}
+
+/**
  * The parts of a damage board's team total that are not in its rows.
  * @param {Object} board - From {@link panelRows}
  * @returns {Array<[string, number]>} Name and amount, only the ones of a point or more
@@ -925,10 +949,13 @@ export function drawBoard(body, sources) {
         : historyEnabled()
           ? [{ key: 'history', label: 'History' }]
           : [];
+    // Live only — a saved session is a fixed snapshot no refresh interrupted
+    const restored = sources?.saved ? '' : restoredNoteHTML((sources?.dealt || damageBreakdown)());
 
     if (tab === 'rotation') {
         body.innerHTML =
             banner +
+            restored +
             boardTabsHTML(TABS, tab) +
             rotationHTML((sources?.audit || rotationAudit)(), scope) +
             boardButtonsHTML([
@@ -981,6 +1008,7 @@ export function drawBoard(body, sources) {
 
     body.innerHTML =
         banner +
+        restored +
         boardHeadHTML({
             value: perSecond,
             label: `party ${unit}`,

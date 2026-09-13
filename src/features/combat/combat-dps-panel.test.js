@@ -910,6 +910,44 @@ function boardText() {
     return board().textContent;
 }
 
+describe('the restored-after-refresh note', () => {
+    test('a live run carried over a refresh says so, with the time it happened', () => {
+        opts.dealt = {
+            seconds: 30,
+            team: { damage: 1000, dps: 33 },
+            players: [{ name: 'Alice', damage: 1000, dps: 33 }],
+            // Local time, not UTC — formatDateTime draws the house clock in
+            // whatever zone the test runs in, and a UTC timestamp would print
+            // a different hour on every machine
+            restored: { savedAt: 1000, at: new Date(2026, 0, 1, 14, 5).getTime() },
+        };
+        // config.getSettingValue is mocked to hand back the fallback, which
+        // formatDateTime asks for as '24hour' — so the reading is deterministic
+        expect(boardText()).toContain('Continued after a page refresh at 14:05.');
+    });
+
+    test('a run that was never restored says nothing about it', () => {
+        opts.dealt = {
+            seconds: 30,
+            team: { damage: 1000, dps: 33 },
+            players: [{ name: 'Alice', damage: 1000, dps: 33 }],
+        };
+        expect(boardText()).not.toContain('Continued after a page refresh');
+    });
+
+    test('shown on the Rotation tab too — the run it describes is not tab-specific', () => {
+        opts.dealt = {
+            seconds: 30,
+            team: { damage: 1000, dps: 33 },
+            players: [],
+            restored: { savedAt: 1000, at: new Date(2026, 0, 1, 9, 0).getTime() },
+        };
+        feature._setTab('rotation');
+        expect(boardText()).toContain('Continued after a page refresh at 09:00.');
+        feature._resetTab();
+    });
+});
+
 describe('the healing done tab', () => {
     beforeEach(() => {
         opts.dealt = {
@@ -1173,7 +1211,13 @@ describe('saved sessions', () => {
         opts.stored = new Map();
         _resetMeterHistory();
         // What the trackers say now, which a saved board must not show
-        opts.dealt = { seconds: 10, players: [{ name: 'LiveOne', damage: 50, dps: 5, abilities: [] }] };
+        opts.dealt = {
+            seconds: 10,
+            players: [{ name: 'LiveOne', damage: 50, dps: 5, abilities: [] }],
+            // Set on the live run so the saved-session assertion below actually
+            // proves something: the note has to be suppressed, not merely absent
+            restored: { savedAt: 1000, at: new Date(2026, 0, 1, 12, 0).getTime() },
+        };
         opts.taken = { seconds: 10, players: [] };
     });
 
@@ -1183,6 +1227,7 @@ describe('saved sessions', () => {
         await saveHistoryEntry(savedRun(), 'default');
         const body = board();
         expect(body.textContent).toContain('LiveOne');
+        expect(body.textContent).toContain('Continued after a page refresh at 12:00.');
 
         click(body, '[data-action="history"]');
         await vi.waitFor(() => expect(body.textContent).toContain('Swamp Planet'));
@@ -1193,6 +1238,9 @@ describe('saved sessions', () => {
         expect(body.textContent).toContain('Viewing saved session');
         expect(body.textContent).toContain('Tank');
         expect(body.textContent).not.toContain('LiveOne');
+        // The saved snapshot is not what interrupted this session — the note
+        // is the live board's alone, never drawn over a saved one
+        expect(body.textContent).not.toContain('Continued after a page refresh');
         expect(body.textContent).toContain('3 kills');
         expect(body.querySelector('[data-dps-graph] svg')).not.toBeNull();
         expect(body.querySelector('[data-dps-graph] rect[data-band]')).not.toBeNull();
