@@ -18,6 +18,7 @@ import {
     foldTakenByEnemy,
     resolveName,
     waveKey,
+    DAMAGE_OVER_TIME_LABEL,
 } from './damage-taken.js';
 
 /**
@@ -50,6 +51,24 @@ describe('what counts as being hit', () => {
         const events = attributeIncoming(tick({ 0: { hp: 420, dmg: 4 } }), state);
 
         expect(events).toEqual([{ playerIndex: '0', monsters: [], damage: 80, isMiss: false }]);
+    });
+
+    test('a hit whose tick names no monster at all reaches the enemy tally as damage over time', () => {
+        // End to end: a tick with no mMap entry at all is what a damage-over-time
+        // tick looks like (a bleed or poison ticking with no swing behind it) —
+        // measured live, a quarter of one party's incoming hits arrived this way.
+        // Before this fix `resolveName` folded it into "Unknown Enemy" alongside
+        // hits that did have an attacker nobody could name, which is a different
+        // fact and was the maintainer's reason for splitting the label.
+        const state = newTakenState();
+        attributeIncoming(tick({ 0: { hp: 500, dmg: 3 } }), state);
+        const events = attributeIncoming(tick({ 0: { hp: 420, dmg: 4 } }), state);
+
+        const tally = {};
+        foldTakenByEnemy(tally, events, () => null);
+
+        expect(tally[DAMAGE_OVER_TIME_LABEL].damage).toBe(80);
+        expect(tally['Unknown Enemy']).toBeUndefined();
     });
 
     test('the counter up with health unchanged is a miss', () => {
@@ -247,8 +266,11 @@ describe('naming a hit from its candidates', () => {
         expect(resolveName(['0', '1'], (index) => (index === '0' ? 'Eye' : null))).toBe('Unknown Enemy');
     });
 
-    test('no candidates at all is unknown', () => {
-        expect(resolveName([], () => 'Eye')).toBe('Unknown Enemy');
+    test('no candidates at all is damage over time, not unknown', () => {
+        // A tick where nothing identified an attacker is most likely a
+        // damage-over-time tick (a bleed or poison ticking with no swing behind
+        // it), which is a different fact than "an attacker nobody could name"
+        expect(resolveName([], () => 'Eye')).toBe(DAMAGE_OVER_TIME_LABEL);
     });
 });
 
@@ -295,15 +317,19 @@ describe('folding a run together', () => {
         expect(tally.Veyes.byPlayer['1']).toMatchObject({ damage: 12, min: 12, max: 12 });
     });
 
-    test('an unidentified attacker is named as unknown, not dropped', () => {
+    test('a hit with no candidate at all is filed as damage over time, not dropped', () => {
         // Dropping it would make the enemy totals disagree with the party total
         const tally = {};
         foldTakenByEnemy(tally, [{ playerIndex: '0', monsters: [], damage: 8 }], () => null);
 
-        expect(tally['Unknown Enemy'].damage).toBe(8);
+        expect(tally[DAMAGE_OVER_TIME_LABEL].damage).toBe(8);
+        expect(tally['Unknown Enemy']).toBeUndefined();
     });
 
-    test('a monster index the battle no longer knows is unknown too', () => {
+    test('a monster index the battle no longer knows is unknown, not dropped', () => {
+        // Dropping it would make the enemy totals disagree with the party total.
+        // Unlike the empty-candidate case above, there was a real candidate here
+        // — the battle just cannot say what it was
         const tally = {};
         foldTakenByEnemy(tally, [{ playerIndex: '0', monsters: ['7'], damage: 8 }], () => null);
 

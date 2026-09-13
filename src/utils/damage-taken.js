@@ -37,10 +37,15 @@
  *    acted.
  * 5. **`dmgCounter` rose** — it was hit this tick. MCS's proxy, kept last:
  *    being hit is not attacking, and what it names is the monster *you* hit.
- * 6. **Nobody** — no candidate rather than a guess, shown as "Unknown Enemy".
+ * 6. **Nobody** — no candidate at all. This is a tick where the player's own
+ *    counters moved but no monster's did, which in practice is a
+ *    damage-over-time tick (a bleed or poison applied earlier, ticking with no
+ *    attacker of its own): shown as "Damage over time" rather than guessed at.
  *
  * Several candidates of the same kind resolve rather than falling through, since
- * "what hit me" has the same answer either way.
+ * "what hit me" has the same answer either way. Candidates that disagree, or a
+ * candidate the battle cannot name, are the two cases still shown as "Unknown
+ * Enemy" — there was an attacker, but not one that can be said with confidence.
  *
  * ## Two wrong turns worth remembering
  *
@@ -63,6 +68,13 @@
  * `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`. The code is
  * Toolasha's own.
  */
+
+/**
+ * What an unattributed hit is called when its tick named no candidate at all —
+ * a damage-over-time tick, most likely, rather than a monster the ladder
+ * merely failed to pin down. See `resolveName`.
+ */
+export const DAMAGE_OVER_TIME_LABEL = 'Damage over time';
 
 /**
  * A fresh set of the counters a tick is measured against.
@@ -283,13 +295,21 @@ export function foldTaken(tally, events) {
  * monster of a wave onto another and then be read as evidence about which of
  * them is dangerous.
  *
+ * An empty candidate list is a different kind of not-knowing: the ladder in
+ * `findAttackers` found no monster whose counters moved at all, which measured
+ * live is a damage-over-time tick far more often than it is a monster this
+ * missed — so it is named `DAMAGE_OVER_TIME_LABEL` rather than folded into
+ * "Unknown Enemy" alongside hits that did have an attacker nobody could name.
+ *
  * @param {Array<string>} candidates - Monster indices
  * @param {Function} nameOf - Monster index → name, or null
- * @returns {string} A monster name, or `Unknown Enemy`
+ * @returns {string} A monster name, `DAMAGE_OVER_TIME_LABEL`, or `Unknown Enemy`
  */
 export function resolveName(candidates, nameOf) {
+    if (!candidates || candidates.length === 0) return DAMAGE_OVER_TIME_LABEL;
+
     const names = new Set();
-    for (const index of candidates || []) {
+    for (const index of candidates) {
         const name = nameOf(index);
         if (!name) return 'Unknown Enemy';
         names.add(name);

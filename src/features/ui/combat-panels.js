@@ -1588,7 +1588,8 @@ export const deathsPanel = new CombatPanel({
         body.appendChild(
             note(
                 'A monster casting is identified by its mana; an auto-attack spends none, so in a wave the ' +
-                    'attacker is a proxy and unattributed hits are shown as Unknown Enemy.'
+                    'attacker is a proxy. A tick with no attacker at all is listed as damage over time; hits ' +
+                    'that had one but could not be named are shown as Unknown Enemy.'
             )
         );
     },

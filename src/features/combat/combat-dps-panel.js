@@ -465,7 +465,8 @@ const NOTES = {
         detail:
             'Taken is a floor: damage healed back on the same tick was never visible, and it is not the game’s ' +
             'pre-mitigation figure. Received is every rise on that player’s own bar — heals, life-steal, ' +
-            'regeneration, food — except revives; net is received minus taken. Healing done says who healed.',
+            'regeneration, food — except revives; net is received minus taken. A tick with no attacker of its ' +
+            'own is listed as damage over time. Healing done says who healed.',
     },
     healing: {
         strong: 'Healing done — credited only where the feed shows who did it.',
