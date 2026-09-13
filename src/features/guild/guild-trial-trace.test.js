@@ -98,6 +98,7 @@ import trace, {
     TRACE_MESSAGES,
     describeTraceStatus,
     traceGapWarning,
+    traceablePayload,
     formatGap,
 } from './guild-trial-trace.js';
 
@@ -169,6 +170,28 @@ describe('capture', () => {
     test('every message in the trial family is kept, in arrival order', async () => {
         for (const type of TRACE_MESSAGES) emit(type, { marker: type });
         expect((await tracedEvents()).map((event) => event.type)).toEqual(TRACE_MESSAGES);
+    });
+
+    test('guild_updated is trimmed to the one field the trial gate reads', async () => {
+        emit('guild_updated', {
+            guild: {
+                name: 'Milky Way',
+                members: [{ name: 'Ada', skills: { '/skills/alchemy': 90 } }],
+                currentTrialsData: '{"combat":{"status":"in_progress"}}',
+            },
+        });
+
+        const [event] = await tracedEvents();
+        expect(event.type).toBe('guild_updated');
+        expect(event.payload).toEqual({ currentTrialsData: '{"combat":{"status":"in_progress"}}' });
+    });
+
+    test('guild_updated is trimmed the same way whichever level currentTrialsData sits at', () => {
+        expect(traceablePayload('guild_updated', { currentTrialsData: 'x' })).toEqual({ currentTrialsData: 'x' });
+        expect(traceablePayload('guild_updated', { guild: {} })).toEqual({ currentTrialsData: null });
+        expect(traceablePayload('guild_updated', null)).toEqual({ currentTrialsData: null });
+        // Every other message is untouched
+        expect(traceablePayload('new_guild_battle', { battleId: 1 })).toEqual({ battleId: 1 });
     });
 
     test('an adjacent byte-identical tick is dropped, and counted', () => {

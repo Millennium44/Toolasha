@@ -92,14 +92,40 @@ export const MAX_QUEUED_EVENTS = UNKNOWN_MANIFEST_GIVE_UP_EVENTS;
  * The trial battle stream, verbatim. Mirrors the names `guild-trial-damage.js`
  * subscribes to: the tier-opening message (roster, tier-scaled boss — every one
  * is a boundary marker in the trace), the spectator tick firehose, the
- * end-of-trial message, and the server's own per-member totals.
+ * end-of-trial message, the server's own per-member totals, and `guild_updated`
+ * — the only other message the damage module reads to tell the game has ended
+ * the trial (`currentTrialsData` leaving `in_progress`), a second signal
+ * alongside `end_guild_battle` that a reader piecing together why a trial was
+ * declared over needs to see. Kept trimmed to that one field; see
+ * {@link traceablePayload}.
  */
 export const TRACE_MESSAGES = [
     'new_guild_battle',
     'guild_battle_updated',
     'end_guild_battle',
     'guild_trial_stats_updated',
+    'guild_updated',
 ];
+
+/**
+ * What to write to the trace for one message.
+ *
+ * `guild_updated` carries the whole guild record — every member's name, XP and
+ * skills — to feed the roster panel and the XP tracker; the trial lifecycle
+ * gate this trace exists to explain reads exactly one field off it,
+ * `currentTrialsData`. Recording the whole payload would make a guild-wide
+ * event (a member's level-up, anyone's XP tick) as heavy as a fight tick for no
+ * reason this trace serves, so only that field is kept. Every other message is
+ * recorded exactly as received.
+ *
+ * @param {string} type - The message name
+ * @param {Object} data - The payload, exactly as the hook delivered it
+ * @returns {Object} What to write to the trace for this message
+ */
+export function traceablePayload(type, data) {
+    if (type !== 'guild_updated') return data;
+    return { currentTrialsData: data?.guild?.currentTrialsData ?? data?.currentTrialsData ?? null };
+}
 
 /** The message whose absence at the head of a trace means the fight was joined late */
 const BOUNDARY_MESSAGE = 'new_guild_battle';
@@ -633,7 +659,9 @@ class GuildTrialTrace {
             }
             if (!this.firstEventType) this.firstEventType = type;
 
-            this.pending.push(JSON.stringify({ at, rel: at - this.startedAt, type, payload: data }));
+            this.pending.push(
+                JSON.stringify({ at, rel: at - this.startedAt, type, payload: traceablePayload(type, data) })
+            );
             this.eventCount++;
             this.lastEventAt = at;
 
