@@ -523,6 +523,67 @@ describe('a dungeon that is only queued', () => {
         expect(tracker.currentRun.wavesCompleted).toBe(3);
     });
 
+    test('a dungeon queued behind a running crafting action does not arm the tracker', () => {
+        // Observed live: array order was foraging, dungeon, cheesesmithing, but the
+        // cheesesmithing action (ordinal -4) was the one running — lower than both
+        // the queued foraging (-3) and the queued dungeon (-2). `runningCombatAction`
+        // used to filter to combat-hrid actions FIRST and then pick the lowest
+        // ordinal *within that subset*, so with only one combat entry in the queue
+        // it always "won" regardless of whether something non-combat actually held
+        // the lowest ordinal overall. That armed the panel on a character that was
+        // crafting Griffin Bulwark, naming Sinister Circus and reading
+        // "waiting for next wave".
+        game.actions = [
+            {
+                actionHrid: '/actions/foraging/asteroid_belt',
+                ordinal: -3,
+                isDone: false,
+                maxCount: 0,
+                currentCount: 18333,
+            },
+            { actionHrid: LAIR, difficultyTier: 0, ordinal: -2, isDone: false, maxCount: 0, currentCount: 0 },
+            {
+                actionHrid: '/actions/cheesesmithing/griffin_bulwark',
+                ordinal: -4,
+                isDone: false,
+                maxCount: 219,
+                currentCount: 17,
+            },
+        ];
+
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 0, isDone: false }] });
+
+        expect(tracker.pendingDungeonInfo).toBeNull();
+    });
+
+    test('page load does not adopt a dungeon queued behind a running crafting action', async () => {
+        // Same live queue as above, exercised through the page-load path instead
+        // of actions_updated.
+        game.actions = [
+            {
+                actionHrid: '/actions/foraging/asteroid_belt',
+                ordinal: -3,
+                isDone: false,
+                maxCount: 0,
+                currentCount: 18333,
+            },
+            { actionHrid: LAIR, difficultyTier: 0, ordinal: -2, isDone: false, maxCount: 0, currentCount: 0 },
+            {
+                actionHrid: '/actions/cheesesmithing/griffin_bulwark',
+                ordinal: -4,
+                isDone: false,
+                maxCount: 219,
+                currentCount: 17,
+            },
+        ];
+
+        await tracker.checkForActiveDungeon();
+        await flush();
+
+        expect(tracker.isTracking).toBe(false);
+        expect(tracker.pendingDungeonInfo).toBeNull();
+    });
+
     test('page load does not adopt a dungeon that is only queued', async () => {
         game.actions = [
             { actionHrid: FLY, difficultyTier: 0, ordinal: 1, isDone: false },

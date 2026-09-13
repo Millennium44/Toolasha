@@ -22,12 +22,32 @@ describe('runningCombatAction', () => {
         expect(runningCombatAction(actions).actionHrid).toBe('/actions/combat/sorcerers_tower');
     });
 
-    test('ignores non-combat actions', () => {
+    test('a running combat action among other unfinished types is still found', () => {
         const actions = [
-            { actionHrid: '/actions/cheesesmithing/holy_cheese', isDone: false, ordinal: 0 },
+            { actionHrid: '/actions/cheesesmithing/holy_cheese', isDone: true, ordinal: 0 },
             { actionHrid: '/actions/combat/fly', isDone: false, ordinal: 3 },
         ];
         expect(runningCombatAction(actions).actionHrid).toBe('/actions/combat/fly');
+    });
+
+    test('a queued combat action behind a running non-combat one is not "running" — the live bug', () => {
+        // The exact live queue that armed the dungeon tracker on a crafting
+        // character: array order (foraging, dungeon, cheesesmithing) does not
+        // match ordinal order, and the lowest ordinal — the one actually
+        // running — is the cheesesmithing action, not the queued dungeon.
+        const actions = [
+            { actionHrid: '/actions/foraging/asteroid_belt', isDone: false, ordinal: -3, currentCount: 18333 },
+            { actionHrid: '/actions/combat/sinister_circus', isDone: false, ordinal: -2, currentCount: 0 },
+            {
+                actionHrid: '/actions/cheesesmithing/griffin_bulwark',
+                isDone: false,
+                ordinal: -4,
+                currentCount: 17,
+                maxCount: 219,
+            },
+        ];
+        // Nothing combat is running: the running action is the cheesesmithing one.
+        expect(runningCombatAction(actions)).toBeNull();
     });
 
     test('returns null when every combat action is finished and finished are not included', () => {
@@ -75,14 +95,31 @@ describe('runningAction', () => {
 
     test('a predicate narrows to a kind of action and still picks the running one among them', () => {
         // Two enhancing actions queued for different items: array order has the
-        // queued one first, execution order has the running one first.
+        // queued one first, execution order has the running one first. The
+        // combat entry is already finished (a previous zone), so it drops out
+        // of the unfinished pool entirely rather than being the running action.
+        const enhance = (a) => a.actionHrid === '/actions/enhancing/enhance';
+        const actions = [
+            { actionHrid: '/actions/enhancing/enhance', primaryItemHash: 'queued::5', isDone: false, ordinal: 9 },
+            { actionHrid: '/actions/combat/fly', isDone: true, ordinal: 1 },
+            { actionHrid: '/actions/enhancing/enhance', primaryItemHash: 'running::7', isDone: false, ordinal: 3 },
+        ];
+        expect(runningAction(actions, enhance)?.primaryItemHash).toBe('running::7');
+    });
+
+    test('the running action is a different type than the predicate: nothing of that type is running', () => {
+        // Same shape as above, but the truly running action (lowest ordinal
+        // overall) is the combat one, not an enhance — the queue is a single
+        // execution timeline, so neither enhance entry is "running" even
+        // though both match the predicate and one has a lower ordinal than
+        // the other.
         const enhance = (a) => a.actionHrid === '/actions/enhancing/enhance';
         const actions = [
             { actionHrid: '/actions/enhancing/enhance', primaryItemHash: 'queued::5', isDone: false, ordinal: 9 },
             { actionHrid: '/actions/combat/fly', isDone: false, ordinal: 1 },
-            { actionHrid: '/actions/enhancing/enhance', primaryItemHash: 'running::7', isDone: false, ordinal: 3 },
+            { actionHrid: '/actions/enhancing/enhance', primaryItemHash: 'also-queued::7', isDone: false, ordinal: 3 },
         ];
-        expect(runningAction(actions, enhance).primaryItemHash).toBe('running::7');
+        expect(runningAction(actions, enhance)).toBeNull();
     });
 
     test('no action matching the predicate is null, even when the queue is not empty', () => {

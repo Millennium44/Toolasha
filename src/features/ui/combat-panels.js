@@ -51,6 +51,7 @@ import { expectedKills, killComparison } from '../../utils/expected-kills.js';
 import { loadAllZonesSnapshot, bestSoloZone, zoneFromSnapshot } from '../../utils/all-zones-snapshot.js';
 import { partyLintWarnings, battleLintInputs } from '../../utils/party-lint.js';
 import { abilityBreakdownRows, abilityDamageText, abilityRateText } from '../../utils/damage-board.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 const REFRESH_MS = 2000;
 
@@ -291,9 +292,10 @@ function drawSoloComparison(card_, party, mode, tax) {
  *   there is a forecast to show
  */
 function drawSimHere(body) {
-    const action = dataManager
-        .getCurrentActions?.()
-        ?.find((entry) => entry.actionHrid?.startsWith('/actions/combat/') && !entry.isDone);
+    // The combat action actually running, by execution order — array order
+    // can carry a queued zone (or a queued dungeon) ahead of the one whose
+    // fights are being measured.
+    const action = runningCombatAction(dataManager.getCurrentActions?.());
     if (!action) return;
 
     const row = zoneFromSnapshot(cachedSnapshot(), action.actionHrid, action.difficultyTier || 0);

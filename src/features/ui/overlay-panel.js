@@ -88,6 +88,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, clearGeometry, allGeometry } from '../../utils/panel-geometry.js';
 import { characterKey, readScopedFrom, writeScoped } from '../../utils/character-key.js';
+import { runningAction } from '../../utils/combat-actions.js';
 import {
     registeredRows,
     resolveRows,
@@ -403,7 +404,10 @@ function currentActivity() {
         // Tuesday still read as being in one on Thursday while quietly
         // tailoring — and with auto-switching on, got the Labyrinth layout for
         // it, permanently, since the reading never changed back.
-        const running = (dataManager.getCurrentActions?.() || []).find((action) => action && !action.isDone);
+        // The action actually running is the lowest-ordinal unfinished one, not
+        // whichever one sits first in array order — a repeating action requeued
+        // to the front carries a higher ordinal than the one still running.
+        const running = runningAction(dataManager.getCurrentActions?.() || []);
         if (!running?.actionHrid) return null;
 
         const hrid = String(running.actionHrid);

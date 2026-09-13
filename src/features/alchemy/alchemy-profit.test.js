@@ -95,7 +95,13 @@ describe('getCurrentActionHrid', () => {
     });
 
     test('picks the alchemy action out of the queue', () => {
-        game.currentActions = [{ actionHrid: '/actions/milking/cow' }, { actionHrid: '/actions/alchemy/coinify' }];
+        // The milking action already finished; alchemy is what is running now.
+        // Realistic queue entries always carry isDone/ordinal — a fixture missing
+        // both ties every entry at ordinal 0 and hides which one is truly running.
+        game.currentActions = [
+            { actionHrid: '/actions/milking/cow', isDone: true, ordinal: 0 },
+            { actionHrid: '/actions/alchemy/coinify', isDone: false, ordinal: 1 },
+        ];
 
         expect(alchemyProfit.getCurrentActionHrid()).toBe('/actions/alchemy/coinify');
     });

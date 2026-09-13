@@ -45,6 +45,7 @@ import {
     partyLootPanel,
     consumablesPanel,
 } from '../../utils/bundle-bridge.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 /** Long enough that a busy loot map is not repriced every tick */
 const CACHE_MS = 4000;
@@ -617,7 +618,10 @@ registerRow({
  * @returns {Object|null} The queue's first unfinished action, or null when idle
  */
 function currentAction() {
-    return (dataManager.getCurrentActions?.() || []).find((action) => !action.isDone) || null;
+    // Execution order (lowest ordinal), not array position — a repeating
+    // action requeued to the front of the array carries a higher ordinal
+    // than the one actually running.
+    return runningAction(dataManager.getCurrentActions?.() || []);
 }
 
 /**

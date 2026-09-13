@@ -83,7 +83,11 @@ async function handleActionsUpdated(data) {
     // finished, or starved of materials. Nothing else ever says so: without
     // this, running dry left the session "In Progress" (and on the briefing)
     // indefinitely, since only a differently-configured restart finalized it.
-    const enhancingAction = enhancingRows.find((a) => a.isDone === false) || enhancingRows[0];
+    //
+    // Picked by execution order (lowest ordinal), not array position: a
+    // repeating enhance queued back onto itself can sit ahead of the row
+    // actually running within this same message.
+    const enhancingAction = runningAction(enhancingRows, undefined, { includeFinished: true });
     if (enhancingAction.isDone === true) {
         if (enhancementTracker.getCurrentSession()) {
             await enhancementTracker.finalizeCurrentSession();

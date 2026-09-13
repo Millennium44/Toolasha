@@ -23,33 +23,52 @@
  */
 
 /**
- * The action the game is actually running, among those matching `predicate`,
- * chosen by execution order (lowest ordinal) rather than array position.
+ * The action the game is actually running, reported only when it matches
+ * `predicate`, chosen by execution order (lowest ordinal) rather than array
+ * position.
+ *
+ * The queue is a single timeline: only one action executes at a time, in
+ * ascending-ordinal order, whatever mix of types sits in it. So "the running
+ * action" is found *first*, over every action regardless of type, and
+ * `predicate` is then asked only whether that one action qualifies — it is
+ * never used to narrow the candidate pool before ordinals are compared.
+ * Filtering first and picking the lowest ordinal *within* the filtered set
+ * (an earlier version of this function did exactly that) answers a different
+ * question — "which matching action has the lowest ordinal", which is a
+ * queued one whenever a non-matching action is what actually holds the
+ * lowest ordinal. That produced `runningCombatAction` reporting a dungeon
+ * queued behind a running crafting action as the fight in progress, which
+ * armed the dungeon tracker's panel on a character that was crafting.
  *
  * @param {Array<{actionHrid?: string, isDone?: boolean, ordinal?: number}>} actions
  *   The character action queue (e.g. `dataManager.getCurrentActions()` or
  *   `characterData.characterActions`).
- * @param {(action: Object) => boolean} [predicate] - Which actions qualify;
- *   defaults to every action, i.e. "the front of the whole queue".
+ * @param {(action: Object) => boolean} [predicate] - Whether the running
+ *   action qualifies; defaults to every action, i.e. "the front of the whole
+ *   queue". Never used to select among several matches — only one action is
+ *   ever running.
  * @param {Object} [options]
- * @param {boolean} [options.includeFinished=false] - When no unfinished match
- *   exists, fall back to the lowest-ordinal finished one rather than null.
- *   Callers that must still name an action the instant it ends (a recorder
- *   folding a just-banked segment, an export of a finished character) want
- *   this; live header chips do not.
- * @returns {Object|null} The running matching action, or null when none qualifies.
+ * @param {boolean} [options.includeFinished=false] - When no unfinished
+ *   action exists at all, fall back to the lowest-ordinal finished one rather
+ *   than null. Callers that must still name an action the instant it ends (a
+ *   recorder folding a just-banked segment, an export of a finished
+ *   character) want this; live header chips do not.
+ * @returns {Object|null} The running action, or null when it does not exist
+ *   or does not match `predicate` (including when a non-matching action is
+ *   the one actually running).
  */
 export function runningAction(actions, predicate = () => true, { includeFinished = false } = {}) {
     if (!Array.isArray(actions)) return null;
 
-    const matching = actions.filter((a) => a && predicate(a));
-    if (matching.length === 0) return null;
+    const present = actions.filter((a) => a);
+    if (present.length === 0) return null;
 
-    const active = matching.filter((a) => !a.isDone);
-    const pool = active.length > 0 ? active : includeFinished ? matching : active;
+    const active = present.filter((a) => !a.isDone);
+    const pool = active.length > 0 ? active : includeFinished ? present : active;
     if (pool.length === 0) return null;
 
-    return pool.reduce((lowest, a) => ((a.ordinal ?? 0) < (lowest.ordinal ?? 0) ? a : lowest));
+    const running = pool.reduce((lowest, a) => ((a.ordinal ?? 0) < (lowest.ordinal ?? 0) ? a : lowest));
+    return predicate(running) ? running : null;
 }
 
 /**
