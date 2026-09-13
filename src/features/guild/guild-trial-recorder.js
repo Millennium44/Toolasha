@@ -244,6 +244,13 @@ class GuildTrialRecorder {
          * arrive: `{session, context, guildName, characterId, armedAt}`. Cleared
          * once they are applied, so a stats message the game repeats (it is
          * re-sent whenever the native Stats panel is opened) is folded once.
+         *
+         * In-memory only until `_persist` started writing it down alongside the
+         * session (see {@link _pendingForStorage}) — before that, a refresh
+         * between a trial ending and the stats arriving (28 s later in a
+         * recorded trial) lost it outright, and the ledger kept the stream
+         * estimate forever. `_restoreFromStorage` re-arms it from what was on
+         * disk when this session's `initialize` ran.
          */
         this.pendingReconcile = null;
     }
@@ -260,6 +267,10 @@ class GuildTrialRecorder {
 
         this.watcherId = setInterval(() => this._tick(), SNAPSHOT_MS);
         this.timers.registerInterval(this.watcherId, 'guildTrialRecorder.tick');
+        // Fired once, not awaited: nothing here may land after a session has
+        // already started (by the button, or by the tick this very interval
+        // just armed) or after `forget`/a guild switch made the read stale
+        this._restoreFromStorage();
     }
 
     cleanup() {
@@ -483,13 +494,17 @@ class GuildTrialRecorder {
         const endedAt = Number.isFinite(breakdown?.endedAt) ? breakdown.endedAt : 0;
         if (now - Math.max(pending.armedAt, endedAt) > RECONCILE_WAIT_MS) {
             this.pendingReconcile = null;
+            // Nothing left waiting on this guild's key; written down so a
+            // reload does not keep resuming a wait that already expired
+            if (this.session) this._persist();
             return;
         }
         if (!this._applyReported(breakdown, now)) return;
 
-        // Storage keeps one session per guild; a newer one opened since is
-        // not overwritten with the old one
-        if (pending.session === this.session) this._persist();
+        // `this.session` is always what gets persisted, whether or not it is
+        // the one the fold just patched — and `pendingReconcile` is null
+        // either way now, so this is always worth writing down
+        this._persist();
         this._accrue(pending, breakdown);
     }
 
@@ -789,11 +804,117 @@ class GuildTrialRecorder {
         if (this.session.snapshots.length > MAX_SNAPSHOTS) this.session.snapshots.shift();
     }
 
-    /** Write the session down; not awaited by callers on the render path */
+    /**
+     * The pending reconcile as it goes to disk: a plain description of what
+     * `stop()` armed, with its own copy of the session it is waiting to patch
+     * rather than a live reference — `restart()` can move `this.session` on to
+     * a new trial before the wait is over, and a reload has to have something
+     * self-contained to resume either way.
+     *
+     * @returns {Object|null}
+     */
+    _pendingForStorage() {
+        const pending = this.pendingReconcile;
+        if (!pending) return null;
+        return {
+            session: pending.session,
+            context: pending.context,
+            guildName: pending.guildName,
+            characterId: pending.characterId,
+            armedAt: pending.armedAt,
+        };
+    }
+
+    /**
+     * A value read back from storage, whichever shape it was written in.
+     *
+     * Before persisting a pending reconcile, this key held a session object
+     * directly. A value with its own `startedAt` is that older shape, read
+     * back as a session with nothing pending — an install mid-upgrade loses
+     * nothing, it just cannot resume a reconcile that was in flight the moment
+     * it updated.
+     *
+     * @param {*} stored - Whatever `storage.get` answered with
+     * @returns {{session: Object|null, pendingReconcile: Object|null}}
+     */
+    _unwrap(stored) {
+        if (!stored || typeof stored !== 'object') return { session: null, pendingReconcile: null };
+        if (Object.prototype.hasOwnProperty.call(stored, 'startedAt'))
+            return { session: stored, pendingReconcile: null };
+        return { session: stored.session || null, pendingReconcile: stored.pendingReconcile || null };
+    }
+
+    /**
+     * Whether a persisted pending reconcile is still worth resuming.
+     *
+     * Same rule `_reconcilePending` applies on every tick: the game's totals
+     * get {@link RECONCILE_WAIT_MS} from whichever is later, the close or the
+     * game's own end, and past it the stream's figures stand. Read from disk
+     * there is no live breakdown to ask for `endedAt`, so the session's own is
+     * used instead — it is the same value the fold was armed with.
+     *
+     * @param {Object} pendingReconcile - As read back by `_unwrap`
+     * @param {Object} session - The session it is waiting to patch
+     * @returns {boolean}
+     */
+    _pendingIsFresh(pendingReconcile, session) {
+        if (!pendingReconcile || !Number.isFinite(pendingReconcile.armedAt)) return false;
+        const endedAt = Number.isFinite(session?.endedAt) ? session.endedAt : 0;
+        return Date.now() - Math.max(pendingReconcile.armedAt, endedAt) <= RECONCILE_WAIT_MS;
+    }
+
+    /**
+     * Pick up a reconcile still waiting on the game's totals when the page
+     * last closed.
+     *
+     * Fired once from `initialize`, not awaited by it: nothing here may race
+     * ahead of a session already started by the time it resolves, and nothing
+     * here may land after `forget`/a guild switch made it stale.
+     *
+     * @returns {Promise<void>}
+     */
+    async _restoreFromStorage() {
+        const key = trialSessionStorageKey(this.guildName, this.characterId);
+        const scopedCharacterId = this.characterId;
+        const scopedGuildName = this.guildName;
+        try {
+            const stored = await storage.get(key, STORE_NAME, null);
+            // Stale by the time the read lands: a guild or character switch,
+            // or a session already open, makes this read's answer moot
+            if (this.characterId !== scopedCharacterId || this.guildName !== scopedGuildName) return;
+            if (this.session) return;
+
+            const { session, pendingReconcile } = this._unwrap(stored);
+            if (!session || !session.endedAt) return;
+
+            // Closed, and still waiting on the game's own totals when the
+            // page went away: pick up exactly where the tab that stopped it
+            // left off, so the stats can still patch the snapshot and the
+            // ledger fold once when they arrive
+            if (pendingReconcile && this._pendingIsFresh(pendingReconcile, session)) {
+                this.session = pendingReconcile.session || session;
+                this.pendingReconcile = {
+                    session: this.session,
+                    context: pendingReconcile.context,
+                    guildName: pendingReconcile.guildName,
+                    characterId: pendingReconcile.characterId,
+                    armedAt: pendingReconcile.armedAt,
+                };
+            }
+        } catch (error) {
+            console.error('[GuildTrialRecorder] Restoring the saved session failed:', error);
+        }
+    }
+
+    /** Write the session down, and whatever is still waiting on the game's totals; not awaited by callers on the render path */
     async _persist() {
         try {
             if (!this.session) return;
-            await storage.set(trialSessionStorageKey(this.guildName, this.characterId), this.session, STORE_NAME);
+            await storage.set(
+                trialSessionStorageKey(this.guildName, this.characterId),
+                { session: this.session, pendingReconcile: this._pendingForStorage() },
+                STORE_NAME
+            );
         } catch (error) {
             console.error('[GuildTrialRecorder] Saving the session failed:', error);
         }
@@ -806,7 +927,12 @@ class GuildTrialRecorder {
     async loadSession() {
         if (this.session) return this.session;
         try {
-            return await storage.get(trialSessionStorageKey(this.guildName, this.characterId), STORE_NAME, null);
+            const stored = await storage.get(
+                trialSessionStorageKey(this.guildName, this.characterId),
+                STORE_NAME,
+                null
+            );
+            return this._unwrap(stored).session;
         } catch (error) {
             console.error('[GuildTrialRecorder] Reading the session failed:', error);
             return null;

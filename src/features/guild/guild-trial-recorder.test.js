@@ -106,6 +106,14 @@ const {
 
 const now = Date.parse('2026-08-05T15:00:00Z');
 
+// As `guild_trial_stats_updated` is surfaced on the breakdown: per name
+const reported = {
+    tib: { damage: 350_000, healing: 0, taken: 150_000 },
+    Moo: { damage: 180_000, healing: 60_000, taken: 5_000 },
+    Ada: { damage: 20_000, healing: 0, taken: 1_000 },
+};
+const lastOf = (session) => session.snapshots[session.snapshots.length - 1];
+
 /**
  * A breakdown as the damage module reports one.
  * @param {Object} overrides - Fields to override
@@ -662,14 +670,6 @@ describe('a trial that has already ended', () => {
 });
 
 describe('the game’s own totals', () => {
-    // As `guild_trial_stats_updated` is surfaced on the breakdown: per name
-    const reported = {
-        tib: { damage: 350_000, healing: 0, taken: 150_000 },
-        Moo: { damage: 180_000, healing: 60_000, taken: 5_000 },
-        Ada: { damage: 20_000, healing: 0, taken: 1_000 },
-    };
-    const lastOf = (session) => session.snapshots[session.snapshots.length - 1];
-
     test('restate damage, healing and taken by name, and keep what only the stream knows', () => {
         const base = thinBreakdown(breakdown(), now);
         const snapshot = { ...base, players: [...base.players, { index: '2', name: 'Player 3', damage: 7 }] };
@@ -722,7 +722,7 @@ describe('the game’s own totals', () => {
         const final = lastOf(guildTrialRecorder.session);
         expect(final.basis).toBe('game');
         expect(final.players.find((row) => row.name === 'Tib').damage).toBe(350_000);
-        expect(lastOf(game.store[trialSessionStorageKey(null, game.characterId)]).basis).toBe('game');
+        expect(lastOf(game.store[trialSessionStorageKey(null, game.characterId)].session).basis).toBe('game');
 
         // The game re-sends the message whenever its Stats panel is opened
         vi.advanceTimersByTime(SNAPSHOT_MS * 4);
@@ -777,6 +777,119 @@ describe('the game’s own totals', () => {
 
         expect(game.accrued).toHaveLength(1);
         expect(lastOf(recorded).basis).toBeUndefined();
+    });
+});
+
+describe('a reload while the game’s totals are still in flight', () => {
+    // A: pendingReconcile used to live only in memory. A refresh between the
+    // trial ending and the stats landing (28s later in a recorded trial) lost
+    // it outright, and the ledger kept the stream estimate forever.
+    const reload = async () => {
+        guildTrialRecorder.session = null;
+        guildTrialRecorder.pendingReconcile = null;
+        guildTrialRecorder._priorSession = null;
+        await guildTrialRecorder._restoreFromStorage();
+    };
+
+    test('the stats arriving after a reload still patch the snapshot and the ledger fold, once', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+
+        vi.setSystemTime(now + 1000);
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: now + 1000, active: false });
+        guildTrialRecorder.noteLifecycle('completed', now + 1000);
+        expect(game.accrued).toHaveLength(1);
+        expect(lastOf(game.accrued[0].session).basis).toBeUndefined();
+
+        await reload();
+        expect(guildTrialRecorder.session).not.toBeNull();
+        expect(guildTrialRecorder.pendingReconcile).not.toBeNull();
+        // Not recording: the restored session is the ended one, and `stop()`
+        // must never be able to reopen it
+        expect(guildTrialRecorder.recording).toBe(false);
+
+        // The stats land 28s after the end, as in a recorded trial
+        vi.setSystemTime(now + 29_000);
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: now + 1000, active: false, reported });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(game.accrued).toHaveLength(2);
+        expect(game.accrued[1].encounter).toBe('badger');
+        const final = lastOf(guildTrialRecorder.session);
+        expect(final.basis).toBe('game');
+        expect(final.players.find((row) => row.name === 'Tib').damage).toBe(350_000);
+        expect(lastOf(game.store[trialSessionStorageKey(null, game.characterId)].session).basis).toBe('game');
+
+        // Re-sent whenever the native Stats panel is opened: still folded once
+        vi.advanceTimersByTime(SNAPSHOT_MS * 4);
+        expect(game.accrued).toHaveLength(2);
+    });
+
+    test('a wait already expired by the time of the reload is not resumed', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.start('button');
+        vi.setSystemTime(now + 1000);
+        guildTrialRecorder.stop('button', now + 1000);
+
+        vi.setSystemTime(now + 1000 + RECONCILE_WAIT_MS + 30_000);
+        await reload();
+
+        // Nothing left worth resuming: the session is not reattached either,
+        // exactly as when nothing was ever pending for it
+        expect(guildTrialRecorder.pendingReconcile).toBeNull();
+        expect(guildTrialRecorder.session).toBeNull();
+    });
+
+    test('totals already in hand at the close leave nothing pending to resume', async () => {
+        // stop() applies `reported` into the fold immediately when it is
+        // already in hand, and clears `pendingReconcile` right there
+        game.breakdown = breakdown({ encounter: 'badger', reported });
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+        expect(game.accrued).toHaveLength(1);
+        expect(guildTrialRecorder.pendingReconcile).toBeNull();
+
+        await reload();
+
+        expect(guildTrialRecorder.pendingReconcile).toBeNull();
+    });
+
+    test('a session already recording when the read lands is left alone', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+        const key = trialSessionStorageKey(null, game.characterId);
+        const stored = game.store[key];
+
+        guildTrialRecorder.session = null;
+        guildTrialRecorder.pendingReconcile = null;
+        guildTrialRecorder.start('a fresh trial started before the read landed');
+        const started = guildTrialRecorder.session;
+
+        game.store[key] = stored; // the read in flight still answers with the old value
+        await guildTrialRecorder._restoreFromStorage();
+
+        expect(guildTrialRecorder.session).toBe(started);
+    });
+
+    test('a legacy value from before this change carries nothing to resume', async () => {
+        // Pre-A storage shape: the key held the session object directly, with
+        // no pending reconcile ever written down alongside it
+        game.store[trialSessionStorageKey(null, game.characterId)] = {
+            startedAt: now,
+            endedAt: now + 1000,
+            weekStart: 0,
+            snapshots: [],
+        };
+
+        await reload();
+
+        // Nothing to resume — this is exactly the pre-A loss the decision
+        // accepts for an install caught mid-upgrade: the session is still
+        // readable by `loadSession()`, just not resumed as `this.session`
+        expect(guildTrialRecorder.session).toBeNull();
+        expect(guildTrialRecorder.pendingReconcile).toBeNull();
+        await expect(guildTrialRecorder.loadSession()).resolves.toMatchObject({ startedAt: now });
     });
 });
 
