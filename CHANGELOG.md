@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A finished trial stays on the trial board after a reload
+
+- The trial board only brought its figures back after a refresh if they had been saved in the last 20 minutes, and a finished trial stops saving — so reloading 20 minutes or more after a trial ended left the board empty, though the trial was still stored and in History. A trial the game has ended now comes back after any reload for the rest of that trial week, until the next trial fight starts; the 20-minute limit still applies to a fight in progress.
+
 ### Guild panel: one Damage button, one line per past week, and late trial totals
 
 - The guild panel's "⚔ Damage" button copied the game's whole tab row, so a second row appeared under the real one with Overview renamed. It is now a single button after the game's own tabs.
