@@ -257,10 +257,14 @@ const combatDPS = new CombatDPS();
  * "who" is the whole question when somebody is under-geared for the zone. It
  * needs attribution, so it is drawn only when the Damage Tracker has some.
  *
- * The lines and the total both come from attribution rather than the total
- * coming from this module's own health-diff figure. The two measure different
- * things — health lost includes bleeds nobody cast — and a total that did not
- * equal the sum of the lines above it would read as an arithmetic bug.
+ * The player lines come from attribution — only what could be pinned on
+ * somebody. The total does not: it is the Damage Tracker's own team figure
+ * (`breakdown.team`, `damage-tracker.js`'s `foldTeam`), every point of health
+ * a monster lost whether or not a player could be credited with it. The tile
+ * is named "Total DPS", not "Credited DPS", so it does not understate the
+ * party's real output by the share attribution could not resolve — a bleed
+ * on a tick nothing else can separate, a hit before the counters were known.
+ * The two can disagree, and the Per-player panel is where the gap is named.
  *
  * @param {HTMLElement} container - The tile
  * @param {Object} breakdown - From `damageBreakdown`
@@ -283,11 +287,9 @@ function dpsFigure(value) {
 function drawPerPlayer(container, breakdown) {
     const lines = [];
     const names = [];
-    let total = 0;
 
     for (const player of breakdown.players) {
         if (player.dps === null) continue;
-        total += player.dps;
         names.push(player.name);
 
         lines.push([
@@ -300,6 +302,15 @@ function drawPerPlayer(container, breakdown) {
             },
         ]);
     }
+
+    // The team's total, not the sum of the credited rows above it: every point
+    // of health a monster lost, attributed or not — a bleed nobody could be
+    // credited with, a tick before the counters were known. The rows above
+    // add only what could be pinned on somebody, which is the right figure for
+    // "who" and the wrong one for a tile whose own name promises the party's
+    // whole output. `team.dps` shares this run's `seconds`, so it is null on
+    // exactly the same runs the rows above are.
+    const total = breakdown.team?.dps ?? 0;
 
     lines.push([
         { text: 'Total DPS', color: ROW_COLORS.neutral, bold: true },
@@ -337,13 +348,19 @@ function drawPerPlayer(container, breakdown) {
     });
 
     const dot = breakdown.players.reduce((sum, player) => sum + (player.dotDamage || 0), 0);
+    const unattributed = breakdown.team?.unattributed || 0;
     container.title =
-        'Damage per second and hit rate, per player, from attributed hits.\n' +
+        'Per-player lines from attributed hits; Total DPS is the team’s — every point of health a monster ' +
+        'lost, whether or not a player could be credited with it.\n' +
         'The game attributes nothing, so the caster is worked out from attack counters, then presence, ' +
         'then whose mana fell — an equal split only in a crowd nothing else can separate.\n' +
         (dot > 0
-            ? `Includes ${formatLargeNumber(Math.round(dot))} of damage-over-time — health lost with no hit ` +
-              'counter behind it, so it moves the damage and not the hit rate.\n'
+            ? `Player lines include ${formatLargeNumber(Math.round(dot))} of damage-over-time — health lost with ` +
+              'no hit counter behind it, so it moves the damage and not the hit rate.\n'
+            : '') +
+        (unattributed > 0
+            ? `Total DPS also includes ${formatLargeNumber(Math.round(unattributed))} the game never let this ` +
+              'client pin on a player, which is why it can run ahead of the lines above it.\n'
             : '') +
         'Double-click for the breakdown by ability.';
 }

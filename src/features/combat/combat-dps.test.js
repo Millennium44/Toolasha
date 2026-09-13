@@ -52,6 +52,10 @@ describe('with attribution', () => {
                 { index: '0', name: 'Millennium44', dps: 368, accuracy: 0.94, damage: 22080 },
                 { index: '1', name: 'Someone Else', dps: 120, accuracy: null, damage: 7200 },
             ],
+            // The credited rows sum to 488; the team is given a different
+            // figure below specifically so the total can be told apart from
+            // "the rows added up"
+            team: { damage: 29880, unattributed: 0, dps: 498 },
         };
     });
 
@@ -63,9 +67,16 @@ describe('with attribution', () => {
         expect(text).toContain('Total DPS');
     });
 
-    test('the total is the sum of the lines above it', () => {
-        // Not this module's own health-diff figure, which counts bleeds nobody
-        // cast — a total that did not add up would read as an arithmetic bug
+    test('the total is the team’s figure, not the sum of the credited lines above it', () => {
+        // The Damage Tracker's team total counts every point of health a
+        // monster lost, attributed or not — health lost includes bleeds
+        // nobody could be credited with, which the rows above leave out
+        expect(draw().textContent).toContain('498');
+        expect(draw().textContent).not.toContain('488');
+    });
+
+    test('with nothing unattributed, the total still equals the credited sum', () => {
+        tracker.breakdown.team = { damage: 29280, unattributed: 0, dps: 488 };
         expect(draw().textContent).toContain('488');
     });
 
