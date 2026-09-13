@@ -266,6 +266,32 @@ function noteCasts(players) {
 }
 
 /**
+ * A representative "everyone has this" threat reading for the current party.
+ *
+ * The median of every captured slot's sheet-stated threat — the middle of the
+ * pack rather than the mean, so one true tank pulling the average up cannot
+ * raise the bar against themselves. Mirrors the guild trial scoreboard's own
+ * baseline (`guild-trial-abilities.js`'s `_partyThreatBaseline`) for the same
+ * reason: every unit's sheet carries a nonzero threat the moment it enters
+ * combat, so without a baseline to compare against, `inferClass`'s threat
+ * rule degrades to "nonzero" and tags an ordinary auto-attacker or buffer as
+ * Tank before it ever reads their weapon style. Null under two readings — a
+ * baseline of one is not a baseline, and `inferClass` falls back to its own
+ * "nonzero" reading in that case.
+ *
+ * @returns {number|null}
+ */
+function partyThreatBaseline() {
+    const threats = Object.values(sheets)
+        .map((entry) => Number(entry?.stats?.threat))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .sort((a, b) => a - b);
+    if (threats.length < 2) return null;
+    const mid = Math.floor(threats.length / 2);
+    return threats.length % 2 === 0 ? (threats[mid - 1] + threats[mid]) / 2 : threats[mid];
+}
+
+/**
  * The role each slot appears to be playing, from its casts this run.
  * @param {Object} [abilityDetailMap] - Game data; read from the client data by default
  * @param {Object} [itemDetailMap] - Game data, for the weapon-passive rule; read from the client by default
@@ -279,6 +305,7 @@ export function runClasses(
     // The one slot whose weapon need not be guessed: this character's own
     const ownName = dataManager.getCurrentCharacterName?.() || null;
     const ownWeapon = ownName ? ownWeaponHrid() : null;
+    const partyThreat = partyThreatBaseline();
     for (const index of new Set([...Object.keys(sheets), ...Object.keys(castLogs)])) {
         const verdict = inferClass(
             {
@@ -286,6 +313,7 @@ export function runClasses(
                 kit: sheets[index]?.kit || null,
                 stats: sheets[index]?.stats || null,
                 weaponHrid: ownWeapon && names[index] === ownName ? ownWeapon : null,
+                partyThreat,
             },
             abilityDetailMap,
             itemDetailMap

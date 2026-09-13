@@ -434,6 +434,29 @@ describe('the class read off a run', () => {
         expect(runClasses()['0']?.key).toBe('fireMage');
     });
 
+    test('threat is read against the party’s own baseline, not as a bare nonzero flag', () => {
+        // Every sheet carries a baseline threat the moment it enters combat —
+        // three ordinary members near 100-110 and one real tank at 400. Passing
+        // no baseline at all (the bug) tags all four Tank off "nonzero"; the
+        // fix's median baseline (107.5) only clears for the real outlier.
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: { name: 'Alice', combatDetails: { combatAbilities: [], combatStats: { threat: 100 } } },
+                1: { name: 'Bob', combatDetails: { combatAbilities: [], combatStats: { threat: 105 } } },
+                2: { name: 'Carol', combatDetails: { combatAbilities: [], combatStats: { threat: 110 } } },
+                3: { name: 'Dave', combatDetails: { combatAbilities: [], combatStats: { threat: 400 } } },
+            },
+            monsters: { 0: { name: 'Eye' } },
+        });
+
+        const classes = runClasses();
+        expect(classes['3']?.key).toBe('tank');
+        expect(classes['0']).toBeUndefined();
+        expect(classes['1']).toBeUndefined();
+        expect(classes['2']).toBeUndefined();
+    });
+
     test('a new run starts with no evidence', () => {
         announce();
         tick({ 0: { preparingAbilityHrid: '/abilities/fireball' }, 1: {} });
