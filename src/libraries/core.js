@@ -18,7 +18,14 @@ import featureRegistry from '../core/feature-registry.js';
 import * as errorLog from '../core/error-log.js';
 import settingsStorage from '../core/settings-storage.js';
 import { settingsGroups, getAllSettingIds, getSettingDefinition } from '../core/settings-schema.js';
-import { setCurrentProfile, getCurrentProfile, clearCurrentProfile } from '../core/profile-manager.js';
+import {
+    setCurrentProfile,
+    getCurrentProfile,
+    clearCurrentProfile,
+    evidenceFromSharedProfile,
+    noteSharedClassEvidence,
+    sharedClassEvidenceFor,
+} from '../core/profile-manager.js';
 import tooltipObserver from '../core/tooltip-observer.js';
 import * as dualInstallGuard from '../core/dual-install-guard.js';
 import performanceMonitor, { installIntervalTracing } from '../utils/performance-monitor.js';
@@ -56,6 +63,9 @@ toolashaRoot.Core = {
         setCurrentProfile,
         getCurrentProfile,
         clearCurrentProfile,
+        evidenceFromSharedProfile,
+        noteSharedClassEvidence,
+        sharedClassEvidenceFor,
     },
     marketAPI,
     networkAlert,

@@ -34,6 +34,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
+import { sharedClassEvidenceFor } from '../../core/profile-manager.js';
 import {
     newAttributionState,
     noteActions,
@@ -411,7 +412,18 @@ function partyThreatBaseline() {
 }
 
 /**
- * The role each slot appears to be playing, from its casts this run.
+ * The role each slot appears to be playing, from its casts this run — or,
+ * failing that, from a shared profile.
+ *
+ * A slot with no live sheet and no live cast has nothing this run has shown
+ * about it, which used to mean no verdict at all: an auto-attacker who never
+ * fetched a Battle Info and never cast an identifying ability stayed blank
+ * for the whole fight. `profile-manager.js`'s shared-profile cache
+ * (`sharedClassEvidenceFor`, filled from `profile_shared` in `websocket.js`)
+ * is consulted only for such a slot — anything actually seen live, sheet or
+ * cast, still wins outright, because it is evidence from *this* run and the
+ * cache may be old.
+ *
  * @param {Object} [abilityDetailMap] - Game data; read from the client data by default
  * @param {Object} [itemDetailMap] - Game data, for the weapon-passive rule; read from the client by default
  * @returns {Object} Player index → verdict from `inferClass`, absent where nothing supports one
@@ -425,12 +437,27 @@ export function runClasses(
     const ownName = dataManager.getCurrentCharacterName?.() || null;
     const ownWeapon = ownName ? ownWeaponHrid() : null;
     const partyThreat = partyThreatBaseline();
-    for (const index of new Set([...Object.keys(sheets), ...Object.keys(castLogs)])) {
+
+    const indices = new Set([...Object.keys(sheets), ...Object.keys(castLogs)]);
+    // A slot with neither is only worth a second look when a shared profile
+    // has something to say about it — most slots never get one
+    for (const [index, name] of Object.entries(names)) {
+        if (!name || indices.has(index)) continue;
+        if (sharedClassEvidenceFor(name)) indices.add(index);
+    }
+
+    for (const index of indices) {
+        const hasLiveEvidence = Boolean(sheets[index] || castLogs[index]);
+        const shared = hasLiveEvidence ? null : sharedClassEvidenceFor(names[index]);
+        const sharedStats = shared?.weaponHrid
+            ? itemDetailMap?.[shared.weaponHrid]?.equipmentDetail?.combatStats
+            : null;
+
         const verdict = inferClass(
             {
                 casts: castLogs[index] || null,
-                kit: sheets[index]?.kit || null,
-                stats: sheets[index]?.stats || null,
+                kit: sheets[index]?.kit || shared?.kit || null,
+                stats: sheets[index]?.stats || sharedStats || null,
                 weaponHrid: ownWeapon && names[index] === ownName ? ownWeapon : null,
                 partyThreat,
             },

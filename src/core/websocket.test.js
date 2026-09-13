@@ -11,6 +11,8 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('./profile-manager.js', () => ({
     setCurrentProfile: vi.fn(),
+    evidenceFromSharedProfile: vi.fn(() => null),
+    noteSharedClassEvidence: vi.fn(),
 }));
 
 vi.mock('./storage.js', () => ({
@@ -21,7 +23,7 @@ vi.mock('./storage.js', () => ({
 }));
 
 const { default: webSocketHook } = await import('./websocket.js');
-const { setCurrentProfile } = await import('./profile-manager.js');
+const { setCurrentProfile, evidenceFromSharedProfile, noteSharedClassEvidence } = await import('./profile-manager.js');
 const storage = (await import('./storage.js')).default;
 
 function msg(type, extra = {}) {
@@ -375,6 +377,11 @@ describe('saveCombatSimData side effects', () => {
         // Immediate: the GM copy an external page reads is written right after, and a
         // debounced IndexedDB write would leave the two disagreeing meanwhile.
         expect(storage.setJSON).toHaveBeenCalledWith('profile_list', expect.any(Array), 'combatExport', true);
+
+        // class-inference.js's shared-profile fallback: the evidence this
+        // profile shows is derived and cached under the player's name
+        expect(evidenceFromSharedProfile).toHaveBeenCalledWith(savedProfile);
+        expect(noteSharedClassEvidence).toHaveBeenCalledWith('Hero', evidenceFromSharedProfile.mock.results[0].value);
     });
 
     test('a profile_shared message with no profile at all is ignored without throwing', async () => {
@@ -383,6 +390,21 @@ describe('saveCombatSimData side effects', () => {
         await new Promise((r) => setTimeout(r, 0));
         expect(setCurrentProfile).not.toHaveBeenCalled();
         expect(storage.setJSON).not.toHaveBeenCalled();
+        expect(noteSharedClassEvidence).not.toHaveBeenCalled();
+    });
+
+    test('the "Unknown" placeholder name is never cached as class evidence', async () => {
+        // sharableCharacter carries no name here, so characterName falls back
+        // to the literal placeholder — caching it would risk mislabelling a
+        // real future player who happens to share that name
+        const profileMessage = msg('profile_shared', {
+            profile: { sharableCharacter: { id: 'char-1' } },
+        });
+        webSocketHook.processMessage(profileMessage);
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(setCurrentProfile).toHaveBeenCalled();
+        expect(noteSharedClassEvidence).not.toHaveBeenCalled();
     });
 
     test('each share re-reads the stored list, so a second tab does not clobber the first', async () => {

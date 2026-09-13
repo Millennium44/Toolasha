@@ -20,6 +20,7 @@ const listeners = vi.hoisted(() => ({}));
 vi.mock('../../core/data-manager.js', () => ({
     default: { getInitClientData: () => ({ abilityDetailMap: {}, itemDetailMap: {} }) },
 }));
+vi.mock('../../core/profile-manager.js', () => ({ sharedClassEvidenceFor: () => null }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
         on: (type, handler) => (listeners[type] = handler),

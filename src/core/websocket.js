@@ -5,7 +5,7 @@
  * Uses WebSocket constructor wrapper for better performance than MessageEvent.prototype.data hooking
  */
 
-import { setCurrentProfile } from './profile-manager.js';
+import { setCurrentProfile, evidenceFromSharedProfile, noteSharedClassEvidence } from './profile-manager.js';
 import storage from './storage.js';
 import performanceMonitor from '../utils/performance-monitor.js';
 
@@ -842,6 +842,16 @@ class WebSocketHook {
 
                 // Store in memory for Steam users (works without GM storage)
                 setCurrentProfile(parsed);
+
+                // What this profile shows about the player's build, for
+                // class-inference.js to fall back on when nothing live has
+                // been seen from them — see profile-manager.js. Skipped for
+                // the 'Unknown' placeholder name: a profile whose own
+                // character link could not be read is not worth caching
+                // under a name real players could someday share.
+                if (parsed.characterName && parsed.characterName !== 'Unknown') {
+                    noteSharedClassEvidence(parsed.characterName, evidenceFromSharedProfile(parsed));
+                }
 
                 // The read-modify-write below spans two awaits. Two profiles shared in the
                 // same burst would both read the pre-existing list and the later write would

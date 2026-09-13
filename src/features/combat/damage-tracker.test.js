@@ -93,6 +93,17 @@ const ITEMS = vi.hoisted(() => ({
 /** Who is logged in and what they wield; nobody by default */
 const OWN = vi.hoisted(() => ({ name: null, equipment: null }));
 
+/** name (lowercased) → `{weaponHrid, kit}`, as `profile-manager.js` would answer */
+const SHARED_CLASS_EVIDENCE = vi.hoisted(() => ({}));
+
+vi.mock('../../core/profile-manager.js', () => ({
+    sharedClassEvidenceFor: (name) =>
+        SHARED_CLASS_EVIDENCE[
+            String(name || '')
+                .trim()
+                .toLowerCase()
+        ] || null,
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ abilityDetailMap: ABILITIES, itemDetailMap: ITEMS }),
@@ -112,6 +123,10 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
 
 const tracker = await import('./damage-tracker.js');
 const { sessionKeyFor, battleBreakdown, manaSamples, damageBreakdown, runClasses } = tracker;
+
+afterEach(() => {
+    for (const key of Object.keys(SHARED_CLASS_EVIDENCE)) delete SHARED_CLASS_EVIDENCE[key];
+});
 
 const battle = (names, combatStartTime = '2026-08-03T01:00:00Z') => ({
     combatStartTime,
@@ -563,6 +578,47 @@ describe('the class read off a run', () => {
             players: { 0: { name: 'SomebodyElse' } },
             monsters: { 0: { name: 'Eye' } },
         });
+        expect(runClasses()).toEqual({});
+    });
+
+    test('a slot with nothing live yet is read off a shared profile', () => {
+        // Bob has neither cast anything nor had a sheet fetched this run — the
+        // old behaviour left him blank. A profile_shared for him (opened, say,
+        // from the guild roster) cached his weapon before this fight even
+        // started, and that is enough for a verdict.
+        SHARED_CLASS_EVIDENCE.bob = { weaponHrid: '/items/test_crossbow', kit: null };
+        announce();
+        tick({ 0: { preparingAbilityHrid: '/abilities/fireball' } });
+
+        const classes = runClasses();
+        expect(classes['0']?.key).toBe('fireMage');
+        expect(classes['1']?.key).toBe('ranged');
+        expect(classes['1']?.basis).toContain('passive');
+    });
+
+    test('anything seen live still wins over a shared profile', () => {
+        // The cache says Bob wields a crossbow; what he is actually casting
+        // this run says otherwise, and the live evidence must not be shadowed
+        SHARED_CLASS_EVIDENCE.bob = { weaponHrid: '/items/test_crossbow', kit: null };
+        announce();
+        tick({ 1: { preparingAbilityHrid: '/abilities/heal' } });
+
+        expect(runClasses()['1']?.key).toBe('healer');
+    });
+
+    test('a shared profile is matched by name, case- and whitespace-insensitively', () => {
+        SHARED_CLASS_EVIDENCE.bob = { weaponHrid: '/items/test_crossbow', kit: null };
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: { 0: { name: ' Bob ' } },
+            monsters: { 0: { name: 'Eye' } },
+        });
+
+        expect(runClasses()['0']?.key).toBe('ranged');
+    });
+
+    test('a player with no shared evidence and nothing live gets no verdict, as before', () => {
+        announce();
         expect(runClasses()).toEqual({});
     });
 });

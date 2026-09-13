@@ -13,7 +13,11 @@
 
 import { describe, test, expect, vi, beforeEach, afterAll } from 'vitest';
 
-vi.mock('./profile-manager.js', () => ({ setCurrentProfile: vi.fn() }));
+vi.mock('./profile-manager.js', () => ({
+    setCurrentProfile: vi.fn(),
+    evidenceFromSharedProfile: vi.fn(() => null),
+    noteSharedClassEvidence: vi.fn(),
+}));
 vi.mock('./storage.js', () => ({
     default: { getJSON: vi.fn(async () => []), setJSON: vi.fn(async () => {}) },
 }));
