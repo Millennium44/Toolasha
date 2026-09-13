@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild panel: one Damage button, one line per past week, and late trial totals
+
+- The guild panel's "⚔ Damage" button copied the game's whole tab row, so a second row appeared under the real one with Overview renamed. It is now a single button after the game's own tabs.
+- Once a week's combat trial had ended, the guild panel kept archiving the finished week as if it were stale, filling "Past weeks" with copies of this week reading "combat — · 0 pts" and pushing the real past weeks out. A week is kept once, and the current week is never archived; weeks already pushed out cannot be recovered.
+- The game only sends a trial's exact totals when someone opens its Combat Trial Stats, often well after the fight. Totals fetched that way now still reach History and the ledger (once, for the rest of the trial week), the board suggests opening the Stats when they haven't arrived, and its game-stats rows show a per-second rate over the whole fight instead of a dash.
+
 ### Trial board: no more "Player N" rows when you open a trial partway through
 
 - Opening the fight view in the middle of a tier, before that tier's roster had arrived, filed every player's damage under "Player 1", "Player 2" … for good, so half the board was placeholders (45 of 92 rows on a live trial). Those slots are now named from the fight view's own name tiles, kept only where the players' health and mana confirm the match, and anything still unknown is one "Unnamed — before names were known" row that the guild report, History and the ledger's player counts treat the same way.
