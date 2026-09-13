@@ -624,7 +624,13 @@ class GuildTrialScoreboard {
      * @returns {string} The report
      */
     reportText(breakdown = guildTrialDamage.breakdown?.()) {
-        return buildGuildReport({ ...(this.context || {}), breakdown, estimate: this._estimate() });
+        return buildGuildReport({
+            ...(this.context || {}),
+            breakdown,
+            estimate: this._estimate(),
+            // The same authoritative totals the table beside the button shows
+            gameStats: modalStatsForBreakdown(breakdown),
+        });
     }
 
     /**

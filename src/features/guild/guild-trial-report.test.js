@@ -9,7 +9,14 @@
 
 import { describe, test, expect } from 'vitest';
 
-import { buildGuildReport, describeShortfall, MAX_REPORT_PLAYERS, playerLine } from './guild-trial-report.js';
+import {
+    buildGuildReport,
+    describeShortfall,
+    MAX_REPORT_PLAYERS,
+    playerLine,
+    TAKEN_BASIS_GAME,
+    TAKEN_BASIS_STREAM,
+} from './guild-trial-report.js';
 
 /**
  * A breakdown as the damage module reports one.
@@ -44,6 +51,55 @@ function breakdown(overrides = {}) {
         ...overrides,
     };
 }
+
+describe('a report from the game’s own totals', () => {
+    // As `modalStatsForBreakdown` returns them: the wire stats, per name
+    const gameStats = [
+        { name: 'moo', damage: 400_000, healing: 300_000, damageTaken: 20_000 },
+        { name: 'Tib', damage: 800_000, healing: 0, damageTaken: 400_000 },
+        { name: 'Ada', damage: 0, healing: 0, damageTaken: 0 },
+    ];
+
+    test('ranks and shares by the game’s figures, so it agrees with the table it is copied from', () => {
+        const report = buildGuildReport({
+            trialName: 'Trial Badger',
+            tiersCleared: 3,
+            breakdown: breakdown(),
+            gameStats,
+        });
+
+        expect(report).toContain('Party · 1,200,000 dmg\n');
+        // Deaths and mana come off the stream row of the same name
+        expect(report).toContain('1. Tib · 800,000 dmg · 67% · took 400,000 · died 1×');
+        expect(report).toContain('2. moo · 400,000 dmg · 33% · healed 300,000 · took 20,000 · ran dry 3× (~4m)');
+        expect(report).toContain('3. Ada · 0 dmg · 0%');
+        // Whole-trial totals over a watched-stretch clock is not a rate
+        expect(report).not.toContain('/s');
+        expect(report).toContain('Healing · 300,000\n');
+        expect(report).not.toContain('unattributed');
+        expect(report).toContain(TAKEN_BASIS_GAME);
+        expect(report).not.toContain(TAKEN_BASIS_STREAM);
+        expect(report).toContain('end-of-trial totals');
+        for (const line of report.split('\n')) expect(line.length).toBeLessThanOrEqual(120);
+    });
+
+    test('with nothing measured the game’s totals are still the report', () => {
+        const report = buildGuildReport({
+            breakdown: breakdown({ players: [], support: { players: [] } }),
+            gameStats,
+        });
+        expect(report).toContain('1. Tib · 800,000 dmg');
+        expect(report).toContain('(the game’s own end-of-trial totals)');
+        expect(report).not.toContain('Nothing was measured');
+    });
+
+    test('without totals the stream is the report, and says what its taken figure is', () => {
+        const report = buildGuildReport({ breakdown: breakdown(), gameStats: [] });
+        expect(report).toContain('1,250/s');
+        expect(report).toContain(TAKEN_BASIS_STREAM);
+        expect(report).not.toContain(TAKEN_BASIS_GAME);
+    });
+});
 
 describe('describeShortfall', () => {
     test('says how far into the tier the hour left them, both ways', () => {

@@ -234,6 +234,104 @@ describe('accrueTrial', () => {
     });
 });
 
+describe('one trial is folded once, whatever restarts around it', () => {
+    /**
+     * A contribution for Trial Badger off one snapshot.
+     * @param {Array<Object>} players - Snapshot rows
+     * @param {Object} [overrides] - Session fields
+     * @param {string} [basis] - `game` to mark the snapshot reconciled
+     * @returns {Object} The contribution
+     */
+    function badger(players, overrides = {}, basis = null) {
+        const finished = session([players], { startedBy: 'trial-fight', ...overrides });
+        if (basis) finished.snapshots[finished.snapshots.length - 1].basis = basis;
+        return sessionContribution(finished, { encounter: 'badger' });
+    }
+
+    test('a contribution says whose figures it carries and whether it armed itself', () => {
+        expect(badger([player('Alice')])).toMatchObject({ basis: 'stream', automatic: true });
+        expect(badger([player('Alice')], { startedBy: 'button' }, 'game')).toMatchObject({
+            basis: 'game',
+            automatic: false,
+        });
+    });
+
+    test('a second session over the same finished encounter is not a second trial', () => {
+        // B1: a session re-opened over the ended trial snapshots the same
+        // cumulative breakdown under a new start time
+        const first = badger([player('Alice', { damage: 900 }), player('Bob', { damage: 100 })]);
+        const again = badger([player('Alice', { damage: 900 }), player('Bob', { damage: 100 })], {
+            startedAt: WEEK + 4_000_000,
+        });
+
+        const once = accrueTrial(emptyLedgerCycle(WEEK, 'g'), first);
+        expect(accrueTrial(once, again)).toBe(once);
+        expect(once.members.alice).toMatchObject({ trials: 1, damage: 900 });
+    });
+
+    test('different encounters in one cycle are different trials', () => {
+        const cycle = accrueTrial(
+            accrueTrial(emptyLedgerCycle(WEEK, 'g'), badger([player('Alice', { damage: 900 })])),
+            sessionContribution(session([[player('Alice', { damage: 300 })]], { startedAt: WEEK + 9 }), {
+                encounter: 'swarm',
+            })
+        );
+        expect(cycle.trials).toHaveLength(2);
+        expect(cycle.members.alice).toMatchObject({ trials: 2, damage: 1200 });
+    });
+
+    test('the game’s totals replace the stream’s estimate for the same trial rather than adding to it', () => {
+        const stream = badger([player('Alice', { damage: 900, deaths: 1 }), player('Bob', { damage: 100 })]);
+        const game = badger(
+            [
+                player('Alice', { damage: 1000, deaths: 1 }),
+                player('Bob', { damage: 50 }),
+                player('Carol', { damage: 20 }),
+            ],
+            {},
+            'game'
+        );
+
+        const cycle = accrueTrial(accrueTrial(emptyLedgerCycle(WEEK, 'g'), stream), game);
+
+        expect(cycle.trials).toHaveLength(1);
+        expect(cycle.trials[0]).toMatchObject({ basis: 'game', totals: { damage: 1070, members: 3 } });
+        expect(cycle.members.alice).toMatchObject({ trials: 1, damage: 1000, deaths: 1, seconds: 15 });
+        expect(cycle.members.bob).toMatchObject({ trials: 1, damage: 50 });
+        expect(cycle.members.carol).toMatchObject({ trials: 1, damage: 20 });
+    });
+
+    test('the stream never replaces the game’s totals, and the game’s totals fold once', () => {
+        const game = badger([player('Alice', { damage: 1000 })], {}, 'game');
+        const once = accrueTrial(emptyLedgerCycle(WEEK, 'g'), game);
+
+        // The stats message is re-sent whenever the game's Stats panel opens
+        expect(accrueTrial(once, game)).toBe(once);
+        expect(accrueTrial(once, badger([player('Alice', { damage: 5000 })], { startedAt: WEEK + 9 }))).toBe(once);
+    });
+
+    test('a fuller stream reading of the same encounter replaces a partial one', () => {
+        const partial = badger([player('Alice', { damage: 400 }), player('Ghost', { damage: 10 })]);
+        const fuller = badger([player('Alice', { damage: 1500 })], { startedAt: WEEK + 9 });
+
+        const cycle = accrueTrial(accrueTrial(emptyLedgerCycle(WEEK, 'g'), partial), fuller);
+
+        expect(cycle.trials).toHaveLength(1);
+        expect(cycle.members.alice).toMatchObject({ trials: 1, damage: 1500 });
+        // Named only by the reading that was replaced
+        expect(cycle.members.ghost).toBeUndefined();
+    });
+
+    test('an archived entry with no per-member figures is never taken back out', () => {
+        const archived = {
+            ...emptyLedgerCycle(WEEK, 'g'),
+            trials: [{ trialId: 'old', encounter: 'badger', totals: { damage: 900 } }],
+            members: { alice: { name: 'Alice', trials: 1, damage: 900 } },
+        };
+        expect(accrueTrial(archived, badger([player('Alice', { damage: 1000 })], {}, 'game'))).toBe(archived);
+    });
+});
+
 describe('foldLedgerCycles', () => {
     /**
      * @param {number} weekStart - Which cycle
@@ -624,6 +722,37 @@ describe('the ledger on disk', () => {
         expect(second).toBeNull();
         const [cycle] = await loadLedgerCycles('g');
         expect(cycle.members.alice.trials).toBe(1);
+    });
+
+    test('repeated stop and start over one ended trial folds it once, and the game’s totals then correct it', async () => {
+        // B1 end to end: every restart over the finished trial is a new
+        // session start re-reading the same cumulative breakdown
+        for (let pass = 0; pass < 5; pass += 1) {
+            await recordFinishedTrial({
+                session: session([[player('Alice', { damage: 900 }), player('Bob', { damage: 100 })]], {
+                    startedAt: WEEK + 1000 + pass * 15_000,
+                    startedBy: 'trial-fight',
+                }),
+                guildName: 'g',
+                encounter: 'badger',
+            });
+        }
+        let [cycle] = await loadLedgerCycles('g');
+        expect(cycle.trials).toHaveLength(1);
+        expect(cycle.members.alice).toMatchObject({ trials: 1, damage: 900 });
+
+        const reconciled = session([[player('Alice', { damage: 1200 }), player('Bob', { damage: 80 })]], {
+            startedBy: 'trial-fight',
+        });
+        reconciled.snapshots[0].basis = 'game';
+        expect(await recordFinishedTrial({ session: reconciled, guildName: 'g', encounter: 'badger' })).not.toBeNull();
+        expect(await recordFinishedTrial({ session: reconciled, guildName: 'g', encounter: 'badger' })).toBeNull();
+
+        [cycle] = await loadLedgerCycles('g');
+        expect(cycle.trials).toHaveLength(1);
+        expect(cycle.trials[0].basis).toBe('game');
+        expect(cycle.members.alice).toMatchObject({ trials: 1, damage: 1200 });
+        expect(cycle.members.bob).toMatchObject({ trials: 1, damage: 80 });
     });
 
     test('two guilds in one tab never read each other back', async () => {

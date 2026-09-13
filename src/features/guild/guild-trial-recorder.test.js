@@ -95,6 +95,8 @@ const {
     guildTrialRecorder,
     IDLE_STOP_MS,
     MANUAL_MAX_MS,
+    RECONCILE_WAIT_MS,
+    reconcileSnapshot,
     SNAPSHOT_MS,
     thinBreakdown,
     trialSessionStorageKey,
@@ -568,6 +570,182 @@ describe('the participation the ledger is handed', () => {
         guildTrialRecorder.stop('button');
 
         expect(game.accrued[0].participation).toBe(null);
+    });
+});
+
+describe('a trial that has already ended', () => {
+    test('a tick trailing in after the end cannot re-open a session, however often the panel closes it', () => {
+        // B1: a tick after end_guild_battle leaves the breakdown reading
+        // active with endedAt set. Each panel render closed the session and the
+        // next signal re-opened it, and every close folded the whole trial again
+        game.breakdown = breakdown({ encounter: 'badger' });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+        expect(guildTrialRecorder.recording).toBe(true);
+
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: Date.now(), active: true });
+        for (let pass = 0; pass < 8; pass += 1) {
+            guildTrialRecorder.noteLifecycle('completed');
+            guildTrialRecorder.noteActivity('tab-reading');
+            guildTrialRecorder.noteActivity('guild-updated');
+            vi.advanceTimersByTime(SNAPSHOT_MS);
+        }
+
+        expect(guildTrialRecorder.recording).toBe(false);
+        expect(game.accrued).toHaveLength(1);
+    });
+
+    test('with the panel shut, the hour stop is not followed by a fresh session over the same trial', () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: Date.now(), active: true });
+
+        vi.setSystemTime(now + 61 * 60_000);
+        vi.advanceTimersByTime(SNAPSHOT_MS * 4);
+
+        expect(guildTrialRecorder.recording).toBe(false);
+        expect(guildTrialRecorder.session.endedBy).toMatch(/hour a trial runs/);
+        expect(game.accrued).toHaveLength(1);
+    });
+
+    test('the game’s own end flag refuses it too, and the button still records', () => {
+        game.breakdown = breakdown({ endedByGame: true });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+        expect(guildTrialRecorder.recording).toBe(false);
+
+        guildTrialRecorder.start('button');
+        expect(guildTrialRecorder.recording).toBe(true);
+    });
+
+    test('an end left in memory from last week does not refuse this week’s trial', () => {
+        game.breakdown = breakdown({ active: false, endedAt: now - 7 * 86_400_000 });
+        guildTrialRecorder.noteActivity('tab-reading');
+        expect(guildTrialRecorder.recording).toBe(true);
+    });
+
+    test('a breakdown from an earlier week lends a session no trial identity', () => {
+        game.breakdown = breakdown({ active: false, encounter: 'badger', spectator: { lastAt: now - 7 * 86_400_000 } });
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+        expect(game.accrued[0].encounter).toBeNull();
+    });
+});
+
+describe('the game’s own totals', () => {
+    // As `guild_trial_stats_updated` is surfaced on the breakdown: per name
+    const reported = {
+        tib: { damage: 350_000, healing: 0, taken: 150_000 },
+        Moo: { damage: 180_000, healing: 60_000, taken: 5_000 },
+        Ada: { damage: 20_000, healing: 0, taken: 1_000 },
+    };
+    const lastOf = (session) => session.snapshots[session.snapshots.length - 1];
+
+    test('restate damage, healing and taken by name, and keep what only the stream knows', () => {
+        const base = thinBreakdown(breakdown(), now);
+        const snapshot = { ...base, players: [...base.players, { index: '2', name: 'Player 3', damage: 7 }] };
+        const patched = reconcileSnapshot(snapshot, reported, now + 1);
+
+        expect(patched.basis).toBe('game');
+        expect(patched.players.find((row) => row.name === 'Tib')).toMatchObject({
+            damage: 350_000,
+            healingDone: 0,
+            damageTaken: 150_000,
+            deaths: 0,
+        });
+        expect(patched.players.find((row) => row.name === 'Moo')).toMatchObject({
+            damage: 180_000,
+            healingDone: 60_000,
+            damageTaken: 5_000,
+            deaths: 1,
+            manaSpent: 12_000,
+            manaOuts: 2,
+        });
+        // Credited by the server, never split out by the stream
+        expect(patched.players.find((row) => row.name === 'Ada')).toMatchObject({ index: null, damage: 20_000 });
+        // An id the server's list could not name is not absence
+        expect(patched.players.find((row) => row.name === 'Player 3').damage).toBe(7);
+        expect(patched.totalDamage).toBe(550_007);
+        expect(patched.streamTotalDamage).toBe(500_000);
+        expect(snapshot.basis).toBeUndefined();
+        expect(reconcileSnapshot(snapshot, null)).toBe(snapshot);
+    });
+
+    test('totals landing after the session closed correct its fold, once', () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+
+        // end_guild_battle: the panel closes the session on the stream's figures
+        vi.setSystemTime(now + 1000);
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: now + 1000, active: false });
+        guildTrialRecorder.noteLifecycle('completed', now + 1000);
+        expect(game.accrued).toHaveLength(1);
+        expect(lastOf(game.accrued[0].session).basis).toBeUndefined();
+
+        // The stats land 28 s after the end, as in a recorded trial
+        vi.setSystemTime(now + 29_000);
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: now + 1000, active: false, reported });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(game.accrued).toHaveLength(2);
+        expect(game.accrued[1].session).toBe(game.accrued[0].session);
+        expect(game.accrued[1].encounter).toBe('badger');
+        const final = lastOf(guildTrialRecorder.session);
+        expect(final.basis).toBe('game');
+        expect(final.players.find((row) => row.name === 'Tib').damage).toBe(350_000);
+        expect(lastOf(game.store[trialSessionStorageKey(null, game.characterId)]).basis).toBe('game');
+
+        // The game re-sends the message whenever its Stats panel is opened
+        vi.advanceTimersByTime(SNAPSHOT_MS * 4);
+        expect(game.accrued).toHaveLength(2);
+    });
+
+    test('totals already in hand when the session closes go into its only fold', () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: now, active: false, reported });
+
+        guildTrialRecorder.stop('the trial is completed');
+        vi.advanceTimersByTime(SNAPSHOT_MS * 2);
+
+        expect(game.accrued).toHaveLength(1);
+        expect(lastOf(game.accrued[0].session).basis).toBe('game');
+    });
+
+    test('another trial’s totals are not applied to this one', () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+
+        game.breakdown = breakdown({ encounter: 'swarm', active: false, reported });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(game.accrued).toHaveLength(1);
+        expect(lastOf(guildTrialRecorder.session).basis).toBeUndefined();
+    });
+
+    test('totals arriving after the wait leave the stream’s figures standing', () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+
+        vi.setSystemTime(now + RECONCILE_WAIT_MS + 30_000);
+        game.breakdown = breakdown({ encounter: 'badger', active: false, reported });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(game.accrued).toHaveLength(1);
+        expect(lastOf(guildTrialRecorder.session).basis).toBeUndefined();
+    });
+
+    test('a character switch drops the wait: later totals are the next character’s', () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+        const recorded = guildTrialRecorder.session;
+        guildTrialRecorder.forget();
+
+        game.breakdown = breakdown({ encounter: 'badger', active: false, reported });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(game.accrued).toHaveLength(1);
+        expect(lastOf(recorded).basis).toBeUndefined();
     });
 });
 

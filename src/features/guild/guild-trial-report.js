@@ -124,6 +124,59 @@ export function playerLine(player, support, rank) {
     return parts.join(' · ');
 }
 
+/** Says what "took" means on a report drawn from the game's own totals */
+export const TAKEN_BASIS_GAME = '(“took” is the game’s own damage taken, before mitigation.)';
+
+/** Says what "took" means on a report drawn from the stream */
+export const TAKEN_BASIS_STREAM =
+    '(“took” is health actually lost, after mitigation — the game’s own damage taken runs higher.)';
+
+/**
+ * Report rows from the game's end-of-trial totals, joined to the stream by name.
+ *
+ * Damage, healing and damage taken are the game's; deaths and the mana
+ * figures exist only on the stream and are carried over where a stream row
+ * has the same name. No per-second: the totals cover the whole trial and the
+ * stream's clock covers only the stretch that was watched.
+ *
+ * @param {Array<Object>|null} gameStats - From `modalStatsForBreakdown`
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @returns {Array<{player: Object, support: Object}>|null} Ranked rows, or null without totals
+ */
+export function gameReportRows(gameStats, breakdown) {
+    const list = (Array.isArray(gameStats) ? gameStats : []).filter((member) => String(member?.name || '').trim());
+    if (!list.length) return null;
+
+    const keyOf = (name) =>
+        String(name || '')
+            .trim()
+            .toLowerCase();
+    const streamPlayers = new Map((breakdown?.players || []).map((row) => [keyOf(row?.name), row]));
+    const streamSupport = new Map((breakdown?.support?.players || []).map((row) => [keyOf(row?.name), row]));
+    const total = list.reduce((sum, member) => sum + (Number(member.damage) || 0), 0);
+
+    return list
+        .map((member) => {
+            const key = keyOf(member.name);
+            const damage = Number(member.damage) || 0;
+            return {
+                player: {
+                    name: member.name,
+                    damage,
+                    share: total > 0 ? (damage / total) * 100 : null,
+                    dps: null,
+                    deaths: streamPlayers.get(key)?.deaths ?? streamSupport.get(key)?.deaths ?? 0,
+                },
+                support: {
+                    ...(streamSupport.get(key) || {}),
+                    healingDone: Number(member.healing) || 0,
+                    damageTaken: Number(member.damageTaken) || 0,
+                },
+            };
+        })
+        .sort((a, b) => b.player.damage - a.player.damage);
+}
+
 /**
  * The whole report, ready to paste.
  *
@@ -136,6 +189,8 @@ export function playerLine(player, support, rank) {
  * @param {Object} [input.estimate] - From `estimateDamageSplit`, used when nothing was measured
  * @param {Array<Object>} [input.pastWeeks] - Archived-cycle summaries from
  *   `summariseArchivedCycle`, newest first; appended as a short tail when present
+ * @param {Array<Object>|null} [input.gameStats] - From `modalStatsForBreakdown`: the game's
+ *   own end-of-trial totals, preferred over the stream whenever present
  * @returns {string} The report
  */
 export function buildGuildReport({
@@ -146,6 +201,7 @@ export function buildGuildReport({
     shortfall,
     estimate = null,
     pastWeeks = [],
+    gameStats = null,
 } = {}) {
     const players = breakdown?.players || [];
     const support = breakdown?.support?.players || [];
@@ -159,6 +215,32 @@ export function buildGuildReport({
     // the report takes — a guild judging this week's result wants last week's
     // beside it, and this is the only place those figures can still be read
     const history = (pastWeeks || []).length ? ['Past weeks:', ...pastWeeks.map((week) => pastWeekLine(week))] : [];
+
+    // The game's own totals are what the table beside the Copy button shows,
+    // and a pasted report must not disagree with it
+    const gameRows = gameReportRows(gameStats, breakdown);
+    if (gameRows) {
+        const total = gameRows.reduce((sum, row) => sum + row.player.damage, 0);
+        const lines = [headline, `Party · ${whole(total)} dmg`];
+        gameRows
+            .slice(0, MAX_REPORT_PLAYERS)
+            .forEach((row, index) => lines.push(playerLine(row.player, row.support, index + 1)));
+        if (gameRows.length > MAX_REPORT_PLAYERS) lines.push(`…and ${gameRows.length - MAX_REPORT_PLAYERS} more`);
+
+        const healed = gameRows.reduce((sum, row) => sum + row.support.healingDone, 0);
+        if (healed > 0) lines.push(`Healing · ${whole(healed)}`);
+        if (gameRows.some((row) => row.support.damageTaken > 0)) lines.push(TAKEN_BASIS_GAME);
+
+        const close = describeShortfall({ tier, ...(shortfall || {}) });
+        if (close) lines.push(close);
+        lines.push(
+            players.length || support.length
+                ? '(the game’s own end-of-trial totals; deaths and mana are from the trial fight stream)'
+                : '(the game’s own end-of-trial totals)'
+        );
+        lines.push(...history);
+        return lines.join('\n');
+    }
 
     if (!players.length) {
         const close = describeShortfall({ tier, ...(shortfall || {}) });
@@ -235,6 +317,7 @@ export function buildGuildReport({
                 (unattributed > 0 ? ` · ${whole(unattributed)} unattributed (regen, or two healers at once)` : '')
         );
     }
+    if (ranked.some((player) => (supportFor(player.index)?.damageTaken || 0) > 0)) lines.push(TAKEN_BASIS_STREAM);
 
     const close = describeShortfall({ tier, ...(shortfall || {}) });
     if (close) lines.push(close);

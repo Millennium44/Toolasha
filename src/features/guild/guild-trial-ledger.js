@@ -316,12 +316,17 @@ export function sessionContribution(session, { encounter = null, tier = null, ro
     const sum = (field) => members.reduce((total, member) => total + (member[field] || 0), 0);
 
     return {
-        // The session's own start is what makes a trial unique: two sessions
-        // cannot begin at the same millisecond, and re-folding the same one is
-        // the failure this guards
+        // The session's own start identifies the recording: re-folding the same
+        // one is a no-op. The trial itself is identified by its encounter as
+        // well — see `accrueTrial`
         trialId: `${weekStart}:${session?.startedAt ?? at}`,
         weekStart,
         at,
+        // Whose figures damage, healing and damage taken are: the game's own
+        // end-of-trial totals once the recorder has reconciled the snapshot
+        // against them, the stream's estimate until then
+        basis: last?.basis === 'game' ? 'game' : 'stream',
+        automatic: session?.startedBy !== 'button',
         encounter: encounter || null,
         tier: Number.isFinite(tier) ? tier : null,
         seconds,
@@ -337,12 +342,64 @@ export function sessionContribution(session, { encounter = null, tier = null, ro
     };
 }
 
+/** The per-member figures a trial entry keeps, so a later fold can take them back out */
+const MEMBER_FIGURES = ['damage', 'healing', 'damageTaken', 'deaths', 'manaSpent', 'starvedMs', 'lowManaMs'];
+
+/** How much a basis is trusted: the game's own totals over the stream's estimate */
+const BASIS_RANK = { stream: 0, game: 1 };
+
+/**
+ * The trial a contribution restates, if the cycle already holds it.
+ *
+ * The same recording (`trialId`), or the same encounter in the same cycle. A
+ * guild fights each combat encounter once a week and `storedStats` is keyed
+ * the same way, so two folds naming one encounter in one cycle are one trial
+ * read twice — a session restarted over a breakdown that still holds the
+ * finished fight's cumulative totals. Folding both would count every member's
+ * whole trial again.
+ *
+ * @param {Array<Object>} trials - The cycle's trial entries
+ * @param {Object} contribution - From {@link sessionContribution}
+ * @returns {number} The held entry's position, or -1
+ */
+function heldTrialIndex(trials, contribution) {
+    const byId = trials.findIndex((trial) => trial?.trialId === contribution.trialId);
+    if (byId !== -1 || !contribution.encounter) return byId;
+    return trials.findIndex((trial) => trial?.encounter && trial.encounter === contribution.encounter);
+}
+
+/**
+ * Whether a contribution should replace the held entry for the same trial.
+ *
+ * The game's totals replace the stream's; the stream never replaces the
+ * game's. Between two stream readings of one trial the larger cumulative total
+ * is the later, fuller one. The same recording at the same basis is the
+ * idempotent re-fold and changes nothing. An archived entry without per-member
+ * figures cannot be taken back out, so it is never replaced.
+ *
+ * @param {Object} held - The cycle's entry
+ * @param {Object} contribution - From {@link sessionContribution}
+ * @returns {boolean} Whether to replace it
+ */
+function supersedes(held, contribution) {
+    if (!Array.isArray(held?.memberFigures)) return false;
+    const heldRank = BASIS_RANK[held.basis] ?? 0;
+    const rank = BASIS_RANK[contribution.basis] ?? 0;
+    if (rank !== heldRank) return rank > heldRank;
+    if (held.trialId === contribution.trialId) return false;
+    return (Number(contribution.totals?.damage) || 0) > (Number(held.totals?.damage) || 0);
+}
+
 /**
  * Fold one trial's contribution into a cycle record.
  *
- * Idempotent on `trialId`: the recorder can stop a session more than once —
- * a manual stop racing the watcher's — and a trial counted twice would put a
- * member's attendance above the number of trials that happened.
+ * Idempotent on the trial: the same recording folded twice, or a second
+ * recording of an encounter the cycle already holds, changes nothing — a
+ * member's attendance must never exceed the trials that happened. The one
+ * exception is a better reading of the same trial (see {@link supersedes}),
+ * which takes the held entry's per-member figures back out before adding its
+ * own, so the game's totals arriving after the stream's estimate was folded
+ * correct the ledger rather than doubling it.
  *
  * @param {Object} cycle - The cycle record (not mutated)
  * @param {Object} contribution - From {@link sessionContribution}
@@ -357,10 +414,24 @@ export function accrueTrial(cycle, contribution, { participation = null } = {}) 
     if (!contribution?.trialId) return cycle;
 
     const trials = Array.isArray(cycle?.trials) ? cycle.trials : [];
-    if (trials.some((trial) => trial?.trialId === contribution.trialId)) return cycle;
+    const heldAt = heldTrialIndex(trials, contribution);
+    const held = heldAt === -1 ? null : trials[heldAt];
+    if (held && !supersedes(held, contribution)) return cycle;
 
     const members = {};
     for (const [key, tally] of Object.entries(cycle?.members || {})) members[key] = { ...tally };
+
+    if (held) {
+        for (const figures of held.memberFigures) {
+            const key = memberKey(figures?.name);
+            const tally = members[key];
+            if (!tally) continue;
+            tally.trials = Math.max(0, tally.trials - 1);
+            for (const field of MEMBER_FIGURES) tally[field] = (tally[field] || 0) - (Number(figures[field]) || 0);
+            tally.seconds = Math.max(0, (tally.seconds || 0) - (Number(held.seconds) || 0));
+            if (tally.trials === 0) delete members[key];
+        }
+    }
 
     for (const member of contribution.members || []) {
         const key = memberKey(member.name);
@@ -385,29 +456,43 @@ export function accrueTrial(cycle, contribution, { participation = null } = {}) 
         members[key] = tally;
     }
 
+    const entry = {
+        trialId: contribution.trialId,
+        at: contribution.at,
+        basis: contribution.basis || 'stream',
+        automatic: contribution.automatic !== false,
+        encounter: contribution.encounter,
+        tier: contribution.tier,
+        seconds: contribution.seconds,
+        participants: contribution.participants,
+        totals: { ...contribution.totals },
+        // Who this particular fight named, so a cycle holding several
+        // trials can say which of them a member was in rather than only
+        // how many. Additive: an archived trial entry has no such list
+        // and is read as "the whole cycle's tally" instead.
+        memberKeys: (contribution.members || []).map((member) => memberKey(member.name)).filter(Boolean),
+        // What this trial added per member, so a better reading of the same
+        // trial can take it back out. Additive, like `memberKeys`
+        memberFigures: (contribution.members || [])
+            .filter((member) => memberKey(member.name))
+            .map((member) => {
+                const figures = { name: member.name };
+                for (const field of MEMBER_FIGURES) figures[field] = member[field] || 0;
+                return figures;
+            }),
+    };
+
+    const nextTrials = [...trials];
+    if (held) nextTrials[heldAt] = entry;
+    else nextTrials.push(entry);
+
     return {
         ...cycle,
         weekStart: cycle?.weekStart ?? contribution.weekStart,
         scope: cycle?.scope ?? 'default',
         members,
         participation: mergeParticipation(cycle?.participation, participation),
-        trials: [
-            ...trials,
-            {
-                trialId: contribution.trialId,
-                at: contribution.at,
-                encounter: contribution.encounter,
-                tier: contribution.tier,
-                seconds: contribution.seconds,
-                participants: contribution.participants,
-                totals: { ...contribution.totals },
-                // Who this particular fight named, so a cycle holding several
-                // trials can say which of them a member was in rather than only
-                // how many. Additive: an archived trial entry has no such list
-                // and is read as "the whole cycle's tally" instead.
-                memberKeys: (contribution.members || []).map((member) => memberKey(member.name)).filter(Boolean),
-            },
-        ],
+        trials: nextTrials,
     };
 }
 

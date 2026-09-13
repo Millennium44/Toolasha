@@ -84,6 +84,17 @@ export const MANUAL_MAX_MS = 6 * 60 * 60 * 1000;
 export const GAP_AFTER_MS = 3 * SNAPSHOT_MS;
 
 /**
+ * How long a closed session waits for the game's own end-of-trial totals.
+ *
+ * `guild_trial_stats_updated` lands after `end_guild_battle` — 28 s later in a
+ * recorded 57-player trial — and a session is usually closed at the end. The
+ * window counts from whichever is later, the close or the game's end, and is
+ * checked on the recorder's 15 s tick, so it has to clear the delay by a few
+ * ticks. Past it the stream's figures stand.
+ */
+export const RECONCILE_WAIT_MS = 2 * 60_000;
+
+/**
  * Storage key for a guild's most recent session.
  *
  * Falls back to the character rather than to one shared bucket, for the reason
@@ -153,6 +164,65 @@ export function thinBreakdown(breakdown, at) {
     };
 }
 
+/**
+ * A closed session's final snapshot, restated in the game's own totals.
+ *
+ * `reported` is `guildTrialDamage.breakdown().reported`: the server's
+ * end-of-trial damage, healing and pre-mitigation damage taken per member name.
+ * Those three figures replace the stream's estimate row by row, matched on the
+ * name case-insensitively; a member the server credited and the stream never
+ * split out gains a row, and a stream row the server did not name keeps its
+ * own figures, because an unnameable id is dropped from `reported` rather than
+ * being absent from the trial. Deaths and the mana figures are stream-only and
+ * stay as they were. `basis: 'game'` marks the result, which the ledger reads.
+ *
+ * @param {Object|null} snapshot - A `thinBreakdown` snapshot, or null
+ * @param {Object|null} reported - Name → `{damage, healing, taken}`
+ * @param {number} [at] - When the totals were applied
+ * @returns {Object|null} A new snapshot, or the one given when there is nothing to apply
+ */
+export function reconcileSnapshot(snapshot, reported, at = Date.now()) {
+    const entries = Object.entries(reported && typeof reported === 'object' ? reported : {}).filter(([name]) =>
+        String(name || '').trim()
+    );
+    if (!entries.length) return snapshot;
+
+    const base = snapshot || { t: at, seconds: 0, fights: 0, totalDamage: 0, partyDps: null, players: [] };
+    const keyOf = (name) =>
+        String(name || '')
+            .trim()
+            .toLowerCase();
+    const byKey = new Map(entries.map(([name, stats]) => [keyOf(name), { name, stats }]));
+    const figures = (stats) => ({
+        damage: Number(stats?.damage) || 0,
+        healingDone: Number(stats?.healing) || 0,
+        damageTaken: Number(stats?.taken) || 0,
+    });
+
+    const claimed = new Set();
+    const players = (base.players || []).map((player) => {
+        const key = keyOf(player?.name);
+        const match = byKey.get(key);
+        if (!match || claimed.has(key)) return player;
+        claimed.add(key);
+        return { ...player, ...figures(match.stats) };
+    });
+    for (const [key, { name, stats }] of byKey) {
+        if (claimed.has(key)) continue;
+        const [row] = thinBreakdown({ players: [{ index: null, name, damage: 0, deaths: 0 }] }, at).players;
+        players.push({ ...row, ...figures(stats) });
+    }
+
+    return {
+        ...base,
+        players,
+        basis: 'game',
+        reconciledAt: at,
+        streamTotalDamage: base.totalDamage ?? 0,
+        totalDamage: players.reduce((sum, player) => sum + (Number(player.damage) || 0), 0),
+    };
+}
+
 class GuildTrialRecorder {
     constructor() {
         this.initialized = false;
@@ -165,6 +235,13 @@ class GuildTrialRecorder {
         this.lastActivityAt = 0;
         /** Where the guild panel says the cycle is; null until one has been read */
         this.phase = null;
+        /**
+         * The last closed session, while the game's own totals for it may still
+         * arrive: `{session, context, guildName, characterId, armedAt}`. Cleared
+         * once they are applied, so a stats message the game repeats (it is
+         * re-sent whenever the native Stats panel is opened) is folded once.
+         */
+        this.pendingReconcile = null;
     }
 
     /**
@@ -222,6 +299,9 @@ class GuildTrialRecorder {
      */
     forget() {
         if (this.recording) this.stop('character switched');
+        // The damage module is reset right after this; any totals arriving
+        // later belong to the next character's trial
+        this.pendingReconcile = null;
         this.session = null;
         this.lastActivityAt = 0;
         this.phase = null;
@@ -272,48 +352,167 @@ class GuildTrialRecorder {
             this._snapshot(at);
             this.session.endedAt = at;
             this.session.endedBy = reason;
+
+            // Read once, synchronously: `forget` resets the damage module
+            // straight after this returns
+            const breakdown = this._breakdown();
+            const fold = {
+                session: this.session,
+                context: this._foldContext(breakdown, this.session),
+                guildName: this.guildName,
+                characterId: this.characterId,
+                armedAt: at,
+            };
+            this.pendingReconcile = fold;
+            // Totals already in hand (a session closed after they landed) go
+            // into the first fold rather than a correction of it
+            this._applyReported(breakdown, at);
+
             this._persist();
-            this._accrue();
+            this._accrue(fold, breakdown);
         }
         return this.session;
     }
 
+    /** @returns {Object} The damage module's breakdown, or an empty one when it cannot be read */
+    _breakdown() {
+        try {
+            return guildTrialDamage.breakdown?.() || {};
+        } catch (error) {
+            console.error('[GuildTrialRecorder] Reading the trial breakdown failed:', error);
+            return {};
+        }
+    }
+
     /**
-     * Fold the finished session into the long-lived attendance ledger.
+     * What the damage module knew about the trial a session recorded.
+     *
+     * The encounter is the trial's identity in the ledger (see `accrueTrial`),
+     * so it is only attached when the breakdown's own trial ran in the session's
+     * trial week. A breakdown kept in memory from an earlier week's fight must
+     * not give a later session that fight's identity, where it would collide
+     * with this week's fold of the same encounter.
+     *
+     * @param {Object} breakdown - `guildTrialDamage.breakdown()`
+     * @param {Object} session - The session being folded
+     * @returns {{encounter: string|null, tier: number|null, roster: Array<string>, participants: number|null}}
+     */
+    _foldContext(breakdown, session) {
+        const seen = [breakdown?.spectator?.lastAt, breakdown?.endedAt].find(
+            (stamp) => Number.isFinite(stamp) && stamp > 0
+        );
+        const thisWeek =
+            seen === undefined || !Number.isFinite(session?.weekStart) || trialWeekStart(seen) === session.weekStart;
+        return {
+            encounter: thisWeek ? (breakdown?.encounter ?? null) : null,
+            tier: breakdown?.tier ?? null,
+            roster: Object.values(breakdown?.roster || {})
+                .map((entry) => (typeof entry === 'string' ? entry : entry?.name))
+                .filter((name) => typeof name === 'string' && name),
+            participants: breakdown?.participants ?? null,
+        };
+    }
+
+    /**
+     * Put the game's own totals into the pending session, once.
+     *
+     * Only for the trial the session recorded — the breakdown's encounter must
+     * match the one folded — and only for the character that recorded it. The
+     * final snapshot is replaced, so the finished-trial rows drawn from it and
+     * the ledger fold read the same figures.
+     *
+     * @param {Object} breakdown - `guildTrialDamage.breakdown()`
+     * @param {number} at - Clock
+     * @returns {boolean} Whether totals were applied
+     */
+    _applyReported(breakdown, at) {
+        const pending = this.pendingReconcile;
+        if (!pending) return false;
+
+        const reported = breakdown?.reported;
+        if (!reported || typeof reported !== 'object' || !Object.keys(reported).length) return false;
+
+        if (pending.characterId !== (dataManager.getCurrentCharacterId?.() ?? null)) {
+            this.pendingReconcile = null;
+            return false;
+        }
+        const encounter = breakdown?.encounter ?? null;
+        if (pending.context.encounter && encounter !== pending.context.encounter) return false;
+
+        const snapshots = pending.session.snapshots || (pending.session.snapshots = []);
+        const last = snapshots[snapshots.length - 1] || null;
+        if (last?.basis === 'game') {
+            this.pendingReconcile = null;
+            return false;
+        }
+
+        const patched = reconcileSnapshot(last, reported, at);
+        if (last) snapshots[snapshots.length - 1] = patched;
+        else snapshots.push(patched);
+        pending.session.reconciledAt = at;
+        if (!pending.context.encounter) pending.context.encounter = encounter;
+
+        this.pendingReconcile = null;
+        return true;
+    }
+
+    /**
+     * Apply the game's totals to the last closed session if they have landed,
+     * and correct the ledger fold with them.
+     *
+     * @param {Object} breakdown - `guildTrialDamage.breakdown()`
+     * @param {number} now - Clock
+     */
+    _reconcilePending(breakdown, now) {
+        const pending = this.pendingReconcile;
+        if (!pending) return;
+
+        const endedAt = Number.isFinite(breakdown?.endedAt) ? breakdown.endedAt : 0;
+        if (now - Math.max(pending.armedAt, endedAt) > RECONCILE_WAIT_MS) {
+            this.pendingReconcile = null;
+            return;
+        }
+        if (!this._applyReported(breakdown, now)) return;
+
+        // Storage keeps one session per guild; a newer one opened since is
+        // not overwritten with the old one
+        if (pending.session === this.session) this._persist();
+        this._accrue(pending, breakdown);
+    }
+
+    /**
+     * Fold a finished session into the long-lived attendance ledger.
      *
      * The archive in `guild-trials-store.js` keeps four cycles; the ledger keeps
-     * half a year of one small row per member, and this is the only moment it is
-     * ever written. Idempotent on the session's own start time, so a manual stop
-     * racing the watcher's cannot count the hour twice.
+     * half a year of one small row per member. Written when a session closes,
+     * and once more if the game's own totals land afterwards — the ledger
+     * replaces the stream fold with them rather than adding a second trial.
      *
      * Not awaited by `stop`, and `async` so that its own `catch` covers a
      * rejection as well as a throw: every failure here is the ledger's own, and
      * a table with a hole in it must never be the reason a recording fails to be
      * saved — nor an unhandled rejection on the page.
      *
+     * @param {Object} fold - `{session, context, guildName, characterId}`, as armed by `stop`
+     * @param {Object} breakdown - `guildTrialDamage.breakdown()`, read by the caller
      * @returns {Promise<void>}
      * @private
      */
-    async _accrue() {
+    async _accrue(fold, breakdown) {
         try {
             // The ledger is its own setting, and a player who switched it off
             // was switching off the record, not merely the panel that reads it.
             // Writing half a year of per-member rows for somebody who asked for
             // none is the one thing the setting exists to prevent
             if (!config.getSetting('guildTrialLedger')) return;
+            if (!fold?.session) return;
 
-            const breakdown = guildTrialDamage.breakdown?.() || {};
             await recordFinishedTrial({
-                session: this.session,
-                guildName: this.guildName,
-                characterId: this.characterId,
-                encounter: breakdown.encounter ?? null,
-                tier: breakdown.tier ?? null,
-                roster: Object.values(breakdown.roster || {})
-                    .map((entry) => (typeof entry === 'string' ? entry : entry?.name))
-                    .filter((name) => typeof name === 'string' && name),
-                participants: breakdown.participants ?? null,
-                participation: this._participation(breakdown),
+                session: fold.session,
+                guildName: fold.guildName,
+                characterId: fold.characterId,
+                ...fold.context,
+                participation: this._participation(breakdown, fold.session),
             });
         } catch (error) {
             console.error('[GuildTrialRecorder] Folding the session into the ledger failed:', error);
@@ -341,10 +540,11 @@ class GuildTrialRecorder {
      * whole path exists to stop making.
      *
      * @param {Object} breakdown - `guildTrialDamage.breakdown()`
+     * @param {Object} [session] - The session being folded, for its trial week
      * @returns {Object|null} Trial key → roster, or null when nothing states one
      * @private
      */
-    _participation(breakdown) {
+    _participation(breakdown, session = this.session) {
         try {
             const at = Date.now();
             const participation = signupParticipation(guildXPTracker.getMemberList?.() || [], {
@@ -357,7 +557,7 @@ class GuildTrialRecorder {
             // roster folded into this cycle would settle attendance off last
             // week's fight, so only entries stamped inside this session's own
             // trial week count here.
-            const week = Number.isFinite(this.session?.weekStart) ? this.session.weekStart : trialWeekStart(at);
+            const week = Number.isFinite(session?.weekStart) ? session.weekStart : trialWeekStart(at);
             for (const [encounter, entry] of Object.entries(breakdown?.storedStats || {})) {
                 const names = Object.keys(entry?.reported || {});
                 if (!encounter || !names.length) continue;
@@ -420,7 +620,32 @@ class GuildTrialRecorder {
 
         if (this.recording) return;
         if (!config.getSetting('guildTrialAutoRecord', true)) return;
+        if (this._trialDeclaredOver(at)) return;
         this.start(kind, at);
+    }
+
+    /**
+     * Whether the combat trial the damage module holds has already ended.
+     *
+     * A session opened over a finished trial snapshots that trial's whole
+     * cumulative breakdown and folds it into the ledger again when it closes.
+     * Ticks trailing in after `end_guild_battle`, a `guild_updated` saying
+     * another party's fight is still running, and a tab reading all arrive
+     * after the end, so while `endedAt` (or `endedByGame`) stands nothing may
+     * arm a session by itself. The button still can.
+     *
+     * Bounded to the trial week the trial ended in: combat is the cycle's last
+     * trial, a new fight clears `endedAt` in the damage module, and an
+     * `endedAt` left in memory must not refuse next week's trials.
+     *
+     * @param {number} at - Clock
+     * @returns {boolean} Whether auto-start is refused
+     */
+    _trialDeclaredOver(at) {
+        const breakdown = this._breakdown();
+        const endedAt = Number.isFinite(breakdown?.endedAt) ? breakdown.endedAt : null;
+        if (endedAt === null && breakdown?.endedByGame !== true) return false;
+        return trialWeekStart(endedAt ?? at) === trialWeekStart(at);
     }
 
     /**
@@ -457,6 +682,9 @@ class GuildTrialRecorder {
         try {
             const now = Date.now();
             const breakdown = guildTrialDamage.breakdown?.();
+            // Before anything can open a new session: the last one's fold is
+            // corrected with the game's totals if they have landed
+            this._reconcilePending(breakdown, now);
             // A fight the damage gate has armed is a trial by the gate's own
             // narrow test, which is evidence enough on its own
             if (breakdown?.active) this.noteActivity('trial-fight', now);
