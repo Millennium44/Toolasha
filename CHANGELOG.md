@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Healing done credits only real healing, and Healed moves into Taken
+
+- The Per-player panel's Healing done tab handed any unexplained health rise to whoever happened to be casting, or to the only player on the tick, so a party with no healer read as a damage dealer healing tens of thousands through Entangle, and a player's own regeneration counted as their healing. It now credits only heal casts, life-steal from a hit, and Blooming Trident procs (shown as "Bloom (via …)"); regeneration, food and anything else sit on one "not from a cast" line under the table.
+- The separate Healed tab is gone: the Taken tab now shows what each player received and their net beside what they took. The trial board's By caster view is unchanged, since every stricter rule measured worse against the game's own healing figures.
+
 ### The dungeon tracker stops showing for a dungeon that is only queued
 
 - With a dungeon queued behind a craft, the dungeon tracker showed "waiting for next wave" as if the dungeon were running. The shared helper that finds the running action picked the lowest-ordinal action among combat actions only, so a queued dungeon won whenever the real running action was a skill. It now finds the running action first and then asks whether it is combat, which fixes every feature that uses it.
