@@ -1076,6 +1076,45 @@ describe('reflect', () => {
     });
 });
 
+describe('an area attack, target by target', () => {
+    // KikiMeter scores an AoE per target (3 of 4 hit is 75%) and does not count
+    // a dead monster as a miss. Each monster here is classified on its own, a
+    // miss being that target's counter rising with its health unchanged
+    const four = (hp) =>
+        Object.fromEntries([0, 1, 2, 3].map((index) => [index, monster(hp[index], index < 3 ? 1 : 0)]));
+
+    test('three targets hit and one missed are three hits and one miss', () => {
+        const state = newAttributionState();
+        noteActions(state, { 0: { isAutoAtk: true } });
+        attributeTick(tick(four([1000, 1000, 1000, 1000]), { 0: { cMP: 100 } }), state);
+        const events = attributeTick(
+            tick(
+                { 0: monster(800, 2), 1: monster(700, 2), 2: monster(900, 2), 3: monster(1000, 1) },
+                { 0: { cMP: 90 } }
+            ),
+            state
+        );
+        const tally = foldEvents({}, events);
+
+        expect(tally['0']).toMatchObject({ hits: 3, misses: 1, damage: 600 });
+        expect(tally['0'].hits / (tally['0'].hits + tally['0'].misses)).toBe(0.75);
+    });
+
+    test('a monster already dead is not a target, so not a miss', () => {
+        const state = newAttributionState();
+        noteActions(state, { 0: { isAutoAtk: true } });
+        attributeTick(tick(four([1000, 1000, 1000, 0]), { 0: { cMP: 100 } }), state);
+        // The corpse stays in the payload, counter unmoved, while the live three are struck
+        const events = attributeTick(
+            tick({ 0: monster(800, 2), 1: monster(700, 2), 2: monster(900, 2), 3: monster(0, 0) }, { 0: { cMP: 90 } }),
+            state
+        );
+
+        expect(events.filter((event) => event.monsterIndex === '3')).toEqual([]);
+        expect(foldEvents({}, events)['0']).toMatchObject({ hits: 3, misses: 0 });
+    });
+});
+
 describe('a monster respawning into a slot', () => {
     const unit = (cHP, mHP, dmgCounter) => ({ cHP, mHP, dmgCounter, critCounter: 0 });
 
