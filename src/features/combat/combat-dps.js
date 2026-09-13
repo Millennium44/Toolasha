@@ -65,6 +65,12 @@ class CombatDPS {
         this.monsterHp = new Map();
         this.playerHp = new Map();
         this.partySize = 1;
+        // Every slot seen so far, from `new_battle`'s full roster or —
+        // before one has arrived — accumulated from `pMap`, which is
+        // actor-grouped and sparse (a five-player party averages about one
+        // entry per tick). Counting a single tick's `pMap` read the party as
+        // whoever happened to act that tick rather than who was in it.
+        this.partySlots = new Set();
         this.battleId = null;
         this.battleSeeded = false;
     }
@@ -124,9 +130,17 @@ class CombatDPS {
                 const seeded = Number.isFinite(hp) ? hp : Number.isFinite(max) ? max : null;
                 if (seeded !== null) this.monsterHp.set(slot, seeded);
             }
+            const roster = Object.keys(data?.players || {});
             for (const [slot, player] of Object.entries(data?.players || {})) {
                 const hp = Number(player?.currentHitpoints ?? player?.combatDetails?.currentHitpoints ?? player?.cHP);
                 if (Number.isFinite(hp)) this.playerHp.set(slot, hp);
+            }
+            // The one message that states the whole party at once, so it is
+            // trusted outright rather than merely folded into the tick-by-tick
+            // accumulation below
+            if (roster.length > 0) {
+                this.partySlots = new Set(roster);
+                this.partySize = roster.length;
             }
             this.battleSeeded = true;
         } catch (error) {
@@ -187,8 +201,15 @@ class CombatDPS {
             this.damage += this._foldSide(data?.mMap, this.monsterHp);
             this.taken += this._foldSide(data?.pMap, this.playerHp);
 
-            const players = Object.keys(data?.pMap || {}).length;
-            if (players > 0) this.partySize = players;
+            // Only a fallback for the ticks before any `new_battle` has
+            // arrived (a reload mid-fight): `pMap` is actor-grouped and
+            // sparse, so counting one tick's entries reads the party as
+            // whoever happened to act that tick rather than who was in it —
+            // a five-player party averages about one entry per tick. Every
+            // distinct slot seen is kept instead, which converges on the
+            // true size as more of the party acts.
+            for (const slot of Object.keys(data?.pMap || {})) this.partySlots.add(slot);
+            if (this.partySlots.size > this.partySize) this.partySize = this.partySlots.size;
 
             // Only the gap between two ticks of the same fight is time spent
             // fighting; the first tick after a break contributes none

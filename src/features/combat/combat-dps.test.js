@@ -188,6 +188,32 @@ describe('seeding a battle from new_battle', () => {
     });
 });
 
+describe('party size for the fallback figure', () => {
+    test('taken from new_battle’s roster rather than one sparse pMap tick', () => {
+        // pMap is actor-grouped: a five-player party averages about one entry
+        // per tick, so a single tick's key count is not the party
+        combatDPS._onNewBattle({
+            players: { 0: {}, 1: {}, 2: {}, 3: {}, 4: {} },
+            monsters: {},
+        });
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: {}, pMap: { 0: { cHP: 100 } } });
+
+        expect(combatDPS.partySize).toBe(5);
+    });
+
+    test('before any new_battle, the fallback converges on distinct slots seen', () => {
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: {}, pMap: { 0: { cHP: 100 } } });
+        expect(combatDPS.partySize).toBe(1);
+
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: {}, pMap: { 1: { cHP: 100 } } });
+        expect(combatDPS.partySize).toBe(2);
+
+        // A tick that only mentions one of them again does not shrink it back
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: {}, pMap: { 0: { cHP: 90 } } });
+        expect(combatDPS.partySize).toBe(2);
+    });
+});
+
 describe('without attribution', () => {
     test('nothing measured at all draws nothing', () => {
         expect(draw().textContent).toBe('');
