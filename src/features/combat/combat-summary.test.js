@@ -48,6 +48,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 const combatSummary = (await import('./combat-summary.js')).default;
+const marketAPI = (await import('../../api/marketplace.js')).default;
 
 /** Build the battle panel shape the feature injects into. */
 function buildBattlePanel(combatInfoHTML) {
@@ -77,6 +78,7 @@ describe('combat summary', () => {
         game.marketLoaded = true;
         game.prices = {};
         game.wsHandlers = {};
+        game.characterId = 'me-1';
         combatSummary.disable();
         combatSummary.initialize();
     });
@@ -200,6 +202,31 @@ describe('combat summary', () => {
         });
 
         expect(document.querySelectorAll('#mwi-combat-revenue')).toHaveLength(1);
+    });
+
+    test('a character switch during the market fetch discards the summary rather than injecting it', async () => {
+        // The fetch is the only await in the handler; a switch that lands
+        // while it is pending must not let the previous character's revenue
+        // and exp land on the arriving character's Battle Info
+        game.marketLoaded = false;
+        let resolveFetch;
+        marketAPI.fetch.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFetch = resolve;
+                })
+        );
+        buildBattlePanel('Combat Duration: 1h 0m 0s | Battles: 2 | Deaths: 0');
+
+        const pending = game.wsHandlers.battle_unit_fetched({
+            unit: { totalLootMap: {}, totalSkillExperienceMap: {} },
+        });
+
+        game.characterId = 'someone-else';
+        resolveFetch({});
+        await pending;
+
+        expect(text('mwi-combat-revenue')).toBeNull();
     });
 
     test('market data is fetched when not yet loaded, and the summary still renders', async () => {

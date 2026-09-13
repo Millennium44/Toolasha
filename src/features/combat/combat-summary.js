@@ -92,10 +92,14 @@ class CombatSummary {
             return;
         }
 
+        // Captured before the market fetch below can await across a character
+        // switch — see the check after it for why.
+        const characterId = dataManager.getCurrentCharacterId();
+
         // A unit sheet (clicking a monster or yourself mid-fight) rides the same
         // message and is not a summary — drop it silently, before the market
         // fetch, the missing-map warnings and the battle-panel hunt.
-        if (!isSessionSummary(message, dataManager.getCurrentCharacterId())) {
+        if (!isSessionSummary(message, characterId)) {
             return;
         }
 
@@ -104,6 +108,16 @@ class CombatSummary {
             const marketData = await marketAPI.fetch();
             if (!marketData) {
                 console.error('[Combat Summary] Market data not available');
+                return;
+            }
+
+            // The character playing when the fetch resolves may not be the one
+            // this summary belongs to: the market can take a moment to load,
+            // and switching character in the meantime would inject the
+            // previous character's revenue and exp rates into the new
+            // character's Battle Info — a document-global query with no owner
+            // check of its own.
+            if (dataManager.getCurrentCharacterId() !== characterId) {
                 return;
             }
         }
