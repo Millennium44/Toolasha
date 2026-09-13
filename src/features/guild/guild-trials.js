@@ -193,6 +193,32 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
 /** Class every injected element carries, so cleanup is one query */
 const CSS_CLASS = 'mwi-trial-info';
 
+/** Marks the scoreboard toggle beside the guild panel's tabs, so every copy can be found and removed */
+const SCOREBOARD_TAB_ATTR = 'data-mwi-scoreboard-tab';
+
+/**
+ * The guild panel's own tab strip — Overview, Members, Trials and the rest.
+ *
+ * Found by role, never by the shared Tabs component's class: that class prefix
+ * is carried by the strip's wrapper and its panels container as well as by the
+ * tabs, so a substring match lands on the wrapper first. Two other strips are
+ * refused: one inside a floating dialog (the trial stats modal's per-member tabs
+ * are built off the same component and nested inside the panel), and one inside
+ * a tab's own content, such as the Trials tab's Trials / In Progress pair.
+ *
+ * @param {Element} panel - The guild panel
+ * @returns {Element|null} The `role="tablist"` element, or null
+ */
+export function guildPanelTabList(panel) {
+    for (const list of panel?.querySelectorAll?.('[role="tablist"]') || []) {
+        if (inFloatingDialog(list)) continue;
+        const content = list.closest('[class*="TabsComponent_tabPanelsContainer"]');
+        if (content && panel.contains(content)) continue;
+        return list;
+    }
+    return null;
+}
+
 /** How often a reading is taken while the tab is open */
 const SAMPLE_MS = 5000;
 
@@ -4458,31 +4484,43 @@ class GuildTrials {
      */
     _ensureScoreboardTabButton() {
         const panel = document.querySelector('[class*="GuildPanel"]');
-        if (!panel) return;
+        const list = panel ? guildPanelTabList(panel) : null;
 
-        // Excludes our own clone (which also carries the class it was cloned
-        // from) and anything inside a floating dialog — the trial stats modal
-        // has its own per-member tab strip, built off the same shared Tabs
-        // component, and it is nested inside the panel rather than a portal
-        // elsewhere (see `inFloatingDialog`'s own doc for the popup this
-        // fooled before)
-        const tabs = [...panel.querySelectorAll('[class*="TabsComponent_tab"]')].filter(
-            (tab) => tab !== this._scoreboardTabButton && !inFloatingDialog(tab)
-        );
-        const strip = tabs[0]?.parentElement;
-        if (!strip) return;
-
-        if (this._scoreboardTabButton && strip.contains(this._scoreboardTabButton)) {
+        // Every copy that is not a direct child of the strip goes: one left in a
+        // strip React has since replaced, and the whole-strip clone an earlier
+        // build stood up as a second tab row
+        for (const stray of document.querySelectorAll(`[${SCOREBOARD_TAB_ATTR}]`)) {
+            if (!list || stray.parentElement !== list || stray !== this._scoreboardTabButton) stray.remove();
+        }
+        if (!list) {
+            this._scoreboardTabButton = null;
+            return;
+        }
+        if (this._scoreboardTabButton?.parentElement === list) {
             this._syncScoreboardTabButton();
             return;
         }
-        this._scoreboardTabButton?.remove();
 
-        const button = tabs[0].cloneNode(true);
+        // A real tab of this strip, never the strip itself: the class selector
+        // this used to pick its model with, `[class*="TabsComponent_tab"]`, is a
+        // substring match, and the first element carrying it in the panel is
+        // `TabsComponent_tabsContainer` — the wrapper of the whole strip. Cloning
+        // that stood a second copy of every tab under the real row, and the badge
+        // relabelled below was the copy's Overview tab
+        const model = [...list.querySelectorAll('[role="tab"]')].find(
+            (tab) => tab.closest('[role="tablist"]') === list
+        );
+        if (!model) return;
+
+        const button = model.cloneNode(true);
+        button.setAttribute(SCOREBOARD_TAB_ATTR, '');
         button.removeAttribute('id');
         button.title = 'Trial damage — who is carrying it, ranked.';
         button.classList.remove('Mui-selected');
-        button.setAttribute('aria-selected', 'false');
+        // Not a tab: it opens something rather than switching what the panel
+        // shows, so it takes no part in the strip's selection or its tab order
+        button.setAttribute('role', 'button');
+        button.removeAttribute('aria-selected');
         button.setAttribute('tabindex', '-1');
         button.removeAttribute('aria-controls');
         // `cloneNode` copies the model tab's inline state along with its
@@ -4504,7 +4542,7 @@ class GuildTrials {
             this._syncScoreboardTabButton();
         });
 
-        strip.appendChild(button);
+        list.appendChild(button);
         this._scoreboardTabButton = button;
         this._syncScoreboardTabButton();
     }
@@ -4923,6 +4961,7 @@ class GuildTrials {
         this.blockHtml.clear();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
         this._scoreboardTabButton?.remove();
+        document.querySelectorAll(`[${SCOREBOARD_TAB_ATTR}]`).forEach((el) => el.remove());
         this._scoreboardTabButton = null;
         this._autoOpenedTrialKey = null;
         // In-memory only: the persisted copy stays, and the next initialize

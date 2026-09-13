@@ -3634,91 +3634,152 @@ describe('the panel, end to end', () => {
 
     describe('the tab-bar toggle button', () => {
         /**
-         * The guild panel's own tab strip, as a handful of plain tabs.
+         * One MUI tab strip as the game's shared Tabs component renders it: a
+         * `TabsComponent_tabsContainer` wrapper around the MUI scroller, whose
+         * flex container is the `role="tablist"` holding the tab buttons.
          * @param {string[]} names - Tab labels
-         * @returns {{panel: Element, strip: Element}}
+         * @param {number} [selected] - Which tab is selected
+         * @returns {string} Markup
          */
-        function buildGuildPanelWithTabs(names = ['Overview', 'Members', 'Trials']) {
-            document.body.innerHTML = '';
-            const panel = document.createElement('div');
-            panel.className = 'GuildPanel_root__z';
-            const strip = document.createElement('div');
-            for (const name of names) {
-                const tab = document.createElement('div');
-                tab.className = 'TabsComponent_tab__x';
-                tab.textContent = name;
-                strip.appendChild(tab);
-            }
-            panel.appendChild(strip);
-            document.body.appendChild(panel);
-            return { panel, strip };
+        const stripHTML = (names, selected = 0) =>
+            '<div class="TabsComponent_tabsContainer__t"><div class="MuiTabs-root"><div class="MuiTabs-scroller">' +
+            '<div class="MuiTabs-flexContainer" role="tablist">' +
+            names
+                .map(
+                    (name, index) =>
+                        `<button class="MuiButtonBase-root MuiTab-root${index === selected ? ' Mui-selected' : ''}" ` +
+                        `role="tab" aria-selected="${index === selected}" tabindex="${index === selected ? 0 : -1}">` +
+                        `<span class="MuiBadge-root TabsComponent_badge__b">${name}</span></button>`
+                )
+                .join('') +
+            '</div><span class="MuiTabs-indicator"></span></div></div></div>';
+
+        const GUILD_TABS = ['Overview', 'Members', 'Trials', 'Buildings', 'Shop', 'Icons'];
+
+        /**
+         * The guild panel: its own strip, then the panels container, whose Trials
+         * content carries a strip of its own.
+         * @returns {Element} The panel
+         */
+        function buildGuildPanel() {
+            document.body.innerHTML =
+                '<div class="GuildPanel_guildPanel__z"><div class="TabsComponent_tabsComponent__c">' +
+                stripHTML(GUILD_TABS) +
+                '<div class="TabsComponent_tabPanelsContainer__p"><div class="TabPanel_tabPanel__q">' +
+                stripHTML(['Trials', 'In Progress']) +
+                '</div></div></div></div>';
+            return document.querySelector('.GuildPanel_guildPanel__z');
         }
 
-        /** @returns {Element|null} The injected toggle, found by its own label */
-        const findInjected = () =>
-            [...document.querySelectorAll('.TabsComponent_tab__x')].find((el) => el.textContent.includes('Damage'));
+        /** @returns {Element} The guild panel's own tablist */
+        const guildList = () => document.querySelector('[role="tablist"]');
+        /** @returns {string[]} The labels of a tablist's children, in order */
+        const labels = (list) => [...list.children].map((el) => el.textContent.trim());
+        /** @returns {Element[]} Every injected toggle */
+        const injected = () => [...document.querySelectorAll('[data-mwi-scoreboard-tab]')];
 
-        test('is injected beside the guild panel’s own tabs, stripped of tab semantics', () => {
-            buildGuildPanelWithTabs();
+        test('sits after the game’s own tabs, and never copies or relabels one of them', () => {
+            buildGuildPanel();
             guildTrials._ensureScoreboardTabButton();
 
-            const injected = findInjected();
-            expect(injected).toBeTruthy();
-            expect(injected.getAttribute('aria-selected')).toBe('false');
-            expect(injected.classList.contains('Mui-selected')).toBe(false);
+            // One strip of guild tabs with the toggle at its end — not a second
+            // row whose first tab reads "⚔ Damage", which is what cloning the
+            // strip's wrapper put on screen
+            expect(labels(guildList())).toEqual([...GUILD_TABS, '⚔ Damage']);
+            expect(document.querySelectorAll('[role="tablist"]')).toHaveLength(2);
+            expect(document.querySelectorAll('.TabsComponent_tabsContainer__t')).toHaveLength(2);
+            expect([...document.querySelectorAll('button')].filter((b) => b.textContent === 'Overview')).toHaveLength(
+                1
+            );
+
+            // The game's selected tab keeps its selection; the toggle claims none
+            const [overview] = guildList().children;
+            expect(overview.classList.contains('Mui-selected')).toBe(true);
+            expect(overview.getAttribute('aria-selected')).toBe('true');
+            const [button] = injected();
+            expect(button.classList.contains('Mui-selected')).toBe(false);
+            expect(button.hasAttribute('aria-selected')).toBe(false);
+            expect(button.getAttribute('role')).toBe('button');
+
+            // The Trials tab's own Trials / In Progress strip is left alone
+            const nested = document.querySelectorAll('[role="tablist"]')[1];
+            expect(labels(nested)).toEqual(['Trials', 'In Progress']);
         });
 
         test('toggles the board on click, and dims to say it is shut', () => {
-            buildGuildPanelWithTabs();
+            buildGuildPanel();
             guildTrials._ensureScoreboardTabButton();
-            const injected = findInjected();
+            const [button] = injected();
 
             game.scoreboardOpen = false;
-            injected.click();
+            button.click();
             expect(game.scoreboardToggles).toBe(1);
-            expect(injected.style.opacity).toBe('1');
+            expect(button.style.opacity).toBe('1');
 
-            injected.click();
+            button.click();
             expect(game.scoreboardToggles).toBe(2);
-            expect(injected.style.opacity).toBe('0.6');
+            expect(button.style.opacity).toBe('0.6');
         });
 
-        test('re-injects rather than duplicating when React rebuilds the strip', () => {
-            const { panel } = buildGuildPanelWithTabs();
-            guildTrials._ensureScoreboardTabButton();
-            expect(document.querySelectorAll('.TabsComponent_tab__x').length).toBe(4);
-
-            // React tears the whole strip down and stands a fresh one up in its place
-            panel.querySelector('div').remove();
-            const freshStrip = document.createElement('div');
-            for (const name of ['Overview', 'Members', 'Trials']) {
-                const tab = document.createElement('div');
-                tab.className = 'TabsComponent_tab__x';
-                tab.textContent = name;
-                freshStrip.appendChild(tab);
-            }
-            panel.appendChild(freshStrip);
-
-            guildTrials._ensureScoreboardTabButton();
-            expect(document.querySelectorAll('.TabsComponent_tab__x').length).toBe(4);
+        test('every guild-panel mutation calls it, and it never stacks a second copy', () => {
+            buildGuildPanel();
+            for (let pass = 0; pass < 5; pass += 1) guildTrials._ensureScoreboardTabButton();
+            expect(injected()).toHaveLength(1);
+            expect(labels(guildList())).toEqual([...GUILD_TABS, '⚔ Damage']);
         });
 
-        test('ignores a tab-shaped strip inside a floating dialog, such as the trial stats modal', () => {
-            document.body.innerHTML = '';
-            const panel = document.createElement('div');
-            panel.className = 'GuildPanel_root__z';
-            const modal = document.createElement('div');
-            modal.className = 'Modal_modalContainer__x';
-            const modalTab = document.createElement('div');
-            modalTab.className = 'TabsComponent_tab__x';
-            modalTab.textContent = 'Member 1';
-            modal.appendChild(modalTab);
-            panel.appendChild(modal);
-            document.body.appendChild(panel);
+        test('follows a strip React rebuilt, leaving no copy behind in the old one', () => {
+            const panel = buildGuildPanel();
+            guildTrials._ensureScoreboardTabButton();
+            const old = injected()[0];
+
+            // React stands a fresh strip up in place of the old one…
+            const wrapper = panel.querySelector('.TabsComponent_tabsContainer__t');
+            const fresh = document.createElement('div');
+            fresh.innerHTML = stripHTML(GUILD_TABS, 2);
+            wrapper.replaceWith(fresh.firstElementChild);
+            // …while a stale reference to the detached copy is still held
+            guildTrials._ensureScoreboardTabButton();
+
+            expect(injected()).toHaveLength(1);
+            expect(injected()[0]).not.toBe(old);
+            expect(labels(guildList())).toEqual([...GUILD_TABS, '⚔ Damage']);
+            expect(guildList().children[2].classList.contains('Mui-selected')).toBe(true);
+        });
+
+        test('a copy left anywhere else — such as a whole cloned strip — is cleared away', () => {
+            const panel = buildGuildPanel();
+            const leftover = document.createElement('div');
+            leftover.setAttribute('data-mwi-scoreboard-tab', '');
+            panel.appendChild(leftover);
 
             guildTrials._ensureScoreboardTabButton();
 
-            expect(findInjected()).toBeUndefined();
+            expect(panel.contains(leftover)).toBe(false);
+            expect(injected()).toHaveLength(1);
+        });
+
+        test('ignores a tab strip inside a floating dialog, such as the trial stats modal', () => {
+            document.body.innerHTML =
+                '<div class="GuildPanel_guildPanel__z"><div class="Modal_modalContainer__x">' +
+                stripHTML(['Member 1', 'Member 2']) +
+                '</div></div>';
+
+            guildTrials._ensureScoreboardTabButton();
+
+            expect(injected()).toHaveLength(0);
+            expect(labels(document.querySelector('[role="tablist"]'))).toEqual(['Member 1', 'Member 2']);
+        });
+
+        test('teardown takes it away', () => {
+            buildGuildPanel();
+            guildTrials._ensureScoreboardTabButton();
+            expect(injected()).toHaveLength(1);
+
+            trialsFeature.cleanup();
+
+            expect(injected()).toHaveLength(0);
+            expect(labels(guildList())).toEqual(GUILD_TABS);
         });
     });
 });
