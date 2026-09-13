@@ -3392,6 +3392,16 @@ export const settingsGroups = {
                     'current tier, how many tiers the hour is on pace for, the next tier’s projected size, and the ' +
                     'Guild Points and token payout the week’s tiers are worth.',
             },
+            guildTrialTracking: {
+                id: 'guildTrialTracking',
+                label: 'Guild Trials: Track trial combat per player (damage, healing, kills)',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Reads the trial fight stream the In Progress fight view subscribes to and splits it per ' +
+                    'player. Turning it off stops that at once, without a reload: an open recording is closed and ' +
+                    'filed, the live figures are dropped, and nothing more is read until it is turned back on.',
+            },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',
                 label: 'Guild Trials: Record a trial automatically when one starts',

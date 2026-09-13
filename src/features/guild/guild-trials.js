@@ -2447,7 +2447,8 @@ class GuildTrials {
         // unit popup both happen while the guild page is shut. `_publishTrialNames`
         // arms the damage gate from last session's record, so a fight is
         // recognised without the tab having been opened this session.
-        guildTrialDamage.initialize();
+        if (config.getSetting('guildTrialTracking', true)) guildTrialDamage.initialize();
+        this._followTracking();
         guildTrialSkilling.initialize();
         guildTrialStatsModal.initialize();
         guildTrialAlerts.initialize?.();
@@ -4706,6 +4707,37 @@ class GuildTrials {
         return (
             'Derived from the tier ladder — 200 + 100 per extra tier for skilling, 400 + 200 for combat, ' +
             'times the Builder’s Hall bonus. Open the Trials tab and the game’s own “N pts” is used instead.'
+        );
+    }
+
+    /**
+     * Follow `guildTrialTracking` for as long as the feature is up.
+     *
+     * Off stops the trial meter without a reload. The recorder closes its open
+     * session first, because that close folds off the still-live breakdown, as on
+     * a character switch; then the damage module drops its socket listeners and
+     * its tally, so no trial tick is attributed and no personal fight is held back
+     * for one. On starts it listening again, re-scoped to this character and guild
+     * and re-armed with this week's encounters. The watcher goes with the
+     * feature's own cleanup, which stops the module either way.
+     * @private
+     */
+    _followTracking() {
+        this.unregister.push(
+            config.onSettingChange('guildTrialTracking', (enabled) => {
+                try {
+                    if (enabled) {
+                        guildTrialDamage.initialize();
+                        guildTrialDamage.setGuildName?.(this.guildName, this.characterId);
+                        this._publishTrialNames();
+                        return;
+                    }
+                    if (guildTrialRecorder.recording) guildTrialRecorder.stop?.('trial tracking switched off');
+                    guildTrialDamage.cleanup();
+                } catch (error) {
+                    console.error('[GuildTrials] Switching trial tracking failed:', error);
+                }
+            })
         );
     }
 

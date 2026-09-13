@@ -1856,6 +1856,43 @@ describe('the panel, end to end', () => {
         expect(guildTrials.initialized).toBe(false);
     });
 
+    test('switching trial tracking off stops the trial meter, closing the open recording first', async () => {
+        const damage = (await import('./guild-trial-damage.js')).default;
+        damage.cleanup.mockClear();
+        game.recorder.recording = true;
+
+        flipSetting('guildTrialTracking', false);
+
+        expect(game.recorder.endedBy).toBe('trial tracking switched off');
+        expect(damage.cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    test('switching trial tracking back on listens again without a reload', async () => {
+        const damage = (await import('./guild-trial-damage.js')).default;
+        flipSetting('guildTrialTracking', false);
+        damage.initialize.mockClear();
+        game.trialNames = null;
+
+        flipSetting('guildTrialTracking', true);
+
+        expect(damage.initialize).toHaveBeenCalledTimes(1);
+        // Re-armed with this week's encounters
+        expect(game.trialNames).toEqual([]);
+    });
+
+    test('trial tracking off at start never starts the meter, and its watcher goes with cleanup', async () => {
+        const damage = (await import('./guild-trial-damage.js')).default;
+        trialsFeature.cleanup();
+        game.settings = { guildTrialsInfo: true, guildTrialTracking: false };
+        damage.initialize.mockClear();
+
+        await trialsFeature.initialize();
+        expect(damage.initialize).not.toHaveBeenCalled();
+
+        trialsFeature.cleanup();
+        expect(game.settingListeners.guildTrialTracking || []).toEqual([]);
+    });
+
     test('an open tab is sampled every five seconds, not whenever the DOM churns', () => {
         // The reported recording: two samples in forty minutes of a live trial
         // with the tab open and the pool ticking every second. A rate cannot be
