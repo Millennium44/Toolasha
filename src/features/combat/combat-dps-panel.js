@@ -66,6 +66,7 @@ import domObserver from '../../core/dom-observer.js';
 import { damageBreakdown, actionLabel } from './damage-tracker.js';
 import { takenBreakdown } from './damage-taken-tracker.js';
 import { rotationAudit, startRotationTracker, stopRotationTracker } from './rotation-tracker.js';
+import { dpsGraphHTML, startDpsSampler, stopDpsSampler, wireDpsGraph } from './dps-graph.js';
 import { createPanel } from '../../utils/simple-panel.js';
 import {
     BOARD_COLORS,
@@ -686,6 +687,8 @@ export function drawBoard(body, sources) {
             color: BOARD_COLORS.accent,
         }) +
         boardTabsHTML(TABS, tab) +
+        // DPS-over-time graph — dps-graph.js
+        (tab === 'damage' ? dpsGraphHTML() : '') +
         boardNoteHTML(note.strong, { color: note.color, strong: true }) +
         boardNoteHTML(note.detail) +
         list +
@@ -707,6 +710,7 @@ export function drawBoard(body, sources) {
 function wireBoard(body, sources) {
     // Player colour and class menu — utils/player-menu.js
     wirePlayerMenu(body, () => drawBoard(body, sources));
+    wireDpsGraph(body, () => drawBoard(body, sources));
     body.querySelectorAll('[data-tab]').forEach((button) => {
         button.addEventListener('click', () => {
             tab = button.dataset.tab;
@@ -872,6 +876,7 @@ export default {
         // The Rotation tab is the only reader of this, so it starts and stops
         // with the panel rather than carrying a setting of its own
         startRotationTracker();
+        startDpsSampler();
         const onArea = (el) => {
             if (el && !inGuildPanel(el)) lastArea = el;
             inject();
@@ -897,6 +902,7 @@ export default {
             unregisterReady?.();
             unregisterReady = null;
             stopRotationTracker();
+            stopDpsSampler();
             closePlayerMenu();
             timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);

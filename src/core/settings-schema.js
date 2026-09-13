@@ -2496,6 +2496,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Each player keeps one colour across the Per-player panel, the trial damage board and the unit badges, so a row and a badge can be matched at a glance. Players in the same party get different colours (up to twelve), and a player keeps theirs for the session when someone joins. Click the dot beside a name to pick a colour; it is remembered for that player on every character. With this off, the trial board goes back to colouring bars by damage type',
             },
+            combatDpsGraph: {
+                id: 'combatDpsGraph',
+                label: 'DPS graph: Chart damage per second over time on the Per-player panel and trial damage board',
+                type: 'checkbox',
+                default: true,
+                help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own colour. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. Needs the Per-player panel on for normal fights',
+            },
             combatClassOverride: {
                 id: 'combatClassOverride',
                 label: 'Class override: Click a player’s class on the damage boards to set it by hand',

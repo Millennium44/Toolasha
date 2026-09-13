@@ -70,6 +70,7 @@ import {
 import { classTagIconHTML } from '../../utils/class-weapon.js';
 import { closePlayerMenu, playerMarkersHTML, playerRowColor, wirePlayerMenu } from '../../utils/player-menu.js';
 import { resolveRosterColors } from '../../utils/player-colors.js';
+import { trialDpsGraphHTML, wireTrialDpsGraph } from './trial-dps-graph.js';
 
 /** Class every part of this panel carries, so teardown is one query */
 export const PANEL_CLASS = 'mwi-trial-scoreboard';
@@ -581,6 +582,7 @@ class GuildTrialScoreboard {
         body.innerHTML = this._bodyHTML(breakdown);
         // Player colour and class menu — utils/player-menu.js
         wirePlayerMenu(body, () => this.render());
+        wireTrialDpsGraph(body, () => this.render());
 
         body.querySelectorAll('[data-tab]').forEach((button) => {
             button.addEventListener('click', () => {
@@ -1058,6 +1060,8 @@ class GuildTrialScoreboard {
         return (
             head +
             tabs +
+            // DPS-over-time graph — trial-dps-graph.js; called on every tab so tier changes are noted
+            trialDpsGraphHTML(breakdown, { draw: this.tab === 'damage' }) +
             disclaimer +
             takenNote +
             ceilingNote +

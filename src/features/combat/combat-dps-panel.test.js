@@ -734,6 +734,33 @@ describe('player markers on the board', () => {
     });
 });
 
+describe('the DPS graph', () => {
+    test('sits on the Damage tab only', () => {
+        opts.dealt = { seconds: 100, players: [{ name: 'Abe', damage: 1000, dps: 10, classTag: null }] };
+        expect(board().querySelector('[data-dps-graph]')).not.toBeNull();
+
+        feature._setTab('taken');
+        expect(board().querySelector('[data-dps-graph]')).toBeNull();
+    });
+
+    test('its sampler listens for battles while the panel is on, and lets go when it is switched off', async () => {
+        const websocket = (await import('../../core/websocket.js')).default;
+        const on = vi.spyOn(websocket, 'on');
+        const off = vi.spyOn(websocket, 'off');
+        try {
+            feature.initialize();
+            const registered = on.mock.calls.find(([type]) => type === 'new_battle');
+            expect(registered).toBeDefined();
+
+            feature.cleanup();
+            expect(off).toHaveBeenCalledWith('new_battle', registered[1]);
+        } finally {
+            on.mockRestore();
+            off.mockRestore();
+        }
+    });
+});
+
 describe('the shell the panel is built from', () => {
     const switchListeners = () => dataManager.eventListeners.get('character_switched')?.length ?? 0;
 

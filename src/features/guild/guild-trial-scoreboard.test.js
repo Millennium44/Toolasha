@@ -830,6 +830,20 @@ describe('the trace recording warning', () => {
         expect(html).toContain(`${playerColor('Estevao')}44`);
     });
 
+    test('the DPS graph is drawn on the Damage tab and not on the others', () => {
+        game.breakdown = breakdown({ source: 'spectated', participants: 2 });
+        guildTrialScoreboard.open();
+        try {
+            expect(document.querySelector('[data-trial-graph]')).not.toBeNull();
+
+            guildTrialScoreboard.tab = 'healing';
+            guildTrialScoreboard.render();
+            expect(document.querySelector('[data-trial-graph]')).toBeNull();
+        } finally {
+            guildTrialScoreboard.tab = 'damage';
+        }
+    });
+
     test('is about the trace, not the damage module’s coverage accounting', () => {
         // A fully covered attribution is still short by whatever the feed
         // missed, and the two must not be read as one claim
