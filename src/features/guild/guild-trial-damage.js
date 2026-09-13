@@ -2062,6 +2062,7 @@ class GuildTrialDamage {
         this.reflectCasts = {};
         this.support.lastHP = {};
         this.support.lastMP = {};
+        this.support.lastHealAt = {};
         this.playersHP = {};
         // The slots are re-dealt, so the last wave's portraits describe nobody
         // here: the next tick sweeps the view again rather than resolving this

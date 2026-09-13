@@ -975,3 +975,67 @@ describe('the trace recording warning', () => {
         expect(shown).not.toContain('of 2 players');
     });
 });
+
+describe('healing by caster', () => {
+    const text = () => document.querySelector(`.${PANEL_CLASS}`)?.textContent || '';
+
+    /** Ada is the certain healer; Bex only earns credit in the by-caster view */
+    const casterBreakdown = (overrides = {}) =>
+        breakdown({
+            source: 'spectated',
+            support: {
+                players: [
+                    { index: '2', name: 'Ada', healingDone: 150_000, healingByCaster: 180_000, damageTaken: 0 },
+                    { index: '3', name: 'Bex', healingDone: 0, healingByCaster: 40_000, damageTaken: 0 },
+                ],
+                unattributedHealing: 75_000,
+                unplacedCasterHealing: 5_000,
+                regenHealing: 20_000,
+            },
+            ...overrides,
+        });
+
+    test('ranks the by-caster figure, leaving the Healing tab’s certain one alone', () => {
+        expect(scoreboardRows(casterBreakdown(), 'casters').rows.map((row) => [row.name, row.value])).toEqual([
+            ['Ada', 180_000],
+            ['Bex', 40_000],
+        ]);
+        expect(scoreboardRows(casterBreakdown(), 'healing').rows.map((row) => [row.name, row.value])).toEqual([
+            ['Ada', 150_000],
+        ]);
+    });
+
+    test('game stats rows are compared against the by-caster figure', () => {
+        const { rows } = scoreboardRows(casterBreakdown(), 'casters', [
+            { name: 'Ada', damage: 0, healing: 200_000, damageTaken: 0 },
+        ]);
+        expect(rows[0]).toMatchObject({ name: 'Ada', value: 200_000, measuredValue: 180_000 });
+        expect(rows[0].measuredDeltaPct).toBeCloseTo(-10, 6);
+    });
+
+    test('a tab beside Healing, which says what it is and what it could not place', () => {
+        game.breakdown = casterBreakdown();
+        guildTrialScoreboard.open();
+        const tab = document.querySelector('[data-tab="casters"]');
+        expect(tab.textContent).toBe('By caster');
+        expect(tab.previousElementSibling.dataset.tab).toBe('healing');
+
+        tab.click();
+        expect(text()).toContain('Bex');
+        expect(text()).toContain('party hps · by caster');
+        expect(text()).toContain('credited to whoever could have cast it');
+        expect(text()).toContain('5.0K had no caster in sight');
+        expect(text()).toContain('20.0K regeneration');
+        // The certain view's bucket is that view's to name
+        expect(text()).not.toContain('75.0K unattributed');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('copied, it names itself and its remainder', () => {
+        const copied = scoreboardText(casterBreakdown(), 'casters');
+        expect(copied).toContain('Trial healing by caster');
+        expect(copied).toContain('2. Bex — 40,000');
+        expect(copied).toContain('No caster in sight: 5,000');
+        expect(copied).not.toContain('Unattributed: 75,000');
+    });
+});

@@ -3339,6 +3339,7 @@ describe('reflect and unattributed damage on the spectated stream', () => {
         game.wsHandlers.new_guild_battle(roster(4, ['Ann', 'Tank', 'Bo', 'Cy', 'Di']));
         expect(guildTrialDamage.state.playersHP).toEqual({});
         expect(guildTrialDamage.reflectCasts).toEqual({});
+        expect(guildTrialDamage.support.lastHealAt).toEqual({});
 
         tick(4, crowd(), boss(650_000, 0), 500);
         tick(4, crowd([0], { 0: { atkCounter: 2 } }), boss(645_000, 1), 1000);

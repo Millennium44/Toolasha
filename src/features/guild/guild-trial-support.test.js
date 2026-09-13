@@ -17,8 +17,15 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-const { classifyAbility, foldSupportTick, newSupportState, splitRegenRises, summariseSupport, supportCoverage } =
-    await import('./guild-trial-support.js');
+const {
+    classifyAbility,
+    foldSupportTick,
+    HEAL_CASTER_WINDOW_MS,
+    newSupportState,
+    splitRegenRises,
+    summariseSupport,
+    supportCoverage,
+} = await import('./guild-trial-support.js');
 
 /** The game's own ability data, in the shape `upgrade-advisor.js` already reads */
 const detailMap = {
@@ -153,6 +160,112 @@ describe('foldSupportTick', () => {
         foldSupportTick(state, { 0: unit({ cHP: 300, mHP: 1000 }) }, {}, detailMap);
         expect(state.players[0].damageTaken).toBe(0);
         expect(state.players[0].healingReceived).toBe(0);
+    });
+
+    test('by caster, two healers on one tick share the heal the certain view leaves unattributed', () => {
+        const state = newSupportState();
+        const start = {
+            0: unit({ cHP: 1000, atkCounter: 1 }),
+            1: unit({ cHP: 1000, atkCounter: 1 }),
+            2: unit({ cHP: 400, atkCounter: 1 }),
+        };
+        foldSupportTick(state, start, {}, detailMap);
+        foldSupportTick(
+            state,
+            {
+                0: unit({ cHP: 1000, atkCounter: 2 }),
+                1: unit({ cHP: 1000, atkCounter: 2 }),
+                2: unit({ cHP: 700, atkCounter: 1 }),
+            },
+            { 0: '/abilities/rejuvenate', 1: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.unattributedHealing).toBe(300);
+        expect(state.players[0].healingByCaster).toBe(150);
+        expect(state.players[1].healingByCaster).toBe(150);
+        expect(state.players[2].healingByCaster).toBe(0);
+    });
+
+    test('by caster, a lone healer is credited exactly what the certain view credits', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cHP: 1000, atkCounter: 1 }), 1: unit({ cHP: 400, atkCounter: 1 }) }, {});
+        foldSupportTick(
+            state,
+            { 0: unit({ cHP: 1000, atkCounter: 2 }), 1: unit({ cHP: 700, atkCounter: 1 }) },
+            { 0: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.players[0].healingByCaster).toBe(state.players[0].healingDone);
+        expect(state.players[0].healingByCaster).toBe(300);
+    });
+
+    /**
+     * Two healers cast at `castAt`, and at `riseAt` a lone rise lands on a tick nobody cast on.
+     * @param {number|null} castAt - When the heals were cast
+     * @param {number|null} riseAt - When the rise lands
+     * @returns {Object} The state
+     */
+    function lateRise(castAt, riseAt) {
+        const state = newSupportState();
+        const actions = { 0: '/abilities/rejuvenate', 1: '/abilities/rejuvenate' };
+        const healers = (atk) => ({ 0: unit({ atkCounter: atk }), 1: unit({ atkCounter: atk }) });
+        foldSupportTick(state, { ...healers(1), 2: unit({ cHP: 800 }) }, actions, detailMap, castAt);
+        foldSupportTick(state, { ...healers(2), 2: unit({ cHP: 800 }) }, actions, detailMap, castAt);
+        foldSupportTick(state, { ...healers(2), 2: unit({ cHP: 890 }) }, actions, detailMap, riseAt);
+        return state;
+    }
+
+    test('by caster, a rise nobody cast on goes to the heal casters of the last ten seconds', () => {
+        const state = lateRise(2000, 2000 + HEAL_CASTER_WINDOW_MS);
+
+        expect(state.unattributedHealing).toBe(90);
+        expect([0, 1, 2].map((index) => state.players[index].healingByCaster)).toEqual([45, 45, 0]);
+        expect(state.unplacedCasterHealing).toBe(0);
+    });
+
+    test('by caster, with no heal caster in sight the rise is kept apart, not spread over everyone present', () => {
+        const stale = lateRise(2000, 2001 + HEAL_CASTER_WINDOW_MS);
+        expect([0, 1, 2].map((index) => stale.players[index].healingByCaster)).toEqual([0, 0, 0]);
+        expect(stale.unplacedCasterHealing).toBe(90);
+        expect(summariseSupport(stale).unplacedCasterHealing).toBe(90);
+
+        // No clock is no window
+        expect(lateRise(null, null).unplacedCasterHealing).toBe(90);
+    });
+
+    test('by caster, regeneration and a revive are nobody’s', () => {
+        const state = newSupportState();
+        const healer = { atkCounter: 1 };
+        foldSupportTick(
+            state,
+            {
+                0: unit({ ...healer }),
+                1: unit({ cHP: 1900, mHP: 2000 }),
+                2: unit({ cHP: 2800, mHP: 3000 }),
+                3: unit({ cHP: 0 }),
+            },
+            {},
+            detailMap
+        );
+        // A 3% regen wave and a revive, on a tick the healer cast on
+        foldSupportTick(
+            state,
+            {
+                0: unit({ atkCounter: 2 }),
+                1: unit({ cHP: 1960, mHP: 2000 }),
+                2: unit({ cHP: 2890, mHP: 3000 }),
+                3: unit({ cHP: 1000 }),
+            },
+            { 0: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.regenHealing).toBe(150);
+        expect(state.revivedHealth).toBe(1000);
+        const byCaster = Object.values(state.players).reduce((sum, row) => sum + row.healingByCaster, 0);
+        expect(byCaster).toBe(0);
     });
 
     test('an empty tick changes nothing', () => {

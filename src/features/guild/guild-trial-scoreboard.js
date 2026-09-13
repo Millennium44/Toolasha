@@ -262,7 +262,8 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
     // left it at ~5%) and barely sees damage taken at all (health falling per
     // tick, most of it masked by healing). No per-second: the modal states
     // whole-trial totals, not a rate.
-    const modalField = { damage: 'damage', healing: 'healing', taken: 'damageTaken' }[tab] || 'damage';
+    const modalField =
+        { damage: 'damage', healing: 'healing', casters: 'healing', taken: 'damageTaken' }[tab] || 'damage';
     if (Array.isArray(modalStats) && modalStats.length) {
         const raw = modalStats.map((member) => ({
             index: member.name,
@@ -282,8 +283,11 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
         // row can say how far the plugin's tick-by-tick estimate ran from it —
         // the point of capturing the game's numbers in the first place.
         const measuredSource =
-            tab === 'healing' || tab === 'taken' ? breakdown?.support?.players || [] : breakdown?.players || [];
-        const measuredField = tab === 'healing' ? 'healingDone' : tab === 'taken' ? 'damageTaken' : 'damage';
+            tab === 'healing' || tab === 'casters' || tab === 'taken'
+                ? breakdown?.support?.players || []
+                : breakdown?.players || [];
+        const measuredField =
+            { healing: 'healingDone', casters: 'healingByCaster', taken: 'damageTaken' }[tab] || 'damage';
         const measuredByName = new Map(
             measuredSource.filter((row) => row?.name).map((row) => [row.name, Number(row[measuredField]) || 0])
         );
@@ -312,9 +316,15 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
     const raw =
         tab === 'healing'
             ? support.map((row) => ({ index: row.index, name: row.name, value: row.healingDone || 0 }))
-            : tab === 'taken'
-              ? support.map((row) => ({ index: row.index, name: row.name, value: row.damageTaken || 0 }))
-              : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
+            : tab === 'casters'
+              ? support.map((row) => ({ index: row.index, name: row.name, value: row.healingByCaster || 0 }))
+              : tab === 'taken'
+                ? support.map((row) => ({ index: row.index, name: row.name, value: row.damageTaken || 0 }))
+                : (breakdown?.players || []).map((row) => ({
+                      index: row.index,
+                      name: row.name,
+                      value: row.damage || 0,
+                  }));
 
     const measuredBy = new Map((breakdown?.players || []).map((row) => [row.index, row.measured]));
     const ranked = rankRows(raw, seconds);
@@ -395,7 +405,7 @@ export function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) 
  */
 export function scoreboardText(breakdown, tab = 'damage', estimate = null, modalStats = null) {
     const { rows, total, perSecond, source } = scoreboardRows(breakdown, tab, modalStats);
-    const label = tab === 'healing' ? 'healing' : tab === 'taken' ? 'damage taken' : 'damage';
+    const label = { healing: 'healing', casters: 'healing by caster', taken: 'damage taken' }[tab] || 'damage';
     const kills = tab === 'damage' ? killsByName(breakdown) : new Map();
 
     if (source === 'game') {
@@ -466,13 +476,23 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null, modal
         }
     }
 
-    if (tab === 'healing') {
+    if (tab === 'casters') {
+        const unplaced = breakdown?.support?.unplacedCasterHealing || 0;
+        if (unplaced > 0) {
+            lines.push(
+                `No caster in sight: ${formatWithSeparator(Math.round(unplaced))} ` +
+                    '(no cast on the tick and no heal cast in the ten seconds before it)'
+            );
+        }
+    }
+
+    if (tab === 'healing' || tab === 'casters') {
         const regen = breakdown?.support?.regenHealing || 0;
         if (regen > 0) {
             lines.push(`Regeneration: ${formatWithSeparator(Math.round(regen))} (the trial’s flat regen, nobody’s)`);
         }
         const unattributed = breakdown?.support?.unattributedHealing || 0;
-        if (unattributed > 0) {
+        if (tab === 'healing' && unattributed > 0) {
             lines.push(
                 `Unattributed: ${formatWithSeparator(Math.round(unattributed))} ` +
                     '(overlapping heals, or an on-cast proc from a player without streamed counters)'
@@ -871,7 +891,9 @@ class GuildTrialScoreboard {
         const modalStats = modalStatsForBreakdown(breakdown);
         const { rows, total, perSecond, source } = scoreboardRows(breakdown, this.tab, modalStats);
         const fromGame = source === 'game';
-        const healing = this.tab === 'healing';
+        // The by-caster view is a healing view: the same unit, notes and empty states
+        const byCaster = this.tab === 'casters';
+        const healing = this.tab === 'healing' || byCaster;
         const taken = this.tab === 'taken';
         const unit = healing ? 'hps' : 'dps';
 
@@ -893,15 +915,21 @@ class GuildTrialScoreboard {
             : fromGame
               ? boardHeadHTML({
                     value: total,
-                    label: `trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats`,
+                    label: `trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats${byCaster ? ' vs by caster' : ''}`,
                     color: GOOD,
                 })
-              : boardHeadHTML({ value: perSecond, label: `party ${unit}`, color: ACCENT, right: total });
+              : boardHeadHTML({
+                    value: perSecond,
+                    label: `party ${unit}${byCaster ? ' · by caster' : ''}`,
+                    color: ACCENT,
+                    right: total,
+                });
 
         const tabs = boardTabsHTML(
             [
                 { key: 'damage', label: 'Damage' },
                 { key: 'healing', label: 'Healing' },
+                { key: 'casters', label: 'By caster' },
                 { key: 'taken', label: 'Taken' },
             ],
             this.tab
@@ -1070,8 +1098,21 @@ class GuildTrialScoreboard {
         // lines: "the game healed everyone" is not a failure to attribute, and
         // lumping the two together read as one — "0 party hps" over a bucket
         // that was mostly the trial's own flat regen
-        const unattributed = breakdown?.support?.unattributedHealing || 0;
+        // The by-caster view says what it is, and what it could not place, where
+        // the Healing tab speaks of what it could not attribute
+        const unattributed = byCaster ? 0 : breakdown?.support?.unattributedHealing || 0;
         const regen = breakdown?.support?.regenHealing || 0;
+        const unplaced = byCaster ? breakdown?.support?.unplacedCasterHealing || 0 : 0;
+        const casterNote = byCaster
+            ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">` +
+              'Every heal credited to whoever could have cast it: the heal casters on that tick, else its ability ' +
+              'casters, else whoever cast a heal in the ten seconds before — split equally between several. ' +
+              'The Healing tab keeps only the certain credits.' +
+              (unplaced > 0
+                  ? ` ${formatKMB(Math.round(unplaced))} had no caster in sight and is credited to nobody.`
+                  : '') +
+              '</div>'
+            : '';
         const footnote =
             healing && (unattributed > 0 || regen > 0)
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">` +
@@ -1169,6 +1210,7 @@ class GuildTrialScoreboard {
             traceNote +
             list +
             teamLine +
+            casterNote +
             footnote +
             manaLine +
             expected +

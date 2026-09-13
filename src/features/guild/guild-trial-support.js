@@ -153,6 +153,32 @@ export const REGEN_FRACTION_CAP = 0.1;
 const REGEN_ROUNDING_HP = 1;
 
 /**
+ * How recently a slot must have cast a heal to share, in the by-caster view, a
+ * rise on a tick nobody cast on.
+ *
+ * A heal's rise can land on a tick of its own. On the 2026-09-07 trace (31
+ * healers), per-player error against the game's healing totals was 3.14% at
+ * 5 s with 183.7K unplaced, 3.27% at 10 s with 89.5K, 4.84% at 20 s and 5.17% at
+ * 60 s. Spreading what is left over everyone present instead read 9.91%, and
+ * KikiMeter's rule as written (lone present player, lone mana spender, then
+ * everyone present) 114%.
+ */
+export const HEAL_CASTER_WINDOW_MS = 10_000;
+
+/**
+ * The slots that cast a heal within {@link HEAL_CASTER_WINDOW_MS} of a tick.
+ * @param {Object} state - From {@link newSupportState}
+ * @param {number|null} at - The tick's time
+ * @returns {string[]} Player slots
+ */
+function recentHealers(state, at) {
+    if (!Number.isFinite(at)) return [];
+    return Object.entries(state.lastHealAt || {})
+        .filter(([, castAt]) => at - castAt <= HEAL_CASTER_WINDOW_MS)
+        .map(([index]) => index);
+}
+
+/**
  * A fresh support state.
  * @returns {{players: Object, lastHP: Object, lastMP: Object, lastAtk: Object, emptySince: Object,
  *   unattributedHealing: number, regenHealing: number, regenFraction: number|null,
@@ -168,6 +194,10 @@ export function newSupportState() {
         lowSince: {},
         starvedSince: {},
         unattributedHealing: 0,
+        /** Slot → when it last cast a heal, for {@link HEAL_CASTER_WINDOW_MS}; per wave */
+        lastHealAt: {},
+        /** Healing the by-caster view could name no caster for */
+        unplacedCasterHealing: 0,
         regenHealing: 0,
         // Health that came back with a player, rather than to one. See the
         // revive branch in `foldSupportTick`
@@ -186,6 +216,13 @@ function emptyRow() {
         damageTaken: 0,
         healingReceived: 0,
         healingDone: 0,
+        /**
+         * Non-regeneration, non-revive healing credited to whoever could have cast
+         * it, split equally when that is several — see {@link foldSupportTick}. A
+         * second view beside `healingDone`, not a replacement: it places much of
+         * what that one leaves unattributed, at a guess's precision.
+         */
+        healingByCaster: 0,
         manaSpent: 0,
         manaRestored: 0,
         casts: 0,
@@ -418,6 +455,11 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
         }
     }
 
+    // When each slot last cast a heal, for the by-caster view's window
+    if (Number.isFinite(at)) {
+        state.lastHealAt ||= {};
+        for (const index of healers) state.lastHealAt[index] = at;
+    }
     const restored = risesThisTick.reduce((sum, rise) => sum + rise.amount, 0);
     if (restored <= 0) return;
 
@@ -429,6 +471,22 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
 
     const remainder = rest.reduce((sum, rise) => sum + rise.amount, 0);
     if (remainder <= 0) return;
+
+    // The by-caster view places what a caster can be named for: the heal
+    // casters on the tick share it; failing any, its ability casters; failing
+    // those, whoever cast a heal within HEAL_CASTER_WINDOW_MS. Equal shares, as
+    // KikiMeter's trial healing does (ZhuLiMoon, MIT). With nobody in sight it
+    // is kept apart rather than spread over everyone present — see the window.
+    const candidates = healers.length ? healers : casters.length ? casters : recentHealers(state, at);
+    if (candidates.length) {
+        const share = remainder / candidates.length;
+        for (const index of candidates) {
+            const row = (state.players[index] ||= emptyRow());
+            row.healingByCaster = (row.healingByCaster || 0) + share;
+        }
+    } else {
+        state.unplacedCasterHealing = (state.unplacedCasterHealing || 0) + remainder;
+    }
 
     // One healer casting on this tick owns what is left. Failing that, a lone
     // ability caster does: the server groups a tick by actor, so a lone cast
@@ -538,6 +596,7 @@ export function summariseSupport(state, names = {}, deaths = {}) {
             damageTaken: sum('damageTaken'),
             healingReceived: sum('healingReceived'),
             healingDone: sum('healingDone'),
+            healingByCaster: sum('healingByCaster'),
             manaSpent: sum('manaSpent'),
             casts: sum('casts'),
             manaOuts: sum('manaOuts'),
@@ -546,6 +605,9 @@ export function summariseSupport(state, names = {}, deaths = {}) {
             revives: sum('revives'),
         },
         unattributedHealing: state?.unattributedHealing || 0,
+        // The by-caster view's own remainder: healing with no caster on the tick
+        // and no heal cast within the window
+        unplacedCasterHealing: state?.unplacedCasterHealing || 0,
         // Kept out of every healing figure above: a revive returns the whole bar
         // at once and no cast in the game does that
         revivedHealth: state?.revivedHealth || 0,
@@ -584,6 +646,11 @@ export function supportCoverage() {
             'attributed when exactly one player cast a heal on the tick, or when a lone ability cast ' +
             'sits beside rises that are not regeneration-shaped (the tick is grouped by actor, so those ' +
             'are that cast’s effect — a heal, a leech, or an on-cast proc); anything else is unattributed',
+        healingByCaster:
+            'non-regeneration, non-revive rises credited to a possible caster: the heal casters on the ' +
+            'tick share them equally, failing any its ability casters, failing those whoever cast a heal ' +
+            'in the last ten seconds; anything else is unplacedCasterHealing. Places much of what ' +
+            'healingDone leaves unattributed, at a guess’s precision, so the two are shown side by side',
         regenHealing:
             'classified by shape — every below-full unit rising by one uniform fraction of its own ' +
             'maximum on one tick is the trial’s flat regeneration, and the learned fraction then ' +
