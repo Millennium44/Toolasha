@@ -6,6 +6,28 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers: trial ledger after a refresh, and trial replays
+
+- If the page was refreshed between a trial ending and the game's own totals arriving, the ledger kept the live estimate for good; the pending correction is now saved and still applied once after the reload. A session recorded in the following week no longer picks up the previous week's roster and participant count, and the trial DPS graph keeps its history across a refresh.
+- The diagnostic trace now records the guild message that ends a trial, and the offline attribution referee can replay a guild trial trace against the game's totals (1.17% per-player error on a real 57-player trial).
+
+### Leftovers: the trial damage board opens itself and remembers where it was
+
+- The trial damage board can open by itself when a trial fight starts (a new setting, on for new installs), once per trial and not again after you close it, and a "⚔ Damage" button in the guild panel's tab strip toggles it. It closes on Escape, remembers its position and tab, and says when the live figures continued after a page refresh or reconnect.
+- "Copy guild report" now carries each player's kills and a Healing by caster section. The Trial Abilities panel shows a class you set by hand, and a finished trial's row tooltip says when its figures are the game's whole-trial totals rather than the watched stretch.
+
+### Leftovers: charm upgrades, empty Artisan Tea and tea running dry
+
+- Every advanced to grandmaster charm uses the charm it upgrades as an ingredient too, and Missing Materials checked the two against the same stock separately, so two Advanced Attack Charms with 16 Basic Attack Charms read as nothing missing when they need 18. The shared item is now counted once, here and in the material limits on the action panel.
+- Artisan Tea that is slotted but out of stock, with its buff gone, no longer discounts the crafting plan, arbitrage margins, Can produce, the Max button, action time estimates or tooltip production costs — the Missing Materials panel already worked this way.
+- Missing Materials and the crafting plan warn when a slotted Artisan Tea will run out before the run finishes, since the discount stops there and no rounding mode can cover it. A Hybrid-mode plan that owns part of an intermediate now sizes the rest with the right rounding, and a material-limited action count no longer reads one short.
+
+### Leftovers: meter totals line up, and classes come from shared profiles
+
+- The DPS tile's Total DPS is now the team total (all health lost), matching the Per-player panel's headline, instead of the sum of credited rows. Kills on a monster that was never named count under "Unknown enemy", so the per-monster kills add up to the per-player ones.
+- The Per-player panel says when the live run continued after a page refresh.
+- A player's class can now be learned from a profile they shared, so someone never seen casting or in Battle Info still gets a class; what they are seen doing, and a class you set by hand, still win.
+
 ### Healing done credits only real healing, and Healed moves into Taken
 
 - The Per-player panel's Healing done tab handed any unexplained health rise to whoever happened to be casting, or to the only player on the tick, so a party with no healer read as a damage dealer healing tens of thousands through Entangle, and a player's own regeneration counted as their healing. It now credits only heal casts, life-steal from a hit, and Blooming Trident procs (shown as "Bloom (via …)"); regeneration, food and anything else sit on one "not from a cast" line under the table.
