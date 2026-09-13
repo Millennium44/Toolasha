@@ -100,7 +100,13 @@
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
-import { attributeTick, foldEvents, newAttributionState, noteActions } from '../../utils/damage-attribution.js';
+import {
+    attributeTick,
+    foldEvents,
+    foldTeam,
+    newAttributionState,
+    noteActions,
+} from '../../utils/damage-attribution.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
@@ -260,6 +266,20 @@ const RECONCILE_WINDOW_MS = 120_000;
  * budget may not charge (that trace ended 60m24s after tier 1 opened).
  */
 const FIGHT_SPAN_MS = TRIAL_ACTIVE_MS + 15 * 60_000;
+
+/** The abilities whose buff returns damage to whoever strikes the wearer */
+export const REFLECT_ABILITIES = new Set(['/abilities/spike_shell', '/abilities/retribution']);
+
+/**
+ * How long after a reflect cast its wearer is taken to still have it up.
+ *
+ * The guild stream carries no buff maps, so a remembered cast is the only buff
+ * state there is. On the 2026-09-07 trace Spike Shell recast at p90 32.7 s and
+ * Retribution at 32.8 s, and thorns-shaped ticks landed up to 32.8 s after the
+ * cast; a window over that beat reading the tick's own `abilityHrid` against the
+ * game's per-member totals (1.164% against 1.199% absolute error).
+ */
+export const REFLECT_WINDOW_MS = 33_000;
 
 /**
  * A `combatStartTime` as epoch milliseconds.
@@ -810,6 +830,14 @@ class GuildTrialDamage {
         this.bankedTally = {};
         this.bankedDeaths = {};
         this.bankedSupport = {};
+        /**
+         * Everything the monsters lost this fight, from `foldTeam`: `damage` is all
+         * of it, `unattributed` the part no player could be credited with. Not
+         * index-keyed, so it spans waves without banking.
+         */
+        this.team = {};
+        /** Slot → `{hrid, at}`, the last reflect cast seen — see {@link REFLECT_WINDOW_MS} */
+        this.reflectCasts = {};
         this.playersHP = {};
         this.seconds = 0;
         /**
@@ -1650,15 +1678,24 @@ class GuildTrialDamage {
             // boss struck the tank and bled on their thorns, and refusing it
             // was the error.) `soloFallback: false` still holds — it gates the
             // party-of-one rung, and no roster message states a party here.
-            const events = attributeTick(data, this.state, { soloFallback: false });
-            // No non-damaging filter: `abilityHrid` streams for your own unit
-            // only, so every other player's action reads as idle — on this
-            // stream that means unlabeled, not idle, and the hit gate (the
-            // boss's own counter) already keeps non-hits out
+            //
+            // `unattributed` keeps health nobody could be credited with in the
+            // team total rather than dropping it, and `reflecting` lets a struck
+            // tank with a reflect up own a crowd tick their thorns caused.
+            const events = attributeTick(data, this.state, {
+                soloFallback: false,
+                unattributed: true,
+                reflecting: (index) => this._reflectingAt(index, now),
+            });
+            // No non-damaging filter: the hit gate (the boss's own counter)
+            // already keeps non-hits out, and a stream action labelled with a
+            // buff is often the swing that ran before it, not idleness
             foldEvents(this.tally, events, { filterNonDamaging: false });
+            foldTeam(this.team, events);
             this._noteDeaths(pMap);
             foldSupportTick(this.support, pMap, this.state.actions, undefined, now);
             noteActions(this.state, pMap);
+            this._noteReflectCasts(pMap, now);
 
             this.spectator.ticks += 1;
             // Which *slots* carried counters, not merely whether any did. The
@@ -1704,10 +1741,11 @@ class GuildTrialDamage {
      * - **Only a named slot.** A placeholder — `Player 7`, a slot no source
      *   could put a name to — files nothing. Evidence attached to a slot index
      *   would move to a different person at the next tier's re-deal.
-     * - **Only what the stream actually carries.** `abilityHrid` is present for
-     *   some units and absent for others (it is reliably there for the
-     *   watcher's own unit); a member it never arrives for simply earns no tag,
-     *   and their captured kit remains the only thing that can give them one.
+     * - **Only what the stream actually carries.** `abilityHrid` now streams for
+     *   every present player (243,833 entries across all 57 slots of the
+     *   2026-09-07 trace), but only on the ticks a unit casts; a member it never
+     *   arrives for simply earns no tag, and their captured kit remains the only
+     *   thing that can give them one.
      *
      * @param {Object} pMap - The tick's players
      */
@@ -1720,6 +1758,33 @@ class GuildTrialDamage {
             if (!entry?.name || entry.source === 'placeholder') continue;
             guildTrialAbilities.noteAbilityCast?.(entry.name, hrid);
         }
+    }
+
+    /**
+     * Remember each slot's reflect casts, for {@link _reflectingAt}.
+     *
+     * After attributing, beside `noteActions`: the tick that carries the cast
+     * is not yet under the reflect it applies.
+     *
+     * @param {Object} pMap - The tick's players
+     * @param {number} now - Clock
+     */
+    _noteReflectCasts(pMap, now) {
+        for (const [index, unit] of Object.entries(pMap || {})) {
+            const hrid = unit?.abilityHrid;
+            if (REFLECT_ABILITIES.has(hrid)) this.reflectCasts[index] = { hrid, at: now };
+        }
+    }
+
+    /**
+     * The reflect a slot has up, as far as its remembered cast says.
+     * @param {string} index - Player slot
+     * @param {number} now - Clock
+     * @returns {string|null} The reflect ability's hrid, or null
+     */
+    _reflectingAt(index, now) {
+        const cast = this.reflectCasts[index];
+        return cast && now - cast.at <= REFLECT_WINDOW_MS ? cast.hrid : null;
     }
 
     /**
@@ -1855,6 +1920,7 @@ class GuildTrialDamage {
                 this.bankedTally = {};
                 this.bankedDeaths = {};
                 this.bankedSupport = {};
+                this.team = {};
 
                 // And the denominator those numerators are divided by. It is
                 // accumulated tick-gap by tick-gap across every tier of a trial
@@ -1947,6 +2013,10 @@ class GuildTrialDamage {
         this.state.actions = {};
         this.state.party = {};
         this.state.lastSwing = null;
+        // Read by the reflect rung as "hurt this tick"; a re-dealt slot compared
+        // to its last occupant's health would read as struck
+        this.state.playersHP = {};
+        this.reflectCasts = {};
         this.support.lastHP = {};
         this.support.lastMP = {};
         this.playersHP = {};
@@ -2754,6 +2824,14 @@ class GuildTrialDamage {
             reported: this.reported ? { ...this.reported } : null,
             reportedMeasured: this.reportedMeasured ? { ...this.reportedMeasured } : null,
             storedStats: { ...this.storedStats },
+            // All health the monsters lost this fight, and the part of it no
+            // player could be credited with — the per-player rows sum to
+            // `attributed`, not to `damage`
+            team: {
+                damage: this.team.damage || 0,
+                attributed: this.team.attributed || 0,
+                unattributed: this.team.unattributed || 0,
+            },
             ...summary,
         };
     }

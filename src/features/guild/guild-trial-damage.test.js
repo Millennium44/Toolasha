@@ -114,6 +114,7 @@ const {
     isTrialBattle,
     MIN_SECONDS,
     liveTrialSplit,
+    REFLECT_WINDOW_MS,
     SPECTATED_TRIAL_NOTE,
     summariseTrialDamage,
     TRIAL_BADGE_WINDOW_MS,
@@ -3237,5 +3238,106 @@ describe('the split a live portrait may be badged with', () => {
     test('a client that has never spectated answers null', () => {
         expect(liveTrialSplit(at, tracker(0, measured))).toBeNull();
         expect(liveTrialSplit(at, {})).toBeNull();
+    });
+});
+
+describe('reflect and unattributed damage on the spectated stream', () => {
+    const at = new Date('2026-08-03T16:00:00Z').getTime();
+    const names = ['Tank', 'Ann', 'Bo', 'Cy', 'Di'];
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Chameleon']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+    });
+
+    const roster = (tier, order = names) => ({
+        battleId: 9,
+        tier,
+        players: order.map((name) => ({ character: { id: names.indexOf(name) + 100, name } })),
+        monsters: [{ hrid: '/monsters/trial_chameleon', name: 'Trial Chameleon', combatDetails: {} }],
+    });
+    const tick = (tier, pMap, mMap, offsetMs) => {
+        vi.setSystemTime(at + offsetMs);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ battleId: 9, tier, pMap, mMap });
+    };
+    const boss = (hp, dmg) => ({ 0: { cHP: hp, mHP: 650_000, dmgCounter: dmg, critCounter: 0 } });
+    /** All five present; `hurt` slots lose 1,000 health, and `extra` merges into a slot's entry */
+    const crowd = (hurt = [], extra = {}) =>
+        Object.fromEntries(
+            names.map((_, slot) => [
+                slot,
+                { atkCounter: 1, cHP: hurt.includes(slot) ? 4000 : 5000, ...(extra[slot] || {}) },
+            ])
+        );
+    const totals = () => Object.fromEntries(guildTrialDamage.breakdown().players.map((row) => [row.name, row.damage]));
+
+    /** Tier 3 opened, a baseline tick, and the tank casting Spike Shell */
+    function tankCastsSpikeShell() {
+        game.wsHandlers.new_guild_battle(roster(3));
+        tick(3, crowd(), boss(650_000, 0), 0);
+        tick(3, { 0: { atkCounter: 2, cHP: 5000, abilityHrid: '/abilities/spike_shell' } }, boss(650_000, 0), 250);
+    }
+
+    test('a struck tank with Spike Shell up owns the crowd tick their thorns dealt', () => {
+        tankCastsSpikeShell();
+        // Five present, nobody swung, only the tank was hit, and the boss lost 5,000
+        tick(3, crowd([0], { 0: { atkCounter: 2 } }), boss(645_000, 1), 10_000);
+
+        expect(totals()).toEqual({ Tank: 5000 });
+    });
+
+    test('a cast older than the window no longer claims the tick', () => {
+        tankCastsSpikeShell();
+        tick(3, crowd([0], { 0: { atkCounter: 2 } }), boss(645_000, 1), 250 + REFLECT_WINDOW_MS + 1);
+
+        expect(totals()).toEqual({ Tank: 1000, Ann: 1000, Bo: 1000, Cy: 1000, Di: 1000 });
+    });
+
+    test('a wave boundary forgets the cast and the health baselines with the slots', () => {
+        tankCastsSpikeShell();
+        // Tier 4 re-deals: the tank's old slot now holds Ann
+        game.wsHandlers.new_guild_battle(roster(4, ['Ann', 'Tank', 'Bo', 'Cy', 'Di']));
+        expect(guildTrialDamage.state.playersHP).toEqual({});
+        expect(guildTrialDamage.reflectCasts).toEqual({});
+
+        tick(4, crowd(), boss(650_000, 0), 500);
+        tick(4, crowd([0], { 0: { atkCounter: 2 } }), boss(645_000, 1), 1000);
+        // Ann was struck in the tank's old slot, and has no reflect of her own
+        expect(totals().Ann).toBe(1000);
+        expect(totals().Tank).toBe(1000);
+    });
+
+    test('health lost on a tick with nobody present stays in the team total', () => {
+        game.wsHandlers.new_guild_battle(roster(3));
+        tick(3, crowd(), boss(650_000, 0), 0);
+        tick(3, crowd(), boss(640_000, 1), 250); // 10K split five ways
+        tick(3, {}, boss(637_000, 1), 500); // 3K nobody could be credited with
+
+        const { team, totalDamage } = guildTrialDamage.breakdown();
+        expect(totalDamage).toBe(10_000);
+        expect(team).toEqual({ damage: 13_000, attributed: 10_000, unattributed: 3000 });
+    });
+
+    test('another trial starts its team total afresh', () => {
+        game.wsHandlers.new_guild_battle(roster(3));
+        tick(3, crowd(), boss(650_000, 0), 0);
+        tick(3, {}, boss(640_000, 1), 250);
+        expect(guildTrialDamage.breakdown().team.damage).toBe(10_000);
+
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ battleId: 10, tier: 1, pMap: crowd(), mMap: boss(650_000, 0) });
+        expect(guildTrialDamage.breakdown().team).toEqual({ damage: 0, attributed: 0, unattributed: 0 });
     });
 });
