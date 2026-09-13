@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Taken tab: hits with no attacker read as damage over time
+
+- About a quarter of the hits a party took in a Pirate Cove run arrived with no attacking monster anywhere near them — most likely a bleed or poison ticking — and the Taken tab filed all of them under "Unknown Enemy". They are now listed as "Damage over time"; "Unknown Enemy" is left for the cases it describes, a tick where different kinds of monster attacked at once or an attacker with no name.
+
 ### Leftovers: trial ledger after a refresh, and trial replays
 
 - If the page was refreshed between a trial ending and the game's own totals arriving, the ledger kept the live estimate for good; the pending correction is now saved and still applied once after the reload. A session recorded in the following week no longer picks up the previous week's roster and participant count, and the trial DPS graph keeps its history across a refresh.
