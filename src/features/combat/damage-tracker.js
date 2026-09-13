@@ -49,7 +49,13 @@ import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js
 import { ownWeaponHrid } from '../../utils/class-weapon.js';
 import { abilityActionLabel } from '../../utils/damage-board.js';
 import { newLabyrinthSessionState, noteLabyrinthUpdate, labyrinthSessionKey } from '../../utils/labyrinth-session.js';
-import { foldHealingTick, newHealingState, resetHealingBaselines, seedHealingState } from '../../utils/healing-done.js';
+import {
+    foldHealingTick,
+    healingUnitStats,
+    newHealingState,
+    resetHealingBaselines,
+    seedHealingState,
+} from '../../utils/healing-done.js';
 import {
     newReflectState,
     noteReflectBuffs,
@@ -447,8 +453,49 @@ function noteSheets(players) {
             ? abilities.filter((entry) => entry?.abilityHrid).map((entry) => ({ hrid: entry.abilityHrid }))
             : null;
         const stats = player?.combatDetails?.combatStats || null;
-        if (kit?.length || stats) sheets[index] = { kit, stats };
+        const magicMaxDamage = Number(player?.combatDetails?.magicMaxDamage) || null;
+        if (kit?.length || stats) sheets[index] = { kit, stats, magicMaxDamage };
     }
+    healUnits = null;
+}
+
+/** Player index → `healingUnitStats`, rebuilt lazily after sheets or names change */
+let healUnits = null;
+
+/**
+ * Each slot's life-steal, Bloom and heal-amplify figures, for crediting healing.
+ *
+ * Off the stated sheets. This character's own slot, when no sheet states bloom,
+ * takes its equipped weapon's `bloom` from `itemDetailMap`: enough to know the
+ * proc is there, not to bound its size or amplify, so both caps go unbounded.
+ *
+ * @returns {Object} Player index → `healingUnitStats`, absent where nothing was stated
+ */
+function healingUnits() {
+    if (healUnits) return healUnits;
+    const out = {};
+    for (const [index, sheet] of Object.entries(sheets)) {
+        const stats = healingUnitStats(sheet?.stats, sheet?.magicMaxDamage ?? null);
+        if (stats) out[index] = stats;
+    }
+    const ownName = dataManager.getCurrentCharacterName?.() || null;
+    const ownIndex = ownName ? Object.keys(names).find((index) => names[index] === ownName) : undefined;
+    if (ownIndex !== undefined && !(out[ownIndex]?.bloom > 0)) {
+        const weapon = ownWeaponHrid();
+        const detail = weapon ? dataManager.getInitClientData?.()?.itemDetailMap?.[weapon] : null;
+        const bloom = Number(detail?.equipmentDetail?.combatStats?.bloom);
+        if (Number.isFinite(bloom) && bloom > 0) {
+            out[ownIndex] = {
+                lifeSteal: 0,
+                magicMaxDamage: null,
+                ...(out[ownIndex] || {}),
+                healingAmplify: out[ownIndex]?.healingAmplify ?? null,
+                bloom,
+            };
+        }
+    }
+    healUnits = out;
+    return out;
 }
 
 export function damageBreakdown() {
@@ -556,6 +603,8 @@ export function damageBreakdown() {
         // A player who only healed has no damage row, so healing is its own list
         healing: {
             total: healState.total,
+            // Rises no heal, life-steal or Bloom accounts for; on nobody's row
+            uncredited: healState.uncredited || 0,
             regen: healState.regen,
             revived: healState.revived,
             shared: healState.shared,
@@ -712,6 +761,7 @@ function serializeDamageSession() {
         heal: {
             players: healState.players,
             total: healState.total,
+            uncredited: healState.uncredited,
             regen: healState.regen,
             revived: healState.revived,
             shared: healState.shared,
@@ -756,7 +806,10 @@ function adoptPendingRestore(now = Date.now()) {
 
     const heal = saved.heal || {};
     mergeCounts(healState.players, heal.players);
-    for (const field of ['total', 'regen', 'revived', 'shared']) healState[field] += Number(heal[field]) || 0;
+    // A save from before `uncredited` existed has none, and adds nothing to it
+    for (const field of ['total', 'uncredited', 'regen', 'revived', 'shared']) {
+        healState[field] += Number(heal[field]) || 0;
+    }
     // Learned per slot, and the slots are the same people
     healState.regenAmount = { ...(heal.regenAmount || {}), ...healState.regenAmount };
 
@@ -765,6 +818,7 @@ function adoptPendingRestore(now = Date.now()) {
         castLogs[index] = live && Object.keys(live.counts || {}).length ? mergeCounts(live, log) : log;
     }
     sheets = { ...(saved.sheets || {}), ...sheets };
+    healUnits = null;
     for (const [name, max] of Object.entries(saved.monsterHealth || {})) {
         if (Number.isFinite(max) && max > (monsterHealth[name] || 0)) monsterHealth[name] = max;
     }
@@ -1095,7 +1149,10 @@ export default {
                 // fight to one ability — and to the wrong one.
                 // Before the actions move on: a heal that landed now was cast by
                 // what was being prepared going into this tick
-                foldHealingTick(healState, data?.pMap, state.actions, abilityDetailMap);
+                foldHealingTick(healState, data?.pMap, state.actions, abilityDetailMap, {
+                    events,
+                    units: healingUnits(),
+                });
 
                 noteActions(state, data?.pMap);
                 noteCasts(data?.pMap);
@@ -1132,10 +1189,12 @@ export default {
                 const kit = Array.isArray(abilities)
                     ? abilities.filter((entry) => entry?.abilityHrid).map((entry) => ({ hrid: entry.abilityHrid }))
                     : null;
+                const magicMaxDamage = Number(unit.combatDetails.magicMaxDamage) || null;
                 for (const [index, slotName] of Object.entries(names)) {
                     if (slotName !== name) continue;
-                    sheets[index] = { kit: kit ?? sheets[index]?.kit ?? null, stats };
+                    sheets[index] = { kit: kit ?? sheets[index]?.kit ?? null, stats, magicMaxDamage };
                 }
+                healUnits = null;
             } catch (error) {
                 console.error('[DamageTracker] Reading a fetched unit sheet failed:', error);
             }

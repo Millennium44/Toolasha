@@ -118,31 +118,33 @@ describe('healing done', () => {
         return total;
     }
 
-    // Credited plus regeneration is every rise: nothing is dropped, and
-    // regeneration is never on a row. The healer on the five-player run is the
-    // one with the heal on their bar
+    // Credited, uncredited and regeneration are every rise: nothing is dropped,
+    // and neither of the last two is on a row. The recordings carry no sheets, so
+    // no Life Steal or Bloom is known, and replay without ability data, so only a
+    // heal its hrid names as one earns a row — the healer on the five-player run
     test.each([
-        ['combat-dungeon', dungeon, 246, 74],
-        ['combat-five', five, 2197, 1618],
-        ['combat-party', party, 291, 1450],
-        ['combat-refresh', refresh, 185, 130],
-        ['combat-run', run, 758, 197],
-    ])('%s', (_name, recording, credited, regen) => {
+        ['combat-dungeon', dungeon, 0, 246, 74],
+        ['combat-five', five, 1150, 1047, 1618],
+        ['combat-party', party, 0, 291, 1450],
+        ['combat-refresh', refresh, 0, 185, 130],
+        ['combat-run', run, 0, 758, 197],
+    ])('%s', (_name, recording, credited, uncredited, regen) => {
         const { healing } = replay(recording);
 
         expect(Math.round(healing.total)).toBe(credited);
+        expect(Math.round(healing.uncredited)).toBe(uncredited);
         expect(Math.round(healing.regen)).toBe(regen);
-        expect(Math.round(healing.total + healing.regen)).toBe(rises(recording));
+        expect(Math.round(healing.total + healing.uncredited + healing.regen)).toBe(rises(recording));
         expect(healing.shared).toBe(0);
     });
 
-    test('combat-five: the healer’s row is Rejuvenate first', () => {
+    test('combat-five: the only row is the healer’s, and only their heal', () => {
         const { healing } = replay(five);
-        const healer = healing.players[0];
 
+        expect(healing.players).toHaveLength(1);
+        const healer = healing.players[0];
         expect(healer.index).toBe('1');
-        expect(Math.round(healer.healing)).toBe(2067);
-        expect(healer.abilities[0].action).toBe('/abilities/rejuvenate');
-        expect(Math.round(healer.abilities[0].healing)).toBe(1150);
+        expect(Math.round(healer.healing)).toBe(1150);
+        expect(healer.abilities.map((ability) => ability.action)).toEqual(['/abilities/rejuvenate']);
     });
 });

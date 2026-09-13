@@ -16,17 +16,20 @@
  * genuinely different: which tracker feeds which tab, and what each figure
  * honestly is.
  *
- * ## Four tabs, and the third and fourth are not the same healing
+ * ## Three tabs, and healing is on two of them as different things
  *
  * - **Damage** — `damageBreakdown()`. Per player, including damage-over-time
  *   and reflect, which move a monster's health with no swing behind them.
  * - **Taken** — `takenBreakdown()`. Health actually lost, after mitigation, and
- *   a floor at that: damage healed on the same tick was never visible.
- * - **Healed** — the taken tracker's `regen`, which is health *restored*: a
- *   heal, a life-steal and the game's own regeneration are one number here,
- *   filed under whoever received it. Healing **received**, labelled that way.
- * - **Healing done** — `damageBreakdown().healing`, the same rises credited to
- *   the caster with regeneration and revives held out (`utils/healing-done.js`).
+ *   a floor at that: damage healed on the same tick was never visible. Each row
+ *   also carries the taken tracker's `regen` — every rise on that player's own
+ *   bar, whatever caused it: healing **received** — and the net of the two.
+ * - **Healing done** — `damageBreakdown().healing`: only the rises a heal cast,
+ *   a life-steal or a Bloom proc accounts for, on the player who did it
+ *   (`utils/healing-done.js`). Everything else is one team line.
+ *
+ * A separate Healed tab once ranked healing received on its own; `healed` is
+ * still read as Taken wherever a caller names it.
  *
  * ## And a tab that is not about the party at all
  *
@@ -77,6 +80,7 @@ import {
     wireHistoryList,
 } from './meter-history.js';
 import { createPanel } from '../../utils/simple-panel.js';
+import { BLOOM_HEAL_PREFIX, LIFESTEAL_HEAL } from '../../utils/healing-done.js';
 import {
     BOARD_COLORS,
     boardButtonsHTML,
@@ -122,7 +126,6 @@ const PLAYERS_AREA = '[class*="BattlePanel_playersArea"]';
 export const TABS = [
     { key: 'damage', label: 'Damage' },
     { key: 'taken', label: 'Taken' },
-    { key: 'healed', label: 'Healed' },
     { key: 'healing', label: 'Healing done' },
     { key: 'rotation', label: 'Rotation' },
 ];
@@ -169,6 +172,7 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
     // The Rotation tab is not a ranked board of players: its rows are your own
     // abilities and it builds them itself
     if (which === 'rotation') return rankRows([], 0);
+    if (which === 'healed') return panelRows('taken', { dealt, taken });
 
     const dealtRun = dealt() || {};
     if (which === 'damage') {
@@ -242,41 +246,85 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
             dealtRun.seconds || 0
         );
         board.regen = healing.regen || 0;
+        // Absent from a session saved before healing was credited strictly
+        board.uncredited = healing.uncredited || 0;
         board.revived = healing.revived || 0;
         board.shared = healing.shared || 0;
         return board;
     }
 
     const run = taken() || {};
-    const rows = (run.players || []).map((row) => ({
-        name: row.name,
-        value: (which === 'healed' ? row.regen : row.damage) || 0,
-        perSecond: (which === 'healed' ? row.hps : row.dps) ?? null,
-        classTag: classByName[row.name] || null,
-        // What hit them, from the taken tracker's per-monster split. Health
-        // restored has no source to split by
-        breakdown:
-            which === 'taken'
-                ? breakdownLines(
-                      (run.enemies || []).flatMap((enemy) =>
-                          (enemy.players || [])
-                              .filter((hit) => hit.name === row.name)
-                              .map((hit) => ({
-                                  label: enemy.name,
-                                  value: hit.damage,
-                                  detail:
-                                      `${formatWithSeparator(hit.hits || 0)} hits` +
-                                      (hit.min === null || hit.min === undefined
-                                          ? ''
-                                          : ` · ${formatWithSeparator(hit.min)}–${formatWithSeparator(hit.max)} a hit`),
-                              }))
-                      ),
-                      row.damage,
-                      run.seconds
-                  )
-                : [],
-    }));
-    return rankRows(rows, run.seconds || 0);
+    const rows = (run.players || []).map((row) => {
+        const received = Number(row.regen) || 0;
+        const net = received - (Number(row.damage) || 0);
+        return {
+            name: row.name,
+            value: row.damage || 0,
+            perSecond: row.dps ?? null,
+            classTag: classByName[row.name] || null,
+            received,
+            net,
+            detail: `received ${formatKMB(Math.round(received))} · net ${signedFigure(net, formatKMB)}`,
+            // What hit them, from the taken tracker's per-monster split
+            breakdown: breakdownLines(
+                (run.enemies || []).flatMap((enemy) =>
+                    (enemy.players || [])
+                        .filter((hit) => hit.name === row.name)
+                        .map((hit) => ({
+                            label: enemy.name,
+                            value: hit.damage,
+                            detail:
+                                `${formatWithSeparator(hit.hits || 0)} hits` +
+                                (hit.min === null || hit.min === undefined
+                                    ? ''
+                                    : ` · ${formatWithSeparator(hit.min)}–${formatWithSeparator(hit.max)} a hit`),
+                        }))
+                ),
+                row.damage,
+                run.seconds
+            ),
+        };
+    });
+    const board = rankRows(rows, run.seconds || 0);
+    // The party's, including anyone who received healing and took nothing
+    board.received = (run.players || []).reduce((sum, row) => sum + (Number(row.regen) || 0), 0);
+    board.net = board.received - (run.players || []).reduce((sum, row) => sum + (Number(row.damage) || 0), 0);
+    return board;
+}
+
+/**
+ * A figure with its sign, for a net.
+ * @param {number} value - The figure
+ * @param {Function} format - How to draw its size
+ * @returns {string} `+1.2K`, `−300`, or `0`
+ */
+function signedFigure(value, format) {
+    const rounded = Math.round(Number(value) || 0);
+    if (rounded === 0) return '0';
+    return `${rounded > 0 ? '+' : '−'}${format(Math.abs(rounded))}`;
+}
+
+/** The healing done tab's team line: everything no heal, life-steal or Bloom accounts for */
+const NOT_FROM_A_CAST = 'Not from a cast — regeneration, food, unexplained';
+
+/**
+ * The lines under a healing done or taken board that are the party's rather than any row's.
+ * @param {string} which - A key of {@link TABS}
+ * @param {Object} board - From {@link panelRows}
+ * @returns {Array<[string, string]>} Name and the figure as printed
+ */
+function partyLines(which, board) {
+    if (which === 'healing') {
+        const outside = (board?.regen || 0) + (board?.uncredited || 0);
+        return outside >= 1 ? [[NOT_FROM_A_CAST, formatWithSeparator(Math.round(outside))]] : [];
+    }
+    if ((which === 'taken' || which === 'healed') && board?.rows?.length) {
+        return [
+            ['Healing received', formatWithSeparator(Math.round(board.received || 0))],
+            ['Net', signedFigure(board.net, formatWithSeparator)],
+        ];
+    }
+    return [];
 }
 
 /**
@@ -290,6 +338,8 @@ const expanded = new Set();
 const BREAKDOWN_LABELS = {
     dot: 'Damage over time',
     reflect: 'Reflect',
+    [LIFESTEAL_HEAL]: 'Life steal (auto-attacks)',
+    // No longer written; still in sessions saved before healing was credited strictly
     shared: 'Split — no caster on the tick',
     other: 'No cast on the tick',
 };
@@ -299,6 +349,8 @@ const BREAKDOWN_LABELS = {
  * @returns {string} Something readable
  */
 function breakdownLabel(action) {
+    const text = String(action);
+    if (text.startsWith(BLOOM_HEAL_PREFIX)) return `Bloom (via ${actionLabel(text.slice(BLOOM_HEAL_PREFIX.length))})`;
     return BREAKDOWN_LABELS[action] || actionLabel(action);
 }
 
@@ -408,27 +460,21 @@ const NOTES = {
             'crowd. Includes damage-over-time and reflect, which move health with no swing behind them.',
     },
     taken: {
-        strong: 'Health actually lost, after mitigation.',
+        strong: 'Health lost after mitigation, beside the healing each player received.',
         color: BOARD_COLORS.warn,
         detail:
-            'A floor rather than a total: damage healed back on the same tick was never visible. This is not the ' +
-            'game’s pre-mitigation figure and the two do not match by design.',
-    },
-    healed: {
-        strong: 'Health restored — received, not healing done.',
-        color: BOARD_COLORS.accent,
-        detail:
-            'A heal, a life-steal and the zone’s own regeneration are one number here, filed under whoever’s ' +
-            'health went up. Ranking this does not say who healed — the Healing done tab credits the caster.',
+            'Taken is a floor: damage healed back on the same tick was never visible, and it is not the game’s ' +
+            'pre-mitigation figure. Received is every rise on that player’s own bar — heals, life-steal, ' +
+            'regeneration, food — except revives; net is received minus taken. Healing done says who healed.',
     },
     healing: {
-        strong: 'Healing done — credited to whoever cast it.',
+        strong: 'Healing done — credited only where the feed shows who did it.',
         color: BOARD_COLORS.good,
         detail:
-            'A rise goes to a lone heal cast on the tick, then the one player on it (a life-steal or self-heal), ' +
-            'then a lone ability cast (an on-cast proc), then a lone mana drop; with none of those it is split ' +
-            'evenly among the players present. Regeneration — health rising with mana, or by a player’s own ' +
-            'regeneration amount — and revives are left out.',
+            'A rise goes to a healing ability cast on that tick, to life-steal on the hitter’s own bar (auto-attacks ' +
+            'with Life Steal on the sheet, or a draining ability like Life Drain), or to a Bloom proc on the ' +
+            'lowest-health ally when a Bloom wearer cast an ability. Regeneration, food and anything unexplained ' +
+            'go on one team line below, on nobody’s row; revives are left out.',
     },
 };
 
@@ -823,12 +869,16 @@ export function panelText(which, sources) {
     const { rows, seconds } = board;
     const label =
         {
-            healed: 'health restored',
+            healed: 'damage taken',
             healing: 'healing done',
             taken: 'damage taken',
         }[which] || 'damage';
 
-    if (!rows.length) return `Party ${label}: nothing measured yet.`;
+    const party = partyLines(which, board);
+    if (!rows.length) {
+        const empty = `Party ${label}: nothing measured yet.`;
+        return party.length ? [empty, ...party.map(([name, value]) => `${name}: ${value}`)].join('\n') : empty;
+    }
 
     const total = board.team ?? board.total;
     const perSecond = board.team === undefined ? board.perSecond : board.teamPerSecond;
@@ -836,9 +886,10 @@ export function panelText(which, sources) {
         `Party ${label} — ${formatWithSeparator(Math.round(total))} total` +
         (perSecond === null ? '' : `, ${formatWithSeparator(Math.round(perSecond))}/s`) +
         ` over ${Math.round(seconds)}s (attributed from this client’s battle feed)`;
-    const reconcile = reconcileParts(board)
-        .map(([name, value]) => `${name}: ${formatWithSeparator(Math.round(value))}`)
-        .join('\n');
+    const reconcile = [
+        ...reconcileParts(board).map(([name, value]) => `${name}: ${formatWithSeparator(Math.round(value))}`),
+        ...party.map(([name, value]) => `${name}: ${value}`),
+    ].join('\n');
     return boardLines(heading, rows) + (reconcile ? `\n${reconcile}` : '');
 }
 
@@ -864,6 +915,8 @@ function reconcileParts(board) {
  * @param {Object} [sources] - As {@link panelRows}
  */
 export function drawBoard(body, sources) {
+    // The Healed tab folded into Taken
+    if (tab === 'healed') tab = 'taken';
     // Saved-session history — meter-history.js. A saved board carries its own
     // banner and graph; a live one offers the list
     const banner = sources?.bannerHTML || '';
@@ -892,7 +945,7 @@ export function drawBoard(body, sources) {
     const total = board.team ?? board.total;
     const perSecond = board.team === undefined ? board.perSecond : board.teamPerSecond;
     const note = NOTES[tab] || NOTES.damage;
-    const unit = tab === 'healed' || tab === 'healing' ? 'hps' : 'dps';
+    const unit = tab === 'healing' ? 'hps' : 'dps';
 
     // Player colours and class overrides — utils/player-menu.js
     resolveRosterColors(rows.map((row) => row.name));
@@ -910,6 +963,14 @@ export function drawBoard(body, sources) {
                   'damage the DPs panel’s Filter Nondamage keeps out of the rows.',
               { color: BOARD_COLORS.warn }
           )
+        : '';
+
+    // What belongs to the party and no row: the uncredited healing, or what came back against what was lost
+    const party = partyLines(tab, board);
+    const partyNote = party.length
+        ? boardNoteHTML(escapeText(party.map(([name, value]) => `${name}: ${value}`).join(' · ')), {
+              color: tab === 'healing' ? BOARD_COLORS.warn : BOARD_COLORS.dim,
+          })
         : '';
 
     const list = rows.length
@@ -932,6 +993,7 @@ export function drawBoard(body, sources) {
         boardNoteHTML(note.strong, { color: note.color, strong: true }) +
         boardNoteHTML(note.detail) +
         reconcile +
+        partyNote +
         list +
         boardButtonsHTML([{ key: 'copy', label: 'Copy stats' }, ...historyButton]);
 
@@ -1186,7 +1248,7 @@ function inject() {
     const button = document.createElement('button');
     button.id = BUTTON_ID;
     button.textContent = 'Per-player';
-    button.title = 'Damage, damage taken and health restored per party member, ranked.';
+    button.title = 'Damage, damage taken with healing received, and healing done per party member, ranked.';
     button.style.cssText =
         'position:absolute; top:2px; right:2px; z-index:5; padding:1px 6px; border-radius:4px;' +
         `border:1px solid ${BOARD_COLORS.accent}66; background:rgba(18,20,28,0.85); color:${BOARD_COLORS.accent};` +

@@ -16,6 +16,15 @@ const listeners = vi.hoisted(() => ({}));
 
 /** Enough of the ability map for a class to be read off a cast */
 const ABILITIES = vi.hoisted(() => ({
+    '/abilities/entangle': {
+        abilityEffects: [
+            {
+                effectType: '/ability_effect_types/damage',
+                combatStyleHrid: '/combat_styles/magic',
+                damageType: '/damage_types/nature',
+            },
+        ],
+    },
     '/abilities/fireball': {
         abilityEffects: [
             {
@@ -59,6 +68,16 @@ const ABILITIES = vi.hoisted(() => ({
 
 /** Enough of the item map for a weapon passive to be resolved to its family */
 const ITEMS = vi.hoisted(() => ({
+    '/items/test_blooming_trident': {
+        equipmentDetail: {
+            type: '/equipment_types/two_hand',
+            combatStats: {
+                combatStyleHrids: ['/combat_styles/magic'],
+                damageType: '/damage_types/nature',
+                bloom: 0.38,
+            },
+        },
+    },
     '/items/test_crossbow': {
         equipmentDetail: {
             type: '/equipment_types/two_hand',
@@ -71,8 +90,15 @@ const ITEMS = vi.hoisted(() => ({
     },
 }));
 
+/** Who is logged in and what they wield; nobody by default */
+const OWN = vi.hoisted(() => ({ name: null, equipment: null }));
+
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => ({ abilityDetailMap: ABILITIES, itemDetailMap: ITEMS }) },
+    default: {
+        getInitClientData: () => ({ abilityDetailMap: ABILITIES, itemDetailMap: ITEMS }),
+        getCurrentCharacterName: () => OWN.name,
+        getEquipment: () => OWN.equipment,
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -824,6 +850,83 @@ describe('healing done', () => {
     afterEach(() => {
         tracker.default.cleanup();
         vi.useRealTimers();
+        OWN.name = null;
+        OWN.equipment = null;
+    });
+
+    const EYE = { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } };
+
+    test('a Bloom wearer’s sheet earns the proc on the lowest ally; a full-mana ally’s own rise is nobody’s', () => {
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: {
+                    name: 'Trident',
+                    currentHitpoints: 2000,
+                    maxHitpoints: 2000,
+                    currentManapoints: 500,
+                    preparingAbilityHrid: '/abilities/entangle',
+                    combatDetails: { magicMaxDamage: 1000, combatStats: { bloom: 0.38 } },
+                },
+                1: {
+                    name: 'Noir',
+                    currentHitpoints: 600,
+                    maxHitpoints: 2000,
+                    currentManapoints: 1000,
+                    isPreparingAutoAttack: true,
+                    combatDetails: { combatStats: {} },
+                },
+            },
+            monsters: EYE,
+        });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1, cHP: 2000, mHP: 2000, cMP: 500 } } });
+        vi.setSystemTime(Date.now() + 1000);
+        // Entangle cast; the ally lowest going in rises
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2, cHP: 2000, mHP: 2000, cMP: 450 }, 1: { cHP: 760, mHP: 2000, cMP: 1000 } },
+        });
+        vi.setSystemTime(Date.now() + 1000);
+        // Noir alone, mana full: their own regeneration, which nothing taught
+        listeners.battle_updated({ battleId: 1, pMap: { 1: { cHP: 802, mHP: 2000, cMP: 1000 } } });
+
+        const { healing } = damageBreakdown();
+        expect(healing.players).toHaveLength(1);
+        expect(healing.players[0]).toMatchObject({ name: 'Trident', healing: 160 });
+        expect(healing.players[0].abilities).toEqual([{ action: 'bloom:/abilities/entangle', healing: 160 }]);
+        expect(healing.uncredited).toBe(42);
+        expect(healing.total + healing.uncredited + healing.regen).toBe(202);
+    });
+
+    test('with no sheet stated, this character’s own equipped weapon still says Bloom is there', () => {
+        OWN.name = 'Me';
+        OWN.equipment = new Map([['/equipment_types/two_hand', { itemHrid: '/items/test_blooming_trident' }]]);
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: {
+                    name: 'Me',
+                    currentHitpoints: 2000,
+                    maxHitpoints: 2000,
+                    currentManapoints: 500,
+                    preparingAbilityHrid: '/abilities/entangle',
+                },
+                1: { name: 'Ally', currentHitpoints: 600, maxHitpoints: 2000, currentManapoints: 1000 },
+            },
+            monsters: EYE,
+        });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1, cHP: 2000, mHP: 2000, cMP: 500 } } });
+        vi.setSystemTime(Date.now() + 1000);
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2, cHP: 2000, mHP: 2000, cMP: 450 }, 1: { cHP: 900, mHP: 2000, cMP: 1000 } },
+        });
+
+        const { healing } = damageBreakdown();
+        // No magicMaxDamage to bound it by, so the whole rise on the target is the proc's
+        expect(healing.players[0]).toMatchObject({ name: 'Me', healing: 300 });
+        expect(healing.players[0].abilities[0].action).toBe('bloom:/abilities/entangle');
+        expect(healing.uncredited).toBe(0);
     });
 
     test('a heal lands on the healer’s row, a regeneration tick lands nowhere, and a healer with no damage is listed', () => {

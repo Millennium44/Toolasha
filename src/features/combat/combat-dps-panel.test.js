@@ -4,10 +4,10 @@
  *
  * What is worth asserting is which tracker feeds which tab and what each tab
  * claims about its figures — the drawing itself belongs to `damage-board.js`
- * and is tested there. The third tab is the one to watch: it ranks health
- * *restored*, which is not healing done, and a panel that let that read as a
- * healer's scoreboard would be inventing an attribution the run feed cannot
- * make.
+ * and is tested there. Healing is on two tabs as two different things: Taken
+ * carries health *received* beside what was lost, and Healing done credits a
+ * player only where the feed shows them causing it — a panel that let either
+ * read as the other would be inventing an attribution the run feed cannot make.
  *
  * The rest is the lifecycle: the opener has to survive React rebuilding the
  * battle panel, and switching the feature off has to leave the game's own DOM
@@ -203,11 +203,19 @@ describe('which tracker feeds which tab', () => {
         expect(panelRows('taken').rows.map((row) => row.name)).toEqual(['Bob', 'Alice']);
     });
 
-    test('healed ranks health restored, not damage', () => {
-        const { rows } = panelRows('healed');
+    test('taken rows carry the healing each player received and the net', () => {
+        const board = panelRows('taken');
 
-        expect(rows[0]).toMatchObject({ name: 'Alice', value: 900, perSecond: 9 });
-        expect(rows[1].value).toBe(100);
+        expect(board.rows[0]).toMatchObject({ name: 'Bob', value: 1600, received: 100, net: -1500 });
+        expect(board.rows[0].detail).toBe('received 100 · net −1.5K');
+        expect(board.rows[1]).toMatchObject({ name: 'Alice', value: 400, received: 900, net: 500 });
+        expect(board.rows[1].detail).toBe('received 900 · net +500');
+        expect(board.received).toBe(1000);
+        expect(board.net).toBe(-1000);
+    });
+
+    test('a caller still naming the old Healed tab gets Taken', () => {
+        expect(panelRows('healed')).toEqual(panelRows('taken'));
     });
 
     test('a rate the tracker refused to state is not invented', () => {
@@ -238,14 +246,17 @@ describe('what the board says about its figures', () => {
         expect(text).toContain('Alice');
     });
 
-    test('the healed tab refuses to read as a healer’s scoreboard', () => {
+    test('there is no Healed tab; Taken shows received and net, and does not claim who healed', () => {
         const body = board();
-        [...body.querySelectorAll('[data-tab]')].find((tab) => tab.dataset.tab === 'healed').click();
+        expect(body.querySelector('[data-tab="healed"]')).toBeNull();
+        body.querySelector('[data-tab="taken"]').click();
 
         const text = body.textContent;
-        expect(text).toContain('received, not healing done');
-        // And points at where the caster is credited instead
-        expect(text).toContain('the Healing done tab credits the caster');
+        expect(text).toContain('received 900 · net +500');
+        expect(text).toContain('Healing received: 900 · Net: +500');
+        expect(text).toContain('Healing done says who healed');
+        expect(text).not.toContain('could not be drawn');
+        expect(panelText('taken')).toContain('Healing received: 900\nNet: +500');
     });
 
     test('the taken tab says its figure is a floor, not the game’s own', () => {
@@ -254,6 +265,15 @@ describe('what the board says about its figures', () => {
 
         expect(body.textContent).toContain('after mitigation');
         expect(body.textContent).toContain('floor');
+    });
+
+    test('a remembered Healed tab draws as Taken', () => {
+        feature._setTab('healed');
+        const body = board();
+
+        expect(body.querySelector('[data-expand], [data-tab="taken"]')).not.toBeNull();
+        expect(body.textContent).toContain('Healing received: 900');
+        expect(body.textContent).not.toContain('could not be drawn');
     });
 
     test('a run with nothing in it explains itself rather than sitting blank', () => {
@@ -498,7 +518,7 @@ describe('the rotation tab', () => {
     });
 
     test('is a tab of its own, after the party ones', () => {
-        expect(TABS.map((entry) => entry.key)).toEqual(['damage', 'taken', 'healed', 'healing', 'rotation']);
+        expect(TABS.map((entry) => entry.key)).toEqual(['damage', 'taken', 'healing', 'rotation']);
     });
 
     test('says nothing is being watched until a battle names your slot', () => {
@@ -897,6 +917,7 @@ describe('the healing done tab', () => {
             players: [{ name: 'Tank', damage: 5000, dps: 50, classTag: { key: 'tank', short: 'TANK' } }],
             healing: {
                 total: 4000,
+                uncredited: 300,
                 regen: 900,
                 revived: 2000,
                 shared: 100,
@@ -908,9 +929,9 @@ describe('the healing done tab', () => {
         };
     });
 
-    test('sits beside the received tab and ranks what each player cast', () => {
+    test('sits after Taken and ranks what each player caused', () => {
         expect(TABS.findIndex((entry) => entry.key === 'healing')).toBe(
-            TABS.findIndex((entry) => entry.key === 'healed') + 1
+            TABS.findIndex((entry) => entry.key === 'taken') + 1
         );
 
         const { rows, total } = panelRows('healing');
@@ -928,16 +949,46 @@ describe('the healing done tab', () => {
         const text = board().textContent;
 
         expect(text).toContain('party hps');
-        expect(text).toContain('credited to whoever cast it');
+        expect(text).toContain('credited only where the feed shows who did it');
+        expect(text).toContain('life-steal');
+        expect(text).toContain('Bloom');
         expect(text).toContain('revives are left out');
         expect(text).toContain('Healer');
+        // Regeneration and the uncredited rises, as one line that is nobody's row
+        expect(text).toContain('Not from a cast — regeneration, food, unexplained: 1,200');
         expect(text).not.toContain('could not be drawn');
-        expect(panelText('healing')).toContain('Party healing done — 4,000 total, 40/s');
+        const copy = panelText('healing');
+        expect(copy).toContain('Party healing done — 4,000 total, 40/s');
+        expect(copy).toContain('Not from a cast — regeneration, food, unexplained: 1,200');
     });
 
     test('an older breakdown with no healing is an empty tab, not a crash', () => {
         opts.dealt = { seconds: 100, players: [] };
         expect(panelRows('healing').rows).toEqual([]);
+    });
+
+    test('a Bloom proc and a life-steal read as what they are in the breakdown', () => {
+        opts.dealt.healing.players = [
+            {
+                name: 'Healer',
+                healing: 3000,
+                hps: 30,
+                abilities: [
+                    { action: 'bloom:/abilities/entangle', healing: 2000 },
+                    { action: 'lifesteal', healing: 600 },
+                    { action: '/abilities/life_drain', healing: 400 },
+                ],
+            },
+        ];
+        feature._setTab('healing');
+        const body = board();
+        body.querySelector('[data-expand="healing:Healer"]').click();
+
+        const text = body.textContent;
+        expect(text).toContain('Bloom (via entangle)');
+        expect(text).toContain('Life steal (auto-attacks)');
+        expect(text).toContain('life drain');
+        expect(text).not.toContain('bloom:');
     });
 });
 
@@ -1049,8 +1100,21 @@ describe('a row opens into its breakdown', () => {
     });
 
     test('a row with nothing to break down is not offered as a button', () => {
-        feature._setTab('healed');
-        expect(board().querySelector('[data-expand]')).toBeNull();
+        opts.dealt.healing.players.push({ name: 'Quiet', healing: 100, hps: 1, abilities: [] });
+        feature._setTab('healing');
+        const body = board();
+
+        expect(body.textContent).toContain('Quiet');
+        expect(body.querySelector('[data-expand="healing:Quiet"]')).toBeNull();
+        expect(body.querySelector('[data-expand="healing:Healer"]')).not.toBeNull();
+    });
+
+    test('a taken row still opens into what hit them, with received and net on the row itself', () => {
+        feature._setTab('taken');
+        const body = board();
+        expect(body.textContent).toContain('received 40 · net −460');
+        row(body, 'taken:Tank').click();
+        expect(body.textContent).toContain('3 hits · 90–110 a hit');
     });
 });
 
@@ -1182,6 +1246,49 @@ describe('saved sessions', () => {
         expect(text).toContain('1. Tank — 6,000');
         expect(text).toContain('Party healing done — 900 total');
         expect(text).toContain('Party damage taken — 500 total');
+        expect(text).toContain('received 40 · net −460');
+        expect(text).toContain('Healing received: 40');
+    });
+
+    test('a session saved before strict healing, viewed from the Healed tab, opens on Taken and Healing done', async () => {
+        // Its healing rows carry the retired split and no-cast labels, and it has no uncredited figure
+        const old = savedRun('Old Swamp', 5000);
+        old.dealt.healing = {
+            total: 900,
+            regen: 120,
+            revived: 0,
+            shared: 300,
+            players: [
+                {
+                    name: 'Healer',
+                    healing: 900,
+                    hps: 7.5,
+                    abilities: [
+                        { action: '/abilities/heal', healing: 400 },
+                        { action: 'shared', healing: 300 },
+                        { action: 'other', healing: 200 },
+                    ],
+                },
+            ],
+        };
+        await saveHistoryEntry(old, 'default');
+        feature._setTab('healed');
+        const body = board();
+        click(body, '[data-action="history"]');
+        await vi.waitFor(() => expect(body.textContent).toContain('Old Swamp'));
+        click(body, '[data-history-open]');
+        await vi.waitFor(() => expect(body.querySelector('[data-history-banner]')).not.toBeNull());
+
+        expect(body.querySelector('[data-tab="taken"]')).not.toBeNull();
+        expect(body.textContent).toContain('Healing received: 40 · Net: −460');
+
+        click(body, '[data-tab="healing"]');
+        click(body, '[data-expand="healing:Healer"]');
+        expect(body.textContent).toContain('Split — no caster on the tick');
+        expect(body.textContent).toContain('No cast on the tick');
+        expect(body.textContent).toContain('Not from a cast — regeneration, food, unexplained: 120');
+        expect(body.textContent).not.toContain('could not be drawn');
+        expect(savedEntryText(old)).toContain('Party healing done — 900 total');
     });
 
     test('with the setting off the live board offers no History', () => {
