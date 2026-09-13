@@ -766,6 +766,70 @@ describe('the game’s own totals', () => {
         expect(lastOf(guildTrialRecorder.session).basis).toBeUndefined();
     });
 
+    /** Close a watched Badger session on the game's own end, at `now + 1000` */
+    const closeOnGameEnd = () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+        vi.setSystemTime(now + 1000);
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: now + 1000, endedByGame: true, active: false });
+        guildTrialRecorder.noteLifecycle('completed', now + 1000);
+        expect(game.accrued).toHaveLength(1);
+        return guildTrialRecorder.session;
+    };
+
+    test('totals fetched minutes after a trial the game ended still correct its fold, once', () => {
+        const closed = closeOnGameEnd();
+
+        // Nobody opens the game's Stats panel for a while: the short wait passes
+        vi.setSystemTime(now + 1000 + RECONCILE_WAIT_MS + 5 * 60_000);
+        vi.advanceTimersByTime(SNAPSHOT_MS * 2);
+        expect(game.accrued).toHaveLength(1);
+        expect(guildTrialRecorder.pendingReconcile).not.toBeNull();
+
+        game.breakdown = breakdown({
+            encounter: 'badger',
+            endedAt: now + 1000,
+            endedByGame: true,
+            active: false,
+            reported,
+        });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+
+        expect(game.accrued).toHaveLength(2);
+        expect(game.accrued[1].session).toBe(closed);
+        expect(lastOf(closed).basis).toBe('game');
+
+        // Opened again: still folded once
+        vi.advanceTimersByTime(SNAPSHOT_MS * 4);
+        expect(game.accrued).toHaveLength(2);
+    });
+
+    test('the long wait ends once the breakdown holds another fight, or the week has rolled', () => {
+        const closed = closeOnGameEnd();
+        vi.setSystemTime(now + 1000 + RECONCILE_WAIT_MS + 60_000);
+        // The next fight running, with a stats copy the damage module paired to it
+        game.breakdown = breakdown({ encounter: 'badger', active: true, endedAt: null, reported });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+        expect(game.accrued.filter((fold) => fold.session === closed)).toHaveLength(1);
+        expect(lastOf(closed).basis).toBeUndefined();
+    });
+
+    test('a trial ended by the game stops waiting when its week is over', () => {
+        const closed = closeOnGameEnd();
+        vi.setSystemTime(now + 8 * 24 * 60 * 60_000);
+        game.breakdown = breakdown({
+            encounter: 'badger',
+            endedAt: now + 1000,
+            endedByGame: true,
+            active: false,
+            reported,
+        });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+        expect(game.accrued).toHaveLength(1);
+        expect(lastOf(closed).basis).toBeUndefined();
+        expect(guildTrialRecorder.pendingReconcile).toBeNull();
+    });
+
     test('a character switch drops the wait: later totals are the next character’s', () => {
         game.breakdown = breakdown({ encounter: 'badger' });
         guildTrialRecorder.noteActivity('trial-fight');
@@ -823,6 +887,29 @@ describe('a reload while the game’s totals are still in flight', () => {
         // Re-sent whenever the native Stats panel is opened: still folded once
         vi.advanceTimersByTime(SNAPSHOT_MS * 4);
         expect(game.accrued).toHaveLength(2);
+    });
+
+    test('a reload minutes after a trial the game ended keeps waiting for its totals', async () => {
+        game.breakdown = breakdown({ encounter: 'badger' });
+        guildTrialRecorder.noteActivity('trial-fight');
+        vi.setSystemTime(now + 1000);
+        game.breakdown = breakdown({ encounter: 'badger', endedAt: now + 1000, endedByGame: true, active: false });
+        guildTrialRecorder.noteLifecycle('completed', now + 1000);
+
+        vi.setSystemTime(now + 1000 + RECONCILE_WAIT_MS + 5 * 60_000);
+        await reload();
+        expect(guildTrialRecorder.pendingReconcile).not.toBeNull();
+
+        game.breakdown = breakdown({
+            encounter: 'badger',
+            endedAt: now + 1000,
+            endedByGame: true,
+            active: false,
+            reported,
+        });
+        vi.advanceTimersByTime(SNAPSHOT_MS);
+        expect(game.accrued).toHaveLength(2);
+        expect(lastOf(guildTrialRecorder.session).basis).toBe('game');
     });
 
     test('a wait already expired by the time of the reload is not resumed', async () => {

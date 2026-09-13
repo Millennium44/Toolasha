@@ -51,7 +51,8 @@ vi.mock('./guild-trial-recorder.js', () => ({
 
 const { buildTrialEntry, flushTrialHistory, sampleTrialHistory, thinTrialBreakdown, _resetTrialHistory } =
     await import('./trial-history.js');
-const { getHistoryEntry, loadHistoryIndex, _resetMeterHistory } = await import('../combat/meter-history.js');
+const { getHistoryEntry, loadHistoryIndex, renameEntry, setFavourite, _resetMeterHistory } =
+    await import('../combat/meter-history.js');
 
 const T0 = 1_700_000_000_000;
 
@@ -132,6 +133,36 @@ describe('archived once', () => {
         const index = await loadHistoryIndex('trial', 'A');
         expect(index).toHaveLength(1);
         expect(index[0].basis).toBe('game');
+    });
+
+    test('totals fetched long after the fallback save replace it in place, once, keeping its star and name', async () => {
+        // The game sent no stats at the end; the maintainer opened its Combat
+        // Trial Stats panel minutes later, and they arrived then
+        await Promise.all(sampleTrialHistory(T0 + 730_000, { breakdown: ended() }));
+        const [streamSaved] = await loadHistoryIndex('trial', 'A');
+        expect(streamSaved.basis).toBe('stream');
+        await setFavourite('trial', streamSaved.id, true, 'A');
+        await renameEntry('trial', streamSaved.id, 'Hedgehog night', 'A');
+
+        for (let minute = 1; minute <= 8; minute += 1) {
+            await Promise.all(sampleTrialHistory(T0 + 730_000 + minute * 60_000, { breakdown: ended() }));
+        }
+        const writesBefore = bodyWrites();
+
+        await Promise.all(sampleTrialHistory(T0 + 1_300_000, { breakdown: ended({ reported }) }));
+        await Promise.all(sampleTrialHistory(T0 + 1_315_000, { breakdown: ended({ reported }) }));
+        await Promise.all(sampleTrialHistory(T0 + 1_330_000, { breakdown: ended({ reported }) }));
+
+        const index = await loadHistoryIndex('trial', 'A');
+        expect(index).toHaveLength(1);
+        expect(index[0]).toMatchObject({
+            id: streamSaved.id,
+            basis: 'game',
+            total: 5200,
+            favourite: true,
+            name: 'Hedgehog night',
+        });
+        expect(bodyWrites()).toBe(writesBefore + 1);
     });
 
     test('a trial too slight to keep is not saved', async () => {

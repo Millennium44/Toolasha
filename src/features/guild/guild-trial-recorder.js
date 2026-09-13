@@ -435,6 +435,7 @@ class GuildTrialRecorder {
                 armedAt: at,
             };
             this.pendingReconcile = fold;
+            this._noteGameEnded(fold, breakdown);
             // Totals already in hand (a session closed after they landed) go
             // into the first fold rather than a correction of it
             this._applyReported(breakdown, at);
@@ -537,6 +538,56 @@ class GuildTrialRecorder {
     }
 
     /**
+     * Mark a pending fold as waiting on a trial the game itself declared over.
+     *
+     * Only for the trial the fold recorded, where it knows which that was.
+     *
+     * @param {Object} pending - `pendingReconcile`
+     * @param {Object} breakdown - `guildTrialDamage.breakdown()`
+     * @returns {boolean} Whether the mark is new
+     */
+    _noteGameEnded(pending, breakdown) {
+        if (!pending || pending.gameEnded) return false;
+        if (breakdown?.endedByGame !== true || !Number.isFinite(breakdown?.endedAt)) return false;
+        const encounter = pending.context?.encounter;
+        if (encounter && breakdown.encounter && breakdown.encounter !== encounter) return false;
+        pending.gameEnded = true;
+        return true;
+    }
+
+    /**
+     * Whether a closed session may still take the game's totals.
+     *
+     * {@link RECONCILE_WAIT_MS} from whichever is later, the close or the
+     * game's own end, as always. Past it, a fold that knows which trial it
+     * recorded, and whose trial the game declared over, keeps waiting for the
+     * rest of that trial week: the game sends its totals only when somebody
+     * opens its Combat Trial Stats panel, which can be minutes after the end or
+     * never. The wait ends early once the breakdown holds another fight — a
+     * fight running again, or a different encounter — and the damage module
+     * only pairs stats with the fight it holds, so a copy for a different fight
+     * never reaches `reported` either.
+     *
+     * @param {Object} pending - `pendingReconcile`
+     * @param {Object} breakdown - `guildTrialDamage.breakdown()`
+     * @param {number} now - Clock
+     * @returns {boolean}
+     */
+    _pendingStillOpen(pending, breakdown, now) {
+        const endedAt = Number.isFinite(breakdown?.endedAt) ? breakdown.endedAt : 0;
+        if (now - Math.max(pending.armedAt, endedAt) <= RECONCILE_WAIT_MS) return true;
+
+        const encounter = pending.context?.encounter;
+        if (!pending.gameEnded || !encounter) return false;
+        const week = Number.isFinite(pending.session?.weekStart)
+            ? pending.session.weekStart
+            : trialWeekStart(pending.armedAt);
+        if (trialWeekStart(now) !== week) return false;
+        if (breakdown?.active && !Number.isFinite(breakdown?.endedAt)) return false;
+        return !breakdown?.encounter || breakdown.encounter === encounter;
+    }
+
+    /**
      * Apply the game's totals to the last closed session if they have landed,
      * and correct the ledger fold with them.
      *
@@ -547,8 +598,9 @@ class GuildTrialRecorder {
         const pending = this.pendingReconcile;
         if (!pending) return;
 
-        const endedAt = Number.isFinite(breakdown?.endedAt) ? breakdown.endedAt : 0;
-        if (now - Math.max(pending.armedAt, endedAt) > RECONCILE_WAIT_MS) {
+        // Written down the moment it is learned, so a reload can keep waiting too
+        if (this._noteGameEnded(pending, breakdown) && this.session) this._persist();
+        if (!this._pendingStillOpen(pending, breakdown, now)) {
             this.pendingReconcile = null;
             // Nothing left waiting on this guild's key; written down so a
             // reload does not keep resuming a wait that already expired
@@ -888,6 +940,7 @@ class GuildTrialRecorder {
             guildName: pending.guildName,
             characterId: pending.characterId,
             armedAt: pending.armedAt,
+            gameEnded: Boolean(pending.gameEnded),
         };
     }
 
@@ -926,7 +979,12 @@ class GuildTrialRecorder {
     _pendingIsFresh(pendingReconcile, session) {
         if (!pendingReconcile || !Number.isFinite(pendingReconcile.armedAt)) return false;
         const endedAt = Number.isFinite(session?.endedAt) ? session.endedAt : 0;
-        return Date.now() - Math.max(pendingReconcile.armedAt, endedAt) <= RECONCILE_WAIT_MS;
+        if (Date.now() - Math.max(pendingReconcile.armedAt, endedAt) <= RECONCILE_WAIT_MS) return true;
+        // A trial the game ended keeps waiting for its week — see `_pendingStillOpen`,
+        // which the first tick after the reload applies against the live breakdown
+        if (!pendingReconcile.gameEnded || !pendingReconcile.context?.encounter) return false;
+        const week = Number.isFinite(session?.weekStart) ? session.weekStart : trialWeekStart(pendingReconcile.armedAt);
+        return trialWeekStart(Date.now()) === week;
     }
 
     /**
@@ -967,6 +1025,7 @@ class GuildTrialRecorder {
                         guildName: pendingReconcile.guildName,
                         characterId: pendingReconcile.characterId,
                         armedAt: pendingReconcile.armedAt,
+                        gameEnded: Boolean(pendingReconcile.gameEnded),
                     };
                 }
             } else {

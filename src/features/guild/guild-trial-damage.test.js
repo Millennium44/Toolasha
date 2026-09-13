@@ -2478,16 +2478,43 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(report.storedStats.badger.measured).toBe(null);
     });
 
-    test('a stats message long after the end is filed as a roster too', () => {
+    test('the totals for a fight the game ended are paired with it however late they are fetched', () => {
+        // The game sends them only when somebody opens its Combat Trial Stats
+        // panel: a trial on the test server ended with no stats message at all,
+        // and they arrived minutes later, when the panel was opened
         game.guildMembers = { 910011: 'Tank' };
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[0]);
         game.wsHandlers.end_guild_battle(END_GUILD_BATTLE);
 
-        vi.setSystemTime(at + 5 * 60_000);
+        vi.setSystemTime(at + 7 * 60_000);
+        game.wsHandlers.guild_trial_stats_updated(badgerStats);
+        expect(guildTrialDamage.breakdown().reported).toEqual({ Tank: { damage: 750_000, healing: 0, taken: 2_000 } });
+        expect(guildTrialDamage.breakdown().storedStats.badger.measured).not.toBe(null);
+    });
+
+    test('a stats message in a later trial week is filed as a roster, even with the old fight still held', () => {
+        game.guildMembers = { 910011: 'Tank' };
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[0]);
+        game.wsHandlers.end_guild_battle(END_GUILD_BATTLE);
+
+        vi.setSystemTime(at + 8 * 24 * 60 * 60_000);
         game.wsHandlers.guild_trial_stats_updated(badgerStats);
         expect(guildTrialDamage.breakdown().reported).toBe(null);
         expect(guildTrialDamage.breakdown().storedStats.badger.measured).toBe(null);
+    });
+
+    test('a quiet stream’s ending keeps the short window: a view shut mid-fight is not the end', () => {
+        game.guildMembers = { 910011: 'Tank' };
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[0]);
+
+        // Long enough for the stream to be called stale, and past the window
+        vi.setSystemTime(at + 10 * 60_000);
+        expect(guildTrialDamage.breakdown().endedByGame).toBe(false);
+        game.wsHandlers.guild_trial_stats_updated(badgerStats);
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
     });
 
     test('the reconciliation still lands for an end the client missed, once the stream has gone quiet', () => {

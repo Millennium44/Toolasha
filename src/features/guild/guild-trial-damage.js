@@ -143,6 +143,7 @@ import {
     TRIAL_ACTIVE_MS,
     tierFromLevel,
     trialFromHrid,
+    trialWeekStart,
 } from './guild-trials-math.js';
 import { loadTrialRoster, loadTrialStats, saveTrialRoster, saveTrialStats } from './guild-trials-store.js';
 import {
@@ -3226,7 +3227,17 @@ class GuildTrialDamage {
      */
     _reconcilable(now) {
         if (this.source !== 'spectated') return true;
-        if (this.endedAt !== null) return now - this.endedAt <= RECONCILE_WINDOW_MS;
+        if (this.endedAt !== null) {
+            if (now - this.endedAt <= RECONCILE_WINDOW_MS) return true;
+            // The game sends its totals only when somebody opens its Combat
+            // Trial Stats panel: 27.9 s after the end in one recorded trial, not
+            // until minutes later in another. A fight the game itself declared
+            // over is still the fight held here until the next one arms — a new
+            // tier or fight clears `endedAt` — so its totals are paired for the
+            // rest of that trial week. A quiet stream's ending may be a fight
+            // still running with the view shut, and keeps the short window.
+            return this.endedByGame === true && trialWeekStart(now) === trialWeekStart(this.endedAt);
+        }
         const lastAt = this.spectator.lastAt;
         if (!lastAt) return false;
         const quiet = now - lastAt;

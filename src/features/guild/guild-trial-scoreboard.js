@@ -364,6 +364,34 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
     };
 }
 
+/** How long after the game ends a trial its totals are overdue: they have been seen landing 28 s after the end */
+const STATS_OVERDUE_MS = 45_000;
+
+/**
+ * A line saying how to get the game's own totals, when a trial it ended has none yet.
+ *
+ * The game sends `guild_trial_stats_updated` only when somebody opens its Combat
+ * Trial Stats panel, and a trial has been seen ending with no stats message at
+ * all. Whenever they do arrive for the fight held here, they replace the stream
+ * figures on this board, in History and in the attendance ledger.
+ *
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @param {Array<Object>|null} modalStats - From `modalStatsForBreakdown`
+ * @param {number} [now] - Clock
+ * @returns {string} HTML, or an empty string
+ */
+export function statsPendingNote(breakdown, modalStats, now = Date.now()) {
+    if (breakdown?.endedByGame !== true || !Number.isFinite(breakdown?.endedAt)) return '';
+    if (Array.isArray(modalStats) && modalStats.length) return '';
+    if (now - breakdown.endedAt < STATS_OVERDUE_MS) return '';
+    return (
+        `<div style="color:${WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;" ` +
+        'title="The game sends its own per-member totals only when its Combat Trial Stats panel is opened. ' +
+        'Once they arrive they replace these figures here, in History and in the attendance ledger.">' +
+        'Open the game’s Combat Trial Stats to fetch the exact totals.</div>'
+    );
+}
+
 /** How far a measured total may sit over the boss-HP ceiling before it is flagged. */
 const CEILING_MARGIN = 0.02;
 
@@ -1194,7 +1222,7 @@ class GuildTrialScoreboard {
         // line when the live tally kept counting through a refresh, a
         // reconnect, or both, so a number that looks lower than it should
         // is not mistaken for a tally that quietly restarted
-        const continuityNote = saved ? '' : this._continuityNote(breakdown);
+        const continuityNote = saved ? '' : this._continuityNote(breakdown) + statsPendingNote(breakdown, modalStats);
 
         // The two "damage taken" figures are different quantities and must not be
         // read as one: the game modal reports gross incoming *before* mitigation,

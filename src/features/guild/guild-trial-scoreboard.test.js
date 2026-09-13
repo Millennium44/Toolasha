@@ -1037,6 +1037,43 @@ describe('Escape, position and the remembered tab', () => {
     });
 });
 
+describe('a trial the game ended without sending its totals', () => {
+    const endedByGame = (ago, overrides = {}) =>
+        breakdown({
+            source: 'spectated',
+            active: false,
+            endedByGame: true,
+            endedAt: Date.now() - ago,
+            ...overrides,
+        });
+    const panelText = () => document.querySelector(`.${PANEL_CLASS}`).textContent;
+
+    test('the live board says how to fetch them, and stops saying it once they are in', () => {
+        game.breakdown = endedByGame(5 * 60_000);
+        guildTrialScoreboard.open();
+        expect(panelText()).toContain('Open the game’s Combat Trial Stats to fetch the exact totals.');
+        guildTrialScoreboard.close();
+
+        game.breakdown = endedByGame(5 * 60_000, {
+            encounter: 'badger',
+            reported: { Tib: { damage: 600_000, healing: 0, taken: 0 } },
+        });
+        guildTrialScoreboard.open();
+        expect(panelText()).not.toContain('Combat Trial Stats to fetch');
+    });
+
+    test('not while the totals are still on their usual way, nor for a fight still running', () => {
+        game.breakdown = endedByGame(10_000);
+        guildTrialScoreboard.open();
+        expect(panelText()).not.toContain('Combat Trial Stats to fetch');
+        guildTrialScoreboard.close();
+
+        game.breakdown = breakdown({ source: 'spectated', endedAt: null, endedByGame: false });
+        guildTrialScoreboard.open();
+        expect(panelText()).not.toContain('Combat Trial Stats to fetch');
+    });
+});
+
 describe('the class chip on a board row', () => {
     test('a verdict draws its short label and says it is an inference', () => {
         const html = classTagHTML({ key: 'ranged', label: 'Ranged', short: 'RANGED' });
