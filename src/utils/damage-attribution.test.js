@@ -245,6 +245,44 @@ describe('kills in a tick', () => {
         expect(events.filter((event) => event.isKill)).toHaveLength(0);
     });
 
+    test('names the player who owned the killing tick', () => {
+        const state = newAttributionState();
+        attributeTick({ mMap: { 0: { cHP: 100, dmgCounter: 0 } }, pMap: { 3: { cMP: 50 } } }, state);
+        const events = attributeTick({ mMap: { 0: { cHP: 0, dmgCounter: 1 } }, pMap: { 3: { cMP: 40 } } }, state);
+
+        expect(events.find((event) => event.isKill)).toMatchObject({ monsterIndex: '0', killerIndex: '3' });
+    });
+
+    test('a bleed kill goes to the tick’s owner too', () => {
+        const state = newAttributionState();
+        attributeTick({ mMap: { 0: { cHP: 100, dmgCounter: 4 } }, pMap: { 1: { cMP: 50 } } }, state);
+        const events = attributeTick({ mMap: { 0: { cHP: 0, dmgCounter: 4 } }, pMap: { 1: { cMP: 50 } } }, state);
+
+        expect(events.find((event) => event.isKill).killerIndex).toBe('1');
+    });
+
+    test('a kill on a shared tick is nobody’s, not a fraction', () => {
+        const crowd = Object.fromEntries([...Array(6)].map((_, index) => [index, { cHP: 100, cMP: 50 }]));
+        const state = newAttributionState();
+        attributeTick({ mMap: { 0: { cHP: 100, dmgCounter: 0 } }, pMap: crowd }, state, { soloFallback: false });
+        const events = attributeTick({ mMap: { 0: { cHP: 0, dmgCounter: 1 } }, pMap: crowd }, state, {
+            soloFallback: false,
+        });
+
+        expect(events.filter((event) => !event.isKill)).toHaveLength(6);
+        expect(events.find((event) => event.isKill).killerIndex).toBeNull();
+    });
+
+    test('a kill on a tick nobody is present in is nobody’s', () => {
+        const state = newAttributionState();
+        attributeTick({ mMap: { 0: { cHP: 100, dmgCounter: 0 } }, pMap: {} }, state, { soloFallback: false });
+        const events = attributeTick({ mMap: { 0: { cHP: 0, dmgCounter: 0 } }, pMap: {} }, state, {
+            soloFallback: false,
+        });
+
+        expect(events).toEqual([{ monsterIndex: '0', isKill: true, killerIndex: null }]);
+    });
+
     test('a kill event does not reach the player tally', () => {
         const tally = foldEvents({}, [{ playerIndex: '0', monsterIndex: '0', isKill: true }]);
         expect(tally['0']).toBeUndefined();

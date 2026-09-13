@@ -423,18 +423,23 @@ function swingLabel(action, abilityDetailMap) {
  *   than dropping it. Off by default, because a caller iterating events must skip a null player
  * @returns {Array<Object>} Hits as
  *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, isDot, weight, action}`, and
- *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
- *   bleed can land the killing blow on a tick where no counter moved. `weight`
+ *   deaths as `{monsterIndex, isKill, killerIndex}` — the two are separate events because a
+ *   bleed can land the killing blow on a tick where no counter moved. `killerIndex` is the
+ *   player who owns the killing tick, or null when it was shared or credited nobody. `weight`
  *   is 1 for a tick one player owns and 1/n for one shared between n of them,
  *   so a swing count still sums to the number of swings
  */
 export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
-    const { actors } = findActors(pMap, state, options);
+    const { actors, shared } = findActors(pMap, state, options);
     const abilityDetailMap = options?.abilityDetailMap;
     const emitUnattributed = options?.unattributed === true;
     const events = [];
     const weight = actors.length ? 1 / actors.length : 0;
+    // A kill goes to the tick's one owner or to nobody. Not a fraction: "0.05
+    // kills" on twenty rows says nothing a player can read, and the shared tick
+    // is exactly the one where nobody knows who landed the blow
+    const killerIndex = !shared && actors.length === 1 ? actors[0] : null;
 
     for (const [index, monster] of Object.entries(mMap || {})) {
         const health = Number(monster?.currentHitpoints ?? monster?.cHP);
@@ -470,7 +475,7 @@ export function attributeTick(tick, state, options) {
         // only when a hit lands undercounts exactly the fights that take
         // longest, which are the ones worth measuring.
         if (beforeHealth > 0 && health <= 0) {
-            events.push({ monsterIndex: index, isKill: true });
+            events.push({ monsterIndex: index, isKill: true, killerIndex });
         }
 
         const change = beforeHealth - health;
