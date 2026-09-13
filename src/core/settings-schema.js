@@ -3437,6 +3437,16 @@ export const settingsGroups = {
                     'shows a live reading, so the whole hour is captured without having to press anything. ' +
                     'The Record button on the trials block starts and stops one by hand either way.',
             },
+            guildTrialAutoOpenScoreboard: {
+                id: 'guildTrialAutoOpenScoreboard',
+                label: 'Guild Trials: Open the trial damage board when a trial fight starts',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Pops the per-player damage board open the moment a trial fight starts being watched, once ' +
+                    'per trial — closing it during that trial keeps it closed until the next one. A button beside ' +
+                    'the guild panel’s own tabs opens or closes it by hand at any time.',
+            },
             guildTrialDiagnosticTrace: {
                 id: 'guildTrialDiagnosticTrace',
                 label: 'Guild Trials: Keep a raw diagnostic trace of trial combat',

@@ -2333,6 +2333,15 @@ class GuildTrials {
         this.lastSession = null;
         /** Whether that one-shot read has been made (or is in flight) */
         this.lastSessionChecked = false;
+        /**
+         * The fight identity (`guildBattleId_fightStartMs`) the scoreboard has
+         * already been auto-opened for — set once and never re-triggered for
+         * the same fight, so closing it by hand does not pop it back open on
+         * the next render pass. Reset on a character switch.
+         */
+        this._autoOpenedTrialKey = null;
+        /** The toggle button injected beside the guild panel's own tabs */
+        this._scoreboardTabButton = null;
     }
 
     async initialize() {
@@ -2580,6 +2589,9 @@ class GuildTrials {
             this._armSampler();
         }
         this._render(el);
+        // Every tab of the guild panel, not only the trial ones — `el` is null
+        // off it, but the panel and its own tab strip are still on screen
+        this._ensureScoreboardTabButton();
     }
 
     /**
@@ -2620,6 +2632,10 @@ class GuildTrials {
             document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
             this.blockHtml.clear();
             guildTrialScoreboard.close?.();
+            // A fight identity is only unique within one guild's battles; the
+            // arriving character's first watched fight must be free to
+            // auto-open even if it happens to reuse a small id
+            this._autoOpenedTrialKey = null;
 
             // The recorder closes its own open session first, and that close
             // folds it into the attendance ledger off the damage module's
@@ -3026,6 +3042,7 @@ class GuildTrials {
             // is about — and is asked once per card rather than once per render
             this.watchedPool = watched;
             this.contextRank = 0;
+            this._maybeAutoOpenScoreboard(watched);
             // A composite trial (Trial Swarm) draws the In Progress fight view
             // four separately named monster cards — Beetle, Dragonfly, Wasp,
             // Firefly — none of which is a trial name, so `readTrialTiles` finds
@@ -4397,6 +4414,109 @@ class GuildTrials {
     }
 
     /**
+     * Open the trial damage board the moment a trial fight starts being
+     * watched, if the setting allows it.
+     *
+     * "Once per trial" is a fight identity — `guildBattleId` paired with
+     * `fightStartMs`, the same pair `guild-trial-damage.js` uses to tell one
+     * trial's fight from the next — not "once per render": `watched` goes
+     * null between ticks whenever the pool reading goes stale for a moment,
+     * and that must not read as a new fight starting. The key is recorded
+     * whether or not the board is still open a moment later, so closing it by
+     * hand keeps it closed for the rest of that same trial rather than having
+     * it pop back the next time the pool ticks.
+     *
+     * @param {Object|null} watched - This render's `_spectatedPool` reading
+     */
+    _maybeAutoOpenScoreboard(watched) {
+        if (!watched) return;
+        if (!config.getSetting('guildTrialAutoOpenScoreboard', true)) return;
+
+        const breakdown = guildTrialDamage.breakdown?.() || {};
+        // The game having already ended this fight is not "starting to be
+        // watched" — a character switch landing on a finished trial's card
+        // must not pop the board back open for a fight that is over
+        if (breakdown.endedAt !== null && breakdown.endedAt !== undefined) return;
+        if (breakdown.guildBattleId === null || breakdown.guildBattleId === undefined) return;
+
+        const key = `${breakdown.guildBattleId}_${breakdown.fightStartMs ?? ''}`;
+        if (this._autoOpenedTrialKey === key) return;
+        this._autoOpenedTrialKey = key;
+
+        guildTrialScoreboard.open();
+    }
+
+    /**
+     * A small toggle for the scoreboard, beside the guild panel's own tabs.
+     *
+     * Not a real tab — nothing here changes what the panel shows — so it is
+     * cloned and stripped of tab semantics the same way `overlay-tab-button.js`
+     * strips its own clone: no `Mui-selected`, no `aria-controls`, and a click
+     * that never reaches the game's tab-switching listener. Idempotent and
+     * cheap enough to call on every guild-panel mutation, because React tears
+     * the strip down and rebuilds it on almost every render of that panel.
+     */
+    _ensureScoreboardTabButton() {
+        const panel = document.querySelector('[class*="GuildPanel"]');
+        if (!panel) return;
+
+        // Excludes our own clone (which also carries the class it was cloned
+        // from) and anything inside a floating dialog — the trial stats modal
+        // has its own per-member tab strip, built off the same shared Tabs
+        // component, and it is nested inside the panel rather than a portal
+        // elsewhere (see `inFloatingDialog`'s own doc for the popup this
+        // fooled before)
+        const tabs = [...panel.querySelectorAll('[class*="TabsComponent_tab"]')].filter(
+            (tab) => tab !== this._scoreboardTabButton && !inFloatingDialog(tab)
+        );
+        const strip = tabs[0]?.parentElement;
+        if (!strip) return;
+
+        if (this._scoreboardTabButton && strip.contains(this._scoreboardTabButton)) {
+            this._syncScoreboardTabButton();
+            return;
+        }
+        this._scoreboardTabButton?.remove();
+
+        const button = tabs[0].cloneNode(true);
+        button.removeAttribute('id');
+        button.title = 'Trial damage — who is carrying it, ranked.';
+        button.classList.remove('Mui-selected');
+        button.setAttribute('aria-selected', 'false');
+        button.setAttribute('tabindex', '-1');
+        button.removeAttribute('aria-controls');
+        // `cloneNode` copies the model tab's inline state along with its
+        // classes, and `order` in particular would park this button on top of
+        // whichever tab it was cloned from
+        button.style.removeProperty('display');
+        button.style.removeProperty('order');
+        button.style.minWidth = 'auto';
+        button.style.cursor = 'pointer';
+
+        const badge = button.querySelector('[class*="TabsComponent_badge"]');
+        if (badge) badge.innerHTML = '<div style="text-align:center;"><div>⚔ Damage</div></div>';
+        else button.textContent = '⚔ Damage';
+
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            guildTrialScoreboard.toggle();
+            this._syncScoreboardTabButton();
+        });
+
+        strip.appendChild(button);
+        this._scoreboardTabButton = button;
+        this._syncScoreboardTabButton();
+    }
+
+    /** Dim the tab button when the board is shut, so it says which state it is in */
+    _syncScoreboardTabButton() {
+        if (this._scoreboardTabButton) {
+            this._scoreboardTabButton.style.opacity = guildTrialScoreboard.isOpen ? '1' : '0.6';
+        }
+    }
+
+    /**
      * The tier the currently-flowing spectator stream states for a trial, or null.
      *
      * `_withSpectatedPool` only grafts the stream's *reading* onto a card that has
@@ -4802,6 +4922,9 @@ class GuildTrials {
         guildLoadoutCapture.cleanup();
         this.blockHtml.clear();
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+        this._scoreboardTabButton?.remove();
+        this._scoreboardTabButton = null;
+        this._autoOpenedTrialKey = null;
         // In-memory only: the persisted copy stays, and the next initialize
         // reads it back
         this.workBases = {};

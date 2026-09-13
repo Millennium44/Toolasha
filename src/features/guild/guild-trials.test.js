@@ -40,6 +40,8 @@ const game = vi.hoisted(() => ({
     alerts: { status: [], payouts: [], reset: 0, started: 0, stopped: 0 },
     recorder: { recording: false, activity: [], lifecycle: [], downloads: [], startedBy: null, endedBy: null },
     scoreboardToggles: 0,
+    scoreboardOpens: 0,
+    scoreboardOpen: false,
     breakdown: {},
     scoreboardContext: null,
     skilling: {},
@@ -231,8 +233,18 @@ vi.mock('./guild-trial-boss-debuffs-ui.js', () => ({
 }));
 vi.mock('./guild-trial-scoreboard.js', () => ({
     default: {
-        toggle: () => (game.scoreboardToggles += 1),
-        close: vi.fn(),
+        toggle: () => {
+            game.scoreboardToggles += 1;
+            game.scoreboardOpen = !game.scoreboardOpen;
+        },
+        open: () => {
+            game.scoreboardOpens += 1;
+            game.scoreboardOpen = true;
+        },
+        close: () => (game.scoreboardOpen = false),
+        get isOpen() {
+            return game.scoreboardOpen;
+        },
         noteForecast: vi.fn(),
         noteContext: (context) => (game.scoreboardContext = context),
     },
@@ -336,6 +348,8 @@ function resetTrialsSingleton() {
     guildTrials.lastSession = null;
     guildTrials.lastSessionChecked = false;
     guildTrials.blockHtml.clear();
+    guildTrials._autoOpenedTrialKey = null;
+    guildTrials._scoreboardTabButton = null;
 }
 
 /**
@@ -1534,6 +1548,8 @@ describe('the panel, end to end', () => {
             endedBy: null,
         };
         game.scoreboardToggles = 0;
+        game.scoreboardOpens = 0;
+        game.scoreboardOpen = false;
         game.breakdown = {};
         game.scoreboardContext = null;
         game.skilling = {};
@@ -3532,6 +3548,179 @@ describe('the panel, end to end', () => {
             expect(text()).not.toContain('Ghost');
         });
     });
+
+    describe('auto-opening the scoreboard when a trial fight starts being watched', () => {
+        /**
+         * A fresh fight's identity, as `guildTrialDamage.breakdown()` states it.
+         * @param {Object} overrides - Fields to override
+         * @returns {Object} `breakdown()`-shaped fields
+         */
+        function watchedFight(overrides = {}) {
+            return {
+                pool: { current: 400_000, max: 600_000, tier: 2, at: now, encounter: 'chameleon' },
+                guildBattleId: 42,
+                fightStartMs: now,
+                endedAt: null,
+                ...overrides,
+            };
+        }
+
+        test('opens once, and not again while the same fight keeps ticking', () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+
+            vi.setSystemTime(now + 5000);
+            game.breakdown = watchedFight({ pool: { ...watchedFight().pool, at: now + 5000 } });
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+        });
+
+        test('does not reopen after the user closes it during the same trial', () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+
+            // The user closes it by hand; the fight is still the same one
+            game.scoreboardOpen = false;
+            vi.setSystemTime(now + 5000);
+            game.breakdown = watchedFight({ pool: { ...watchedFight().pool, at: now + 5000 } });
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+
+            expect(game.scoreboardOpens).toBe(1);
+            expect(game.scoreboardOpen).toBe(false);
+        });
+
+        test('a new fight (a different battle) opens it again', () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+
+            vi.setSystemTime(now + 60_000);
+            game.breakdown = watchedFight({
+                guildBattleId: 43,
+                fightStartMs: now + 60_000,
+                pool: { ...watchedFight().pool, at: now + 60_000, tier: 3 },
+            });
+            fire(buildTab([{ name: 'Trial Chameleon', level: 120, points: 800, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(2);
+        });
+
+        test('never opens it when the setting is off', () => {
+            game.settings.guildTrialAutoOpenScoreboard = false;
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(0);
+        });
+
+        test('a character switch landing on a finished trial does not pop it open', () => {
+            game.breakdown = watchedFight({ endedAt: now - 1000 });
+            fire(buildTab([{ name: 'Trial Chameleon', level: 140, points: 1200, completed: true, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(0);
+        });
+
+        test('a character switch frees the same battle id to auto-open again', () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+
+            guildTrials._forgetCharacter(999);
+            game.characterId = 999;
+
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(2);
+        });
+    });
+
+    describe('the tab-bar toggle button', () => {
+        /**
+         * The guild panel's own tab strip, as a handful of plain tabs.
+         * @param {string[]} names - Tab labels
+         * @returns {{panel: Element, strip: Element}}
+         */
+        function buildGuildPanelWithTabs(names = ['Overview', 'Members', 'Trials']) {
+            document.body.innerHTML = '';
+            const panel = document.createElement('div');
+            panel.className = 'GuildPanel_root__z';
+            const strip = document.createElement('div');
+            for (const name of names) {
+                const tab = document.createElement('div');
+                tab.className = 'TabsComponent_tab__x';
+                tab.textContent = name;
+                strip.appendChild(tab);
+            }
+            panel.appendChild(strip);
+            document.body.appendChild(panel);
+            return { panel, strip };
+        }
+
+        /** @returns {Element|null} The injected toggle, found by its own label */
+        const findInjected = () =>
+            [...document.querySelectorAll('.TabsComponent_tab__x')].find((el) => el.textContent.includes('Damage'));
+
+        test('is injected beside the guild panel’s own tabs, stripped of tab semantics', () => {
+            buildGuildPanelWithTabs();
+            guildTrials._ensureScoreboardTabButton();
+
+            const injected = findInjected();
+            expect(injected).toBeTruthy();
+            expect(injected.getAttribute('aria-selected')).toBe('false');
+            expect(injected.classList.contains('Mui-selected')).toBe(false);
+        });
+
+        test('toggles the board on click, and dims to say it is shut', () => {
+            buildGuildPanelWithTabs();
+            guildTrials._ensureScoreboardTabButton();
+            const injected = findInjected();
+
+            game.scoreboardOpen = false;
+            injected.click();
+            expect(game.scoreboardToggles).toBe(1);
+            expect(injected.style.opacity).toBe('1');
+
+            injected.click();
+            expect(game.scoreboardToggles).toBe(2);
+            expect(injected.style.opacity).toBe('0.6');
+        });
+
+        test('re-injects rather than duplicating when React rebuilds the strip', () => {
+            const { panel } = buildGuildPanelWithTabs();
+            guildTrials._ensureScoreboardTabButton();
+            expect(document.querySelectorAll('.TabsComponent_tab__x').length).toBe(4);
+
+            // React tears the whole strip down and stands a fresh one up in its place
+            panel.querySelector('div').remove();
+            const freshStrip = document.createElement('div');
+            for (const name of ['Overview', 'Members', 'Trials']) {
+                const tab = document.createElement('div');
+                tab.className = 'TabsComponent_tab__x';
+                tab.textContent = name;
+                freshStrip.appendChild(tab);
+            }
+            panel.appendChild(freshStrip);
+
+            guildTrials._ensureScoreboardTabButton();
+            expect(document.querySelectorAll('.TabsComponent_tab__x').length).toBe(4);
+        });
+
+        test('ignores a tab-shaped strip inside a floating dialog, such as the trial stats modal', () => {
+            document.body.innerHTML = '';
+            const panel = document.createElement('div');
+            panel.className = 'GuildPanel_root__z';
+            const modal = document.createElement('div');
+            modal.className = 'Modal_modalContainer__x';
+            const modalTab = document.createElement('div');
+            modalTab.className = 'TabsComponent_tab__x';
+            modalTab.textContent = 'Member 1';
+            modal.appendChild(modalTab);
+            panel.appendChild(modal);
+            document.body.appendChild(panel);
+
+            guildTrials._ensureScoreboardTabButton();
+
+            expect(findInjected()).toBeUndefined();
+        });
+    });
 });
 
 /**
@@ -3637,6 +3826,8 @@ describe('the two trial tabs, as the game draws them', () => {
             endedBy: null,
         };
         game.scoreboardToggles = 0;
+        game.scoreboardOpens = 0;
+        game.scoreboardOpen = false;
         resetTrialsSingleton();
         await trialsFeature.initialize();
     });
@@ -5452,6 +5643,8 @@ describe('the payout block, audited', () => {
             endedBy: null,
         };
         game.scoreboardToggles = 0;
+        game.scoreboardOpens = 0;
+        game.scoreboardOpen = false;
         game.breakdown = {};
         game.scoreboardContext = null;
         game.skilling = {};
