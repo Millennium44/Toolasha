@@ -50,6 +50,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { sharedClassEvidenceFor } from '../../core/profile-manager.js';
 import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
 import { inferClass, newCastLog, noteCast, WEAPON_PASSIVE_STATS } from '../../utils/class-inference.js';
 import { applyClassOverride } from '../../utils/class-override.js';
@@ -864,18 +865,26 @@ class GuildTrialAbilities {
     classOf(row, abilityDetailMap = this._abilityMap(), partyThreat = this._partyThreatBaseline()) {
         const displayName = String(row?.name || row?.capture?.name || '').trim();
         const name = displayName.toLowerCase();
-        // Trial evidence only — never the weapon on the character's sheet: a
+        // Trial evidence first — never the weapon on the character's sheet: a
         // trial runs on its own loadout while the same character may be in an
         // ordinary fight with another weapon at the same time
+        const casts = name ? this.casts[name] || null : null;
+        const kit = row?.capture?.abilities || null;
+        const stats = row?.capture?.classStats || null;
+        // A profile they shared (`profile-manager.js`) only stands in while
+        // nothing from this trial is known; the first watched cast or capture wins
+        const shared = casts || kit || stats ? null : sharedClassEvidenceFor(displayName);
+        const itemMap = this._itemMap();
         const verdict = inferClass(
             {
-                casts: name ? this.casts[name] || null : null,
-                kit: row?.capture?.abilities || null,
-                stats: row?.capture?.classStats || null,
+                casts,
+                kit: kit || shared?.kit || null,
+                stats:
+                    stats || (shared?.weaponHrid && itemMap?.[shared.weaponHrid]?.equipmentDetail?.combatStats) || null,
                 partyThreat,
             },
             abilityDetailMap,
-            this._itemMap()
+            itemMap
         );
         // Every other surface that draws a class tag passes it through this —
         // the Trial Abilities panel is fed straight from `classOf`/`state()`
