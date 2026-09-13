@@ -98,6 +98,7 @@
  * `docs/THIRD-PARTY-LICENSES.md`. The code is Toolasha's own.
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import {
@@ -137,6 +138,13 @@ import {
     trialFromHrid,
 } from './guild-trials-math.js';
 import { loadTrialRoster, loadTrialStats, saveTrialRoster, saveTrialStats } from './guild-trials-store.js';
+import {
+    createLiveSessionPersister,
+    isRestorable,
+    liveSessionKey,
+    liveSessionRestoreEnabled,
+    loadLiveSession,
+} from '../../utils/live-session-persist.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
 export const MIN_SECONDS = 5;
@@ -269,6 +277,20 @@ const RECONCILE_WINDOW_MS = 120_000;
 const FIGHT_SPAN_MS = TRIAL_ACTIVE_MS + 15 * 60_000;
 
 /** The abilities whose buff returns damage to whoever strikes the wearer */
+/** Where the live trial tally is saved through a refresh, and what its payload is called */
+const LIVE_STORE = 'guildHistory';
+const LIVE_KIND = 'trial';
+
+/** Support totals that are counters rather than per-slot baselines, so a restore carries them */
+const SUPPORT_TOTALS = ['unattributedHealing', 'unplacedCasterHealing', 'regenHealing', 'revivedHealth'];
+
+/** A support row's live spell flag and the per-slot start stamp `foldSpell` times it by */
+const SPELL_SINCE = [
+    ['outOfMana', 'emptySince'],
+    ['lowMana', 'lowSince'],
+    ['starved', 'starvedSince'],
+];
+
 export const REFLECT_ABILITIES = new Set(['/abilities/spike_shell', '/abilities/retribution']);
 
 /**
@@ -825,11 +847,29 @@ class GuildTrialDamage {
          * fallback key before the guild is known. Set by {@link setGuildName}.
          */
         this.statsScope = { guildName: null, characterId: null };
+        /** A saved live tally read back at startup, waiting for the stream to show the same fight */
+        this.pendingLive = null;
+        /** Bumped whenever a read of it in flight stops being wanted */
+        this._liveGeneration = 0;
+        this._livePersist = createLiveSessionPersister({
+            storeName: LIVE_STORE,
+            kind: LIVE_KIND,
+            label: 'GuildTrialDamage',
+            keyFor: () => liveSessionKey('Trial', this.statsScope.characterId ?? null),
+            serialize: () => this._serializeLive(),
+        });
         this.reset();
     }
 
     /** Forget the trial and measure the next one from scratch */
     reset() {
+        // A trial ended on purpose — restarted, archived, left by a character
+        // switch — is not one a refresh should bring back
+        this._livePersist?.discard();
+        this.pendingLive = null;
+        this._liveGeneration = (this._liveGeneration || 0) + 1;
+        /** True while the saved tally is being read: until it is decided, the copy on disk is the better one */
+        this._liveLoading = false;
         this.state = newAttributionState();
         this.support = newSupportState();
         this.tally = {};
@@ -973,6 +1013,10 @@ class GuildTrialDamage {
          * arrived, so the comparison survives the tally being reset next trial.
          */
         this.reportedMeasured = null;
+        /** Times the connection dropped and came back while this trial was being watched */
+        this.reconnects = 0;
+        /** `{savedAt, at}` once this tally was carried over a page refresh; null otherwise */
+        this.restoredFrom = null;
     }
 
     /**
@@ -1032,6 +1076,11 @@ class GuildTrialDamage {
         };
         this.storedStats = {};
         this._restoreStats();
+        // …and the live tally a refresh interrupted, held until the stream shows the same fight
+        this.pendingLive = null;
+        this._liveGeneration += 1;
+        this._livePersist.start();
+        this._loadLive(this._liveGeneration);
 
         this.onNewBattle = (data) => this._onNewBattle(data);
         this.onBattleUpdated = (data) => this._onBattleUpdated(data);
@@ -1049,9 +1098,20 @@ class GuildTrialDamage {
         webSocketHook.on(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
         webSocketHook.on(GUILD_TRIAL_STATS_MESSAGE, this.onTrialStats);
         webSocketHook.on('guild_updated', this.onGuildUpdated);
+        this.onCharacterData = (data) => this._onCharacterData(data);
+        webSocketHook.on('init_character_data', this.onCharacterData);
     }
 
     cleanup() {
+        // Turning trial tracking off drops the figures on purpose, so the saved
+        // copy goes with them; any other stop keeps it for a refresh to find
+        if (config.getSetting('guildTrialTracking', true) === false) this._livePersist.discard();
+        this._livePersist.stop();
+        this.pendingLive = null;
+        this._liveGeneration += 1;
+        this._liveLoading = false;
+        if (this.onCharacterData) webSocketHook.off('init_character_data', this.onCharacterData);
+        this.onCharacterData = null;
         if (this.onNewBattle) webSocketHook.off('new_battle', this.onNewBattle);
         if (this.onBattleUpdated) webSocketHook.off('battle_updated', this.onBattleUpdated);
         if (this.onGuildBattle) webSocketHook.off(GUILD_BATTLE_MESSAGE, this.onGuildBattle);
@@ -1100,7 +1160,17 @@ class GuildTrialDamage {
                 : null;
         this.statsScope = next;
         this.storedStats = {};
+        // A saved live tally belongs to the character it was read for
+        if (String(previous.characterId ?? '') !== String(next.characterId ?? '')) {
+            this.pendingLive = null;
+            this._liveGeneration += 1;
+            this._liveLoading = false;
+        }
         if (!this.initialized) return;
+        // A finished trial waiting only for the guild to be known can be decided now
+        if (this.pendingLive && Number.isFinite(this.pendingLive.endedAt) && !this.spectator.ticks && !this.source) {
+            this._tryAdoptLive(null);
+        }
         if (carry) this._persistStats(carry).catch(() => {});
         else this._restoreStats().catch(() => {});
     }
@@ -1205,6 +1275,9 @@ class GuildTrialDamage {
                     .map((monster) => encounterOfMonster(monster?.hrid || monster?.name || ''))
                     .find(Boolean) || null;
 
+            // A tally a refresh interrupted is adopted before this boundary is judged against it
+            this._tryAdoptLive({ battleId, tier, startMs, encounter }, now);
+
             // The stated boundary, which is what this message is *for*
             const newFight = this._isNewFight({ battleId, tier, startMs, encounter });
             if (newFight || battleId !== this.guildBattleId || tier !== this.tier) {
@@ -1282,6 +1355,7 @@ class GuildTrialDamage {
             // than counted off a sign-up sheet
             const participants = Object.keys(roster).length;
             if (participants) this.participants = participants;
+            this._livePersist.note();
         } catch (error) {
             console.error('[GuildTrialDamage] Reading the start of a trial tier failed:', error);
         }
@@ -1377,6 +1451,8 @@ class GuildTrialDamage {
     _onEndGuildBattle(data) {
         try {
             const trial = trialFromHrid(data?.trialHrid);
+            // A refresh just before the end: the ending names its battle and trial, which is enough
+            this._tryAdoptLive({ battleId: data?.battleId ?? null, tier: null, encounter: trial?.key ?? null });
             // A different trial's ending is not this one's
             if (trial && this.encounter && trial.key !== this.encounter) return;
             // …nor a different battle's, where both sides state one
@@ -1493,6 +1569,7 @@ class GuildTrialDamage {
             if (own) {
                 this.reported = grouped[own];
                 this.reportedMeasured = this._measuredByName();
+                this._livePersist.note();
             }
 
             const at = Date.now();
@@ -1647,6 +1724,9 @@ class GuildTrialDamage {
             const battleId = data.battleId ?? null;
             const tier = Number.isFinite(Number(data.tier)) ? Number(data.tier) : null;
 
+            // Before anything compares this tick against the module's fight
+            this._tryAdoptLive({ battleId, tier }, now);
+
             const sameWave = battleId === this.guildBattleId && tier === this.tier;
             // The game has said this trial is over, and this is the same battle
             // and tier still being drawn. It re-arms nothing and is not counted:
@@ -1743,6 +1823,7 @@ class GuildTrialDamage {
             }
             this.lastTickAt = now;
             this.spectator.lastAt = now;
+            this._livePersist.note();
         } catch (error) {
             console.error('[GuildTrialDamage] Reading a spectated trial tick failed:', error);
         }
@@ -2453,6 +2534,7 @@ class GuildTrialDamage {
         // The cause is now the game's statement, whatever froze it first
         this.staleStream = false;
         this._freezeElapsed();
+        this._livePersist.note();
     }
 
     /**
@@ -2524,6 +2606,351 @@ class GuildTrialDamage {
     }
 
     /**
+     * The same character arriving on a new connection: a reconnect, not a switch.
+     *
+     * `data-manager.js` tears features down only when the id changes, so the
+     * tally already survives a reconnect. What does not survive is the
+     * baselines — every counter moved while the socket was down, and the first
+     * tick back would hand the whole gap to whoever it happened to name. So they
+     * are dropped, the gap is not counted as fighting, and the reconnect is
+     * counted, so a trial with a hole in its watching says so. Only while a
+     * spectated trial is still running, as KikiMeter (ZhuLiMoon, MIT) counts it.
+     *
+     * @param {Object} data - An `init_character_data` payload
+     */
+    _onCharacterData(data) {
+        try {
+            const id = data?.character?.id ?? null;
+            const own = this.statsScope.characterId ?? dataManager.getCurrentCharacterId?.() ?? null;
+            if (id === null || own === null || String(id) !== String(own)) return;
+            if (this.source !== 'spectated' || this.endedAt !== null || this.endedByGame) return;
+            const lastAt = this.spectator.lastAt;
+            if (!lastAt || Date.now() - lastAt > STALE_STREAM_MS) return;
+
+            this.reconnects += 1;
+            this._resetWaveBaselines();
+            this.lastTickAt = 0;
+            this._livePersist.note();
+            this._livePersist.flush();
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading a reconnect failed:', error);
+        }
+    }
+
+    /**
+     * The trial's tallies, for saving through a refresh.
+     *
+     * Left out on purpose: the attribution and support baselines, the deaths
+     * health map, the reflect casts and boss debuff timers, the pool and its
+     * slots, and the fight-view caches — all of them describe the units on
+     * screen at the moment of saving, and the next tick re-reads every one.
+     * A personally fought trial is not saved: that path cannot count a battle it
+     * did not see announced, so a restore would have nothing to continue.
+     *
+     * @returns {Object|null} The payload, or null when no spectated trial is held
+     */
+    _serializeLive() {
+        const characterId = this.statsScope.characterId ?? null;
+        if (characterId === null || this.source !== 'spectated' || !this.spectator.ticks) return null;
+        // A saved tally not yet decided on is better than this one, which may be a fraction of it
+        if (this._liveLoading || this.pendingLive) return null;
+        const support = this.support;
+        return {
+            characterId,
+            guildName: this._guildName(),
+            tally: this.tally,
+            names: this.names,
+            deaths: this.deaths,
+            bankedTally: this.bankedTally,
+            bankedDeaths: this.bankedDeaths,
+            bankedSupport: this.bankedSupport,
+            team: this.team,
+            support: {
+                players: support.players,
+                ...Object.fromEntries(SUPPORT_TOTALS.map((field) => [field, support[field] || 0])),
+                regenFraction: support.regenFraction,
+                abilityKindsKnown: support.abilityKindsKnown,
+            },
+            seconds: this.seconds,
+            frozenSeconds: this.frozenSeconds,
+            staleStream: this.staleStream,
+            endedByGame: this.endedByGame,
+            endedBy: this.endedBy,
+            endedAt: this.endedAt,
+            combatInProgressSeen: this.combatInProgressSeen,
+            wave: this.wave,
+            fightStartMs: this.fightStartMs,
+            active: this.active,
+            encounter: this.encounter,
+            reason: this.reason,
+            fights: this.fights,
+            startedAt: this.startedAt,
+            monsterNames: this.monsterNames,
+            guildBattleId: this.guildBattleId,
+            tier: this.tier,
+            spectator: this.spectator,
+            bossSheets: this.bossSheets,
+            spectatedBossName: this.spectatedBossName,
+            roster: this.roster,
+            slotIds: this.slotIds,
+            unitNames: this.unitNames,
+            countedSlots: [...this.countedSlots],
+            tierStarts: this.tierStarts,
+            participants: this.participants,
+            characterNames: this.characterNames,
+            reported: this.reported,
+            reportedMeasured: this.reportedMeasured,
+            reconnects: this.reconnects,
+        };
+    }
+
+    /**
+     * Read the saved live tally back at startup.
+     *
+     * A finished trial has no stream left to prove itself by, so it is adopted
+     * straight away into a module that has seen nothing; a running one waits for
+     * a message of the same fight ({@link _tryAdoptLive}).
+     *
+     * @param {number} generation - `_liveGeneration` when the read began
+     */
+    async _loadLive(generation) {
+        const characterId = this.statsScope.characterId ?? null;
+        if (characterId === null || !liveSessionRestoreEnabled()) return;
+        this._liveLoading = true;
+        const saved = await loadLiveSession(liveSessionKey('Trial', characterId), LIVE_STORE);
+        if (generation !== this._liveGeneration) return;
+        this._liveLoading = false;
+        if (!saved) return;
+        // Captured before the read: a switch while it was out makes it another character's
+        if (String(dataManager.getCurrentCharacterId?.() ?? '') !== String(characterId)) return;
+        this.pendingLive = saved;
+
+        if (Number.isFinite(saved.endedAt)) {
+            if (!this.spectator.ticks && !this.source) this._tryAdoptLive(null);
+            else this.pendingLive = null;
+            return;
+        }
+        // The stream beat the read: it is judged by the fight it has already shown
+        if (this.spectator.ticks > 0) {
+            this._tryAdoptLive({
+                battleId: this.guildBattleId,
+                tier: this.tier,
+                startMs: this.fightStartMs,
+                encounter: this.encounter,
+            });
+        }
+    }
+
+    /**
+     * Adopt the saved live tally if this message is the same fight, guild and character.
+     *
+     * The first message that can decide, decides — a different fight drops the
+     * saved tally for good. The one exception is a guild not known yet while the
+     * save names one: that waits for a later message.
+     *
+     * @param {Object|null} signal - `{battleId, tier, startMs?, encounter?}` off the message; null for an ended trial
+     * @param {number} [now] - Clock
+     * @returns {boolean} Whether it was adopted
+     */
+    _tryAdoptLive(signal, now = Date.now()) {
+        const saved = this.pendingLive;
+        if (!saved) return false;
+        const scope = this._liveScopeVerdict(saved);
+        if (scope === 'wait') return false;
+        this.pendingLive = null;
+        if (scope !== 'ok') return false;
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (!isRestorable(saved, { kind: LIVE_KIND, characterId, now })) return false;
+        if (signal && !this._liveFightMatches(saved, signal, now)) return false;
+        // Ticks folded before the read came back merge only into the wave they were taken from
+        const sameWave =
+            String(this.guildBattleId ?? '') === String(saved.guildBattleId ?? '') && this.tier === saved.tier;
+        if (this.spectator.ticks > 0 && !sameWave) return false;
+        this._adoptLive(saved, now);
+        return true;
+    }
+
+    /**
+     * Whether a saved live tally is this character's and this guild's.
+     * @param {Object} saved - As read back
+     * @returns {'ok'|'wait'|'refuse'}
+     */
+    _liveScopeVerdict(saved) {
+        const ownId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (ownId === null || String(saved?.characterId ?? '') !== String(ownId)) return 'refuse';
+        const scopeId = this.statsScope.characterId;
+        if (scopeId !== null && scopeId !== undefined && String(scopeId) !== String(ownId)) return 'refuse';
+        const guild = this._guildName();
+        const heldGuild = saved.guildName ?? null;
+        // A save made before the guild was known cannot prove which guild it was
+        if (!guild) return heldGuild ? 'wait' : 'ok';
+        return heldGuild === guild ? 'ok' : 'refuse';
+    }
+
+    /**
+     * Whether a message describes the fight a saved tally was measuring.
+     *
+     * `battleId` is 1 for every tier of every trial seen so far, so it is only
+     * the first test. Beside it: the tier can only have climbed, the trial
+     * cannot have run longer than {@link FIGHT_SPAN_MS}, a tier opening's
+     * `combatStartTime` must fall inside that span of the saved fight's first,
+     * and a named encounter must be the saved one.
+     *
+     * @param {Object} saved - As read back
+     * @param {Object} signal - `{battleId, tier, startMs?, encounter?}`; `tier` null skips the tier test
+     * @param {number} now - Clock
+     * @returns {boolean}
+     */
+    _liveFightMatches(saved, { battleId, tier, startMs = null, encounter = null }, now) {
+        if (saved.guildBattleId === null || saved.guildBattleId === undefined) return false;
+        if (String(battleId ?? '') !== String(saved.guildBattleId)) return false;
+        if (Number.isFinite(tier) && !(Number.isFinite(saved.tier) && tier >= saved.tier)) return false;
+        if (Number.isFinite(saved.startedAt) && saved.startedAt > 0 && now - saved.startedAt > FIGHT_SPAN_MS) {
+            return false;
+        }
+        if (
+            startMs !== null &&
+            Number.isFinite(saved.fightStartMs) &&
+            Math.abs(startMs - saved.fightStartMs) > FIGHT_SPAN_MS
+        ) {
+            return false;
+        }
+        return !(encounter && saved.encounter && encounter !== saved.encounter);
+    }
+
+    /**
+     * Put a saved live tally back.
+     *
+     * Restored: every tally (the live wave by slot, the banked waves by name,
+     * team, deaths, support rows and totals), the clock that divides them, the
+     * lifecycle (`active`, the ending and its cause, a frozen clock), the fight's
+     * identity (battle, tier, wave, encounter, start, tier starts), its naming
+     * (roster, slot ids, unit names, the id → name map), the boss sheets, the
+     * game's reported totals and the reconnect count.
+     *
+     * Not restored: every baseline. The next tick sets them, which costs the
+     * first swing on each unit — the same cost as a refresh always had — and the
+     * gap the page was shut is never counted, because `lastTickAt` starts over.
+     *
+     * Ticks already folded since the reload (the stream beat the read) belong to
+     * the same wave, and are added in rather than replaced.
+     *
+     * @param {Object} saved - As read back
+     * @param {number} now - Clock
+     */
+    _adoptLive(saved, now) {
+        const fresh = this.spectator.ticks > 0;
+        const live = {
+            tally: this.tally,
+            deaths: this.deaths,
+            players: this.support.players,
+            team: this.team,
+            seconds: this.seconds,
+            spectator: this.spectator,
+            countedSlots: this.countedSlots,
+            totals: Object.fromEntries(SUPPORT_TOTALS.map((field) => [field, Number(this.support[field]) || 0])),
+            named: Object.keys(this.roster).length > 0,
+        };
+        const held = (value) => (value && typeof value === 'object' ? value : {});
+        const finite = (value) => (Number.isFinite(value) ? value : null);
+
+        this.tally = held(saved.tally);
+        this.deaths = held(saved.deaths);
+        this.bankedTally = held(saved.bankedTally);
+        this.bankedDeaths = held(saved.bankedDeaths);
+        this.bankedSupport = held(saved.bankedSupport);
+        this.team = held(saved.team);
+
+        const support = held(saved.support);
+        this.support.players = held(support.players);
+        for (const field of SUPPORT_TOTALS) this.support[field] = Number(support[field]) || 0;
+        if (!Number.isFinite(this.support.regenFraction) && Number.isFinite(support.regenFraction)) {
+            this.support.regenFraction = support.regenFraction;
+        }
+        if (support.abilityKindsKnown === false) this.support.abilityKindsKnown = false;
+
+        this.seconds = Number(saved.seconds) || 0;
+        this.frozenSeconds = finite(saved.frozenSeconds);
+        this.staleStream = Boolean(saved.staleStream);
+        this.endedByGame = Boolean(saved.endedByGame);
+        this.endedBy = saved.endedBy ?? null;
+        this.endedAt = finite(saved.endedAt);
+        this.combatInProgressSeen = Boolean(saved.combatInProgressSeen);
+        this.wave = finite(saved.wave);
+        this.fightStartMs = finite(saved.fightStartMs);
+        this.active = Boolean(saved.active) && this.endedAt === null;
+        this.encounter = saved.encounter ?? this.encounter;
+        this.reason = saved.reason || this.reason;
+        this.fights = Number(saved.fights) || this.fights;
+        this.startedAt = Number(saved.startedAt) || this.startedAt;
+        if (Array.isArray(saved.monsterNames)) this.monsterNames = saved.monsterNames;
+        this.source = 'spectated';
+        this.guildBattleId = saved.guildBattleId ?? null;
+        this.tier = finite(saved.tier);
+
+        const savedSpectator = held(saved.spectator);
+        const count = (field) =>
+            (Number(savedSpectator[field]) || 0) + (fresh ? Number(live.spectator[field]) || 0 : 0);
+        this.spectator = {
+            ticks: count('ticks'),
+            playerActionTicks: count('playerActionTicks'),
+            bossTicks: count('bossTicks'),
+            trailingTicks: count('trailingTicks'),
+            firstAt: Number(savedSpectator.firstAt) || live.spectator.firstAt || 0,
+            lastAt: fresh ? live.spectator.lastAt : Number(savedSpectator.lastAt) || 0,
+        };
+
+        this.bossSheets = { ...held(saved.bossSheets), ...this.bossSheets };
+        this.spectatedBossName = saved.spectatedBossName ?? this.spectatedBossName;
+        // The roster a tier's opening stated beats whatever the resolver made of the ticks since
+        if (!fresh || !live.named) {
+            this.roster = held(saved.roster);
+            this.slotIds = held(saved.slotIds);
+            this.unitNames = held(saved.unitNames);
+            this.names = held(saved.names);
+        }
+        this.countedSlots = new Set([
+            ...(Array.isArray(saved.countedSlots) ? saved.countedSlots : []),
+            ...(fresh ? live.countedSlots : []),
+        ]);
+        this.tierStarts = { ...held(saved.tierStarts), ...this.tierStarts };
+        this.participants = saved.participants ?? this.participants;
+        this.characterNames = { ...held(saved.characterNames), ...this.characterNames };
+        this.reported = saved.reported ?? this.reported;
+        this.reportedMeasured = saved.reportedMeasured ?? this.reportedMeasured;
+        this.reconnects += Number(saved.reconnects) || 0;
+
+        if (fresh) {
+            for (const [index, row] of Object.entries(live.tally))
+                this.tally[index] = foldTallyRow(this.tally[index], row);
+            for (const [index, deaths] of Object.entries(live.deaths)) {
+                this.deaths[index] = (this.deaths[index] || 0) + deaths;
+            }
+            for (const [index, row] of Object.entries(live.players)) {
+                this.support.players[index] = foldSupportRow(this.support.players[index], row);
+            }
+            for (const field of SUPPORT_TOTALS) this.support[field] += live.totals[field];
+            this.team = foldTallyRow(this.team, live.team);
+            this.seconds += live.seconds;
+        } else {
+            // The stretch the page was shut is not fighting
+            this.lastTickAt = 0;
+        }
+
+        // A mana spell open at the save is timed from now: its start stamp was a baseline
+        for (const [index, row] of Object.entries(this.support.players)) {
+            for (const [flag, map] of SPELL_SINCE) {
+                if (!row?.[flag]) continue;
+                const since = (this.support[map] ||= {});
+                if (!Number.isFinite(since[index])) since[index] = now;
+            }
+        }
+
+        this.restoredFrom = { savedAt: saved.savedAt, at: now };
+        this._livePersist.note();
+    }
+
+    /**
      * Whether a `guild_trial_stats_updated` can still be this fight's reconciliation.
      *
      * Within {@link RECONCILE_WINDOW_MS} of the recorded end. With no end recorded
@@ -2577,6 +3004,7 @@ class GuildTrialDamage {
         if (!this.endedAt) this.endedAt = this.spectator.lastAt;
         if (!this.endedBy) this.endedBy = 'stale';
         this._freezeElapsed();
+        this._livePersist.note();
     }
 
     /**
@@ -2823,6 +3251,10 @@ class GuildTrialDamage {
             endedByGame: this.endedByGame,
             endedBy: this.endedBy,
             wave: this.wave,
+            // Connection drops survived while watching; each one cost the tick that followed it
+            reconnects: this.reconnects,
+            // Set when this tally was carried over a page refresh
+            restored: this.restoredFrom ? { ...this.restoredFrom } : null,
             fights: this.fights,
             ageMs,
             // Where these figures came from, which every caption has to state
