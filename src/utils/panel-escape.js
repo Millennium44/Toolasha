@@ -24,6 +24,11 @@
  *   their own openness, and asking them at keypress time cannot drift.
  * - An Escape something else already acted on arrives with `defaultPrevented`
  *   set, and is not acted on twice.
+ * - A held key repeats: the browser fires one non-repeat keydown and then more
+ *   with `repeat: true` for as long as the key stays down. A physical press
+ *   closes one thing; without this a hold a fraction of a second too long
+ *   peels the menu and the panel underneath it in the same gesture, which
+ *   reads as "Escape closed both" even though it took two keydowns to do it.
  *
  * The listener exists only while at least one panel is registered, so a page
  * with every panel shut carries no keydown listener for this at all.
@@ -46,6 +51,9 @@ const holds = new Set();
 
 function onKeydown(event) {
     if (event.key !== 'Escape' || event.defaultPrevented) return;
+    // One physical press closes one thing; a repeat from holding the key down
+    // must not keep peeling the stack
+    if (event.repeat) return;
     if (isTypingTarget(event.target)) return;
     for (const isHolding of holds) {
         if (isHolding()) return;

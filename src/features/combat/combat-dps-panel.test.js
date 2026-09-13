@@ -746,6 +746,35 @@ describe('player markers on the board', () => {
         marker.click();
         expect(document.querySelector('.toolasha-player-menu')?.textContent).toContain('Abe');
     });
+
+    test('a held Escape closes only the menu, not the panel underneath it too', () => {
+        // Reproduces a live report: opening the menu and tapping Escape once
+        // closed the menu and, by the time anyone looked, the panel as well.
+        // The browser fires a non-repeat keydown for a press and then more
+        // with `repeat: true` for as long as the key is down — a hold a
+        // fraction of a second too long reaches this listener as two
+        // keydowns, and without a repeat guard the second one peels the panel
+        // right behind the menu.
+        opts.dealt = { seconds: 100, players: [{ name: 'Abe', damage: 1000, dps: 10, classTag: null }] };
+        const panel = getPanel();
+        panel.show();
+        const marker = panel.panel.querySelector('[data-toolasha-player="Abe"]');
+        marker.click();
+        expect(document.querySelector('.toolasha-player-menu')).not.toBeNull();
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        expect(document.querySelector('.toolasha-player-menu')).toBeNull();
+        expect(panel.isOpen()).toBe(true);
+
+        document.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, repeat: true })
+        );
+        expect(panel.isOpen()).toBe(true);
+
+        // A second, genuine press still closes it
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        expect(panel.isOpen()).toBe(false);
+    });
 });
 
 describe('the DPS graph', () => {

@@ -348,6 +348,30 @@ describe('Escape closes the panel in front', () => {
         expect(first.panel).toBeNull();
     });
 
+    test('a held key repeats, and a repeat closes nothing more than the one physical press already did', () => {
+        // The browser fires a non-repeat keydown for a press and then more
+        // with `repeat: true` for as long as the key stays down. A hold a
+        // fraction of a second too long must still close one thing, not peel
+        // straight through the stack in the time it takes to notice.
+        const first = createPanel({ id: 'esc-repeat-first', title: 'First', size: SIZE, draw: () => {} });
+        const second = createPanel({ id: 'esc-repeat-second', title: 'Second', size: SIZE, draw: () => {} });
+        first.show();
+        second.show();
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        expect(second.panel).toBeNull();
+        expect(first.panel).not.toBeNull();
+
+        document.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true, repeat: true })
+        );
+        expect(first.panel).not.toBeNull();
+
+        // Releasing and pressing again is a second physical press
+        escape();
+        expect(first.panel).toBeNull();
+    });
+
     test('re-showing an open panel makes it the one Escape closes', () => {
         const behind = createPanel({ id: 'esc-behind', title: 'Behind', size: SIZE, draw: () => {} });
         const front = createPanel({ id: 'esc-front', title: 'Front', size: SIZE, draw: () => {} });
