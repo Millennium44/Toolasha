@@ -1704,6 +1704,8 @@ class GuildTrialDamage {
                 soloFallback: false,
                 unattributed: true,
                 reflecting: (index) => this._reflectingAt(index, now),
+                // A hit landing while a buff or heal is prepared is filed under auto attack, as in personal combat
+                abilityDetailMap: dataManager.getInitClientData?.()?.abilityDetailMap,
             });
             // No non-damaging filter: the hit gate (the boss's own counter)
             // already keeps non-hits out, and a stream action labelled with a
