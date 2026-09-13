@@ -678,8 +678,10 @@ export function isDamagingAction(action, nonDamaging = NON_DAMAGING) {
  * Deliberately, and it is the reason nothing downstream had to be taught about
  * damage-over-time to stop under-reporting it: `damage` is the whole of what a
  * player did, and `dotDamage` is the part of that which no swing counter ever
- * confirmed. A breakdown can name the share ("incl. X DoT/reflect"); a total
- * cannot get it wrong by forgetting to add a second field.
+ * confirmed. A breakdown can name the share ("incl. X DoT"); a total cannot
+ * get it wrong by forgetting to add a second field. Reflect is not in
+ * `dotDamage` — it moves the hit counter (see below) and gets its own named
+ * ability row instead of riding inside this one.
  *
  * @param {Object} tally - `{}` or a previous return, mutated
  * @param {Array<Object>} events - From `attributeTick`
@@ -790,6 +792,26 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
 }
 
 /**
+ * The bucket a kill on a monster {@link foldEnemies}'s `nameOf` cannot name is
+ * counted under, rather than dropped.
+ *
+ * `nameOf` answers null for a monster a reload mid-fight never saw a
+ * `new_battle` for (see `damage-tracker.js`'s `recoverMonsterNames` fallback,
+ * which fills in what it can but not always a name). The per-player kill
+ * tally (`damage-tracker.js`'s `kills`) has no such gate at all — every
+ * killing tick's sole owner is credited whether or not the monster it killed
+ * has a name — so dropping the kill here instead of naming it made the sum of
+ * every row in this table read lower than the sum of every player's kills by
+ * exactly the kills this client could never label.
+ */
+export const UNKNOWN_ENEMY = 'Unknown enemy';
+
+/** A fresh per-monster tally row, shared by a named enemy and {@link UNKNOWN_ENEMY} */
+function newEnemyTally() {
+    return { damage: 0, hits: 0, crits: 0, misses: 0, kills: 0, dotDamage: 0, byAbility: {} };
+}
+
+/**
  * Fold events into a per-monster tally.
  *
  * The player table answers "who is doing the damage". This answers "to what",
@@ -805,7 +827,9 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
  * @param {Array<Object>} events - From `attributeTick`
  * Unattributed damage (see {@link UNATTRIBUTED_ACTION}) is counted here like any
  * other — the monster lost the health whoever dealt it — and also named in an
- * `unattributedDamage` subtotal that appears once there is any.
+ * `unattributedDamage` subtotal that appears once there is any. A kill on a
+ * monster `nameOf` cannot name lands in {@link UNKNOWN_ENEMY} rather than
+ * being dropped, so this table's kills always sum to the player table's.
  *
  * @param {Function} nameOf - `(monsterIndex) => string|null`
  * @returns {Object} Monster name → `{damage, dotDamage, hits, crits, misses, kills, byAbility, unattributedDamage?}`
@@ -813,22 +837,16 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
 export function foldEnemies(tally, events, nameOf) {
     for (const event of events || []) {
         const name = nameOf(event.monsterIndex);
-        if (!name) continue;
-
-        const enemy = (tally[name] = tally[name] || {
-            damage: 0,
-            hits: 0,
-            crits: 0,
-            misses: 0,
-            kills: 0,
-            dotDamage: 0,
-            byAbility: {},
-        });
 
         if (event.isKill) {
+            const key = name || UNKNOWN_ENEMY;
+            const enemy = (tally[key] = tally[key] || newEnemyTally());
             enemy.kills++;
             continue;
         }
+        if (!name) continue;
+
+        const enemy = (tally[name] = tally[name] || newEnemyTally());
 
         const ability = (enemy.byAbility[event.action] = enemy.byAbility[event.action] || {
             damage: 0,

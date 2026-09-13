@@ -708,10 +708,13 @@ function countAndShare(count, outOf) {
 /**
  * The damage-over-time share of a row, for a tooltip.
  *
- * Bleeds and reflects move a monster's health without moving its hit counter,
- * so they carry no swing, no crit and no ability — they are inside the damage
- * figure and invisible in every column beside it. Saying so is the difference
- * between a row that looks miscounted and one that explains itself.
+ * A bleed moves a monster's health without moving its hit counter, so it
+ * carries no swing, no crit and no ability of its own — it is inside the
+ * damage figure and invisible in every column beside it. Saying so is the
+ * difference between a row that looks miscounted and one that explains
+ * itself. Reflect (Spike Shell, Retribution) is not this: it *does* move the
+ * hit counter and is credited its own named ability row, so it plays no part
+ * in `dotDamage` and is left out of this note.
  *
  * @param {Object} row - Anything carrying `damage` and `dotDamage`
  * @returns {string} A sentence with a trailing newline, or nothing

@@ -226,6 +226,36 @@ describe('foldEnemies', () => {
 
         expect(tally.Rat).toMatchObject({ misses: 1, hits: 0, damage: 0 });
     });
+
+    test('a kill on a monster it cannot name lands in the Unknown enemy bucket instead of being dropped', () => {
+        // Unlike damage, a kill is never simply left out: the per-player kill
+        // tally (damage-tracker.js's `kills`) has no name gate at all, so a
+        // dropped kill here read as a missing kill rather than a missing name
+        const tally = foldEnemies({}, [{ monsterIndex: '9', isKill: true }], nameOf);
+
+        expect(tally['Unknown enemy']).toMatchObject({ kills: 1, damage: 0, hits: 0 });
+        expect(tally.Rat).toBeUndefined();
+    });
+
+    test('kills on several unnamed monsters accumulate in the one Unknown enemy bucket', () => {
+        const tally = foldEnemies(
+            {},
+            [
+                { monsterIndex: '9', isKill: true },
+                { monsterIndex: '10', isKill: true },
+                { monsterIndex: '0', isKill: true },
+            ],
+            nameOf
+        );
+
+        expect(tally['Unknown enemy'].kills).toBe(2);
+        expect(tally.Rat.kills).toBe(1);
+        // Every kill landed somewhere: the per-monster total (named + unknown)
+        // sums to the number of kill events, exactly as the per-player total
+        // (a player's kills, or damage-tracker.js's `unownedKills`) does
+        const totalKills = Object.values(tally).reduce((sum, enemy) => sum + enemy.kills, 0);
+        expect(totalKills).toBe(3);
+    });
 });
 
 describe('kills in a tick', () => {

@@ -121,10 +121,15 @@ describe('a recorded run', () => {
     });
 
     test('the monsters of the zone are named and counted', () => {
-        expect(Object.keys(enemies).sort()).toEqual(['Eye', 'Eyes', 'Veyes']);
+        // One kill in this recording lands on a slot never named by a
+        // `new_battle` this trimmed replay kept (unlike the real tracker, this
+        // helper has no `recoverMonsterNames` mid-fight fallback) — it goes to
+        // the Unknown enemy bucket rather than vanishing, which is why the
+        // total below is 15 and not the 14 a dropped kill used to leave behind
+        expect(Object.keys(enemies).sort()).toEqual(['Eye', 'Eyes', 'Unknown enemy', 'Veyes']);
 
         const killed = Object.values(enemies).reduce((total, enemy) => total + enemy.kills, 0);
-        expect(killed).toBe(14);
+        expect(killed).toBe(15);
     });
 
     test('no monster is credited more damage than the party dealt', () => {
