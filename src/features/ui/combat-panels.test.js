@@ -1106,3 +1106,23 @@ describe('kills on the DPs table', () => {
         expect(dpsPlayerRow().lastElementChild.textContent).toBe('0');
     });
 });
+
+describe('the DPs header’s team total', () => {
+    test('reads everything the monsters lost and names what the rows do not carry', () => {
+        state.breakdown.team = { damage: 1_000_000, unattributed: 60_000, filtered: 40_000, dps: 3333.3 };
+        dpsPanel.show();
+        const text = dpsPanel.panel.textContent;
+
+        expect(text).toContain('DPS 3333.3');
+        expect(text).toContain('Unattributed:');
+        expect(text).toContain('Filtered:');
+        expect(text).not.toContain(FAILED);
+    });
+
+    test('says nothing extra when every point is on a row', () => {
+        state.breakdown.team = { damage: 900_000, unattributed: 0, filtered: 0 };
+        dpsPanel.show();
+        expect(dpsPanel.panel.textContent).not.toContain('Unattributed:');
+        expect(dpsPanel.panel.textContent).toContain('DPS 3000.0');
+    });
+});

@@ -40,6 +40,7 @@ import {
     attributeTick,
     foldEvents,
     foldEnemies,
+    foldTeam,
 } from '../../utils/damage-attribution.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { pushManaSample } from './combat-estimates.js';
@@ -113,6 +114,13 @@ let kills = {};
 
 /** Kills whose killing tick had no single owner; with the player kills they add up to the enemy kills */
 let unownedKills = 0;
+
+/**
+ * Everything the monsters lost this run, credited or not — `foldTeam`'s tally.
+ * The player rows sum only what a player was credited with, so this is what a
+ * team headline has to be, with the uncredited share named beside it.
+ */
+let team = {};
 
 /**
  * This fight only, cleared when the next one starts.
@@ -225,6 +233,7 @@ export function resetDamageTracker() {
     enemyTally = {};
     kills = {};
     unownedKills = 0;
+    team = {};
     battle = { players: {}, enemies: {}, seconds: 0 };
     battleHP = {};
     manaSeries = {};
@@ -458,6 +467,22 @@ export function damageBreakdown() {
         };
     });
 
+    // The team headline. `attributed` counts every credited point whatever its
+    // label, and the rows drop what the non-damaging filter holds back, so the
+    // gap between the two is named too: rows + unattributed + filtered = damage
+    const rowDamage = players.reduce((sum, row) => sum + row.damage, 0);
+    const teamDamage = team.damage || 0;
+    const filtered = Math.max(0, (team.attributed || 0) - rowDamage);
+    const teamRow = {
+        damage: teamDamage,
+        attributed: team.attributed || 0,
+        unattributed: team.unattributed || 0,
+        unattributedEvents: team.unattributedEvents || 0,
+        // Sub-point differences are the fold's floating point, not held-back damage
+        filtered: filtered < 0.5 ? 0 : filtered,
+        dps: measurable ? teamDamage / seconds : null,
+    };
+
     // Wall clock against time actually swinging. The gap between them is what
     // walking between fights costs, which is the figure DPs leads its enemy
     // card with — a rotation cannot fix it and a zone change can.
@@ -468,6 +493,7 @@ export function damageBreakdown() {
         startedAt,
         logging,
         unownedKills,
+        team: teamRow,
         players: players.sort((a, b) => b.damage - a.damage),
         enemies: enemies.sort((a, b) => b.damage - a.damage),
     };
@@ -805,6 +831,7 @@ export default {
                 const nameOf = (index) => monsters[index]?.name || null;
                 foldEvents(tally, events, { filterNonDamaging, nameOf });
                 foldEnemies(enemyTally, events, nameOf);
+                foldTeam(team, events);
 
                 // Credited only to a tick's sole owner, so a kill on a shared or
                 // ownerless tick stays a kill of the monster and nobody's

@@ -748,3 +748,68 @@ describe('kills per player', () => {
         expect(damageBreakdown().unownedKills).toBe(0);
     });
 });
+
+describe('the team total', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+        tracker.default.initialize();
+    });
+
+    afterEach(() => {
+        tracker.default.cleanup();
+        vi.useRealTimers();
+    });
+
+    const rows = () => damageBreakdown().players.reduce((sum, row) => sum + row.damage, 0);
+
+    test('health lost on a tick nobody can be credited with is in the team total and named', () => {
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: { name: 'Alice', isPreparingAutoAttack: true },
+                1: { name: 'Bob', isPreparingAutoAttack: true },
+            },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+        // A tick naming no player in a party of two, before anybody has swung
+        listeners.battle_updated({ battleId: 1, pMap: {}, mMap: { 0: { cHP: 950, mHP: 1000 } } });
+        // Then Alice swings for 100
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1 } }, mMap: {} });
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2 } },
+            mMap: { 0: { cHP: 850, dmgCounter: 1, mHP: 1000 } },
+        });
+
+        const { team, enemies } = damageBreakdown();
+        expect(rows()).toBe(100);
+        expect(team.unattributed).toBe(50);
+        expect(team.damage).toBe(150);
+        expect(team.damage).toBe(rows() + team.unattributed + team.filtered);
+        // The monster really lost it, so its row carries it too
+        expect(enemies.find((row) => row.name === 'Eye').damage).toBe(150);
+    });
+
+    test('a credited hit the non-damaging filter keeps off the rows is named as filtered', () => {
+        // The filter is module state that outlives a cleanup, and other tests turn it off
+        tracker.setFilterNonDamaging(true);
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: { 0: { name: 'Alice', isPreparingAutoAttack: false } },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+        listeners.battle_updated({ battleId: 1, pMap: { 0: { atkCounter: 1 } }, mMap: {} });
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2 } },
+            mMap: { 0: { cHP: 800, dmgCounter: 1, mHP: 1000 } },
+        });
+
+        const { team } = damageBreakdown();
+        expect(rows()).toBe(0);
+        expect(team.filtered).toBe(200);
+        expect(team.unattributed).toBe(0);
+        expect(team.damage).toBe(rows() + team.unattributed + team.filtered);
+    });
+});

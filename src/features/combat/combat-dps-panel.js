@@ -162,7 +162,7 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
 
     const dealtRun = dealt() || {};
     if (which === 'damage') {
-        return rankRows(
+        const board = rankRows(
             (dealtRun.players || []).map((row) => ({
                 name: row.name,
                 value: row.damage || 0,
@@ -174,6 +174,17 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
             })),
             dealtRun.seconds || 0
         );
+        // Everything the monsters lost, which the rows fall short of by what
+        // nobody could be credited with and what the non-damaging filter keeps
+        // out — both named, so the headline and the rows reconcile
+        const team = dealtRun.team;
+        if (team?.damage > 0) {
+            board.team = team.damage;
+            board.teamPerSecond = board.seconds > 0 ? team.damage / board.seconds : null;
+            board.unattributed = team.unattributed || 0;
+            board.filtered = team.filtered || 0;
+        }
+        return board;
     }
 
     // The taken tracker knows nothing about casts, so the class comes from the
@@ -630,16 +641,34 @@ export function rotationVarianceText(audit, which) {
 export function panelText(which, sources) {
     if (which === 'rotation') return rotationText((sources?.audit || rotationAudit)(), scope);
 
-    const { rows, total, perSecond, seconds } = panelRows(which, sources);
+    const board = panelRows(which, sources);
+    const { rows, seconds } = board;
     const label = which === 'healed' ? 'health restored' : which === 'taken' ? 'damage taken' : 'damage';
 
     if (!rows.length) return `Party ${label}: nothing measured yet.`;
 
+    const total = board.team ?? board.total;
+    const perSecond = board.team === undefined ? board.perSecond : board.teamPerSecond;
     const heading =
         `Party ${label} — ${formatWithSeparator(Math.round(total))} total` +
         (perSecond === null ? '' : `, ${formatWithSeparator(Math.round(perSecond))}/s`) +
         ` over ${Math.round(seconds)}s (attributed from this client’s battle feed)`;
-    return boardLines(heading, rows);
+    const reconcile = reconcileParts(board)
+        .map(([name, value]) => `${name}: ${formatWithSeparator(Math.round(value))}`)
+        .join('\n');
+    return boardLines(heading, rows) + (reconcile ? `\n${reconcile}` : '');
+}
+
+/**
+ * The parts of a damage board's team total that are not in its rows.
+ * @param {Object} board - From {@link panelRows}
+ * @returns {Array<[string, number]>} Name and amount, only the ones of a point or more
+ */
+function reconcileParts(board) {
+    return [
+        ['Unattributed', board?.unattributed],
+        ['Filtered', board?.filtered],
+    ].filter(([, value]) => value >= 1);
 }
 
 /**
@@ -664,7 +693,10 @@ export function drawBoard(body, sources) {
         return;
     }
 
-    const { rows, total, perSecond } = panelRows(tab, sources);
+    const board = panelRows(tab, sources);
+    const { rows } = board;
+    const total = board.team ?? board.total;
+    const perSecond = board.team === undefined ? board.perSecond : board.teamPerSecond;
     const note = NOTES[tab] || NOTES.damage;
     const unit = tab === 'healed' ? 'hps' : 'dps';
 
@@ -675,6 +707,21 @@ export function drawBoard(body, sources) {
             color: playerRowColor(row.name, BOARD_COLORS.accent),
             tagHTML: playerMarkersHTML(row.name, row.classTag, classTagHTML),
         });
+
+    // The headline is the team's; when the rows fall short of it, say by what
+    const parts = reconcileParts(board);
+    const reconcile = parts.length
+        ? boardNoteHTML(
+              `Team total ${formatWithSeparator(Math.round(total))} = the rows ` +
+                  `${formatWithSeparator(Math.round(board.total))} + ` +
+                  parts
+                      .map(([name, value]) => `${name.toLowerCase()} ${formatWithSeparator(Math.round(value))}`)
+                      .join(' + ') +
+                  '. Unattributed is health lost on ticks no player could be credited with; filtered is credited ' +
+                  'damage the DPs panel’s Filter Nondamage keeps out of the rows.',
+              { color: BOARD_COLORS.warn }
+          )
+        : '';
 
     const list = rows.length
         ? rows.map(playerRow).join('')
@@ -694,6 +741,7 @@ export function drawBoard(body, sources) {
         (tab === 'damage' ? dpsGraphHTML() : '') +
         boardNoteHTML(note.strong, { color: note.color, strong: true }) +
         boardNoteHTML(note.detail) +
+        reconcile +
         list +
         boardButtonsHTML([{ key: 'copy', label: 'Copy stats' }]);
 

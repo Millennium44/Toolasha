@@ -78,3 +78,25 @@ describe('kills per player', () => {
         expect(breakdown.unownedKills).toBe(0);
     });
 });
+
+describe('the team total against the table', () => {
+    // Ground truth is every point of monster health the recording lost, counted
+    // straight off `mMap`. The rows plus the named remainder reach it exactly;
+    // on the party recording the remainder is one hit the non-damaging filter
+    // holds back (a slot with no action history when it landed)
+    test.each([
+        ['combat-dungeon', dungeon, 29335, 0, 0],
+        ['combat-five', five, 109623, 0, 0],
+        ['combat-party', party, 233768, 0, 1000],
+        ['combat-refresh', refresh, 16430, 0, 0],
+        ['combat-run', run, 31278, 0, 0],
+    ])('%s', (_name, recording, lost, unattributed, filtered) => {
+        const breakdown = replay(recording);
+        const rows = breakdown.players.reduce((sum, row) => sum + row.damage, 0);
+
+        expect(Math.round(breakdown.team.damage)).toBe(lost);
+        expect(Math.round(breakdown.team.unattributed)).toBe(unattributed);
+        expect(Math.round(breakdown.team.filtered)).toBe(filtered);
+        expect(Math.round(rows + breakdown.team.unattributed + breakdown.team.filtered)).toBe(lost);
+    });
+});

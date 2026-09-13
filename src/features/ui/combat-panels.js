@@ -1037,13 +1037,29 @@ export const dpsPanel = new CombatPanel({
         // clock and only resets on a battleId decrease, so it neither agreed
         // with this panel's Reset nor with what the rows underneath added up
         // to.
-        dpsFigure.textContent = `DPS ${measurable ? (partyDamage / breakdown.seconds).toFixed(1) : '—'}`;
+        // The team figure is everything the monsters lost, credited or not;
+        // the rows below sum only the credited part, and the uncredited and
+        // filtered parts are named beside it so the two can be reconciled. A
+        // breakdown without a team figure (nothing folded yet) reads the rows
+        const team = breakdown.team;
+        const teamDamage = team?.damage > 0 ? team.damage : partyDamage;
+        dpsFigure.textContent = `DPS ${measurable ? (teamDamage / breakdown.seconds).toFixed(1) : '—'}`;
         Object.assign(dpsFigure.style, { color: ROW_COLORS.gold, fontWeight: 'bold', fontSize: '14px' });
         heading.append(
             dpsFigure,
-            piece(`Total Damage: ${formatKMB(partyDamage)}`, COLORS.textDim),
+            piece(`Total Damage: ${formatKMB(teamDamage)}`, COLORS.textDim),
             piece(timeReadable(Math.round(breakdown.seconds)), COLORS.textDim)
         );
+        if (team?.unattributed >= 1) {
+            const unattributed = piece(`Unattributed: ${formatKMB(team.unattributed)}`, ROW_COLORS.bad);
+            unattributed.title = 'Health the monsters lost on ticks no player could be credited with.';
+            heading.appendChild(unattributed);
+        }
+        if (team?.filtered >= 1) {
+            const filtered = piece(`Filtered: ${formatKMB(team.filtered)}`, COLORS.textDim);
+            filtered.title = 'Credited damage the Filter Nondamage toggle keeps out of the rows.';
+            heading.appendChild(filtered);
+        }
         body.appendChild(heading);
 
         // Mistakes that distort every number below, called out before them

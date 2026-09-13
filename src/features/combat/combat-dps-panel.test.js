@@ -805,3 +805,44 @@ describe('kills on the damage board', () => {
         expect(panelText('damage')).toContain('1. Alice — 7,500 (75/s, 68.2%) · 4 kills');
     });
 });
+
+describe('the damage board’s team total', () => {
+    test('the headline is the team total and the rows reconcile to it', () => {
+        opts.dealt = {
+            seconds: 100,
+            team: { damage: 11_500, unattributed: 1000, filtered: 500 },
+            players: [
+                { name: 'Alice', damage: 7500, dps: 75 },
+                { name: 'Bob', damage: 2500, dps: 25 },
+            ],
+        };
+
+        const board = panelRows('damage');
+        expect(board.total).toBe(10_000);
+        expect(board.team).toBe(11_500);
+        expect(board.team).toBe(board.total + board.unattributed + board.filtered);
+
+        const text = boardText();
+        expect(text).toContain('Team total 11,500 = the rows 10,000 + unattributed 1,000 + filtered 500');
+        expect(text).toContain('party dps');
+
+        const copy = panelText('damage');
+        expect(copy).toContain('Party damage — 11,500 total, 115/s');
+        expect(copy).toContain('Unattributed: 1,000');
+        expect(copy).toContain('Filtered: 500');
+    });
+
+    test('with nothing uncredited the note is not drawn', () => {
+        opts.dealt = {
+            seconds: 100,
+            team: { damage: 10_000, unattributed: 0, filtered: 0 },
+            players: [{ name: 'Alice', damage: 10_000, dps: 100 }],
+        };
+        expect(boardText()).not.toContain('Team total');
+        expect(panelText('damage')).not.toContain('Unattributed');
+    });
+});
+
+function boardText() {
+    return board().textContent;
+}
