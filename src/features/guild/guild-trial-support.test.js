@@ -282,6 +282,94 @@ describe('regeneration and on-cast procs', () => {
         expect(state.players[0].healingDone).toBe(0);
     });
 
+    /**
+     * Two ticks that teach a 3% regeneration fraction off units 1 and 2, with
+     * unit 3 hurt and the healer (unit 0) idle.
+     * @returns {Object} The support state
+     */
+    function regenLearned() {
+        const state = newSupportState();
+        const hurt = unit({ cHP: 400, mHP: 1000 });
+        foldSupportTick(
+            state,
+            {
+                0: unit({ atkCounter: 1 }),
+                1: unit({ cHP: 1900, mHP: 2000 }),
+                2: unit({ cHP: 2800, mHP: 3000 }),
+                3: hurt,
+            },
+            {},
+            detailMap
+        );
+        foldSupportTick(
+            state,
+            {
+                0: unit({ atkCounter: 1 }),
+                1: unit({ cHP: 1960, mHP: 2000 }),
+                2: unit({ cHP: 2890, mHP: 3000 }),
+                3: hurt,
+            },
+            {},
+            detailMap
+        );
+        return state;
+    }
+
+    test('a lone healer is not handed the regeneration that shares their tick', () => {
+        // B3: a heal cast on a regen tick used to collect every rise on it,
+        // the regeneration included
+        const state = regenLearned();
+        foldSupportTick(
+            state,
+            {
+                0: unit({ atkCounter: 2 }),
+                1: unit({ cHP: 1960, mHP: 2000 }),
+                2: unit({ cHP: 2980, mHP: 3000 }),
+                3: unit({ cHP: 700, mHP: 1000 }),
+            },
+            { 0: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.players[0].healCasts).toBe(1);
+        expect(state.players[0].healingDone).toBe(300);
+        expect(state.regenHealing).toBe(240);
+        expect(state.unattributedHealing).toBe(0);
+    });
+
+    test('a heal cast on a tick that carries only regeneration earns nothing', () => {
+        const state = regenLearned();
+        foldSupportTick(
+            state,
+            { 0: unit({ atkCounter: 2 }), 2: unit({ cHP: 2980, mHP: 3000 }) },
+            { 0: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.players[0].healingDone).toBe(0);
+        expect(state.regenHealing).toBe(240);
+    });
+
+    test('a full roster on the tick does not stop a lone heal from being credited', () => {
+        // Every one of the 761 lone-heal ticks in a recorded 57-player trial
+        // carried all 57 slots, so a present-player gate would credit no heal
+        const roster = (fields) => {
+            const pMap = {};
+            for (let index = 0; index < 57; index += 1) pMap[index] = unit(fields[index] || {});
+            return pMap;
+        };
+        const state = newSupportState();
+        foldSupportTick(state, roster({ 0: { atkCounter: 1 }, 5: { cHP: 400 } }), {}, detailMap);
+        foldSupportTick(
+            state,
+            roster({ 0: { atkCounter: 2 }, 5: { cHP: 700 } }),
+            { 0: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.players[0].healingDone).toBe(300);
+    });
+
     test('the summary carries regeneration apart from unattributed', () => {
         const state = newSupportState();
         state.regenHealing = 150;

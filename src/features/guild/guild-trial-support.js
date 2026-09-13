@@ -418,33 +418,33 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
         }
     }
 
-    // One healer casting on this tick is who the rises belong to. None or
-    // several is not something the payload can separate, and a guess would put
-    // one player's work on another's row
     const restored = risesThisTick.reduce((sum, rise) => sum + rise.amount, 0);
     if (restored <= 0) return;
 
-    if (healers.length === 1) {
-        const row = (state.players[healers[0]] ||= emptyRow());
-        row.healingDone += restored;
-        return;
-    }
-
-    // No lone healer. Take the regeneration out first — it identifies itself
-    // by its shape — and give what is left to a lone ability caster whose tick
-    // this is, before anything lands in the unattributed bucket.
+    // Regeneration comes out first, whoever cast on the tick. It identifies
+    // itself by its shape and is the game's, so a heal landing on a regen tick
+    // must not collect every regen rise beside it.
     const { regen, rest } = splitRegenRises(state, risesThisTick);
     state.regenHealing += regen.reduce((sum, rise) => sum + rise.amount, 0);
 
     const remainder = rest.reduce((sum, rise) => sum + rise.amount, 0);
     if (remainder <= 0) return;
 
-    if (casters.length === 1) {
-        // The server groups a tick by actor, so a lone cast beside these rises
-        // is what caused them — a heal, a leech, or an on-cast proc like
-        // Blooming Trident's Bloom, which lands on the lowest-health ally and
-        // never labels itself as a healing ability
-        const row = (state.players[casters[0]] ||= emptyRow());
+    // One healer casting on this tick owns what is left. Failing that, a lone
+    // ability caster does: the server groups a tick by actor, so a lone cast
+    // beside these rises is what caused them — a heal, a leech, or an on-cast
+    // proc like Blooming Trident's Bloom, which never labels itself as a
+    // healing ability. Several of either separate nothing, and a guess would
+    // put one player's work on another's row.
+    //
+    // No crowd-size gate, unlike the damage rungs. Those gate because a lone
+    // counter or mana movement among many present players is coincidence;
+    // here the rung already requires exactly one heal (or ability) cast on
+    // the tick, and a heal is routinely multi-target, so a gate on present
+    // players or risers would strip genuine group heals rather than guesses.
+    const owner = healers.length === 1 ? healers[0] : casters.length === 1 ? casters[0] : null;
+    if (owner !== null) {
+        const row = (state.players[owner] ||= emptyRow());
         row.healingDone += remainder;
     } else {
         state.unattributedHealing += remainder;
