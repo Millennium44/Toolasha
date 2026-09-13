@@ -5,6 +5,8 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
+import { _resetClassOverrides, setClassOverride } from '../../utils/class-override.js';
+
 /**
  * What storage answers with, and the last thing written to it.
  *
@@ -750,6 +752,32 @@ describe('class tags from the ability stream', () => {
         s.noteAbilityCast('alice', '/abilities/steady_shot');
 
         expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('ranged');
+    });
+
+    test('a hand-set class overrides the inference, here and everywhere else a tag is drawn', async () => {
+        // Reported: the Trial Abilities panel kept showing the auto-attacking
+        // tank's inferred role instead of the class set for them from the
+        // scoreboard's player menu — every other board applies the override
+        // through `player-menu.js`, but this panel is fed straight from
+        // `classOf`/`state()`, which never did
+        _resetClassOverrides();
+        try {
+            const s = session(['Alice']);
+            s.noteTrialStart(NOW);
+            s.noteAbilityCast('Alice', '/abilities/steady_shot');
+            expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('ranged');
+
+            await setClassOverride('Alice', 'tank');
+
+            const view = s.state(STREAM_GAME).participants[0].classTag;
+            expect(view.key).toBe('tank');
+            expect(view.manual).toBe(true);
+            expect(view.basis).toBe('set by you');
+            // The inferred verdict is kept alongside, not thrown away
+            expect(view.inferred?.key).toBe('ranged');
+        } finally {
+            _resetClassOverrides();
+        }
     });
 
     test('a healer is named by the heal, not by the damage they also do', () => {

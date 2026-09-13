@@ -52,6 +52,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
 import { inferClass, newCastLog, noteCast, WEAPON_PASSIVE_STATS } from '../../utils/class-inference.js';
+import { applyClassOverride } from '../../utils/class-override.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
@@ -857,16 +858,16 @@ class GuildTrialAbilities {
      * @param {number|null} [partyThreat] - Baseline threat for the rest of the party, from
      *   {@link partyThreatBaseline}. Recomputed from the current roster when omitted — pass it in
      *   when classifying many rows in a loop so it is only ever computed once.
-     * @returns {Object|null} The verdict, from `inferClass`
+     * @returns {Object|null} The verdict, from `inferClass` — or the user's own
+     *   override for this player, laid over it (`class-override.js`)
      */
     classOf(row, abilityDetailMap = this._abilityMap(), partyThreat = this._partyThreatBaseline()) {
-        const name = String(row?.name || row?.capture?.name || '')
-            .trim()
-            .toLowerCase();
+        const displayName = String(row?.name || row?.capture?.name || '').trim();
+        const name = displayName.toLowerCase();
         // Trial evidence only — never the weapon on the character's sheet: a
         // trial runs on its own loadout while the same character may be in an
         // ordinary fight with another weapon at the same time
-        return inferClass(
+        const verdict = inferClass(
             {
                 casts: name ? this.casts[name] || null : null,
                 kit: row?.capture?.abilities || null,
@@ -876,6 +877,10 @@ class GuildTrialAbilities {
             abilityDetailMap,
             this._itemMap()
         );
+        // Every other surface that draws a class tag passes it through this —
+        // the Trial Abilities panel is fed straight from `classOf`/`state()`
+        // rather than through a board renderer, so it never got the layer
+        return applyClassOverride(displayName, verdict);
     }
 
     /**
