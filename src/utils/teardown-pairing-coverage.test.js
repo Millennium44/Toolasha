@@ -279,6 +279,9 @@ export function scanForUnpairedStarts(original) {
  * Keyed `<path from repo root>#<binding name>`.
  */
 const KNOWN_SAFE = {
+    'src/features/combat/dps-graph.js#persister':
+        'Started in `startDpsSampler()` and stopped in `stopDpsSampler()`, a teardown this scan does not know by ' +
+        'name; `combat-dps-panel.js` calls `stopDpsSampler()` from its own cleanup on every switch and toggle.',
     'src/features/actions/gathering-stats.js#actionPanelSort':
         'One of two parents — `max-produceable.js` starts the same singleton — and it self-manages across ' +
         'switches with its own `character_switching`/`character_initialized` handlers, so a `disable()` from ' +
