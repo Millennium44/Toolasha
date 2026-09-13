@@ -11,7 +11,14 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ breakdown: null, loadouts: {}, seen: [], restarts: 0, traceStatus: null }));
+const game = vi.hoisted(() => ({
+    breakdown: null,
+    loadouts: {},
+    seen: [],
+    restarts: 0,
+    traceStatus: null,
+    stored: new Map(),
+}));
 
 // The pure parts of the damage module are the real ones — `estimateDamageSplit`
 // is what the Damage tab now draws, and a stub of it would be testing the stub
@@ -27,9 +34,23 @@ vi.mock('./guild-loadout-capture.js', () => ({
 }));
 vi.mock('./guild-trial-recorder.js', () => ({
     guildTrialRecorder: {
+        session: null,
         restart: () => {
             game.restarts += 1;
         },
+    },
+    SNAPSHOT_MS: 15_000,
+    RECONCILE_WAIT_MS: 120_000,
+}));
+// Saved trials live in IndexedDB; an in-memory map stands in for it
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        get: async (key, _store, fallback) => (game.stored.has(key) ? game.stored.get(key) : fallback),
+        set: async (key, value) => {
+            game.stored.set(key, value);
+            return true;
+        },
+        delete: async (key) => game.stored.delete(key),
     },
 }));
 // The trace's own wording is the real thing — `traceGapWarning` is what the
@@ -1037,5 +1058,122 @@ describe('healing by caster', () => {
         expect(copied).toContain('2. Bex — 40,000');
         expect(copied).toContain('No caster in sight: 5,000');
         expect(copied).not.toContain('Unattributed: 75,000');
+    });
+});
+
+const { buildTrialEntry, sampleTrialHistory, thinTrialBreakdown, _resetTrialHistory } =
+    await import('./trial-history.js');
+const { saveHistoryEntry, loadHistoryIndex, _resetMeterHistory } = await import('../combat/meter-history.js');
+const { savedTrialText } = await import('./guild-trial-scoreboard.js');
+
+describe('saved trials', () => {
+    const panelText = () => document.querySelector(`.${PANEL_CLASS}`)?.textContent || '';
+    const panel = (selector) => document.querySelector(`.${PANEL_CLASS} ${selector}`);
+
+    /** A finished trial with the game's totals, as the history saves one */
+    const savedTrial = () =>
+        buildTrialEntry(
+            {
+                at: 9000,
+                firstSeenAt: 1000,
+                characterId: 'default',
+                classes: {},
+                graph: null,
+                breakdown: thinTrialBreakdown(
+                    breakdown({
+                        source: 'spectated',
+                        encounter: '/monsters/badger',
+                        bossName: 'Badger',
+                        seconds: 400,
+                        tier: 3,
+                        tierStarts: { 1: 1000, 3: 2000 },
+                        endedAt: 8000,
+                        endedByGame: true,
+                        players: [
+                            { index: '0', name: 'Sav', damage: 650_000, kills: 2, abilities: [] },
+                            { index: '1', name: 'Kit', damage: 280_000, abilities: [] },
+                        ],
+                        reported: {
+                            Sav: { damage: 700_000, healing: 0, taken: 5 },
+                            Kit: { damage: 300_000, healing: 90_000, taken: 9 },
+                        },
+                    })
+                ),
+            },
+            true
+        );
+
+    beforeEach(() => {
+        game.stored = new Map();
+        _resetMeterHistory();
+        _resetTrialHistory();
+    });
+
+    test('History in the header lists saved trials; one opens read-only with its own figures', async () => {
+        await saveHistoryEntry(savedTrial(), 'default');
+        guildTrialScoreboard.open();
+        expect(panelText()).toContain('Tib');
+
+        panel('[data-history-toggle]').click();
+        await vi.waitFor(() => expect(panelText()).toContain('Badger T1–T3'));
+        expect(panelText()).toContain('game totals');
+
+        panel('[data-history-open]').click();
+        await vi.waitFor(() => expect(panel('[data-history-banner]')).not.toBeNull());
+        expect(panelText()).toContain('Viewing saved trial');
+        expect(panelText()).toContain('Sav');
+        expect(panelText()).toContain('game stats');
+        expect(panelText()).not.toContain('Tib');
+        // Live-only actions are not offered on a saved trial
+        expect(panel('[data-action="restart"]')).toBeNull();
+        expect(panel('[data-action="report"]')).toBeNull();
+
+        // The five-second refresh keeps it on screen
+        vi.advanceTimersByTime(5000);
+        expect(panel('[data-history-banner]')).not.toBeNull();
+
+        panel('[data-tab="healing"]').click();
+        expect(panelText()).toContain('Kit');
+        expect(panel('[data-history-banner]')).not.toBeNull();
+        panel('[data-tab="damage"]').click();
+
+        panel('[data-action="live"]').click();
+        expect(panel('[data-history-banner]')).toBeNull();
+        expect(panelText()).toContain('Tib');
+        expect(panel('[data-action="restart"]')).not.toBeNull();
+        expect(panelText()).not.toContain('could not be drawn');
+    });
+
+    test('End & start new saves the trial being thrown away first', async () => {
+        game.breakdown = breakdown({ source: 'spectated', encounter: '/monsters/badger' });
+        sampleTrialHistory(Date.now(), { characterId: 'default', session: null, classes: {} });
+        guildTrialScoreboard.open();
+        panel('[data-action="restart"]').click();
+
+        expect(game.restarts).toBe(1);
+        await vi.waitFor(async () => expect(await loadHistoryIndex('trial', 'default')).toHaveLength(1));
+        expect((await loadHistoryIndex('trial', 'default'))[0].finished).toBe(false);
+    });
+
+    test('a name being typed is not redrawn away by the refresh', async () => {
+        await saveHistoryEntry(savedTrial(), 'default');
+        guildTrialScoreboard.open();
+        panel('[data-history-toggle]').click();
+        await vi.waitFor(() => expect(panel('[data-history-rename]')).not.toBeNull());
+
+        panel('[data-history-rename]').click();
+        const input = panel('[data-history-label]');
+        input.focus();
+        input.value = 'Our best';
+        vi.advanceTimersByTime(5000);
+        expect(panel('[data-history-label]')).toBe(input);
+        expect(input.value).toBe('Our best');
+    });
+
+    test('a saved trial copies with the totals it carries, not the live stats modal', () => {
+        const text = savedTrialText(savedTrial());
+        expect(text).toContain('Saved trial — Badger T1–T3');
+        expect(text).toContain("Trial damage — 1,000,000 total, from the game's post-trial stats");
+        expect(text).toContain('Trial healing — 90,000 total');
     });
 });

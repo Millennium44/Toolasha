@@ -71,7 +71,18 @@ import {
 import { classTagIconHTML } from '../../utils/class-weapon.js';
 import { closePlayerMenu, playerMarkersHTML, playerRowColor, wirePlayerMenu } from '../../utils/player-menu.js';
 import { resolveRosterColors } from '../../utils/player-colors.js';
-import { trialDpsGraphHTML, wireTrialDpsGraph } from './trial-dps-graph.js';
+import { savedTrialGraphHTML, trialDpsGraphHTML, wireTrialDpsGraph } from './trial-dps-graph.js';
+import { flushTrialHistory } from './trial-history.js';
+import {
+    cachedHistoryIndex,
+    ensureHistoryLoaded,
+    entryHeading,
+    historyEnabled,
+    historyListHTML,
+    historyUiState,
+    savedBannerHTML,
+    wireHistoryList,
+} from '../combat/meter-history.js';
 
 /** Class every part of this panel carries, so teardown is one query */
 export const PANEL_CLASS = 'mwi-trial-scoreboard';
@@ -503,6 +514,25 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null, modal
     return [header, ...lines].join('\n');
 }
 
+/**
+ * A saved trial as plain text: its heading, then damage, healing and taken.
+ *
+ * Game totals come only from what the saved breakdown carries — never from the
+ * scraped stats modal, which by now may hold a later trial of the same name.
+ *
+ * @param {Object} entry - A trial body from `trial-history.js`
+ * @param {Object|null} [summary] - Its list summary, for the user's name
+ * @returns {string}
+ */
+export function savedTrialText(entry, summary = null) {
+    const breakdown = entry?.breakdown || null;
+    const modalStats = modalStatsForBreakdown(breakdown, {});
+    return [
+        entryHeading(entry, summary),
+        ...['damage', 'healing', 'taken'].map((tab) => scoreboardText(breakdown, tab, null, modalStats)),
+    ].join('\n\n');
+}
+
 class GuildTrialScoreboard {
     constructor() {
         this.container = null;
@@ -520,6 +550,10 @@ class GuildTrialScoreboard {
          * Survives the five-second redraw, so an open row stays open.
          */
         this.expanded = new Set();
+        /** `live`, `list` (the saved trials) or `saved` (one of them, read-only) */
+        this.mode = 'live';
+        /** The saved trial drawn while `mode` is `saved`: `{entry, summary}` */
+        this.viewing = null;
     }
 
     /**
@@ -586,6 +620,8 @@ class GuildTrialScoreboard {
         // Expansion state is about the trial being watched; the next open may
         // be a different trial, or a different guild's
         this.expanded.clear();
+        this.mode = 'live';
+        this.viewing = null;
     }
 
     /** Open when shut, shut when open — what the command palette calls */
@@ -617,6 +653,23 @@ class GuildTrialScoreboard {
         close.style.cssText =
             'background:none; border:none; color:#aaa; font-size:16px; line-height:1; cursor:pointer; padding:0 2px;';
         close.addEventListener('click', () => this.close());
+        // Saved trials — meter-history.js
+        if (historyEnabled()) {
+            const history = document.createElement('button');
+            history.textContent = 'History';
+            history.dataset.historyToggle = '';
+            history.title = 'Saved trials: open a finished trial again, read-only.';
+            history.style.cssText =
+                `margin-left:auto; background:none; border:1px solid ${ACCENT}55; border-radius:3px; color:${ACCENT};` +
+                'font-size:10px; line-height:1.4; cursor:pointer; padding:0 6px;';
+            history.addEventListener('click', () => {
+                this.mode = this.mode === 'list' ? 'live' : 'list';
+                this.viewing = null;
+                this.expanded.clear();
+                this.render();
+            });
+            header.appendChild(history);
+        }
         header.appendChild(close);
 
         const body = document.createElement('div');
@@ -636,6 +689,9 @@ class GuildTrialScoreboard {
         // board is rebuilt each pass, and nobody is looking at it.
         this.refreshId = setInterval(() => {
             if (document.hidden) return;
+            // A name being typed into the saved-trials list must not be redrawn away
+            const active = document.activeElement;
+            if (active?.tagName === 'INPUT' && this.container?.contains(active)) return;
             this.render();
         }, 5000);
         // Coming back to the tab should show the trial as it stands now, not as
@@ -681,8 +737,13 @@ class GuildTrialScoreboard {
         const body = this.container.querySelector(`.${PANEL_CLASS}__body`);
         if (!body) return;
 
-        const breakdown = guildTrialDamage.breakdown?.() || null;
-        body.innerHTML = this._bodyHTML(breakdown);
+        if (this.mode === 'list') {
+            this._renderHistory(body);
+            return;
+        }
+        const viewing = this.mode === 'saved' ? this.viewing : null;
+        const breakdown = viewing ? viewing.entry.breakdown || null : guildTrialDamage.breakdown?.() || null;
+        body.innerHTML = this._bodyHTML(breakdown, viewing);
         // Player colour and class menu — utils/player-menu.js
         wirePlayerMenu(body, () => this.render());
         wireTrialDpsGraph(body, () => this.render());
@@ -704,15 +765,76 @@ class GuildTrialScoreboard {
             });
         });
         body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
-            this._copy(scoreboardText(breakdown, this.tab, this._estimate(), modalStatsForBreakdown(breakdown)));
+            this._copy(
+                viewing
+                    ? scoreboardText(breakdown, this.tab, null, modalStatsForBreakdown(breakdown, {}))
+                    : scoreboardText(breakdown, this.tab, this._estimate(), modalStatsForBreakdown(breakdown))
+            );
         });
         body.querySelector('[data-action="report"]')?.addEventListener('click', () => {
             this._copy(this.reportText(breakdown));
         });
         body.querySelector('[data-action="restart"]')?.addEventListener('click', () => {
+            // The trial being thrown away is saved first, off the still-live breakdown
+            flushTrialHistory();
             guildTrialRecorder.restart();
             this.render();
         });
+        this._wireModes(body);
+    }
+
+    /**
+     * The History and Back to live buttons.
+     * @param {HTMLElement} body - The panel body
+     */
+    _wireModes(body) {
+        body.querySelector('[data-action="history"]')?.addEventListener('click', () => {
+            this.mode = 'list';
+            this.viewing = null;
+            this.expanded.clear();
+            this.render();
+        });
+        body.querySelectorAll('[data-action="live"]').forEach((button) => {
+            button.addEventListener('click', () => {
+                this.mode = 'live';
+                this.viewing = null;
+                this.expanded.clear();
+                this.render();
+            });
+        });
+    }
+
+    /**
+     * The saved-trials list.
+     * @param {HTMLElement} body - The panel body
+     */
+    _renderHistory(body) {
+        const redraw = () => {
+            if (this.isOpen) this.render();
+        };
+        const index = cachedHistoryIndex('trial');
+        if (index === null) ensureHistoryLoaded('trial', redraw);
+
+        body.innerHTML =
+            historyListHTML(index, { type: 'trial', ...historyUiState('trial') }) +
+            `<div style="display:flex; gap:6px; margin-top:8px;">` +
+            `<button data-action="live" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
+            `border:1px solid ${ACCENT}66; background:transparent; color:${ACCENT}; font-size:11px;">` +
+            'Back to live</button></div>';
+
+        wireHistoryList(body, {
+            type: 'trial',
+            redraw,
+            onOpen: (entry, summary) => {
+                if (this.mode !== 'list') return;
+                this.mode = 'saved';
+                this.viewing = { entry, summary };
+                this.expanded.clear();
+                redraw();
+            },
+            copyText: savedTrialText,
+        });
+        this._wireModes(body);
     }
 
     /**
@@ -884,11 +1006,19 @@ class GuildTrialScoreboard {
 
     /**
      * The body's markup.
-     * @param {Object|null} breakdown - From `guildTrialDamage.breakdown()`
+     *
+     * A saved trial draws through the same path with the live-only parts left
+     * out: no estimate, no forecast, no trace note, no mana-right-now markers,
+     * no report or restart — and no scraped stats modal, which may by now hold
+     * a later trial of the same name.
+     *
+     * @param {Object|null} breakdown - From `guildTrialDamage.breakdown()`, or a saved trial's
+     * @param {Object|null} [viewing] - `{entry, summary}` when drawing a saved trial
      * @returns {string} HTML
      */
-    _bodyHTML(breakdown) {
-        const modalStats = modalStatsForBreakdown(breakdown);
+    _bodyHTML(breakdown, viewing = null) {
+        const saved = viewing?.entry || null;
+        const modalStats = saved ? modalStatsForBreakdown(breakdown, {}) : modalStatsForBreakdown(breakdown);
         const { rows, total, perSecond, source } = scoreboardRows(breakdown, this.tab, modalStats);
         const fromGame = source === 'game';
         // The by-caster view is a healing view: the same unit, notes and empty states
@@ -900,7 +1030,7 @@ class GuildTrialScoreboard {
         // Measurement is impossible for a trial (see the module note), so the
         // damage tab falls through to the estimate rather than to an apology —
         // but never over the game's own stats or the damage-taken tab.
-        const estimate = !rows.length && !healing && !taken && !fromGame ? this._estimate() : null;
+        const estimate = !saved && !rows.length && !healing && !taken && !fromGame ? this._estimate() : null;
         const estimated = Boolean(estimate?.players?.length);
 
         const head = estimated
@@ -1003,7 +1133,7 @@ class GuildTrialScoreboard {
         // this is about ticks that never arrived. A fully-covered attribution
         // computed over a feed with a forty-second hole in it is still short by
         // forty seconds, and only this line says so.
-        const traceGap = traceGapWarning(guildTrialTrace.status?.());
+        const traceGap = saved ? null : traceGapWarning(guildTrialTrace.status?.());
         const traceNote = traceGap
             ? `<div style="color:${WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
               `${escapeText(traceGap)}</div>`
@@ -1043,17 +1173,19 @@ class GuildTrialScoreboard {
         // Read once for the whole table rather than per row: the map is built
         // off the roster, and rebuilding it forty times a redraw would be forty
         // passes over the same participants
-        const classes = guildTrialAbilities.classes?.() || {};
+        const classes = saved ? saved.classes || {} : guildTrialAbilities.classes?.() || {};
         // Live mana state by name, for the marker beside a caster who is dry,
-        // starved or low right now
-        const manaByName = new Map(
-            (breakdown?.support?.players || []).map((row) => [
-                String(row.name || '')
-                    .trim()
-                    .toLowerCase(),
-                row,
-            ])
-        );
+        // starved or low right now — which a saved trial has no "now" for
+        const manaByName = saved
+            ? null
+            : new Map(
+                  (breakdown?.support?.players || []).map((row) => [
+                      String(row.name || '')
+                          .trim()
+                          .toLowerCase(),
+                      row,
+                  ])
+              );
 
         // The stream's per-ability split by lowercased name, for the damage
         // tab's expandable rows. Only the stream carries one — the game's
@@ -1147,7 +1279,7 @@ class GuildTrialScoreboard {
               '</div>'
             : '';
 
-        const forecast = this.forecast;
+        const forecast = saved ? null : this.forecast;
         const expected =
             forecast && forecast.tier !== null
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:6px;">` +
@@ -1187,23 +1319,35 @@ class GuildTrialScoreboard {
             ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">${manaBits.join(' · ')}</div>`
             : '';
 
-        const buttons =
+        const savedButtons =
             `<div style="display:flex; gap:6px; margin-top:8px;">` +
             `<button data-action="copy" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
             `border:1px solid rgba(255,255,255,0.15); background:transparent; color:${DIM}; font-size:11px;">` +
             'Copy stats</button>' +
-            `<button data-action="report" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
+            `<button data-action="history" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
             `border:1px solid ${ACCENT}66; background:transparent; color:${ACCENT}; font-size:11px;">` +
-            'Copy guild report</button>' +
-            `<button data-action="restart" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-            `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN}; font-size:11px;">` +
-            'End &amp; start new</button></div>';
+            'History</button></div>';
+        const buttons = saved
+            ? savedButtons
+            : `<div style="display:flex; gap:6px; margin-top:8px;">` +
+              `<button data-action="copy" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
+              `border:1px solid rgba(255,255,255,0.15); background:transparent; color:${DIM}; font-size:11px;">` +
+              'Copy stats</button>' +
+              `<button data-action="report" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
+              `border:1px solid ${ACCENT}66; background:transparent; color:${ACCENT}; font-size:11px;">` +
+              'Copy guild report</button>' +
+              `<button data-action="restart" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
+              `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN}; font-size:11px;">` +
+              'End &amp; start new</button></div>';
 
         return (
+            (saved ? savedBannerHTML(saved, viewing.summary) : '') +
             head +
             tabs +
             // DPS-over-time graph — trial-dps-graph.js; called on every tab so tier changes are noted
-            trialDpsGraphHTML(breakdown, { draw: this.tab === 'damage' }) +
+            (saved
+                ? savedTrialGraphHTML(saved.graph, { draw: this.tab === 'damage' })
+                : trialDpsGraphHTML(breakdown, { draw: this.tab === 'damage' })) +
             disclaimer +
             takenNote +
             ceilingNote +

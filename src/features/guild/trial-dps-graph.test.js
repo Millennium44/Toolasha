@@ -130,3 +130,45 @@ describe('trialDpsGraphHTML', () => {
         expect(trialDpsGraphHTML(null, { session })).toBe('');
     });
 });
+
+const { thinTrialRates, snapshotTierMarks, savedTrialGraphHTML } = await import('./trial-dps-graph.js');
+
+describe('a saved trial’s graph', () => {
+    const seven = (seconds, tier) => ({
+        seconds,
+        fights: tier,
+        tier,
+        players: ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7'].map((name, i) => ({ name, damage: seconds * (i + 1) })),
+    });
+
+    test('keeps the leading players and how many there were', () => {
+        const thin = thinTrialRates(trialRates([seven(0, 1), seven(15, 1), seven(30, 2)]));
+        expect(Object.keys(thin.players)).toEqual(['A7', 'A6', 'A5', 'A4', 'A3']);
+        expect(thin.playerCount).toBe(7);
+        expect(thin.party).toEqual([28, 28]);
+    });
+
+    test('tier changes come from the readings, and a new trial starts the list again', () => {
+        expect(snapshotTierMarks([seven(0, 1), seven(15, 2), seven(30, 2), seven(45, 4)])).toEqual([
+            { seconds: 15, tier: 2 },
+            { seconds: 45, tier: 4 },
+        ]);
+        expect(snapshotTierMarks([seven(0, 1), seven(15, 2), seven(5, 1), seven(20, 3)])).toEqual([
+            { seconds: 20, tier: 3 },
+        ]);
+    });
+
+    test('draws the kept lines with every tier labelled, and says so when nothing was kept', () => {
+        const snapshots = [seven(0, 1), seven(15, 1), seven(30, 2), seven(45, 2)];
+        const graph = { rates: thinTrialRates(trialRates(snapshots)), marks: snapshotTierMarks(snapshots) };
+        const host = parse(savedTrialGraphHTML(graph));
+        expect(host.querySelectorAll('polyline')).toHaveLength(TOP_PLAYERS + 1);
+        expect(host.textContent).toContain('T2');
+        expect(host.textContent).toContain('5 leading players of 7');
+
+        expect(savedTrialGraphHTML(null)).toContain('No graph was kept');
+        expect(savedTrialGraphHTML(graph, { draw: false })).toBe('');
+        opts.settings = { combatDpsGraph: false };
+        expect(savedTrialGraphHTML(graph)).toBe('');
+    });
+});

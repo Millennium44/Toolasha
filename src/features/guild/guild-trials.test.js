@@ -237,6 +237,10 @@ vi.mock('./guild-trial-scoreboard.js', () => ({
         noteContext: (context) => (game.scoreboardContext = context),
     },
 }));
+// Saved trials read storage on a timer; what this file tests is the feature's own panel
+vi.mock('./trial-history.js', () => ({
+    default: { start: vi.fn(), stop: vi.fn(), flush: vi.fn(), sample: vi.fn() },
+}));
 // Real wording, driven status: `describeTraceStatus` is what the Trace button's
 // tooltip carries, and the singleton behind it otherwise reads a live stream
 vi.mock('./guild-trial-trace.js', async (importOriginal) => ({

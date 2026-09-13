@@ -162,15 +162,102 @@ export function trialDpsGraphHTML(breakdown, { draw = true, session = guildTrial
         );
     }
 
+    return `<div data-trial-graph style="margin:4px 0 6px;">${buttons}${ratesGraphHTML(rates, tierMarks)}</div>`;
+}
+
+/**
+ * The leading players' rates only, for keeping: a saved trial draws the same
+ * lines the live board does without carrying sixty players' series.
+ *
+ * @param {Object} rates - From {@link trialRates}
+ * @param {number} [top] - Players kept
+ * @returns {Object} `rates` with `players` and `totals` cut to the leaders, and `playerCount` of all of them
+ */
+export function thinTrialRates(rates, top = TOP_PLAYERS) {
+    const ranked = Object.keys(rates?.totals || {}).sort((a, b) => rates.totals[b] - rates.totals[a]);
+    const kept = ranked.slice(0, top);
+    return {
+        xs: [...(rates?.xs || [])],
+        party: [...(rates?.party || [])],
+        players: Object.fromEntries(kept.map((name) => [name, [...(rates.players[name] || [])]])),
+        totals: Object.fromEntries(kept.map((name) => [name, rates.totals[name]])),
+        boundaries: [...(rates?.boundaries || [])],
+        playerCount: ranked.length,
+    };
+}
+
+/**
+ * Tier changes as the recorder's readings state them.
+ *
+ * Snapshots carry the tier being fought, so a finished trial's boundaries can
+ * all be labelled — including the ones nobody had the board open for.
+ *
+ * @param {Array<Object>} snapshots - Oldest first
+ * @returns {Array<{seconds: number, tier: number}>}
+ */
+export function snapshotTierMarks(snapshots) {
+    let marks = [];
+    let previousTier = null;
+    let previousSeconds = null;
+    for (const snapshot of snapshots || []) {
+        const seconds = Number(snapshot?.seconds);
+        if (!Number.isFinite(seconds)) continue;
+        if (previousSeconds !== null && seconds < previousSeconds) {
+            marks = [];
+            previousTier = null;
+        }
+        previousSeconds = seconds;
+        const tier = snapshot?.tier;
+        if (!Number.isFinite(tier) || tier === previousTier) continue;
+        if (previousTier !== null) marks.push({ seconds, tier });
+        previousTier = tier;
+    }
+    return marks;
+}
+
+/**
+ * A saved trial's graph.
+ *
+ * @param {Object|null} graph - `{rates, marks}` as `trial-history.js` keeps them
+ * @param {Object} [options] - Context
+ * @param {boolean} [options.draw] - Whether the graph is wanted on this tab
+ * @returns {string} HTML, or '' when not drawn or the setting is off
+ */
+export function savedTrialGraphHTML(graph, { draw = true } = {}) {
+    if (!draw || config.getSetting('combatDpsGraph') !== true) return '';
+    const buttons = graphButtonsHTML(TRIAL_GRAPH_VIEWS, view, 'data-trial-graph-view');
+    if (view === 'hidden') return `<div data-trial-graph style="margin:4px 0;">${buttons}</div>`;
+    if (!(graph?.rates?.xs?.length >= 2)) {
+        return (
+            `<div data-trial-graph style="margin:4px 0 6px;">${buttons}` +
+            boardNoteHTML('No graph was kept for this trial — it draws from the trial recorder’s readings.') +
+            `</div>`
+        );
+    }
+    return (
+        `<div data-trial-graph style="margin:4px 0 6px;">${buttons}` +
+        `${ratesGraphHTML(graph.rates, graph.marks || [])}</div>`
+    );
+}
+
+/**
+ * The chart and its legend, off rates between readings.
+ * @param {Object} rates - From {@link trialRates} or {@link thinTrialRates}
+ * @param {Array<{seconds: number, tier: number}>} marks - Tier changes to label
+ * @returns {string} HTML
+ */
+function ratesGraphHTML(rates, marks) {
     const ranked = Object.keys(rates.totals).sort((a, b) => rates.totals[b] - rates.totals[a]);
+    const playerCount = Number.isFinite(rates.playerCount) ? rates.playerCount : ranked.length;
     const top = ranked.slice(0, TOP_PLAYERS);
     resolveRosterColors(ranked);
     const lines = top.map((name) => ({ values: rates.players[name], color: playerColor(name), label: name })).reverse();
     lines.push({ values: rates.party, color: PARTY_COLOR, width: 1.8, label: 'Party' });
 
-    const labelled = tierMarks.map((mark) => ({ x: mark.seconds, label: `T${mark.tier}` }));
-    const unlabelled = rates.boundaries
-        .filter((seconds) => !tierMarks.some((mark) => Math.abs(mark.seconds - seconds) <= SAME_BOUNDARY_SECONDS))
+    const seen = marks || [];
+    const labelled = seen.map((mark) => ({ x: mark.seconds, label: `T${mark.tier}` }));
+    const unlabelled = (rates.boundaries || [])
+        .filter((seconds) => !seen.some((mark) => Math.abs(mark.seconds - seconds) <= SAME_BOUNDARY_SECONDS))
         .map((seconds) => ({ x: seconds }));
     const first = rates.xs[0];
     const last = rates.xs[rates.xs.length - 1];
@@ -186,10 +273,10 @@ export function trialDpsGraphHTML(breakdown, { draw = true, session = guildTrial
     const svg = dpsGraphSVG({ xs: rates.xs, lines, markers, xTicks });
     const legend =
         `<div style="color:${BOARD_COLORS.dim}; font-size:9px; line-height:1.4; margin-top:2px;">` +
-        `White is the party; the ${Math.min(TOP_PLAYERS, ranked.length)} leading players of ${ranked.length} ` +
+        `White is the party; the ${Math.min(TOP_PLAYERS, playerCount)} leading players of ${playerCount} ` +
         'are drawn in their own colours. One point per recorder reading, on the watched clock; dashed lines are ' +
         'wave or tier changes, labelled where the tier was seen.</div>';
-    return `<div data-trial-graph style="margin:4px 0 6px;">${buttons}${svg}${legend}</div>`;
+    return `${svg}${legend}`;
 }
 
 /**

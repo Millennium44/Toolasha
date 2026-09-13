@@ -145,6 +145,7 @@ import guildTrialRecorder, {
     trialExportIsEmpty,
 } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
+import trialHistory from './trial-history.js';
 import guildTrialBossDebuffsUI from './guild-trial-boss-debuffs-ui.js';
 import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -2455,6 +2456,8 @@ class GuildTrials {
         guildTrialStatsModal.initialize();
         guildTrialAlerts.initialize?.();
         guildTrialRecorder.initialize(this.guildName);
+        // Saved trials for the damage board's History — trial-history.js
+        trialHistory.start();
         guildMemberSkills.initialize(this.guildName).catch(() => {});
         guildTrialTrace.initialize?.();
         guildTrialAbilitiesFeature.initialize(this.guildName).catch(() => {});
@@ -2617,6 +2620,8 @@ class GuildTrials {
             // synchronously) — so it has to run before that breakdown is wiped
             // below, or a trial cut short by this very character switch would
             // be folded in with no encounter, no tier and no roster
+            // The history save reads that same breakdown, for the same reason — trial-history.js
+            trialHistory.flush();
             guildTrialRecorder.forget?.();
             guildTrialRecorder.setGuildName?.(null);
             // The gate's "this week's combat trials" is the old guild's answer
@@ -4735,6 +4740,7 @@ class GuildTrials {
                         return;
                     }
                     if (guildTrialRecorder.recording) guildTrialRecorder.stop?.('trial tracking switched off');
+                    trialHistory.flush();
                     guildTrialDamage.cleanup();
                 } catch (error) {
                     console.error('[GuildTrials] Switching trial tracking failed:', error);
@@ -4760,6 +4766,8 @@ class GuildTrials {
         this.timers.clearAll();
         this.samplerId = null;
         this.lastTickAt = 0;
+        // Before the breakdown goes: the trial in hand is saved off it — trial-history.js
+        trialHistory.stop();
         guildTrialDamage.cleanup();
         guildTrialBossDebuffsUI.cleanup();
         guildTrialSkilling.cleanup();
