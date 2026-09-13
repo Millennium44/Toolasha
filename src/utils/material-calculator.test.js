@@ -281,6 +281,41 @@ describe('calculateMaterialRequirements', () => {
         expect(upgrade.have).toBe(3);
         expect(upgrade.missing).toBe(2);
     });
+
+    describe('an upgrade item that is also one of the regular inputs (every advanced+ charm)', () => {
+        beforeEach(() => {
+            state.gameData.itemDetailMap['/items/basic_attack_charm'] = {
+                name: 'Basic Attack Charm',
+                isTradable: true,
+            };
+            state.gameData.actionDetailMap['/actions/crafting/advanced_attack_charm'] = {
+                type: '/action_types/crafting',
+                inputItems: [{ itemHrid: '/items/basic_attack_charm', count: 8 }],
+                upgradeItemHrid: '/items/basic_attack_charm',
+            };
+        });
+
+        test('16 held basic charms are 2 short of 2 crafts (18 needed: 16 input + 2 upgrade)', () => {
+            // Before the fix, the input line and the upgrade line each checked the
+            // full 16 held independently and both read "enough" — hiding that the
+            // craft actually needs 8×2 + 1×2 = 18.
+            state.inventory = [{ itemHrid: '/items/basic_attack_charm', count: 16 }];
+            const result = calculateMaterialRequirements('/actions/crafting/advanced_attack_charm', 2);
+
+            const input = result.find((m) => !m.isUpgradeItem);
+            const upgrade = result.find((m) => m.isUpgradeItem);
+            expect(input).toMatchObject({ required: 16, have: 16, missing: 0 });
+            // The upgrade line sees only what the input line left of the shared 16.
+            expect(upgrade).toMatchObject({ required: 2, have: 16, available: 0, missing: 2 });
+        });
+
+        test('18 held basic charms are exactly enough for 2 crafts', () => {
+            state.inventory = [{ itemHrid: '/items/basic_attack_charm', count: 18 }];
+            const result = calculateMaterialRequirements('/actions/crafting/advanced_attack_charm', 2);
+            expect(result.find((m) => !m.isUpgradeItem).missing).toBe(0);
+            expect(result.find((m) => m.isUpgradeItem).missing).toBe(0);
+        });
+    });
 });
 
 describe('calculateQueuedMaterialsForAction', () => {

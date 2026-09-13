@@ -38,6 +38,8 @@ import {
 } from '../../utils/tea-parser.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { resolveActionContext } from '../../utils/action-context.js';
+import { affordableActions } from '../../utils/material-calculator.js';
 import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
@@ -2355,17 +2357,28 @@ class ActionTimeDisplay {
             }
         }
 
-        // Check input items (affected by Artisan Tea)
+        // Check input items (affected by Artisan Tea). An item that is ALSO the
+        // upgrade item (every advanced+ charm reuses its own lower tier as the
+        // upgrade slot) is billed once here — the artisan-reduced input count
+        // plus the unreduced +1 for the upgrade — rather than as two independent
+        // constraints against the same stock, which let the less-restrictive of
+        // the two hide the real, larger per-action cost.
+        let upgradeAccountedFor = false;
         if (hasInputItems) {
             for (const inputItem of actionDetails.inputItems) {
                 noteProvenance(inputItem.itemHrid);
                 const availableCount = byHrid[inputItem.itemHrid] || 0;
 
                 // Apply Artisan reduction to required materials
-                const requiredPerAction = inputItem.count * (1 - artisanBonus);
+                let requiredPerAction = inputItem.count * (1 - artisanBonus);
+                if (hasUpgradeItem === inputItem.itemHrid) {
+                    requiredPerAction += 1;
+                    upgradeAccountedFor = true;
+                }
 
-                // Calculate max queued actions for this material
-                const maxActions = Math.floor(availableCount / requiredPerAction);
+                // Not a plain floor: IEEE division under-reads exact multiples of a
+                // fractional artisan-reduced cost (8880 / 8.88 → 999.999…), see affordableActions
+                const maxActions = affordableActions(availableCount, requiredPerAction);
 
                 if (maxActions < minLimit) {
                     minLimit = maxActions;
@@ -2374,8 +2387,9 @@ class ActionTimeDisplay {
             }
         }
 
-        // Check upgrade item (NOT affected by Artisan Tea)
-        if (hasUpgradeItem) {
+        // Check upgrade item (NOT affected by Artisan Tea) — skipped when it was
+        // already folded into an input's per-action cost above.
+        if (hasUpgradeItem && !upgradeAccountedFor) {
             noteProvenance(hasUpgradeItem);
             const availableCount = byHrid[hasUpgradeItem] || 0;
 

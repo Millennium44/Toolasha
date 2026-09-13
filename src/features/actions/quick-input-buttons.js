@@ -18,6 +18,7 @@ import config from '../../core/config.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { parseEquipmentSpeedBonuses, debugEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
+import { resolveActionContext } from '../../utils/action-context.js';
 import { formatPercentage, timeReadable, formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { setReactInputValue } from '../../utils/react-input.js';
@@ -1175,36 +1176,21 @@ class QuickInputButtons {
                 return 0; // No inventory data available
             }
 
-            // Get Artisan Tea reduction if active
-            const equipment = dataManager.getEquipment();
+            // Get Artisan Tea reduction if active. resolveActionContext drops a drink that is
+            // slotted but out of stock and no longer buffed, matching the Missing Materials panel.
             const itemDetailMap = gameData?.itemDetailMap || {};
+            const { equipment, drinks: activeDrinks } = resolveActionContext(actionDetails.type);
             const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
-            const activeDrinks = dataManager.getActionDrinkSlots(actionDetails.type);
             const artisanBonus = parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
             let maxActions = Infinity;
 
-            // Check upgrade item first (e.g., Crimson Staff → Azure Staff)
-            if (actionDetails.upgradeItemHrid) {
-                // Upgrade recipes require base item (enhancement level 0)
-                const upgradeItem = inventory.find(
-                    (item) => item.itemHrid === actionDetails.upgradeItemHrid && item.enhancementLevel === 0
-                );
-                const availableAmount = upgradeItem?.count || 0;
-                const baseRequirement = 1; // Upgrade items always require exactly 1
-
-                // Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
-                // Materials are consumed PER ACTION (including instant repeats)
-                // Efficiency gives bonus actions for FREE (no material cost)
-                const materialsPerAction = baseRequirement;
-
-                if (materialsPerAction > 0) {
-                    const possibleActions = affordableActions(availableAmount, materialsPerAction);
-                    maxActions = Math.min(maxActions, possibleActions);
-                }
-            }
-
-            // Check regular input items (materials like lumber, etc.)
+            // Check regular input items (materials like lumber, etc.). An input that is ALSO
+            // the upgrade item (every advanced+ charm reuses its own lower tier as the upgrade
+            // slot) is billed once here — the artisan-reduced input count plus the unreduced +1
+            // for the upgrade slot — rather than as two independent constraints against the same
+            // stock, which let the less-restrictive of the two hide the real per-action cost.
+            let upgradeAccountedFor = false;
             if (actionDetails.inputItems && actionDetails.inputItems.length > 0) {
                 for (const input of actionDetails.inputItems) {
                     // Find ALL items with this HRID (different enhancement levels stack separately)
@@ -1217,7 +1203,11 @@ class QuickInputButtons {
                     // Apply Artisan reduction
                     // Materials are consumed PER ACTION (including instant repeats)
                     // Efficiency gives bonus actions for FREE (no material cost)
-                    const materialsPerAction = baseRequirement * (1 - artisanBonus);
+                    let materialsPerAction = baseRequirement * (1 - artisanBonus);
+                    if (actionDetails.upgradeItemHrid === input.itemHrid) {
+                        materialsPerAction += 1;
+                        upgradeAccountedFor = true;
+                    }
 
                     if (materialsPerAction > 0) {
                         // Not a plain floor: IEEE division under-reads exact multiples
@@ -1226,6 +1216,22 @@ class QuickInputButtons {
                         maxActions = Math.min(maxActions, possibleActions);
                     }
                 }
+            }
+
+            // Check upgrade item (e.g., Crimson Staff → Azure Staff) — skipped when it was
+            // already folded into an input's per-action cost above.
+            if (actionDetails.upgradeItemHrid && !upgradeAccountedFor) {
+                // Upgrade recipes require base item (enhancement level 0)
+                const upgradeItem = inventory.find(
+                    (item) => item.itemHrid === actionDetails.upgradeItemHrid && item.enhancementLevel === 0
+                );
+                const availableAmount = upgradeItem?.count || 0;
+
+                // Upgrade items are NOT affected by Artisan Tea (only regular inputItems are)
+                // Materials are consumed PER ACTION (including instant repeats)
+                // Efficiency gives bonus actions for FREE (no material cost)
+                const possibleActions = affordableActions(availableAmount, 1);
+                maxActions = Math.min(maxActions, possibleActions);
             }
 
             // If we couldn't calculate (no materials found), return 0

@@ -182,17 +182,76 @@ export function unclaimedBoughtCount(itemHrid) {
  * @param {string|null} ownerId - Who is asking
  * @returns {{reserved?: number, reservedNote?: string}} Fields to spread onto the line
  */
-function reservationFields(missing, itemHrid, required, have, queued, reserved, ownerId) {
+function reservationFields(missing, itemHrid, required, have, queued, reserved, ownerId, claimed = 0) {
     if (!(reserved > 0) || !(missing > 0)) return {};
     // Only when the claim is what made it short: a player who is simply out of
     // logs needs no explanation, and a note that fires either way explains
-    // nothing. That is exactly "the bag, less the queue, covers the whole
+    // nothing. That is exactly "the bag, less the queue and less what an
+    // earlier line for the same item already spoken for, covers the whole
     // requirement" — the same test the two sibling notes use. `missing +
     // reserved` is not that number and suppressed the commonest case of all: a
     // bag holding precisely what the action needs, every unit of it claimed.
-    if (Math.max(0, have - queued) < required) return { reserved };
+    if (Math.max(0, have - queued - claimed) < required) return { reserved };
     const reservedNote = shortfallNote(missing, itemHrid, 0, { excludeOwner: ownerId });
     return reservedNote ? { reserved, reservedNote } : { reserved };
+}
+
+/**
+ * One material line: required/have/queued/available/missing plus the optional
+ * reservation fields, sharing stock with any earlier line this same call already
+ * built for the identical item.
+ *
+ * A recipe whose upgrade item is also one of its regular inputs (every
+ * advanced/expert/master/grandmaster charm: the upgrade slot takes the same item
+ * the input list already lists 8 of) used to get two independent lines, each
+ * checking the FULL held count against its own share — so 16 held read as
+ * "enough" for both the 16-input line and the 2-upgrade line even though the
+ * craft actually needs 18. `claimedByItem` is the running total an earlier line
+ * for this item already spoken for in this call, so the second line sees only
+ * what is left.
+ *
+ * @param {string} itemHrid - Material
+ * @param {number} totalRequired - This line's own requirement (already rounded per the artisan mode)
+ * @param {Object} params
+ * @param {Array<Object>} params.inventory - From `dataManager.getInventory()`
+ * @param {Map<string, number>} params.queuedMaterialsMap - itemHrid → queued units
+ * @param {string|null} params.ownerId - Reservation ledger caller id
+ * @param {boolean} params.isUpgradeItem - Whether this line is the upgrade slot
+ * @param {Map<string, number>} params.claimedByItem - Mutable running total per itemHrid, shared
+ *   across every line built this call; updated in place so a later line for the same item sees
+ *   what earlier lines already took
+ * @returns {Object|null} A material line, or null when the item has no game data
+ */
+function buildMaterialLine(
+    itemHrid,
+    totalRequired,
+    { inventory, queuedMaterialsMap, ownerId, isUpgradeItem, claimedByItem }
+) {
+    const gameData = dataManager.getInitClientData();
+    const itemDetails = gameData.itemDetailMap[itemHrid];
+    if (!itemDetails) return null;
+
+    const have = unclaimedBoughtCount(itemHrid) + heldInBag(inventory, itemHrid);
+    const queued = queuedMaterialsMap.get(itemHrid) || 0;
+    const reserved = ownerId ? reservedElsewhere(itemHrid, 0, { excludeOwner: ownerId }) : 0;
+    const claimed = claimedByItem.get(itemHrid) || 0;
+    const available = Math.max(0, have - queued - reserved - claimed);
+    const missingAmount = Math.max(0, totalRequired - available);
+
+    claimedByItem.set(itemHrid, claimed + totalRequired);
+
+    return {
+        itemHrid,
+        itemName: itemDetails.name,
+        required: totalRequired,
+        have,
+        queued,
+        available,
+        missing: missingAmount,
+        isTradeable: itemDetails.isTradable === true, // British spelling
+        isUpgradeItem,
+        ...reservationFields(missingAmount, itemHrid, totalRequired, have, queued, reserved, ownerId, claimed),
+    };
 }
 
 export function calculateMaterialRequirements(
@@ -203,7 +262,6 @@ export function calculateMaterialRequirements(
 ) {
     const actionDetails = dataManager.getActionDetails(actionHrid);
     const inventory = dataManager.getInventory() || [];
-    const gameData = dataManager.getInitClientData();
 
     if (!actionDetails) {
         return [];
@@ -219,6 +277,11 @@ export function calculateMaterialRequirements(
     const queuedMaterialsMap = accountForQueue ? calculateQueuedMaterialsForAction(null) : new Map();
 
     const materials = [];
+    // Running per-item claim shared across both loops below. An item that is both
+    // a regular input and the upgrade item (every advanced+ charm) gets two lines
+    // — the DOM has two separate slots to annotate — but only one pool of stock;
+    // see buildMaterialLine.
+    const claimedByItem = new Map();
 
     // Process regular input items first
     if (actionDetails.inputItems && actionDetails.inputItems.length > 0) {
@@ -231,73 +294,30 @@ export function calculateMaterialRequirements(
             // Only count unenhanced items — enhanced copies are distinct items the player
             // would not want consumed as crafting materials. Bought-but-unclaimed
             // units on the player's own buy orders count too (see unclaimedBoughtCount).
-            const have = unclaimedBoughtCount(input.itemHrid) + heldInBag(inventory, input.itemHrid);
-
-            // Calculate queued and available amounts. Stock another plan has
-            // already claimed is not available either — see
-            // utils/inventory-reservations.js; zero while the ledger is off.
-            const queued = queuedMaterialsMap.get(input.itemHrid) || 0;
-            const reserved = ownerId ? reservedElsewhere(input.itemHrid, 0, { excludeOwner: ownerId }) : 0;
-            const available = Math.max(0, have - queued - reserved);
-            const missingAmount = Math.max(0, totalRequired - available);
-
-            const itemDetails = gameData.itemDetailMap[input.itemHrid];
-            if (!itemDetails) {
-                continue;
-            }
-
-            materials.push({
-                itemHrid: input.itemHrid,
-                itemName: itemDetails.name,
-                required: totalRequired,
-                have: have,
-                queued: queued,
-                available: available,
-                missing: missingAmount,
-                isTradeable: itemDetails.isTradable === true, // British spelling
+            const line = buildMaterialLine(input.itemHrid, totalRequired, {
+                inventory,
+                queuedMaterialsMap,
+                ownerId,
                 isUpgradeItem: false,
-                ...reservationFields(missingAmount, input.itemHrid, totalRequired, have, queued, reserved, ownerId),
+                claimedByItem,
             });
+            if (line) materials.push(line);
         }
     }
 
-    // Process upgrade item at the end (if exists)
+    // Process upgrade item at the end (if exists). Upgrade items always need
+    // exactly 1 per action, no artisan reduction. When it is also one of the
+    // inputs above, claimedByItem already carries that line's requirement, so
+    // this one is checked against only what is left.
     if (actionDetails.upgradeItemHrid) {
-        // Upgrade items always need exactly 1 per action, no artisan reduction
-        const totalRequired = numActions;
-
-        const have =
-            unclaimedBoughtCount(actionDetails.upgradeItemHrid) + heldInBag(inventory, actionDetails.upgradeItemHrid);
-
-        // Calculate queued and available amounts
-        const queued = queuedMaterialsMap.get(actionDetails.upgradeItemHrid) || 0;
-        const reserved = ownerId ? reservedElsewhere(actionDetails.upgradeItemHrid, 0, { excludeOwner: ownerId }) : 0;
-        const available = Math.max(0, have - queued - reserved);
-        const missingAmount = Math.max(0, totalRequired - available);
-
-        const itemDetails = gameData.itemDetailMap[actionDetails.upgradeItemHrid];
-        if (itemDetails) {
-            materials.push({
-                itemHrid: actionDetails.upgradeItemHrid,
-                itemName: itemDetails.name,
-                required: totalRequired,
-                have: have,
-                queued: queued,
-                available: available,
-                missing: missingAmount,
-                isTradeable: itemDetails.isTradable === true, // British spelling
-                isUpgradeItem: true, // Flag to identify upgrade items
-                ...reservationFields(
-                    missingAmount,
-                    actionDetails.upgradeItemHrid,
-                    totalRequired,
-                    have,
-                    queued,
-                    reserved,
-                    ownerId
-                ),
-            });
-        }
+        const line = buildMaterialLine(actionDetails.upgradeItemHrid, numActions, {
+            inventory,
+            queuedMaterialsMap,
+            ownerId,
+            isUpgradeItem: true,
+            claimedByItem,
+        });
+        if (line) materials.push(line);
     }
 
     return materials;
