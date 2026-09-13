@@ -1635,7 +1635,10 @@ export function lastTrialPlayerRows(snapshot) {
     if (!players.length) return [];
 
     const total = players.reduce((sum, player) => sum + (Number(player.damage) || 0), 0);
-    const seconds = Number(snapshot.seconds);
+    // A snapshot patched with the game's whole-trial totals has no matching
+    // clock: its `seconds` are the watched stretch only, and dividing a
+    // whole-trial total by them overstates every rate. Totals are shown instead.
+    const seconds = snapshot.basis === 'game' ? 0 : Number(snapshot.seconds);
     const rows = [
         `<div style="margin-top:4px; color:${ACCENT}; font-weight:600;" title="The recorded session’s final ` +
             `per-player split — the last snapshot the trial recorder kept before the fight was torn down. ` +
@@ -2463,6 +2466,7 @@ class GuildTrials {
         this.guildName = this._resolveGuildName();
         guildTrialRecorder.setGuildName(this.guildName);
         guildTrialAbilities.setGuildName?.(this.guildName);
+        guildTrialDamage.setGuildName?.(this.guildName, this.characterId);
         // Three independent storage reads, awaited together rather than one
         // after another: serially they were three IndexedDB round trips before
         // the first panel could carry stored samples, which is a visible slice
@@ -2615,6 +2619,8 @@ class GuildTrials {
             // The gate's "this week's combat trials" is the old guild's answer
             guildTrialDamage.setTrialNames?.([]);
             guildTrialDamage.reset?.();
+            // …and the week's measured-vs-reported blob, which `reset` keeps
+            guildTrialDamage.setGuildName?.(null, newId);
             guildTrialAbilities.setGuildName?.(null);
             guildLoadoutCapture.setGuildName?.(null)?.catch?.(() => {});
             guildTrialAlerts.reset?.();
@@ -2731,6 +2737,7 @@ class GuildTrials {
         // a name has arrived that belongs to *this* character.
         guildTrialRecorder.setGuildName(null);
         guildTrialAbilities.setGuildName?.(null);
+        guildTrialDamage.setGuildName?.(null, characterId);
         const stored = await loadTrialRecord(null, Date.now(), characterId, { guildId: this._guildId() });
 
         // Another switch may have happened while the read was in flight
@@ -2916,6 +2923,7 @@ class GuildTrials {
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
             guildTrialAbilities.setGuildName?.(name);
+            guildTrialDamage.setGuildName?.(name, characterId);
             guildMemberSkills.setGuildName(name).catch(() => {});
             guildLoadoutCapture.setGuildName?.(name)?.catch?.(() => {});
             await this._persistRecord();

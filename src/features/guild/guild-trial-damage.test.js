@@ -28,6 +28,8 @@ const game = vi.hoisted(() => ({
     readOwnId: null,
     storedRoster: null,
     storedStats: null,
+    loadStats: null,
+    statsSaves: [],
     casts: [],
     // characterId → name, as `guildXPTracker.memberMeta` would answer it —
     // the whole-guild roster (and its trial sign-ups), kept regardless of
@@ -50,9 +52,13 @@ vi.mock('./guild-trials-store.js', () => ({
         game.storedRoster = entry;
         return true;
     },
-    loadTrialStats: async () => game.storedStats || { weekStart: 0, trials: {} },
-    saveTrialStats: async (blob) => {
+    // `loadStats`, when a test sets it, answers per scope (and may hold the read
+    // open); every save records the scope it was filed under
+    loadTrialStats: async (_now, scope) =>
+        game.loadStats ? game.loadStats(scope) : game.storedStats || { weekStart: 0, trials: {} },
+    saveTrialStats: async (blob, scope) => {
         game.storedStats = blob;
+        game.statsSaves.push({ blob, scope });
         return true;
     },
 }));
@@ -1917,6 +1923,40 @@ describe('the tier-opening message', () => {
         expect(guildTrialDamage.breakdown().names['19'].source).toBe('placeholder');
     });
 
+    test('a stored roster another character or another guild wrote lends no names', async () => {
+        // Same battle id and tier — every capture reads battleId 1 — but not this watcher's
+        const stored = (extra) => ({
+            battleId: GUILD_BATTLE_TICKS[2].battleId,
+            tier: GUILD_BATTLE_TICKS[2].tier,
+            roster: { 19: { name: 'SomebodyElse', characterId: 1 } },
+            slotIds: {},
+            at: Date.now(),
+            ...extra,
+        });
+        const refresh = async () => {
+            guildTrialDamage.cleanup();
+            guildTrialDamage.storedRoster = null;
+            guildTrialDamage.initialize();
+            await vi.advanceTimersByTimeAsync(0);
+            game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
+            return guildTrialDamage.breakdown().names['19'];
+        };
+
+        game.ownId = 888;
+        game.storedRoster = stored({ ownerId: 777 });
+        expect((await refresh()).source).toBe('placeholder');
+
+        game.storedRoster = stored({ ownerId: 888, guildName: 'Milky Way' });
+        guildTrialDamage.setGuildName('Andromeda', 888);
+        expect((await refresh()).source).toBe('placeholder');
+
+        // The same character in the same guild still gets its names back
+        game.storedRoster = stored({ ownerId: 888, guildName: 'Andromeda' });
+        expect((await refresh()).name).toBe('SomebodyElse');
+        guildTrialDamage.setGuildName(null, null);
+        game.ownId = null;
+    });
+
     test('a stored duplicate of the watcher’s name heals on the next tick', () => {
         // The user's own export, verbatim: names held {0: MillenniumTest
         // (portrait), 2: MillenniumTest (vitals)} with countedSlots ['2'] —
@@ -2138,6 +2178,7 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
     test('reported totals are named through the roster and exposed for comparison', () => {
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         guildTrialDamage.encounter = 'badger';
+        game.wsHandlers.end_guild_battle(END_GUILD_BATTLE);
         game.wsHandlers.guild_trial_stats_updated({
             guildTrialStatList: [
                 {
@@ -2224,6 +2265,7 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         game.guildMembers = { 910011: 'Tank', 910012: 'Cleric' };
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         guildTrialDamage.encounter = 'hedgehog';
+        game.wsHandlers.end_guild_battle({ ...END_GUILD_BATTLE, trialHrid: '/guild_combat/hedgehog' });
         game.wsHandlers.guild_trial_stats_updated({
             guildTrialStatList: [
                 {
@@ -2390,10 +2432,61 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(game.storedStats.trials.badger.measured).toEqual(storedMeasured);
     });
 
+    const badgerStats = {
+        guildTrialStatList: [
+            {
+                characterId: 910011,
+                trialHrid: '/guild_combat/badger',
+                damageDealt: 750_000,
+                healingDone: 0,
+                premitigatedDamageTaken: 2_000,
+            },
+        ],
+    };
+
+    test('a stats message arriving mid-fight is filed as a roster, never paired with the live tally', () => {
+        // The game re-sends the message whenever its own Stats panel is opened;
+        // one landing while the next fight is being watched describes an earlier trial
+        game.guildMembers = { 910011: 'Tank' };
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[0]);
+        game.wsHandlers.guild_trial_stats_updated(badgerStats);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported).toBe(null);
+        expect(report.storedStats.badger.reported.Tank.damage).toBe(750_000);
+        expect(report.storedStats.badger.measured).toBe(null);
+    });
+
+    test('a stats message long after the end is filed as a roster too', () => {
+        game.guildMembers = { 910011: 'Tank' };
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[0]);
+        game.wsHandlers.end_guild_battle(END_GUILD_BATTLE);
+
+        vi.setSystemTime(at + 5 * 60_000);
+        game.wsHandlers.guild_trial_stats_updated(badgerStats);
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
+        expect(guildTrialDamage.breakdown().storedStats.badger.measured).toBe(null);
+    });
+
+    test('the reconciliation still lands for an end the client missed, once the stream has gone quiet', () => {
+        // The trace's own timing: the totals came 27.9 s after the end
+        game.guildMembers = { 910011: 'Tank' };
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[0]);
+
+        vi.setSystemTime(at + 28_000);
+        game.wsHandlers.guild_trial_stats_updated(badgerStats);
+        expect(guildTrialDamage.breakdown().reported).not.toBe(null);
+        expect(guildTrialDamage.breakdown().storedStats.badger.measured).not.toBe(null);
+    });
+
     test('a new trial does not inherit the previous one’s reported totals or boss sheets', () => {
         // First trial: Badger, tiers 1 and 2, plus its game-reported totals
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         guildTrialDamage.encounter = 'badger';
+        game.wsHandlers.end_guild_battle(END_GUILD_BATTLE);
         game.wsHandlers.guild_trial_stats_updated({
             guildTrialStatList: [
                 {
@@ -2440,6 +2533,88 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(rows[0].taken.deltaPct).toBe(0);
         // Player02 was never measured — 0 vs 500 reads as −100%.
         expect(rows[1].damage.deltaPct).toBeCloseTo(-100);
+    });
+});
+
+describe('the week’s stats belong to one guild and character', () => {
+    const at = new Date('2026-08-14T18:00:00Z').getTime();
+    const tankStats = {
+        guildTrialStatList: [
+            {
+                characterId: 910011,
+                trialHrid: '/guild_combat/badger',
+                damageDealt: 750_000,
+                healingDone: 0,
+                premitigatedDamageTaken: 2_000,
+            },
+        ],
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.storedStats = null;
+        game.loadStats = null;
+        game.statsSaves = [];
+        game.guildMembers = { 910011: 'Tank' };
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+    });
+
+    afterEach(() => {
+        guildTrialDamage.setGuildName(null, null);
+        guildTrialDamage.cleanup();
+        game.loadStats = null;
+        vi.useRealTimers();
+    });
+
+    test('a character switch empties the comparisons at once and reads the arriving scope back', async () => {
+        const held = { badger: { reported: { Tank: { damage: 1, healing: 0, taken: 0 } }, measured: null, at } };
+        game.loadStats = async (scope) => ({ weekStart: 0, trials: scope?.guildName === 'Milky Way' ? held : {} });
+
+        guildTrialDamage.setGuildName('Milky Way', 111);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(guildTrialDamage.breakdown().storedStats)).toEqual(['badger']);
+
+        guildTrialDamage.setGuildName(null, 222);
+        expect(guildTrialDamage.breakdown().storedStats).toEqual({});
+        await vi.advanceTimersByTimeAsync(0);
+        expect(guildTrialDamage.breakdown().storedStats).toEqual({});
+    });
+
+    test('a save whose read straddles a switch files under the scope it arrived in and leaves memory alone', async () => {
+        game.loadStats = async () => ({ weekStart: 0, trials: {} });
+        guildTrialDamage.setGuildName('Milky Way', 111);
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Every read from here on is held open until released
+        const pending = [];
+        game.loadStats = () => new Promise((resolve) => pending.push(() => resolve({ weekStart: 0, trials: {} })));
+        game.wsHandlers.guild_trial_stats_updated(tankStats);
+        expect(Object.keys(guildTrialDamage.storedStats)).toEqual(['badger']);
+
+        // The switch lands while the save's read is still out
+        guildTrialDamage.setGuildName('Andromeda', 111);
+        for (const release of pending) release();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(game.statsSaves).toHaveLength(1);
+        expect(game.statsSaves[0].scope).toEqual({ guildName: 'Milky Way', characterId: 111 });
+        expect(guildTrialDamage.breakdown().storedStats).toEqual({});
+    });
+
+    test('comparisons filed before the guild was known move onto the guild’s key', async () => {
+        game.loadStats = async () => ({ weekStart: 0, trials: {} });
+        guildTrialDamage.setGuildName(null, 111);
+        await vi.advanceTimersByTimeAsync(0);
+        game.wsHandlers.guild_trial_stats_updated(tankStats);
+        await vi.advanceTimersByTimeAsync(0);
+
+        guildTrialDamage.setGuildName('Milky Way', 111);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(game.statsSaves.at(-1).scope).toEqual({ guildName: 'Milky Way', characterId: 111 });
+        expect(Object.keys(game.statsSaves.at(-1).blob.trials)).toEqual(['badger']);
+        expect(Object.keys(guildTrialDamage.breakdown().storedStats)).toEqual(['badger']);
     });
 });
 
@@ -2647,6 +2822,93 @@ describe('per-name history is immutable across wave boundaries', () => {
     });
 
     /**
+     * A roster whose character ids follow the names rather than the slots, so a
+     * restatement that moves a name moves an id with it.
+     */
+    const IDS = { Rick: 100, NPD: 101, Zeta: 102 };
+    const dealt = (tier, names, extra = {}) => ({
+        battleId: 9,
+        tier,
+        players: names.map((name) => ({ character: { id: IDS[name], name } })),
+        monsters: [{ hrid: '/monsters/trial_chameleon', name: 'Trial Chameleon', combatDetails: {} }],
+        ...extra,
+    });
+
+    test('a same-tier restatement that re-deals the slots banks the wave under the names that earned it', () => {
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD']));
+        tick(3, { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, 650_000, 0, 0);
+        tick(3, { 1: { atkCounter: 2 } }, 500_000, 1, 250); // NPD 150K
+
+        // Same battle, same tier, the slots dealt the other way round
+        game.wsHandlers.new_guild_battle(dealt(3, ['NPD', 'Rick']));
+        expect(totals()).toEqual({ NPD: 150_000 });
+
+        // The new occupants' counters are a fresh baseline, not a swing
+        tick(3, { 0: { atkCounter: 9 }, 1: { atkCounter: 9 } }, 500_000, 1, 500);
+        tick(3, { 1: { atkCounter: 10 } }, 450_000, 2, 750); // Rick, slot 1 now, 50K
+        expect(totals()).toEqual({ NPD: 150_000, Rick: 50_000 });
+    });
+
+    test('an identical restatement is not a boundary, and a new wave number is', () => {
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD'], { wave: 1 }));
+        const fights = guildTrialDamage.breakdown().fights;
+
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD'], { wave: 1 }));
+        expect(guildTrialDamage.breakdown().fights).toBe(fights);
+
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD'], { wave: 2 }));
+        expect(guildTrialDamage.breakdown().fights).toBe(fights + 1);
+    });
+
+    test('every tier of one trial keeps its damage though battle id stays put and each tier restamps its start', () => {
+        // The 2026-09-07 trace: battleId 1 on all sixteen tiers, combatStartTime new on each
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD'], { combatStartTime: '2026-08-03T16:00:00.1Z' }));
+        tick(3, { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, 650_000, 0, 0);
+        tick(3, { 1: { atkCounter: 2 } }, 500_000, 1, 250); // NPD 150K
+
+        game.wsHandlers.new_guild_battle(dealt(4, ['NPD', 'Rick'], { combatStartTime: '2026-08-03T16:54:00.1Z' }));
+        expect(totals()).toEqual({ NPD: 150_000 });
+    });
+
+    test('a second trial behind the same battle id and tier starts afresh', () => {
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD'], { combatStartTime: '2026-08-03T16:00:00.1Z' }));
+        tick(3, { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, 650_000, 0, 0);
+        tick(3, { 1: { atkCounter: 2 } }, 500_000, 1, 250);
+        expect(guildTrialDamage.breakdown().seconds).toBeGreaterThan(0);
+
+        // Three hours on, the next cycle: nothing on the wire but the start time differs
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD'], { combatStartTime: '2026-08-03T19:00:00.1Z' }));
+        expect(totals()).toEqual({});
+        expect(guildTrialDamage.breakdown().seconds).toBe(0);
+    });
+
+    test('a different encounter behind the same battle id and tier is another trial', () => {
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD']));
+        tick(3, { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, 650_000, 0, 0);
+        tick(3, { 1: { atkCounter: 2 } }, 500_000, 1, 250);
+
+        game.wsHandlers.new_guild_battle({
+            ...dealt(3, ['Zeta']),
+            monsters: [{ hrid: '/monsters/trial_hedgehog', name: 'Trial Hedgehog', combatDetails: {} }],
+        });
+        const report = guildTrialDamage.breakdown();
+        expect(totals()).toEqual({});
+        expect(report.encounter).toBe('hedgehog');
+    });
+
+    test('a lower tier after the game’s end is the next trial, not more of this one', () => {
+        game.wsHandlers.new_guild_battle(dealt(3, ['Rick', 'NPD']));
+        tick(3, { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } }, 650_000, 0, 0);
+        tick(3, { 1: { atkCounter: 2 } }, 500_000, 1, 250);
+        game.wsHandlers.end_guild_battle({ battleId: 9, trialHrid: '/guild_combat/chameleon' });
+
+        vi.setSystemTime(at + 60 * 60_000);
+        tick(1, { 0: { atkCounter: 1 } }, 650_000, 0, 60 * 60_000);
+        expect(totals()).toEqual({});
+        expect(guildTrialDamage.breakdown().active).toBe(true);
+    });
+
+    /**
      * The elapsed denominator is the other half of the same carryover. It is
      * accumulated from the gaps between ticks across every tier of a trial (a
      * tier boundary is not a new fight, which is why it has to survive one),
@@ -2730,14 +2992,126 @@ describe('the trial ends and its figures stop moving', () => {
         expect(later.partyDps).toBe(ended.partyDps);
     });
 
-    test('a tick trailing in after the end does not extend it', () => {
+    test('a tick trailing in after the end does not extend it, re-arm it, or add to it', () => {
         game.wsHandlers.new_guild_battle(opening());
         for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
         endTrial(11_000);
-        const frozenAt = guildTrialDamage.breakdown().seconds;
+        const ended = guildTrialDamage.breakdown();
+        expect(ended.active).toBe(false);
+        expect(ended.endedByGame).toBe(true);
+        expect(ended.endedBy).toBe('end_guild_battle');
 
+        // Same battle, same tier, the boss down another 10,000
         tick(11_200, 240_000, 41);
-        expect(guildTrialDamage.breakdown().seconds).toBe(frozenAt);
+        const after = guildTrialDamage.breakdown();
+        expect(after.seconds).toBe(ended.seconds);
+        // Re-arming here is what restarted the recorder on a finished trial
+        expect(after.active).toBe(false);
+        expect(after.endedAt).toBe(ended.endedAt);
+        expect(after.endedByGame).toBe(true);
+        expect(after.totalDamage).toBe(ended.totalDamage);
+        expect(after.spectator.trailingTicks).toBe(1);
+    });
+
+    test('a new wave after the game’s end re-arms the measurement', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+        endTrial(11_000);
+
+        vi.setSystemTime(at + 12_000);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 11,
+            tier: 3,
+            pMap: { 0: { cHP: 2000, mHP: 2000, cMP: 500, mMP: 500, atkCounter: 50 } },
+            mMap: { 0: { cHP: 700_000, mHP: 700_000, dmgCounter: 0, critCounter: 0 } },
+        });
+        const report = guildTrialDamage.breakdown();
+        expect(report.active).toBe(true);
+        expect(report.endedAt).toBeNull();
+        expect(report.endedByGame).toBe(false);
+        expect(report.frozen).toBe(false);
+    });
+
+    test('a quiet stream that ticks again in the same tier resumes, without the silence counted', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+
+        vi.setSystemTime(at + 10_000 + 3.5 * 60_000);
+        const stale = guildTrialDamage.breakdown();
+        expect(stale.staleStream).toBe(true);
+        expect(stale.endedBy).toBe('stale');
+        expect(stale.endedByGame).toBe(false);
+
+        // The fight view is reopened during the same tier
+        tick(10_000 + 4 * 60_000, 200_000, 41);
+        const resumed = guildTrialDamage.breakdown();
+        expect(resumed.active).toBe(true);
+        expect(resumed.frozen).toBe(false);
+        expect(resumed.staleStream).toBe(false);
+        expect(resumed.endedAt).toBeNull();
+        expect(resumed.endedBy).toBeNull();
+        // Four unwatched minutes are not four minutes of fighting
+        expect(resumed.seconds).toBe(stale.seconds);
+
+        tick(10_000 + 4 * 60_000 + 250, 190_000, 42);
+        const later = guildTrialDamage.breakdown();
+        expect(later.seconds).toBeCloseTo(stale.seconds + 0.25);
+        expect(later.totalDamage).toBeGreaterThan(stale.totalDamage);
+    });
+
+    test('the guild’s own trial status ends it too, but only once seen in progress', () => {
+        const status = (combat) => ({ guild: { currentTrialsData: JSON.stringify({ combat }) } });
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+
+        // Never seen in progress since the reset: a finished record says nothing about this fight
+        game.wsHandlers.guild_updated(status({ status: 'completed', parties: { a: { done: true } } }));
+        expect(guildTrialDamage.breakdown().endedAt).toBeNull();
+
+        game.wsHandlers.guild_updated(status({ status: 'in_progress', parties: { a: { done: false } } }));
+        expect(guildTrialDamage.breakdown().active).toBe(true);
+
+        vi.setSystemTime(at + 12_000);
+        game.wsHandlers.guild_updated(status({ status: 'in_progress', parties: { a: { done: true } } }));
+        const ended = guildTrialDamage.breakdown();
+        expect(ended.active).toBe(false);
+        expect(ended.frozen).toBe(true);
+        expect(ended.endedAt).toBe(at + 12_000);
+        expect(ended.endedByGame).toBe(true);
+        expect(ended.endedBy).toBe('guild_updated');
+
+        tick(12_200, 240_000, 41);
+        expect(guildTrialDamage.breakdown().active).toBe(false);
+    });
+
+    test('an end message naming another battle is not this one’s', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        tick(250, 640_000, 1);
+        game.wsHandlers.end_guild_battle({ battleId: 99, trialHrid: '/guild_combat/chameleon' });
+        expect(guildTrialDamage.breakdown().endedAt).toBeNull();
+        expect(guildTrialDamage.breakdown().active).toBe(true);
+    });
+
+    test('an opening message landing after the tier’s first ticks does not refill the pool', () => {
+        const sheet = (hp) => [
+            { hrid: '/monsters/trial_chameleon', name: 'Trial Chameleon', currentHitpoints: hp, maxHitpoints: 650_000 },
+        ];
+        game.wsHandlers.new_guild_battle({ ...opening(), monsters: sheet(650_000) });
+        tick(250, 600_000, 1);
+
+        // Tier 3's first tick beats its opening message
+        vi.setSystemTime(at + 1_000);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 11,
+            tier: 3,
+            pMap: {},
+            mMap: { 0: { cHP: 500_000, mHP: 650_000, dmgCounter: 0, critCounter: 0 } },
+        });
+        game.wsHandlers.new_guild_battle({ ...opening(), tier: 3, monsters: sheet(650_000) });
+        vi.setSystemTime(at + 1_250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({ battleId: 11, tier: 3, pMap: {}, mMap: {} });
+
+        expect(guildTrialDamage.breakdown().pool.current).toBe(500_000);
     });
 
     test('a new trial stream starts the clock again', () => {

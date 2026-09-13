@@ -1102,24 +1102,46 @@ export async function saveTrialRoster(entry) {
 // ─── Measured-vs-reported trial stats ───────────────────────────────────────
 
 /**
- * Where the week's measured-vs-game-reported comparison is kept.
+ * Base of the key the week's measured-vs-game-reported comparison is kept under.
  *
  * Under the `guildTrials` prefix, so {@link clearTrialStorage} takes it too, and
  * week-guarded on the way in exactly as {@link loadTrialRecord} is: a blob from a
  * previous week is last week's trial, and the comparison resets with the ladder.
+ * The unscoped key this base once was is no longer read.
  */
 const STATS_KEY = `${KEY_PREFIX}Stats`;
 
 /**
+ * Storage key for a guild's measured-vs-reported trial stats.
+ *
+ * Scoped exactly as {@link guildTrialsStorageKey} is, and for the same reason:
+ * the blob names members and feeds the attendance ledger and the accuracy card,
+ * so one guild's trial must never be read back by an alt in another guild.
+ *
+ * @param {string|null} guildName - Guild name, or null before it is known
+ * @param {string|number|null} [characterId] - The viewing character, for the fallback key
+ * @returns {string} Storage key
+ */
+export function trialStatsStorageKey(guildName, characterId = null) {
+    if (guildName) return `${STATS_KEY}_${guildName}`;
+    return characterId === null || characterId === undefined
+        ? `${STATS_KEY}_default`
+        : `${STATS_KEY}_char_${characterId}`;
+}
+
+/**
  * Read the week's saved measured-vs-reported trial stats.
  * @param {number} [now=Date.now()] - Clock, in ms
+ * @param {Object} [scope] - Whose stats
+ * @param {string|null} [scope.guildName] - Guild name, or null before it is known
+ * @param {string|number|null} [scope.characterId] - The viewing character, for the fallback key
  * @returns {Promise<{weekStart: number, trials: Object}>} The blob, or a fresh one
  */
-export async function loadTrialStats(now = Date.now()) {
+export async function loadTrialStats(now = Date.now(), { guildName = null, characterId = null } = {}) {
     const weekStart = trialWeekStart(now);
     const fresh = { weekStart, trials: {} };
     try {
-        const held = await storage.get(STATS_KEY, STORE_NAME, null);
+        const held = await storage.get(trialStatsStorageKey(guildName, characterId), STORE_NAME, null);
         if (!held || typeof held !== 'object' || held.weekStart !== weekStart) return fresh;
         return { weekStart, trials: held.trials && typeof held.trials === 'object' ? held.trials : {} };
     } catch (error) {
@@ -1131,16 +1153,19 @@ export async function loadTrialStats(now = Date.now()) {
 /**
  * Write the week's measured-vs-reported trial stats.
  * @param {{weekStart: number, trials: Object}} blob - The comparison, keyed by encounter
+ * @param {Object} [scope] - Whose stats; see {@link trialStatsStorageKey}
+ * @param {string|null} [scope.guildName] - Guild name, or null before it is known
+ * @param {string|number|null} [scope.characterId] - The viewing character, for the fallback key
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveTrialStats(blob) {
+export async function saveTrialStats(blob, { guildName = null, characterId = null } = {}) {
     // Same week: the encounters are unioned, this copy's winning; another
     // week's stored blob is last week's trial and the new one replaces it
     const fold = (stored, memory) =>
         stored?.weekStart === memory?.weekStart
             ? { ...stored, ...memory, trials: { ...(stored.trials || {}), ...(memory.trials || {}) } }
             : memory;
-    return probeMergeWrite(STATS_KEY, blob, fold);
+    return probeMergeWrite(trialStatsStorageKey(guildName, characterId), blob, fold);
 }
 
 // ─── Building bonuses ───────────────────────────────────────────────────────

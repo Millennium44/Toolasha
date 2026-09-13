@@ -96,6 +96,7 @@ const {
     saveTrialRoster,
     loadTrialStats,
     saveTrialStats,
+    trialStatsStorageKey,
     tileKey,
 } = await import('./guild-trials-store.js');
 
@@ -1225,17 +1226,31 @@ describe('the record cannot be wiped by a failed read or a stale copy', () => {
         expect(merged.guildName).toBe('Milky Way');
     });
 
+    test('the week’s stats are kept per guild, and per character before the guild is known', async () => {
+        expect(trialStatsStorageKey('Milky Way', 111)).toBe(trialStatsStorageKey('Milky Way', 222));
+        expect(trialStatsStorageKey(null, 111)).not.toBe(trialStatsStorageKey(null, 222));
+        expect(trialStatsStorageKey('Milky Way', 111)).not.toBe(trialStatsStorageKey('Andromeda', 111));
+        // Still under the prefix the escape hatch clears
+        expect(trialStatsStorageKey(null, null).startsWith('guildTrials')).toBe(true);
+
+        await saveTrialStats({ weekStart: thisWeek, trials: { badger: { reported: 1 } } }, { guildName: 'Milky Way' });
+        expect((await loadTrialStats(now, { guildName: 'Andromeda' })).trials).toEqual({});
+        expect((await loadTrialStats(now, { characterId: 111 })).trials).toEqual({});
+        expect((await loadTrialStats(now, { guildName: 'Milky Way' })).trials).toEqual({ badger: { reported: 1 } });
+    });
+
     test('the learned work bases, the roster and the stats merge the same way and refuse a blind write', async () => {
         game.store.guildTrialsWorkBases = { crafting: { baseWork: 40_000 } };
         await saveWorkBases({ milking: { baseWork: 30_000 } });
         expect(await loadWorkBases()).toEqual({ crafting: { baseWork: 40_000 }, milking: { baseWork: 30_000 } });
 
-        game.store.guildTrialsStats = { weekStart: thisWeek, trials: { a: { reported: 1 } } };
-        await saveTrialStats({ weekStart: thisWeek, trials: { b: { reported: 2 } } });
-        expect((await loadTrialStats(now)).trials).toEqual({ a: { reported: 1 }, b: { reported: 2 } });
+        const scope = { guildName: 'Milky Way', characterId: 111 };
+        game.store['guildTrialsStats_Milky Way'] = { weekStart: thisWeek, trials: { a: { reported: 1 } } };
+        await saveTrialStats({ weekStart: thisWeek, trials: { b: { reported: 2 } } }, scope);
+        expect((await loadTrialStats(now, scope)).trials).toEqual({ a: { reported: 1 }, b: { reported: 2 } });
         // Last week's comparison is not folded into this week's
-        await saveTrialStats({ weekStart: thisWeek + 7 * 24 * 3600_000, trials: { c: { reported: 3 } } });
-        expect(game.store.guildTrialsStats.trials).toEqual({ c: { reported: 3 } });
+        await saveTrialStats({ weekStart: thisWeek + 7 * 24 * 3600_000, trials: { c: { reported: 3 } } }, scope);
+        expect(game.store['guildTrialsStats_Milky Way'].trials).toEqual({ c: { reported: 3 } });
 
         game.store.guildTrialsRoster = { battleId: 1, roster: { 0: 'Ada' }, at: 1 };
         await saveTrialRoster({ battleId: 2, roster: { 0: 'Bea' }, at: 2 });

@@ -122,7 +122,13 @@ import {
     rosterFromBattle,
 } from './guild-trial-units.js';
 import { compactAccuracySummary, joinTrialStats } from './guild-trial-accuracy.js';
-import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel, trialFromHrid } from './guild-trials-math.js';
+import {
+    COMBAT_ENCOUNTERS,
+    parseCurrentTrialsData,
+    TRIAL_ACTIVE_MS,
+    tierFromLevel,
+    trialFromHrid,
+} from './guild-trials-math.js';
 import { loadTrialRoster, loadTrialStats, saveTrialRoster, saveTrialStats } from './guild-trials-store.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
@@ -162,7 +168,8 @@ export const END_GUILD_BATTLE_MESSAGE = 'end_guild_battle';
  * `guildTrialStatList: [{ characterId, trialHrid, damageDealt, healingDone,
  * premitigatedDamageTaken }]`. This is the authoritative figure the plugin's
  * live measurement is estimating — captured so the two can be compared. Arrives
- * a few seconds after {@link END_GUILD_BATTLE_MESSAGE}.
+ * after {@link END_GUILD_BATTLE_MESSAGE} (27.9 s after it in the 2026-09-07
+ * trace), and again whenever the game's own Stats panel is opened.
  */
 export const GUILD_TRIAL_STATS_MESSAGE = 'guild_trial_stats_updated';
 
@@ -229,15 +236,50 @@ const ENCOUNTER_PROBE_MS = 1000;
  * How long after `end_guild_battle` the game's own per-member totals are still
  * expected.
  *
- * They arrive about eight seconds later ({@link GUILD_TRIAL_STATS_MESSAGE}),
- * and a member who goes back to farming the moment the trial ends starts a
- * personal fight inside that window. Nothing of this trial may be reset or
- * re-decided until the reconciliation has landed, or the comparison the panel
- * exists to show is thrown away seconds before its other half arrives. A minute
- * is many times the observed delay and still far short of anything that could
- * swallow a real second trial.
+ * They were once seen about eight seconds later, and 27.9 s later in the
+ * 2026-09-07 trace ({@link GUILD_TRIAL_STATS_MESSAGE}); a member who goes back
+ * to farming the moment the trial ends starts a personal fight inside that
+ * window. Nothing of this trial may be reset or re-decided until the
+ * reconciliation has landed, or the comparison the panel exists to show is
+ * thrown away seconds before its other half arrives. Two minutes is four times
+ * the slowest delay observed and still far short of anything that could swallow
+ * a real second trial. It also bounds when that message may be paired with the
+ * live tally at all — see {@link GuildTrialDamage#_reconcilable}.
  */
-const RECONCILE_WINDOW_MS = 60_000;
+const RECONCILE_WINDOW_MS = 120_000;
+
+/**
+ * The widest two tier openings of one trial can lie apart.
+ *
+ * `battleId` is not a fight identity: the 2026-09-07 trace kept `battleId: 1`
+ * for all sixteen tiers, and two other captures of different trials also read
+ * 1. `combatStartTime` is not one either — it is stamped per tier. What does
+ * hold is that every tier of a trial opens inside the trial's hour, so a
+ * `new_guild_battle` whose start lies further than this from the fight's first
+ * is another trial. The quarter hour over the budget covers transitions the
+ * budget may not charge (that trace ended 60m24s after tier 1 opened).
+ */
+const FIGHT_SPAN_MS = TRIAL_ACTIVE_MS + 15 * 60_000;
+
+/**
+ * A `combatStartTime` as epoch milliseconds.
+ * @param {*} value - The wire's ISO string, nanosecond fraction and all
+ * @returns {number|null} Milliseconds, or null when it does not parse
+ */
+function combatStartMs(value) {
+    if (typeof value !== 'string' || !value) return null;
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * A stats scope as one comparable string.
+ * @param {{guildName: string|null, characterId: string|number|null}} scope - Whose stats
+ * @returns {string} The key
+ */
+function statsScopeKey(scope) {
+    return `${scope?.guildName ?? ''}|${scope?.characterId ?? ''}`;
+}
 
 /**
  * Which of the five encounters a name is, if any.
@@ -742,8 +784,14 @@ class GuildTrialDamage {
          * The week's measured-vs-reported comparisons, `{[encounter]: {reported,
          * measured, at}}`. Survives {@link reset} like the roster does: it spans
          * every trial of the week, and the store clears it when the week rolls.
+         * Held for {@link statsScope} only, and replaced when that changes.
          */
         this.storedStats = {};
+        /**
+         * Whose week `storedStats` is: the guild, and the character for the
+         * fallback key before the guild is known. Set by {@link setGuildName}.
+         */
+        this.statsScope = { guildName: null, characterId: null };
         this.reset();
     }
 
@@ -771,6 +819,24 @@ class GuildTrialDamage {
         this.frozenSeconds = null;
         /** True once the stream went quiet long enough to be called ended */
         this.staleStream = false;
+        /**
+         * True once the game itself said this trial is over — `end_guild_battle`,
+         * or `guild_updated.currentTrialsData` leaving `in_progress`. Kept apart
+         * from {@link staleStream} because the two recover differently: a quiet
+         * stream that ticks again was merely unwatched and resumes, while a tick
+         * of the same battle and tier after the game's end is the fight being
+         * drawn out and re-arms nothing. Only a new wave or `new_guild_battle`
+         * clears it.
+         */
+        this.endedByGame = false;
+        /** `'end_guild_battle'`, `'guild_updated'`, `'stale'`, or null while running */
+        this.endedBy = null;
+        /** `currentTrialsData` has shown the combat trial in progress since the last reset */
+        this.combatInProgressSeen = false;
+        /** `new_guild_battle.wave` for the wave in progress, when it stated one */
+        this.wave = null;
+        /** The earliest `combatStartTime` of this fight, in ms — see {@link FIGHT_SPAN_MS} */
+        this.fightStartMs = null;
         this.lastTickAt = 0;
         this.battleId = null;
         this.active = false;
@@ -814,7 +880,7 @@ class GuildTrialDamage {
          * which is all `splitFromCounters` asks of it — but it is no longer a
          * statement about the viewer, and nothing may read it as one.
          */
-        this.spectator = { ticks: 0, playerActionTicks: 0, bossTicks: 0, lastAt: 0, firstAt: 0 };
+        this.spectator = { ticks: 0, playerActionTicks: 0, bossTicks: 0, lastAt: 0, firstAt: 0, trailingTicks: 0 };
         /** The boss's own stat sheet, per tier, from clicking it in the fight view */
         this.bossSheets = {};
         /** What the fight view says is being watched, exactly as it wrote it */
@@ -915,7 +981,13 @@ class GuildTrialDamage {
         // mid-tier does not lose every name until the next tier restates them
         this._restoreStoredRoster();
         // …and the week's measured-vs-reported comparisons, so a refresh after a
-        // trial ended still has last fight's figures to show against the game's
+        // trial ended still has last fight's figures to show against the game's.
+        // The character is known from login; the guild arrives by `setGuildName`
+        this.statsScope = {
+            guildName: this.statsScope.guildName,
+            characterId: dataManager.getCurrentCharacterId?.() ?? null,
+        };
+        this.storedStats = {};
         this._restoreStats();
 
         this.onNewBattle = (data) => this._onNewBattle(data);
@@ -925,6 +997,7 @@ class GuildTrialDamage {
         this.onNewGuildBattle = (data) => this._onNewGuildBattle(data);
         this.onEndGuildBattle = (data) => this._onEndGuildBattle(data);
         this.onTrialStats = (data) => this._onTrialStats(data);
+        this.onGuildUpdated = (data) => this._onGuildUpdated(data);
         webSocketHook.on('new_battle', this.onNewBattle);
         webSocketHook.on('battle_updated', this.onBattleUpdated);
         webSocketHook.on(GUILD_BATTLE_MESSAGE, this.onGuildBattle);
@@ -932,6 +1005,7 @@ class GuildTrialDamage {
         webSocketHook.on(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
         webSocketHook.on(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
         webSocketHook.on(GUILD_TRIAL_STATS_MESSAGE, this.onTrialStats);
+        webSocketHook.on('guild_updated', this.onGuildUpdated);
     }
 
     cleanup() {
@@ -942,6 +1016,7 @@ class GuildTrialDamage {
         if (this.onNewGuildBattle) webSocketHook.off(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
         if (this.onEndGuildBattle) webSocketHook.off(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
         if (this.onTrialStats) webSocketHook.off(GUILD_TRIAL_STATS_MESSAGE, this.onTrialStats);
+        if (this.onGuildUpdated) webSocketHook.off('guild_updated', this.onGuildUpdated);
         this.onNewBattle = null;
         this.onBattleUpdated = null;
         this.onGuildBattle = null;
@@ -949,8 +1024,81 @@ class GuildTrialDamage {
         this.onNewGuildBattle = null;
         this.onEndGuildBattle = null;
         this.onTrialStats = null;
+        this.onGuildUpdated = null;
         this.initialized = false;
         this.reset();
+    }
+
+    /**
+     * Say whose guild the week's measured-vs-reported blob belongs to.
+     *
+     * Called by the trials feature wherever it re-scopes its own storage: at
+     * startup, on a character switch (with the arriving character's id, since
+     * `dataManager` still answers with the departing one at that moment), and
+     * once a guild name is adopted. A changed scope empties `storedStats` at once
+     * and reads the new scope's blob back; comparisons this character filed
+     * under its fallback key before the guild was known are carried onto the
+     * guild's key rather than stranded there.
+     *
+     * @param {string|null} guildName - Guild name, or null before it is known
+     * @param {string|number|null} [characterId] - The viewing character
+     */
+    setGuildName(guildName, characterId = dataManager.getCurrentCharacterId?.() ?? null) {
+        const next = { guildName: guildName || null, characterId: characterId ?? null };
+        const previous = this.statsScope;
+        if (statsScopeKey(next) === statsScopeKey(previous)) return;
+
+        const carry =
+            !previous.guildName &&
+            next.guildName &&
+            String(previous.characterId ?? '') === String(next.characterId ?? '') &&
+            Object.keys(this.storedStats || {}).length
+                ? { ...this.storedStats }
+                : null;
+        this.statsScope = next;
+        this.storedStats = {};
+        if (!this.initialized) return;
+        if (carry) this._persistStats(carry).catch(() => {});
+        else this._restoreStats().catch(() => {});
+    }
+
+    /**
+     * The game's own trial status, off `guild_updated`.
+     *
+     * `currentTrialsData.combat` goes `in_progress` while a combat trial runs and
+     * leaves it — or marks every party `done` — once it is over. That is a second
+     * statement of the ending beside `end_guild_battle`, and it arrives whether or
+     * not the end message reached this client. Only a transition counts: a status
+     * that was never seen `in_progress` since the last reset says nothing about
+     * the fight being measured. Nothing here arms a trial.
+     *
+     * Detection rule from KikiMeter v3.40.6 (ZhuLiMoon, MIT); see
+     * `third-party/kikimeter/`.
+     *
+     * @param {Object} data - A `guild_updated` payload
+     */
+    _onGuildUpdated(data) {
+        try {
+            const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
+            const combat = read?.combat;
+            if (!combat) return;
+
+            if (combat.inProgress && !combat.allDone) {
+                this.combatInProgressSeen = true;
+                return;
+            }
+            if (!this.combatInProgressSeen) return;
+            // A record with no status string is a shape change, not an ending
+            const leftProgress = combat.status !== null && !combat.inProgress;
+            if (!combat.allDone && !leftProgress) return;
+
+            this.combatInProgressSeen = false;
+            // Nothing watched is nothing to close; the panel's own phase covers it
+            if (this.source !== 'spectated' || this.endedByGame) return;
+            this._endByGame('guild_updated', Date.now());
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading the guild’s trial status failed:', error);
+        }
     }
 
     /**
@@ -1006,11 +1154,30 @@ class GuildTrialDamage {
             const now = Date.now();
             const tier = Number.isFinite(Number(data.tier)) ? Number(data.tier) : null;
             const battleId = data.battleId ?? null;
+            const wave = Number.isFinite(Number(data.wave)) ? Number(data.wave) : null;
+            const startMs = combatStartMs(data.combatStartTime);
+            const slotIds = slotIdsFromBattle(data);
+            const encounter =
+                (Array.isArray(data.monsters) ? data.monsters : [])
+                    .map((monster) => encounterOfMonster(monster?.hrid || monster?.name || ''))
+                    .find(Boolean) || null;
 
             // The stated boundary, which is what this message is *for*
-            if (battleId !== this.guildBattleId || tier !== this.tier) {
-                this._newSpectatedWave(battleId, tier, now);
+            const newFight = this._isNewFight({ battleId, tier, startMs, encounter });
+            if (newFight || battleId !== this.guildBattleId || tier !== this.tier) {
+                this._newSpectatedWave(battleId, tier, now, { newFight });
+            } else if (this._isRedeal(slotIds, wave)) {
+                // The same battle and tier stated again with its slots dealt to
+                // different characters, or a new wave number. The live tally is
+                // index-keyed and every per-slot baseline describes the previous
+                // occupant, so the wave so far banks under the names it was
+                // earned by before the roster below relabels those slots
+                this._newSpectatedWave(battleId, tier, now, { newFight: false });
             }
+            if (startMs !== null && (this.fightStartMs === null || startMs < this.fightStartMs)) {
+                this.fightStartMs = startMs;
+            }
+            this.wave = wave;
             this.tier = tier;
             this.guildBattleId = battleId;
             this.source = this.source || 'spectated';
@@ -1018,9 +1185,8 @@ class GuildTrialDamage {
             // trial is running that this module has ever had
             this.active = true;
             this.reason = SPECTATED_TRIAL_NOTE;
-            this.endedAt = null;
-            // A tier opening is the stream running again, whatever was frozen
-            this._unfreezeElapsed();
+            // A tier opening is the stream running again, whatever ended or froze it
+            if (this.frozenSeconds !== null || this.endedAt !== null) this._resumeStream();
             if (!this.startedAt) this.startedAt = now;
             if (Number.isFinite(tier)) this.tierStarts[tier] = now;
 
@@ -1034,7 +1200,6 @@ class GuildTrialDamage {
             // roster is the name-bearing view of `players[]` and drops what it
             // cannot name; this is the id-bearing one and drops nothing. Only
             // {@link _ownIdentity} reads it, and only on an exact id match.
-            const slotIds = slotIdsFromBattle(data);
             if (Object.keys(slotIds).length) this.slotIds = slotIds;
             if (Object.keys(roster).length) {
                 this.roster = roster;
@@ -1064,7 +1229,8 @@ class GuildTrialDamage {
             // merely leaves a placeholder.
             if (battleId && (Object.keys(roster).length || Object.keys(slotIds).length)) {
                 const ownerId = dataManager.getCurrentCharacterId?.() ?? null;
-                this.storedRoster = { battleId, tier, roster, slotIds, ownerId, at: now };
+                const guildName = this._guildName();
+                this.storedRoster = { battleId, tier, roster, slotIds, ownerId, guildName, at: now };
                 saveTrialRoster(this.storedRoster).catch(() => {});
             }
 
@@ -1106,9 +1272,14 @@ class GuildTrialDamage {
             // the first second as the stream names one slot at a time — the
             // window in which the panel's sampler would otherwise read the
             // filling-in as a boss cleared. See `_readPool`.
+            //
+            // Only a slot the stream has not already stated. When the tier's
+            // first ticks beat this message, the wave began on those ticks and
+            // their bar is the live one; the opening sheet's full health written
+            // over it reads to the panel's sampler as the boss healing back up.
             const currentHp = Number(monster?.currentHitpoints);
             const maxHp = Number(monster?.maxHitpoints);
-            if (Number.isFinite(currentHp) && Number.isFinite(maxHp) && maxHp > 0) {
+            if (!(index in this.poolSlots) && Number.isFinite(currentHp) && Number.isFinite(maxHp) && maxHp > 0) {
                 this.poolSlots[index] = { current: currentHp, max: maxHp };
             }
 
@@ -1165,17 +1336,24 @@ class GuildTrialDamage {
             const trial = trialFromHrid(data?.trialHrid);
             // A different trial's ending is not this one's
             if (trial && this.encounter && trial.key !== this.encounter) return;
+            // …nor a different battle's, where both sides state one
+            const endedBattle = data?.battleId ?? null;
+            if (
+                endedBattle !== null &&
+                this.guildBattleId !== null &&
+                String(endedBattle) !== String(this.guildBattleId)
+            ) {
+                return;
+            }
             if (trial && !this.encounter) this.encounter = trial.key;
 
-            this.endedAt = Date.now();
-            this.active = false;
             // The denominator stops here. It is accumulated from the gaps
             // between ticks rather than off the wall clock, so it does not
             // *decay* on its own — but ticks that trail in after the end, and a
             // stream that resumes for something else, would both keep extending
             // a figure that is finished. A trial's final DPS is a fact about
             // the trial, and it stops moving when the trial does.
-            this._freezeElapsed();
+            this._endByGame(END_GUILD_BATTLE_MESSAGE, Date.now());
         } catch (error) {
             console.error('[GuildTrialDamage] Reading the end of a trial failed:', error);
         }
@@ -1205,8 +1383,9 @@ class GuildTrialDamage {
      * rows are still dropped: they carry no damage, healing or damage taken,
      * and filing one as a combat comparison would draw a card full of zeros.
      *
-     * Not gated on `active` or stream liveness: it arrives a few seconds after
-     * `end_guild_battle`, once the fight is already over and the stream quiet.
+     * Not gated on `active`: it arrives after `end_guild_battle`, once the fight
+     * is already over and the stream quiet. What *is* gated is pairing it with
+     * the live tally — see {@link _reconcilable}.
      *
      * @param {Object} data - A `guild_trial_stats_updated` payload
      */
@@ -1252,13 +1431,22 @@ class GuildTrialDamage {
             // the claim "watched, and split nobody out", which the accuracy
             // card would then draw as the attribution failing.
             const measuredAnything = this.spectator.ticks > 0 || this.fights > 0;
-            const own = this.encounter
-                ? grouped[this.encounter]
-                    ? this.encounter
-                    : null
-                : encounters.length === 1 && measuredAnything
-                  ? encounters[0]
-                  : null;
+            const now = Date.now();
+            // …and only while the message can still be this fight's reconciliation.
+            // The game re-sends it every time its own Stats panel is opened, so a
+            // copy arriving mid-fight, or long after the end, describes an earlier
+            // trial; pairing it with the live tally would overwrite the week's
+            // stored measurement with an unrelated partial one. Such a copy is
+            // filed as a roster only.
+            const own = !this._reconcilable(now)
+                ? null
+                : this.encounter
+                  ? grouped[this.encounter]
+                      ? this.encounter
+                      : null
+                  : encounters.length === 1 && measuredAnything
+                    ? encounters[0]
+                    : null;
             if (own) {
                 this.reported = grouped[own];
                 this.reportedMeasured = this._measuredByName();
@@ -1314,8 +1502,14 @@ class GuildTrialDamage {
      */
     async _persistStats(entries) {
         if (!entries || !Object.keys(entries).length) return;
+        // Whose week these entries belong to is decided now, before the await: a
+        // character switch or guild change landing during the read must neither
+        // file them under the arriving scope nor put the departing scope's blob
+        // back into memory
+        const scope = { ...this.statsScope };
+        const scopeKey = statsScopeKey(scope);
         try {
-            const blob = await loadTrialStats();
+            const blob = await loadTrialStats(Date.now(), scope);
             blob.trials = blob.trials && typeof blob.trials === 'object' ? blob.trials : {};
             for (const [encounter, entry] of Object.entries(entries)) {
                 // A trial re-stated with nothing watched beside it — a
@@ -1330,8 +1524,10 @@ class GuildTrialDamage {
                         ? { ...entry, measured: held.measured }
                         : entry;
             }
-            this.storedStats = blob.trials;
-            await saveTrialStats(blob);
+            // The write still lands under the scope the entries arrived in, where
+            // they belong; memory takes the merged blob only if nobody switched
+            if (statsScopeKey(this.statsScope) === scopeKey) this.storedStats = blob.trials;
+            await saveTrialStats(blob, scope);
         } catch (error) {
             console.error('[GuildTrialDamage] Saving trial stats failed:', error);
         }
@@ -1362,13 +1558,23 @@ class GuildTrialDamage {
         }
     }
 
-    /** Read the week's saved comparisons back after a refresh. */
+    /**
+     * Read the week's saved comparisons back, for the scope held now.
+     *
+     * Dropped if the scope moved during the read. Entries that arrived while it
+     * was in flight are memory's and win over the stored copy of the same
+     * encounter.
+     */
     async _restoreStats() {
+        const scope = { ...this.statsScope };
+        const scopeKey = statsScopeKey(scope);
         try {
-            const blob = await loadTrialStats();
-            this.storedStats = blob?.trials && typeof blob.trials === 'object' ? blob.trials : {};
+            const blob = await loadTrialStats(Date.now(), scope);
+            if (statsScopeKey(this.statsScope) !== scopeKey) return;
+            const trials = blob?.trials && typeof blob.trials === 'object' ? blob.trials : {};
+            this.storedStats = { ...trials, ...this.storedStats };
         } catch {
-            this.storedStats = {};
+            // Unreadable: memory keeps whatever arrived under this scope since
         }
     }
 
@@ -1398,11 +1604,23 @@ class GuildTrialDamage {
             const battleId = data.battleId ?? null;
             const tier = Number.isFinite(Number(data.tier)) ? Number(data.tier) : null;
 
+            const sameWave = battleId === this.guildBattleId && tier === this.tier;
+            // The game has said this trial is over, and this is the same battle
+            // and tier still being drawn. It re-arms nothing and is not counted:
+            // attributing it would add to a finished trial, and marking the
+            // module active would restart the recorder on a trial that has ended
+            if (sameWave && this.endedByGame) {
+                this.spectator.trailingTicks += 1;
+                return;
+            }
+
             // A different battle, or a different wave of the same one. Either way
             // the units on screen are not the units the baselines describe
-            if (battleId !== this.guildBattleId || tier !== this.tier) {
-                this._newSpectatedWave(battleId, tier, now);
-            }
+            if (!sameWave) this._newSpectatedWave(battleId, tier, now);
+            // A stream that went quiet and is ticking again was unwatched, not
+            // over; a new wave after the game's end is the next fight. Either way
+            // the measurement runs again, without the silence counted as fighting
+            if (this.frozenSeconds !== null || this.endedAt !== null) this._resumeStream();
 
             this.source = 'spectated';
             this.active = true;
@@ -1569,10 +1787,10 @@ class GuildTrialDamage {
      * @param {*} battleId - The battle this tick belongs to
      * @param {number|null} tier - The tier it states
      * @param {number} at - Now
+     * @param {Object} [options]
+     * @param {boolean} [options.newFight] - Whether this is another trial; {@link _isNewFight} by default
      */
-    _newSpectatedWave(battleId, tier, at) {
-        const newFight = battleId !== this.guildBattleId;
-
+    _newSpectatedWave(battleId, tier, at, { newFight = this._isNewFight({ battleId, tier }) } = {}) {
         // The wave that just ended is banked under the names its slots held —
         // BEFORE anything below re-deals them. Observed live at a tier
         // rollover: per-name totals *swapped* (NPD lost 132K to whoever
@@ -1653,6 +1871,9 @@ class GuildTrialDamage {
         this.guildBattleId = battleId;
         this.tier = tier;
         this.fights += 1;
+        // Restated by the wave's own opening message, if one comes
+        this.wave = null;
+        if (newFight) this.fightStartMs = null;
         // A different battle is a different trial, and its clock starts running
         if (newFight) this._unfreezeElapsed();
         // A gap in the watching is not a gap in the fight, but it is a gap in
@@ -1827,6 +2048,17 @@ class GuildTrialDamage {
         if (!held || !battleId || String(held.battleId) !== String(battleId)) return;
         if ((held.tier ?? null) !== (tier ?? null)) return;
         if (Number.isFinite(held.at) && Date.now() - held.at > TRIAL_ACTIVE_MS) return;
+
+        // Names as well as ids, only for the character and guild that wrote it.
+        // `battleId` is not unique across trials (every capture so far reads 1),
+        // so an alt in another guild refreshing mid-tier within the hour would
+        // otherwise adopt the first guild's names onto its own slots. A guild on
+        // one side only is not a mismatch: the name is not always known in time.
+        const ownId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (String(held.ownerId ?? '') !== String(ownId ?? '')) return;
+        const heldGuild = held.guildName ?? null;
+        const guild = this._guildName();
+        if (heldGuild && guild && heldGuild !== guild) return;
 
         // The id map first, and only for the character that wrote it. It is
         // read by {@link _ownIdentity} alone, where a wrong answer pins the
@@ -2082,6 +2314,114 @@ class GuildTrialDamage {
     }
 
     /**
+     * The game has said the trial is over.
+     *
+     * Freezes the denominator and marks the ending as the game's, which is what
+     * stops a trailing tick of the same battle and tier re-arming anything.
+     *
+     * @param {string} by - Which message said so
+     * @param {number} at - Now
+     */
+    _endByGame(by, at) {
+        this.endedAt = at;
+        this.endedByGame = true;
+        this.endedBy = by;
+        this.active = false;
+        // The cause is now the game's statement, whatever froze it first
+        this.staleStream = false;
+        this._freezeElapsed();
+    }
+
+    /**
+     * Undo an ending: the stream is being measured again.
+     *
+     * For a quiet stream ticking again, a new wave after the game's end, or a
+     * tier opening. The gap before it was not watched fighting, so the next tick
+     * starts the elapsed count afresh rather than bridging it.
+     */
+    _resumeStream() {
+        this._unfreezeElapsed();
+        this.endedAt = null;
+        this.endedByGame = false;
+        this.endedBy = null;
+        this.lastTickAt = 0;
+    }
+
+    /**
+     * Whether a wave boundary is another trial rather than the next tier.
+     *
+     * A changed `battleId` always was. Beside it, each of these can only be
+     * another trial however `battleId` is assigned:
+     *
+     * - a lower tier after the game said the trial ended, since a trial neither
+     *   continues past its end nor climbs down;
+     * - a tier opening further from the fight's first than {@link FIGHT_SPAN_MS};
+     * - a tier opening whose monsters are a different encounter than the one
+     *   already identified.
+     *
+     * @param {Object} wave - What the boundary states
+     * @param {*} wave.battleId - Its battle
+     * @param {number|null} wave.tier - Its tier
+     * @param {number|null} [wave.startMs] - Its `combatStartTime`, where a `new_guild_battle` carried one
+     * @param {string|null} [wave.encounter] - Its monsters' encounter, where a `new_guild_battle` named them
+     * @returns {boolean}
+     */
+    _isNewFight({ battleId, tier, startMs = null, encounter = null }) {
+        if (battleId !== this.guildBattleId) return true;
+        if (this.endedByGame && Number.isFinite(tier) && Number.isFinite(this.tier) && tier < this.tier) return true;
+        if (startMs !== null && this.fightStartMs !== null && Math.abs(startMs - this.fightStartMs) > FIGHT_SPAN_MS) {
+            return true;
+        }
+        return Boolean(encounter && this.encounter && encounter !== this.encounter);
+    }
+
+    /**
+     * Whether a `new_guild_battle` for the wave in progress deals its slots anew.
+     *
+     * A slot both rosters state, held by a different character id, or a changed
+     * `wave` number. A slot only one of them states is not evidence: a roster that
+     * trimmed or appended an entry has not moved anybody.
+     *
+     * @param {Object<string, number>} slotIds - The message's slot → character id
+     * @param {number|null} wave - The message's wave number
+     * @returns {boolean}
+     */
+    _isRedeal(slotIds, wave) {
+        if (wave !== null && this.wave !== null && wave !== this.wave) return true;
+        for (const [index, id] of Object.entries(slotIds || {})) {
+            const held = this.slotIds?.[index];
+            if (held !== undefined && held !== null && String(held) !== String(id)) return true;
+        }
+        return false;
+    }
+
+    /** @returns {string|null} The guild being watched from, as far as this module knows */
+    _guildName() {
+        return this.statsScope.guildName || guildXPTracker.getOwnGuildName?.() || null;
+    }
+
+    /**
+     * Whether a `guild_trial_stats_updated` can still be this fight's reconciliation.
+     *
+     * Within {@link RECONCILE_WINDOW_MS} of the recorded end. With no end recorded
+     * — the end message missed — the stream must have gone quiet, and recently:
+     * a live stream is a fight still running, which no end-of-trial totals can
+     * describe. The 2026-09-07 trace put the totals 27.9 s after
+     * `end_guild_battle`. A client that never spectated keeps the old behaviour.
+     *
+     * @param {number} now - Clock
+     * @returns {boolean}
+     */
+    _reconcilable(now) {
+        if (this.source !== 'spectated') return true;
+        if (this.endedAt !== null) return now - this.endedAt <= RECONCILE_WINDOW_MS;
+        const lastAt = this.spectator.lastAt;
+        if (!lastAt) return false;
+        const quiet = now - lastAt;
+        return quiet >= SPECTATOR_LIVE_WINDOW_MS && quiet <= RECONCILE_WINDOW_MS;
+    }
+
+    /**
      * The seconds a rate is divided by: the measurement while a trial runs, and
      * the figure it finished on afterwards.
      * @returns {number}
@@ -2112,14 +2452,15 @@ class GuildTrialDamage {
         this.staleStream = true;
         this.active = false;
         if (!this.endedAt) this.endedAt = this.spectator.lastAt;
+        if (!this.endedBy) this.endedBy = 'stale';
         this._freezeElapsed();
     }
 
     /**
      * Whether the game's own end-of-trial totals are still expected.
      *
-     * `guild_trial_stats_updated` lands about eight seconds after the trial
-     * ends, and this window is the reason a personal fight started in the
+     * `guild_trial_stats_updated` lands some seconds after the trial ends
+     * (27.9 s in the 2026-09-07 trace), and this window is the reason a personal fight started in the
      * meantime must not touch anything: the reconciliation the panel exists to
      * show is half-arrived, and re-deciding the module's state on a zone battle
      * would archive the estimate against nothing.
@@ -2159,7 +2500,7 @@ class GuildTrialDamage {
             // battle is active — the two streams are the game's own separation of
             // personal combat from the trial.
             if (this._spectatorStreamLive()) return;
-            // …and for the eight seconds after it ends, while the game's own
+            // …and for the reconciliation window after it ends, while the game's own
             // per-member totals are still on their way. Re-deciding anything
             // here would reset the very measurement they are about to be
             // compared against, on the strength of a zone the player wandered
@@ -2348,6 +2689,16 @@ class GuildTrialDamage {
             // the game said the trial ended, or the stream simply went quiet
             frozen: this.frozenSeconds !== null,
             staleStream: this.staleStream,
+            // The game said the trial is over (`end_guild_battle` or
+            // `guild_updated`), as against the stream merely going quiet.
+            // While true, `active` stays false through trailing ticks of the
+            // same battle and tier; only a new wave or tier opening clears it.
+            // `endedAt` is non-null exactly while either kind of ending holds —
+            // a quiet stream that ticks again clears it — so a consumer may
+            // read `endedAt !== null` as "not running"
+            endedByGame: this.endedByGame,
+            endedBy: this.endedBy,
+            wave: this.wave,
             fights: this.fights,
             ageMs,
             // Where these figures came from, which every caption has to state

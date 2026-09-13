@@ -5314,6 +5314,16 @@ describe('lastTrialPlayerRows', () => {
         expect(lastTrialPlayerRows({ seconds: 10, players: [{ name: 'Idle', damage: 0, deaths: 0 }] })).toEqual([]);
     });
 
+    test('a snapshot carrying the game’s whole-trial totals states them rather than a rate over the watched seconds', () => {
+        const html = lastTrialPlayerRows({
+            seconds: 100,
+            basis: 'game',
+            players: [{ name: 'Orven', damage: 12_345, deaths: 0 }],
+        }).join('');
+        expect(html).toContain('12.3K');
+        expect(html).not.toMatch(/[\dK]\/s/);
+    });
+
     test('a snapshot with no clock still states the damage', () => {
         const html = lastTrialPlayerRows({ players: [{ name: 'Orven', damage: 12_345, deaths: 0 }] }).join('');
         expect(html).toContain('Orven');

@@ -170,7 +170,7 @@ export async function refreshLedgerView() {
         // discards, and the four archived cycles the rollover folds a compact
         // summary into. Both are tolerated failing — an unreadable accuracy
         // section must not cost the panel its table
-        const stats = await loadTrialStats().catch(() => null);
+        const stats = await loadTrialStats(Date.now(), { guildName: guild, characterId }).catch(() => null);
         const trialRecord = await loadTrialRecord(guild, Date.now(), characterId).catch(() => null);
         // A newer refresh already started while these reads were in flight —
         // storage reads do not resolve in call order, so writing this one's
