@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial board: no more "Player N" rows when you open a trial partway through
+
+- Opening the fight view in the middle of a tier, before that tier's roster had arrived, filed every player's damage under "Player 1", "Player 2" … for good, so half the board was placeholders (45 of 92 rows on a live trial). Those slots are now named from the fight view's own name tiles, kept only where the players' health and mana confirm the match, and anything still unknown is one "Unnamed — before names were known" row that the guild report, History and the ledger's player counts treat the same way.
+
 ### Taken tab: hits with no attacker read as damage over time
 
 - About a quarter of the hits a party took in a Pirate Cove run arrived with no attacking monster anywhere near them — most likely a bleed or poison ticking — and the Taken tab filed all of them under "Unknown Enemy". They are now listed as "Damage over time"; "Unknown Enemy" is left for the cases it describes, a tick where different kinds of monster attacked at once or an attacker with no name.
