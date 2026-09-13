@@ -170,6 +170,24 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
                 kills: row.kills ?? null,
                 detail:
                     row.kills > 0 ? `${formatWithSeparator(row.kills)} ${row.kills === 1 ? 'kill' : 'kills'}` : null,
+                breakdown: breakdownLines(
+                    (row.abilities || []).map((ability) => {
+                        const swings = (ability.hits || 0) + (ability.misses || 0);
+                        return {
+                            label: breakdownLabel(ability.action),
+                            value: ability.damage,
+                            // Damage-over-time and a reflect have no swing behind them
+                            detail:
+                                swings > 0
+                                    ? `${formatWithSeparator(Math.round(ability.hits || 0))} hits · ` +
+                                      `${percent(ability.hits > 0 ? (ability.crits || 0) / ability.hits : null)} crit · ` +
+                                      `${percent((ability.hits || 0) / swings)} accuracy`
+                                    : 'no swing behind it',
+                        };
+                    }),
+                    row.damage,
+                    dealtRun.seconds
+                ),
             })),
             dealtRun.seconds || 0
         );
@@ -201,6 +219,14 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
                 value: row.healing || 0,
                 perSecond: row.hps ?? null,
                 classTag: row.classTag || classByName[row.name] || null,
+                breakdown: breakdownLines(
+                    (row.abilities || []).map((ability) => ({
+                        label: breakdownLabel(ability.action),
+                        value: ability.healing,
+                    })),
+                    row.healing,
+                    dealtRun.seconds
+                ),
             })),
             dealtRun.seconds || 0
         );
@@ -216,8 +242,125 @@ export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdo
         value: (which === 'healed' ? row.regen : row.damage) || 0,
         perSecond: (which === 'healed' ? row.hps : row.dps) ?? null,
         classTag: classByName[row.name] || null,
+        // What hit them, from the taken tracker's per-monster split. Health
+        // restored has no source to split by
+        breakdown:
+            which === 'taken'
+                ? breakdownLines(
+                      (run.enemies || []).flatMap((enemy) =>
+                          (enemy.players || [])
+                              .filter((hit) => hit.name === row.name)
+                              .map((hit) => ({
+                                  label: enemy.name,
+                                  value: hit.damage,
+                                  detail:
+                                      `${formatWithSeparator(hit.hits || 0)} hits` +
+                                      (hit.min === null || hit.min === undefined
+                                          ? ''
+                                          : ` · ${formatWithSeparator(hit.min)}–${formatWithSeparator(hit.max)} a hit`),
+                              }))
+                      ),
+                      row.damage,
+                      run.seconds
+                  )
+                : [],
     }));
     return rankRows(rows, run.seconds || 0);
+}
+
+/**
+ * Which rows are open, as `tab:name`. Kept across redraws — the panel repaints
+ * every couple of seconds, and a row that shuts itself while it is being read
+ * is worse than one that never opened.
+ */
+const expanded = new Set();
+
+/** Words for the action keys that are this codebase's markers rather than hrids */
+const BREAKDOWN_LABELS = {
+    dot: 'Damage over time',
+    reflect: 'Reflect',
+    shared: 'Split — no caster on the tick',
+    other: 'No cast on the tick',
+};
+
+/**
+ * @param {string} action - An ability hrid or one of the markers
+ * @returns {string} Something readable
+ */
+function breakdownLabel(action) {
+    return BREAKDOWN_LABELS[action] || actionLabel(action);
+}
+
+/**
+ * One row's breakdown, biggest first, each line's share of the row's own total.
+ *
+ * @param {Array<{label: string, value: number, detail?: string}>} entries - Unranked lines
+ * @param {number} total - The row's own figure
+ * @param {number} seconds - The measurement window
+ * @returns {Array<{label: string, value: number, detail: string|null, perSecond: number|null, share: number|null}>}
+ */
+export function breakdownLines(entries, total, seconds) {
+    return (entries || [])
+        .filter((entry) => Number(entry?.value) > 0 || entry?.detail)
+        .map((entry) => ({
+            label: entry.label,
+            value: Number(entry.value) || 0,
+            detail: entry.detail || null,
+            perSecond: seconds > 0 ? (Number(entry.value) || 0) / seconds : null,
+            share: total > 0 ? ((Number(entry.value) || 0) / total) * 100 : null,
+        }))
+        .sort((a, b) => b.value - a.value);
+}
+
+/**
+ * A board row that opens into its breakdown, or the plain row when there is
+ * nothing to break it into.
+ *
+ * @param {Object} row - From {@link panelRows}
+ * @param {string} which - The tab it is drawn on
+ * @returns {string} HTML
+ */
+function expandableRowHTML(row, which) {
+    // Player colours and class overrides — utils/player-menu.js
+    const tagHTML = playerMarkersHTML(row.name, row.classTag, classTagHTML);
+    const color = playerRowColor(row.name, BOARD_COLORS.accent);
+    if (!row.breakdown?.length) return boardRowHTML(row, { tagHTML, color });
+
+    const key = `${which}:${row.name}`;
+    const open = expanded.has(key);
+    const { accent, dim } = BOARD_COLORS;
+    const chevron = `<span aria-hidden="true" style="color:${dim}; font-size:9px;">${open ? '▾' : '▸'}</span>`;
+    const what = which === 'taken' ? 'monster' : 'ability';
+
+    const lines = open
+        ? `<div data-breakdown="${escapeText(key)}" style="margin:0 0 6px 14px; padding:1px 6px; ` +
+          `border-left:2px solid ${accent}66;">` +
+          row.breakdown
+              .map(
+                  (line) =>
+                      `<div style="padding:2px 0;">` +
+                      `<div style="display:flex; gap:6px; align-items:baseline; font-size:10.5px;">` +
+                      `<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">` +
+                      `${escapeText(line.label)}</span>` +
+                      `<span style="margin-left:auto; white-space:nowrap;">${formatKMB(Math.round(line.value))}` +
+                      ` · ${line.perSecond === null ? '—' : formatKMB(Math.round(line.perSecond))}/s` +
+                      ` · ${line.share === null ? '—' : `${line.share.toFixed(1)}%`}</span></div>` +
+                      (line.detail
+                          ? `<div style="color:${dim}; font-size:9.5px;">${escapeText(line.detail)}</div>`
+                          : '') +
+                      `</div>`
+              )
+              .join('') +
+          `</div>`
+        : '';
+
+    return (
+        `<div data-expand="${escapeText(key)}" role="button" tabindex="0" aria-expanded="${open}" ` +
+        `title="Click for the per-${what} breakdown" style="cursor:pointer;">` +
+        boardRowHTML(row, { tagHTML: tagHTML + chevron, color }) +
+        `</div>` +
+        lines
+    );
 }
 
 /**
@@ -731,11 +874,6 @@ export function drawBoard(body, sources) {
 
     // Player colours and class overrides — utils/player-menu.js
     resolveRosterColors(rows.map((row) => row.name));
-    const playerRow = (row) =>
-        boardRowHTML(row, {
-            color: playerRowColor(row.name, BOARD_COLORS.accent),
-            tagHTML: playerMarkersHTML(row.name, row.classTag, classTagHTML),
-        });
 
     // The headline is the team's; when the rows fall short of it, say by what
     const parts = reconcileParts(board);
@@ -753,7 +891,7 @@ export function drawBoard(body, sources) {
         : '';
 
     const list = rows.length
-        ? rows.map(playerRow).join('')
+        ? rows.map((row) => expandableRowHTML(row, tab)).join('')
         : `<div style="color:${BOARD_COLORS.dim}; padding:6px 0; line-height:1.5;">` +
           'Nothing measured yet — the table fills in as the fight goes on. A run that has only just started has ' +
           'no seconds to divide by, which is why a rate can be dashed while a total is not.</div>';
@@ -801,6 +939,20 @@ function wireBoard(body, sources) {
         button.addEventListener('click', () => {
             scope = button.dataset.scope;
             drawBoard(body, sources);
+        });
+    });
+    body.querySelectorAll('[data-expand]').forEach((element) => {
+        const toggle = () => {
+            const key = element.dataset.expand;
+            if (expanded.has(key)) expanded.delete(key);
+            else expanded.add(key);
+            drawBoard(body, sources);
+        };
+        element.addEventListener('click', toggle);
+        element.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            toggle();
         });
     });
     body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
@@ -1013,6 +1165,7 @@ export default {
     _resetTab: () => {
         tab = 'damage';
         scope = 'session';
+        expanded.clear();
     },
     /** Show a tab directly — for tests, which cannot click one */
     _setTab: (which, which2) => {

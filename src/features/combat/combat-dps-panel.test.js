@@ -897,3 +897,116 @@ describe('the healing done tab', () => {
         expect(panelRows('healing').rows).toEqual([]);
     });
 });
+
+describe('a row opens into its breakdown', () => {
+    beforeEach(() => {
+        opts.dealt = {
+            seconds: 100,
+            players: [
+                {
+                    name: 'Tank',
+                    damage: 6000,
+                    dps: 60,
+                    abilities: [
+                        { action: 'auto', damage: 3000, hits: 30, crits: 3, misses: 10 },
+                        { action: '/abilities/spike_shell', damage: 2000, hits: 0, crits: 0, misses: 0 },
+                        { action: 'dot', damage: 1000, hits: 0, crits: 0, misses: 0 },
+                    ],
+                },
+                {
+                    name: 'Dps',
+                    damage: 4000,
+                    dps: 40,
+                    abilities: [{ action: '/abilities/fireball', damage: 4000, hits: 20, crits: 5, misses: 0 }],
+                },
+            ],
+            healing: {
+                players: [
+                    {
+                        name: 'Healer',
+                        healing: 900,
+                        hps: 9,
+                        abilities: [
+                            { action: '/abilities/heal', healing: 600 },
+                            { action: 'shared', healing: 300 },
+                        ],
+                    },
+                ],
+            },
+        };
+        opts.taken = {
+            seconds: 100,
+            players: [{ name: 'Tank', damage: 500, dps: 5, regen: 40, hps: 0.4 }],
+            enemies: [
+                { name: 'Eye', players: [{ name: 'Tank', damage: 300, hits: 3, min: 90, max: 110 }] },
+                { name: 'Rat', players: [{ name: 'Tank', damage: 200, hits: 4, min: 40, max: 60 }] },
+            ],
+        };
+    });
+
+    afterEach(() => feature._resetTab());
+
+    const row = (body, key) => body.querySelector(`[data-expand="${key}"]`);
+
+    test('a click lists every ability on its own line and the list survives a repaint', () => {
+        const body = board();
+        expect(body.textContent).not.toContain('spike shell');
+        expect(row(body, 'damage:Tank').getAttribute('aria-expanded')).toBe('false');
+
+        row(body, 'damage:Tank').click();
+
+        const text = body.textContent;
+        expect(text).toContain('auto');
+        expect(text).toContain('spike shell');
+        expect(text).toContain('Damage over time');
+        // Share of the player's own damage, and the swing figures where there is a swing
+        expect(text).toContain('50.0%');
+        expect(text).toContain('30 hits · 10% crit · 75% accuracy');
+        expect(text).toContain('no swing behind it');
+        expect(row(body, 'damage:Tank').getAttribute('aria-expanded')).toBe('true');
+        // Only the row that was opened
+        expect(text).not.toContain('fireball');
+
+        // The panel's periodic repaint draws into the same body again
+        drawBoard(body);
+        expect(body.textContent).toContain('spike shell');
+        expect(body.querySelector('[data-breakdown="damage:Tank"]')).not.toBeNull();
+        expect(body.textContent).not.toContain('could not be drawn');
+    });
+
+    test('the keyboard opens and closes it too', () => {
+        const body = board();
+        row(body, 'damage:Dps').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        expect(body.textContent).toContain('fireball');
+
+        row(body, 'damage:Dps').dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+        expect(body.textContent).not.toContain('fireball');
+        expect(row(body, 'damage:Dps').getAttribute('role')).toBe('button');
+        expect(row(body, 'damage:Dps').getAttribute('tabindex')).toBe('0');
+    });
+
+    test('healing done opens into what each heal came from', () => {
+        feature._setTab('healing');
+        const body = board();
+        row(body, 'healing:Healer').click();
+
+        expect(body.textContent).toContain('heal');
+        expect(body.textContent).toContain('Split — no caster on the tick');
+        expect(body.textContent).toContain('66.7%');
+    });
+
+    test('taken opens into what hit them', () => {
+        feature._setTab('taken');
+        const body = board();
+        row(body, 'taken:Tank').click();
+
+        expect(body.textContent).toContain('Eye');
+        expect(body.textContent).toContain('3 hits · 90–110 a hit');
+        expect(body.textContent).toContain('Rat');
+    });
+
+    test('a row with nothing to break down is not offered as a button', () => {
+        feature._setTab('healed');
+        expect(board().querySelector('[data-expand]')).toBeNull();
+    });
+});
