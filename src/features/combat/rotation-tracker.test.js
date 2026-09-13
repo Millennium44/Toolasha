@@ -164,6 +164,45 @@ describe('a character switch', () => {
     });
 });
 
+describe('the first hit of a wave', () => {
+    test('is counted rather than becoming the monster’s baseline', () => {
+        // The monster is stated at full health before anything has touched it;
+        // the very first tick already shows it hit — without seeding this
+        // slot's baseline from `new_battle`, that first hit would be read as
+        // the baseline itself and contribute nothing
+        emit('new_battle', {
+            players: {
+                1: {
+                    name: 'Me',
+                    preparingAbilityHrid: CHEAP,
+                    combatDetails: { combatAbilities: [{ abilityHrid: CHEAP }] },
+                },
+            },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+        emit('battle_updated', {
+            battleId: 'b1',
+            pMap: { 1: { cMP: 100, mMP: 1000, atkCounter: 1 } },
+            mMap: { 0: { cHP: 900, dmgCounter: 1, mHP: 1000 } },
+        });
+
+        const row = rotationAudit().fight.abilities.find((entry) => entry.hrid === CHEAP);
+        expect(row.damage).toBe(100);
+    });
+
+    test('a battleId change nothing announced still starts from nothing', () => {
+        emit('battle_updated', {
+            battleId: 'b1',
+            pMap: { 1: { cMP: 100, mMP: 1000, atkCounter: 1, preparingAbilityHrid: CHEAP } },
+            mMap: { 0: { cHP: 900, dmgCounter: 1, mHP: 1000 } },
+        });
+        // No slot has been named yet, so nothing is tracked — the point here
+        // is only that the battleId-change branch above ran with no seed to
+        // protect, which the next assertion's fresh fight relies on
+        expect(rotationAudit().tracking).toBe(false);
+    });
+});
+
 describe('the per-fight history', () => {
     const START = new Date('2026-08-23T00:00:00Z').getTime();
 

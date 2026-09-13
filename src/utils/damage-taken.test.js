@@ -11,6 +11,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     newTakenState,
+    seedTakenState,
     findAttackers,
     attributeIncoming,
     foldTaken,
@@ -321,6 +322,40 @@ describe('folding a run together', () => {
         );
 
         expect(tally).toEqual({});
+    });
+});
+
+describe('seeding a battle from new_battle', () => {
+    test('the first real hit on a player is counted rather than producing nothing', () => {
+        // Without a seed there is no previous reading, and the first sight of
+        // a player produces nothing — exactly the "first sight" gap this
+        // seeds around, on the incoming side
+        const state = newTakenState();
+        seedTakenState(state, { players: { 0: { currentHitpoints: 500 } } });
+
+        const events = attributeIncoming(tick({ 0: { hp: 420, dmg: 1 } }), state);
+        expect(events).toEqual([{ playerIndex: '0', monsters: [], damage: 80, isMiss: false }]);
+    });
+
+    test('a reused slot is seeded fresh rather than keeping a corpse’s counters', () => {
+        // The labyrinth case `battleId` cannot announce: the slot held a
+        // monster whose atkCounter had climbed to 9 over the room just
+        // cleared. A weaker monster reusing the slot attacks once and its
+        // counter — freshly at 1 — reads as *lower* than the corpse's,
+        // which without reseeding never counts as a rise at all
+        const state = newTakenState();
+        findAttackers({ 0: { cHP: 400, cMP: 100, atkCounter: 9, dmgCounter: 5 } }, state);
+
+        seedTakenState(state, { monsters: { 0: { combatDetails: { atkCounter: 0 } } } });
+
+        expect(findAttackers({ 0: { cHP: 400, cMP: 100, atkCounter: 1, dmgCounter: 0 } }, state)).toEqual(['0']);
+    });
+
+    test('a monster the battle never mentions keeps no baseline', () => {
+        const state = newTakenState();
+        seedTakenState(state, { monsters: { 0: { combatDetails: { atkCounter: 0 } } } });
+
+        expect(state.monsters['1']).toBeUndefined();
     });
 });
 

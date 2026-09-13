@@ -148,6 +148,46 @@ describe('tracking a health-diff run', () => {
     });
 });
 
+describe('seeding a battle from new_battle', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(0);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('the first hit is counted rather than becoming the baseline', () => {
+        // Without a seed the monster's first mMap entry — already at 900 —
+        // would be read as full health and the 100 that got it there lost
+        combatDPS._onNewBattle({ monsters: { 0: { currentHitpoints: 1000 } }, players: {} });
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: { 0: { cHP: 900 } }, pMap: {} });
+        expect(combatDPS.damage).toBe(100);
+    });
+
+    test('a battle nothing announced still starts from nothing', () => {
+        // No new_battle seen — a reload mid-fight — so the first tick is the
+        // baseline, same as before this fix
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: { 0: { cHP: 900 } }, pMap: {} });
+        expect(combatDPS.damage).toBe(0);
+    });
+
+    test('the seed survives the battleId change it announces, and no other', () => {
+        combatDPS._onNewBattle({ monsters: { 0: { currentHitpoints: 1000 } }, players: {} });
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: { 0: { cHP: 1000 } }, pMap: {} });
+        vi.setSystemTime(1000);
+        combatDPS._onBattleUpdated({ battleId: 5, mMap: { 0: { cHP: 900 } }, pMap: {} });
+        expect(combatDPS.damage).toBe(100);
+
+        // A second battleId change nothing announced: last battle's health has
+        // nothing to do with this one, and must not be diffed against it
+        vi.setSystemTime(2000);
+        combatDPS._onBattleUpdated({ battleId: 6, mMap: { 0: { cHP: 1000 } }, pMap: {} });
+        expect(combatDPS.damage).toBe(100);
+    });
+});
+
 describe('without attribution', () => {
     test('nothing measured at all draws nothing', () => {
         expect(draw().textContent).toBe('');

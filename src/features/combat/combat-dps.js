@@ -52,6 +52,7 @@ class CombatDPS {
     constructor() {
         this.isInitialized = false;
         this.battleHandler = null;
+        this.newBattleHandler = null;
         this.reset();
     }
 
@@ -65,6 +66,7 @@ class CombatDPS {
         this.playerHp = new Map();
         this.partySize = 1;
         this.battleId = null;
+        this.battleSeeded = false;
     }
 
     initialize() {
@@ -73,7 +75,9 @@ class CombatDPS {
         this.isInitialized = true;
 
         this.battleHandler = (data) => this._onBattleUpdated(data);
+        this.newBattleHandler = (data) => this._onNewBattle(data);
         webSocketHook.on('battle_updated', this.battleHandler);
+        webSocketHook.on('new_battle', this.newBattleHandler);
     }
 
     disable() {
@@ -82,12 +86,51 @@ class CombatDPS {
                 webSocketHook.off('battle_updated', this.battleHandler);
                 this.battleHandler = null;
             }
+            if (this.newBattleHandler) {
+                webSocketHook.off('new_battle', this.newBattleHandler);
+                this.newBattleHandler = null;
+            }
             this.reset();
             this.isInitialized = false;
         } catch (error) {
             console.error('[Combat DPS] Disable failed part-way:', error);
         } finally {
             this.isInitialized = false;
+        }
+    }
+
+    /**
+     * Seed this battle's health maps from the one message that states them
+     * before anything has touched them.
+     *
+     * Without this the tile's own health-diff figure has the same first-hit
+     * gap as the attributed one: a monster's first `mMap` entry is usually the
+     * tick it is first struck, so a baseline read from that entry is already
+     * post-hit and the blow that set it counts nothing. It also re-baselines
+     * every wave rather than only when `battleId` changes, which matters in a
+     * labyrinth — `battleId` never changes there (`labyrinth-room-logs.js`),
+     * so without a `new_battle`-driven seed a room's leftover health map would
+     * carry into the next room's different monsters and players.
+     *
+     * @param {Object} data - `new_battle` payload
+     */
+    _onNewBattle(data) {
+        try {
+            for (const [slot, monster] of Object.entries(data?.monsters || {})) {
+                const hp = Number(
+                    monster?.currentHitpoints ?? monster?.combatDetails?.currentHitpoints ?? monster?.cHP
+                );
+                const max = Number(monster?.combatDetails?.maxHitpoints ?? monster?.maxHitpoints);
+                const seeded = Number.isFinite(hp) ? hp : Number.isFinite(max) ? max : null;
+                if (seeded !== null) this.monsterHp.set(slot, seeded);
+            }
+            for (const [slot, player] of Object.entries(data?.players || {})) {
+                const hp = Number(player?.currentHitpoints ?? player?.combatDetails?.currentHitpoints ?? player?.cHP);
+                if (Number.isFinite(hp)) this.playerHp.set(slot, hp);
+            }
+            this.battleSeeded = true;
+        } catch (error) {
+            console.error('[CombatDPS] Seeding a new battle failed:', error);
         }
     }
 
@@ -129,8 +172,16 @@ class CombatDPS {
                     this.lastTickAt = 0;
                 }
                 this.battleId = battleId;
-                this.monsterHp.clear();
-                this.playerHp.clear();
+                // Cleared only when nothing just seeded them: `new_battle`
+                // usually ran a moment ago and stated exactly this battle's
+                // health, and wiping that seed here would lose the first hit
+                // it exists to recover. A battle nothing announced (a reload
+                // mid-run) has no seed to protect and starts from nothing.
+                if (!this.battleSeeded) {
+                    this.monsterHp.clear();
+                    this.playerHp.clear();
+                }
+                this.battleSeeded = false;
             }
 
             this.damage += this._foldSide(data?.mMap, this.monsterHp);

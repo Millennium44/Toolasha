@@ -30,7 +30,14 @@
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
-import { newTakenState, attributeIncoming, foldTaken, foldTakenByEnemy, waveKey } from '../../utils/damage-taken.js';
+import {
+    newTakenState,
+    seedTakenState,
+    attributeIncoming,
+    foldTaken,
+    foldTakenByEnemy,
+    waveKey,
+} from '../../utils/damage-taken.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 
 /** The counters this tick is measured against */
@@ -89,6 +96,14 @@ let lastTickAt = 0;
 let seconds = 0;
 let battleId = null;
 
+/**
+ * Whether `state` was just seeded by a `new_battle` that the next tick's
+ * battle-id change is about to announce. Without this flag the first tick of
+ * every battle would wipe the seed it just received — see `damage-tracker.js`'s
+ * `battleSeeded` for the same guard on the outgoing side.
+ */
+let battleSeeded = false;
+
 /** Below this the per-second figures are one swing's luck rather than a rate */
 const MIN_SECONDS = 5;
 
@@ -114,6 +129,7 @@ export function resetDamageTaken() {
     seconds = 0;
     lastTickAt = 0;
     startedAt = Date.now();
+    battleSeeded = false;
 }
 
 /**
@@ -294,6 +310,14 @@ export default {
                     if (name) monsters[index] = name;
                 }
 
+                // Seeded every battle, not only a fresh session: the baseline
+                // this replaces may be a previous wave's, or — in a labyrinth,
+                // where `battleId` never changes between rooms — a previous
+                // room's monster still sitting in a reused slot. See
+                // `seedTakenState` for why leaving either in place loses hits.
+                seedTakenState(state, data);
+                battleSeeded = true;
+
                 // The fight on screen is a new one, and last fight's slots
                 // were different monsters
                 battleTaken = { enemies: {}, seconds: 0 };
@@ -317,7 +341,12 @@ export default {
                 // somebody else and diffing against them invents huge hits
                 if (data?.battleId !== battleId) {
                     battleId = data?.battleId;
-                    state = newTakenState();
+                    // Cleared only when `new_battle` did not just seed it for
+                    // exactly this battle — wiping the seed here would put the
+                    // first hit right back to being lost. A battle nothing
+                    // announced (a reload mid-run) has no seed to protect.
+                    if (!battleSeeded) state = newTakenState();
+                    battleSeeded = false;
                     // A reload mid-fight never saw this battle's `new_battle`,
                     // so this is the only boundary that clears the per-fight
                     // fold for it. After a normal battle start it clears a map

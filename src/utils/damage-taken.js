@@ -73,6 +73,52 @@ export function newTakenState() {
 }
 
 /**
+ * Seed this battle's baselines from `new_battle`, the one message that states
+ * them before anything has happened.
+ *
+ * Without this, two things are lost every wave. A player's first real hit
+ * this battle is measured against nothing (`attributeIncoming` requires a
+ * previous reading) and is dropped rather than counted — the same
+ * first-sighting gap `damage-attribution.js` has on the outgoing side. And a
+ * monster's attacker baseline (`findAttackers`' `state.monsters`) is either
+ * absent for a slot never seen this session, so its very first action falls
+ * through to the "fresh" rung and needs to be the delta's only entry to be
+ * believed — or, worse, still holds a *previous* monster's counters, which
+ * happens whenever a battle's slots are reused without `battleId` changing
+ * (a labyrinth run: `battleId` never changes between rooms). A new, weaker
+ * monster in the same slot would then never appear to attack at all, because
+ * its counters read as lower than the corpse's rather than as a fresh start.
+ *
+ * @param {Object} state - From `newTakenState`, mutated
+ * @param {Object} data - The `new_battle` payload
+ */
+export function seedTakenState(state, data) {
+    const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : undefined);
+
+    for (const [index, player] of Object.entries(data?.players || {})) {
+        const details = player?.combatDetails || {};
+        const hp = num(details.currentHitpoints ?? player?.currentHitpoints ?? player?.cHP);
+        if (hp !== undefined) state.playersHP[index] = hp;
+        // Nobody has landed a hit on a battle that has just begun
+        state.playersDmg[index] = 0;
+    }
+
+    for (const [index, monster] of Object.entries(data?.monsters || {})) {
+        const details = monster?.combatDetails || {};
+        // A freshly spawned monster has attacked nobody and cast nothing yet;
+        // seeded at zero rather than left absent, so the ladder's counter
+        // comparisons see a real baseline instead of treating the first tick
+        // as unbaselined (the "fresh" rung) or, in a reused slot, as a rise
+        // that never happened relative to a corpse's higher counters
+        state.monsters[index] = {
+            atkCounter: num(details.atkCounter ?? monster?.atkCounter) ?? 0,
+            cMP: num(details.currentManapoints ?? monster?.cMP) ?? 0,
+            dmgCounter: num(details.dmgCounter ?? monster?.dmgCounter) ?? 0,
+        };
+    }
+}
+
+/**
  * Whether a monster reported anything different from last time.
  *
  * Every field the tick carries, rather than a list of the ones known today: a

@@ -549,10 +549,32 @@ export default {
                 // and last fight's slot 0 was a different monster
                 monsters = {};
                 for (const [index, monster] of Object.entries(data?.monsters || {})) {
+                    const maxHP = Number(monster?.combatDetails?.maxHitpoints ?? monster?.maxHitpoints);
+                    const hp = Number(
+                        monster?.currentHitpoints ?? monster?.combatDetails?.currentHitpoints ?? monster?.cHP
+                    );
+
+                    // Seed the attribution baseline for every monster the battle
+                    // states, so the swing between this statement and the first
+                    // retained tick is measured against its true starting health
+                    // rather than silently becoming the baseline —
+                    // `damage-attribution.js`'s "first sighting" rule otherwise
+                    // discards it, along with the kill when it is a one-shot.
+                    // Current health first, since a weakened spawn is real;
+                    // max only when the current figure is missing. Counters
+                    // start at zero — a monster not yet hit has no swings on
+                    // it — exactly as `labyrinth-room-logs.js`'s
+                    // `seedAttribution` seeds a labyrinth fight's opening tick.
+                    const seededHp = Number.isFinite(hp) ? hp : Number.isFinite(maxHP) ? maxHP : null;
+                    if (seededHp !== null) {
+                        state.monstersHP[index] = seededHp;
+                        state.dmgCounter[index] = 0;
+                        state.critCounter[index] = 0;
+                    }
+                    if (Number.isFinite(maxHP)) state.monstersMaxHP[index] = maxHP;
+
                     const name = monsterName(monster);
                     if (!name) continue;
-
-                    const maxHP = Number(monster?.combatDetails?.maxHitpoints ?? monster?.maxHitpoints);
 
                     // The enrage clock, where the sheet states one: a duration
                     // in nanoseconds anchored at the spawn. Either half missing
@@ -567,9 +589,6 @@ export default {
                     // Stated current health, never assumed full — a weakened
                     // spawn is a real thing and inventing the difference would
                     // overstate the time to kill
-                    const hp = Number(
-                        monster?.currentHitpoints ?? monster?.combatDetails?.currentHitpoints ?? monster?.cHP
-                    );
                     if (Number.isFinite(hp)) battleHP[index] = hp;
 
                     // The largest seen, since a weakened spawn would understate
@@ -589,10 +608,20 @@ export default {
                 // somebody else and comparing against them invents huge hits
                 if (data?.battleId !== battleId) {
                     battleId = data?.battleId;
-                    state.monstersHP = {};
-                    state.monstersMaxHP = {};
-                    state.dmgCounter = {};
-                    state.critCounter = {};
+
+                    // The attribution baseline is per battle too, but `new_battle`
+                    // has usually just seeded it for exactly this battle, and
+                    // wiping that seed here would throw away the very statement
+                    // this fix exists to use — the first hit would go right back
+                    // to being lost to a first-sighting skip. Only a battle
+                    // nothing announced (a reload mid-run) starts from nothing,
+                    // the same condition `battleHP` below is guarded on.
+                    if (!battleSeeded) {
+                        state.monstersHP = {};
+                        state.monstersMaxHP = {};
+                        state.dmgCounter = {};
+                        state.critCounter = {};
+                    }
 
                     // This-fight-only totals belong to the battle that just ended,
                     // same as every other per-battle counter reset in this branch —

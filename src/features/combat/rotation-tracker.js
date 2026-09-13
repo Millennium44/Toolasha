@@ -73,6 +73,13 @@ let ownIndex = null;
 /** The battle the counters belong to; a change is a different set of units */
 let battleId = null;
 
+/**
+ * Whether the current battle's monster baselines were just seeded from
+ * `new_battle`, so the battleId-change wipe below does not undo it — see
+ * `damage-tracker.js`'s `battleSeeded` for the reasoning.
+ */
+let battleSeeded = false;
+
 /** @returns {Object} `abilityDetailMap`, or an empty map before client data lands */
 function detailMap() {
     return dataManager.getInitClientData?.()?.abilityDetailMap || {};
@@ -105,6 +112,7 @@ export function resetRotationAudit() {
     history = [];
     ownIndex = null;
     battleId = null;
+    battleSeeded = false;
 }
 
 /**
@@ -158,6 +166,27 @@ export function startRotationTracker() {
 
             noteActions(state, players);
 
+            // Seed this battle's monster baselines from the one message that
+            // states them before anything has touched them — otherwise the
+            // own-slot audit loses the first hit of every wave the same way
+            // `damage-tracker.js` did: a monster's first `mMap` entry is
+            // usually the tick it is first struck, and a baseline read from
+            // that entry is already post-hit.
+            for (const [index, monster] of Object.entries(data?.monsters || {})) {
+                const hp = Number(
+                    monster?.currentHitpoints ?? monster?.combatDetails?.currentHitpoints ?? monster?.cHP
+                );
+                const maxHP = Number(monster?.combatDetails?.maxHitpoints ?? monster?.maxHitpoints);
+                const seeded = Number.isFinite(hp) ? hp : Number.isFinite(maxHP) ? maxHP : null;
+                if (seeded !== null) {
+                    state.monstersHP[index] = seeded;
+                    state.dmgCounter[index] = 0;
+                    state.critCounter[index] = 0;
+                }
+                if (Number.isFinite(maxHP)) state.monstersMaxHP[index] = maxHP;
+            }
+            battleSeeded = true;
+
             // The fight on screen is a new one, so what was measured belongs to
             // the last one. The session keeps both.
             //
@@ -183,10 +212,17 @@ export function startRotationTracker() {
         try {
             if (data?.battleId !== battleId) {
                 battleId = data?.battleId;
-                state.monstersHP = {};
-                state.monstersMaxHP = {};
-                state.dmgCounter = {};
-                state.critCounter = {};
+                // Cleared only when `new_battle` did not just seed it for
+                // exactly this battle — wiping a seed the instant it arrives
+                // would put the own-slot audit right back to losing the first
+                // hit. A battle nothing announced starts from nothing.
+                if (!battleSeeded) {
+                    state.monstersHP = {};
+                    state.monstersMaxHP = {};
+                    state.dmgCounter = {};
+                    state.critCounter = {};
+                }
+                battleSeeded = false;
             }
 
             if (ownIndex === null) return;
