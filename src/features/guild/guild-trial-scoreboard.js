@@ -155,6 +155,58 @@ export function manaMarkerHTML(support) {
 }
 
 /**
+ * A row's kill count, or nothing when it has none.
+ * @param {number} kills - Kills from the player's breakdown row
+ * @returns {string} HTML
+ */
+export function killsMarkerHTML(kills) {
+    const count = Number(kills) || 0;
+    if (count <= 0) return '';
+    return (
+        `<span title="Kills landed on a tick this player owned alone. A kill on a shared tick counts for the ` +
+        `team and nobody's row." style="color:${DIM}; font-size:9px; margin-left:4px; white-space:nowrap;">` +
+        `⚔ ${count}</span>`
+    );
+}
+
+/**
+ * The team's own totals off a breakdown: every point of health the monsters
+ * lost, the part no player could be credited with, and the kills.
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @returns {{damage: number, unattributed: number, kills: number, unownedKills: number}|null} Null
+ *   when nothing was lost
+ */
+export function teamFigures(breakdown) {
+    const team = breakdown?.team;
+    const damage = Number(team?.damage) || 0;
+    if (!(damage > 0)) return null;
+    return {
+        damage,
+        unattributed: Number(team.unattributed) || 0,
+        kills: Number(team.kills) || 0,
+        unownedKills: Number(team.unownedKills) || 0,
+    };
+}
+
+/**
+ * Player name → kills, off a breakdown's damage rows.
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @returns {Map<string, number>}
+ */
+function killsByName(breakdown) {
+    return new Map((breakdown?.players || []).map((row) => [row.name, Number(row.kills) || 0]));
+}
+
+/**
+ * A copied line's kill suffix.
+ * @param {number} kills - Kill count
+ * @returns {string}
+ */
+function killsSuffix(kills) {
+    return kills > 0 ? ` · ${kills} kill${kills === 1 ? '' : 's'}` : '';
+}
+
+/**
  * The damage type a player fights with, from their captured loadout.
  * @param {string} name - Player name
  * @param {Object} [capture] - The loadout store, injectable for tests
@@ -329,6 +381,7 @@ export function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) 
 export function scoreboardText(breakdown, tab = 'damage', estimate = null, modalStats = null) {
     const { rows, total, perSecond, source } = scoreboardRows(breakdown, tab, modalStats);
     const label = tab === 'healing' ? 'healing' : tab === 'taken' ? 'damage taken' : 'damage';
+    const kills = tab === 'damage' ? killsByName(breakdown) : new Map();
 
     if (source === 'game') {
         if (!rows.length) return `Trial ${label}: the game's stats modal lists none.`;
@@ -336,7 +389,8 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null, modal
         const lines = rows.map(
             (row) =>
                 `${row.rank}. ${row.name} — ${formatWithSeparator(Math.round(row.value))}` +
-                (row.share === null ? '' : ` (${row.share.toFixed(1)}%)`)
+                (row.share === null ? '' : ` (${row.share.toFixed(1)}%)`) +
+                killsSuffix(kills.get(row.name) || 0)
         );
         return [head, ...lines].join('\n');
     }
@@ -367,13 +421,27 @@ export function scoreboardText(breakdown, tab = 'damage', estimate = null, modal
         (row) =>
             `${row.rank}. ${row.name} — ${formatWithSeparator(Math.round(row.value))}` +
             (row.perSecond === null ? '' : ` (${formatWithSeparator(Math.round(row.perSecond))}/s`) +
-            (row.share === null ? ')' : `, ${row.share.toFixed(1)}%)`)
+            (row.share === null ? ')' : `, ${row.share.toFixed(1)}%)`) +
+            killsSuffix(kills.get(row.name) || 0)
     );
 
     // Damage summing to 100% across a subset of the party reads as the whole
     // party unless it says otherwise — a spectated split only names the players
     // who had a tick of their own, so "3 of 7" is stated here too
     if (tab === 'damage') {
+        const team = teamFigures(breakdown);
+        if (team) {
+            lines.push(
+                `Team total: ${formatWithSeparator(Math.round(team.damage))} (all health the monsters lost)` +
+                    killsSuffix(team.kills)
+            );
+            if (team.unattributed > 0) {
+                lines.push(
+                    `Unattributed: ${formatWithSeparator(Math.round(team.unattributed))} ` +
+                        '(lost on ticks no player could be credited with)'
+                );
+            }
+        }
         const coverage = attributionCoverage(breakdown);
         if (coverage.partial) {
             lines.push(
@@ -1005,6 +1073,24 @@ class GuildTrialScoreboard {
                   '</div>'
                 : '';
 
+        // The team's own figure beside the rows: every point of health the
+        // monsters lost, which the rows only sum to when nothing went uncredited
+        const team = this.tab === 'damage' && spectated && !estimated ? teamFigures(breakdown) : null;
+        const teamLine = team
+            ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">` +
+              `Team total ${formatKMB(Math.round(team.damage))} — all health the monsters lost while watched` +
+              (team.kills > 0
+                  ? ` · ${team.kills} kill${team.kills === 1 ? '' : 's'}` +
+                    (team.unownedKills > 0 ? ` (${team.unownedKills} on shared ticks)` : '')
+                  : '') +
+              '.' +
+              (team.unattributed > 0
+                  ? `<br>Unattributed ${formatKMB(Math.round(team.unattributed))} — lost on ticks no player ` +
+                    'could be credited with; in the team total and in nobody’s row.'
+                  : '') +
+              '</div>'
+            : '';
+
         const forecast = this.forecast;
         const expected =
             forecast && forecast.tier !== null
@@ -1067,6 +1153,7 @@ class GuildTrialScoreboard {
             ceilingNote +
             traceNote +
             list +
+            teamLine +
             footnote +
             manaLine +
             expected +
@@ -1107,6 +1194,7 @@ class GuildTrialScoreboard {
             tagHTML:
                 playerMarkersHTML(row.name, classes?.[key] || null, classTagHTML) +
                 manaMarkerHTML(manaByName?.get?.(key)) +
+                killsMarkerHTML(abilitySplit?.get?.(key)?.kills) +
                 caret,
         });
         if (abilitySplit === null) return base;

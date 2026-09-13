@@ -327,6 +327,84 @@ describe('scoreboardText', () => {
         const text = scoreboardText(breakdown({ source: 'spectated', participants: 2 }), 'damage');
         expect(text).not.toContain('players attributed');
     });
+
+    test('kills ride on each line, and the team total names what nobody was credited with', () => {
+        const text = scoreboardText(
+            breakdown({
+                players: [
+                    { index: '0', name: 'Tib', damage: 600_000, kills: 2 },
+                    { index: '1', name: 'Moo', damage: 400_000, kills: 1 },
+                ],
+                team: { damage: 1_003_000, attributed: 1_000_000, unattributed: 3000, kills: 4, unownedKills: 1 },
+            }),
+            'damage'
+        );
+        expect(text).toContain('1. Tib — 600,000 (6,000/s, 60.0%) · 2 kills');
+        expect(text).toContain('2. Moo — 400,000 (4,000/s, 40.0%) · 1 kill');
+        expect(text).toContain('Team total: 1,003,000 (all health the monsters lost) · 4 kills');
+        expect(text).toContain('Unattributed: 3,000');
+    });
+
+    test('nothing unattributed is no unattributed line', () => {
+        const text = scoreboardText(
+            breakdown({ team: { damage: 1_000_000, attributed: 1_000_000, unattributed: 0 } }),
+            'damage'
+        );
+        expect(text).toContain('Team total: 1,000,000');
+        expect(text).not.toContain('Unattributed');
+    });
+
+    test('game stats rows keep the stream’s kills by name', () => {
+        const text = scoreboardText(
+            breakdown({ players: [{ index: '0', name: 'Tib', damage: 600_000, kills: 2 }] }),
+            'damage',
+            null,
+            [{ name: 'Tib', damage: 700_000, healing: 0, damageTaken: 0 }]
+        );
+        expect(text).toContain('1. Tib — 700,000 (100.0%) · 2 kills');
+    });
+});
+
+describe('kills and the team total on the panel', () => {
+    const text = () => document.querySelector(`.${PANEL_CLASS}`)?.textContent || '';
+
+    test('a row carries its kills, and the team line its unattributed share', () => {
+        game.breakdown = breakdown({
+            source: 'spectated',
+            players: [
+                { index: '0', name: 'Tib', damage: 600_000, kills: 2 },
+                { index: '1', name: 'Moo', damage: 400_000, kills: 0 },
+            ],
+            team: { damage: 1_003_000, attributed: 1_000_000, unattributed: 3000, kills: 3, unownedKills: 1 },
+        });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('⚔ 2');
+        expect(text()).not.toContain('⚔ 0');
+        expect(text()).toContain('Team total 1.0M');
+        expect(text()).toContain('3 kills (1 on shared ticks)');
+        expect(text()).toContain('Unattributed 3.0K');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('no unattributed damage draws no unattributed sentence', () => {
+        game.breakdown = breakdown({
+            source: 'spectated',
+            team: { damage: 1_000_000, attributed: 1_000_000, unattributed: 0, kills: 0, unownedKills: 0 },
+        });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('Team total 1.0M');
+        expect(text()).not.toContain('Unattributed');
+    });
+
+    test('the healing tab carries no team damage line', () => {
+        game.breakdown = breakdown({ source: 'spectated', team: { damage: 1_000_000, unattributed: 5 } });
+        guildTrialScoreboard.open();
+        document.querySelector('[data-tab="healing"]').click();
+
+        expect(text()).not.toContain('Team total');
+    });
 });
 
 describe('the panel', () => {

@@ -590,6 +590,8 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
             crits: Math.round(entry.crits || 0),
             misses: Math.round(entry.misses || 0),
             deaths: deaths[index] || 0,
+            // Whole kills, only for the tick's sole owner — see `_foldKills`
+            kills: entry.kills || 0,
             // Null rather than zero: no swings is nothing to compute a hit rate
             // from, and drawing it as 0% accuses somebody of missing everything
             accuracy: swings > 0 ? entry.hits / swings : null,
@@ -610,6 +612,7 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
         players: players.sort((a, b) => b.damage - a.damage),
         totalDamage,
         totalDotDamage,
+        totalKills: players.reduce((sum, row) => sum + row.kills, 0),
         partyDps: measurable && seconds > 0 ? totalDamage / seconds : null,
     };
 }
@@ -1692,6 +1695,7 @@ class GuildTrialDamage {
             // buff is often the swing that ran before it, not idleness
             foldEvents(this.tally, events, { filterNonDamaging: false });
             foldTeam(this.team, events);
+            this._foldKills(events);
             this._noteDeaths(pMap);
             foldSupportTick(this.support, pMap, this.state.actions, undefined, now);
             noteActions(this.state, pMap);
@@ -1757,6 +1761,32 @@ class GuildTrialDamage {
             const entry = this.unitNames[index];
             if (!entry?.name || entry.source === 'placeholder') continue;
             guildTrialAbilities.noteAbilityCast?.(entry.name, hrid);
+        }
+    }
+
+    /**
+     * Count the tick's kills: on the killer's tally row, so they bank by name at a
+     * wave boundary like damage does, and on the team.
+     *
+     * A kill whose tick was shared, or credited nobody, counts for the team only:
+     * a split tick is exactly the one where nobody knows who landed the blow, and
+     * a fraction of a kill on twenty rows says nothing a player can read.
+     *
+     * @param {Array<Object>} events - From `attributeTick`
+     */
+    _foldKills(events) {
+        for (const event of events || []) {
+            if (!event.isKill) continue;
+            this.team.kills = (this.team.kills || 0) + 1;
+            const killer = event.killerIndex;
+            if (killer === null || killer === undefined) {
+                this.team.unownedKills = (this.team.unownedKills || 0) + 1;
+                continue;
+            }
+            // The killing tick carried the killer's own damage event, so the row
+            // exists; created bare only if a future engine ever emits one alone
+            const row = (this.tally[killer] ||= { damage: 0, dotDamage: 0, hits: 0, crits: 0, misses: 0 });
+            row.kills = (row.kills || 0) + 1;
         }
     }
 
@@ -2659,6 +2689,7 @@ class GuildTrialDamage {
             const now = Date.now();
             const events = attributeTick(data, this.state);
             foldEvents(this.tally, events);
+            this._foldKills(events);
             this._noteDeaths(data?.pMap);
 
             // Damage taken, healing, mana and casts, from the same tick and the
@@ -2831,6 +2862,9 @@ class GuildTrialDamage {
                 damage: this.team.damage || 0,
                 attributed: this.team.attributed || 0,
                 unattributed: this.team.unattributed || 0,
+                // Every kill seen, and those whose tick no single player owned
+                kills: this.team.kills || 0,
+                unownedKills: this.team.unownedKills || 0,
             },
             ...summary,
         };

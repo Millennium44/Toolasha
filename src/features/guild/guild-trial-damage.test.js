@@ -393,6 +393,18 @@ describe('summariseTrialDamage', () => {
         ]);
     });
 
+    test('kills ride on the row, and the summary totals them', () => {
+        const summary = summariseTrialDamage({
+            tally: { 0: { damage: 600, hits: 1, kills: 3 }, 1: { damage: 400, hits: 1 } },
+            names: { 0: 'Tib', 1: 'Moo' },
+        });
+        expect(summary.players.map((row) => [row.name, row.kills])).toEqual([
+            ['Tib', 3],
+            ['Moo', 0],
+        ]);
+        expect(summary.totalKills).toBe(3);
+    });
+
     test('a tally row with no per-ability map carries an empty list, not a crash', () => {
         const summary = summariseTrialDamage({ tally: { 0: { damage: 10, hits: 1, crits: 0, misses: 0 } } });
         expect(summary.players[0].abilities).toEqual([]);
@@ -3328,7 +3340,25 @@ describe('reflect and unattributed damage on the spectated stream', () => {
 
         const { team, totalDamage } = guildTrialDamage.breakdown();
         expect(totalDamage).toBe(10_000);
-        expect(team).toEqual({ damage: 13_000, attributed: 10_000, unattributed: 3000 });
+        expect(team).toMatchObject({ damage: 13_000, attributed: 10_000, unattributed: 3000 });
+    });
+
+    test('a kill counts for the tick’s sole owner and banks under their name; a shared one for the team', () => {
+        game.wsHandlers.new_guild_battle(roster(3));
+        tick(3, crowd(), boss(650_000, 0), 0);
+        // Two present, the tank alone swung: the tick, the bar and the kill are the tank's
+        tick(3, { 0: { atkCounter: 2, cHP: 5000 }, 1: { atkCounter: 1, cHP: 5000 } }, boss(0, 1), 250);
+
+        // Tier 4 re-deals the tank into slot 1; the crowd shares the next kill
+        game.wsHandlers.new_guild_battle(roster(4, ['Ann', 'Tank', 'Bo', 'Cy', 'Di']));
+        tick(4, crowd(), boss(650_000, 0), 500);
+        tick(4, crowd(), boss(0, 1), 750);
+
+        const report = guildTrialDamage.breakdown();
+        const kills = Object.fromEntries(report.players.map((row) => [row.name, row.kills]));
+        expect(kills).toEqual({ Tank: 1, Ann: 0, Bo: 0, Cy: 0, Di: 0 });
+        expect(report.totalKills).toBe(1);
+        expect(report.team).toMatchObject({ kills: 2, unownedKills: 1 });
     });
 
     test('another trial starts its team total afresh', () => {
@@ -3338,6 +3368,12 @@ describe('reflect and unattributed damage on the spectated stream', () => {
         expect(guildTrialDamage.breakdown().team.damage).toBe(10_000);
 
         game.wsHandlers[GUILD_BATTLE_MESSAGE]({ battleId: 10, tier: 1, pMap: crowd(), mMap: boss(650_000, 0) });
-        expect(guildTrialDamage.breakdown().team).toEqual({ damage: 0, attributed: 0, unattributed: 0 });
+        expect(guildTrialDamage.breakdown().team).toEqual({
+            damage: 0,
+            attributed: 0,
+            unattributed: 0,
+            kills: 0,
+            unownedKills: 0,
+        });
     });
 });
