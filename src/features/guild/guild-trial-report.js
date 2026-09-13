@@ -31,6 +31,7 @@
 
 import { attributionCoverage } from './guild-trial-damage.js';
 import { pastWeekLine } from './guild-trial-history.js';
+import { fightSpanLabel, trialFightSpan } from './guild-trials-math.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** Longest player list a report will print before it summarises the tail */
@@ -157,6 +158,8 @@ export function gameReportRows(gameStats, breakdown) {
     const streamPlayers = new Map((breakdown?.players || []).map((row) => [keyOf(row?.name), row]));
     const streamSupport = new Map((breakdown?.support?.players || []).map((row) => [keyOf(row?.name), row]));
     const total = list.reduce((sum, member) => sum + (Number(member.damage) || 0), 0);
+    // Over the whole fight's span, never the watched stretch — see `trialFightSpan`
+    const span = trialFightSpan(breakdown);
 
     return list
         .map((member) => {
@@ -167,7 +170,7 @@ export function gameReportRows(gameStats, breakdown) {
                     name: member.name,
                     damage,
                     share: total > 0 ? (damage / total) * 100 : null,
-                    dps: null,
+                    dps: span ? damage / span.seconds : null,
                     // The post-trial stats state a total, never a kill count —
                     // kills exist only on the stream's own attribution
                     kills: streamPlayers.get(key)?.kills ?? 0,
@@ -259,7 +262,12 @@ export function buildGuildReport({
     const gameRows = gameReportRows(gameStats, breakdown);
     if (gameRows) {
         const total = gameRows.reduce((sum, row) => sum + row.player.damage, 0);
-        const lines = [headline, `Party · ${whole(total)} dmg`];
+        const span = trialFightSpan(breakdown);
+        const lines = [
+            headline,
+            `Party · ${whole(total)} dmg` +
+                (span ? ` in ${fightSpanLabel(span)} · ${whole(total / span.seconds)}/s` : ''),
+        ];
         gameRows
             .slice(0, MAX_REPORT_PLAYERS)
             .forEach((row, index) => lines.push(playerLine(row.player, row.support, index + 1)));

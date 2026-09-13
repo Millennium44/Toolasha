@@ -281,6 +281,50 @@ describe('scoreboardRows', () => {
         expect(heal.rows).toEqual([expect.objectContaining({ name: 'MillenniumTestIC', value: 118_000 })]);
     });
 
+    test('game rows are a rate over the whole fight, on every tab, with the basis on the header', () => {
+        // Watched from tier 10 (the stream's 100 s), a 58-minute fight the game
+        // ended: its totals divided by 100 s would read ~35× too fast
+        const hour = Date.parse('2026-09-13T22:00:00Z');
+        const ended = breakdown({
+            source: 'spectated',
+            active: false,
+            endedByGame: true,
+            endedAt: hour + 58 * 60_000,
+            fightStartMs: hour + 31 * 60_000,
+            tierStarts: { 10: hour + 31 * 60_000 },
+        });
+        const modal = [
+            { name: 'Tib', damage: 3_480_000, healing: 348_000, damageTaken: 174_000 },
+            { name: 'Moo', damage: 1_740_000, healing: 0, damageTaken: 0 },
+        ];
+
+        const dmg = scoreboardRows(ended, 'damage', modal);
+        expect(dmg.rows[0].perSecond).toBeCloseTo(1000, 6);
+        expect(dmg.perSecond).toBeCloseTo(1500, 6);
+        expect(dmg.rows[0].rateNote).toContain('~58m fight');
+        expect(scoreboardRows(ended, 'healing', modal).rows[0].perSecond).toBeCloseTo(100, 6);
+        expect(scoreboardRows(ended, 'taken', modal).rows[0].perSecond).toBeCloseTo(50, 6);
+        expect(scoreboardText(ended, 'damage', null, modal)).toContain('1,500/s over the ~58m fight');
+
+        // The board: every row a rate, and the header saying over what
+        game.breakdown = { ...ended, encounter: 'badger', reported: { Tib: { damage: 3_480_000 } } };
+        guildTrialScoreboard.open();
+        const panel = document.querySelector(`.${PANEL_CLASS}`).textContent;
+        expect(panel).toContain('trial damage · game stats · per second over the ~58m fight');
+        expect(panel).toContain('1.0K/s');
+        expect(panel).not.toContain('—/s');
+    });
+
+    test('with no span known a game row keeps its dash, and its tooltip says why', () => {
+        const { rows } = scoreboardRows(breakdown(), 'damage', [
+            { name: 'Tib', damage: 1, healing: 0, damageTaken: 0 },
+        ]);
+        expect(rows[0].perSecond).toBeNull();
+        const html = guildTrialScoreboard._rowHTML(rows[0]);
+        expect(html).toContain('—/s');
+        expect(html).toContain('No per-second figure: the game’s end-of-trial totals state no duration');
+    });
+
     test('without the modal the Taken tab falls back to the stream support tally', () => {
         const taken = scoreboardRows(breakdown(), 'taken');
         expect(taken.rows[0]).toMatchObject({ name: 'Tib', value: 200_000 });

@@ -32,6 +32,7 @@ import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder, RECONCILE_WAIT_MS, SNAPSHOT_MS } from './guild-trial-recorder.js';
 import { isUnnamedRowName } from './guild-trial-units.js';
 import { snapshotTierMarks, thinTrialRates, trialRates } from './trial-dps-graph.js';
+import { trialFightSpan } from './guild-trials-math.js';
 import { currentCharacterId, historyEnabled, saveHistoryEntry } from '../combat/meter-history.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -102,6 +103,9 @@ export function thinTrialBreakdown(breakdown) {
         damageCeiling: b.damageCeiling ?? null,
         trialNames: [...(b.trialNames || [])],
         tierStarts: { ...(b.tierStarts || {}) },
+        // What a game-totals rate is divided by, on the saved board as on the live one
+        fightStartMs: Number.isFinite(b.fightStartMs) ? b.fightStartMs : null,
+        combatBudget: b.combatBudget ? { ...b.combatBudget } : null,
         reported: b.reported && Object.keys(b.reported).length ? { ...b.reported } : null,
         team: b.team ? { ...b.team } : null,
         totalDamage: Number(b.totalDamage) || 0,
@@ -206,6 +210,7 @@ export function buildTrialEntry(sample, finished) {
     const gameTotal = reported
         ? Object.values(reported).reduce((sum, stats) => sum + (Number(stats?.damage) || 0), 0)
         : null;
+    const span = trialFightSpan(breakdown);
     // The unnamed row is slots nobody could name, most of them members counted
     // again under their names from later tiers — not another player
     const players = new Set(
@@ -228,7 +233,9 @@ export function buildTrialEntry(sample, finished) {
             label: trialLabel(breakdown),
             detail: `${players} player${players === 1 ? '' : 's'}`,
             total: gameTotal ?? (Number(breakdown.team?.damage) || breakdown.totalDamage),
-            perSecond: breakdown.partyDps,
+            // A whole-trial total over the watched stretch is not a rate: the
+            // game's is divided by the whole fight's span, or left out
+            perSecond: reported ? (span ? gameTotal / span.seconds : null) : breakdown.partyDps,
             players,
         },
         breakdown,

@@ -269,6 +269,87 @@ export function parseCurrentTrialsData(raw) {
     return { combat, skilling };
 }
 
+/** One hour, in ms */
+const HOUR_MS = 3_600_000;
+
+/**
+ * How far a fight span may run past the budget before it is refused: the end is
+ * this client's clock and the starts are the server's, and the two are not one
+ * clock.
+ */
+export const TRIAL_SPAN_SLACK_MS = 2 * 60_000;
+
+/**
+ * How long a guild combat trial's fight ran, from what this client saw of it.
+ *
+ * The game's own end-of-trial totals carry no duration — `guildTrialStatList`
+ * entries are ids and figures only — so a rate for them has to be divided by the
+ * whole fight's length, never by the stretch this client happened to watch,
+ * which would inflate every rate of a trial watched from partway through. The
+ * sources, most trusted first:
+ *
+ * 1. **`first-tier`**: the end, less tier 1's own `combatStartTime`, when tier 1
+ *    was seen (the earliest start is then tier 1's).
+ * 2. **`budget`**: the combat trial's hour, less what `guild_updated` said was
+ *    left of it, carried forward from when it said so to the end.
+ * 3. **`hour`**, approximate: the end, less the top of the hour at or before the
+ *    earliest tier start seen. A combat trial opens on the hour — tier 1 began
+ *    5.9 s past it in a recorded trial — and the combat fight's own start picks
+ *    the hour, never the skilling trial's that runs before it in the same slot.
+ *
+ * Every source is refused past the hour's budget and {@link TRIAL_SPAN_SLACK_MS};
+ * null when none is usable, or the game has not said the trial ended.
+ *
+ * @param {Object} breakdown - `{endedAt, endedByGame, fightStartMs, tierStarts, combatBudget}`
+ * @returns {{seconds: number, source: 'first-tier'|'budget'|'hour', approximate: boolean}|null}
+ */
+export function trialFightSpan(breakdown) {
+    if (breakdown?.endedByGame !== true || !Number.isFinite(breakdown?.endedAt)) return null;
+    const end = breakdown.endedAt;
+    const plausible = (ms) => Number.isFinite(ms) && ms > 0 && ms <= TRIAL_BUDGET_MS + TRIAL_SPAN_SLACK_MS;
+    const span = (ms, source) => ({ seconds: ms / 1000, source, approximate: source === 'hour' });
+
+    const start = Number.isFinite(breakdown.fightStartMs) && breakdown.fightStartMs > 0 ? breakdown.fightStartMs : null;
+    if (start !== null && Number.isFinite(Number(breakdown.tierStarts?.[1])) && plausible(end - start)) {
+        return span(end - start, 'first-tier');
+    }
+
+    // A reading from within this trial's hour: one older than that is another trial's
+    const budget = breakdown.combatBudget;
+    if (
+        Number.isFinite(budget?.remainingMs) &&
+        Number.isFinite(budget?.at) &&
+        end - budget.at <= TRIAL_BUDGET_MS &&
+        budget.at - end <= TRIAL_SPAN_SLACK_MS
+    ) {
+        const leftAtEnd = Math.max(0, budget.remainingMs - Math.max(0, end - budget.at));
+        if (plausible(TRIAL_BUDGET_MS - leftAtEnd)) return span(TRIAL_BUDGET_MS - leftAtEnd, 'budget');
+    }
+
+    if (start !== null) {
+        const hour = Math.floor(start / HOUR_MS) * HOUR_MS;
+        if (start - hour < TRIAL_BUDGET_MS && plausible(end - hour)) return span(end - hour, 'hour');
+    }
+    return null;
+}
+
+/**
+ * A fight span as a board or report states it: `58m`, `~58m` when approximate.
+ * @param {{seconds: number, approximate: boolean}|null} span - From {@link trialFightSpan}
+ * @returns {string|null}
+ */
+export function fightSpanLabel(span) {
+    if (!span || !Number.isFinite(span.seconds) || span.seconds <= 0) return null;
+    const minutes = Math.round(span.seconds / 60);
+    const text =
+        minutes >= 60
+            ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+            : minutes >= 1
+              ? `${minutes}m`
+              : `${Math.round(span.seconds)}s`;
+    return `${span.approximate ? '~' : ''}${text}`;
+}
+
 /**
  * Which tier a trial level belongs to.
  * @param {number} level - Trial level, e.g. 140

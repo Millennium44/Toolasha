@@ -971,6 +971,8 @@ class GuildTrialDamage {
         this.wave = null;
         /** The earliest `combatStartTime` of this fight, in ms — see {@link FIGHT_SPAN_MS} */
         this.fightStartMs = null;
+        /** `{remainingMs, at}`: the combat trial's budget as `guild_updated` last stated it in progress */
+        this.combatBudget = null;
         this.lastTickAt = 0;
         this.battleId = null;
         this.active = false;
@@ -1266,6 +1268,12 @@ class GuildTrialDamage {
 
             if (combat.inProgress && !combat.allDone) {
                 this.combatInProgressSeen = true;
+                // What is left of the combat trial's hour, and when the server
+                // said so: how long the whole fight ran when tier 1 was not seen
+                // (see `trialFightSpan`)
+                if (Number.isFinite(combat.budgetRemainingMs)) {
+                    this.combatBudget = { remainingMs: combat.budgetRemainingMs, at: Date.now() };
+                }
                 return;
             }
             if (!this.combatInProgressSeen) return;
@@ -2930,6 +2938,7 @@ class GuildTrialDamage {
             combatInProgressSeen: this.combatInProgressSeen,
             wave: this.wave,
             fightStartMs: this.fightStartMs,
+            combatBudget: this.combatBudget,
             active: this.active,
             encounter: this.encounter,
             reason: this.reason,
@@ -3134,6 +3143,10 @@ class GuildTrialDamage {
         this.combatInProgressSeen = Boolean(saved.combatInProgressSeen);
         this.wave = finite(saved.wave);
         this.fightStartMs = finite(saved.fightStartMs);
+        this.combatBudget =
+            Number.isFinite(saved.combatBudget?.remainingMs) && Number.isFinite(saved.combatBudget?.at)
+                ? { remainingMs: saved.combatBudget.remainingMs, at: saved.combatBudget.at }
+                : null;
         this.active = Boolean(saved.active) && this.endedAt === null;
         this.encounter = saved.encounter ?? this.encounter;
         this.reason = saved.reason || this.reason;
@@ -3565,6 +3578,10 @@ class GuildTrialDamage {
             // When each tier started, so a trial's tier durations are exact
             tierStarts: { ...this.tierStarts },
             endedAt: this.endedAt,
+            // What a game-totals rate is divided by: the whole fight's span,
+            // from these and the ending — see `trialFightSpan`
+            fightStartMs: this.fightStartMs,
+            combatBudget: this.combatBudget ? { ...this.combatBudget } : null,
             // How each unit was identified, so a placeholder can be shown as one
             names: Object.fromEntries(Object.entries(this.unitNames).map(([index, e]) => [index, { ...e }])),
             nameCoverage: nameCoverage(this.unitNames),

@@ -52,6 +52,7 @@ import guildTrialDamage, {
     SPECTATED_TRIAL_NOTE,
 } from './guild-trial-damage.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
+import { fightSpanLabel, trialFightSpan } from './guild-trials-math.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
@@ -294,8 +295,13 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
         // Ranked by the shared board, so this table and the run-side one order
         // and share out their rows by exactly one rule. No per-second: the
         // modal states whole-trial totals, not a rate
+        // …so a rate is the total over the whole fight's span, never over the
+        // watched seconds, which would inflate a trial watched from partway
+        // through. No span, no rate — and the row's tooltip says why
+        const span = trialFightSpan(breakdown);
+        const rateNote = gameRateNote(span);
         const ranked = rankRows(
-            raw.map((row) => ({ ...row, perSecond: null })),
+            raw.map((row) => ({ ...row, perSecond: span ? row.value / span.seconds : null, rateNote })),
             seconds
         );
         const { rows, total } = ranked;
@@ -327,9 +333,10 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
                 };
             }),
             total,
-            perSecond: null,
+            perSecond: span ? total / span.seconds : null,
             seconds,
             source: 'game',
+            span,
         };
     }
 
@@ -362,6 +369,28 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
         seconds,
         source: breakdown?.source === 'spectated' ? 'stream' : null,
     };
+}
+
+/**
+ * What a game-totals row's rate is, or why it has none, for its tooltip.
+ * @param {Object|null} span - From `trialFightSpan`
+ * @returns {string}
+ */
+export function gameRateNote(span) {
+    if (!span) {
+        return (
+            'No per-second figure: the game’s end-of-trial totals state no duration, and how long the whole ' +
+            'fight ran is not known here — neither tier 1’s start, the server’s trial clock, nor the fight’s ' +
+            'start was seen.'
+        );
+    }
+    const how =
+        span.source === 'first-tier'
+            ? 'from tier 1’s start to the end'
+            : span.source === 'budget'
+              ? 'by the server’s own trial clock'
+              : 'approximate: from the top of the hour the fight began in to the end';
+    return `Per second over the whole ${fightSpanLabel(span)} fight (${how}), not over the stretch watched.`;
 }
 
 /** How long after the game ends a trial its totals are overdue: they have been seen landing 28 s after the end */
@@ -453,17 +482,26 @@ export function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) 
  * @returns {string} One line per player
  */
 export function scoreboardText(breakdown, tab = 'damage', estimate = null, modalStats = null) {
-    const { rows, total, perSecond, source } = scoreboardRows(breakdown, tab, modalStats);
+    const { rows, total, perSecond, source, span } = scoreboardRows(breakdown, tab, modalStats);
     const label = { healing: 'healing', casters: 'healing by caster', taken: 'damage taken' }[tab] || 'damage';
     const kills = tab === 'damage' ? killsByName(breakdown) : new Map();
 
     if (source === 'game') {
         if (!rows.length) return `Trial ${label}: the game's stats modal lists none.`;
-        const head = `Trial ${label} — ${formatWithSeparator(Math.round(total))} total, from the game's post-trial stats`;
+        const head =
+            `Trial ${label} — ${formatWithSeparator(Math.round(total))} total` +
+            (perSecond === null
+                ? ''
+                : `, ${formatWithSeparator(Math.round(perSecond))}/s over the ${fightSpanLabel(span)} fight`) +
+            `, from the game's post-trial stats`;
         const lines = rows.map(
             (row) =>
                 `${row.rank}. ${row.name} — ${formatWithSeparator(Math.round(row.value))}` +
-                (row.share === null ? '' : ` (${row.share.toFixed(1)}%)`) +
+                (row.share === null
+                    ? ''
+                    : ` (${row.share.toFixed(1)}%` +
+                      (row.perSecond === null ? '' : `, ${formatWithSeparator(Math.round(row.perSecond))}/s`) +
+                      ')') +
                 killsSuffix(kills.get(row.name) || 0)
         );
         return [head, ...lines].join('\n');
@@ -1137,7 +1175,7 @@ class GuildTrialScoreboard {
     _bodyHTML(breakdown, viewing = null) {
         const saved = viewing?.entry || null;
         const modalStats = saved ? modalStatsForBreakdown(breakdown, {}) : modalStatsForBreakdown(breakdown);
-        const { rows, total, perSecond, source } = scoreboardRows(breakdown, this.tab, modalStats);
+        const { rows, total, perSecond, source, span } = scoreboardRows(breakdown, this.tab, modalStats);
         const fromGame = source === 'game';
         // The by-caster view is a healing view: the same unit, notes and empty states
         const byCaster = this.tab === 'casters';
@@ -1163,8 +1201,12 @@ class GuildTrialScoreboard {
             : fromGame
               ? boardHeadHTML({
                     value: total,
-                    label: `trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats${byCaster ? ' vs by caster' : ''}`,
+                    label:
+                        `trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats` +
+                        `${byCaster ? ' vs by caster' : ''}` +
+                        (span ? ` · per second over the ${fightSpanLabel(span)} fight` : ''),
                     color: GOOD,
+                    right: perSecond === null ? null : `${formatKMB(Math.round(perSecond))}/s`,
                 })
               : boardHeadHTML({
                     value: perSecond,

@@ -3106,6 +3106,22 @@ describe('the trial ends and its figures stop moving', () => {
         expect(later.totalDamage).toBeGreaterThan(stale.totalDamage);
     });
 
+    test('the trial clock and the fight’s start ride on the breakdown, for a whole-fight rate', () => {
+        const status = (combat) => ({ guild: { currentTrialsData: JSON.stringify({ combat }) } });
+        game.wsHandlers.new_guild_battle({ ...opening(), combatStartTime: '2026-08-03T16:00:01.606Z' });
+        expect(guildTrialDamage.breakdown().fightStartMs).toBe(Date.parse('2026-08-03T16:00:01.606Z'));
+        expect(guildTrialDamage.breakdown().combatBudget).toBeNull();
+
+        vi.setSystemTime(at + 30_000);
+        game.wsHandlers.guild_updated(
+            status({ status: 'in_progress', parties: { a: { done: false } }, budgetRemainingMs: 1_200_000 })
+        );
+        expect(guildTrialDamage.breakdown().combatBudget).toEqual({ remainingMs: 1_200_000, at: at + 30_000 });
+
+        guildTrialDamage.reset();
+        expect(guildTrialDamage.breakdown().combatBudget).toBeNull();
+    });
+
     test('the guild’s own trial status ends it too, but only once seen in progress', () => {
         const status = (combat) => ({ guild: { currentTrialsData: JSON.stringify({ combat }) } });
         game.wsHandlers.new_guild_battle(opening());

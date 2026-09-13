@@ -84,6 +84,23 @@ describe('a report from the game’s own totals', () => {
         for (const line of report.split('\n')) expect(line.length).toBeLessThanOrEqual(120);
     });
 
+    test('a fight whose span is known pastes a rate over the whole of it, per player and for the party', () => {
+        const hour = Date.parse('2026-09-13T22:00:00Z');
+        const report = buildGuildReport({
+            trialName: 'Trial Hedgehog',
+            breakdown: breakdown({
+                endedByGame: true,
+                endedAt: hour + 40 * 60_000,
+                fightStartMs: hour + 5_000,
+                tierStarts: { 1: hour + 5_100 },
+            }),
+            gameStats,
+        });
+        // 1,200,000 over 39m55s — never over the 480 s the stream watched
+        expect(report).toContain('Party · 1,200,000 dmg in 40m · 501/s\n');
+        expect(report).toContain('1. Tib · 800,000 dmg · 67% · 334/s · took 400,000');
+    });
+
     test('with nothing measured the game’s totals are still the report', () => {
         const report = buildGuildReport({
             breakdown: breakdown({ players: [], support: { players: [] } }),

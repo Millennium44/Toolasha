@@ -247,6 +247,27 @@ describe('what a saved trial holds', () => {
         expect(body.breakdown.reported.Tib.damage).toBe(3100);
     });
 
+    test('a game-basis entry’s rate is over the whole fight, and its body keeps what the rate is taken from', () => {
+        const fight = {
+            fightStartMs: T0 - 5_000,
+            combatBudget: { remainingMs: 60_000, at: T0 + 500_000 },
+        };
+        const stream = buildTrialEntry({ at: T0, breakdown: thinTrialBreakdown(ended(fight)) }, true);
+        expect(stream.summary.perSecond).toBe(8.3);
+
+        const game = buildTrialEntry({ at: T0, breakdown: thinTrialBreakdown(ended({ ...fight, reported })) }, true);
+        expect(game.breakdown.fightStartMs).toBe(T0 - 5_000);
+        expect(game.breakdown.combatBudget).toEqual(fight.combatBudget);
+        // tier 1 seen at T0: 5,200 over the 605 s from its start to the end
+        expect(game.summary.perSecond).toBeCloseTo(5200 / 605, 6);
+
+        const unknown = buildTrialEntry(
+            { at: T0, breakdown: thinTrialBreakdown(ended({ reported, tierStarts: { 3: T0 } })) },
+            true
+        );
+        expect(unknown.summary.perSecond).toBeNull();
+    });
+
     test('an entry is identified by its encounter and when its first tier began', () => {
         const entry = buildTrialEntry({ at: T0, firstSeenAt: T0, breakdown: thinTrialBreakdown(trial()) }, true);
         expect(entry.id).toBe(`trial__monsters_badger_${T0}`);

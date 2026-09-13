@@ -187,7 +187,7 @@ export function boardRowHTML(row, { color = BOARD_COLORS.accent, tagHTML = '' } 
         `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
         `</div>` +
         `<div style="display:flex; gap:6px; color:${dim}; font-size:10px;">` +
-        `<span title="meas: what the plugin's own live stream measured for this player, and how far that ran from the game's reported figure">${label}${comparison}` +
+        `<span title="${row?.rateNote ? `${escapeText(row.rateNote)}&#10;&#10;` : ''}meas: what the plugin's own live stream measured for this player, and how far that ran from the game's reported figure">${label}${comparison}` +
         `${row?.detail ? ` · ${escapeText(row.detail)}` : ''}</span>` +
         `<span style="margin-left:auto;">${row?.share === null || row?.share === undefined ? '—' : `${row.share.toFixed(1)}%`}</span>` +
         `</div></div>`

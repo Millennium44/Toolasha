@@ -55,8 +55,65 @@ import {
     trialTimeLeftMs,
     trialWeekEnd,
     trialWeekStart,
+    fightSpanLabel,
+    trialFightSpan,
+    TRIAL_SPAN_SLACK_MS,
 } from './guild-trials-math.js';
 import { NOTICE_BOARD_NAME } from './guild-notice-board.fixture.js';
+
+describe('trialFightSpan: how long the whole combat fight ran', () => {
+    // The 2026-09-07 trace: tier 1 opened 5.9 s past 22:00 UTC
+    const hour = Date.parse('2026-09-13T22:00:00Z');
+    const end = hour + 58 * 60_000 + 4_000;
+    const ended = (overrides = {}) => ({ endedByGame: true, endedAt: end, tierStarts: {}, ...overrides });
+
+    test('tier 1 seen: from its own start to the end', () => {
+        const span = trialFightSpan(ended({ fightStartMs: hour + 5_890, tierStarts: { 1: hour + 6_000 } }));
+        expect(span).toEqual({ seconds: (end - hour - 5_890) / 1000, source: 'first-tier', approximate: false });
+    });
+
+    test('tier 1 not seen: the server’s own trial clock, carried forward to the end', () => {
+        // Watched from tier 10; `guild_updated` said 3 min of the hour were left, 1 min before the end
+        const span = trialFightSpan(
+            ended({
+                fightStartMs: hour + 31 * 60_000,
+                tierStarts: { 10: hour + 31 * 60_000 },
+                combatBudget: { remainingMs: 3 * 60_000, at: end - 60_000 },
+            })
+        );
+        expect(span).toEqual({ seconds: (3_600_000 - 2 * 60_000) / 1000, source: 'budget', approximate: false });
+    });
+
+    test('watched from partway, no clock: the top of the hour the combat fight began in, marked approximate', () => {
+        // The skilling trial ran the hour before in the same slot; the combat
+        // fight's own earliest tier start — 22:31 — picks 22:00, not 21:00
+        const span = trialFightSpan(ended({ fightStartMs: hour + 31 * 60_000 + 12_000, tierStarts: { 10: 1 } }));
+        expect(span).toEqual({ seconds: (end - hour) / 1000, source: 'hour', approximate: true });
+        expect(fightSpanLabel(span)).toBe('~58m');
+    });
+
+    test('a span past the hour’s budget is refused, and a budget reading from another hour too', () => {
+        // Tier start just before 22:00, end well past 23:00: no hour explains it
+        const late = ended({ fightStartMs: hour - 30_000, tierStarts: { 10: 1 }, endedAt: hour + 70 * 60_000 });
+        expect(trialFightSpan(late)).toBeNull();
+        expect(
+            trialFightSpan(
+                ended({ combatBudget: { remainingMs: 60_000, at: end - 2 * 3_600_000 }, fightStartMs: null })
+            )
+        ).toBeNull();
+        // …while the slack lets a client clock run a little past the server's hour
+        const ok = ended({ fightStartMs: hour + 30 * 60_000, endedAt: hour + 3_600_000 + TRIAL_SPAN_SLACK_MS / 2 });
+        expect(trialFightSpan(ok)?.source).toBe('hour');
+    });
+
+    test('no ending stated by the game, or nothing to start from, is no span', () => {
+        expect(trialFightSpan(ended({ endedByGame: false, fightStartMs: hour }))).toBeNull();
+        expect(trialFightSpan(ended({ endedAt: null, fightStartMs: hour }))).toBeNull();
+        expect(trialFightSpan(ended())).toBeNull();
+        expect(fightSpanLabel(null)).toBeNull();
+        expect(fightSpanLabel({ seconds: 3_604, approximate: false })).toBe('1h 0m');
+    });
+});
 
 describe('the ladder', () => {
     test('starts at level 100 and steps ten levels a tier to 300', () => {
