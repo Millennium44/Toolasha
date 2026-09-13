@@ -44,6 +44,7 @@ vi.mock('../../utils/timer-registry.js', () => ({
 
 const {
     matchPortraits,
+    matchEnemyPortraits,
     portraitName,
     meterText,
     enemyMeterText,
@@ -129,6 +130,48 @@ describe('pairing portraits with the tally', () => {
     test('nothing to match is nothing, not a crash', () => {
         expect(matchPortraits([], players)).toEqual([]);
         expect(matchPortraits(null, null)).toEqual([]);
+    });
+});
+
+describe('pairing monster tiles with the fight (B12)', () => {
+    // Slot 1 never spawned — a real shape a wave can take. Position would
+    // shift every tile after the gap onto its neighbour's data.
+    const enemies = { 0: { name: 'Rat', damage: 400, dps: 40 }, 2: { name: 'Wolf', damage: 900, dps: 90 } };
+
+    test('a missing slot does not shift a later tile onto its data', () => {
+        const units = [portrait('Rat'), portrait('Wolf')];
+        const pairs = matchEnemyPortraits(units, enemies);
+
+        expect(pairs).toHaveLength(2);
+        expect(pairs[0].enemy.name).toBe('Rat');
+        expect(pairs[0].slot).toBe('0');
+        expect(pairs[1].enemy.name).toBe('Wolf');
+        expect(pairs[1].slot).toBe('2');
+    });
+
+    test('two of the same monster are told apart by order among their own name', () => {
+        const twoVeyes = { 0: { name: 'Veyes', damage: 100 }, 1: { name: 'Veyes', damage: 200 } };
+        const pairs = matchEnemyPortraits([portrait('Veyes'), portrait('Veyes')], twoVeyes);
+
+        expect(pairs[0].enemy.damage).toBe(100);
+        expect(pairs[1].enemy.damage).toBe(200);
+    });
+
+    test('a tile whose name matches nothing in the fight gets no pair', () => {
+        expect(matchEnemyPortraits([portrait('Stranger')], enemies)).toHaveLength(0);
+    });
+
+    test('a third same-named tile with only two slots stated gets no pair', () => {
+        const pairs = matchEnemyPortraits([portrait('Veyes'), portrait('Veyes'), portrait('Veyes')], {
+            0: { name: 'Veyes', damage: 1 },
+            1: { name: 'Veyes', damage: 2 },
+        });
+        expect(pairs).toHaveLength(2);
+    });
+
+    test('nothing to match is nothing, not a crash', () => {
+        expect(matchEnemyPortraits([], enemies)).toEqual([]);
+        expect(matchEnemyPortraits(null, null)).toEqual([]);
     });
 });
 
@@ -275,6 +318,30 @@ describe('drawing on the monster tiles', () => {
         portraitDps.initialize();
 
         expect(tiles[1].querySelector('[data-toolasha-portrait-dps]')).toBeNull();
+    });
+
+    test('a monster tile drawn by name, not by raw position (B12)', () => {
+        // Slot 1 never spawned; by position the second DOM tile (a Wolf)
+        // would be read against `enemies[1]`, which does not exist, and draw
+        // nothing rather than the Wolf's own rate
+        document.body.innerHTML = '';
+        const area = document.createElement('div');
+        area.className = 'BattlePanel_monstersArea__7z1k';
+        area.appendChild(portrait('Rat'));
+        area.appendChild(portrait('Wolf'));
+        document.body.appendChild(area);
+        const tiles = [...area.children];
+
+        opts.players = [];
+        opts.fight = {
+            players: {},
+            enemies: { 0: { name: 'Rat', damage: 400, dps: 40 }, 2: { name: 'Wolf', damage: 900, dps: 90 } },
+        };
+
+        portraitDps.initialize();
+
+        expect(tiles[0].textContent).toContain('40/s');
+        expect(tiles[1].textContent).toContain('90/s');
     });
 });
 

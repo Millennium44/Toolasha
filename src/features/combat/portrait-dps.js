@@ -121,6 +121,59 @@ export function matchPortraits(units, players) {
 }
 
 /**
+ * Pair each monster tile with the fight-scope row belonging to the monster on
+ * it.
+ *
+ * `fight.enemies` is keyed by slot, the game's own spawn order, and the
+ * obvious join is a tile's position in that same order. It is also wrong the
+ * moment a slot has no tile — omitted, or drawn out of order — because every
+ * later position then means a different monster than the row paired with
+ * it, and the mismatch draws silently: a wrong rate, an invented
+ * time-to-kill, an enrage clock for a monster nobody is looking at.
+ *
+ * Matched by name instead, in slot order among tiles that share one — two
+ * Eyes side by side are told apart by which is first among Eyes in the DOM
+ * against which is first among the fight's Eye-named slots, so an omitted
+ * slot simply has no tile to consume rather than shifting every later one.
+ * A tile whose name matches nothing in the fight gets no meter rather than a
+ * neighbour's.
+ *
+ * @param {Array<HTMLElement>} units - Monster tiles, in DOM order
+ * @param {Object} enemies - From `battleBreakdown().enemies`, keyed by slot
+ * @returns {Array<{unit: HTMLElement, slot: string, enemy: Object}>} Only the matches, in DOM order
+ */
+export function matchEnemyPortraits(units, enemies) {
+    const bySlot = enemies || {};
+    const slots = Object.keys(bySlot).sort((a, b) => Number(a) - Number(b));
+
+    // Every slot's name, grouped and kept in slot order — the only ordering
+    // the fight's own data states
+    const byName = new Map();
+    for (const slot of slots) {
+        const name = bySlot[slot]?.name;
+        if (!name) continue;
+        if (!byName.has(name)) byName.set(name, []);
+        byName.get(name).push(slot);
+    }
+
+    const consumed = new Map();
+    const pairs = [];
+    for (const unit of units || []) {
+        const name = portraitName(unit);
+        const candidates = name ? byName.get(name) : null;
+        if (!candidates) continue;
+
+        const used = consumed.get(name) || 0;
+        const slot = candidates[used];
+        if (slot === undefined) continue;
+
+        consumed.set(name, used + 1);
+        pairs.push({ unit, slot, enemy: bySlot[slot] });
+    }
+    return pairs;
+}
+
+/**
  * What a meter says.
  *
  * DPS first because it is the comparable figure — total damage rewards whoever
@@ -503,30 +556,27 @@ class PortraitDps {
         const area = this._ownArea(MONSTERS_AREA);
         if (!area) return;
 
-        // Monsters are joined by slot rather than by name, which is the opposite
-        // of the players and right for the opposite reason: two of the same
-        // monster are two different fights, and their names cannot tell them
-        // apart. A slot is stable for the length of a battle, and the tiles are
-        // rebuilt when it ends.
+        // Matched by name in slot order, not by raw DOM position — see
+        // `matchEnemyPortraits` for why a missing or reordered tile makes
+        // position the wrong join. Two of the same monster are still told
+        // apart, by which is first in the DOM against which is first in the
+        // fight's own slot order.
         const units = [...area.querySelectorAll(UNIT)];
-        const wanted = new Set();
+        const pairs = matchEnemyPortraits(units, fight.enemies);
+        const wanted = new Set(pairs.map((pair) => pair.unit));
 
-        // One figure for the whole wave, drawn on the topmost tile
+        // One figure for the whole wave, drawn on the topmost matched tile
         const waveSeconds = settings.waveClear ? waveClearSeconds(fight.enemies) : null;
         const outgoing = settings.enemyOutgoing ? battleTakenBreakdown().enemies : null;
         const now = Date.now();
 
-        units.forEach((unit, index) => {
-            const enemy = fight.enemies?.[index];
-            if (!enemy) return;
-
-            wanted.add(unit);
+        pairs.forEach(({ unit, slot, enemy }, index) => {
             const extras = {
                 showTimeToKill: settings.timeToKill,
                 showWaveClear: settings.waveClear,
                 waveSeconds: index === 0 ? waveSeconds : null,
                 showOutgoing: settings.enemyOutgoing,
-                outgoingDps: outgoing?.[index]?.dps ?? null,
+                outgoingDps: outgoing?.[slot]?.dps ?? null,
                 showEnrage: settings.enrage,
                 now,
             };
