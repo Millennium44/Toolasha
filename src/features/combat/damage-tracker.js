@@ -48,9 +48,23 @@ import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js
 import { ownWeaponHrid } from '../../utils/class-weapon.js';
 import { abilityActionLabel } from '../../utils/damage-board.js';
 import { newLabyrinthSessionState, noteLabyrinthUpdate, labyrinthSessionKey } from '../../utils/labyrinth-session.js';
+import {
+    newReflectState,
+    noteReflectBuffs,
+    noteReflectCasts,
+    noteReflectEvents,
+    reflectingFor,
+    reflectSummary,
+} from '../../utils/reflect-state.js';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
+
+/**
+ * Who has Spike Shell or Retribution up — see `utils/reflect-state.js`. Without
+ * it a reflect is a hit filed under whatever the tank was preparing.
+ */
+let reflect = newReflectState();
 
 /** Player index → damage, hits, crits, misses, and the same by ability */
 let tally = {};
@@ -193,6 +207,7 @@ export function setFilterNonDamaging(value) {
 /** Forget the run and measure again from here */
 export function resetDamageTracker() {
     state = newAttributionState();
+    reflect = newReflectState();
     sessionKey = null;
     tally = {};
     castLogs = {};
@@ -213,6 +228,17 @@ export function resetDamageTracker() {
  */
 export function manaSamples() {
     return manaSeries;
+}
+
+/**
+ * Which source said each slot's reflect was up, and how much reflect damage each
+ * source produced — the buff-map reading has never been checked against a live
+ * personal payload, so this is how it gets checked.
+ *
+ * @returns {{sources: Object, buffMapSlots: string[], casts: Object, damage: {buffMap: number, castWindow: number}}}
+ */
+export function reflectDiagnostics() {
+    return reflectSummary(reflect);
 }
 
 /**
@@ -364,8 +390,8 @@ export function damageBreakdown() {
             classTag: classes[index] || null,
             damage: entry.damage,
             // The part of `damage` no swing counter confirmed — a bleed
-            // ticking, thorns firing. Inside the total, named separately so a
-            // breakdown can say "incl. X DoT/reflect"
+            // ticking. Inside the total, named separately so a breakdown can
+            // say "incl. X DoT". A detected reflect is its own ability row
             dotDamage: entry.dotDamage || 0,
             // Rounded here and nowhere earlier: a tick shared between the
             // players present carries a fractional swing, and the ledger keeps
@@ -582,6 +608,16 @@ export default {
                 noteActions(state, players);
                 noteCasts(players);
                 noteSheets(players);
+                noteReflectBuffs(reflect, players);
+
+                // Player health is the reflect rung's "hurt this tick" baseline.
+                // Seeded where stated, and a slot not stated is dropped: a stale
+                // reading from another battle's occupant reads as a hit
+                state.playersHP = {};
+                for (const [index, player] of Object.entries(players)) {
+                    const hp = Number(player?.currentHitpoints ?? player?.combatDetails?.currentHitpoints);
+                    if (Number.isFinite(hp)) state.playersHP[index] = hp;
+                }
 
                 // Rebuilt rather than merged, for the same reason the monster map
                 // below is: an index is a slot in this fight. Every battle names
@@ -673,6 +709,7 @@ export default {
                         state.monstersMaxHP = {};
                         state.dmgCounter = {};
                         state.critCounter = {};
+                        state.playersHP = {};
                     }
 
                     // This-fight-only totals belong to the battle that just ended,
@@ -735,7 +772,20 @@ export default {
                     if (Number.isFinite(mana)) pushManaSample((manaSeries[index] ||= []), now, mana);
                 }
 
-                const events = attributeTick(data, state);
+                // A map on this tick is what is on the unit now, so it is read
+                // before the thorns it may explain
+                const abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap;
+                noteReflectBuffs(reflect, data?.pMap);
+                const events = attributeTick(data, state, {
+                    // A hit landing while a buff or heal is prepared is the
+                    // auto-attack before it, not the buff's damage
+                    abilityDetailMap,
+                    // Health lost on a tick nobody can be credited with is still
+                    // lost; it goes to the enemy rows here and nowhere per player
+                    unattributed: true,
+                    reflecting: reflectingFor(reflect, now, abilityDetailMap),
+                });
+                noteReflectEvents(reflect, events);
                 const nameOf = (index) => monsters[index]?.name || null;
                 foldEvents(tally, events, { filterNonDamaging, nameOf });
                 foldEnemies(enemyTally, events, nameOf);
@@ -766,6 +816,7 @@ export default {
                 // fight to one ability — and to the wrong one.
                 noteActions(state, data?.pMap);
                 noteCasts(data?.pMap);
+                noteReflectCasts(reflect, data?.pMap, now);
 
                 // Only the gap between two ticks of one run is time spent
                 // fighting; the first tick after a break contributes none

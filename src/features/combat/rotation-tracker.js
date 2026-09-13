@@ -40,6 +40,7 @@
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { newAttributionState, noteActions, attributeTick } from '../../utils/damage-attribution.js';
+import { newReflectState, noteReflectBuffs, noteReflectCasts, reflectingFor } from '../../utils/reflect-state.js';
 import {
     newRotationState,
     noteRotationKit,
@@ -51,6 +52,9 @@ import {
 
 /** The counters this tick is measured against — this module's own, never shared */
 let state = newAttributionState();
+
+/** Who has a reflect up, so thorns land on the reflect's row rather than a swing's */
+let reflect = newReflectState();
 
 /** Cleared at every battle: what is happening in the fight on screen */
 let fight = newRotationState();
@@ -107,6 +111,7 @@ function seedKit(kit = equippedKit()) {
 /** Forget everything and measure again from here */
 export function resetRotationAudit() {
     state = newAttributionState();
+    reflect = newReflectState();
     fight = newRotationState();
     session = newRotationState();
     history = [];
@@ -173,6 +178,15 @@ export function startRotationTracker() {
             // already known is lost by starting fresh.
             state.party = {};
             noteActions(state, players);
+            noteReflectBuffs(reflect, players);
+
+            // The reflect rung's "hurt this tick" baseline, per battle — see
+            // `damage-tracker.js`
+            state.playersHP = {};
+            for (const [index, player] of Object.entries(players)) {
+                const hp = Number(player?.currentHitpoints ?? player?.combatDetails?.currentHitpoints);
+                if (Number.isFinite(hp)) state.playersHP[index] = hp;
+            }
 
             // Seed this battle's monster baselines from the one message that
             // states them before anything has touched them — otherwise the
@@ -229,9 +243,13 @@ export function startRotationTracker() {
                     state.monstersMaxHP = {};
                     state.dmgCounter = {};
                     state.critCounter = {};
+                    state.playersHP = {};
                 }
                 battleSeeded = false;
             }
+
+            const now = Date.now();
+            noteReflectBuffs(reflect, data?.pMap);
 
             if (ownIndex === null) return;
             const player = data?.pMap?.[ownIndex];
@@ -241,10 +259,15 @@ export function startRotationTracker() {
             // overwrites it with what is being prepared for the next one — the
             // same ordering the damage tracker keeps, and for the same reason
             const action = state.actions?.[ownIndex] || 'idle';
-            const events = attributeTick(data, state).filter((event) => event.playerIndex === ownIndex);
+            const map = detailMap();
+            const events = attributeTick(data, state, {
+                abilityDetailMap: map,
+                reflecting: reflectingFor(reflect, now, map),
+            }).filter((event) => event.playerIndex === ownIndex);
             noteActions(state, data?.pMap);
+            noteReflectCasts(reflect, data?.pMap, now);
 
-            const tick = { at: Date.now(), player, action, events, detailMap: detailMap() };
+            const tick = { at: now, player, action, events, detailMap: map };
             foldRotationTick(fight, tick);
             foldRotationTick(session, tick);
         } catch (error) {

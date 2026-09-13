@@ -70,7 +70,7 @@ export const STARVED_SHARE = 0.4;
 /** Below this many measured seconds, every share is one lucky fight rather than a figure */
 export const MIN_SECONDS = 3;
 
-/** The pseudo-ability damage-over-time and reflect arrive under; never a row */
+/** The pseudo-ability damage-over-time arrives under; never a row. A detected reflect carries its hrid */
 export const DOT_ACTION = 'dot';
 
 /**
@@ -372,6 +372,9 @@ export function foldRotationTick(state, { at, player, action, events, detailMap 
         const row = abilityRow(state, event.action, detailMap);
         if (event.isMiss) row.misses += 1;
         else if (event.isHeal) row.healing += Math.abs(amount);
+        // Thorns are the reflect's output with no swing of its own: they count
+        // towards output per cast and per mana, never towards hits
+        else if (event.isReflect) row.damage += amount;
         else {
             row.damage += amount;
             row.hits += 1;

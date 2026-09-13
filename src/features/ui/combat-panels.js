@@ -718,7 +718,7 @@ function dotNote(row) {
     const dot = Number(row?.dotDamage) || 0;
     if (!(dot > 0)) return '';
     const share = row.damage > 0 ? ` (${((dot / row.damage) * 100).toFixed(1)}% of it)` : '';
-    return `Damage incl. ${formatKMB(dot)} DoT/reflect${share} — no swing, crit or ability behind it.\n`;
+    return `Damage incl. ${formatKMB(dot)} damage-over-time${share} — no swing, crit or ability behind it.\n`;
 }
 
 /**

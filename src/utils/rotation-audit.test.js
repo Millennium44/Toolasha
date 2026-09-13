@@ -491,3 +491,32 @@ describe('the per-fight history', () => {
         expect(record.manaRestored).toBe(100);
     });
 });
+
+describe('reflect output', () => {
+    const SPIKE = '/abilities/spike_shell';
+    const SPIKE_DETAILS = { ...DETAILS, [SPIKE]: { manaCost: 60, cooldownDuration: 30e9 } };
+
+    test('thorns count towards the reflect’s output per cast, never towards its hits', () => {
+        const state = newRotationState();
+        noteRotationFight(state);
+        let attacks = 0;
+        for (let index = 0; index < 10; index += 1) {
+            // One cast of Spike Shell on the first tick, thorns on three later ones
+            if (index === 1) attacks += 1;
+            foldRotationTick(state, {
+                at: START + index * 500,
+                player: { cMP: 900, mMP: 1000, atkCounter: attacks },
+                action: index === 1 ? SPIKE : 'auto',
+                events: [3, 5, 7].includes(index) ? [{ action: SPIKE, amount: 120, isReflect: true, weight: 1 }] : [],
+                detailMap: SPIKE_DETAILS,
+            });
+        }
+
+        const row = summariseRotation(state).abilities.find((entry) => entry.hrid === SPIKE);
+        expect(row.casts).toBe(1);
+        expect(row.damage).toBe(360);
+        expect(row.hits).toBe(0);
+        expect(row.outputPerCast).toBe(360);
+        expect(row.damagePerMana).toBe(6);
+    });
+});

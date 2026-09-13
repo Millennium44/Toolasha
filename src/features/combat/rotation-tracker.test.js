@@ -87,7 +87,18 @@ function tick(index) {
 beforeEach(() => {
     game.name = 'Me';
     game.characterData = null;
-    game.clientData = { abilityDetailMap: { [CHEAP]: { manaCost: 10, cooldownDuration: 2e9 } } };
+    // A damaging effect stated, as real game data always states one: the tracker
+    // hands this map to the engine, which files a hit landing during an ability
+    // that states no damage under auto attack
+    game.clientData = {
+        abilityDetailMap: {
+            [CHEAP]: {
+                manaCost: 10,
+                cooldownDuration: 2e9,
+                abilityEffects: [{ effectType: '/ability_effect_types/damage', targetType: 'enemy' }],
+            },
+        },
+    };
     game.handlers = new Map();
     game.socket = new Map();
     vi.useFakeTimers();
@@ -331,5 +342,41 @@ describe('the per-fight history', () => {
         stopRotationTracker();
 
         expect(rotationAudit().history).toEqual([]);
+    });
+});
+
+describe('a reflect on your own bar', () => {
+    const SPIKE = '/abilities/spike_shell';
+
+    test('thorns after a Spike Shell cast land on its row as output, not hits', () => {
+        const start = new Date('2026-08-23T00:00:00Z').getTime();
+        emit('new_battle', {
+            players: {
+                1: {
+                    name: 'Me',
+                    currentHitpoints: 1000,
+                    isPreparingAutoAttack: true,
+                    combatDetails: { combatAbilities: [{ abilityHrid: SPIKE }] },
+                },
+                2: { name: 'Ally', currentHitpoints: 1000 },
+            },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 5000 }, currentHitpoints: 5000 } },
+        });
+        vi.setSystemTime(start + 500);
+        emit('battle_updated', {
+            battleId: 'b1',
+            pMap: { 1: { cHP: 1000, cMP: 500, mMP: 1000, atkCounter: 1, abilityHrid: SPIKE } },
+            mMap: {},
+        });
+        vi.setSystemTime(start + 4000);
+        emit('battle_updated', {
+            battleId: 'b1',
+            pMap: { 1: { cHP: 940, cMP: 500, mMP: 1000, atkCounter: 1 }, 2: { cHP: 1000 } },
+            mMap: { 0: { cHP: 4880, dmgCounter: 1, mHP: 5000, atkCounter: 1 } },
+        });
+
+        const row = rotationAudit().fight.abilities.find((entry) => entry.hrid === SPIKE);
+        expect(row.damage).toBe(120);
+        expect(row.hits).toBe(0);
     });
 });

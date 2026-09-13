@@ -342,7 +342,7 @@ function drawPerPlayer(container, breakdown) {
         'The game attributes nothing, so the caster is worked out from attack counters, then presence, ' +
         'then whose mana fell — an equal split only in a crowd nothing else can separate.\n' +
         (dot > 0
-            ? `Includes ${formatLargeNumber(Math.round(dot))} of DoT/reflect — health lost with no hit ` +
+            ? `Includes ${formatLargeNumber(Math.round(dot))} of damage-over-time — health lost with no hit ` +
               'counter behind it, so it moves the damage and not the hit rate.\n'
             : '') +
         'Double-click for the breakdown by ability.';

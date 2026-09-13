@@ -37,6 +37,24 @@ const ABILITIES = vi.hoisted(() => ({
             },
         ],
     },
+    '/abilities/spike_shell': {
+        abilityEffects: [
+            {
+                targetType: 'self',
+                effectType: '/ability_effect_types/buff',
+                buffs: [{ uniqueHrid: '/buff_uniques/spike_shell', typeHrid: '/buff_types/thorns', duration: 30e9 }],
+            },
+        ],
+    },
+    '/abilities/toughness': {
+        abilityEffects: [
+            {
+                targetType: 'self',
+                effectType: '/ability_effect_types/buff',
+                buffs: [{ uniqueHrid: '/buff_uniques/toughness', typeHrid: '/buff_types/armor', duration: 20e9 }],
+            },
+        ],
+    },
 }));
 
 /** Enough of the item map for a weapon passive to be resolved to its family */
@@ -520,5 +538,144 @@ describe('the class read off a run', () => {
             monsters: { 0: { name: 'Eye' } },
         });
         expect(runClasses()).toEqual({});
+    });
+});
+
+/**
+ * The attribution engine's opt-in inputs, as the tracker feeds them: game data
+ * for the buff-cast relabel, and a reflect source so a tank's thorns become the
+ * reflect's own ability row instead of hits under whatever was being prepared.
+ */
+describe('the engine as the tracker wires it', () => {
+    const SPIKE = '/abilities/spike_shell';
+    const START = Date.parse('2026-08-03T01:00:00Z');
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(START);
+        tracker.default.initialize();
+        tracker.setFilterNonDamaging(false);
+    });
+
+    afterEach(() => {
+        tracker.default.cleanup();
+        vi.useRealTimers();
+    });
+
+    /** A tank (slot 0) and a damage dealer (slot 1) against one monster */
+    const announce = (tank = {}) =>
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: { name: 'Tank', currentHitpoints: 1000, isPreparingAutoAttack: true, ...tank },
+                1: { name: 'Dps', currentHitpoints: 1000, isPreparingAutoAttack: true },
+            },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 5000 }, currentHitpoints: 5000 } },
+        });
+
+    const at = (ms) => vi.setSystemTime(START + ms);
+
+    /**
+     * The thorns shape: a monster attacks, the tank loses health and does not
+     * swing, and the monster loses health with its hit counter rising
+     */
+    const thorns = (tankHP, monsterHP, dmg, pMap = {}) =>
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { cHP: tankHP, atkCounter: 5, ...pMap } },
+            mMap: { 0: { cHP: monsterHP, dmgCounter: dmg, mHP: 5000, atkCounter: dmg } },
+        });
+
+    const abilityRow = (hrid) =>
+        damageBreakdown()
+            .players.find((row) => row.index === '0')
+            ?.abilities.find((a) => a.action === hrid);
+
+    test('a remembered Spike Shell cast turns thorns into its own row, with no hit', () => {
+        announce();
+        at(100);
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { cHP: 1000, atkCounter: 5, abilityHrid: SPIKE } },
+            mMap: {},
+        });
+        at(5000);
+        thorns(950, 4900, 1);
+
+        const row = abilityRow(SPIKE);
+        expect(row?.damage).toBe(100);
+        expect(row?.hits).toBe(0);
+        expect(damageBreakdown().players.find((p) => p.index === '0').hits).toBe(0);
+        expect(tracker.reflectDiagnostics().sources['0']).toBe('castWindow');
+        expect(tracker.reflectDiagnostics().damage.castWindow).toBe(100);
+    });
+
+    test('past the window the same shape is a swing again', () => {
+        announce();
+        at(100);
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { cHP: 1000, atkCounter: 5, abilityHrid: SPIKE } },
+            mMap: {},
+        });
+        at(40_000);
+        thorns(950, 4900, 1, { isAutoAtk: true });
+
+        expect(abilityRow(SPIKE)).toBeUndefined();
+        expect(damageBreakdown().players.find((p) => p.index === '0').hits).toBe(1);
+    });
+
+    test('a buff map stated by new_battle is read instead, and says so', () => {
+        announce({
+            combatBuffMap: {
+                '/buff_uniques/spike_shell': {
+                    uniqueHrid: '/buff_uniques/spike_shell',
+                    duration: 30e9,
+                    startTime: new Date(START).toISOString(),
+                },
+            },
+        });
+        at(5000);
+        thorns(950, 4900, 1);
+
+        expect(abilityRow(SPIKE)?.damage).toBe(100);
+        expect(tracker.reflectDiagnostics().sources['0']).toBe('buffMap');
+        expect(tracker.reflectDiagnostics().damage.buffMap).toBe(100);
+        expect(tracker.reflectDiagnostics().buffMapSlots).toEqual(['0']);
+    });
+
+    test('player health is seeded from new_battle, so the first thorns of a wave count', () => {
+        // Without the seed the tank's first reading is a baseline, not "hurt"
+        announce({
+            combatBuffMap: {
+                '/buff_uniques/spike_shell': { uniqueHrid: '/buff_uniques/spike_shell', duration: 30e9 },
+            },
+        });
+        at(1000);
+        thorns(990, 4950, 1);
+        expect(abilityRow(SPIKE)?.damage).toBe(50);
+    });
+
+    test('a hit landing while a buff is prepared is filed under auto attack', () => {
+        announce({ isPreparingAutoAttack: false, preparingAbilityHrid: '/abilities/toughness' });
+        at(1000);
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 6 } },
+            mMap: { 0: { cHP: 4800, dmgCounter: 1, mHP: 5000 } },
+        });
+        // One more tick so the swing counter has a baseline, then the hit
+        at(1500);
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 7 } },
+            mMap: { 0: { cHP: 4600, dmgCounter: 2, mHP: 5000 } },
+        });
+
+        const actions = damageBreakdown()
+            .players.find((p) => p.index === '0')
+            .abilities.map((a) => a.action);
+        expect(actions).toContain('auto');
+        expect(actions).not.toContain('/abilities/toughness');
     });
 });
