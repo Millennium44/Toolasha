@@ -9,6 +9,7 @@ import {
     isDamagingAction,
     foldEnemies,
     foldTeam,
+    REFLECT_ACTION,
     UNATTRIBUTED_ACTION,
 } from './damage-attribution.js';
 
@@ -939,6 +940,139 @@ describe('damage nobody could be credited with', () => {
         expect(team).toEqual({ damage: 1_250, attributed: 1_000, unattributed: 250, unattributedEvents: 1 });
         const rows = Object.values(players).reduce((sum, row) => sum + row.damage, 0);
         expect(rows).toBeCloseTo(team.attributed, 9);
+    });
+});
+
+describe('reflect', () => {
+    const SHELL = '/abilities/spike_shell';
+    /** A player entry: health, attack counter */
+    const unit = (cHP, atkCounter = 0) => ({ cHP, cMP: 50, atkCounter });
+    const crowd = (count, hp = 100) => Object.fromEntries([...Array(count)].map((_, index) => [index, unit(hp)]));
+
+    test('a tank struck while their shell is up owns their thorns, labelled by the ability', () => {
+        // A thorns tick moves the monster's hit counter: without buff state it
+        // is filed as a swing under whatever the tank was preparing
+        const state = newAttributionState();
+        noteActions(state, { 2: { isAutoAtk: true } });
+        attributeTick({ pMap: { 2: unit(900, 5) }, mMap: { 0: monster(10_000, 1) } }, state);
+
+        const events = attributeTick({ pMap: { 2: unit(850, 5) }, mMap: { 0: monster(9_880, 2) } }, state, {
+            reflecting: (index) => (index === '2' ? SHELL : null),
+        });
+
+        expect(events).toEqual([
+            expect.objectContaining({ playerIndex: '2', amount: 120, isReflect: true, isDot: false, action: SHELL }),
+        ]);
+        const tally = foldEvents({}, events);
+        expect(tally['2']).toMatchObject({ damage: 120, hits: 0, crits: 0, misses: 0, dotDamage: 0 });
+        expect(tally['2'].byAbility[SHELL].damage).toBe(120);
+        expect(foldEnemies({}, events, () => 'Rat').Rat).toMatchObject({ damage: 120, hits: 0 });
+    });
+
+    test('without buff state the same tick is the swing it always was', () => {
+        const state = newAttributionState();
+        noteActions(state, { 2: { isAutoAtk: true } });
+        attributeTick({ pMap: { 2: unit(900, 5) }, mMap: { 0: monster(10_000, 1) } }, state);
+
+        const [event] = attributeTick({ pMap: { 2: unit(850, 5) }, mMap: { 0: monster(9_880, 2) } }, state);
+        expect(event).toMatchObject({ action: 'auto', isDot: false });
+        expect(event.isReflect).toBeUndefined();
+    });
+
+    test('a tank who swung on the tick, or was not hurt, is swinging', () => {
+        const reflecting = new Set(['2']);
+        const swinging = newAttributionState();
+        noteActions(swinging, { 2: { isAutoAtk: true } });
+        attributeTick({ pMap: { 2: unit(900, 5) }, mMap: { 0: monster(10_000, 1) } }, swinging);
+        const [swing] = attributeTick({ pMap: { 2: unit(850, 6) }, mMap: { 0: monster(9_880, 2) } }, swinging, {
+            reflecting,
+        });
+
+        const unhurt = newAttributionState();
+        noteActions(unhurt, { 2: { isAutoAtk: true } });
+        attributeTick({ pMap: { 2: unit(900, 5) }, mMap: { 0: monster(10_000, 1) } }, unhurt);
+        const [hit] = attributeTick({ pMap: { 2: unit(900, 5) }, mMap: { 0: monster(9_880, 2) } }, unhurt, {
+            reflecting,
+        });
+
+        expect(swing.action).toBe('auto');
+        expect(hit.action).toBe('auto');
+    });
+
+    test('a bleed tick stays a bleed', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 2: unit(900) }, mMap: { 0: monster(10_000, 1) } }, state);
+        const [event] = attributeTick({ pMap: { 2: unit(850) }, mMap: { 0: monster(9_880, 1) } }, state, {
+            reflecting: { 2: SHELL },
+        });
+
+        expect(event).toMatchObject({ isDot: true, action: 'dot' });
+    });
+
+    test('a set names no ability, so the generic label is used', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 2: unit(900) }, mMap: { 0: monster(10_000, 1) } }, state);
+        const [event] = attributeTick({ pMap: { 2: unit(850) }, mMap: { 0: monster(9_880, 2) } }, state, {
+            reflecting: new Set([2]),
+        });
+
+        expect(event.action).toBe(REFLECT_ACTION);
+    });
+
+    describe('on a spectated trial', () => {
+        const trial = (reflecting) => ({ soloFallback: false, reflecting });
+
+        test('one struck reflector owns a crowd tick outright', () => {
+            const state = newAttributionState();
+            attributeTick({ pMap: crowd(20), mMap: { 0: monster(10_000, 1) } }, state, trial());
+
+            const struck = { ...crowd(20), 7: unit(60) };
+            const events = attributeTick(
+                { pMap: struck, mMap: { 0: monster(9_500, 2) } },
+                state,
+                trial(new Map([[7, SHELL]]))
+            );
+
+            expect(events).toEqual([
+                expect.objectContaining({ playerIndex: '7', amount: 500, action: SHELL, weight: 1 }),
+            ]);
+        });
+
+        test('two struck reflectors separate nobody', () => {
+            const state = newAttributionState();
+            attributeTick({ pMap: crowd(20), mMap: { 0: monster(10_000, 1) } }, state, trial());
+
+            const struck = { ...crowd(20), 7: unit(60), 9: unit(70) };
+            const { actors, shared } = findActors(struck, state, trial({ 7: SHELL, 9: SHELL }));
+            expect(shared).toBe(true);
+            expect(actors).toHaveLength(20);
+        });
+
+        test('a reflector who was not struck is not the source', () => {
+            const state = newAttributionState();
+            attributeTick({ pMap: crowd(20), mMap: { 0: monster(10_000, 1) } }, state, trial());
+
+            const { shared } = findActors({ ...crowd(20), 4: unit(60) }, state, trial({ 7: SHELL }));
+            expect(shared).toBe(true);
+        });
+
+        test('it settles a small collision too', () => {
+            const state = newAttributionState();
+            attributeTick({ pMap: crowd(2), mMap: { 0: monster(10_000, 1) } }, state, trial());
+
+            expect(findActors({ 0: unit(100), 1: unit(40) }, state, trial({ 1: SHELL }))).toEqual({
+                actors: ['1'],
+                shared: false,
+            });
+        });
+
+        test('and without buff state a struck tank in a crowd is split as before', () => {
+            const state = newAttributionState();
+            attributeTick({ pMap: crowd(20), mMap: { 0: monster(10_000, 1) } }, state, trial());
+
+            const { shared } = findActors({ ...crowd(20), 7: unit(60) }, state, trial());
+            expect(shared).toBe(true);
+        });
     });
 });
 

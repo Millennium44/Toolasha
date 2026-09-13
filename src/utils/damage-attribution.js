@@ -78,14 +78,23 @@
  * ## Health that fell without a counter is still damage
  *
  * A hit is `dmgCounter` rising, and everything else used to be discarded. A
- * bleed tick and a thorns reflect move a monster's health without moving its
- * hit counter, so every point of it fell out of the per-player tables while
+ * bleed tick moves a monster's health without moving its hit counter, so every
+ * point of it fell out of the per-player tables while
  * still showing up in the party total measured off the boss bar — the two
  * disagreed by exactly the damage-over-time volume. Those ticks are now their
  * own event class (`isDot`), attributed by the same rungs as a hit and folded
  * into a `dotDamage` subtotal that rides *inside* `damage`, so every total that
  * already existed is now right and the breakdown can still name the share.
  * Hit, miss and crit counts do not move for them: a bleed is not a swing.
+ *
+ * ## Thorns do move the hit counter
+ *
+ * This file once filed reflect with bleeds. Measured, it is not one: on every
+ * tick where a monster attacked, the players present were hurt and none of them
+ * swung, the monster's `dmgCounter` rose for the health it lost — 46 of 46 on
+ * the five-player run, 1,381 of 1,381 on a 57-player trial. So a reflect reads
+ * as a hit, filed under whatever the tank was preparing, and only the caller's
+ * buff state can tell it apart: see the `reflecting` option.
  *
  * ## A collision too big to adjudicate is split, not awarded
  *
@@ -130,6 +139,8 @@ export function newAttributionState() {
     return {
         playersMP: {},
         playersAtk: {},
+        // Each player's last health, so "hurt this tick" is known for the reflect rung
+        playersHP: {},
         party: {},
         lastSwing: null,
         monstersHP: {},
@@ -241,17 +252,31 @@ export const COLLISION_SPLIT_THRESHOLD = 3;
  *   on a spectated trial the last lone riser can be anyone in a 57-slot wave and is usually not
  *   in the tick at all, so there the tick is split among those present and a tick nobody is
  *   present in credits nobody
- * @returns {{actors: string[], shared: boolean}} The players the tick belongs to, and whether
- *   it is being divided between them rather than owned by one
+ * @param {Function|Map|Set|Object} [options.reflecting] - Which players have a reflect (Spike
+ *   Shell, Retribution) up this tick: `(index, player) => hrid|true|null`, or a Map, Set or object
+ *   keyed by player index. When exactly one present player has one up and lost health this tick,
+ *   they own a tick nothing above resolved, whatever the crowd size — thorns fire only when
+ *   their wearer is struck, a causal link a crowd does not dilute. Omitted, nothing changes
+ * @returns {{actors: string[], shared: boolean, hurt: Set<string>, swung: Set<string>}} The
+ *   players the tick belongs to, whether it is divided between them, and who lost health and who
+ *   swung this tick
  */
-export function findActors(
+function resolveActors(
     pMap,
     state,
-    { soloFallback = true, collisionThreshold = COLLISION_SPLIT_THRESHOLD, lastSwingFallback = soloFallback } = {}
+    {
+        soloFallback = true,
+        collisionThreshold = COLLISION_SPLIT_THRESHOLD,
+        lastSwingFallback = soloFallback,
+        reflecting,
+    } = {}
 ) {
     const indices = Object.keys(pMap || {});
     const swung = [];
     const spent = [];
+    const hurt = new Set();
+    // A state built before this field existed, or reset field by field
+    const health = (state.playersHP ||= {});
 
     for (const index of indices) {
         const player = pMap[index];
@@ -269,9 +294,18 @@ export function findActors(
             if (before !== undefined && mana < before) spent.push(index);
             state.playersMP[index] = mana;
         }
+
+        const hp = Number(player?.cHP ?? player?.currentHitpoints);
+        if (Number.isFinite(hp)) {
+            if (health[index] !== undefined && hp < health[index]) hurt.add(index);
+            health[index] = hp;
+        }
     }
 
-    const one = (index) => ({ actors: [index], shared: false });
+    const acted = { hurt, swung: new Set(swung) };
+    const one = (index) => ({ actors: [index], shared: false, ...acted });
+    const split = () => ({ actors: [...indices], shared: true, ...acted });
+    const none = () => ({ actors: [], shared: false, ...acted });
 
     // `atkCounter` is what it sounds like, and it almost always names one person:
     // in a five-character party, two of them swung on the same tick three times
@@ -333,23 +367,48 @@ export function findActors(
         return one(Object.keys(state.party)[0]);
     }
 
+    // Thorns fire only when their wearer is struck, so one present player with a
+    // reflect up who lost health this tick is the source of what nothing above
+    // resolved — a causal link rather than a statistical one, which is why it is
+    // not capped by the crowd size the counter and mana rungs are. KikiMeter's
+    // trial rung (30/08). Needs the caller's buff state; without it this is inert.
+    if (reflecting && indices.length > 1) {
+        const reflectors = indices.filter((index) => hurt.has(index) && reflectOf(reflecting, index, pMap[index]));
+        if (reflectors.length === 1) return one(reflectors[0]);
+    }
+
     // A crowd nothing could separate. Splitting it equally is wrong about every
     // individual and right about the shape: the alternative awards the whole
     // thing to one slot for no reason a player could point at.
-    if (indices.length > collisionThreshold) return { actors: [...indices], shared: true };
+    if (indices.length > collisionThreshold) return split();
 
     // Without a known party the last swinger is not a guess about a handful of
     // people: on a 150,642-tick trial, 261 of the 268 small unresolved damage
     // ticks went to a `lastSwing` who was not in the tick at all. Those present
     // share it, and a tick with nobody present is nobody's.
     if (!lastSwingFallback) {
-        return indices.length > 1 ? { actors: [...indices], shared: true } : { actors: [], shared: false };
+        return indices.length > 1 ? split() : none();
     }
 
     // The last character to swing — still the fallback for the small collision
     // in this client's own fight, where a handful of people is a guess rather
     // than a bias.
-    return state.lastSwing ? one(state.lastSwing) : { actors: [], shared: false };
+    return state.lastSwing ? one(state.lastSwing) : none();
+}
+
+/**
+ * Who acted this tick, and whether the tick had to be shared between them.
+ *
+ * The rungs and every option are {@link resolveActors}'.
+ *
+ * @param {Object} pMap - This tick's players
+ * @param {Object} state - From `newAttributionState`, mutated
+ * @param {Object} [options] - `{soloFallback, collisionThreshold, lastSwingFallback, reflecting}`
+ * @returns {{actors: string[], shared: boolean}}
+ */
+export function findActors(pMap, state, options) {
+    const { actors, shared } = resolveActors(pMap, state, options);
+    return { actors, shared };
 }
 
 /**
@@ -372,10 +431,36 @@ export function findCaster(pMap, state, options) {
  * The label an un-countered health loss is filed under.
  *
  * Not the ability the player was preparing: a bleed landing now was applied
- * some seconds ago, and thorns are not cast at all. Filing it under whatever
- * happened to be mid-cast would credit a rotation with damage it did not do.
+ * some seconds ago. Filing it under whatever happened to be mid-cast would
+ * credit a rotation with damage it did not do. Thorns are not in it — they move
+ * the hit counter; see {@link REFLECT_ACTION}.
  */
 export const DOT_ACTION = 'dot';
+
+/**
+ * The label reflect damage is filed under when the caller's buff state says a
+ * reflect was up but not which one. Given an ability hrid, that hrid is the label.
+ */
+export const REFLECT_ACTION = 'reflect';
+
+/**
+ * A caller's reflect input, read for one player.
+ *
+ * @param {Function|Map|Set|Object} reflecting - See {@link resolveActors}
+ * @param {string} index - Player index, as a `pMap` key
+ * @param {Object} [player] - This tick's entry
+ * @returns {string|null} The reflect ability hrid, {@link REFLECT_ACTION} when the input names
+ *   none, or null when no reflect is up
+ */
+function reflectOf(reflecting, index, player) {
+    let value;
+    if (typeof reflecting === 'function') value = reflecting(index, player);
+    else if (reflecting instanceof Map) value = reflecting.get(index) ?? reflecting.get(Number(index));
+    else if (reflecting instanceof Set) value = reflecting.has(index) || reflecting.has(Number(index));
+    else value = reflecting?.[index];
+    if (!value) return null;
+    return typeof value === 'string' ? value : REFLECT_ACTION;
+}
 
 /**
  * The label health lost on a tick that credits no player is filed under.
@@ -431,8 +516,9 @@ function swingLabel(action, abilityDetailMap) {
  */
 export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
-    const { actors, shared } = findActors(pMap, state, options);
+    const { actors, shared, hurt, swung } = resolveActors(pMap, state, options);
     const abilityDetailMap = options?.abilityDetailMap;
+    const reflecting = options?.reflecting;
     const emitUnattributed = options?.unattributed === true;
     const events = [];
     const weight = actors.length ? 1 / actors.length : 0;
@@ -480,7 +566,7 @@ export function attributeTick(tick, state, options) {
 
         const change = beforeHealth - health;
         // A hit is the counter rising. Health falling without it is a bleed
-        // ticking or a reflect firing — real damage, and the actor rungs name
+        // ticking — real damage, and the actor rungs name
         // its owner exactly as they name a swing's, so it is emitted as its own
         // class rather than discarded. It is emphatically not a swing, which is
         // why it carries no crit, miss or ability of its own.
@@ -524,6 +610,28 @@ export function attributeTick(tick, state, options) {
         }
 
         for (const actor of actors) {
+            // A reflect moves the hit counter too, so it is told apart from a
+            // swing by the caller's buff state: a reflect up, hurt this tick, and
+            // no swing of their own. Damage, not a swing — no hit, crit or miss
+            const reflect =
+                reflecting && change > 0 && hurt.has(actor) && !swung.has(actor)
+                    ? reflectOf(reflecting, actor, pMap?.[actor])
+                    : null;
+            if (reflect) {
+                events.push({
+                    playerIndex: actor,
+                    monsterIndex: index,
+                    amount: change * weight,
+                    isCrit: false,
+                    isMiss: false,
+                    isHeal: false,
+                    isDot: false,
+                    isReflect: true,
+                    weight,
+                    action: reflect,
+                });
+                continue;
+            }
             events.push({
                 playerIndex: actor,
                 monsterIndex: index,
@@ -616,6 +724,8 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
             // ratio against the sim's to decide whether a soft-hit gap is the
             // monster's mitigation or just a different hit mix.
             player.dotTicks += weight;
+        } else if (event.isReflect) {
+            player.damage += event.amount;
         } else if (!event.isMiss && !event.isHeal) {
             player.damage += event.amount;
             player.hits += weight;
@@ -631,7 +741,7 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
         if (event.isMiss) ability.misses += weight;
         // A bleed has no swing behind it on this tick, so it moves the damage
         // under its own label and leaves the counts alone
-        else if (event.isDot) ability.damage += event.amount;
+        else if (event.isDot || event.isReflect) ability.damage += event.amount;
         else if (!event.isHeal) {
             ability.damage += event.amount;
             ability.hits += weight;
@@ -662,7 +772,7 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
         if (event.isMiss) {
             enemy.misses += weight;
             against.misses += weight;
-        } else if (event.isDot) {
+        } else if (event.isDot || event.isReflect) {
             enemy.damage += event.amount;
             against.damage += event.amount;
         } else if (!event.isHeal) {
@@ -732,6 +842,9 @@ export function foldEnemies(tally, events, nameOf) {
         if (event.isMiss) {
             enemy.misses += weight;
             ability.misses += weight;
+        } else if (event.isReflect) {
+            enemy.damage += event.amount;
+            ability.damage += event.amount;
         } else if (event.isDot) {
             // Real damage the monster took, with no swing behind it here
             enemy.damage += event.amount;
