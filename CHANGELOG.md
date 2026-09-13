@@ -9,10 +9,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### The Session Briefing skips a quick refresh
 
 - Refreshing the page brought the Session Briefing up again even though you had only been gone a few seconds. It now stays closed when the page was away for under a minute, and still opens after a real break; opening it by hand works as before.
+- A briefing you had left open also reopened itself on every page load, whatever the gap. It no longer does — it only comes back through the away rule above, or when you open it.
 
-### The command palette's trial shortcut opens the In Progress tab again
+### The command palette's trial shortcut opens the guild page again
 
-- Asking the command palette for the trial figures opened the guild page but clicked the wrapper around its tabs rather than the In Progress tab, so nothing switched and it reported "No trial figures yet" even during a trial. It now picks the tab itself, the same fix as the guild panel's Damage button.
+- Asking the command palette for the trial figures never reached the guild page: it looked for Guild among the sidebar's small links, where it no longer lives, and reported "Could not open the guild page". Once there, it also clicked the wrapper around the tabs rather than the In Progress tab. It now finds the Guild entry the way the Settings shortcut does and picks the tab itself, falling back to Trials when no trial is running.
 
 ### A finished trial stays on the trial board after a reload
 
