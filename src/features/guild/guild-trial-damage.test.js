@@ -3311,6 +3311,21 @@ describe('reflect and unattributed damage on the spectated stream', () => {
         expect(totals()).toEqual({ Tank: 5000 });
     });
 
+    test('thorns get a per-ability row of their own, apart from the swings made under Spike Shell', () => {
+        tankCastsSpikeShell();
+        // Two present and the tank alone swung: a swing, labelled with what was prepared
+        tick(3, { 0: { atkCounter: 3, cHP: 5000 }, 1: { atkCounter: 1, cHP: 5000 } }, boss(645_000, 1), 500);
+        // The crowd tick the thorns dealt
+        tick(3, crowd([0], { 0: { atkCounter: 3 } }), boss(641_000, 2), 1000);
+
+        const tank = guildTrialDamage.breakdown().players.find((row) => row.name === 'Tank');
+        const rows = Object.fromEntries(tank.abilities.map((row) => [row.action, row]));
+        expect(rows['/abilities/spike_shell']).toMatchObject({ damage: 5000, hits: 1 });
+        expect(rows['reflect:/abilities/spike_shell']).toMatchObject({ damage: 4000, hits: 0, crits: 0 });
+        // Thorns are damage, not a swing
+        expect(tank).toMatchObject({ damage: 9000, hits: 1 });
+    });
+
     test('a cast older than the window no longer claims the tick', () => {
         tankCastsSpikeShell();
         tick(3, crowd([0], { 0: { atkCounter: 2 } }), boss(645_000, 1), 250 + REFLECT_WINDOW_MS + 1);

@@ -282,6 +282,15 @@ export const REFLECT_ABILITIES = new Set(['/abilities/spike_shell', '/abilities/
 export const REFLECT_WINDOW_MS = 33_000;
 
 /**
+ * What a reflect's damage is filed under in a player's per-ability split,
+ * ahead of the reflect ability's hrid.
+ *
+ * Kept apart from the ability's own row: a tank's swings while preparing Spike
+ * Shell are filed under Spike Shell, and thorns are not those swings.
+ */
+export const REFLECT_ROW_PREFIX = 'reflect:';
+
+/**
  * A `combatStartTime` as epoch milliseconds.
  * @param {*} value - The wire's ISO string, nanosecond fraction and all
  * @returns {number|null} Milliseconds, or null when it does not parse
@@ -1808,13 +1817,17 @@ class GuildTrialDamage {
 
     /**
      * The reflect a slot has up, as far as its remembered cast says.
+     *
+     * Answered as the per-ability row the reflect's damage is filed under,
+     * which the attribution engine takes as the event's label.
+     *
      * @param {string} index - Player slot
      * @param {number} now - Clock
-     * @returns {string|null} The reflect ability's hrid, or null
+     * @returns {string|null} {@link REFLECT_ROW_PREFIX} and the reflect ability's hrid, or null
      */
     _reflectingAt(index, now) {
         const cast = this.reflectCasts[index];
-        return cast && now - cast.at <= REFLECT_WINDOW_MS ? cast.hrid : null;
+        return cast && now - cast.at <= REFLECT_WINDOW_MS ? `${REFLECT_ROW_PREFIX}${cast.hrid}` : null;
     }
 
     /**

@@ -54,6 +54,7 @@ const {
     PANEL_CLASS,
     scoreboardRows,
     scoreboardText,
+    trialAbilityLabel,
     TYPE_COLORS,
 } = await import('./guild-trial-scoreboard.js');
 
@@ -362,6 +363,24 @@ describe('scoreboardText', () => {
             [{ name: 'Tib', damage: 700_000, healing: 0, damageTaken: 0 }]
         );
         expect(text).toContain('1. Tib — 700,000 (100.0%) · 2 kills');
+    });
+});
+
+describe('trialAbilityLabel', () => {
+    const detailMap = {
+        '/abilities/spike_shell': { name: 'Spike Shell' },
+        '/abilities/retribution': { name: 'Retribution' },
+    };
+
+    test('a reflect row reads as the reflect ability, marked as its reflect', () => {
+        expect(trialAbilityLabel('reflect:/abilities/spike_shell', detailMap)).toBe('Spike Shell (reflect)');
+        expect(trialAbilityLabel('reflect:/abilities/retribution', detailMap)).toBe('Retribution (reflect)');
+        expect(trialAbilityLabel('reflect:/abilities/spike_shell')).toBe('spike shell (reflect)');
+    });
+
+    test('every other row reads as it always did', () => {
+        expect(trialAbilityLabel('/abilities/spike_shell', detailMap)).toBe('Spike Shell');
+        expect(trialAbilityLabel('auto', detailMap)).toBe('Auto attack');
     });
 });
 
@@ -707,6 +726,28 @@ describe('the panel', () => {
 
         document.querySelector('[data-player="tib"]').click();
         expect(text()).not.toContain('fireball');
+    });
+
+    test('a reflect has its own breakdown row, named for the reflect', () => {
+        game.breakdown = breakdown({
+            players: [
+                {
+                    index: '0',
+                    name: 'Tib',
+                    damage: 600_000,
+                    abilities: [
+                        { action: '/abilities/spike_shell', damage: 350_000, hits: 40, crits: 0, misses: 0 },
+                        { action: 'reflect:/abilities/spike_shell', damage: 250_000, hits: 0, crits: 0, misses: 0 },
+                    ],
+                },
+            ],
+        });
+        guildTrialScoreboard.open();
+        document.querySelector('[data-player="tib"]').click();
+
+        expect(text()).toContain('spike shell (reflect)');
+        expect(text()).toContain('250.0K (41.7%)');
+        expect(text()).not.toContain('reflect:/abilities');
     });
 
     test('a player the stream never split says so instead of an empty box', () => {

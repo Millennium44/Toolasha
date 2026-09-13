@@ -46,6 +46,7 @@ import guildTrialDamage, {
     attributionCoverage,
     encounterOf,
     estimateDamageSplit,
+    REFLECT_ROW_PREFIX,
     SPECTATED_TRIAL_NOTE,
 } from './guild-trial-damage.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
@@ -152,6 +153,20 @@ export function manaMarkerHTML(support) {
     }
     if (support.lowMana) return chip('⚡ low', DIM, 'Mana is under a fifth of the bar.');
     return '';
+}
+
+/**
+ * The readable name of one per-ability row, a reflect's own row included.
+ * @param {string} action - The row's action: an ability hrid, `auto`, `dot`, or a reflect row
+ * @param {Object} [detailMap] - `abilityDetailMap`, for the game's own ability names
+ * @returns {string} e.g. "Spike Shell (reflect)"
+ */
+export function trialAbilityLabel(action, detailMap) {
+    const text = String(action ?? '');
+    if (text.startsWith(REFLECT_ROW_PREFIX)) {
+        return `${abilityActionLabel(text.slice(REFLECT_ROW_PREFIX.length), detailMap)} (reflect)`;
+    }
+    return abilityActionLabel(action, detailMap);
 }
 
 /**
@@ -802,12 +817,12 @@ class GuildTrialScoreboard {
     /**
      * How much of the split is damage no hit counter confirmed.
      *
-     * Bleeds and reflects move the boss's health without moving its hit
-     * counter. They used to be discarded, which is why this table used to add
-     * up to less than the boss bar; they are inside the damage figures now and
-     * carry no swing, no crit and no ability, so a row's hit count can look
-     * small beside its damage without either being wrong. Silent when there is
-     * none of it.
+     * Bleeds move the boss's health without moving its hit counter. They are
+     * inside the damage figures and carry no swing, no crit and no ability, so a
+     * row's hit count can look small beside its damage without either being
+     * wrong. Thorns do move the counter; they are told apart by the tank's
+     * reflect cast instead and get a per-ability row of their own. Silent when
+     * there is none.
      *
      * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
      * @returns {string} A sentence, or an empty string
@@ -819,7 +834,7 @@ class GuildTrialScoreboard {
 
         const share = total > 0 ? ` (${((dot / total) * 100).toFixed(0)}% of the total)` : '';
         return (
-            ` Includes ${formatKMB(dot)} of DoT/reflect${share} — health lost with no hit counter behind it,` +
+            ` Includes ${formatKMB(dot)} of DoT${share} — health lost with no hit counter behind it,` +
             ` so it moves the damage and not the hit or crit rates.`
         );
     }
@@ -1232,7 +1247,7 @@ class GuildTrialScoreboard {
 
         const detailMap = dataManager.getInitClientData?.()?.abilityDetailMap;
         const lines = abilityBreakdownRows(abilities, { total: player?.damage || 0, seconds }).map((entry) =>
-            abilityLineHTML(entry, { label: abilityActionLabel(entry.action, detailMap) })
+            abilityLineHTML(entry, { label: trialAbilityLabel(entry.action, detailMap) })
         );
         return `<div style="margin:0 0 4px;">${lines.join('')}</div>`;
     }
