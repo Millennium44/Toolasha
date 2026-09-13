@@ -68,6 +68,8 @@ import {
     escapeText,
 } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
+import { closePlayerMenu, playerMarkersHTML, playerRowColor, wirePlayerMenu } from '../../utils/player-menu.js';
+import { resolveRosterColors } from '../../utils/player-colors.js';
 
 /** Class every part of this panel carries, so teardown is one query */
 export const PANEL_CLASS = 'mwi-trial-scoreboard';
@@ -476,6 +478,7 @@ class GuildTrialScoreboard {
         this.container = null;
         this.context = null;
         this.forecast = null;
+        closePlayerMenu();
         // Expansion state is about the trial being watched; the next open may
         // be a different trial, or a different guild's
         this.expanded.clear();
@@ -576,6 +579,8 @@ class GuildTrialScoreboard {
 
         const breakdown = guildTrialDamage.breakdown?.() || null;
         body.innerHTML = this._bodyHTML(breakdown);
+        // Player colour and class menu — utils/player-menu.js
+        wirePlayerMenu(body, () => this.render());
 
         body.querySelectorAll('[data-tab]').forEach((button) => {
             button.addEventListener('click', () => {
@@ -954,6 +959,9 @@ class GuildTrialScoreboard {
                   )
                 : null;
 
+        // Player colours — utils/player-colors.js
+        resolveRosterColors([...rows, ...(estimate?.players || [])].map((row) => row.name));
+
         const list = rows.length
             ? rows.map((row) => this._rowHTML(row, classes, manaByName, abilitySplit, breakdown?.seconds || 0)).join('')
             : estimated
@@ -1090,8 +1098,12 @@ class GuildTrialScoreboard {
                 ? ''
                 : `<span style="color:${DIM}; font-size:9px; margin-left:4px;">${open ? '▾' : '▸'}</span>`;
         const base = boardRowHTML(row, {
-            color: type ? TYPE_COLORS[type] : ACCENT,
-            tagHTML: classTagHTML(classes?.[key]) + manaMarkerHTML(manaByName?.get?.(key)) + caret,
+            // Player colour and class override — utils/player-menu.js
+            color: playerRowColor(row.name, type ? TYPE_COLORS[type] : ACCENT),
+            tagHTML:
+                playerMarkersHTML(row.name, classes?.[key] || null, classTagHTML) +
+                manaMarkerHTML(manaByName?.get?.(key)) +
+                caret,
         });
         if (abilitySplit === null) return base;
 

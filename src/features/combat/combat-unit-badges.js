@@ -88,6 +88,7 @@ import { damageBreakdown } from './damage-tracker.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
+import { playerColor, resolveRosterColors } from '../../utils/player-colors.js';
 import { GAME } from '../../utils/selectors.js';
 
 /** Where the party's tiles live, as opposed to the monsters' */
@@ -455,10 +456,17 @@ class CombatUnitBadges {
             const tiles = tilesForSource(partyTiles(area), source, config.getSetting('portraitDps') === true);
             const pairs = matchTiles(tiles, badgeRows(players));
 
+            // Player colours — utils/player-colors.js. A dim badge stays dim:
+            // that ink says the share is inside the attribution's own error
+            const colorsOn = config.getSetting('combatPlayerColors') === true;
+            if (colorsOn) resolveRosterColors(players.map((player) => player?.name));
+
             this._prune(area, new Set(pairs.map((pair) => pair.el)));
             for (const { el, row, fullCard } of pairs) {
                 const compact = !fullCard;
-                this._badge(el, badgeText(row, source, compact), compact);
+                const content = badgeText(row, source, compact);
+                if (colorsOn && content.color !== ROW_COLORS.dim) content.color = playerColor(row.name);
+                this._badge(el, content, compact);
             }
         } catch (error) {
             console.error('[CombatUnitBadges] Drawing the unit badges failed:', error);

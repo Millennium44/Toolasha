@@ -719,6 +719,21 @@ describe('the rotation tab’s history scope', () => {
  * switch built a second shell over the first one's live listener, and the count
  * climbed for the life of the tab.
  */
+describe('player markers on the board', () => {
+    test('each row carries a marker in the player’s colour that opens the player menu', async () => {
+        const { playerColor } = await import('../../utils/player-colors.js');
+        opts.dealt = { seconds: 100, players: [{ name: 'Abe', damage: 1000, dps: 10, classTag: null }] };
+
+        const body = board();
+        const marker = body.querySelector('[data-toolasha-player="Abe"]');
+        expect(marker).not.toBeNull();
+        expect(body.innerHTML).toContain(`${playerColor('Abe')}44`);
+
+        marker.click();
+        expect(document.querySelector('.toolasha-player-menu')?.textContent).toContain('Abe');
+    });
+});
+
 describe('the shell the panel is built from', () => {
     const switchListeners = () => dataManager.eventListeners.get('character_switched')?.length ?? 0;
 

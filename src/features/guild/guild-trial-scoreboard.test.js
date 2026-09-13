@@ -823,6 +823,13 @@ describe('the trace recording warning', () => {
         expect(text()).not.toContain('recording gap');
     });
 
+    test('player rows carry the colour and class marker, and the bar takes the player’s colour', async () => {
+        const { playerColor } = await import('../../utils/player-colors.js');
+        const html = guildTrialScoreboard._rowHTML({ name: 'Estevao', rank: 1, value: 100, perSecond: 10, share: 50 });
+        expect(html).toContain('data-toolasha-player="Estevao"');
+        expect(html).toContain(`${playerColor('Estevao')}44`);
+    });
+
     test('is about the trace, not the damage module’s coverage accounting', () => {
         // A fully covered attribution is still short by whatever the feed
         // missed, and the two must not be read as one claim

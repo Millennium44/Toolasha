@@ -540,3 +540,29 @@ describe('yielding the full cards to Portrait DPS', () => {
         expect(tilesForSource(tiles, 'trial', true)).toEqual(tiles);
     });
 });
+
+describe('player colours', () => {
+    /** The browser's own spelling of a colour, whatever form it was set in */
+    const ink = (color) => {
+        const probe = document.createElement('div');
+        probe.style.color = color;
+        return probe.style.color;
+    };
+
+    test('a badge takes its player’s colour, and a share inside the error stays dim', async () => {
+        const { playerColor } = await import('../../utils/player-colors.js');
+        const { ROW_COLORS } = await import('../../utils/overlay-format.js');
+        opts.run = {
+            players: [
+                { name: 'Alice', damage: 980, dps: 98 },
+                { name: 'Bob', damage: 20, dps: 2 },
+            ],
+        };
+        const area = panel(card('Alice'), card('Bob'));
+
+        feature.initialize();
+
+        expect(badgeOf(area.children[0]).style.color).toBe(ink(playerColor('Alice')));
+        expect(badgeOf(area.children[1]).style.color).toBe(ink(ROW_COLORS.dim));
+    });
+});

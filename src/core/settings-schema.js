@@ -2489,6 +2489,20 @@ export const settingsGroups = {
                 default: false,
                 help: "A small “1,240/s · 22%” on every party tile, matched by name. The narrow mini units get a compact “1,240/s” pinned to the bottom edge instead, so nothing lands on the name along their top. During a guild trial it reads the spectated trial split instead of this client's own fight. With Portrait DPS also on, the badge leaves the full cards to it and covers the mini units it never reaches — the two never state the same run twice. Off by default because the portraits are already busy",
             },
+            combatPlayerColors: {
+                id: 'combatPlayerColors',
+                label: 'Player colours: Give each player one colour on the damage boards and unit badges',
+                type: 'checkbox',
+                default: true,
+                help: 'Each player keeps one colour across the Per-player panel, the trial damage board and the unit badges, so a row and a badge can be matched at a glance. Players in the same party get different colours (up to twelve), and a player keeps theirs for the session when someone joins. Click the dot beside a name to pick a colour; it is remembered for that player on every character. With this off, the trial board goes back to colouring bars by damage type',
+            },
+            combatClassOverride: {
+                id: 'combatClassOverride',
+                label: 'Class override: Click a player’s class on the damage boards to set it by hand',
+                type: 'checkbox',
+                default: true,
+                help: 'The class beside each name is inferred from what the player casts and carries, and it can be wrong — a tank whose taunt was never seen, a healer who has only thrown damage so far. Click the class (or the dot beside the name) to set it, or choose Automatic to go back to the inferred class. Remembered by player name on every character, and shown on the Per-player panel and the trial damage board',
+            },
             combatUnitBuffBars: {
                 id: 'combatUnitBuffBars',
                 label: 'Buff bars: Show the buffs and debuffs on every combat unit',

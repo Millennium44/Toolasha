@@ -77,8 +77,11 @@
  *
  * ## What it is not
  *
- * Not a manual override, not persisted, and not authoritative. A captured kit
- * beats it wherever one exists — this is what fills the rest of the column in.
+ * Not persisted and not authoritative. A captured kit beats it wherever one
+ * exists — this is what fills the rest of the column in. A class the user sets
+ * by hand is a layer over this verdict (`class-override.js`), applied where a
+ * tag is drawn; nothing in this file reads it, so the inference stays a
+ * statement about the evidence alone.
  *
  * The idea of naming each row's class on a trial meter is KikiMeter's by
  * ZhuLiMoon (MIT) — see `third-party/kikimeter/` and

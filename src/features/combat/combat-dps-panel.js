@@ -80,6 +80,8 @@ import {
 } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
 import { MIN_SECONDS } from '../../utils/rotation-audit.js';
+import { closePlayerMenu, playerMarkersHTML, playerRowColor, wirePlayerMenu } from '../../utils/player-menu.js';
+import { resolveRosterColors } from '../../utils/player-colors.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -662,8 +664,16 @@ export function drawBoard(body, sources) {
     const note = NOTES[tab] || NOTES.damage;
     const unit = tab === 'healed' ? 'hps' : 'dps';
 
+    // Player colours and class overrides — utils/player-menu.js
+    resolveRosterColors(rows.map((row) => row.name));
+    const playerRow = (row) =>
+        boardRowHTML(row, {
+            color: playerRowColor(row.name, BOARD_COLORS.accent),
+            tagHTML: playerMarkersHTML(row.name, row.classTag, classTagHTML),
+        });
+
     const list = rows.length
-        ? rows.map((row) => boardRowHTML(row, { tagHTML: classTagHTML(row.classTag) })).join('')
+        ? rows.map(playerRow).join('')
         : `<div style="color:${BOARD_COLORS.dim}; padding:6px 0; line-height:1.5;">` +
           'Nothing measured yet — the table fills in as the fight goes on. A run that has only just started has ' +
           'no seconds to divide by, which is why a rate can be dashed while a total is not.</div>';
@@ -695,6 +705,8 @@ export function drawBoard(body, sources) {
  * @param {Object} [sources] - As {@link panelRows}
  */
 function wireBoard(body, sources) {
+    // Player colour and class menu — utils/player-menu.js
+    wirePlayerMenu(body, () => drawBoard(body, sources));
     body.querySelectorAll('[data-tab]').forEach((button) => {
         button.addEventListener('click', () => {
             tab = button.dataset.tab;
@@ -885,6 +897,7 @@ export default {
             unregisterReady?.();
             unregisterReady = null;
             stopRotationTracker();
+            closePlayerMenu();
             timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);
             injected = null;
