@@ -164,6 +164,47 @@ describe('a character switch', () => {
     });
 });
 
+describe('leaving a party (B13)', () => {
+    test('the solo fallback fires for the current roster, not a stale one', () => {
+        // A five-person party, then solo — `state.party` used to accumulate
+        // every slot ever seen rather than being rebuilt, so it kept reading
+        // as five long after only one player was left.
+        emit('new_battle', {
+            players: {
+                1: { name: 'Me', combatDetails: { combatAbilities: [{ abilityHrid: CHEAP }] } },
+                2: { name: 'A' },
+                3: { name: 'B' },
+                4: { name: 'C' },
+                5: { name: 'D' },
+            },
+        });
+        emit('new_battle', {
+            players: {
+                1: {
+                    name: 'Me',
+                    preparingAbilityHrid: CHEAP,
+                    combatDetails: { combatAbilities: [{ abilityHrid: CHEAP }] },
+                },
+            },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+
+        // A tick naming this slot alongside one the current roster no longer
+        // has — the shape the solo-fallback rung exists for, where neither an
+        // attack counter nor mana can separate the two. With `state.party`
+        // still reading five, this tick resolves to nobody and the cast is
+        // lost; rebuilt to the true roster of one, it resolves to 'Me'.
+        emit('battle_updated', {
+            battleId: 'b1',
+            pMap: { 1: { cMP: 100, mMP: 1000 }, 9: { cMP: 100 } },
+            mMap: { 0: { cHP: 900, dmgCounter: 1, mHP: 1000 } },
+        });
+
+        const row = rotationAudit().fight.abilities.find((entry) => entry.hrid === CHEAP);
+        expect(row?.damage).toBe(100);
+    });
+});
+
 describe('the first hit of a wave', () => {
     test('is counted rather than becoming the monster’s baseline', () => {
         // The monster is stated at full health before anything has touched it;

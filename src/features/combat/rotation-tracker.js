@@ -164,6 +164,14 @@ export function startRotationTracker() {
                 if (own && name === own) ownIndex = index;
             }
 
+            // Rebuilt rather than accumulated: `findActors`' solo-party rung
+            // reads `state.party`'s size to tell a genuinely solo fight from
+            // one merely quiet this tick, and a party that shrank after
+            // leaving five people behind would still read as five —
+            // permanently disabling that rung for a run that is now solo.
+            // `new_battle` names the whole roster every time, so nothing
+            // already known is lost by starting fresh.
+            state.party = {};
             noteActions(state, players);
 
             // Seed this battle's monster baselines from the one message that
