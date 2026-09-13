@@ -1015,6 +1015,11 @@ export const dpsPanel = new CombatPanel({
         const breakdown = damageBreakdown();
         const partyDamage = breakdown.players.reduce((sum, player) => sum + player.damage, 0);
 
+        // Whether the breakdown itself thinks there is enough of a run to
+        // divide by — the same threshold every row already reads off `dps`,
+        // rather than a second copy of `MIN_SECONDS` here
+        const measurable = breakdown.players.some((player) => player.dps !== null);
+
         // The header line DPs leads with: the one figure, and what it was
         // computed from, before any of the breakdown
         const heading = document.createElement('div');
@@ -1027,7 +1032,12 @@ export const dpsPanel = new CombatPanel({
             borderBottom: `1px solid ${COLORS.hairline}`,
         });
         const dpsFigure = document.createElement('span');
-        dpsFigure.textContent = `DPS ${Number.isFinite(combatDPS.dps) ? combatDPS.dps.toFixed(1) : '—'}`;
+        // Derived from the same attributed total the table below sums, not
+        // `combatDPS`'s own health-diff figure: that tracker keeps its own
+        // clock and only resets on a battleId decrease, so it neither agreed
+        // with this panel's Reset nor with what the rows underneath added up
+        // to.
+        dpsFigure.textContent = `DPS ${measurable ? (partyDamage / breakdown.seconds).toFixed(1) : '—'}`;
         Object.assign(dpsFigure.style, { color: ROW_COLORS.gold, fontWeight: 'bold', fontSize: '14px' });
         heading.append(
             dpsFigure,

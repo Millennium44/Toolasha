@@ -352,6 +352,26 @@ function collapseDpsRows() {
 }
 
 describe('what the panels add over their tiles', () => {
+    test('the header DPS is the attributed total, not the health-diff tile’s own figure', () => {
+        // `state.dps.dps` (4000) is a different measurement with its own clock —
+        // it never resets alongside this panel and would drift from the table
+        // over a long run. The header must read the same 900,000 over 300s
+        // (3000.0) the table's own player row adds up to.
+        dpsPanel.show();
+        expect(dpsPanel.panel.textContent).toContain('DPS 3000.0');
+        expect(dpsPanel.panel.textContent).not.toContain('DPS 4000.0');
+    });
+
+    test('the header reads unmeasured, not a number, before there is enough of a run', () => {
+        state.breakdown = {
+            ...state.breakdown,
+            seconds: 1,
+            players: state.breakdown.players.map((player) => ({ ...player, dps: null })),
+        };
+        dpsPanel.show();
+        expect(dpsPanel.panel.textContent).toContain('DPS —');
+    });
+
     test('Damage says whether you are winning the exchange', () => {
         // 4,000 dealt against 500 taken
         dpsPanel.show();
