@@ -672,7 +672,19 @@ describe('a trial that has already ended', () => {
 describe('the game’s own totals', () => {
     test('restate damage, healing and taken by name, and keep what only the stream knows', () => {
         const base = thinBreakdown(breakdown(), now);
-        const snapshot = { ...base, players: [...base.players, { index: '2', name: 'Player 3', damage: 7 }] };
+        const snapshot = {
+            ...base,
+            players: [
+                ...base.players,
+                { index: '2', name: 'Zed', damage: 11 },
+                { index: '3', name: 'Player 4', damage: 7 },
+                {
+                    index: 'Unnamed — before names were known',
+                    name: 'Unnamed — before names were known (45 players)',
+                    damage: 300,
+                },
+            ],
+        };
         const patched = reconcileSnapshot(snapshot, reported, now + 1);
 
         expect(patched.basis).toBe('game');
@@ -692,9 +704,14 @@ describe('the game’s own totals', () => {
         });
         // Credited by the server, never split out by the stream
         expect(patched.players.find((row) => row.name === 'Ada')).toMatchObject({ index: null, damage: 20_000 });
-        // An id the server's list could not name is not absence
-        expect(patched.players.find((row) => row.name === 'Player 3').damage).toBe(7);
-        expect(patched.totalDamage).toBe(550_007);
+        // A named member the server's list could not name is not absence
+        expect(patched.players.find((row) => row.name === 'Zed').damage).toBe(11);
+        // …but slots nobody could name are members the server has already
+        // credited by name: set apart, never a player beside those totals
+        expect(patched.players.some((row) => row.name === 'Player 4')).toBe(false);
+        expect(patched.players.some((row) => row.name.startsWith('Unnamed'))).toBe(false);
+        expect(patched.unnamedStreamDamage).toBe(307);
+        expect(patched.totalDamage).toBe(550_011);
         expect(patched.streamTotalDamage).toBe(500_000);
         expect(snapshot.basis).toBeUndefined();
         expect(reconcileSnapshot(snapshot, null)).toBe(snapshot);

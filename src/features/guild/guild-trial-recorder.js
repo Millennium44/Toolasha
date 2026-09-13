@@ -50,6 +50,7 @@ import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { TRIAL_ACTIVE_MS, trialWeekStart } from './guild-trials-math.js';
+import { isPlaceholderName, isUnnamedRowName } from './guild-trial-units.js';
 import { loadTrialRecord } from './guild-trials-store.js';
 import { recordFinishedTrial, signupParticipation } from './guild-trial-ledger.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
@@ -177,8 +178,11 @@ export function thinBreakdown(breakdown, at) {
  * name case-insensitively; a member the server credited and the stream never
  * split out gains a row, and a stream row the server did not name keeps its
  * own figures, because an unnameable id is dropped from `reported` rather than
- * being absent from the trial. Deaths and the mana figures are stream-only and
- * stay as they were. `basis: 'game'` marks the result, which the ledger reads.
+ * being absent from the trial. The exception is a row that is not anybody — the
+ * unnamed row or a slot placeholder — whose damage the server has already
+ * credited to named members: it leaves the players for `unnamedStreamDamage`.
+ * Deaths and the mana figures are stream-only and stay as they were.
+ * `basis: 'game'` marks the result, which the ledger reads.
  *
  * @param {Object|null} snapshot - A `thinBreakdown` snapshot, or null
  * @param {Object|null} reported - Name → `{damage, healing, taken}`
@@ -204,13 +208,27 @@ export function reconcileSnapshot(snapshot, reported, at = Date.now()) {
     });
 
     const claimed = new Set();
-    const players = (base.players || []).map((player) => {
+    // Slots nobody could name — the one unnamed row, or a "Player N"
+    // placeholder banked before that row existed — are members the server
+    // names below under their own names. Kept beside its totals they counted
+    // those members twice, in the party total and in the ledger fold, so their
+    // stream damage is set apart rather than kept as a player
+    let unnamedStreamDamage = 0;
+    const players = [];
+    for (const player of base.players || []) {
+        if (isUnnamedRowName(player?.name) || isPlaceholderName(player?.name)) {
+            unnamedStreamDamage += Number(player?.damage) || 0;
+            continue;
+        }
         const key = keyOf(player?.name);
         const match = byKey.get(key);
-        if (!match || claimed.has(key)) return player;
+        if (!match || claimed.has(key)) {
+            players.push(player);
+            continue;
+        }
         claimed.add(key);
-        return { ...player, ...figures(match.stats) };
-    });
+        players.push({ ...player, ...figures(match.stats) });
+    }
     for (const [key, { name, stats }] of byKey) {
         if (claimed.has(key)) continue;
         const [row] = thinBreakdown({ players: [{ index: null, name, damage: 0, deaths: 0 }] }, at).players;
@@ -223,6 +241,7 @@ export function reconcileSnapshot(snapshot, reported, at = Date.now()) {
         basis: 'game',
         reconciledAt: at,
         streamTotalDamage: base.totalDamage ?? 0,
+        unnamedStreamDamage,
         totalDamage: players.reduce((sum, player) => sum + (Number(player.damage) || 0), 0),
     };
 }

@@ -140,8 +140,9 @@ export const TAKEN_BASIS_STREAM =
  *
  * Damage, healing and damage taken are the game's; deaths and the mana
  * figures exist only on the stream and are carried over where a stream row
- * has the same name. No per-second: the totals cover the whole trial and the
- * stream's clock covers only the stretch that was watched.
+ * has the same name. A rate is over the whole fight's span (`trialFightSpan`),
+ * never the stream's clock, which covers only the stretch that was watched —
+ * and there is none when that span is not known.
  *
  * @param {Array<Object>|null} gameStats - From `modalStatsForBreakdown`
  * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
