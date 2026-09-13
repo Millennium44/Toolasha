@@ -1647,6 +1647,10 @@ export function lastTrialPlayerRows(snapshot) {
             `Shares are of the damage the snapshot itself attributes.">Per player · final</div>`,
     ];
 
+    // A snapshot patched with the game's whole-trial totals is not describing
+    // "the recorded session" — the recorder may only have watched a slice of
+    // the fight, and the server's own figure covers the whole of it
+    const wholeTrial = snapshot.basis === 'game';
     for (const player of [...players].sort((a, b) => (Number(b.damage) || 0) - (Number(a.damage) || 0))) {
         const damage = Number(player.damage) || 0;
         const share = total > 0 ? `${((damage / total) * 100).toFixed(0)}%` : '—';
@@ -1657,8 +1661,11 @@ export function lastTrialPlayerRows(snapshot) {
                 player.name,
                 `${dps} · ${share}${deaths}`,
                 player.deaths > 0 ? WARN : GOOD,
-                `${formatWithSeparator(Math.round(damage))} damage across the recorded session, ` +
-                    `${player.deaths || 0} death${player.deaths === 1 ? '' : 's'}. A final reading, not a live one.`
+                `${formatWithSeparator(Math.round(damage))} damage ` +
+                    (wholeTrial
+                        ? "— the game's own whole-trial total, not just the stretch the recorder watched"
+                        : 'across the recorded session') +
+                    `, ${player.deaths || 0} death${player.deaths === 1 ? '' : 's'}. A final reading, not a live one.`
             )
         );
     }

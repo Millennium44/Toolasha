@@ -5374,6 +5374,23 @@ describe('lastTrialPlayerRows', () => {
         expect(html).toContain('12.3K');
         expect(html).toContain('100%');
     });
+
+    test('the tooltip says whose figure it is: the recorded session, or the game’s whole trial', () => {
+        const streamHtml = lastTrialPlayerRows({
+            seconds: 100,
+            players: [{ name: 'Orven', damage: 12_345, deaths: 0 }],
+        }).join('');
+        expect(streamHtml).toContain('damage across the recorded session');
+        expect(streamHtml).not.toContain('whole-trial total');
+
+        const gameHtml = lastTrialPlayerRows({
+            seconds: 100,
+            basis: 'game',
+            players: [{ name: 'Orven', damage: 12_345, deaths: 0 }],
+        }).join('');
+        expect(gameHtml).toContain("the game's own whole-trial total, not just the stretch the recorder watched");
+        expect(gameHtml).not.toContain('across the recorded session');
+    });
 });
 
 describe('the payout block, audited', () => {
