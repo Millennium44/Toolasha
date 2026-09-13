@@ -33,6 +33,12 @@ import { damageBreakdown } from './damage-tracker.js';
 import { BOARD_COLORS, boardNoteHTML } from '../../utils/damage-board.js';
 import { dpsGraphSVG, graphButtonsHTML, PARTY_COLOR } from '../../utils/dps-graph-svg.js';
 import { BUCKET_MS, newDpsSeries, noteTotals, seriesView } from '../../utils/dps-series.js';
+import {
+    createLiveSessionPersister,
+    isRestorable,
+    liveSessionKey,
+    loadLiveSession,
+} from '../../utils/live-session-persist.js';
 import { playerColor, resolveRosterColors } from '../../utils/player-colors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -44,11 +50,83 @@ export const GRAPH_VIEWS = [
 ];
 
 let series = newDpsSeries();
-let trackerStartedAt = null;
+/** The tracker run the series covers: its `sessionId`, or `startedAt` where it states none */
+let trackerSessionId = null;
 let boss = false;
 let view = 'recent';
 let onNewBattle = null;
 const timers = createTimerRegistry();
+
+/** Where the series is saved, and what its payload is called */
+const LIVE_STORE = 'combatStats';
+const LIVE_KIND = 'dpsGraph';
+
+/** A saved series read back at start, waiting for the tracker's run to claim it */
+let savedGraph = null;
+
+/** Bumped when a read in flight stops being wanted */
+let loadGeneration = 0;
+
+/** True while the saved series is being read: until then the copy on disk is the better one */
+let graphLoading = false;
+
+const persister = createLiveSessionPersister({
+    storeName: LIVE_STORE,
+    kind: LIVE_KIND,
+    label: 'DpsGraph',
+    keyFor: () => liveSessionKey('Graph', dataManager.getCurrentCharacterId?.() ?? null),
+    serialize: () => {
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (graphLoading || characterId === null || trackerSessionId === null || series.startAt === null) return null;
+        return { characterId, sessionId: trackerSessionId, series };
+    },
+});
+
+/**
+ * Take the saved series back for the run it was drawn from.
+ *
+ * The totals are re-read as a baseline rather than kept: the damage done
+ * between the save and now has no time attached, so the stretch the page was
+ * shut draws as nothing measured instead of a spike on the first reading back.
+ *
+ * @param {*} sessionId - The tracker's run now
+ * @param {Object} breakdown - `damageBreakdown()`
+ * @param {number} now - Clock
+ * @returns {boolean} Whether it was adopted
+ */
+function adoptSavedGraph(sessionId, breakdown, now) {
+    const saved = savedGraph;
+    if (!saved || sessionId === null || saved.sessionId !== sessionId) return false;
+    savedGraph = null;
+    const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    if (!isRestorable(saved, { kind: LIVE_KIND, characterId, now })) return false;
+    const restored = saved.series;
+    if (!restored || !Array.isArray(restored.buckets) || !Number.isFinite(restored.startAt)) return false;
+
+    series = { ...newDpsSeries(), ...restored, totals: {}, names: { ...(restored.names || {}) } };
+    for (const player of breakdown?.players || []) {
+        series.totals[String(player.index ?? player.name)] = Number(player.damage) || 0;
+    }
+    return true;
+}
+
+/**
+ * Read this character's saved series back.
+ * @param {number} generation - `loadGeneration` when the read began
+ * @param {string|number} characterId - Who was logged in when it began
+ */
+async function loadSavedGraph(generation, characterId) {
+    const saved = await loadLiveSession(liveSessionKey('Graph', characterId), LIVE_STORE);
+    if (generation !== loadGeneration) return;
+    graphLoading = false;
+    if (!saved) return;
+    if (String(dataManager.getCurrentCharacterId?.() ?? '') !== String(characterId)) return;
+    savedGraph = saved;
+    // The tracker may already be on the saved run: it restored, or never stopped
+    if (trackerSessionId !== null && saved.sessionId === trackerSessionId) {
+        adoptSavedGraph(trackerSessionId, damageBreakdown(), Date.now());
+    }
+}
 
 /**
  * Whether a `new_battle` is a boss fight.
@@ -65,13 +143,16 @@ export function isBossBattle(data) {
  * @param {Object} [breakdown] - `damageBreakdown()`, injectable for tests
  */
 export function sampleDamage(now = Date.now(), breakdown = damageBreakdown()) {
-    const startedAt = breakdown?.startedAt ?? null;
-    if (startedAt !== trackerStartedAt) {
-        // A stamp that changed while sampling means the tracker began a new run
+    const sessionId = breakdown?.sessionId ?? breakdown?.startedAt ?? null;
+    if (sessionId !== trackerSessionId) {
+        // A run that changed while sampling means the tracker began a new one
         // just now, so its totals start at zero with this series. The very
-        // first reading has no such promise and is a baseline.
-        series = newDpsSeries({ fromZero: trackerStartedAt !== null });
-        trackerStartedAt = startedAt;
+        // first reading has no such promise and is a baseline, and neither has
+        // a run carried over a refresh: its totals were earned before this page.
+        if (!adoptSavedGraph(sessionId, breakdown, now)) {
+            series = newDpsSeries({ fromZero: trackerSessionId !== null && !breakdown?.restored });
+        }
+        trackerSessionId = sessionId;
     }
     noteTotals(
         series,
@@ -89,8 +170,17 @@ export function sampleDamage(now = Date.now(), breakdown = damageBreakdown()) {
 export function startDpsSampler() {
     if (onNewBattle || config.getSetting('combatDpsGraph') !== true) return;
     series = newDpsSeries();
-    trackerStartedAt = null;
+    trackerSessionId = null;
     boss = false;
+    savedGraph = null;
+
+    persister.start();
+    loadGeneration += 1;
+    const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    if (characterId !== null) {
+        graphLoading = true;
+        loadSavedGraph(loadGeneration, characterId);
+    }
 
     onNewBattle = (data) => {
         try {
@@ -104,6 +194,7 @@ export function startDpsSampler() {
     const sample = () => {
         try {
             sampleDamage();
+            persister.note();
         } catch (error) {
             console.error('[DpsGraph] Sampling damage failed:', error);
         }
@@ -114,11 +205,16 @@ export function startDpsSampler() {
 
 /** Stop reading and forget the series */
 export function stopDpsSampler() {
+    // Written before the series is forgotten
+    persister.stop();
+    loadGeneration += 1;
+    graphLoading = false;
+    savedGraph = null;
     if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
     onNewBattle = null;
     timers.clearAll();
     series = newDpsSeries();
-    trackerStartedAt = null;
+    trackerSessionId = null;
     boss = false;
 }
 

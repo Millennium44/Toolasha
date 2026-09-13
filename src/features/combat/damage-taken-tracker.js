@@ -40,6 +40,18 @@ import {
 } from '../../utils/damage-taken.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 import { newLabyrinthSessionState, noteLabyrinthUpdate, labyrinthSessionKey } from '../../utils/labyrinth-session.js';
+import {
+    createLiveSessionPersister,
+    isRestorable,
+    liveSessionKey,
+    liveSessionRestoreEnabled,
+    loadLiveSession,
+    mergeCounts,
+} from '../../utils/live-session-persist.js';
+
+/** Where the live session is saved, and what its payload is called */
+const LIVE_STORE = 'combatStats';
+const LIVE_KIND = 'taken';
 
 /** The counters this tick is measured against */
 let state = newTakenState();
@@ -112,6 +124,21 @@ let battleId = null;
  */
 let battleSeeded = false;
 
+/** `{savedAt, at}` once this run was carried over a page refresh; null otherwise */
+let restoredFrom = null;
+
+/** A saved session read back at startup, waiting for the first `new_battle` to prove it is this run */
+let pendingRestore = null;
+
+/** Bumped whenever a read in flight stops being wanted */
+let restoreGeneration = 0;
+
+/** `new_battle`s since `initialize`; only the first may adopt a saved session */
+let battlesSinceInit = 0;
+
+/** True while the saved session is being read: until it is decided, the copy on disk is the better one */
+let restoreLoading = false;
+
 /** Below this the per-second figures are one swing's luck rather than a rate */
 const MIN_SECONDS = 5;
 
@@ -125,8 +152,20 @@ const MIN_BATTLE_SECONDS = 1;
 /** A tick further from the last than this is a new session, not a long swing */
 const MAX_TICK_GAP_MS = 2000;
 
-/** Forget the run and measure again from here */
+/**
+ * Forget the run and measure again from here, on purpose — the saved copy goes
+ * too, so a refresh straight after cannot bring the run back.
+ */
 export function resetDamageTaken() {
+    beginRun();
+    pendingRestore = null;
+    restoreGeneration += 1;
+    restoreLoading = false;
+    persister.discard();
+}
+
+/** Start an empty run in memory, leaving any saved session alone */
+function beginRun() {
     state = newTakenState();
     sessionKey = null;
     tally = {};
@@ -138,6 +177,7 @@ export function resetDamageTaken() {
     lastTickAt = 0;
     startedAt = Date.now();
     battleSeeded = false;
+    restoredFrom = null;
 }
 
 /**
@@ -245,7 +285,16 @@ export function takenBreakdown() {
         }))
         .sort((a, b) => b.average - a.average);
 
-    return { seconds, encounters, startedAt, players, enemies, waves: waveList };
+    return {
+        seconds,
+        encounters,
+        startedAt,
+        // Set when this run was carried over a page refresh
+        restored: restoredFrom ? { ...restoredFrom } : null,
+        players,
+        enemies,
+        waves: waveList,
+    };
 }
 
 /**
@@ -276,6 +325,81 @@ function recoverNames(mMap) {
     }
 }
 
+/**
+ * The run's tallies, for saving.
+ *
+ * Left out, as in `damage-tracker.js`: the attacker and health baselines in
+ * `state`, which describe the units on screen at the moment of saving; the
+ * per-fight slot fold and the monster map, which the next battle replaces; the
+ * wave being fought, which the next battle names; the labyrinth flag.
+ *
+ * @returns {Object|null} The payload, or null when there is no named run worth saving
+ */
+function serializeTakenSession() {
+    const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    if (!sessionKey || characterId === null || !Object.keys(tally).length) return null;
+    // A saved run not yet decided on is better than this one, which may be a fraction of it
+    if (restoreLoading || pendingRestore) return null;
+    return {
+        characterId,
+        sessionKey,
+        logging: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
+        seconds,
+        encounters,
+        tally,
+        enemyTally,
+        waves,
+    };
+}
+
+const persister = createLiveSessionPersister({
+    storeName: LIVE_STORE,
+    kind: LIVE_KIND,
+    label: 'DamageTakenTracker',
+    keyFor: () => liveSessionKey('Taken', dataManager.getCurrentCharacterId?.() ?? null),
+    serialize: serializeTakenSession,
+});
+
+/**
+ * Fold the saved session into this one when the first battle after startup is
+ * the same run — the same key rule as `damage-tracker.js`'s adoption.
+ * @param {number} [now] - Clock
+ * @returns {boolean} Whether it was adopted
+ */
+function adoptPendingRestore(now = Date.now()) {
+    const saved = pendingRestore;
+    pendingRestore = null;
+    if (!saved || !sessionKey || saved.sessionKey !== sessionKey) return false;
+    const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    if (!isRestorable(saved, { kind: LIVE_KIND, characterId, now })) return false;
+
+    mergeCounts(tally, saved.tally);
+    mergeCounts(enemyTally, saved.enemyTally);
+    mergeCounts(waves, saved.waves);
+    encounters += Number(saved.encounters) || 0;
+    seconds += Number(saved.seconds) || 0;
+    startedAt -= Math.max(0, Number(saved.logging) || 0);
+    restoredFrom = { savedAt: saved.savedAt, at: now };
+    persister.note();
+    return true;
+}
+
+/**
+ * Read this character's saved session back.
+ * @param {number} generation - `restoreGeneration` when the read began
+ * @param {string|number} characterId - Who was logged in when it began
+ */
+async function loadPendingRestore(generation, characterId) {
+    const saved = await loadLiveSession(liveSessionKey('Taken', characterId), LIVE_STORE);
+    if (generation !== restoreGeneration) return;
+    restoreLoading = false;
+    if (!saved) return;
+    if (String(dataManager.getCurrentCharacterId?.() ?? '') !== String(characterId)) return;
+    pendingRestore = saved;
+    if (battlesSinceInit === 1) adoptPendingRestore();
+    else if (battlesSinceInit > 1) pendingRestore = null;
+}
+
 let onNewBattle = null;
 let onBattleUpdated = null;
 let onLabyrinthUpdated = null;
@@ -283,7 +407,18 @@ let onLabyrinthUpdated = null;
 export default {
     name: 'Damage Taken Tracker',
     initialize: () => {
-        resetDamageTaken();
+        beginRun();
+
+        battlesSinceInit = 0;
+        pendingRestore = null;
+        restoreGeneration += 1;
+        restoreLoading = false;
+        persister.start();
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (characterId !== null && liveSessionRestoreEnabled()) {
+            restoreLoading = true;
+            loadPendingRestore(restoreGeneration, characterId);
+        }
 
         onLabyrinthUpdated = (data) => {
             try {
@@ -310,11 +445,14 @@ export default {
                     const seenSlots = Object.keys(state.playersHP || {});
                     const adoptable = sessionKey === null && seenSlots.every((index) => index in players);
                     if (!adoptable) {
-                        resetDamageTaken();
+                        beginRun();
                         names = {};
                     }
                 }
                 sessionKey = key || sessionKey;
+
+                battlesSinceInit += 1;
+                if (battlesSinceInit === 1 && pendingRestore) adoptPendingRestore();
 
                 for (const [index, player] of Object.entries(data?.players || {})) {
                     names[index] = player?.name || player?.character?.name || names[index];
@@ -347,6 +485,7 @@ export default {
                     wave.encounters += 1;
                     encounters += 1;
                 }
+                persister.note();
             } catch (error) {
                 console.error('[DamageTakenTracker] Reading a new battle failed:', error);
             }
@@ -413,6 +552,7 @@ export default {
                     battleTaken.seconds += gap / 1000;
                 }
                 lastTickAt = now;
+                persister.note();
             } catch (error) {
                 console.error('[DamageTakenTracker] Reading a combat tick failed:', error);
             }
@@ -423,6 +563,11 @@ export default {
         webSocketHook.on('labyrinth_updated', onLabyrinthUpdated);
     },
     cleanup: () => {
+        // Before anything is cleared, while a departing character is still current
+        persister.stop();
+        pendingRestore = null;
+        restoreGeneration += 1;
+        restoreLoading = false;
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
         if (onLabyrinthUpdated) webSocketHook.off('labyrinth_updated', onLabyrinthUpdated);
@@ -434,6 +579,6 @@ export default {
         monsters = {};
         currentWave = null;
         announced = false;
-        resetDamageTaken();
+        beginRun();
     },
 };

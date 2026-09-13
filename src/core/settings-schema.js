@@ -2071,6 +2071,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
             },
+            combatSessionRestore: {
+                id: 'combatSessionRestore',
+                label: 'Combat meters: Keep the live session through a page refresh',
+                type: 'checkbox',
+                default: true,
+                help: 'Saves the damage and damage-taken tallies, the DPS graph and a watched guild trial every few seconds, in this browser only, and picks them back up after a refresh within 20 minutes — for the same character and the same party and zone, or the same trial fight. The last few seconds before a refresh can be missing, and the first hit on each unit after it is not counted.',
+            },
             partyLint_live: {
                 id: 'partyLint_live',
                 label: 'Party lint: Flag loadout mistakes in the live party',

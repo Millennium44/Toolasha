@@ -58,6 +58,18 @@ import {
     reflectingFor,
     reflectSummary,
 } from '../../utils/reflect-state.js';
+import {
+    createLiveSessionPersister,
+    isRestorable,
+    liveSessionKey,
+    liveSessionRestoreEnabled,
+    loadLiveSession,
+    mergeCounts,
+} from '../../utils/live-session-persist.js';
+
+/** Where the live session is saved, and what its payload is called */
+const LIVE_STORE = 'combatStats';
+const LIVE_KIND = 'damage';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
@@ -125,6 +137,28 @@ let team = {};
 
 /** Healing credited to whoever did it — see `utils/healing-done.js` */
 let healState = newHealingState();
+
+/**
+ * The `startedAt` this run began with. Kept through a restore, where
+ * `startedAt` itself is moved so wall-clock logging skips the time the page was
+ * shut — so this, not `startedAt`, is what says "the same run".
+ */
+let sessionOrigin = 0;
+
+/** `{savedAt, at}` once this run was carried over a page refresh; null otherwise */
+let restoredFrom = null;
+
+/** A saved session read back at startup, waiting for the first `new_battle` to prove it is this run */
+let pendingRestore = null;
+
+/** Bumped whenever a read in flight stops being wanted: a restart, a manual reset */
+let restoreGeneration = 0;
+
+/** `new_battle`s since `initialize`; only the first may adopt a saved session */
+let battlesSinceInit = 0;
+
+/** True while the saved session is being read: until it is decided, the copy on disk is the better one */
+let restoreLoading = false;
 
 /**
  * This fight only, cleared when the next one starts.
@@ -226,8 +260,22 @@ export function setFilterNonDamaging(value) {
     filterNonDamaging = Boolean(value);
 }
 
-/** Forget the run and measure again from here */
+/**
+ * Forget the run and measure again from here — the panel's Reset.
+ *
+ * Ended on purpose, so the saved copy goes too: a refresh straight after must
+ * not bring back the run that was just thrown away.
+ */
 export function resetDamageTracker() {
+    beginRun();
+    pendingRestore = null;
+    restoreGeneration += 1;
+    restoreLoading = false;
+    persister.discard();
+}
+
+/** Start an empty run in memory, leaving any saved session alone */
+function beginRun() {
     state = newAttributionState();
     reflect = newReflectState();
     sessionKey = null;
@@ -245,6 +293,8 @@ export function resetDamageTracker() {
     seconds = 0;
     lastTickAt = 0;
     startedAt = Date.now();
+    sessionOrigin = startedAt;
+    restoredFrom = null;
 }
 
 /**
@@ -496,6 +546,10 @@ export function damageBreakdown() {
     return {
         seconds,
         startedAt,
+        // Which run this is, unchanged by a restore — see `sessionOrigin`
+        sessionId: sessionOrigin,
+        // Set when this run was carried over a page refresh
+        restored: restoredFrom ? { ...restoredFrom } : null,
         logging,
         unownedKills,
         team: teamRow,
@@ -619,6 +673,130 @@ function seedNames() {
     }
 }
 
+/** @returns {string|null} Where this character's live session is saved */
+function liveKey() {
+    return liveSessionKey('Damage', dataManager.getCurrentCharacterId?.() ?? null);
+}
+
+/**
+ * The run's tallies, for saving.
+ *
+ * Only what a refresh cannot re-measure. Left out on purpose: the attribution
+ * baselines (`state`, the reflect state, the healing baselines), which describe
+ * units on screen at the moment of saving and would read the page's absence as
+ * one enormous tick; the fight scope and its health map, which the next battle
+ * replaces anyway; the mana runway samples, which are a recent window in time;
+ * and the labyrinth flag, which only a live `labyrinth_updated` may set.
+ *
+ * @returns {Object|null} The payload, or null when there is no named run worth saving
+ */
+function serializeDamageSession() {
+    const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    // A saved run not yet decided on is better than this one, which may be a fraction of it
+    if (!sessionKey || characterId === null || restoreLoading || pendingRestore) return null;
+    if (!Object.keys(tally).length && !(team.damage > 0) && !(healState.total > 0)) return null;
+    return {
+        characterId,
+        sessionKey,
+        sessionOrigin,
+        logging: startedAt ? Math.max(0, Date.now() - startedAt) : 0,
+        seconds,
+        tally,
+        enemyTally,
+        kills,
+        unownedKills,
+        team,
+        castLogs,
+        sheets,
+        monsterHealth,
+        heal: {
+            players: healState.players,
+            total: healState.total,
+            regen: healState.regen,
+            revived: healState.revived,
+            shared: healState.shared,
+            regenAmount: healState.regenAmount,
+        },
+    };
+}
+
+const persister = createLiveSessionPersister({
+    storeName: LIVE_STORE,
+    kind: LIVE_KIND,
+    label: 'DamageTracker',
+    keyFor: liveKey,
+    serialize: serializeDamageSession,
+});
+
+/**
+ * Fold the saved session into this one, if the battle just announced is the same run.
+ *
+ * Called at the first `new_battle` after startup, once `sessionKey` holds that
+ * battle's key: the roster in slot order plus `combatStartTime` (or the
+ * labyrinth run's key), so a match means the same people in the same seats.
+ * The ticks folded since the reload are the same run's too and are added to,
+ * not replaced. Baselines are not restored — this battle has already seeded
+ * its own.
+ *
+ * @param {number} [now] - Clock
+ * @returns {boolean} Whether it was adopted
+ */
+function adoptPendingRestore(now = Date.now()) {
+    const saved = pendingRestore;
+    pendingRestore = null;
+    if (!saved || !sessionKey || saved.sessionKey !== sessionKey) return false;
+    const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+    if (!isRestorable(saved, { kind: LIVE_KIND, characterId, now })) return false;
+
+    mergeCounts(tally, saved.tally);
+    mergeCounts(enemyTally, saved.enemyTally);
+    mergeCounts(kills, saved.kills);
+    unownedKills += Number(saved.unownedKills) || 0;
+    mergeCounts(team, saved.team);
+
+    const heal = saved.heal || {};
+    mergeCounts(healState.players, heal.players);
+    for (const field of ['total', 'regen', 'revived', 'shared']) healState[field] += Number(heal[field]) || 0;
+    // Learned per slot, and the slots are the same people
+    healState.regenAmount = { ...(heal.regenAmount || {}), ...healState.regenAmount };
+
+    for (const [index, log] of Object.entries(saved.castLogs || {})) {
+        const live = castLogs[index];
+        castLogs[index] = live && Object.keys(live.counts || {}).length ? mergeCounts(live, log) : log;
+    }
+    sheets = { ...(saved.sheets || {}), ...sheets };
+    for (const [name, max] of Object.entries(saved.monsterHealth || {})) {
+        if (Number.isFinite(max) && max > (monsterHealth[name] || 0)) monsterHealth[name] = max;
+    }
+
+    // Measured time only, which never included the page being shut
+    seconds += Number(saved.seconds) || 0;
+    // Wall clock resumes where the saved run stood, so logging skips the gap too
+    startedAt -= Math.max(0, Number(saved.logging) || 0);
+    if (Number.isFinite(saved.sessionOrigin)) sessionOrigin = saved.sessionOrigin;
+    restoredFrom = { savedAt: saved.savedAt, at: now };
+    persister.note();
+    return true;
+}
+
+/**
+ * Read this character's saved session back, to wait for the run to prove itself.
+ * @param {number} generation - `restoreGeneration` when the read began
+ * @param {string|number} characterId - Who was logged in when it began
+ */
+async function loadPendingRestore(generation, characterId) {
+    const saved = await loadLiveSession(liveSessionKey('Damage', characterId), LIVE_STORE);
+    if (generation !== restoreGeneration) return;
+    restoreLoading = false;
+    if (!saved) return;
+    // Captured before the read: a switch while it was out makes it another character's
+    if (String(dataManager.getCurrentCharacterId?.() ?? '') !== String(characterId)) return;
+    pendingRestore = saved;
+    // The first battle statement arrived while the read was out, and it still decides
+    if (battlesSinceInit === 1) adoptPendingRestore();
+    else if (battlesSinceInit > 1) pendingRestore = null;
+}
+
 let onNewBattle = null;
 let onBattleUpdated = null;
 let onUnitFetched = null;
@@ -627,8 +805,19 @@ let onLabyrinthUpdated = null;
 export default {
     name: 'Damage Tracker',
     initialize: () => {
-        resetDamageTracker();
+        beginRun();
         seedNames();
+
+        battlesSinceInit = 0;
+        pendingRestore = null;
+        restoreGeneration += 1;
+        restoreLoading = false;
+        persister.start();
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (characterId !== null && liveSessionRestoreEnabled()) {
+            restoreLoading = true;
+            loadPendingRestore(restoreGeneration, characterId);
+        }
 
         onLabyrinthUpdated = (data) => {
             try {
@@ -666,11 +855,16 @@ export default {
                     const seenSlots = Object.keys(state.party || {});
                     const adoptable = sessionKey === null && seenSlots.every((index) => index in (players || {}));
                     if (!adoptable) {
-                        resetDamageTracker();
+                        beginRun();
                         names = {};
                     }
                 }
                 sessionKey = key || sessionKey;
+
+                // The first battle after startup is the one that can say whether a
+                // saved session is this run
+                battlesSinceInit += 1;
+                if (battlesSinceInit === 1 && pendingRestore) adoptPendingRestore();
 
                 noteActions(state, players);
                 noteCasts(players);
@@ -751,6 +945,7 @@ export default {
                     // what killing one is worth
                     if (Number.isFinite(maxHP) && maxHP > (monsterHealth[name] || 0)) monsterHealth[name] = maxHP;
                 }
+                persister.note();
             } catch (error) {
                 console.error('[DamageTracker] Reading a new battle failed:', error);
             }
@@ -914,6 +1109,7 @@ export default {
                     battle.seconds += gap / 1000;
                 }
                 lastTickAt = now;
+                persister.note();
             } catch (error) {
                 console.error('[DamageTracker] Reading a combat tick failed:', error);
             }
@@ -951,6 +1147,12 @@ export default {
         webSocketHook.on('labyrinth_updated', onLabyrinthUpdated);
     },
     cleanup: () => {
+        // Written before anything is cleared: on a character switch this runs
+        // while the departing character is still the current one
+        persister.stop();
+        pendingRestore = null;
+        restoreGeneration += 1;
+        restoreLoading = false;
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
         if (onUnitFetched) webSocketHook.off('battle_unit_fetched', onUnitFetched);
@@ -965,6 +1167,6 @@ export default {
         monsterHealth = {};
         battleSeeded = false;
         announced = false;
-        resetDamageTracker();
+        beginRun();
     },
 };
