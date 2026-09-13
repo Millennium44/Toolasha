@@ -127,6 +127,9 @@ const { TRIAL_WIRE_DUMP: wireDump } = await import('./guild-trial-wire-dump.fixt
 /** And the five message types a later, fuller recording found */
 const { END_GUILD_BATTLE, GUILD_BATTLE_TICKS, NEW_GUILD_BATTLE } = await import('./guild-trial-messages.fixture.js');
 
+/** The row every name-less slot folds into */
+const { UNNAMED_ROW_NAME } = await import('./guild-trial-units.js');
+
 /**
  * One player in a tick, with the counters attribution reads.
  * @param {number} atk - Attack counter
@@ -964,9 +967,11 @@ describe('the spectated trial fight', () => {
         replay();
 
         // 2612 → 2577 → 2612 → 2499 across the capture: 35 then 113 taken, 35 healed.
-        // Rows are keyed by identity now — the placeholder, for a slot never
+        // Rows are keyed by identity now — the unnamed row, for a slot never
         // named — because a raw index does not survive the per-tier slot re-deal
-        const row = guildTrialDamage.breakdown().support.players.find((entry) => entry.name === 'Player 2');
+        const row = guildTrialDamage
+            .breakdown()
+            .support.players.find((entry) => entry.name === `${UNNAMED_ROW_NAME} (1 player)`);
         expect(row.damageTaken).toBe(35 + 113);
         expect(row.healingReceived).toBe(35);
     });
@@ -993,7 +998,8 @@ describe('the spectated trial fight', () => {
         const report = guildTrialDamage.breakdown();
         expect(report.totalDamage).toBe(1_405);
         expect(report.players).toHaveLength(1);
-        expect(report.players[0].name).toBe('Player 2');
+        // Nothing names the unit, so it is the one unnamed row
+        expect(report.players[0].name).toBe(`${UNNAMED_ROW_NAME} (1 player)`);
         expect(report.players[0].measured).toBe(true);
         // Still true, and still exported: no *player-side* counters were seen
         expect(report.splitFromCounters).toBe(false);
@@ -1049,7 +1055,7 @@ describe('the spectated trial fight', () => {
         game.wsHandlers[GUILD_BATTLE_MESSAGE](tick(3, 1923));
 
         const report = guildTrialDamage.breakdown();
-        const row = report.support.players.find((entry) => entry.name === 'Player 2');
+        const row = report.support.players.find((entry) => entry.name === `${UNNAMED_ROW_NAME} (1 player)`);
         expect(row.healingReceived).toBe(0);
         expect(row.deaths).toBe(1);
     });
@@ -3470,5 +3476,180 @@ describe('debuff timers on the spectated boss', () => {
 
     test('a client that never spectated has no boss timers to draw', () => {
         expect(liveBossDebuffs(at)).toBeNull();
+    });
+});
+
+describe('a trial first watched mid-tier, before any roster', () => {
+    // The live report: the page opened a couple of minutes into a trial, so the
+    // tier in progress never had its `new_guild_battle`. Every slot of that
+    // stretch banked under "Player N" at the next tier and stayed a separate
+    // row from the same member's named one — 45 of them. Here the unannounced
+    // tier 3 deals Bo, Wat, Dee, Ada, Cy; tier 4 re-deals them Ada, Bo, Cy, Dee, Wat.
+    const at = new Date('2026-09-13T20:00:00Z').getTime();
+    const DISTINCT = { Ada: [1000, 500], Bo: [1100, 500], Cy: [1200, 500], Dee: [1300, 500], Wat: [1400, 500] };
+    let vitals = DISTINCT;
+    const TIER3 = ['Bo', 'Wat', 'Dee', 'Ada', 'Cy'];
+    const TIER4 = ['Ada', 'Bo', 'Cy', 'Dee', 'Wat'];
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        vitals = DISTINCT;
+        game.clientData = {};
+        game.loadouts = [];
+        game.ownName = 'Wat';
+        game.ownId = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Hedgehog']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+        game.ownName = null;
+        game.loadouts = [];
+    });
+
+    /** The spectate view: the watcher's own tile, the rest as lines in slot order without the watcher */
+    const drawView = (deal, watcher = 'Wat') => {
+        const own = deal.includes(watcher)
+            ? `<div class="CombatUnit_combatUnit__a"><div class="CombatUnit_name__b">${watcher}</div></div>`
+            : '';
+        const lines = deal
+            .filter((name) => name !== watcher)
+            .map((name) => `<div class="MiniUnit_miniUnit__c"><div class="MiniUnit_name__d">${name}</div></div>`)
+            .join('');
+        document.body.innerHTML = `<div class="BattlePanel_playersArea__p">${own}<div>${lines}</div></div>`;
+    };
+    const unit = (name, extra = {}) => ({
+        cHP: vitals[name][0],
+        mHP: vitals[name][0],
+        cMP: vitals[name][1],
+        mMP: vitals[name][1],
+        isAutoAtk: true,
+        ...extra,
+    });
+    const roster = (tier, deal) => ({
+        battleId: 1,
+        tier,
+        wave: 1,
+        players: deal.map((name) => ({
+            character: { id: 100 + Object.keys(vitals).indexOf(name), name },
+            maxHitpoints: vitals[name][0],
+            maxManapoints: vitals[name][1],
+        })),
+        monsters: [{ hrid: '/monsters/trial_hedgehog', name: 'Trial Hedgehog', combatDetails: {} }],
+    });
+    const tick = (tier, pMap, bossHp, bossDmg, offsetMs) => {
+        vi.setSystemTime(at + offsetMs);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 1,
+            tier,
+            pMap,
+            mMap: { 0: { cHP: bossHp, mHP: 650_000, dmgCounter: bossDmg, critCounter: 0 } },
+        });
+    };
+    /** Tier 3 seen from its middle: every slot present, then Bo (slot 0) 100K and Ada (slot 3) 50K */
+    const tier3 = () => {
+        const everyone = Object.fromEntries(TIER3.map((name, slot) => [slot, unit(name, { atkCounter: 1 })]));
+        tick(3, everyone, 650_000, 0, 0);
+        tick(3, { 0: { atkCounter: 2 } }, 550_000, 1, 1200);
+        tick(3, { 3: { atkCounter: 2 } }, 500_000, 2, 2400);
+        tick(3, { 4: { atkCounter: 1 } }, 500_000, 2, 3600);
+    };
+    /** Tier 4, announced: Ada (slot 0 now) 30K */
+    const tier4 = () => {
+        vi.setSystemTime(at + 4000);
+        game.wsHandlers.new_guild_battle(roster(4, TIER4));
+        const everyone = Object.fromEntries(TIER4.map((name, slot) => [slot, unit(name, { atkCounter: 5 })]));
+        tick(4, everyone, 650_000, 0, 4200);
+        tick(4, { 0: { atkCounter: 6 } }, 620_000, 1, 5400);
+    };
+    const totals = () => Object.fromEntries(guildTrialDamage.breakdown().players.map((row) => [row.name, row.damage]));
+    const unnamed = (count) => `${UNNAMED_ROW_NAME} (${count} players)`;
+
+    test('the fight view’s tiles name the unannounced tier, and it banks under those names', () => {
+        drawView(TIER3);
+        tier3();
+        drawView(TIER4);
+        tier4();
+
+        // Before the fix: {"Player 1": 100K, "Player 4": 50K, Ada: 30K}
+        expect(totals()).toEqual({ Bo: 100_000, Ada: 80_000 });
+        expect(guildTrialDamage.breakdown().totalDamage).toBe(180_000);
+    });
+
+    test('with no fight view to read, the stretch is one unnamed row with its player count', () => {
+        tier3();
+        tier4();
+
+        const { players, totalDamage, support } = guildTrialDamage.breakdown();
+        expect(players.map((row) => row.name)).toEqual([unnamed(5), 'Ada']);
+        expect(players[0]).toMatchObject({ damage: 150_000, unnamed: true, unnamedPlayers: 5 });
+        expect(totalDamage).toBe(180_000);
+        // The support table folds the same stretch into the same row
+        expect(support.players.filter((row) => row.name.startsWith(UNNAMED_ROW_NAME))).toHaveLength(1);
+        expect(attributionCoverage({ participants: 5, players }).attributed).toBe(1);
+    });
+
+    test('tiles still showing another deal name nobody', () => {
+        // The view drawn in tier 4's order while tier 3's slots are live
+        drawView(TIER4);
+        tier3();
+        tier4();
+
+        expect(totals()).toEqual({ [unnamed(5)]: 150_000, Ada: 30_000 });
+    });
+
+    test('neighbours in the watcher’s own gear stay unnamed, and the rest of the tier is named', () => {
+        // Bo wears exactly Wat's vitals, so the watcher could hold slot 0 or 1
+        vitals = { ...DISTINCT, Bo: DISTINCT.Wat };
+        drawView(TIER3);
+        tier3();
+        drawView(TIER4);
+        tier4();
+
+        expect(totals()).toEqual({ [unnamed(2)]: 100_000, Ada: 80_000 });
+    });
+
+    test('a captured build lets the tiles name the wave while it is still live', () => {
+        // Bo and Dee share a build, and so do Ada and Cy: the vitals alone name
+        // nobody, but they rule out every arrangement of the tiles but one
+        vitals = { Ada: [1000, 500], Bo: [1100, 500], Cy: [1000, 500], Dee: [1100, 500], Wat: [1400, 500] };
+        game.loadouts = Object.entries(vitals).map(([name, [hp, mp]]) => ({
+            name,
+            at: 1,
+            rows: [
+                { label: 'Max HP', value: String(hp) },
+                { label: 'Max MP', value: String(mp) },
+            ],
+        }));
+        drawView(TIER3);
+        tier3();
+
+        expect(totals()).toEqual({ Bo: 100_000, Ada: 50_000 });
+        expect(guildTrialDamage.breakdown().names[1]).toMatchObject({ name: 'Wat', source: 'tiles' });
+    });
+
+    test('a watched-from-the-start trial is unchanged by the tiles', () => {
+        const run = (withView) => {
+            guildTrialDamage.reset();
+            document.body.innerHTML = '';
+            vi.setSystemTime(at - 1000);
+            game.wsHandlers.new_guild_battle(roster(3, TIER3));
+            if (withView) drawView(TIER3);
+            tier3();
+            if (withView) drawView(TIER4);
+            tier4();
+            const breakdown = guildTrialDamage.breakdown();
+            return { totals: totals(), total: breakdown.totalDamage, taken: breakdown.support.totals.damageTaken };
+        };
+        const without = run(false);
+        expect(without.totals).toEqual({ Bo: 100_000, Ada: 80_000 });
+        expect(run(true)).toEqual(without);
     });
 });

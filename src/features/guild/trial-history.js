@@ -30,6 +30,7 @@
 import guildTrialDamage from './guild-trial-damage.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder, RECONCILE_WAIT_MS, SNAPSHOT_MS } from './guild-trial-recorder.js';
+import { isUnnamedRowName } from './guild-trial-units.js';
 import { snapshotTierMarks, thinTrialRates, trialRates } from './trial-dps-graph.js';
 import { currentCharacterId, historyEnabled, saveHistoryEntry } from '../combat/meter-history.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -205,8 +206,11 @@ export function buildTrialEntry(sample, finished) {
     const gameTotal = reported
         ? Object.values(reported).reduce((sum, stats) => sum + (Number(stats?.damage) || 0), 0)
         : null;
+    // The unnamed row is slots nobody could name, most of them members counted
+    // again under their names from later tiers — not another player
     const players = new Set(
         [...breakdown.players, ...breakdown.support.players, ...Object.keys(reported || {}).map((name) => ({ name }))]
+            .filter((row) => !isUnnamedRowName(row?.name))
             .map((row) => String(row?.name || '').toLowerCase())
             .filter(Boolean)
     ).size;

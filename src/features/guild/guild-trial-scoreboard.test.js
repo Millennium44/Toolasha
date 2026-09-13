@@ -701,7 +701,7 @@ describe('the panel', () => {
         expect(text()).not.toContain('attack counters');
     });
 
-    test('a placeholder name is flagged as one', () => {
+    test('a slot nobody could name is said to be in the unnamed row', () => {
         game.breakdown = breakdown({
             source: 'spectated',
             nameCoverage: { named: 1, of: 2, placeholders: ['Player 3'], bySource: {} },
@@ -709,7 +709,29 @@ describe('the panel', () => {
         guildTrialScoreboard.open();
 
         expect(text()).toContain('1 of 2 units could be named');
-        expect(text()).toContain('Player 3 is a placeholder');
+        expect(text()).toContain('the other 1 is counted in the “Unnamed — before names were known” row');
+    });
+
+    test('the unnamed row draws with its player count, and totals are the rows summed', () => {
+        game.breakdown = breakdown({
+            source: 'spectated',
+            players: [
+                { index: 'Tib', name: 'Tib', damage: 900, measured: true },
+                {
+                    index: 'Unnamed — before names were known',
+                    name: 'Unnamed — before names were known (45 players)',
+                    damage: 100,
+                    measured: true,
+                    unnamed: true,
+                    unnamedPlayers: 45,
+                },
+            ],
+            totalDamage: 1000,
+        });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('Unnamed — before names were known (45 players)');
+        expect(text()).not.toContain('Player ');
     });
 
     test('watched with nothing attributed yet is its own message, not "nothing to show"', () => {

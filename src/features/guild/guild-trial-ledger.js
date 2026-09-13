@@ -77,6 +77,7 @@
 
 import storage from '../../core/storage.js';
 import { trialFromHrid, trialWeekStart } from './guild-trials-math.js';
+import { isUnnamedRowName } from './guild-trial-units.js';
 
 /** Object store the ledger lives in — shared with the rest of the guild history */
 export const LEDGER_STORE = 'guildHistory';
@@ -277,7 +278,8 @@ export function sessionContribution(session, { encounter = null, tier = null, ro
     const seen = new Set();
     for (const player of last?.players || []) {
         const name = String(player?.name || '').trim();
-        if (!name) continue;
+        // The unnamed row is slots nobody could name, not a member to count attendance for
+        if (!name || isUnnamedRowName(name)) continue;
         const key = memberKey(name);
         if (seen.has(key)) continue;
         seen.add(key);

@@ -150,6 +150,18 @@ describe('sessionContribution', () => {
         expect(contribution.members.find((member) => member.name === 'Bob').damage).toBe(0);
     });
 
+    test('the unnamed row is not a member', () => {
+        const contribution = sessionContribution(
+            session([
+                [
+                    player('Alice', { damage: 900 }),
+                    player('Unnamed — before names were known (45 players)', { damage: 300 }),
+                ],
+            ])
+        );
+        expect(contribution.members.map((member) => member.name)).toEqual(['Alice']);
+    });
+
     test('a session that recorded nobody folds nothing', () => {
         expect(sessionContribution(session([]))).toBeNull();
         expect(sessionContribution(null)).toBeNull();

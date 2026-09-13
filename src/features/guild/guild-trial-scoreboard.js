@@ -75,6 +75,7 @@ import { closePlayerMenu, playerMarkersHTML, playerRowColor, wirePlayerMenu } fr
 import { resolveRosterColors } from '../../utils/player-colors.js';
 import { savedTrialGraphHTML, trialDpsGraphHTML, wireTrialDpsGraph } from './trial-dps-graph.js';
 import { flushTrialHistory } from './trial-history.js';
+import { UNNAMED_ROW_NAME } from './guild-trial-units.js';
 import {
     cachedHistoryIndex,
     ensureHistoryLoaded,
@@ -987,10 +988,11 @@ class GuildTrialScoreboard {
         if (!coverage?.of) return '';
         if (!coverage.placeholders.length) return '';
 
-        const listed = coverage.placeholders.slice(0, 4).join(', ');
+        const count = coverage.placeholders.length;
         return (
-            ` ${coverage.named} of ${coverage.of} units could be named from the fight view or a captured ` +
-            `build; ${listed} ${coverage.placeholders.length === 1 ? 'is a placeholder' : 'are placeholders'}.`
+            ` ${coverage.named} of ${coverage.of} units could be named from the roster, the fight view or a ` +
+            `captured build; the other ${count} ${count === 1 ? 'is' : 'are'} counted in the ` +
+            `“${UNNAMED_ROW_NAME}” row.`
         );
     }
 

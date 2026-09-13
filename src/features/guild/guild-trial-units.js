@@ -273,8 +273,211 @@ export function matchByVitals(unit, loadouts) {
     return hits.length === 1 ? hits[0] : null;
 }
 
+/**
+ * The name tiles the fight view draws, split by kind, in document order.
+ *
+ * Positional only through {@link arrangeByTiles}, which checks the arrangement
+ * against the stream's own vitals before any of it is believed. Null when the
+ * view is not open, which is "no answer" rather than "nobody".
+ *
+ * @param {Document|Element} [root] - Where to look; the document by default
+ * @returns {{own: string[], minis: string[]}|null} `own` holds the full `CombatUnit` tiles'
+ *   names (the watcher's, in the spectate view), `minis` the `MiniUnit` lines', blanks kept
+ */
+export function fightViewTiles(root = typeof document === 'undefined' ? null : document) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+
+    const area = root.querySelector(PLAYERS_AREA);
+    if (!area) return null;
+
+    const text = (el) => el?.textContent?.trim() || '';
+    return {
+        own: [...area.querySelectorAll(UNIT)].map((unit) => text(unit.querySelector(UNIT_NAME))),
+        minis: [...area.querySelectorAll(MINI_UNIT_NAME)].map(text),
+    };
+}
+
+/**
+ * The one row every name-less slot of a trial folds into.
+ *
+ * A game name cannot hold a space, let alone this, so it can never collide with
+ * a member. The board, the guild report and saved History show it with a
+ * player count after it — see {@link unnamedRowName}.
+ */
+export const UNNAMED_ROW_NAME = 'Unnamed — before names were known';
+
+/**
+ * The unnamed row's label, with how many slots went into it.
+ * @param {number} players - Slots folded in
+ * @returns {string} e.g. `Unnamed — before names were known (45 players)`
+ */
+export function unnamedRowName(players) {
+    const count = Math.max(0, Math.round(Number(players) || 0));
+    return `${UNNAMED_ROW_NAME} (${count} player${count === 1 ? '' : 's'})`;
+}
+
+/**
+ * Whether a row is the unnamed row rather than a member.
+ * @param {string} name - A row's name
+ * @returns {boolean}
+ */
+export function isUnnamedRowName(name) {
+    return String(name || '').startsWith(UNNAMED_ROW_NAME);
+}
+
+/**
+ * Whether a name is a slot placeholder (`Player 7`) rather than anybody's.
+ *
+ * Exact for this file's own output ({@link placeholderFor}), and safe on a
+ * saved tally from before the unnamed row existed, which banked under these.
+ *
+ * @param {string} name - A name
+ * @returns {boolean}
+ */
+export function isPlaceholderName(name) {
+    return /^Player \d+$/.test(String(name || ''));
+}
+
+/** Share of a party whose vitals must be checked before a tile arrangement is believed */
+export const MIN_TILE_CHECKED = 0.5;
+
+/**
+ * Name a wave's slots off the fight view's tiles, where the stream's own vitals prove the arrangement.
+ *
+ * The spectate view draws the watcher as one `CombatUnit` tile and everyone
+ * else as `MiniUnit` lines. The lines are believed to run in slot order with
+ * the watcher's slot left out — which puts every name in place *except* that
+ * nothing says where the watcher's slot is, so a one-slot shift anywhere is a
+ * name on the wrong guildmate. So nothing here is believed on layout alone:
+ *
+ * 1. **The tiles must fit the wave exactly.** The slots seen this wave run
+ *    0..n-1 with none missing; the lines are distinct and non-blank; and either
+ *    there is no `CombatUnit` tile and there are n lines, or there is one, it
+ *    bears the watcher's own name, and there are n-1 lines without it.
+ * 2. **Every arrangement is tried.** With the watcher's slot known (the roster's
+ *    id match), one; without it, one per slot the watcher could hold.
+ * 3. **An arrangement survives only if the stream agrees with it.** A tick states
+ *    each slot's maximum health and mana; `new_guild_battle` and captured builds
+ *    state each member's. Any slot whose stated vitals differ from those of the
+ *    name the arrangement gives it kills the arrangement, as does a slot some
+ *    other source already named differently. At least {@link MIN_TILE_CHECKED}
+ *    of the party must actually have been checked — an arrangement nothing
+ *    could contradict has not been confirmed.
+ * 4. **A slot is named only where every surviving arrangement agrees.** Two
+ *    neighbours in the same gear leave the watcher's position between them
+ *    open; the slots in that stretch stay unnamed and the rest do not.
+ *
+ * A tile reading of another deal (the fight view not yet redrawn after a
+ * re-deal), an order that is not slot order, or a missing tile all contradict
+ * the vitals and name nobody.
+ *
+ * @param {Object} input - Inputs
+ * @param {Array<string|number>} input.slots - Slot indexes seen this wave
+ * @param {{own: string[], minis: string[]}|null} input.tiles - From {@link fightViewTiles}, read this wave
+ * @param {Object<string, string|null>} [input.vitals] - Slot → `"mHP/mMP"` as the wave's ticks stated it;
+ *   null for a slot that stated two
+ * @param {Map<string, string|null>} [input.facts] - Lowercased name → `"mHP/mMP"` as stated for that member;
+ *   null for one stated two ways
+ * @param {Object<string, string>} [input.anchors] - Slot → name another source already put there
+ * @param {string|null} [input.ownName] - The watcher's character name
+ * @param {string|number|null} [input.ownSlot] - The watcher's slot, when known by id
+ * @returns {{names: Object<string, string>, arrangements: number, survivors: number, checked: number,
+ *   reason: string|null}} Slot → name for every slot the survivors agree on; `reason` says why nothing was
+ */
+export function arrangeByTiles({
+    slots = [],
+    tiles = null,
+    vitals = {},
+    facts = new Map(),
+    anchors = {},
+    ownName = null,
+    ownSlot = null,
+} = {}) {
+    const refuse = (reason, extra = {}) => ({ names: {}, arrangements: 0, survivors: 0, checked: 0, reason, ...extra });
+
+    const indexes = [...new Set((slots || []).map((slot) => Number(slot)))].sort((a, b) => a - b);
+    const n = indexes.length;
+    if (!n || indexes.some((slot, position) => slot !== position)) return refuse('slots');
+    if (!tiles || !Array.isArray(tiles.minis) || !tiles.minis.length) return refuse('no-tiles');
+
+    const minis = tiles.minis.map((name) => String(name || '').trim());
+    const own = (tiles.own || []).map((name) => String(name || '').trim());
+    const key = (name) => String(name || '').toLowerCase();
+    if (minis.some((name) => !name) || new Set(minis.map(key)).size !== minis.length) return refuse('tiles');
+
+    const watcher = String(ownName || '').trim();
+    let candidates;
+    if (own.length === 0 && minis.length === n) {
+        candidates = [null];
+    } else if (
+        own.length === 1 &&
+        watcher &&
+        key(own[0]) === key(watcher) &&
+        minis.length === n - 1 &&
+        !minis.some((name) => key(name) === key(watcher))
+    ) {
+        const known = ownSlot === null || ownSlot === undefined || ownSlot === '' ? null : Number(ownSlot);
+        candidates = Number.isInteger(known) && known >= 0 && known < n ? [known] : indexes;
+    } else {
+        return refuse('layout');
+    }
+
+    const needed = Math.ceil(n * MIN_TILE_CHECKED);
+    const survivors = [];
+    let best = 0;
+    let consistent = false;
+    for (const w of candidates) {
+        const arrangement = indexes.map((slot) => {
+            if (w === null) return minis[slot];
+            if (slot === w) return watcher;
+            return slot < w ? minis[slot] : minis[slot - 1];
+        });
+
+        let checked = 0;
+        let contradicted = false;
+        for (const slot of indexes) {
+            const name = arrangement[slot];
+            const anchor = anchors?.[slot];
+            if (anchor) {
+                if (key(anchor) !== key(name)) {
+                    contradicted = true;
+                    break;
+                }
+                checked += 1;
+                continue;
+            }
+            const stated = vitals?.[slot];
+            const expected = facts?.get?.(key(name));
+            if (!stated || !expected) continue;
+            if (stated !== expected) {
+                contradicted = true;
+                break;
+            }
+            checked += 1;
+        }
+        if (contradicted) continue;
+        consistent = true;
+        best = Math.max(best, checked);
+        if (checked >= needed) survivors.push(arrangement);
+    }
+
+    if (!survivors.length) {
+        return refuse(consistent ? 'unchecked' : 'contradicted', {
+            arrangements: candidates.length,
+            checked: best,
+        });
+    }
+
+    const names = {};
+    for (const slot of indexes) {
+        const name = survivors[0][slot];
+        if (survivors.every((arrangement) => key(arrangement[slot]) === key(name))) names[slot] = name;
+    }
+    return { names, arrangements: candidates.length, survivors: survivors.length, checked: best, reason: null };
+}
+
 /** How much each naming source is worth, when two of them claim one name */
-const SOURCE_RANK = { placeholder: 0, elimination: 1, vitals: 2, portrait: 3, own: 4, roster: 5 };
+const SOURCE_RANK = { placeholder: 0, elimination: 1, vitals: 2, tiles: 3, portrait: 4, own: 5, roster: 6 };
 
 /**
  * A placeholder entry for a slot.
@@ -322,7 +525,7 @@ function placeholderFor(index) {
  * @param {Object} [input.known] - Names already resolved, index → `{name, source}`
  * @param {{slot: string|number|null, name: string|null, characterId?: number|string|null}|null} [input.own] -
  *   The watcher: the slot they hold (null when unknown), and their character's name
- * @returns {Object<string, {name: string, source: 'roster'|'own'|'portrait'|'vitals'|'elimination'|'placeholder',
+ * @returns {Object<string, {name: string, source: 'roster'|'own'|'portrait'|'tiles'|'vitals'|'elimination'|'placeholder',
  *   characterId?: number|null}>} Per index; may also carry corrections for slots outside this
  *   tick whose held name lost an injectivity contest
  */

@@ -221,4 +221,17 @@ describe('what a saved trial holds', () => {
         expect(entry.id).toBe(`trial__monsters_badger_${T0}`);
         expect(entry.summary.detail).toBe('3 players');
     });
+
+    test('the unnamed row is kept in the body but is not counted as a player', () => {
+        // The live trial read "91 players" for a party of 46: every slot of the
+        // stretch watched before names were known counted as one more player
+        const unnamed = 'Unnamed — before names were known (45 players)';
+        const breakdown = trial({
+            players: [...trial().players, { index: unnamed, name: unnamed, damage: 311, unnamed: true }],
+            support: { players: [...trial().support.players, { index: unnamed, name: unnamed, damageTaken: 9 }] },
+        });
+        const entry = buildTrialEntry({ at: T0, firstSeenAt: T0, breakdown: thinTrialBreakdown(breakdown) }, true);
+        expect(entry.summary.detail).toBe('3 players');
+        expect(entry.breakdown.players.map((row) => row.name)).toContain(unnamed);
+    });
 });

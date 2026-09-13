@@ -13,10 +13,16 @@
 import { describe, test, expect, afterEach } from 'vitest';
 
 import {
+    arrangeByTiles,
     fightViewBossNames,
     fightViewNames,
     fightViewPartyNames,
+    fightViewTiles,
+    isPlaceholderName,
+    isUnnamedRowName,
     loadoutVitals,
+    unnamedRowName,
+    UNNAMED_ROW_NAME,
     matchByVitals,
     nameCoverage,
     resolveUnitNames,
@@ -412,5 +418,119 @@ describe('nameCoverage', () => {
 
     test('nothing resolved is nothing claimed', () => {
         expect(nameCoverage(null)).toEqual({ named: 0, of: 0, placeholders: [], bySource: {} });
+    });
+});
+
+describe('fightViewTiles', () => {
+    test('reads the watcher’s tile and the party’s lines apart, in document order', () => {
+        document.body.innerHTML =
+            '<div class="BattlePanel_playersArea__a">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Wat</div></div>' +
+            '<div class="MiniUnitGrid_miniUnitColumn__d">' +
+            '<div class="MiniUnit_miniUnit__e"><div class="MiniUnit_name__f">Bo</div></div>' +
+            '<div class="MiniUnit_miniUnit__e"><div class="MiniUnit_name__f"> Dee </div></div>' +
+            '</div></div>' +
+            '<div class="BattlePanel_monstersArea__g">' +
+            '<div class="CombatUnit_combatUnit__b"><div class="CombatUnit_name__c">Trial Hedgehog</div></div></div>';
+        expect(fightViewTiles()).toEqual({ own: ['Wat'], minis: ['Bo', 'Dee'] });
+    });
+
+    test('a shut view is no answer rather than an empty party', () => {
+        expect(fightViewTiles()).toBeNull();
+        expect(fightViewTiles(null)).toBeNull();
+    });
+});
+
+describe('arrangeByTiles', () => {
+    // Five slots, dealt Bo, Wat, Dee, Ada, Cy. The watcher is drawn as their own
+    // tile and the rest as lines in slot order with the watcher's slot left out
+    const sig = { Ada: '1000/500', Bo: '1100/500', Cy: '1200/500', Dee: '1300/500', Wat: '1400/500' };
+    const dealt = ['Bo', 'Wat', 'Dee', 'Ada', 'Cy'];
+    const slots = ['0', '1', '2', '3', '4'];
+    const vitalsOf = (deal) => Object.fromEntries(deal.map((name, slot) => [slot, sig[name]]));
+    const factsOf = (table) => new Map(Object.entries(table).map(([name, value]) => [name.toLowerCase(), value]));
+    const tiles = { own: ['Wat'], minis: ['Bo', 'Dee', 'Ada', 'Cy'] };
+    const base = { slots, tiles, vitals: vitalsOf(dealt), facts: factsOf(sig), ownName: 'Wat' };
+
+    test('the vitals leave one place for the watcher, and every slot is named', () => {
+        const result = arrangeByTiles(base);
+        expect(result.names).toEqual({ 0: 'Bo', 1: 'Wat', 2: 'Dee', 3: 'Ada', 4: 'Cy' });
+        expect(result).toMatchObject({ arrangements: 5, survivors: 1, reason: null });
+    });
+
+    test('a party the watcher is not in is read line for line', () => {
+        const result = arrangeByTiles({
+            ...base,
+            tiles: { own: [], minis: ['Bo', 'Dee', 'Ada', 'Cy'] },
+            slots: ['0', '1', '2', '3'],
+            vitals: vitalsOf(['Bo', 'Dee', 'Ada', 'Cy']),
+            ownName: null,
+        });
+        expect(result.names).toEqual({ 0: 'Bo', 1: 'Dee', 2: 'Ada', 3: 'Cy' });
+    });
+
+    test('neighbours in the same gear leave that stretch unnamed and name the rest', () => {
+        // Bo wears exactly the watcher's vitals, so Wat could be slot 0 or 1
+        const same = { ...sig, Bo: sig.Wat };
+        const vitals = Object.fromEntries(dealt.map((name, slot) => [slot, same[name]]));
+        const ambiguous = arrangeByTiles({ ...base, vitals, facts: factsOf(same) });
+        expect(ambiguous.survivors).toBe(2);
+        expect(ambiguous.names).toEqual({ 2: 'Dee', 3: 'Ada', 4: 'Cy' });
+    });
+
+    test('a known watcher slot is the only arrangement tried', () => {
+        const same = { ...sig, Bo: sig.Wat };
+        const vitals = Object.fromEntries(dealt.map((name, slot) => [slot, same[name]]));
+        const result = arrangeByTiles({ ...base, vitals, facts: factsOf(same), ownSlot: '1' });
+        expect(result.names).toEqual({ 0: 'Bo', 1: 'Wat', 2: 'Dee', 3: 'Ada', 4: 'Cy' });
+    });
+
+    test('with nothing to check the arrangement against, nobody is named', () => {
+        const result = arrangeByTiles({ ...base, facts: new Map() });
+        expect(result.names).toEqual({});
+        expect(result.reason).toBe('unchecked');
+        // Half the party is the bar: two of five checked is not enough
+        const thin = arrangeByTiles({ ...base, facts: factsOf({ Bo: sig.Bo, Wat: sig.Wat }), ownSlot: '1' });
+        expect(thin.names).toEqual({});
+    });
+
+    test('tiles still showing the last deal contradict this one, and name nobody', () => {
+        // The view not yet redrawn after a re-deal: the lines are another order
+        const stale = arrangeByTiles({ ...base, tiles: { own: ['Wat'], minis: ['Ada', 'Bo', 'Cy', 'Dee'] } });
+        expect(stale.names).toEqual({});
+        expect(stale.reason).toBe('contradicted');
+    });
+
+    test('a missing, blank or duplicated line, or a tile that is not the watcher, is refused outright', () => {
+        expect(arrangeByTiles({ ...base, tiles: { own: ['Wat'], minis: ['Bo', 'Dee', 'Ada'] } }).reason).toBe('layout');
+        expect(arrangeByTiles({ ...base, tiles: { own: ['Wat'], minis: ['Bo', '', 'Ada', 'Cy'] } }).reason).toBe(
+            'tiles'
+        );
+        expect(arrangeByTiles({ ...base, tiles: { own: ['Wat'], minis: ['Bo', 'Bo', 'Ada', 'Cy'] } }).reason).toBe(
+            'tiles'
+        );
+        expect(arrangeByTiles({ ...base, tiles: { own: ['Zed'], minis: ['Bo', 'Dee', 'Ada', 'Cy'] } }).reason).toBe(
+            'layout'
+        );
+        expect(arrangeByTiles({ ...base, ownName: null }).reason).toBe('layout');
+        expect(arrangeByTiles({ ...base, slots: ['0', '1', '3', '4', '5'] }).reason).toBe('slots');
+        expect(arrangeByTiles({ ...base, tiles: null }).reason).toBe('no-tiles');
+    });
+
+    test('a slot another source already named differently kills the arrangement', () => {
+        const result = arrangeByTiles({ ...base, anchors: { 3: 'Cy' } });
+        expect(result.names).toEqual({});
+        expect(arrangeByTiles({ ...base, anchors: { 3: 'Ada' } }).names[3]).toBe('Ada');
+    });
+});
+
+describe('the unnamed row', () => {
+    test('carries its player count and is never a member name', () => {
+        expect(unnamedRowName(45)).toBe(`${UNNAMED_ROW_NAME} (45 players)`);
+        expect(unnamedRowName(1)).toBe(`${UNNAMED_ROW_NAME} (1 player)`);
+        expect(isUnnamedRowName(unnamedRowName(3))).toBe(true);
+        expect(isUnnamedRowName('Unnamed')).toBe(false);
+        expect(isPlaceholderName('Player 13')).toBe(true);
+        expect(isPlaceholderName('Player13')).toBe(false);
     });
 });
