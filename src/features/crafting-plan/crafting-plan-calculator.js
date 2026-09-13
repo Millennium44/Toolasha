@@ -13,6 +13,7 @@ import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { INVENTORY_LOCATION } from '../../utils/inventory-reservations.js';
+import { artisanInputTotal, getArtisanMaterialMode, usesWorstCaseRounding } from '../../utils/artisan-material-mode.js';
 
 const MAX_DEPTH = 15;
 
@@ -95,6 +96,28 @@ export function getArtisanBonus(actionType) {
     } catch {
         return 0;
     }
+}
+
+/**
+ * Units of one recipe input a memoised craft node of `quantity` needs.
+ *
+ * The template's `qtyPerUnit` is the average reduced count, which is what the cost
+ * and expected-value rounding want. Worst-case rounding bills every craft its
+ * rounded-up count instead, so it has to be sized over whole crafts from the
+ * printed count and the reduction the template was built with. Upgrade-item
+ * templates carry no `countPerAction` and are never reduced.
+ *
+ * @param {{qtyPerUnit: number, countPerAction?: number, artisanBonus?: number}} template - A childrenTemplate entry
+ * @param {number} quantity - Units of the parent this node produces
+ * @param {number} outputCount - Units of the parent one craft yields
+ * @returns {number} Units of the input
+ */
+function memoChildQuantity(template, quantity, outputCount) {
+    if (template.countPerAction === undefined) return template.qtyPerUnit * quantity;
+    const actions = Math.ceil(quantity / outputCount);
+    const artisanMode = getArtisanMaterialMode();
+    if (!usesWorstCaseRounding(artisanMode, actions)) return template.qtyPerUnit * quantity;
+    return artisanInputTotal(template.countPerAction, template.artisanBonus, actions, artisanMode);
 }
 
 /**
@@ -230,7 +253,7 @@ export function computeBestCraftingPlan(
                     ? cachedUnitCost.childrenTemplate.map((c) =>
                           computeBestCraftingPlan(
                               c.itemHrid,
-                              c.qtyPerUnit * quantity,
+                              memoChildQuantity(c, quantity, cachedUnitCost.outputCount || 1),
                               mode,
                               visited,
                               memo,
@@ -317,19 +340,27 @@ export function computeBestCraftingPlan(
     visited.add(itemHrid);
     const { actionHrid, action, outputCount } = production;
     const artisanBonus = getArtisanBonus(action.type);
+    const artisanMode = getArtisanMaterialMode();
     const actionsForOne = 1 / outputCount; // actions per 1 output item
 
     let craftCostPerUnit = 0;
-    const childrenTemplate = []; // { itemHrid, qtyPerUnit } for memo reconstruction
+    // { itemHrid, qtyPerUnit, countPerAction?, artisanBonus? } for memo reconstruction
+    const childrenTemplate = [];
 
     // Input items (affected by artisan bonus)
     if (action.inputItems) {
         for (const input of action.inputItems) {
             const inputCountPerAction = input.count || 1;
             const reducedCount = inputCountPerAction * (1 - artisanBonus);
+            // The average reduced count prices the craft; the quantity bought follows the rounding mode
             const qtyPerUnit = reducedCount * actionsForOne;
 
-            const inputQty = Math.ceil(reducedCount * Math.ceil(quantity / outputCount));
+            const inputQty = artisanInputTotal(
+                inputCountPerAction,
+                artisanBonus,
+                Math.ceil(quantity / outputCount),
+                artisanMode
+            );
             const childPlan = computeBestCraftingPlan(
                 input.itemHrid,
                 inputQty,
@@ -347,7 +378,12 @@ export function computeBestCraftingPlan(
             );
 
             craftCostPerUnit += childPlan.unitCost * qtyPerUnit;
-            childrenTemplate.push({ itemHrid: input.itemHrid, qtyPerUnit });
+            childrenTemplate.push({
+                itemHrid: input.itemHrid,
+                qtyPerUnit,
+                countPerAction: inputCountPerAction,
+                artisanBonus,
+            });
         }
     }
 
@@ -434,9 +470,7 @@ export function computeBestCraftingPlan(
         children = [];
         if (action.inputItems) {
             for (const input of action.inputItems) {
-                const inputCountPerAction = input.count || 1;
-                const reducedCount = inputCountPerAction * (1 - artisanBonus);
-                const inputQty = Math.ceil(reducedCount * actionsNeeded);
+                const inputQty = artisanInputTotal(input.count || 1, artisanBonus, actionsNeeded, artisanMode);
                 children.push(
                     computeBestCraftingPlan(
                         input.itemHrid,

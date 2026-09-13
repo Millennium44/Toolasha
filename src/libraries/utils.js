@@ -38,6 +38,9 @@ import * as enhancementConfig from '../utils/enhancement-config.js';
 import * as enhancementGearDetector from '../utils/enhancement-gear-detector.js';
 import * as reactInput from '../utils/react-input.js';
 import * as materialCalculator from '../utils/material-calculator.js';
+// Artisan rounding for every shopping list: material-calculator (utils) and the
+// crafting plan (actions) both size runs with it
+import * as artisanMaterialMode from '../utils/artisan-material-mode.js';
 import * as tokenValuation from '../utils/token-valuation.js';
 import * as pricingHelper from '../utils/pricing-helper.js';
 import * as cleanupRegistry from '../utils/cleanup-registry.js';
@@ -198,6 +201,7 @@ toolashaRoot.Utils = {
     enhancementGearDetector,
     reactInput,
     materialCalculator,
+    artisanMaterialMode,
     tokenValuation,
     pricingHelper,
     cleanupRegistry,

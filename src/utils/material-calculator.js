@@ -3,57 +3,36 @@
  * Shared calculation logic for material requirements with artisan bonus
  */
 
-import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { parseArtisanBonus, getDrinkConcentration } from './tea-parser.js';
 import { getEnhancingParams } from './enhancement-config.js';
 import { calculateEnhancement } from './enhancement-calculator.js';
 import { resolveActionContext } from './action-context.js';
-import { reservedElsewhere, shortfallNote } from './inventory-reservations.js';
+import { INVENTORY_LOCATION, reservedElsewhere, shortfallNote } from './inventory-reservations.js';
+import { artisanInputTotal as calculateTotalRequired, getArtisanMaterialMode } from './artisan-material-mode.js';
 
-export const ARTISAN_MATERIAL_MODE = {
-    EXPECTED: 'expected',
-    WORST_CASE: 'worst-case',
-    HYBRID: 'hybrid',
-};
-
-// Below this many actions the per-craft ceiling has not had room to average out, so hybrid mode
-// keeps worst-case rounding; at or above it the expected value is within a unit or two of reality.
-const HYBRID_WORST_CASE_MAX_ACTIONS = 100;
-
-function normalizeArtisanMode(mode) {
-    if (mode === ARTISAN_MATERIAL_MODE.WORST_CASE || mode === ARTISAN_MATERIAL_MODE.HYBRID) {
-        return mode;
-    }
-    return ARTISAN_MATERIAL_MODE.EXPECTED;
-}
+export { ARTISAN_MATERIAL_MODE } from './artisan-material-mode.js';
 
 /**
- * Get artisan material mode setting.
- * @returns {string}
+ * Unenhanced units of an item sitting in the bag.
+ *
+ * `getInventory()` mixes bag, equipped and listed rows, told apart only by
+ * `itemLocationHrid`, and a craft spends none but the bag's. A row with no
+ * location at all is kept, as every caller predating location mattering expects.
+ *
+ * @param {Array<Object>} inventory - Rows from `getInventory()`
+ * @param {string} itemHrid - Item
+ * @returns {number} Units held
  */
-function getArtisanMaterialMode() {
-    const setting = config.getSettingValue('actions_artisanMaterialMode', ARTISAN_MATERIAL_MODE.EXPECTED);
-    return normalizeArtisanMode(setting);
-}
-/**
- * Calculate total materials required, optionally using conservative per-action rounding.
- * @param {number} basePerAction
- * @param {number} artisanBonus
- * @param {number} numActions
- * @param {string} artisanMode
- * @returns {number}
- */
-function calculateTotalRequired(basePerAction, artisanBonus, numActions, artisanMode) {
-    const materialsPerAction = basePerAction * (1 - artisanBonus);
-    // Unbounded queues are never below the threshold, so hybrid resolves to expected value there.
-    const useWorstCase =
-        artisanMode === ARTISAN_MATERIAL_MODE.WORST_CASE ||
-        (artisanMode === ARTISAN_MATERIAL_MODE.HYBRID && numActions < HYBRID_WORST_CASE_MAX_ACTIONS);
-    if (useWorstCase) {
-        return Math.ceil(materialsPerAction) * numActions;
-    }
-    return Math.ceil(materialsPerAction * numActions);
+function heldInBag(inventory, itemHrid) {
+    return inventory
+        .filter(
+            (i) =>
+                i.itemHrid === itemHrid &&
+                !i.enhancementLevel &&
+                (!i.itemLocationHrid || i.itemLocationHrid === INVENTORY_LOCATION)
+        )
+        .reduce((sum, i) => sum + (i.count || 0), 0);
 }
 
 /**
@@ -252,11 +231,7 @@ export function calculateMaterialRequirements(
             // Only count unenhanced items — enhanced copies are distinct items the player
             // would not want consumed as crafting materials. Bought-but-unclaimed
             // units on the player's own buy orders count too (see unclaimedBoughtCount).
-            const have =
-                unclaimedBoughtCount(input.itemHrid) +
-                inventory
-                    .filter((i) => i.itemHrid === input.itemHrid && !i.enhancementLevel)
-                    .reduce((sum, i) => sum + (i.count || 0), 0);
+            const have = unclaimedBoughtCount(input.itemHrid) + heldInBag(inventory, input.itemHrid);
 
             // Calculate queued and available amounts. Stock another plan has
             // already claimed is not available either — see
@@ -292,10 +267,7 @@ export function calculateMaterialRequirements(
         const totalRequired = numActions;
 
         const have =
-            unclaimedBoughtCount(actionDetails.upgradeItemHrid) +
-            inventory
-                .filter((i) => i.itemHrid === actionDetails.upgradeItemHrid && !i.enhancementLevel)
-                .reduce((sum, i) => sum + (i.count || 0), 0);
+            unclaimedBoughtCount(actionDetails.upgradeItemHrid) + heldInBag(inventory, actionDetails.upgradeItemHrid);
 
         // Calculate queued and available amounts
         const queued = queuedMaterialsMap.get(actionDetails.upgradeItemHrid) || 0;
@@ -455,11 +427,7 @@ export function calculateEnhancementMaterialRequirements(
         }
 
         const totalQuantity = Math.ceil(cost.count * (repeatCount ?? calc.attempts));
-        const have =
-            unclaimedBoughtCount(cost.itemHrid) +
-            inventory
-                .filter((i) => i.itemHrid === cost.itemHrid && !i.enhancementLevel)
-                .reduce((sum, i) => sum + (i.count || 0), 0);
+        const have = unclaimedBoughtCount(cost.itemHrid) + heldInBag(inventory, cost.itemHrid);
         const missing = Math.max(0, totalQuantity - have);
 
         materials.push({
@@ -482,11 +450,7 @@ export function calculateEnhancementMaterialRequirements(
         const protDetails = gameData.itemDetailMap[protectionItemHrid];
 
         if (protDetails) {
-            const have =
-                unclaimedBoughtCount(protectionItemHrid) +
-                inventory
-                    .filter((i) => i.itemHrid === protectionItemHrid && !i.enhancementLevel)
-                    .reduce((sum, i) => sum + (i.count || 0), 0);
+            const have = unclaimedBoughtCount(protectionItemHrid) + heldInBag(inventory, protectionItemHrid);
             const missing = Math.max(0, totalProtection - have);
 
             materials.push({

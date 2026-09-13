@@ -30,6 +30,17 @@ const buffs = vi.hoisted(() => ({
     actionStats: { actionTime: 10, totalEfficiency: 100 },
 }));
 
+const settings = vi.hoisted(() => ({ values: {} }));
+
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) => settings.values[key],
+        getSettingValue: (key, fallback) => (key in settings.values ? settings.values[key] : fallback),
+        onSettingsLoaded: () => {},
+        onSettingChange: () => {},
+    },
+}));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.initClientData,
@@ -64,6 +75,7 @@ const LEATHER = '/items/rough_leather';
 const BOOTS = '/items/leather_boots';
 
 beforeEach(() => {
+    settings.values = {};
     buffs.artisanBonus = 0;
     buffs.actionStats = { actionTime: 10, totalEfficiency: 100 };
     market.prices = { [COWHIDE]: 10, [LEATHER]: 50, [BOOTS]: 500 };
@@ -264,6 +276,69 @@ describe('artisan tea', () => {
         // boots: 6 × 0.9 = 5.4 leather × 27 = 145.8
         const boots = computeBestCraftingPlan(BOOTS, 1);
         expect(boots.craftCost).toBeCloseTo(145.8, 10);
+    });
+});
+
+describe('artisan requirement mode', () => {
+    // One craft consumes whole units, so a 2.7-hide craft can take 3. The
+    // "Missing materials: Artisan requirement mode" setting decides whether a
+    // shopping list averages that saving or covers every craft's worst case —
+    // and the plan's shopping list, Buy button and walks read these quantities.
+    beforeEach(() => {
+        buffs.artisanBonus = 0.1;
+    });
+
+    test('expected value averages the saving over the run, as before', () => {
+        expect(computeBestCraftingPlan(LEATHER, 5).children[0].quantity).toBe(14); // ceil(2.7 × 5)
+        expect(collectMissingMaterials(computeBestCraftingPlan(BOOTS, 1), [])).toEqual([
+            { itemHrid: COWHIDE, itemName: 'Cowhide', missing: 17, required: 17, isTradeable: true },
+        ]);
+    });
+
+    test('worst-case bills every craft its rounded-up input', () => {
+        settings.values.actions_artisanMaterialMode = 'worst-case';
+
+        // 5 leather crafts at 2.7 hides can take 3 each: 15. Billing ceil(13.5) = 14
+        // leaves the fifth craft one hide short.
+        expect(computeBestCraftingPlan(LEATHER, 5).children[0].quantity).toBe(15);
+    });
+
+    test('worst-case holds through a memoised intermediate, so the last leather craft is not short', () => {
+        settings.values.actions_artisanMaterialMode = 'worst-case';
+
+        // 1 boot: 6 × 0.9 = 5.4 leather, a craft can take 6. Six leather crafts at
+        // 2.7 hides can take 18. The leather node is rebuilt from the memo, which
+        // used to scale 2.7 hides a unit linearly: 16.2, billed as 17.
+        const plan = computeBestCraftingPlan(BOOTS, 1);
+        expect(plan.children[0].quantity).toBe(6);
+        expect(plan.children[0].children[0].quantity).toBe(18);
+        expect(collectMissingMaterials(plan, [])).toEqual([
+            { itemHrid: COWHIDE, itemName: 'Cowhide', missing: 18, required: 18, isTradeable: true },
+        ]);
+    });
+
+    test('hybrid takes the worst case below 100 actions and the average at 100 or more', () => {
+        settings.values.actions_artisanMaterialMode = 'hybrid';
+
+        expect(computeBestCraftingPlan(LEATHER, 5).children[0].quantity).toBe(15); // ceil(2.7) × 5
+        expect(computeBestCraftingPlan(LEATHER, 150).children[0].quantity).toBe(405); // ceil(2.7 × 150)
+    });
+
+    test('the upgrade item is one per craft whatever the mode', () => {
+        settings.values.actions_artisanMaterialMode = 'worst-case';
+        game.itemDetails['/items/reinforced_boots'] = { name: 'Reinforced Boots', isTradable: true };
+        market.prices['/items/reinforced_boots'] = 9999;
+        game.initClientData.actionDetailMap['/actions/crafting/reinforced_boots'] = {
+            type: '/action_types/crafting',
+            category: '/action_categories/crafting/feet',
+            inputItems: [{ itemHrid: LEATHER, count: 2 }],
+            upgradeItemHrid: BOOTS,
+            outputItems: [{ itemHrid: '/items/reinforced_boots', count: 1 }],
+        };
+
+        const plan = computeBestCraftingPlan('/items/reinforced_boots', 3);
+        expect(plan.children[0].quantity).toBe(6); // ceil(1.8) × 3
+        expect(plan.children[1]).toMatchObject({ itemHrid: BOOTS, quantity: 3 });
     });
 });
 

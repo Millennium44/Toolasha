@@ -19,7 +19,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => mocks.settings[key] },
+    default: {
+        getSetting: (key) => mocks.settings[key],
+        getSettingValue: (key, fallback) => (key in mocks.settings ? mocks.settings[key] : fallback),
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({

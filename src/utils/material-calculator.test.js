@@ -52,6 +52,7 @@ vi.mock('./enhancement-calculator.js', () => ({
  */
 const ledger = vi.hoisted(() => ({ claims: {} }));
 vi.mock('./inventory-reservations.js', () => ({
+    INVENTORY_LOCATION: '/item_locations/inventory',
     reservedElsewhere: (itemHrid, level, { excludeOwner } = {}) => {
         let total = 0;
         for (const [owner, byItem] of Object.entries(ledger.claims)) {
@@ -151,6 +152,25 @@ describe('calculateMaterialRequirements', () => {
         expect(nail.required).toBe(10);
         expect(nail.have).toBe(0);
         expect(nail.missing).toBe(10);
+    });
+
+    test('a copy worn or listed on the market is not stock the craft can spend', () => {
+        // `getInventory()` mixes bag, equipped and listed rows. Counting the worn
+        // table as held said nothing was missing for two upgrade crafts, and the
+        // second one never ran.
+        state.gameData.actionDetailMap['/actions/crafting/table'].upgradeItemHrid = '/items/table';
+        state.inventory = [
+            { itemHrid: '/items/table', count: 1, itemLocationHrid: '/item_locations/inventory' },
+            { itemHrid: '/items/table', count: 1, itemLocationHrid: '/item_locations/main_hand' },
+            { itemHrid: '/items/plank', count: 4, itemLocationHrid: '/item_locations/inventory' },
+            { itemHrid: '/items/plank', count: 4, itemLocationHrid: '/item_locations/marketplace' },
+        ];
+        const result = calculateMaterialRequirements('/actions/crafting/table', 2);
+
+        const upgrade = result.find((m) => m.isUpgradeItem);
+        expect(upgrade).toMatchObject({ have: 1, missing: 1 });
+        const plank = result.find((m) => m.itemHrid === '/items/plank' && !m.isUpgradeItem);
+        expect(plank).toMatchObject({ required: 8, have: 4, missing: 4 });
     });
 
     test('excludes enhanced copies from the "have" count', () => {
