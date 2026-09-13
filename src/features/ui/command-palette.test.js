@@ -960,6 +960,91 @@ describe('the Guild Trials entry, on a page with both tabs', () => {
 });
 
 /**
+ * Regression for the bug this fix addresses: Guild is a main nav entry
+ * (`NavigationBar_nav__…`), not one of the sidebar's small links, so the old
+ * lookup — which only searched `NavigationBar_minorNavigationLink` — matched
+ * nothing at all, `guildLink` was `undefined`, and the click was a no-op. The
+ * DOM built here has no minor link whatsoever, so only a fix that also
+ * searches the main-nav entries can find Guild and open its page.
+ */
+describe('the Guild Trials entry, with Guild on the main nav', () => {
+    /**
+     * The live sidebar: three container elements whose own `textContent`
+     * includes every label on the bar (a naive substring match on
+     * `NavigationBar_nav` would land on the first of these, which nothing
+     * listens for a click on), followed by the real entries — Achievements
+     * and Labyrinth carrying a badge count the same way Guild did earlier the
+     * day this was diagnosed, then Guild itself with its own badge.
+     * @returns {Object} The pieces, plus what got clicked
+     */
+    function buildMainNavDom() {
+        const clicks = [];
+
+        const containers = [
+            'NavigationBar_navigationBarContainer__a',
+            'NavigationBar_navigationBar__b',
+            'NavigationBar_navigationLinks__c',
+        ];
+        for (const className of containers) {
+            const container = document.createElement('div');
+            container.className = className;
+            container.textContent = 'AchievementsLabyrinthGuild';
+            document.body.appendChild(container);
+        }
+
+        const navEntry = (labelText, { badge } = {}) => {
+            const entry = document.createElement('a');
+            entry.className = 'NavigationBar_nav__xyz';
+            const label = document.createElement('span');
+            label.className = 'NavigationBar_label__1uH-y';
+            label.textContent = labelText;
+            entry.appendChild(label);
+            if (badge) {
+                const count = document.createElement('span');
+                count.className = 'NavigationBar_badge__d';
+                count.textContent = String(badge);
+                entry.appendChild(count);
+            }
+            return entry;
+        };
+
+        document.body.appendChild(navEntry('Achievements', { badge: 4 }));
+        document.body.appendChild(navEntry('Labyrinth', { badge: 5 }));
+        const guildLink = navEntry('Guild', { badge: 2 });
+        guildLink.addEventListener('click', () => clicks.push('guild'));
+        document.body.appendChild(guildLink);
+
+        const panel = document.createElement('div');
+        panel.className = 'GuildPanel_guildPanel__a';
+        const tabsContainer = document.createElement('div');
+        tabsContainer.className = 'TabsComponent_tabsContainer__x';
+        tabsContainer.setAttribute('role', 'tablist');
+        const inProgress = document.createElement('div');
+        inProgress.className = 'TabsComponent_tab__b';
+        inProgress.setAttribute('role', 'tab');
+        inProgress.textContent = 'In Progress';
+        inProgress.addEventListener('click', () => clicks.push('in progress'));
+        tabsContainer.appendChild(inProgress);
+        panel.appendChild(tabsContainer);
+
+        const block = document.createElement('div');
+        block.className = 'mwi-trial-info';
+        block.scrollIntoView = vi.fn();
+        panel.appendChild(block);
+        document.body.appendChild(panel);
+
+        return { clicks };
+    }
+
+    test('finds Guild among the main nav entries, past the containers and past a badge count', async () => {
+        const dom = buildMainNavDom();
+
+        expect(await openGuildTrials()).toBe(true);
+        expect(dom.clicks).toEqual(['guild', 'in progress']);
+    });
+});
+
+/**
  * A verb is the half of the registry that has no panel to stand for it, so the
  * toast is not decoration — it is the entire visible result of the keystroke.
  * What these pin is the difference the convention exists to make: that a verb

@@ -291,6 +291,50 @@ function settingEntries() {
 }
 
 /**
+ * Find a navigation-bar entry — main or minor — by its label.
+ *
+ * Main entries (Settings, Guild, …) live in `NavigationBar_nav__` elements and
+ * minor ones in `NavigationBar_minorNavigationLink`; both are searched because
+ * the game has moved entries between the two across updates and this file has
+ * been caught out by it before (see the module note on `openSettings` below).
+ * The double underscore in `NavigationBar_nav__` matters: without it, the
+ * substring also matches the containers `NavigationBar_navigationBarContainer`,
+ * `NavigationBar_navigationBar` and `NavigationBar_navigationLinks`, whose
+ * `textContent` includes every label on the bar, so the *first* one found —
+ * a container — would look like a match and nothing would ever get clicked.
+ *
+ * The sidebar can also hang a count badge off a label ("Guild2", "Labyrinth5"),
+ * so a trailing digit run is stripped before comparing. The label's own
+ * `NavigationBar_label` child is preferred when present, since that is
+ * usually just the word itself with no badge in it at all; the entry's full
+ * `textContent` is the fallback for entries that carry no such child.
+ *
+ * @param {string} label - Case-insensitive label to match (e.g. "Guild")
+ * @returns {Element|null} The clickable nav entry, or null
+ */
+function findNavEntry(label) {
+    const target = String(label || '')
+        .trim()
+        .toLowerCase();
+    const normalize = (text) =>
+        String(text || '')
+            .trim()
+            .toLowerCase()
+            .replace(/\d+$/, '')
+            .trim();
+
+    const links = document.querySelectorAll(
+        '[class*="NavigationBar_nav__"], [class*="NavigationBar_minorNavigationLink"]'
+    );
+    for (const link of links) {
+        const labelChild = link.querySelector('[class*="NavigationBar_label"]');
+        const text = labelChild ? labelChild.textContent : link.textContent;
+        if (normalize(text) === target) return link;
+    }
+    return null;
+}
+
+/**
  * Open the game's settings, switch to the Toolasha tab, and land on a setting.
  *
  * There is no programmatic way in — the panel is the game's, drawn from its own
@@ -314,13 +358,9 @@ export async function openSettings(search = '', settingId = '') {
         // Settings moved out of the minor-links list into the main nav's
         // NavigationBar_nav entries; the old selector found nothing, so a
         // palette pick left the page where it was and the queued waits below
-        // only resolved once the player opened Settings by hand. Both classes
-        // are searched, and the click goes through the fiber handler in case
-        // the nav ignores a synthetic one.
-        const links = document.querySelectorAll(
-            '[class*="NavigationBar_nav__"], [class*="NavigationBar_minorNavigationLink"]'
-        );
-        const settingsLink = [...links].find((link) => (link.textContent || '').trim().toLowerCase() === 'settings');
+        // only resolved once the player opened Settings by hand. The click
+        // goes through the fiber handler in case the nav ignores a synthetic one.
+        const settingsLink = findNavEntry('settings');
         if (settingsLink) clickThroughReact(settingsLink, { reactFirst: true });
 
         const tab = await waitFor('#toolasha-settings-tab');
@@ -430,9 +470,12 @@ function guildPanelTabList(panel) {
  */
 export async function openGuildTrials() {
     try {
-        const links = document.querySelectorAll('[class*="NavigationBar_minorNavigationLink"]');
-        const guildLink = [...links].find((link) => (link.textContent || '').trim().toLowerCase() === 'guild');
-        guildLink?.click();
+        // Guild is a main NavigationBar_nav entry, not a minor link — the old
+        // selector only checked the minor-links list, matched nothing, and left
+        // the click a no-op, so waitFor below always timed out with the guild
+        // page never opened. Found and clicked the same way openSettings does.
+        const guildLink = findNavEntry('guild');
+        if (guildLink) clickThroughReact(guildLink, { reactFirst: true });
 
         const panel = await waitFor('[class*="GuildPanel"]');
         if (!panel) {
