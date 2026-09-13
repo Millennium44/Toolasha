@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Session Briefing skips a quick refresh
+
+- Refreshing the page brought the Session Briefing up again even though you had only been gone a few seconds. It now stays closed when the page was away for under a minute, and still opens after a real break; opening it by hand works as before.
+
+### The command palette's trial shortcut opens the In Progress tab again
+
+- Asking the command palette for the trial figures opened the guild page but clicked the wrapper around its tabs rather than the In Progress tab, so nothing switched and it reported "No trial figures yet" even during a trial. It now picks the tab itself, the same fix as the guild panel's Damage button.
+
 ### A finished trial stays on the trial board after a reload
 
 - The trial board only brought its figures back after a refresh if they had been saved in the last 20 minutes, and a finished trial stops saving — so reloading 20 minutes or more after a trial ended left the board empty, though the trial was still stored and in History. A trial the game has ended now comes back after any reload for the rest of that trial week, until the next trial fight starts; the 20-minute limit still applies to a fight in progress.
