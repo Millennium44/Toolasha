@@ -37,6 +37,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
@@ -76,6 +77,134 @@ const ENHANCEMENT_STALE_MS = 60 * 60 * 1000;
 
 /** Character ids whose briefing has been read and closed this page session */
 const dismissed = new Set();
+
+/**
+ * Telling a refresh from a return
+ *
+ * `dismissed` answers "has this character's card been read this page session",
+ * and a page session is exactly one browser tab's lifetime — reloading starts a
+ * new one, with an empty `dismissed`. That is right for "I closed this, stop
+ * showing it" and wrong for "I was gone": reloading to pick up a build, or just
+ * recovering from a disconnect, goes through the same empty `dismissed` and used
+ * to pop the card back up over facts the player had finished reading seconds
+ * earlier. A refresh's userscript-load-and-reconnect stretch runs 10-25 s, so the
+ * gap between "this character's page was alive" and "it is alive again" is the
+ * only signal that survives the reload to tell the two apart.
+ *
+ * The stamp lives in its own key, per character, in the same `settings` store as
+ * everything else here — deliberately not the snapshot `briefing-snapshot.js`
+ * writes on `character_switching`, which answers a different question ("what did
+ * this character's board look like when I left it") and is what `away-diff.js`
+ * builds its own baseline from. Reusing that key for this would mean a quick
+ * refresh silently dragging the away-diff's baseline forward, so a genuine
+ * absence right after would report a shorter gap than the player actually had.
+ * Keeping the two stamps apart is what keeps that baseline honest across a
+ * skipped quick refresh: nothing here ever touches `briefingSnapshot_*` or
+ * `briefingAwayDiffSeen_*`.
+ *
+ * A write started from `pagehide` may never finish — the tab can be gone before
+ * the transaction commits — so the periodic tick below bounds the loss instead
+ * of relying on that write landing.
+ */
+
+/** A character whose page was alive this recently is being refreshed, not returned to */
+export const QUICK_REFRESH_WINDOW_MS = 60_000;
+
+/** At most one heartbeat write per this interval while the tab is open and visible */
+const PRESENCE_HEARTBEAT_MS = 12_000;
+
+/** Where the last moment a character's page was known to be alive lives, per character */
+const PRESENCE_PREFIX = 'sessionBriefingLastAlive_';
+
+/**
+ * The presence key for one character.
+ * @param {string} characterId - Whose
+ * @returns {string} Storage key
+ */
+function presenceKey(characterId) {
+    return `${PRESENCE_PREFIX}${characterId}`;
+}
+
+/**
+ * Stamp a character's page as alive right now, best-effort.
+ *
+ * Fire-and-forget rather than awaited: the unload listeners below call this
+ * synchronously from `pagehide`/`beforeunload`, where there is no time left to
+ * wait on a promise, and a failed stamp is worth logging, not surfacing.
+ *
+ * @param {string|null} [characterId] - Defaults to whoever is current right now
+ * @returns {void}
+ */
+function recordPresence(characterId = currentCharacterId()) {
+    if (!characterId || !config.getSetting(MASTER_SETTING, true)) return;
+    storage.set(presenceKey(characterId), Date.now(), 'settings', true).catch((error) => {
+        console.error('[SessionBriefing] Could not record this character as alive:', error);
+    });
+}
+
+/**
+ * Whether this arrival is a refresh of `characterId` rather than a return to it.
+ *
+ * @param {string|null} characterId - Captured by the caller before this read
+ * @param {number} [now] - Clock, injectable for tests
+ * @returns {Promise<boolean>} Whether the page was alive for this character inside the window
+ */
+async function wasAliveRecently(characterId, now = Date.now()) {
+    if (!characterId) return false;
+    try {
+        const lastAlive = await storage.get(presenceKey(characterId), 'settings', null);
+        // The pointer may have moved on while this read was in flight — a
+        // character switch is not a refresh of whoever is arriving now, and an
+        // answer about a character that is no longer arriving is not an answer
+        // about this arrival at all
+        if (characterId !== currentCharacterId()) return false;
+        return Number.isFinite(lastAlive) && now - lastAlive < QUICK_REFRESH_WINDOW_MS;
+    } catch (error) {
+        console.error('[SessionBriefing] Could not read whether this character was alive recently:', error);
+        return false;
+    }
+}
+
+/** This feature's own timer, for the presence heartbeat */
+const presenceTimers = createTimerRegistry();
+
+/** Whether the heartbeat interval and unload listeners have been installed */
+let presenceStarted = false;
+
+/**
+ * Start stamping "still here" — once, ever.
+ *
+ * Never torn down on `cleanup()`, for the reason `initializeBriefingSnapshots()`
+ * gives its own listener: `cleanup()` runs on every character switch, and a
+ * listener that exists to catch the *tab* going away must survive every switch
+ * that happens before that.
+ *
+ * @returns {void}
+ */
+function startPresenceHeartbeat() {
+    if (presenceStarted) return;
+    presenceStarted = true;
+
+    if (typeof window !== 'undefined') {
+        window.addEventListener('pagehide', () => recordPresence(), true);
+        window.addEventListener('beforeunload', () => recordPresence(), true);
+    }
+    if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') recordPresence();
+        });
+    }
+
+    presenceTimers.registerInterval(
+        setInterval(() => {
+            // The unload listeners above already cover the transition to hidden;
+            // this tick only needs to bound the gap while the tab stays visible
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+            recordPresence();
+        }, PRESENCE_HEARTBEAT_MS),
+        'sessionBriefingPresence'
+    );
+}
 
 /**
  * What the market did between the last session and this one.
@@ -665,6 +794,17 @@ export default {
     initialize: async () => {
         if (!config.getSetting(MASTER_SETTING, true)) return;
         const characterId = currentCharacterId();
+        startPresenceHeartbeat();
+
+        // Asked first, before anything else below moves the clock forward with
+        // its own awaits: a page that was alive for this very character inside
+        // QUICK_REFRESH_WINDOW_MS did not go anywhere, and only a genuine return
+        // earns the automatic card. This gates showing only — the facts below
+        // are still collected and the away diff still computed, exactly as they
+        // would be on a real arrival, so a manual open (or the overlay tile)
+        // during a skipped refresh still reads the truth.
+        const isQuickRefresh = await wasAliveRecently(characterId);
+
         await loadListingDelta(characterId);
         // After the listing delta, because `collectFacts()` reads it — and this
         // whole initialize is itself the arrival hook: feature-registry runs it
@@ -674,6 +814,17 @@ export default {
             characterId,
             attempt('the live facts', () => collectFacts())
         );
+
+        // This arrival's own stamp, so a switch back within the window (or the
+        // next reload) finds this instant rather than whatever the last tick
+        // wrote — but only for the character that is still actually here
+        if (characterId === currentCharacterId()) recordPresence(characterId);
+
+        // Re-checked rather than trusted from the read above: a second switch
+        // landing during the awaits between them would make a quick-refresh
+        // verdict for the character that arrived first meaningless for whoever
+        // is current now, and the safe default is to show rather than guess
+        if (isQuickRefresh && characterId === currentCharacterId()) return;
         maybeShowBriefing();
     },
     cleanup: () => {

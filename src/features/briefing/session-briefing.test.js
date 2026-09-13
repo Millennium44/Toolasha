@@ -461,6 +461,69 @@ describe('showing and dismissing', () => {
     });
 });
 
+/**
+ * Telling a refresh from a return.
+ *
+ * `maybeShowBriefing()` itself is untouched by this — the gate lives in
+ * `initialize()`, which is the arrival hook feature-registry calls on both boot
+ * and a character switch, and the only place that can tell "the page for this
+ * character was alive a moment ago" from "it was not".
+ */
+describe('quick refresh vs a return', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a quick refresh does not auto-show, even with something to say', async () => {
+        game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 20_000);
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+
+        expect(briefingPanel.panel).toBeNull();
+    });
+
+    test('a real absence still shows the briefing, exactly as before', async () => {
+        game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 10 * 60_000);
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+
+        expect(briefingPanel.panel).toBeTruthy();
+    });
+
+    test('a first-ever load has no stamp to compare against, and shows as before', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+
+        expect(briefingPanel.panel).toBeTruthy();
+    });
+
+    test('a character switch is not a refresh of the character switched to', async () => {
+        // char-1's page was alive seconds ago, but char-2 is who is arriving
+        game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 5_000);
+        game.characterId = 'char-2';
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+
+        expect(briefingPanel.panel).toBeTruthy();
+    });
+
+    test('an arrival stamps this character as alive, for the next arrival to compare against', async () => {
+        const now = Date.now();
+        await feature.initialize();
+
+        expect(game.stored.get('sessionBriefingLastAlive_char-1')).toBe(now);
+    });
+});
+
 describe('what the market did while away', () => {
     test('a newly filled listing counts, one already filled last session does not', async () => {
         game.listings = [
@@ -612,5 +675,30 @@ describe('the away card', () => {
         briefingPanel.hide({ remember: false });
 
         expect(game.stored.has(`briefingAwayDiffSeen_${game.characterId}`)).toBe(true);
+    });
+
+    test('a skipped quick refresh does not disturb the baseline the next real absence reports from', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+
+        // A real switch three hours ago left this snapshot, and nobody has read
+        // the resulting "since you were away" card yet
+        storeSnapshot({ tasksReady: 1 }, 3);
+        game.characterInfo = { unreadTaskCount: 4 };
+        // This arrival is only a page refresh, seconds after the last one
+        game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 20_000);
+
+        const snapshotAt = game.stored.get(`briefingSnapshot_${game.characterId}`).at;
+
+        await feature.initialize();
+
+        // Not shown automatically...
+        expect(briefingPanel.panel).toBeNull();
+        // ...but nothing was marked read, and the snapshot itself is untouched —
+        // a genuine absence right after this still measures from the same instant
+        expect(game.stored.has(`briefingAwayDiffSeen_${game.characterId}`)).toBe(false);
+        expect(game.stored.get(`briefingSnapshot_${game.characterId}`).at).toBe(snapshotAt);
+
+        vi.useRealTimers();
     });
 });
