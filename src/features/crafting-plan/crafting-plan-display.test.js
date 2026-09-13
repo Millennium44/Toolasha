@@ -100,6 +100,9 @@ vi.mock('../../utils/action-calculator.js', () => ({
     calculateActionStats: () => ({ actionTime: 0, totalEfficiency: 0 }),
 }));
 vi.mock('../../utils/efficiency.js', () => ({ calculateEfficiencyMultiplier: () => 1 }));
+// This suite's concern is the reservation ledger and the guided walk, not the
+// artisan-tea-runs-dry warning (drink-calculator.test.js owns that arithmetic).
+vi.mock('../../utils/drink-calculator.js', () => ({ artisanTeaShortfall: () => [] }));
 vi.mock('../../utils/experience-calculator.js', () => ({
     calculateExpPerHour: () => ({ expPerHour: 0, actionsPerHour: 0 }),
 }));

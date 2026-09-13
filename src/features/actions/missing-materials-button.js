@@ -20,6 +20,7 @@ import {
     calculateEnhancementMaterialRequirements,
     unclaimedBoughtCount,
 } from '../../utils/material-calculator.js';
+import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager, findQuantityInput } from '../../utils/marketplace-autofill.js';
@@ -220,11 +221,12 @@ function processActionPanel(panel) {
 function updateButtonForPanel(panel, value) {
     const numActions = parseInt(value) || 0;
 
-    // Remove existing button
+    // Remove existing button and warning
     const existingButton = panel.querySelector('#mwi-missing-mats-button');
     if (existingButton) {
         existingButton.remove();
     }
+    panel.querySelector('.mwi-artisan-shortfall-warning')?.remove();
 
     // Check setting early
     if (!config.getSetting('actions_missingMaterialsButton')) {
@@ -281,6 +283,28 @@ function updateButtonForPanel(panel, value) {
     } else {
         // Fallback: insert at top of panel
         panel.insertBefore(button, panel.firstChild);
+    }
+
+    // Warn when a slotted Artisan Tea will run dry partway through this run: the
+    // bill above assumes its discount for every craft, but the last several would
+    // actually cost full price. Distinct from the tea being out of stock right
+    // now — that case gets no discount at all, and required-materials.js already
+    // says so.
+    if (numActions > 0) {
+        const shortfalls = artisanTeaShortfall(actionHrid, numActions);
+        if (shortfalls.length > 0) {
+            const warning = document.createElement('div');
+            warning.className = 'mwi-artisan-shortfall-warning';
+            warning.style.cssText = 'color:#f0a830; font-size:11px; text-align:center; padding:3px 0 1px 0;';
+            warning.textContent = shortfalls
+                .map(
+                    (s) =>
+                        `⚠ ${s.name} runs out after ~${formatWithSeparator(s.craftsSustained)} crafts — ` +
+                        `${formatWithSeparator(s.shortfall)} of these will not get the discount`
+                )
+                .join(' ');
+            button.insertAdjacentElement('afterend', warning);
+        }
     }
 
     // Don't manipulate modal styling - let the game handle it

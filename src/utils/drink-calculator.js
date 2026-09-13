@@ -78,6 +78,88 @@ export function calculateDrinkRemainingSeconds(actionTypeHrid) {
 }
 
 /**
+ * Whether an item carries a given buff type, e.g. Artisan Tea's material discount.
+ * @param {Object|undefined} itemDetails - From `itemDetailMap`
+ * @param {string} buffTypeHrid - e.g. '/buff_types/artisan'
+ * @returns {boolean}
+ */
+function hasBuffType(itemDetails, buffTypeHrid) {
+    return (itemDetails?.consumableDetail?.buffs || []).some((buff) => buff.typeHrid === buffTypeHrid);
+}
+
+/**
+ * Slotted Artisan Teas whose remaining stock will run out before a run of
+ * `numActions` crafts of `actionHrid` finishes — so the material discount the
+ * Missing Materials panel and crafting plan billed for the whole run stops
+ * applying partway through.
+ *
+ * Reuses `calculateDrinkRemainingSeconds` for the same wall-clock figure the
+ * consumables panel shows, converted through this action's own time-per-craft —
+ * the same actionTime/efficiency division `calculateQueueTimeSeconds` uses in
+ * the other direction — so "runs out at craft N" and the account's own drink
+ * timer never disagree about the same tea.
+ *
+ * A tea already fully out of stock (and no longer buffed) is left to
+ * `isArtisanTeaOutOfStock` — that is a different warning ("the whole run got no
+ * discount") from this one ("the run gets a discount that will not last).
+ *
+ * @param {string} actionHrid - Action HRID
+ * @param {number} numActions - Crafts about to be entered/queued
+ * @returns {Array<{itemHrid: string, name: string, craftsSustained: number, shortfall: number}>}
+ *   One entry per artisan tea that will not last the run; empty when every slotted
+ *   artisan tea lasts it, none is slotted, or the action's stats cannot be read
+ */
+export function artisanTeaShortfall(actionHrid, numActions) {
+    if (!(numActions > 0)) return [];
+    const gameData = dataManager.getInitClientData();
+    const actionDetails = dataManager.getActionDetails(actionHrid);
+    if (!gameData || !actionDetails) return [];
+
+    const itemDetailMap = gameData.itemDetailMap || {};
+    const drinks = calculateDrinkRemainingSeconds(actionDetails.type);
+    if (!drinks.length) return [];
+
+    // Only a drink still actively discounting materials right now — a fully spent,
+    // no-longer-buffed slot is the out-of-stock warning's job, not this one's.
+    const artisanDrinks = drinks.filter(
+        (drink) => drink.totalSeconds > 0 && hasBuffType(itemDetailMap[drink.itemHrid], '/buff_types/artisan')
+    );
+    if (!artisanDrinks.length) return [];
+
+    const { equipment } = resolveActionContext(actionDetails.type);
+    const skills = dataManager.getSkills();
+    if (!skills || !equipment) return [];
+
+    const stats = calculateActionStats(actionDetails, {
+        skills,
+        equipment,
+        itemDetailMap,
+        includeCommunityBuff: true,
+        includeBreakdown: false,
+    });
+    if (!stats || !(stats.actionTime > 0)) return [];
+
+    const effMultiplier = calculateEfficiencyMultiplier(stats.totalEfficiency);
+    const secondsPerCraft = stats.actionTime / effMultiplier;
+    if (!(secondsPerCraft > 0)) return [];
+
+    const runSeconds = numActions * secondsPerCraft;
+
+    const shortfalls = [];
+    for (const drink of artisanDrinks) {
+        if (drink.totalSeconds >= runSeconds) continue;
+        const craftsSustained = Math.max(0, Math.floor(drink.totalSeconds / secondsPerCraft));
+        shortfalls.push({
+            itemHrid: drink.itemHrid,
+            name: drink.name,
+            craftsSustained,
+            shortfall: numActions - craftsSustained,
+        });
+    }
+    return shortfalls;
+}
+
+/**
  * Sum inventory counts per item hrid, for the hrids asked about only.
  * @param {Array<{itemHrid: string, count: number}>|null} inventory - Character items
  * @param {Set<string>} hrids - The item hrids worth counting

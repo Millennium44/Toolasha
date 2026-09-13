@@ -21,6 +21,7 @@ import {
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
+import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
 import {
     effectiveInventoryRows,
     heldInInventory,
@@ -742,6 +743,30 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
                     leftColor: 'var(--text-color-primary, #fff)',
                 })
             );
+        }
+
+        // Warn when a step's slotted Artisan Tea will run dry before that step's
+        // own actionsNeeded finishes — the cost and time above assume its
+        // discount for the whole step, but the last several crafts would not
+        // actually get it.
+        const artisanWarnings = [];
+        for (const step of craftSteps) {
+            if (!step.actionHrid || !(step.actionsNeeded > 0)) continue;
+            for (const shortfall of artisanTeaShortfall(step.actionHrid, step.actionsNeeded)) {
+                artisanWarnings.push(
+                    `${shortfall.name} runs out after ~${formatWithSeparator(shortfall.craftsSustained)} of the ${step.itemName} crafts`
+                );
+            }
+        }
+        if (artisanWarnings.length > 0) {
+            const artisanRow = document.createElement('div');
+            artisanRow.className = 'mwi-crafting-plan-artisan-warning';
+            artisanRow.style.cssText = `
+                margin-top: 6px; font-size: 0.8em; line-height: 1.35;
+                color: #f0a830;
+            `;
+            artisanRow.textContent = `⚠ ${artisanWarnings.join('; ')}`;
+            content.appendChild(artisanRow);
         }
 
         if (config.getSetting('craftingPlan_guidedWalk')) {

@@ -55,7 +55,8 @@ vi.mock('./action-calculator.js', () => ({
     calculateActionStats: () => parsers.stats,
 }));
 
-const { calculateDrinkRemainingSeconds, calculateQueueTimeSeconds } = await import('./drink-calculator.js');
+const { calculateDrinkRemainingSeconds, calculateQueueTimeSeconds, artisanTeaShortfall } =
+    await import('./drink-calculator.js');
 
 const WOODCUTTING = '/action_types/woodcutting';
 const MINUTE_NS = 60_000_000_000;
@@ -311,5 +312,64 @@ describe('calculateQueueTimeSeconds', () => {
 
     test('an empty queue is zero', () => {
         expect(calculateQueueTimeSeconds(WOODCUTTING)).toBe(0);
+    });
+});
+
+describe('artisanTeaShortfall', () => {
+    const CHOP = '/actions/woodcutting/tree';
+    const ARTISAN_TEA = '/items/artisan_tea';
+
+    beforeEach(() => {
+        game.actions[CHOP] = { type: WOODCUTTING };
+        game.initClientData.itemDetailMap[ARTISAN_TEA] = {
+            name: 'Artisan Tea',
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/artisan', flatBoost: 0.1, duration: 5 * MINUTE_NS }] },
+        };
+        // 20s/craft at 0 efficiency (parsers.stats default), matching the other describe block
+        parsers.stats = { actionTime: 20, totalEfficiency: 0 };
+    });
+
+    test('no numActions, no action, or no game data all yield nothing rather than throwing', () => {
+        expect(artisanTeaShortfall(CHOP, 0)).toEqual([]);
+        expect(artisanTeaShortfall('/actions/woodcutting/ghost', 10)).toEqual([]);
+        game.initClientData = null;
+        expect(artisanTeaShortfall(CHOP, 10)).toEqual([]);
+    });
+
+    test('nothing slotted, or nothing with the artisan buff type, is not a shortfall', () => {
+        game.drinkSlots = [];
+        expect(artisanTeaShortfall(CHOP, 100)).toEqual([]);
+
+        // Wisdom Tea has no artisan buff — this feature does not warn about it
+        game.initClientData.itemDetailMap['/items/wisdom_tea'] = tea('Wisdom Tea', 5);
+        game.drinkSlots = [{ itemHrid: '/items/wisdom_tea', isActive: false, duration: 0 }];
+        game.inventory = [{ itemHrid: '/items/wisdom_tea', count: 1 }];
+        expect(artisanTeaShortfall(CHOP, 100)).toEqual([]);
+    });
+
+    test('a tea that lasts the whole run is not a shortfall', () => {
+        // 4 teas × 5 min = 1200s of tea; 50 crafts × 20s = 1000s of run
+        game.drinkSlots = [{ itemHrid: ARTISAN_TEA, isActive: false, duration: 0 }];
+        game.inventory = [{ itemHrid: ARTISAN_TEA, count: 4 }];
+
+        expect(artisanTeaShortfall(CHOP, 50)).toEqual([]);
+    });
+
+    test('a tea that runs dry mid-run reports how many crafts it actually covers', () => {
+        // Same 1200s of tea; 100 crafts × 20s = 2000s of run — dry at craft 60
+        game.drinkSlots = [{ itemHrid: ARTISAN_TEA, isActive: false, duration: 0 }];
+        game.inventory = [{ itemHrid: ARTISAN_TEA, count: 4 }];
+
+        expect(artisanTeaShortfall(CHOP, 100)).toEqual([
+            { itemHrid: ARTISAN_TEA, name: 'Artisan Tea', craftsSustained: 60, shortfall: 40 },
+        ]);
+    });
+
+    test('a tea already fully spent and unbuffed is left to the out-of-stock warning, not this one', () => {
+        // Nothing in the bag and nothing currently pouring: totalSeconds is 0
+        game.drinkSlots = [{ itemHrid: ARTISAN_TEA, isActive: false, duration: 0 }];
+        game.inventory = [];
+
+        expect(artisanTeaShortfall(CHOP, 100)).toEqual([]);
     });
 });
