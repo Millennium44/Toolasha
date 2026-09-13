@@ -339,7 +339,8 @@ function drawPerPlayer(container, breakdown) {
     const dot = breakdown.players.reduce((sum, player) => sum + (player.dotDamage || 0), 0);
     container.title =
         'Damage per second and hit rate, per player, from attributed hits.\n' +
-        'The caster is whoever’s mana fell on the tick, since the game attributes nothing.\n' +
+        'The game attributes nothing, so the caster is worked out from attack counters, then presence, ' +
+        'then whose mana fell — an equal split only in a crowd nothing else can separate.\n' +
         (dot > 0
             ? `Includes ${formatLargeNumber(Math.round(dot))} of DoT/reflect — health lost with no hit ` +
               'counter behind it, so it moves the damage and not the hit rate.\n'

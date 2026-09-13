@@ -215,9 +215,10 @@ const NOTES = {
         strong: 'Attributed off this client’s own battle feed.',
         color: BOARD_COLORS.good,
         detail:
-            'Damage is inferred from health lost between combat ticks — the game sends no damage figure — so ' +
-            'overkill is not counted and a tick two players both hit on is shared between them. Includes ' +
-            'damage-over-time and reflect, which move health with no swing behind them.',
+            'Damage is inferred from health lost between combat ticks — the game sends no damage figure. The ' +
+            'hit goes to whoever’s attack counter rose, then whoever is alone on the tick, then whoever’s mana ' +
+            'fell; overkill is not counted, and a tick nothing else can separate is split evenly only in a ' +
+            'crowd. Includes damage-over-time and reflect, which move health with no swing behind them.',
     },
     taken: {
         strong: 'Health actually lost, after mitigation.',

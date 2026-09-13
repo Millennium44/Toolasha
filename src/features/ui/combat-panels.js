@@ -1051,7 +1051,10 @@ export const dpsPanel = new CombatPanel({
 
         if (!breakdown.players.length) {
             body.appendChild(
-                note('No attributed hits yet. Damage is credited by whose mana fell, so it needs a cast to start.')
+                note(
+                    'No attributed hits yet. Damage is credited by attack counters, then presence, then mana, ' +
+                        'so it needs a cast to start.'
+                )
             );
             return;
         }
@@ -1200,8 +1203,9 @@ export const dpsPanel = new CombatPanel({
 
         body.appendChild(
             note(
-                'Attribution comes from whose mana fell on each tick, which is the only join the game offers. ' +
-                    'A tick where two players cast at once credits the last one seen.'
+                'The game attributes nothing. A hit goes to whoever’s attack counter rose, then whoever is ' +
+                    'alone on the tick, then whoever’s mana fell — an ambiguous tick is split evenly only in a ' +
+                    'crowd nothing else can separate.'
             )
         );
     },

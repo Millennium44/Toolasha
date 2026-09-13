@@ -11,8 +11,10 @@
  *
  * ## How attribution works
  *
- * There is no attribution field. The caster is whoever's mana fell this tick,
- * and a hit is a monster's `dmgCounter` rising rather than its health falling —
+ * There is no attribution field. The caster is worked out from a ladder —
+ * attack counters, then presence, then whose mana fell, falling back to an
+ * equal split only when a crowd is too large to separate — and a hit is a
+ * monster's `dmgCounter` rising rather than its health falling —
  * the arithmetic is in `utils/damage-attribution.js` with tests, including the
  * cases that make it worth having: a bleed is not a hit, a miss is a hit for
  * nothing, and a monster seen for the first time has not been hit at all.

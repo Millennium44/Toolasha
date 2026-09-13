@@ -2062,7 +2062,7 @@ export const settingsGroups = {
                 label: 'Damage Tracker: Attribute damage per player and per ability',
                 type: 'checkbox',
                 default: true,
-                help: 'The game attributes nothing, so the caster is worked out from whose mana fell each tick. Feeds the Damage panel behind the DPS tile',
+                help: 'The game attributes nothing, so the caster is worked out from attack counters, then presence, then whose mana fell — an equal split only in a crowd nothing else can separate. Feeds the Damage panel behind the DPS tile',
             },
             damageTakenTracker: {
                 id: 'damageTakenTracker',

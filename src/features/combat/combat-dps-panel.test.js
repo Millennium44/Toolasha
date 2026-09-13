@@ -220,7 +220,7 @@ describe('what the board says about its figures', () => {
         const text = board().textContent;
 
         expect(text).toContain('own battle feed');
-        expect(text).toContain('shared between them');
+        expect(text).toContain('split evenly only in a crowd');
         expect(text).toContain('Alice');
     });
 
