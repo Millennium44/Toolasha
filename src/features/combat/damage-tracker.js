@@ -45,6 +45,7 @@ import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
 import { ownWeaponHrid } from '../../utils/class-weapon.js';
 import { abilityActionLabel } from '../../utils/damage-board.js';
+import { newLabyrinthSessionState, noteLabyrinthUpdate, labyrinthSessionKey } from '../../utils/labyrinth-session.js';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
@@ -75,6 +76,14 @@ let sheets = {};
 
 /** Who is fighting and since when; a change is a new run — see `sessionKeyFor` */
 let sessionKey = null;
+
+/**
+ * Whether the current fight is inside an active labyrinth run, and the key
+ * held constant for the whole of it — see `utils/labyrinth-session.js`. A
+ * room's own `combatStartTime` would otherwise reset this tally at every
+ * door, since each room is genuinely a different `sessionKeyFor` reading.
+ */
+let labyrinthSession = newLabyrinthSessionState();
 
 /** Monster name → damage, hits, crits, misses and kills */
 let enemyTally = {};
@@ -518,12 +527,21 @@ function seedNames() {
 let onNewBattle = null;
 let onBattleUpdated = null;
 let onUnitFetched = null;
+let onLabyrinthUpdated = null;
 
 export default {
     name: 'Damage Tracker',
     initialize: () => {
         resetDamageTracker();
         seedNames();
+
+        onLabyrinthUpdated = (data) => {
+            try {
+                noteLabyrinthUpdate(labyrinthSession, data);
+            } catch (error) {
+                console.error('[DamageTracker] Reading a labyrinth update failed:', error);
+            }
+        };
 
         onNewBattle = (data) => {
             try {
@@ -544,7 +562,11 @@ export default {
                 // unnamed run adopts the first name it is given — as long as the
                 // slots seen so far all belong to this roster, which is what a
                 // roster that changed while the page was away would fail.
-                const key = sessionKeyFor(data);
+                // Overridden while a labyrinth run is active: every room is
+                // its own `combatStartTime`, so the roster-based key would
+                // read each door as a new run and reset this tally at every
+                // one of them
+                const key = labyrinthSessionKey(labyrinthSession, sessionKeyFor(data));
                 if (key && key !== sessionKey) {
                     const seenSlots = Object.keys(state.party || {});
                     const adoptable = sessionKey === null && seenSlots.every((index) => index in (players || {}));
@@ -785,14 +807,18 @@ export default {
         webSocketHook.on('new_battle', onNewBattle);
         webSocketHook.on('battle_updated', onBattleUpdated);
         webSocketHook.on('battle_unit_fetched', onUnitFetched);
+        webSocketHook.on('labyrinth_updated', onLabyrinthUpdated);
     },
     cleanup: () => {
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
         if (onUnitFetched) webSocketHook.off('battle_unit_fetched', onUnitFetched);
+        if (onLabyrinthUpdated) webSocketHook.off('labyrinth_updated', onLabyrinthUpdated);
         onNewBattle = null;
         onBattleUpdated = null;
         onUnitFetched = null;
+        onLabyrinthUpdated = null;
+        labyrinthSession = newLabyrinthSessionState();
         names = {};
         monsters = {};
         monsterHealth = {};

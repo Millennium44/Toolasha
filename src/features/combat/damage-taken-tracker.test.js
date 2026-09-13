@@ -138,6 +138,52 @@ describe('a session that began mid-fight', () => {
     });
 });
 
+describe('a labyrinth run held as one session', () => {
+    test('a new room does not reset the session, even though its combatStartTime differs', () => {
+        listeners.labyrinth_updated({ labyrinth: { isActive: true, startedAt: 'run1' } });
+
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye' } },
+            combatStartTime: 'room1',
+        });
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        tick({ 0: { hp: 420, dmg: 1 } }, { 0: { hp: 2000 } });
+
+        // A different room, a different combatStartTime — outside a labyrinth
+        // this is a new session and the 80 above would be gone
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Wolf' } },
+            combatStartTime: 'room2',
+        });
+        tick({ 0: { hp: 420, dmg: 1 } }, { 0: { hp: 2000 } }, 2);
+        tick({ 0: { hp: 380, dmg: 2 } }, { 0: { hp: 2000 } }, 2);
+
+        expect(tracker.takenBreakdown().players[0].damage).toBe(120);
+    });
+
+    test('isActive going false ends the run and the next room starts a fresh session', () => {
+        listeners.labyrinth_updated({ labyrinth: { isActive: true, startedAt: 'run1' } });
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Eye' } },
+            combatStartTime: 'room1',
+        });
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        tick({ 0: { hp: 420, dmg: 1 } }, { 0: { hp: 2000 } });
+
+        listeners.labyrinth_updated({ labyrinth: { isActive: false } });
+        listeners.new_battle({
+            players: { 0: { name: 'You' } },
+            monsters: { 0: { name: 'Wolf' } },
+            combatStartTime: 'afterwards',
+        });
+
+        expect(tracker.takenBreakdown().players[0].damage).toBe(0);
+    });
+});
+
 /**
  * The per-fight, per-slot fold behind the enemy tiles' outgoing line.
  *

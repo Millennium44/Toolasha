@@ -39,6 +39,7 @@ import {
     waveKey,
 } from '../../utils/damage-taken.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
+import { newLabyrinthSessionState, noteLabyrinthUpdate, labyrinthSessionKey } from '../../utils/labyrinth-session.js';
 
 /** The counters this tick is measured against */
 let state = newTakenState();
@@ -80,6 +81,13 @@ let currentWave = null;
 
 /** Who is fighting and since when; a change is a new run — see `sessionKeyFor` */
 let sessionKey = null;
+
+/**
+ * Whether the current fight is inside an active labyrinth run, and the key
+ * held constant for the whole of it — see `utils/labyrinth-session.js` and
+ * `damage-tracker.js`'s identical use of it.
+ */
+let labyrinthSession = newLabyrinthSessionState();
 
 /**
  * Whether this session has seen a battle begin.
@@ -270,11 +278,20 @@ function recoverNames(mMap) {
 
 let onNewBattle = null;
 let onBattleUpdated = null;
+let onLabyrinthUpdated = null;
 
 export default {
     name: 'Damage Taken Tracker',
     initialize: () => {
         resetDamageTaken();
+
+        onLabyrinthUpdated = (data) => {
+            try {
+                noteLabyrinthUpdate(labyrinthSession, data);
+            } catch (error) {
+                console.error('[DamageTakenTracker] Reading a labyrinth update failed:', error);
+            }
+        };
 
         onNewBattle = (data) => {
             try {
@@ -286,7 +303,9 @@ export default {
                 // very first statement, exactly as the outgoing tracker does: a
                 // reload lands ticks before anything names the run, and those
                 // ticks belong to the fight still on screen.
-                const key = sessionKeyFor(data);
+                // Overridden while a labyrinth run is active — see
+                // `damage-tracker.js`'s identical override for why
+                const key = labyrinthSessionKey(labyrinthSession, sessionKeyFor(data));
                 if (key && key !== sessionKey) {
                     const seenSlots = Object.keys(state.playersHP || {});
                     const adoptable = sessionKey === null && seenSlots.every((index) => index in players);
@@ -401,12 +420,16 @@ export default {
 
         webSocketHook.on('new_battle', onNewBattle);
         webSocketHook.on('battle_updated', onBattleUpdated);
+        webSocketHook.on('labyrinth_updated', onLabyrinthUpdated);
     },
     cleanup: () => {
         if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
         if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
+        if (onLabyrinthUpdated) webSocketHook.off('labyrinth_updated', onLabyrinthUpdated);
         onNewBattle = null;
         onBattleUpdated = null;
+        onLabyrinthUpdated = null;
+        labyrinthSession = newLabyrinthSessionState();
         names = {};
         monsters = {};
         currentWave = null;

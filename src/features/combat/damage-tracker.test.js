@@ -304,6 +304,58 @@ describe('the fight on screen', () => {
     });
 });
 
+describe('a labyrinth run held as one session', () => {
+    beforeEach(() => {
+        tracker.default.initialize();
+    });
+
+    afterEach(() => {
+        tracker.default.cleanup();
+    });
+
+    const seed = (players, monsters, combatStartTime) => listeners.new_battle({ combatStartTime, players, monsters });
+
+    const swing = (atk, hp, dmg, battleId = 1) =>
+        listeners.battle_updated({
+            battleId,
+            pMap: { 0: { atkCounter: atk, isAutoAtk: true } },
+            mMap: { 0: { cHP: hp, dmgCounter: dmg, mHP: 1000 } },
+        });
+
+    test('a new room does not reset the tally, even though its combatStartTime differs', () => {
+        listeners.labyrinth_updated({ labyrinth: { isActive: true, startedAt: 'run1' } });
+
+        seed({ 0: { name: 'You', isPreparingAutoAttack: true } }, { 0: { name: 'Eye', currentHitpoints: 1000 } }, 'r1');
+        swing(1, 900, 1);
+
+        // A different room, a different combatStartTime — outside a labyrinth
+        // this is a new session and the first room's damage would be gone
+        seed(
+            { 0: { name: 'You', isPreparingAutoAttack: true } },
+            { 0: { name: 'Wolf', currentHitpoints: 1000 } },
+            'r2'
+        );
+        swing(2, 900, 1, 2);
+
+        expect(damageBreakdown().players[0].damage).toBe(200);
+    });
+
+    test('isActive going false ends the run and the next room starts fresh', () => {
+        listeners.labyrinth_updated({ labyrinth: { isActive: true, startedAt: 'run1' } });
+        seed({ 0: { name: 'You', isPreparingAutoAttack: true } }, { 0: { name: 'Eye', currentHitpoints: 1000 } }, 'r1');
+        swing(1, 900, 1);
+
+        listeners.labyrinth_updated({ labyrinth: { isActive: false } });
+        seed(
+            { 0: { name: 'You', isPreparingAutoAttack: true } },
+            { 0: { name: 'Wolf', currentHitpoints: 1000 } },
+            'afterwards'
+        );
+
+        expect(damageBreakdown().players).toEqual([]);
+    });
+});
+
 describe('the class read off a run', () => {
     beforeEach(() => {
         vi.useFakeTimers();
