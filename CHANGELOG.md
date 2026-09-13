@@ -6,6 +6,19 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party damage panel: per-ability rows, Healing done, kills and a DPS graph
+
+- Click a player on the Per-player panel's Damage tab to open their per-ability breakdown (damage, DPS, share, hits, crit rate, accuracy); Healing done opens by ability and Taken by monster. Open rows stay open as the panel refreshes.
+- A new Healing done tab credits healing to the caster, leaving out regeneration and revives, beside the existing Healed (received) tab.
+- Rows show kills per player, the headline counts all health lost, and any damage no player could be credited with is named under it. Spike Shell and Retribution thorns get their own ability row instead of counting as the tank's swings.
+- A DPS-over-time graph sits above the Damage tab (5 minutes or the whole session), with boss fights shaded.
+- Click the dot beside a name to give a player their own colour (used on rows, graph lines and unit badges) or to set their class by hand; both are remembered by player name.
+
+### Trial scoreboard: kills, thorns, healing by caster, boss timers and an off switch
+
+- The trial board shows kills per player, a team total with any unattributed share, a "Spike Shell (reflect)" row for tank thorns, and a By caster healing view beside Healing. The same player colours, class override and DPS graph (with tier boundaries) apply.
+- Debuff and stun timers are drawn on trial bosses in the fight view, and guild trial tracking can be switched off and on without a reload.
+
 ### Combat meters count the first hit of every wave
 
 - The personal and party meters never counted the first hit on each monster in each wave, because a monster's health was only learned after it had been struck; recorded fights read 5–22% low, and a one-shot kill counted neither damage nor a kill. Baselines now come from the wave's opening message, in the damage, damage-taken, DPS tile and rotation trackers.
