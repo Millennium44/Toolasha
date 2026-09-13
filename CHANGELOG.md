@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.52.0 -->
+
 ### Party damage panel: per-ability rows, Healing done, kills and a DPS graph
 
 - Click a player on the Per-player panel's Damage tab to open their per-ability breakdown (damage, DPS, share, hits, crit rate, accuracy); Healing done opens by ability and Taken by monster. Open rows stay open as the panel refreshes.
@@ -2869,6 +2871,59 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.52.0](https://github.com/Millennium44/Toolasha/compare/v3.51.0...v3.52.0) (2026-09-13)
+
+### Features
+
+- attribution engine credits and labels Spike Shell and Retribution reflect ([4a58792](https://github.com/Millennium44/Toolasha/commit/4a5879266b8d5b40b7dcaaed61e7c19ffc07d8fc))
+- attribution engine names the player who landed each kill ([ab6d25d](https://github.com/Millennium44/Toolasha/commit/ab6d25d9b4392b40f91f06cb366a8ee682ba62b9))
+- attribution engine reports damage nobody could be credited with ([c893686](https://github.com/Millennium44/Toolasha/commit/c89368647e1f68edc00c7839c691d3efdc646af3))
+- combat meters count kills per player ([ec08019](https://github.com/Millennium44/Toolasha/commit/ec08019f11bd18948147980be6ddd94c0839235d))
+- combat meters show Spike Shell and Retribution thorns as their own ability row ([c4adcbf](https://github.com/Millennium44/Toolasha/commit/c4adcbf44c2dffe9706c6d19ccd0787077500772))
+- combat meters' team total counts all health lost, with the uncredited part named ([60b9481](https://github.com/Millennium44/Toolasha/commit/60b9481da421dafe5c113a4f389c87c1826a6222))
+- DPS-over-time graph on the Per-player panel and trial damage board ([65cfd6c](https://github.com/Millennium44/Toolasha/commit/65cfd6c125857f33f68c8fdbce4a98418e354ec2))
+- guild trial tracking can be switched off and on without a reload ([5779ff4](https://github.com/Millennium44/Toolasha/commit/5779ff469ebc7d8c958335090be141b33866ea79))
+- hold a labyrinth run as one session in the damage and taken trackers ([57325b1](https://github.com/Millennium44/Toolasha/commit/57325b1380d9e113d04a10a4b31d0bc06b205144))
+- Per-player panel adds a Healing done tab that credits the caster ([d0e1e38](https://github.com/Millennium44/Toolasha/commit/d0e1e3835d8c9af91b2e5b7cad507b8a0fd0176e))
+- Per-player panel rows open into a per-ability breakdown ([d13e5ad](https://github.com/Millennium44/Toolasha/commit/d13e5adcccb8ef41a9fef10aab5aefae0e49f020))
+- pick a player's class and colour on the damage boards ([a5318e2](https://github.com/Millennium44/Toolasha/commit/a5318e2d077535772958e4000a409624e8a4750c))
+- trial fight view shows debuff and stun timers on the boss ([8ee58b7](https://github.com/Millennium44/Toolasha/commit/8ee58b764d44ed67cf35069bc818c72454021fb1))
+- trial per-ability breakdown gives tank thorns a row of their own ([240606d](https://github.com/Millennium44/Toolasha/commit/240606d701d9cceb55e884275c18fa2b5664024c))
+- trial recorder snapshots note the tier and wave being fought ([c405e48](https://github.com/Millennium44/Toolasha/commit/c405e487f9a049edc35377469d0f46951c9476b6))
+- trial scoreboard adds a By caster healing view beside the Healing tab ([f03d5bf](https://github.com/Millennium44/Toolasha/commit/f03d5bfbfaf8d32eb05f815b1df612aca8a5e0e1))
+- trial scoreboard shows per-player kills and the team total with its unattributed share ([5baaf74](https://github.com/Millennium44/Toolasha/commit/5baaf747f884bba5cd5847dd74b114681d174312))
+
+### Bug Fixes
+
+- a revive is its own event, not regeneration ([2e259e9](https://github.com/Millennium44/Toolasha/commit/2e259e93ccf9ad2c9931d56ef375597254d7c174))
+- class chip stops tagging anyone with threat as Tank ([3dbf4be](https://github.com/Millennium44/Toolasha/commit/3dbf4be52ba4ce9033295b60b07830d74c6bf04d))
+- combat meters file a hit landing during a buff or heal cast under auto attack ([33f02c0](https://github.com/Millennium44/Toolasha/commit/33f02c0e9ef8f0b1ac25ff38eca613b9799ce3a9))
+- combat meters stop dropping real hits as idle when a tick omits isAutoAtk ([4ef3637](https://github.com/Millennium44/Toolasha/commit/4ef3637560f3284b04a49dfc83c622df5a30722e))
+- combat summary bails when the character switches during its market fetch ([8c5d84a](https://github.com/Millennium44/Toolasha/commit/8c5d84a8cf5f7f37d18a351e00267bd65bad5396))
+- DPS graph shades only real boss fights, not every Pirate Cove wave ([7021b4c](https://github.com/Millennium44/Toolasha/commit/7021b4cdacbf450bc5628949162afd2c072f8214))
+- DPs panel header DPS matches the table and Reset instead of a stale figure ([b23f8c0](https://github.com/Millennium44/Toolasha/commit/b23f8c06f9abae9156e2e4d2ab6689a3ea488be3))
+- guild trial meter tells a game-ended trial from a quiet stream, and scopes its weekly stats ([26c2177](https://github.com/Millennium44/Toolasha/commit/26c2177ea32edad2a59b9a9550dfbc08e528861c))
+- health-diff tile's party size stops reading one tick's sparse pMap ([f094728](https://github.com/Millennium44/Toolasha/commit/f094728d81fcc7cd7830056207b3306f2cc2d8d4))
+- mana tracker ignores casts from a spectated guild trial ([1595010](https://github.com/Millennium44/Toolasha/commit/1595010bfa307356c927645f88d5ab4af244497b))
+- portrait DPS joins monster tiles by name, not by raw DOM position ([5d97610](https://github.com/Millennium44/Toolasha/commit/5d976107ccd7e1564dd21f3d03369ec3b31326cc))
+- reword stale "credited by whose mana fell" copy to the real ladder ([dbc2bc7](https://github.com/Millennium44/Toolasha/commit/dbc2bc72cc1995593bb3979484147cded1efe53b))
+- rotation tracker rebuilds its party roster each battle instead of accumulating it ([3950688](https://github.com/Millennium44/Toolasha/commit/3950688bf913f6129ae738d0ecb4dfa462ffe517))
+- seed monster and player baselines from new_battle so the first hit of every wave counts ([0be97d0](https://github.com/Millennium44/Toolasha/commit/0be97d014d8ee57cf059dbe478e58b29841bcdd8))
+- trial healing no longer hands a lone healer the regeneration on their tick ([ab85b50](https://github.com/Millennium44/Toolasha/commit/ab85b507a8340302a5371034d96f4d350ea40dd9))
+- trial ledger folds each trial once and records the game's own totals ([9a49c8f](https://github.com/Millennium44/Toolasha/commit/9a49c8f406010990e13ed51e1328544a6ed2ae2b))
+- trial meter credits tank thorns in crowd ticks and keeps uncredited damage in the team total ([45541f7](https://github.com/Millennium44/Toolasha/commit/45541f7ffc05da6226e10d57ab5d145cfad0b4a6))
+- trial meter splits small unresolved ticks among those present instead of the last swinger ([9c480ba](https://github.com/Millennium44/Toolasha/commit/9c480baad36830c4d08bbe18e8447d8875d0edf0))
+- trial per-ability rows file hits during a buff or heal cast under auto attack ([eef8b40](https://github.com/Millennium44/Toolasha/commit/eef8b40cecda53ac0882d6412a0c80340b20a49e))
+
+### Documentation
+
+- changelog for the combat and trial meter fixes ([d0e5fab](https://github.com/Millennium44/Toolasha/commit/d0e5fabf095710d4d1c00dae409c4eb70a243468))
+- changelog for the party damage panel and trial scoreboard additions ([7b64b98](https://github.com/Millennium44/Toolasha/commit/7b64b98badd636234a3cf9524aa24cc98c0e35cb))
+
+### Tests
+
+- pin per-target hit and miss classification for area attacks ([82888d3](https://github.com/Millennium44/Toolasha/commit/82888d32546b5d98658d9854a3938b8d107bca3b))
 
 ## [3.51.0](https://github.com/Millennium44/Toolasha/compare/v3.50.0...v3.51.0) (2026-09-12)
 
