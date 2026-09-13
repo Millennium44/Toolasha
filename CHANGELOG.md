@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reported: Worst-case artisan mode still left the last craft short
+
+- The crafting plan's shopping list, its Buy Missing Materials button and the guided and task crafting walks never read "Missing materials: Artisan requirement mode" and always bought the averaged amount, so with Worst-case selected a run could still end one craft short. They now use the chosen mode, like the action panel's Missing Materials button.
+- That action panel button still counted a copy you were wearing or had listed as stock for an upgrade, so a second upgrade could show nothing missing and never run. Only copies in your bag count now.
+
+### Meter history, and meters that survive a refresh
+
+- Finished sessions are saved per character and can be reopened from a History button on the Per-player panel and the trial damage board: the last 10 of each, plus up to 30 starred, with rename, copy and delete. A saved session redraws the whole board read-only — every tab, the per-ability rows and the graph — and a trial is saved once, with the game's own totals when they arrive.
+- The live combat meters, the DPS graph and a watched guild trial now come back after a page refresh within 20 minutes, as long as it is the same character, party and fight; the time the page was shut is not counted. A mid-trial reconnect is counted instead of crediting the whole outage to one player. Both can be turned off in settings.
+
 ### Party damage panel: per-ability rows, Healing done, kills and a DPS graph
 
 - Click a player on the Per-player panel's Damage tab to open their per-ability breakdown (damage, DPS, share, hits, crit rate, accuracy); Healing done opens by ability and Taken by monster. Open rows stay open as the panel refreshes.
