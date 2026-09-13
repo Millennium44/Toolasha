@@ -42,11 +42,19 @@ vi.mock('./guild-trial-recorder.js', () => ({
     SNAPSHOT_MS: 15_000,
     RECONCILE_WAIT_MS: 120_000,
 }));
-// Saved trials live in IndexedDB; an in-memory map stands in for it
+// Saved trials, and panel geometry / the remembered tab, live in IndexedDB;
+// an in-memory map stands in for both — same store, same shape `storage.js`
+// itself keeps for a JSON key
 vi.mock('../../core/storage.js', () => ({
     default: {
+        ready: Promise.resolve(),
         get: async (key, _store, fallback) => (game.stored.has(key) ? game.stored.get(key) : fallback),
+        getJSON: async (key, _store, fallback) => (game.stored.has(key) ? game.stored.get(key) : fallback),
         set: async (key, value) => {
+            game.stored.set(key, value);
+            return true;
+        },
+        setJSON: async (key, value) => {
             game.stored.set(key, value);
             return true;
         },
@@ -65,6 +73,11 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     unregisterFloatingPanel: vi.fn(),
     bringPanelToFront: vi.fn(),
 }));
+
+// Real: position/tab persistence goes through it, and a stub would be testing
+// the stub. `_resetCaches` clears its module-level cache between tests — the
+// same reason `_resetMeterHistory`/`_resetTrialHistory` exist below.
+const { _resetCaches: _resetGeometryCaches } = await import('../../utils/panel-geometry.js');
 
 const {
     classTagHTML,
@@ -116,6 +129,11 @@ beforeEach(() => {
     game.seen = [];
     game.restarts = 0;
     game.traceStatus = null;
+    game.stored = new Map();
+    // `panel-geometry.js` caches what it reads at module scope, so a position
+    // or tab saved by one test would otherwise go on being "restored" by
+    // every test after it in this file, `game.stored` reset or not
+    _resetGeometryCaches();
     document.body.innerHTML = '';
 });
 
@@ -900,6 +918,100 @@ describe('the panel', () => {
         guildTrialScoreboard.open();
         guildTrialScoreboard.open();
         expect(document.querySelectorAll(`.${PANEL_CLASS}`)).toHaveLength(1);
+    });
+});
+
+describe('Escape, position and the remembered tab', () => {
+    // Storage and the geometry cache are already reset in the top-level
+    // `beforeEach` — nothing extra needed here
+
+    test('Escape closes it, like every other floating panel', () => {
+        guildTrialScoreboard.open();
+        expect(document.querySelector(`.${PANEL_CLASS}`)).toBeTruthy();
+
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+        expect(document.querySelector(`.${PANEL_CLASS}`)).toBeNull();
+    });
+
+    test('a dragged position is remembered across a close and reopen', async () => {
+        guildTrialScoreboard.open();
+        const header = document.querySelector(`.${PANEL_CLASS}__header`);
+
+        header.dispatchEvent(new MouseEvent('mousedown', { clientX: 100, clientY: 100, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160, clientY: 140, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+
+        const draggedLeft = document.querySelector(`.${PANEL_CLASS}`).style.left;
+        expect(draggedLeft).toBe('60px');
+
+        guildTrialScoreboard.close();
+        guildTrialScoreboard.open();
+
+        await vi.waitFor(() => {
+            expect(document.querySelector(`.${PANEL_CLASS}`).style.left).toBe(draggedLeft);
+        });
+    });
+
+    test('a plain click on the header does not overwrite the saved position', async () => {
+        guildTrialScoreboard.open();
+        document
+            .querySelector(`.${PANEL_CLASS}__header`)
+            .dispatchEvent(new MouseEvent('mousedown', { clientX: 100, clientY: 100, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mousemove', { clientX: 160, clientY: 140, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        guildTrialScoreboard.close();
+
+        // Reopen at the restored position, then just click the header — no move
+        guildTrialScoreboard.open();
+        await vi.waitFor(() => expect(document.querySelector(`.${PANEL_CLASS}`).style.left).toBe('60px'));
+        document
+            .querySelector(`.${PANEL_CLASS}__header`)
+            .dispatchEvent(new MouseEvent('mousedown', { clientX: 5, clientY: 5, bubbles: true }));
+        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        guildTrialScoreboard.close();
+
+        guildTrialScoreboard.open();
+        await vi.waitFor(() => {
+            expect(document.querySelector(`.${PANEL_CLASS}`).style.left).toBe('60px');
+        });
+    });
+
+    test('the chosen tab is remembered across a close and reopen', async () => {
+        guildTrialScoreboard.open();
+        document.querySelector('[data-tab="taken"]').click();
+        guildTrialScoreboard.close();
+
+        guildTrialScoreboard.open();
+        await vi.waitFor(() => expect(guildTrialScoreboard.tab).toBe('taken'));
+    });
+
+    test('being left on History reopens on History', async () => {
+        guildTrialScoreboard.open();
+        document.querySelector('[data-history-toggle]').click();
+        expect(guildTrialScoreboard.mode).toBe('list');
+        guildTrialScoreboard.close();
+
+        guildTrialScoreboard.open();
+        await vi.waitFor(() => expect(guildTrialScoreboard.mode).toBe('list'));
+    });
+
+    test('a note appears only when the live tally survived a refresh or a reconnect', () => {
+        guildTrialScoreboard.open();
+        expect(document.querySelector(`.${PANEL_CLASS}`).textContent).not.toContain('page refresh');
+        expect(document.querySelector(`.${PANEL_CLASS}`).textContent).not.toContain('reconnect');
+        guildTrialScoreboard.close();
+
+        game.breakdown = breakdown({ restored: { savedAt: 1, at: 2 }, reconnects: 0 });
+        guildTrialScoreboard.open();
+        expect(document.querySelector(`.${PANEL_CLASS}`).textContent).toContain('Continued after a page refresh');
+        expect(document.querySelector(`.${PANEL_CLASS}`).textContent).not.toContain('reconnect');
+        guildTrialScoreboard.close();
+
+        game.breakdown = breakdown({ restored: null, reconnects: 2 });
+        guildTrialScoreboard.open();
+        expect(document.querySelector(`.${PANEL_CLASS}`).textContent).not.toContain('page refresh');
+        expect(document.querySelector(`.${PANEL_CLASS}`).textContent).toContain('2 reconnects');
     });
 });
 

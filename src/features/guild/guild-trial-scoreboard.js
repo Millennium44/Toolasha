@@ -42,6 +42,8 @@
 import dataManager from '../../core/data-manager.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { registerEscapeClose } from '../../utils/panel-escape.js';
+import { restoreGeometry, saveGeometry, allGeometry } from '../../utils/panel-geometry.js';
 import guildTrialDamage, {
     attributionCoverage,
     encounterOf,
@@ -86,6 +88,13 @@ import {
 
 /** Class every part of this panel carries, so teardown is one query */
 export const PANEL_CLASS = 'mwi-trial-scoreboard';
+
+/** `panel-geometry.js` key: position, and the remembered tab/History mode ride in the same record */
+const GEOMETRY_KEY = 'guildTrialScoreboard';
+/** Smallest the panel is allowed to be measured at when clamping to a narrow viewport */
+const MIN_SIZE = { width: 240, height: 160 };
+/** Valid values of `this.tab` — guards a stored value from a future build's tab this one does not have */
+const TAB_KEYS = ['damage', 'healing', 'casters', 'taken'];
 
 const ACCENT = '#8fd3ff';
 const DIM = '#9ca3af';
@@ -554,6 +563,8 @@ class GuildTrialScoreboard {
         this.mode = 'live';
         /** The saved trial drawn while `mode` is `saved`: `{entry, summary}` */
         this.viewing = null;
+        /** `panel-escape.js`'s handle, held while the panel is open */
+        this._escapeReg = null;
     }
 
     /**
@@ -578,6 +589,8 @@ class GuildTrialScoreboard {
     open() {
         if (this.isOpen) {
             bringPanelToFront?.(this.container);
+            // Escape's idea of "in front" has to follow the eye's
+            this._escapeReg?.raise();
             this.render();
             return;
         }
@@ -609,6 +622,8 @@ class GuildTrialScoreboard {
         // closing has to take them off by hand or every open leaves a pair
         this._release?.();
         this._release = null;
+        this._escapeReg?.release();
+        this._escapeReg = null;
         if (this.container) {
             unregisterFloatingPanel?.(this.container);
             this.container.remove();
@@ -666,6 +681,7 @@ class GuildTrialScoreboard {
                 this.mode = this.mode === 'list' ? 'live' : 'list';
                 this.viewing = null;
                 this.expanded.clear();
+                this._saveMode();
                 this.render();
             });
             header.appendChild(history);
@@ -683,6 +699,27 @@ class GuildTrialScoreboard {
 
         this.container = container;
         this._drag(header);
+        // Escape closes the panel in front, and a brand-new panel is in front
+        this._escapeReg = registerEscapeClose(() => this.close());
+
+        // Applied after the panel is on screen, same trade-off `simple-panel.js`
+        // makes: waiting on a database read before there is any panel at all
+        // would be worse than opening at the default and settling a frame later.
+        restoreGeometry(container, GEOMETRY_KEY, MIN_SIZE).catch((error) => {
+            console.error('[GuildTrialScoreboard] Restoring the remembered position failed:', error);
+        });
+        // The remembered tab (and whether History was left open) rides in the
+        // same geometry record, read once here rather than duplicating the
+        // storage round trip `restoreGeometry` already made
+        allGeometry()
+            .then((all) => {
+                if (!this.isOpen) return;
+                const saved = all[GEOMETRY_KEY];
+                if (TAB_KEYS.includes(saved?.tab)) this.tab = saved.tab;
+                if (saved?.mode === 'list' && historyEnabled()) this.mode = 'list';
+                this.render();
+            })
+            .catch((error) => console.error('[GuildTrialScoreboard] Restoring the remembered tab failed:', error));
 
         // A trial is live while this is open; five seconds is the cadence the
         // rest of the feature samples at. A hidden tab is skipped — the whole
@@ -708,20 +745,33 @@ class GuildTrialScoreboard {
      */
     _drag(header) {
         let from = null;
+        // Only a drag that actually moved the panel is worth a write — a plain
+        // click on the header must not re-save whatever the last drag left in
+        // `style.left`/`top`
+        let moved = false;
         header.addEventListener('mousedown', (event) => {
             if (event.target.tagName === 'BUTTON') return;
             const box = this.container.getBoundingClientRect();
             from = { x: event.clientX, y: event.clientY, left: box.left, top: box.top };
+            moved = false;
             event.preventDefault();
         });
         const move = (event) => {
             if (!from || !this.container) return;
+            moved = true;
             this.container.style.left = `${from.left + event.clientX - from.x}px`;
             this.container.style.top = `${from.top + event.clientY - from.y}px`;
             this.container.style.right = 'auto';
         };
         const up = () => {
+            if (moved && this.container) {
+                saveGeometry(GEOMETRY_KEY, {
+                    left: parseFloat(this.container.style.left),
+                    top: parseFloat(this.container.style.top),
+                });
+            }
             from = null;
+            moved = false;
         };
         document.addEventListener('mousemove', move);
         document.addEventListener('mouseup', up);
@@ -729,6 +779,11 @@ class GuildTrialScoreboard {
             document.removeEventListener('mousemove', move);
             document.removeEventListener('mouseup', up);
         };
+    }
+
+    /** Remember whether the panel was left on the live view or on History */
+    _saveMode() {
+        saveGeometry(GEOMETRY_KEY, { mode: this.mode === 'list' ? 'list' : 'live' });
     }
 
     /** Redraw the body from the current breakdown */
@@ -751,6 +806,7 @@ class GuildTrialScoreboard {
         body.querySelectorAll('[data-tab]').forEach((button) => {
             button.addEventListener('click', () => {
                 this.tab = button.dataset.tab;
+                saveGeometry(GEOMETRY_KEY, { tab: this.tab });
                 this.render();
             });
         });
@@ -792,6 +848,7 @@ class GuildTrialScoreboard {
             this.mode = 'list';
             this.viewing = null;
             this.expanded.clear();
+            this._saveMode();
             this.render();
         });
         body.querySelectorAll('[data-action="live"]').forEach((button) => {
@@ -799,6 +856,7 @@ class GuildTrialScoreboard {
                 this.mode = 'live';
                 this.viewing = null;
                 this.expanded.clear();
+                this._saveMode();
                 this.render();
             });
         });
@@ -830,6 +888,11 @@ class GuildTrialScoreboard {
                 this.mode = 'saved';
                 this.viewing = { entry, summary };
                 this.expanded.clear();
+                // A saved trial's own contents are not restorable from a
+                // geometry record, so leaving the panel here is remembered as
+                // plain `live` — the next open lands on the live view rather
+                // than replaying a `list` it has already moved on from
+                this._saveMode();
                 redraw();
             },
             copyText: savedTrialText,
@@ -928,6 +991,31 @@ class GuildTrialScoreboard {
         return (
             ` ${coverage.named} of ${coverage.of} units could be named from the fight view or a captured ` +
             `build; ${listed} ${coverage.placeholders.length === 1 ? 'is a placeholder' : 'are placeholders'}.`
+        );
+    }
+
+    /**
+     * Whether this live tally kept counting through something worth naming: a
+     * page refresh (`guild-trial-damage.js` carries the tally across one, see
+     * its `restored`) or a dropped connection that came back mid-trial
+     * (`reconnects`). Silent when neither happened, which is the ordinary case
+     * and not worth a line every time it draws.
+     *
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @returns {string} HTML, or an empty string
+     */
+    _continuityNote(breakdown) {
+        const restored = Boolean(breakdown?.restored);
+        const reconnects = Number(breakdown?.reconnects) || 0;
+        if (!restored && !reconnects) return '';
+
+        const parts = [];
+        if (restored) parts.push('Continued after a page refresh');
+        if (reconnects > 0) parts.push(`${reconnects} reconnect${reconnects === 1 ? '' : 's'}`);
+        return (
+            `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin:-2px 0 6px;" ` +
+            `title="The live tally kept counting through this rather than starting over.">` +
+            `${parts.join(' · ')}</div>`
         );
     }
 
@@ -1099,6 +1187,12 @@ class GuildTrialScoreboard {
                   '</div>'
                 : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                   'Attributed off this client’s own battle feed.</div>';
+
+        // Says nothing while nothing happened — the ordinary case — and one
+        // line when the live tally kept counting through a refresh, a
+        // reconnect, or both, so a number that looks lower than it should
+        // is not mistaken for a tally that quietly restarted
+        const continuityNote = saved ? '' : this._continuityNote(breakdown);
 
         // The two "damage taken" figures are different quantities and must not be
         // read as one: the game modal reports gross incoming *before* mitigation,
@@ -1349,6 +1443,7 @@ class GuildTrialScoreboard {
                 ? savedTrialGraphHTML(saved.graph, { draw: this.tab === 'damage' })
                 : trialDpsGraphHTML(breakdown, { draw: this.tab === 'damage' })) +
             disclaimer +
+            continuityNote +
             takenNote +
             ceilingNote +
             traceNote +
