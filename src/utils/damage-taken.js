@@ -189,7 +189,7 @@ export function findAttackers(mMap, state) {
  *
  * @param {Object} tick - A `battle_updated` payload
  * @param {Object} state - From `newTakenState`, mutated
- * @returns {Array<Object>} `{playerIndex, monsters, damage, isMiss, isRegen, isDeath}`
+ * @returns {Array<Object>} `{playerIndex, monsters, damage, isMiss, isRegen, isDeath, isRevive}`
  */
 export function attributeIncoming(tick, state) {
     const events = [];
@@ -211,6 +211,16 @@ export function attributeIncoming(tick, state) {
         // Its own event, so a death from a bleed still counts — it is not
         // conditional on the counter having risen
         if (beforeHealth > 0 && health <= 0) events.push({ playerIndex: index, isDeath: true });
+
+        // Dead last tick, alive now: a whole health bar arriving at once, and
+        // reading it as regen would credit whoever died most with the best
+        // sustain — the player who respawns to full over and over would look
+        // like the run's healer. Its own event, and nothing else this tick
+        // can be a hit or a heal on a player who was not there to take one.
+        if (beforeHealth <= 0 && health > 0) {
+            events.push({ playerIndex: index, isRevive: true });
+            continue;
+        }
 
         const lost = beforeHealth - health;
         if (counter > beforeCounter) {
@@ -250,6 +260,9 @@ export function foldTaken(tally, events) {
     for (const event of events) {
         const entry = (tally[event.playerIndex] ||= { damage: 0, regen: 0, hits: 0, misses: 0, deaths: 0 });
 
+        // Its own event, carrying no amount to fold anywhere — see
+        // `attributeIncoming`'s note on why a revive is not regen
+        if (event.isRevive) continue;
         if (event.isDeath) entry.deaths += 1;
         else if (event.isRegen) entry.regen += event.damage;
         else if (event.isMiss) entry.misses += 1;
@@ -297,7 +310,7 @@ export function resolveName(candidates, nameOf) {
  */
 export function foldTakenByEnemy(tally, events, nameOf) {
     for (const event of events) {
-        if (event.isDeath || event.isRegen || event.isMiss) continue;
+        if (event.isDeath || event.isRegen || event.isMiss || event.isRevive) continue;
 
         const name = resolveName(event.monsters, nameOf);
         const entry = (tally[name] ||= { damage: 0, hits: 0, min: null, max: null, byPlayer: {} });

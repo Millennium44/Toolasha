@@ -369,7 +369,7 @@ export default {
                 // candidate slot is filed; "either of the two Eyes" is a fine
                 // answer for a name and no answer at all for a tile.
                 for (const event of events) {
-                    if (event.isDeath || event.isRegen || event.isMiss) continue;
+                    if (event.isDeath || event.isRegen || event.isMiss || event.isRevive) continue;
                     if (!Array.isArray(event.monsters) || event.monsters.length !== 1) continue;
 
                     const slot = event.monsters[0];
@@ -379,7 +379,7 @@ export default {
                 const wave = currentWave ? waves[currentWave] : null;
                 if (wave) {
                     for (const event of events) {
-                        if (event.isDeath || event.isRegen || event.isMiss) continue;
+                        if (event.isDeath || event.isRegen || event.isMiss || event.isRevive) continue;
                         wave.damage += event.damage;
                         wave.min = wave.min === null ? event.damage : Math.min(wave.min, event.damage);
                         wave.max = wave.max === null ? event.damage : Math.max(wave.max, event.damage);

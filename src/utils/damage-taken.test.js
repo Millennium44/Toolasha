@@ -325,6 +325,38 @@ describe('folding a run together', () => {
     });
 });
 
+describe('a revive', () => {
+    test('is its own event, not regeneration', () => {
+        // Dead last tick, alive now — the whole bar arriving at once. Reading
+        // it as regen would credit whoever died most with the best sustain
+        const state = newTakenState();
+        attributeIncoming(tick({ 0: { hp: 0, dmg: 3 } }), state);
+        const events = attributeIncoming(tick({ 0: { hp: 500, dmg: 3 } }), state);
+
+        expect(events).toEqual([{ playerIndex: '0', isRevive: true }]);
+    });
+
+    test('does not fold into a player’s regen total', () => {
+        const state = newTakenState();
+        attributeIncoming(tick({ 0: { hp: 0, dmg: 3 } }), state);
+        const events = attributeIncoming(tick({ 0: { hp: 500, dmg: 3 } }), state);
+
+        const tally = {};
+        foldTaken(tally, events);
+        expect(tally['0'].regen).toBe(0);
+    });
+
+    test('a real heal off zero — health rising while still dead — is not one', () => {
+        // A revive is specifically 0 to positive; nothing about a corpse
+        // ticking regen (impossible in play, but the arithmetic should not
+        // invent a revive from it) should be misread
+        const state = newTakenState();
+        attributeIncoming(tick({ 0: { hp: 0, dmg: 3 } }), state);
+        const events = attributeIncoming(tick({ 0: { hp: 0, dmg: 3 } }), state);
+        expect(events).toEqual([]);
+    });
+});
+
 describe('seeding a battle from new_battle', () => {
     test('the first real hit on a player is counted rather than producing nothing', () => {
         // Without a seed there is no previous reading, and the first sight of
