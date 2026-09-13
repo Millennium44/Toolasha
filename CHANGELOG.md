@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dungeon tracker stops showing for a dungeon that is only queued
+
+- With a dungeon queued behind a craft, the dungeon tracker showed "waiting for next wave" as if the dungeon were running. The shared helper that finds the running action picked the lowest-ordinal action among combat actions only, so a queued dungeon won whenever the real running action was a skill. It now finds the running action first and then asks whether it is combat, which fixes every feature that uses it.
+- Four other places that picked an action by its position in the queue — the overlay's current activity, the combat panel's "sim here", the combat stats rows and the enhancement row picker — now use the running action too.
+
 ### Escape closes only the menu in front
 
 - Pressing Escape with a player's colour and class menu open could close the Per-player panel behind it as well, and the panel stayed shut after a reload, because a held key's repeats were each taken as another Escape. Repeats are ignored now, so one press closes one thing.
