@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat meters count the first hit of every wave
+
+- The personal and party meters never counted the first hit on each monster in each wave, because a monster's health was only learned after it had been struck; recorded fights read 5–22% low, and a one-shot kill counted neither damage nor a kill. Baselines now come from the wave's opening message, in the damage, damage-taken, DPS tile and rotation trackers.
+- "Filter Nondamage" dropped real hits whenever the game left the auto-attack flag off a tick, and a hit landing while a player prepared a buff or heal was filed under that buff. Both now count as the attack they were.
+- A revive is no longer counted as healing, the DPs header DPS matches its table and honours Reset, the class chip stops tagging anyone with threat as Tank, and a labyrinth run stays one session across rooms.
+- Smaller fixes: the mana tracker ignores spectated trial casts, the DPS tile knows a party's size, portrait figures match monster tiles by name, the rotation tracker forgets a party you left, Combat Summary no longer injects the previous character's rates after a switch, and tooltips describe how damage is actually credited.
+
+### Trial meters stop re-counting finished trials and use the game's totals
+
+- A trial the game has ended is now told apart from a stream that merely went quiet. A quiet stream that resumes carries on without inflating DPS, and nothing after the end re-opens the trial, so the ledger can no longer fold the same trial into the week more than once.
+- The ledger, the finished-trial rows and "Copy guild report" now take the game's own end-of-trial totals when they arrive, instead of the live estimate.
+- Unresolved ticks between two or three players are split among the players present rather than handed to someone who may not have been there, and a lone healer is no longer credited that tick's regeneration. On a real 57-player trial, per-player damage error against the game's figures fell from 2.3% to 1.8% on average.
+- The week's measured-vs-reported stats are kept per guild, and a roster saved by one character or guild is no longer adopted by another. Credit to KikiMeter (ZhuLiMoon, MIT) for several of these findings.
+
 <!-- shipped in 3.51.0 -->
 
 ### Times follow your device's clock
