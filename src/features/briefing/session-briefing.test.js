@@ -68,7 +68,11 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-// Geometry lives in IndexedDB and is not what this file is about
+// Geometry lives in IndexedDB and is not what this file is about. `reopenIfLeftOpen`
+// is a spy rather than a plain stub because one test below asserts it is never
+// called — the briefing panel must not restore itself through this path; its
+// own arrival rule (the quick-refresh gate above) is the only thing that opens it.
+const geometry = vi.hoisted(() => ({ reopenIfLeftOpen: vi.fn(async () => {}) }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,
@@ -77,7 +81,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
-    reopenIfLeftOpen: async () => {},
+    reopenIfLeftOpen: geometry.reopenIfLeftOpen,
     markPanelInteracted: () => {},
 }));
 
@@ -132,6 +136,7 @@ const {
     labyrinthFact,
     _resetBriefingState,
     OPENERS,
+    PANEL_ID,
     default: feature,
 } = await import('./session-briefing.js');
 
@@ -434,6 +439,17 @@ describe('showing and dismissing', () => {
 
         game.characterId = 'char-2';
         expect(maybeShowBriefing()).toBe(true);
+    });
+
+    test('never restores itself through the shared reopen-on-load path', () => {
+        // The bug: `simple-panel.js` reopens any panel left open at module scope
+        // and on every character switch, regardless of this feature's own
+        // quick-refresh gate — a card left open reappeared on a plain reload no
+        // matter what `initialize()` decided. The fix opts the briefing panel out
+        // of that path entirely (`restoreOpen: false`), so this feature's own
+        // panel id must never be asked about — the notice log panel this same
+        // module imports is a different panel, and keeps the default behaviour.
+        expect(geometry.reopenIfLeftOpen).not.toHaveBeenCalledWith(PANEL_ID, expect.any(Function));
     });
 
     test('a character switch closes the card without counting as a dismissal', () => {

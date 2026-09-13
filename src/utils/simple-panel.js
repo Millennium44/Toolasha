@@ -37,6 +37,12 @@ const DEFAULT_REFRESH_MS = 3000;
  * @param {Function} definition.draw - `(body, panel) => void`, called each refresh
  * @param {string} [definition.accent] - Header and title colour
  * @param {number} [definition.refreshMs] - How often to redraw
+ * @param {boolean} [definition.restoreOpen] - Whether a panel left open should
+ *   reopen itself on load and on every character switch. Defaults to `true`,
+ *   which is what every ordinary panel wants. `false` is for a panel that has
+ *   its own arrival rule and must appear only through that rule or by hand —
+ *   the Session Briefing card left open otherwise reopened on a plain page
+ *   refresh no matter what its own quick-refresh gate decided.
  * @returns {Object} A panel with `show`, `hide`, `toggle` and `setTitle`
  */
 export function createPanel({
@@ -46,6 +52,7 @@ export function createPanel({
     draw,
     accent = '#8fb4ff',
     refreshMs = DEFAULT_REFRESH_MS,
+    restoreOpen = true,
 }) {
     // Not a constant: a panel that can be pointed at more than one subject has
     // to be able to say which one it is currently about
@@ -369,7 +376,11 @@ export function createPanel({
     // this is module scope and a storage read has no business holding it up —
     // the panel appears a moment after the rest of the page, which is what a
     // remembered panel looks like anyway.
-    reopenIfLeftOpen(id, () => api.show({ remember: false }));
+    //
+    // Skipped when `restoreOpen` is false: that panel has its own arrival rule
+    // and must appear only through it, or by hand — not through the flag left
+    // over from however the page was last closed.
+    if (restoreOpen) reopenIfLeftOpen(id, () => api.show({ remember: false }));
 
     // And again on every character switch. The open flags are per character, so
     // running this once at module scope meant the panels the *first* character
@@ -380,7 +391,7 @@ export function createPanel({
     // flags.
     const onCharacterSwitched = () => {
         api.hide({ remember: false });
-        reopenIfLeftOpen(id, () => api.show({ remember: false }));
+        if (restoreOpen) reopenIfLeftOpen(id, () => api.show({ remember: false }));
     };
     dataManager.on('character_switched', onCharacterSwitched);
 

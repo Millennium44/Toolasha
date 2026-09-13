@@ -709,6 +709,12 @@ export const briefingPanel = createPanel({
     accent: '#9ec4ff',
     refreshMs: REFRESH_MS,
     draw,
+    // This card has its own arrival rule below (`maybeShowBriefing`, gated by
+    // the quick-refresh window in `initialize()`) and must appear only through
+    // it or by hand. `simple-panel.js`'s ordinary reopen-on-load would otherwise
+    // bring a left-open card back on every plain page refresh, whatever that
+    // gate decided.
+    restoreOpen: false,
 });
 
 // Closing the card is the player saying they have read it, and the close button

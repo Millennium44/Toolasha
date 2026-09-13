@@ -519,6 +519,69 @@ describe('switching character', () => {
     });
 });
 
+/**
+ * A panel that must not bring itself back.
+ *
+ * The Session Briefing card has its own arrival rule — a quick-refresh window —
+ * and `reopenIfLeftOpen` running underneath it regardless of that rule was the
+ * bug: the maintainer had left the card open, so every reload reopened it
+ * through this path no matter what the quick-refresh gate decided. `restoreOpen:
+ * false` is the opt-out; every other panel keeps the default.
+ */
+describe('a panel that opts out of restoring itself on load', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.replaceChildren();
+        bus.handlers = {};
+        geometry.saveOpenState.mockClear();
+        geometry.reopen.mockClear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('skips the reopen pass at creation, so a panel left open does not come back', () => {
+        const panel = createPanel({
+            id: 'no-restore',
+            title: 'NoRestore',
+            size: SIZE,
+            draw: () => {},
+            restoreOpen: false,
+        });
+
+        expect(geometry.reopen).not.toHaveBeenCalled();
+        expect(panel.isOpen()).toBe(false);
+    });
+
+    test('skips the reopen pass on a character switch too', () => {
+        const panel = createPanel({
+            id: 'no-restore-switch',
+            title: 'NoRestoreSwitch',
+            size: SIZE,
+            draw: () => {},
+            restoreOpen: false,
+        });
+        geometry.reopen.mockClear();
+
+        dataManager.emit('character_switched', {});
+
+        expect(geometry.reopen).not.toHaveBeenCalled();
+        expect(panel.isOpen()).toBe(false);
+    });
+
+    test('a default panel still restores itself, for contrast', () => {
+        const panel = createPanel({ id: 'default-restore', title: 'DefaultRestore', size: SIZE, draw: () => {} });
+
+        expect(geometry.reopen).toHaveBeenCalledWith('default-restore', expect.any(Function));
+
+        // What `reopenIfLeftOpen` does once it finds the panel was left open
+        const [, reopen] = geometry.reopen.mock.calls.at(-1);
+        reopen();
+        expect(panel.isOpen()).toBe(true);
+    });
+});
+
 describe('a panel that opens where nothing is already sitting', () => {
     beforeEach(() => {
         vi.useFakeTimers();
