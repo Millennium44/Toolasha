@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Node 24 and refreshed development dependencies
+
+- CI and the release workflows now run on Node 24 (Node 20 reached end of life), `package.json` requires Node 22.12+, and `.nvmrc` records the version.
+- Refreshed the lockfile within existing version ranges, clearing most open Dependabot security alerts (Vitest 4.1.11, Vite, undici, Rollup, nanoid, fast-uri, postcss and others). Development tooling only; nothing shipped to users changes.
+
 ### Repository housekeeping
 
 - Added the CC BY-NC-SA 4.0 `LICENSE` file the README already linked to, pointed the README's clone URL at this fork, dropped its stale test count, and turned on weekly Dependabot checks with `chore(deps)` commit subjects.

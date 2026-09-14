@@ -55,6 +55,9 @@
         "rollup-plugin-banner2": "^1.2.2",
         "vitest": "^4.0.18"
     },
+    "engines": {
+        "node": ">=22.12"
+    },
     "lint-staged": {
         "src/**/*.js": [
             "eslint --fix",
