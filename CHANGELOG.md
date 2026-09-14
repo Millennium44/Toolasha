@@ -12,6 +12,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Refreshed the lockfile within existing version ranges, clearing most open Dependabot security alerts (Vitest 4.1.11, Vite, undici, Rollup, nanoid, fast-uri, postcss and others). Development tooling only; nothing shipped to users changes.
 - The house, enhancement-storage and risk-of-ruin tests now stub `CSS` with `vi.stubGlobal` and record import-time subscriptions themselves, so they pass on Vitest 5 (which clears mock calls before each test) as well as Vitest 4.
 - Merged the Dependabot updates: Vitest 5, ESLint 10, `@rollup/plugin-node-resolve` 16, `@rollup/plugin-commonjs` 29, markdownlint-cli 0.49, chartjs-plugin-datalabels 2.2 (tests only; the userscript still loads 2.0.0) and the GitHub Actions group.
+- The config test that scans every source file for removed color names now allows 30 seconds, so a slow run no longer trips the 5-second default.
 - Upgraded `@rollup/plugin-terser` to 1.0.0, which clears the last serialize-javascript alerts; the production bundles it minifies come out byte-identical.
 
 ### Repository housekeeping

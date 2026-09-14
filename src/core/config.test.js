@@ -332,7 +332,8 @@ describe('Config — color constants', () => {
         }
 
         expect(violations).toEqual([]);
-    });
+        // Reading every source file synchronously has run past the 5 s default on a slow pass.
+    }, 30_000);
 });
 
 describe('Config and a settings store that cannot be read', () => {
