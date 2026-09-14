@@ -30,6 +30,7 @@ import { parseEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
 import { calculateHouseActionSpeed } from '../../utils/house-efficiency.js';
 import { getCommunityBuffBonus } from '../../utils/community-buffs.js';
 import { SCROLL_BUFF_VALUES } from '../../utils/scroll-buff-values.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 const SETTING_KEY = 'actionTiming_monitor';
 const STORE_NAME = 'settings';
@@ -309,7 +310,7 @@ class ActionTimingMonitor {
 
     /** @returns {{actionHrid: string, name: string|null, type: string|null, details: Object|null}|null} The action being performed */
     _currentAction() {
-        const current = dataManager.getCurrentActions?.()?.[0];
+        const current = runningAction(dataManager.getCurrentActions?.() ?? []);
         if (!current?.actionHrid) return null;
         const details = dataManager.getActionDetails(current.actionHrid) || null;
         return {

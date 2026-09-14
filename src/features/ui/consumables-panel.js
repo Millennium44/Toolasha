@@ -837,6 +837,10 @@ class ConsumablesPanel {
         const slots = characterData.partyInfo?.partySlotMap || null;
         const slotMembers = slots ? Object.values(slots).filter(Boolean) : [];
 
+        // The next combat action in execution order, running or queued — "about
+        // to run" includes a dungeon queued behind a craft, so this is not
+        // runningCombatAction. The queue is kept in ordinal order, so the first
+        // match is the soonest.
         const live = (dataManager.getCurrentActions?.() || []).find(
             (action) => action.actionHrid?.startsWith('/actions/combat/') && !action.isDone
         );

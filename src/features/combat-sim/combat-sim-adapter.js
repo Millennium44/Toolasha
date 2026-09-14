@@ -1047,17 +1047,19 @@ export function getCurrentCombatZone() {
     const characterData = dataManager.characterData;
     const clientData = dataManager.getInitClientData();
 
-    if (!characterData?.characterActions) {
-        return null;
-    }
-
     // The running action is the lowest-ordinal unfinished combat action, not
     // the first one in array order — a requeued repeat sits first with a higher
     // ordinal. Reading array[0] here mis-stamped dungeon recordings with a
     // queued normal zone's hrid. includeFinished keeps a zone nameable the
     // instant combat ends, matching the old "return the first combat action"
     // behaviour a segment fold relies on.
-    const action = runningCombatAction(characterData.characterActions, { includeFinished: true });
+    //
+    // The live queue leads: `characterData.characterActions` is the login
+    // snapshot, which no queue message updates. It stays as the fallback so a
+    // zone the live queue has already dropped is still named as before.
+    const action =
+        runningCombatAction(dataManager.getCurrentActions?.(), { includeFinished: true }) ||
+        runningCombatAction(characterData?.characterActions, { includeFinished: true });
     if (!action) {
         return null;
     }

@@ -698,6 +698,60 @@ describe('actions_updated', () => {
     });
 });
 
+describe('the action queue is kept in execution order', () => {
+    // The server's arrays are not in ordinal order, and every reader that took
+    // the front of the array for the running action read a queued one instead
+    // (a craft reordered into slot two during a labyrinth run toasted "stopped").
+    const ids = (dataManager) => dataManager.getCurrentActions().map((action) => action.id);
+
+    test('login with out-of-order ordinals comes out sorted, missing ordinal first, ties stable', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [];
+        const characterActions = [
+            { id: 1, ordinal: 5, isDone: false },
+            { id: 2, ordinal: 1, isDone: false },
+            { id: 3, isDone: false },
+            { id: 4, ordinal: 1, isDone: false },
+        ];
+
+        await webSocketHandlers.get('init_character_data')(initPayload({ characterActions }));
+
+        expect(ids(dataManager)).toEqual([3, 2, 4, 1]);
+        // The login snapshot itself is left as the server sent it
+        expect(characterActions.map((action) => action.id)).toEqual([1, 2, 3, 4]);
+    });
+
+    test('a reorder, whose moved action arrives last, is sorted back into place', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [
+            { id: 1, ordinal: 1, isDone: false },
+            { id: 2, ordinal: 2, isDone: false },
+            { id: 3, ordinal: 3, isDone: false },
+        ];
+
+        // The cape craft moved up to the second slot, behind the running labyrinth
+        webSocketHandlers.get('actions_updated')({
+            endCharacterActions: [{ id: 3, ordinal: 1.5, isDone: false }],
+        });
+
+        expect(ids(dataManager)).toEqual([1, 3, 2]);
+    });
+
+    test('a repeat requeued with a higher ordinal by action_completed moves to the back', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [
+            { id: 1, ordinal: 1, isDone: false, currentCount: 0 },
+            { id: 2, ordinal: 2, isDone: false, currentCount: 0 },
+        ];
+
+        webSocketHandlers.get('action_completed')({
+            endCharacterAction: { id: 1, ordinal: 3, isDone: false, currentCount: 0 },
+        });
+
+        expect(ids(dataManager)).toEqual([2, 1]);
+    });
+});
+
 describe('action unit boundary (upstream 9210b4ab)', () => {
     /** An action queue entry, front-most by default */
     const queued = (overrides = {}) => ({

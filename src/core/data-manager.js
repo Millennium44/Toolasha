@@ -1129,6 +1129,7 @@ class DataManager {
         this.characterItems = data.characterItems;
         this._itemIndexById = null; // Rebuilt lazily against the new inventory
         this.characterActions = [...data.characterActions];
+        this._sortActionsByOrdinal();
         this.characterQuests = data.characterQuests || [];
 
         // Re-establish the current-unit timing boundary for whatever action is now
@@ -1244,6 +1245,8 @@ class DataManager {
                     this.characterActions.push(action);
                 }
             }
+            // Appending puts a reordered or requeued action at the back whatever its ordinal
+            this._sortActionsByOrdinal();
 
             // A different action taking the front slot starts that action's first unit now
             this._syncActionUnitBoundary();
@@ -1265,6 +1268,8 @@ class DataManager {
                         break;
                     }
                 }
+                // A repeating action is requeued with a higher ordinal in place
+                this._sortActionsByOrdinal();
             }
 
             // An `isDone: false` continuation is the server telling us one unit finished and
@@ -2134,7 +2139,20 @@ class DataManager {
     }
 
     /**
-     * Get player's current actions
+     * Keep `characterActions` in execution order: ascending `ordinal`, stable, a
+     * missing ordinal counting as 0 (as `runningAction` treats it). The server's
+     * arrays are not in that order — `actions_updated` appends whatever it
+     * carries and a requeued repeat keeps its slot with a higher ordinal — so
+     * every write sorts, and readers get the queue as the game will run it.
+     */
+    _sortActionsByOrdinal() {
+        this.characterActions.sort((a, b) => (a?.ordinal ?? 0) - (b?.ordinal ?? 0));
+    }
+
+    /**
+     * Get player's current actions, in execution order (ascending ordinal).
+     * For "which action is running", use `runningAction()` from
+     * `utils/combat-actions.js` rather than reading `[0]`.
      * @returns {Array} Current action queue
      */
     getCurrentActions() {

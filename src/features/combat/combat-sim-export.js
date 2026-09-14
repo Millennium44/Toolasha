@@ -597,7 +597,14 @@ export async function constructExportObject(externalProfileId = null, singlePlay
         // The zone being fought, by execution order: the first combat entry in
         // array order can be one queued behind it. A finished entry still names
         // a zone for an export taken the instant combat ends, as before.
-        const action = runningCombatAction(characterObj.characterActions, { includeFinished: true });
+        // On the game page the live queue leads — `characterActions` on the
+        // character object is the login snapshot, which queue messages never
+        // update. The snapshot is still the answer on the sim page (no live
+        // queue there) and whenever the live queue has no combat action.
+        const liveActions = characterObj === dataManager.characterData ? dataManager.getCurrentActions?.() : null;
+        const action =
+            runningCombatAction(liveActions, { includeFinished: true }) ||
+            runningCombatAction(characterObj.characterActions, { includeFinished: true });
         if (action) {
             zone = action.actionHrid;
             difficultyTier = action.difficultyTier || 0;

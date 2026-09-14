@@ -43,6 +43,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { labyrinthRunState } from './notification-predicates.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_labyrinthRunFinished';
@@ -54,12 +55,14 @@ const EVENT_KEY_PREFIX = 'labyrinth-stopped';
 const LABYRINTH_ACTION_TYPE = '/action_types/labyrinth';
 
 /**
- * What the character is doing, as the queue has it.
+ * What the character is doing, as the queue has it — the running action by
+ * execution order, not the first entry: reordering a craft into the second
+ * slot during a run used to read as the labyrinth having stopped.
  * @param {Object} [dm] - Injectable for tests
  * @returns {{isLab: boolean, name: string|null}} Whether it is the labyrinth, and a name for it
  */
 export function currentActivity(dm = dataManager) {
-    const current = dm.getCurrentActions?.()?.[0];
+    const current = runningAction(dm.getCurrentActions?.() ?? []);
     if (!current?.actionHrid) return { isLab: false, name: null };
     const details = dm.getActionDetails?.(current.actionHrid);
     const type = details?.type || (String(current.actionHrid).includes('/labyrinth') ? LABYRINTH_ACTION_TYPE : '');

@@ -52,6 +52,7 @@ import { sessionKey, loadSessions } from '../combat-stats/combat-session-history
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { predictionCalibration, MIN_DURATION_SEC } from './prediction-calibration.js';
 import { loadAllZonesSnapshot } from '../../utils/all-zones-snapshot.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 /**
  * How many sessions can be awaiting their archive entry at once.
@@ -174,9 +175,7 @@ class CombatCalibration {
         try {
             const actions = dataManager.getCurrentActions?.();
             if (!Array.isArray(actions)) return null;
-            const combat = actions.find(
-                (action) => action?.actionHrid?.startsWith('/actions/combat/') && !action.isDone
-            );
+            const combat = runningCombatAction(actions);
             return combat ? { actionHrid: combat.actionHrid, difficultyTier: combat.difficultyTier || 0 } : null;
         } catch {
             return null;

@@ -1611,7 +1611,7 @@ function drawEncountersAndKills(body, encounters) {
     const killed = (damageBreakdown().enemies || []).filter((enemy) => enemy.kills > 0);
     if (!killed.length) return;
 
-    const action = dataManager.getCurrentActions?.()?.find((entry) => entry.actionHrid?.startsWith('/actions/combat/'));
+    const action = runningCombatAction(dataManager.getCurrentActions?.());
     const expected = action
         ? expectedKills({
               actionDetail: dataManager.getActionDetails?.(action.actionHrid),

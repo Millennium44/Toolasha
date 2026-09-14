@@ -9,6 +9,7 @@ import storage from '../../core/storage.js';
 import { sessionKey, archiveSession } from './combat-session-history.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 /**
  * How long a finished run stays on the overlay.
@@ -866,9 +867,9 @@ class CombatStatsDataCollector {
             const actions = dataManager.getCurrentActions?.();
             if (!Array.isArray(actions)) return null;
 
-            const combat = actions.find(
-                (action) => action.actionHrid?.startsWith('/actions/combat/') && !action.isDone
-            );
+            // The running action, and only if it is combat — a combat action
+            // queued behind a running craft is not being fought
+            const combat = runningCombatAction(actions);
             return combat?.actionHrid || null;
         } catch {
             return null;

@@ -43,6 +43,7 @@ import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
 import { captureFile, startCapture } from './labyrinth-tick-capture.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 const BLIND_VERDICT = {
     match: { glyph: '✓', color: '#6fce7f' },
@@ -276,7 +277,7 @@ function contextFor(gameUnit) {
     try {
         if (isTrialUnit(gameUnit)) return { trial: { tier: trialTierFor(gameUnit) } };
         const tier = Number(gameUnit?.difficultyTier) || 0;
-        const action = (dataManager.getCurrentActions?.() || [])[0];
+        const action = runningAction(dataManager.getCurrentActions?.() || []);
         const hrid = action?.actionHrid || null;
         const zoneHrid = hrid && /\/actions\/combat\//.test(hrid) && !/labyrinth/i.test(hrid) ? hrid : null;
         if (tier > 0) return zoneHrid ? { zone: { hrid: zoneHrid, tier } } : null;

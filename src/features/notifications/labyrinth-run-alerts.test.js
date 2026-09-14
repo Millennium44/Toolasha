@@ -65,8 +65,11 @@ vi.mock('./notification-service.js', () => ({
 
 const { default: labyrinthRunAlerts, MASTER_SETTING, currentActivity } = await import('./labyrinth-run-alerts.js');
 
-const LAB = { actionHrid: '/actions/labyrinth/floor', id: 1 };
-const CHEESE = { actionHrid: '/actions/cheesesmithing/cheese', id: 2 };
+// Ordinals as the server gives them: execution order, independent of where an
+// action sits in the array
+const LAB = { actionHrid: '/actions/labyrinth/floor', id: 1, ordinal: 1 };
+const CHEESE = { actionHrid: '/actions/cheesesmithing/cheese', id: 2, ordinal: 2 };
+const CAPE = { actionHrid: '/actions/tailoring/culinary_cape', id: 3, ordinal: 2 };
 
 beforeEach(() => {
     game.settings = { [MASTER_SETTING]: true };
@@ -76,6 +79,7 @@ beforeEach(() => {
     game.actionDetails = {
         '/actions/labyrinth/floor': { type: '/action_types/labyrinth', name: 'Labyrinth' },
         '/actions/cheesesmithing/cheese': { type: '/action_types/cheesesmithing', name: 'Cheese' },
+        '/actions/tailoring/culinary_cape': { type: '/action_types/tailoring', name: 'Culinary Cape' },
     };
     game.wsHandlers = {};
     game.dmHandlers = {};
@@ -135,6 +139,25 @@ describe('the stop', () => {
         game.wsHandlers.actions_updated({});
 
         expect(game.notified).toEqual([]);
+    });
+
+    test('a craft reordered into the second slot, first in the array, is not a stop', async () => {
+        // The reported queue: a Culinary Cape moved up behind a running labyrinth.
+        // The array puts the cape first; its higher ordinal puts it second.
+        game.actions = [LAB];
+        await labyrinthRunAlerts.initialize();
+        game.wsHandlers.labyrinth_updated({ labyrinth: { isActive: true, currentFloor: 4 } });
+
+        game.actions = [CAPE, LAB];
+        game.wsHandlers.actions_updated({});
+
+        expect(currentActivity()).toEqual({ isLab: true, name: 'Labyrinth' });
+        expect(game.notified).toEqual([]);
+    });
+
+    test('a finished labyrinth entry still in the array is not what the character is doing', () => {
+        game.actions = [{ ...LAB, isDone: true }, CHEESE];
+        expect(currentActivity()).toEqual({ isLab: false, name: 'Cheese' });
     });
 
     test('a character never seen in the labyrinth is never told it stopped', async () => {

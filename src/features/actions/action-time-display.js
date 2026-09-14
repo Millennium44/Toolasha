@@ -51,6 +51,7 @@ import {
 import { calculateEnhancementPredictions } from '../enhancement/enhancement-xp.js';
 import { BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 /**
  * Format a completion Date as a clock string, respecting user's time/date format settings.
@@ -1077,7 +1078,7 @@ class ActionTimeDisplay {
         let action;
 
         // Match against the front action (lowest ordinal = most active).
-        // Sort needed because the array is in insertion order, not ordinal order.
+        // dataManager keeps the queue in ordinal order; the sort is a cheap guard.
         if (cachedActions.length > 0) {
             const sorted = cachedActions.sort((a, b) => a.ordinal - b.ordinal);
             action = this.matchCurrentActionFromText(sorted.slice(0, 1), actionNameText);
@@ -1095,7 +1096,7 @@ class ActionTimeDisplay {
             // time — its header reads "Labyrinth - Mimic Lv.252" and no action
             // is called that. The width policy only needs the action's type,
             // and the queue gives that without going through the header text.
-            const frontHrid = cachedActions.length > 0 ? cachedActions[0].actionHrid : null;
+            const frontHrid = runningAction(cachedActions)?.actionHrid ?? null;
             const frontType = frontHrid ? dataManager.getActionDetails(frontHrid)?.type : null;
             if (frontType) this.applyActionBarWidth(actionNameElement, frontType === '/action_types/combat');
             // Only retry if no cached actions (data not loaded yet).
