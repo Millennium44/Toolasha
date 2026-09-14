@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.52.1 -->
+
 ### Reordering the queue no longer confuses what is "running"
 
 - Moving an action into the second queue slot could make Toolasha treat it as the running action — most visibly, the labyrinth alert said a run had stopped while it was still going. The queue is now kept in the order the game runs it, the labyrinth alert, action timing monitor, monster stat check, combat stats, combat calibration and combat panel read the actually running action, and the sim export picks up the zone from the live queue.
@@ -2952,20 +2954,17 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.52.1](https://github.com/Millennium44/Toolasha/compare/v3.52.0...v3.52.1) (2026-09-14)
 
-
 ### Bug Fixes
 
-* keep the action queue in execution order so readers stop seeing queued actions as running ([ea2044b](https://github.com/Millennium44/Toolasha/commit/ea2044bac8f4d9fdfa9375d1408c8fd376ed899f))
-
+- keep the action queue in execution order so readers stop seeing queued actions as running ([ea2044b](https://github.com/Millennium44/Toolasha/commit/ea2044bac8f4d9fdfa9375d1408c8fd376ed899f))
 
 ### Documentation
 
-* changelog for keeping the action queue in execution order ([f254bce](https://github.com/Millennium44/Toolasha/commit/f254bce488d59baeae4d272bbe0b8a292d4a8089))
-
+- changelog for keeping the action queue in execution order ([f254bce](https://github.com/Millennium44/Toolasha/commit/f254bce488d59baeae4d272bbe0b8a292d4a8089))
 
 ### Tests
 
-* guard against reading the action queue by position ([81caec0](https://github.com/Millennium44/Toolasha/commit/81caec0a450fb110d4c25751de8746a74c134361))
+- guard against reading the action queue by position ([81caec0](https://github.com/Millennium44/Toolasha/commit/81caec0a450fb110d4c25751de8746a74c134361))
 
 ## [3.52.0](https://github.com/Millennium44/Toolasha/compare/v3.51.0...v3.52.0) (2026-09-13)
 
