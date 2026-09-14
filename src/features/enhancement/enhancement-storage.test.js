@@ -15,7 +15,13 @@ const dataManagerMock = vi.hoisted(() => ({
     currentGameMode: 'standard',
     getCurrentCharacterId: vi.fn(() => dataManagerMock.currentCharacterId),
     getCurrentCharacterGameMode: vi.fn(() => dataManagerMock.currentGameMode),
-    on: vi.fn(),
+    // The module subscribes once, at import. Vitest 5 clears mock call records
+    // before each test, so the subscriptions are kept here rather than read back
+    // from `on.mock.calls`.
+    listeners: [],
+    on: vi.fn((event, handler) => {
+        dataManagerMock.listeners.push([event, handler]);
+    }),
     off: vi.fn(),
 }));
 
@@ -253,7 +259,7 @@ describe('one character cannot read another character’s sessions', () => {
         settings().set('enhancementTracker_sessions_iron456', { theirs: {} });
 
         // The listener the module registers on character_switching
-        const [event, handler] = dataManagerMock.on.mock.calls.at(-1);
+        const [event, handler] = dataManagerMock.listeners.at(-1);
         expect(event).toBe('character_switching');
 
         dataManagerMock.currentCharacterId = 'iron456';

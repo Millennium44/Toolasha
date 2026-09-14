@@ -154,20 +154,18 @@ describe('the panel min-height fallback on browsers without :has()', () => {
     // was settled in a real browser against a reproduction of the game's box
     // structure, with `:has()` simulated away.
 
-    const realCSS = globalThis.CSS;
-
     /** Make `CSS.supports('selector(:has(*))')` answer `answer` */
     function withHasSupport(answer) {
-        globalThis.CSS = { supports: () => answer };
+        vi.stubGlobal('CSS', { supports: () => answer });
     }
 
     /** Make the whole support probe throw, the way a hostile shim would */
     function withThrowingSupports() {
-        globalThis.CSS = {
+        vi.stubGlobal('CSS', {
             supports: () => {
                 throw new Error('nope');
             },
-        };
+        });
     }
 
     /** The game's boxes: HousePanel_modalContent wrapping HousePanel_costs */
@@ -186,7 +184,7 @@ describe('the panel min-height fallback on browsers without :has()', () => {
     });
 
     afterEach(() => {
-        globalThis.CSS = realCSS;
+        vi.unstubAllGlobals();
     });
 
     test('sets the panel min-height when :has() is unsupported', async () => {
@@ -221,7 +219,7 @@ describe('the panel min-height fallback on browsers without :has()', () => {
         expect(first.modalContent.style.minHeight).toContain('fit-content');
 
         houseCostDisplay.disable();
-        globalThis.CSS = undefined;
+        vi.stubGlobal('CSS', undefined);
         const second = buildPanel();
         await houseCostDisplay.addCostColumn(second.costsSection, '/house_rooms/mystical_study', second.modalContent);
         // Failing this way costs one inline style on a browser that did not
@@ -273,11 +271,9 @@ describe('the scroller max-height fallback on browsers without :has()', () => {
     // Chromium, WebKit) against a reproduction of the game's box structure,
     // with `:has()` simulated away.
 
-    const realCSS = globalThis.CSS;
-
     /** Make `CSS.supports('selector(:has(*))')` answer `answer` */
     function withHasSupport(answer) {
-        globalThis.CSS = { supports: () => answer };
+        vi.stubGlobal('CSS', { supports: () => answer });
     }
 
     /**
@@ -306,7 +302,7 @@ describe('the scroller max-height fallback on browsers without :has()', () => {
     });
 
     afterEach(() => {
-        globalThis.CSS = realCSS;
+        vi.unstubAllGlobals();
     });
 
     test('caps the game scroller when :has() is unsupported', async () => {

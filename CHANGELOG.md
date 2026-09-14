@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - CI and the release workflows now run on Node 24 (Node 20 reached end of life), `package.json` requires Node 22.12+, and `.nvmrc` records the version.
 - Refreshed the lockfile within existing version ranges, clearing most open Dependabot security alerts (Vitest 4.1.11, Vite, undici, Rollup, nanoid, fast-uri, postcss and others). Development tooling only; nothing shipped to users changes.
+- The house, enhancement-storage and risk-of-ruin tests now stub `CSS` with `vi.stubGlobal` and record import-time subscriptions themselves, so they pass on Vitest 5 (which clears mock calls before each test) as well as Vitest 4.
 - Upgraded `@rollup/plugin-terser` to 1.0.0, which clears the last serialize-javascript alerts; the production bundles it minifies come out byte-identical.
 
 ### Repository housekeeping

@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
     settings: { riskOfRuin: true, riskOfRuin_showLauncher: true },
     settingChangeHandlers: {},
+    /**
+     * Every `onSettingChange(key, callback)` call, in order. The listener is registered at
+     * module load, and Vitest 5 clears mock call records before each test, so the
+     * registration is kept here rather than read back from `onSettingChange.mock.calls`.
+     */
+    settingChangeRegistrations: [],
     /** `{ [panelKey]: boolean }` written by saveOpenState, read by reopenIfLeftOpen */
     openState: {},
     domObserverHandlers: [],
@@ -20,6 +26,7 @@ vi.mock('../../core/config.js', () => ({
             mocks.settingChangeHandlers[key]?.(value);
         }),
         onSettingChange: vi.fn((key, callback) => {
+            mocks.settingChangeRegistrations.push([key, callback]);
             mocks.settingChangeHandlers[key] = callback;
         }),
     },
@@ -110,7 +117,7 @@ describe('RiskOfRuinUI feature toggle', () => {
         // risk-of-ruin-ui.js), before any test body executes, so by the time this test runs
         // the handler must already be registered - proving the toggle is wired up live, not
         // just read once at startup (which previously required a page refresh to take effect).
-        expect(config.onSettingChange).toHaveBeenCalledWith('riskOfRuin', expect.any(Function));
+        expect(mocks.settingChangeRegistrations).toContainEqual(['riskOfRuin', expect.any(Function)]);
         expect(mocks.settingChangeHandlers.riskOfRuin).toBeTypeOf('function');
     });
 
