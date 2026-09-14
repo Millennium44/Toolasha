@@ -18,6 +18,13 @@
  * task panel took queue[0] as "active". Every "which action is running"
  * question goes through here.
  *
+ * `dataManager` now keeps its copy (`getCurrentActions()`) sorted by ordinal
+ * on every write, so a whole-queue walk over it runs in execution order. The
+ * raw `characterData.characterActions` login snapshot is not sorted, and a
+ * position read still misses `isDone`, so "which action is running" still
+ * comes here — `src/utils/action-queue-position-reads.test.js` fails the build
+ * on a new `[0]` or first-unfinished `.find` over the queue.
+ *
  * Stateless by design — it is bundled into several feature bundles (see the
  * allowlist in scripts/check-bundle-sharing.mjs) and every copy answers alike.
  */
