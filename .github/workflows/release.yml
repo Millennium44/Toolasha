@@ -21,7 +21,7 @@ jobs:
         steps:
             - name: Run release-please
               id: release
-              uses: googleapis/release-please-action@v4
+              uses: googleapis/release-please-action@v5
               with:
                   token: ${{ secrets.PAT }}
                   config-file: .release-please-config.json
@@ -48,11 +48,11 @@ jobs:
             # Build and upload assets if there is a release to publish
             - name: Checkout code
               if: ${{ steps.gate.outputs.should_publish == 'true' }}
-              uses: actions/checkout@v6
+              uses: actions/checkout@v7
 
             - name: Setup Node.js
               if: ${{ steps.gate.outputs.should_publish == 'true' }}
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@v7
               with:
                   node-version: '24'
                   cache: 'npm'
@@ -163,7 +163,7 @@ jobs:
 
             - name: Upload userscripts and publish release
               if: ${{ steps.gate.outputs.should_publish == 'true' }}
-              uses: softprops/action-gh-release@v2
+              uses: softprops/action-gh-release@v3
               with:
                   tag_name: ${{ steps.gate.outputs.tag }}
                   files: |
