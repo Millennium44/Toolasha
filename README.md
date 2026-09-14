@@ -135,7 +135,7 @@ Toolasha is a complete rewrite of the popular MWITools userscript, rebuilt from 
 ### Install from Source
 
 ```bash
-git clone https://github.com/Celasha/Toolasha.git
+git clone https://github.com/Millennium44/Toolasha.git
 cd Toolasha
 npm install
 npm run build:dev
@@ -172,7 +172,7 @@ npm install           # Install dependencies
 npm run build:dev     # Build dev standalone userscript
 npm run build         # Build production libraries + entrypoint
 npm run dev           # Watch mode (auto-rebuild)
-npm test              # Run test suite (202 tests)
+npm test              # Run the automated test suite
 ```
 
 ### Documentation
@@ -228,7 +228,7 @@ npm run test:watch          # Watch mode
 npm test -- --coverage      # Coverage report
 ```
 
-202 tests across 13 test suites with automated CI/CD pipeline validation on every commit.
+Automated tests run through the CI/CD pipeline on every commit.
 
 ## License & Credits
 
