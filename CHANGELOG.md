@@ -2950,6 +2950,23 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.52.1](https://github.com/Millennium44/Toolasha/compare/v3.52.0...v3.52.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* keep the action queue in execution order so readers stop seeing queued actions as running ([ea2044b](https://github.com/Millennium44/Toolasha/commit/ea2044bac8f4d9fdfa9375d1408c8fd376ed899f))
+
+
+### Documentation
+
+* changelog for keeping the action queue in execution order ([f254bce](https://github.com/Millennium44/Toolasha/commit/f254bce488d59baeae4d272bbe0b8a292d4a8089))
+
+
+### Tests
+
+* guard against reading the action queue by position ([81caec0](https://github.com/Millennium44/Toolasha/commit/81caec0a450fb110d4c25751de8746a74c134361))
+
 ## [3.52.0](https://github.com/Millennium44/Toolasha/compare/v3.51.0...v3.52.0) (2026-09-13)
 
 ### Features
