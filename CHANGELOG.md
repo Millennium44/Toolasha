@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Repository housekeeping
+
+- Added the CC BY-NC-SA 4.0 `LICENSE` file the README already linked to, pointed the README's clone URL at this fork, dropped its stale test count, and turned on weekly Dependabot checks with `chore(deps)` commit subjects.
+
 <!-- shipped in 3.52.1 -->
 
 ### Reordering the queue no longer confuses what is "running"

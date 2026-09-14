@@ -1,0 +1,34 @@
+version: 2
+updates:
+    - package-ecosystem: npm
+      directory: /
+      schedule:
+          interval: weekly
+          day: monday
+          time: '09:00'
+          timezone: America/Chicago
+      open-pull-requests-limit: 5
+      # Conventional Commit subjects: release-please drops anything without a type
+      commit-message:
+          prefix: chore(deps)
+      groups:
+          development-dependencies:
+              dependency-type: development
+              update-types:
+                  - minor
+                  - patch
+
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+          interval: weekly
+          day: monday
+          time: '09:30'
+          timezone: America/Chicago
+      open-pull-requests-limit: 5
+      commit-message:
+          prefix: chore(deps)
+      groups:
+          github-actions:
+              patterns:
+                  - '*'
