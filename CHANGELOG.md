@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reordering the queue no longer confuses what is "running"
+
+- Moving an action into the second queue slot could make Toolasha treat it as the running action — most visibly, the labyrinth alert said a run had stopped while it was still going. The queue is now kept in the order the game runs it, the labyrinth alert, action timing monitor, monster stat check, combat stats, combat calibration and combat panel read the actually running action, and the sim export picks up the zone from the live queue.
+- A new test fails the build when code picks "the current action" by list position.
+
 <!-- shipped in 3.52.0 -->
 
 ### The Session Briefing skips a quick refresh
