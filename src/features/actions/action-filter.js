@@ -73,6 +73,14 @@ class ActionFilter {
                 if (this._updateModeBtn) this._updateModeBtn();
             })
         );
+        // The patient tick is changed from the settings panel, not the Mode button,
+        // so nothing else re-renders the open profit sections for it
+        this.unregisterHandlers.push(
+            config.onSettingChange('profitCalc_patientTick', async () => {
+                if (this._updateModeBtn) this._updateModeBtn();
+                await this._refreshProfitDisplays();
+            })
+        );
         this.unregisterHandlers.push(
             config.onSettingChange('profitCalc_craftUpgradeItems', () => {
                 if (this._updateCraftBtn) this._updateCraftBtn();
@@ -320,7 +328,7 @@ class ActionFilter {
         modeBtn.id = 'mwi-action-profit-mode';
         const updateModeBtn = () => {
             const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            modeBtn.textContent = `Mode: ${config.getPricingModeLabel(mode)}`;
+            modeBtn.textContent = `Mode: ${config.getPricingModeDisplayLabel(mode)}`;
         };
         modeBtn.style.cssText = `
             padding: 8px 12px;

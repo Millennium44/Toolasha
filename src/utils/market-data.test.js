@@ -36,6 +36,10 @@ vi.mock('../features/settings/custom-price-overrides.js', () => ({
 const reconciled = vi.hoisted(() => ({ result: null }));
 vi.mock('./market-values.js', () => ({
     refreshMarketValues: vi.fn(),
+    // A flat ten-gold ladder and a band that clamps nothing, so a test reads the tick off the number
+    nextPriceUp: (price) => price + 10,
+    nextPriceDown: (price) => price - 10,
+    clampToBand: vi.fn((price) => price),
     reconcileBook: (ask, bid) =>
         reconciled.result ?? {
             ask,
@@ -238,6 +242,73 @@ describe('price provenance', () => {
         expect(getItemPrice('/items/cheese', { mode: 'nonsense' })).toBeNull();
 
         warn.mockRestore();
+    });
+});
+
+describe('patient +1 tick', () => {
+    // The market-values mock is a flat ten-gold ladder: one tick is ±10
+    beforeEach(() => {
+        vi.clearAllMocks();
+        reconciled.result = null;
+        getCustomPrice.mockReturnValue(null);
+        setting.mode = 'optimistic'; // patient buy at bid, patient sell at ask
+        setting.tick = true;
+        config.getSettingValue.mockImplementation((key, fallback) =>
+            key === 'profitCalc_patientTick' ? setting.tick : (setting.mode ?? fallback)
+        );
+        marketAPI.getPrice.mockReturnValue({ ask: 500, bid: 400 });
+    });
+    const setting = { mode: 'optimistic', tick: true };
+
+    test('a patient buy is one tick above the bid, a patient sell one tick below the ask', () => {
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(410);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(490);
+    });
+
+    test('instant sides are unchanged', () => {
+        setting.mode = 'conservative';
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(500);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(400);
+    });
+
+    test('off, the book prices are used as they stand', () => {
+        setting.tick = false;
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(400);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(500);
+    });
+
+    test('an explicit mode asks for that book side exactly, so it is never ticked', () => {
+        expect(getItemPrice('/items/cheese', { mode: 'bid', context: 'profit', side: 'buy' })).toBe(400);
+        expect(getItemPrice('/items/cheese', { mode: 'ask', context: 'profit', side: 'sell' })).toBe(500);
+    });
+
+    test('only the profit context ticks', () => {
+        setting.mode = 'bid'; // networth_pricingMode
+        expect(getItemPrice('/items/cheese', { context: 'networth', side: 'buy' })).toBe(400);
+    });
+
+    test('an estimate from the value map has no queue to jump', () => {
+        reconciled.result = { ask: 500, bid: 450, askSource: 'book', bidSource: 'value' };
+        const info = getItemPriceInfo('/items/cheese', { context: 'profit', side: 'buy' });
+        expect(info).toEqual({ price: 450, source: 'value', estimated: true });
+    });
+
+    test('a custom price is left alone', () => {
+        getCustomPrice.mockReturnValue(1234);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(1234);
+    });
+
+    test('never crosses the spread', () => {
+        marketAPI.getPrice.mockReturnValue({ ask: 410, bid: 400 });
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(400);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(410);
+    });
+
+    test('the ticked price is re-clamped into the item band', async () => {
+        const { clampToBand } = await import('./market-values.js');
+        clampToBand.mockImplementationOnce(() => 405);
+        expect(getItemPrice('/items/cheese', { enhancementLevel: 2, context: 'profit', side: 'buy' })).toBe(405);
+        expect(clampToBand).toHaveBeenCalledWith(410, '/items/cheese', 2);
     });
 });
 

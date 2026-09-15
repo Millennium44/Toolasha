@@ -323,7 +323,8 @@ function stateFingerprint(priceStamp) {
               .join(',')
         : '';
 
-    const pricingMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+    const tick = config.getSettingValue('profitCalc_patientTick', false) === true ? '+tick' : '';
+    const pricingMode = `${config.getSettingValue('profitCalc_pricingMode', 'hybrid')}${tick}`;
 
     const houseRooms = dataManager.getHouseRooms();
     const house = houseRooms ? Array.from(houseRooms.values()).reduce((sum, room) => sum + (room?.level || 0), 0) : 0;
@@ -354,6 +355,7 @@ export function clearAlchemyRateCache() {
 // The pricing mode decides what every alchemy output is worth. Registered once,
 // at import, because this module has no lifecycle of its own to hang it on.
 config.onSettingChange?.('profitCalc_pricingMode', clearAlchemyRateCache);
+config.onSettingChange?.('profitCalc_patientTick', clearAlchemyRateCache);
 
 /**
  * What alchemy pays per hour, best first, in the shape the planner ranks.

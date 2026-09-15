@@ -23,6 +23,7 @@ import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
 import { entryKeyFor } from '../../utils/key-ledger.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { patientTickPrice } from '../../utils/patient-tick.js';
 import { captureOwner, stillOurs } from '../../utils/init-ownership.js';
 
 /** The tokens the dungeon shops take, which the expected-value calculator also special-cases */
@@ -154,8 +155,12 @@ function consumableBuyPrice(itemHrid) {
     const prices = marketAPI.getPrice(itemHrid);
     if (!prices) return null;
     const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-    const price = mode === 'optimistic' || mode === 'patientBuy' ? prices.bid : prices.ask;
-    return price > 0 ? price : prices.ask > 0 ? prices.ask : null;
+    const patient = mode === 'optimistic' || mode === 'patientBuy';
+    if (patient && prices.bid > 0) {
+        // The same +1 tick the action panel applies to a patient buy
+        return patientTickPrice(prices.bid, 'buy', 'bid', { ask: prices.ask, itemHrid });
+    }
+    return prices.ask > 0 ? prices.ask : null;
 }
 
 /**

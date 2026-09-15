@@ -121,6 +121,38 @@ export function priceIncrement(price) {
 }
 
 /**
+ * The next price on the increment ladder strictly above `price`.
+ *
+ * The step is the one at `price` itself, and the result is snapped to a
+ * multiple of it — every tier boundary (1,000, 3,000, 5,000, 10,000 …) is a
+ * multiple of the step below it, so 999 goes to 1,000 rather than 1,001.
+ * @param {number} price - A price (fractions are floored first)
+ * @returns {number} The next ladder price up; 1 for anything not above 0
+ */
+export function nextPriceUp(price) {
+    const whole = Math.floor(price);
+    if (!(whole > 0)) return 1;
+    const step = priceIncrement(whole);
+    return (Math.floor(whole / step) + 1) * step;
+}
+
+/**
+ * The next price on the increment ladder strictly below `price`.
+ *
+ * The step is taken from one below `price`, so crossing down into a finer
+ * tier uses the finer step: 1,000 goes to 998 (the 500-999 step of 2), not 995.
+ * Never goes below 1, the lowest price an order can carry.
+ * @param {number} price - A price (fractions are rounded up first, so the result stays below it)
+ * @returns {number} The next ladder price down, floored at 1
+ */
+export function nextPriceDown(price) {
+    const below = Math.ceil(price) - 1;
+    if (!(below > 1)) return 1;
+    const step = priceIncrement(below);
+    return Math.max(1, Math.floor(below / step) * step);
+}
+
+/**
  * The tradable range implied by a market value, as the game computes it:
  * ±10%, snapped outward to the increment ladder, then one increment wider on
  * each side. The increment is taken from the raw ±10% figure before snapping —

@@ -28,6 +28,7 @@ import {
     isAbbreviationEnabled,
 } from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
+import { patientTickPrice } from '../../utils/patient-tick.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
 import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
@@ -190,7 +191,13 @@ export function ownUseCompare(profitData, actionDetail = null) {
     const make = spendPerHour / madePerHour;
 
     const priceBasis = ownUseBuyBasis(profitData?.pricingMode);
-    const buy = Number(profitData?.itemPrice?.[priceBasis]);
+    const itemPrice = profitData?.itemPrice;
+    let buy = Number(itemPrice?.[priceBasis]);
+    // Patient +1 tick, the same move getItemPriceInfo makes for a patient buy —
+    // but not on a bid estimated from the value map, which has no queue to jump
+    if (buy > 0 && priceBasis === 'bid' && !itemPrice?.bidEstimated) {
+        buy = patientTickPrice(buy, 'buy', 'bid', { ask: Number(itemPrice?.ask), itemHrid: profitData?.itemHrid });
+    }
     if (!(buy > 0)) return { make, buy: null, saves: null, cheaper: null, priceBasis };
 
     const saves = Math.abs(buy - make);

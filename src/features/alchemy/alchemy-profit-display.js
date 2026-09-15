@@ -100,7 +100,7 @@ class AlchemyProfitDisplay {
             const modeDiv = this.displayElement?.querySelector?.('[data-mwi-alchemy-pricing-mode]');
             if (modeDiv) {
                 const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-                modeDiv.textContent = `Pricing Mode: ${config.getPricingModeLabel(mode)}`;
+                modeDiv.textContent = `Pricing Mode: ${config.getPricingModeDisplayLabel(mode)}`;
             }
             this.lastFingerprint = null;
             if (this.isActive) this.checkAndUpdateDisplay();
@@ -984,7 +984,7 @@ class AlchemyProfitDisplay {
 
         // Add pricing mode label
         const pricingMode = profitData.pricingMode || 'hybrid';
-        const modeLabel = config.getPricingModeLabel(pricingMode);
+        const modeLabel = config.getPricingModeDisplayLabel(pricingMode);
 
         const modeDiv = document.createElement('div');
         modeDiv.style.cssText = `

@@ -160,6 +160,7 @@ class OfflineProgressEconomics {
 
         this.pricingModeChangeHandler = () => this.recompute();
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeChangeHandler);
+        config.onSettingChange('profitCalc_patientTick', this.pricingModeChangeHandler);
 
         this.setupCleanupObserver(modalContentNode);
     }
@@ -220,6 +221,7 @@ class OfflineProgressEconomics {
         }
         if (this.pricingModeChangeHandler) {
             config.offSettingChange('profitCalc_pricingMode', this.pricingModeChangeHandler);
+            config.offSettingChange('profitCalc_patientTick', this.pricingModeChangeHandler);
             this.pricingModeChangeHandler = null;
         }
         if (this.currentBlock) {

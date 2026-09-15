@@ -98,6 +98,7 @@ class GatheringStats {
             this.updateAllStats();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+        config.onSettingChange('profitCalc_patientTick', this.pricingModeHandler);
 
         this.profitPerHourSettingHandler = () => this.updateAllStats();
         this.expPerHourSettingHandler = () => this.updateAllStats();
@@ -690,6 +691,7 @@ class GatheringStats {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+                config.offSettingChange('profitCalc_patientTick', this.pricingModeHandler);
                 this.pricingModeHandler = null;
             }
 

@@ -129,6 +129,7 @@ class MaxProduceable {
             this.updateAllCounts();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+        config.onSettingChange('profitCalc_patientTick', this.pricingModeHandler);
 
         this.maxProduceableSettingHandler = () => this.updateAllCounts();
         this.profitPerHourSettingHandler = () => this.updateAllCounts();
@@ -971,6 +972,7 @@ class MaxProduceable {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+                config.offSettingChange('profitCalc_patientTick', this.pricingModeHandler);
                 this.pricingModeHandler = null;
             }
 

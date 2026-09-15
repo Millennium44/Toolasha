@@ -222,6 +222,7 @@ class ActionTimeDisplay {
                 'actionBar_showActionsPerHour',
                 'actionBar_showTimeRemaining',
                 'profitCalc_pricingMode',
+                'profitCalc_patientTick',
             ];
             for (const key of actionBarSettings) {
                 config.onSettingChange(key, (newValue) => {

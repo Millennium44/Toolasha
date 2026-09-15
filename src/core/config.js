@@ -829,6 +829,19 @@ class Config {
     }
 
     /**
+     * The pricing mode label as the Mode button shows it: {@link getPricingModeLabel}
+     * plus " (+1 tick)" when `profitCalc_patientTick` is on and the mode has a
+     * patient side for the tick to apply to (every mode but 'conservative').
+     * @param {string} [mode] - Pricing mode key; defaults to the current `profitCalc_pricingMode`
+     * @returns {string} Display label
+     */
+    getPricingModeDisplayLabel(mode = this.getSettingValue('profitCalc_pricingMode', 'hybrid')) {
+        const label = this.getPricingModeLabel(mode);
+        const hasPatientSide = mode !== 'conservative';
+        return hasPatientSide && this.getSetting('profitCalc_patientTick') === true ? `${label} (+1 tick)` : label;
+    }
+
+    /**
      * Get a setting value (for non-boolean settings)
      * @param {string} key - Setting key
      * @param {*} defaultValue - Default value if key doesn't exist

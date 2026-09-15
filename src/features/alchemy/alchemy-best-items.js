@@ -126,7 +126,7 @@ class AlchemyBestItems {
         const modeBtn = this.modal?.querySelector('[data-mwi-best-mode-btn]');
         if (!modeBtn) return;
         const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        modeBtn.textContent = `Mode: ${config.getPricingModeLabel(mode)}`;
+        modeBtn.textContent = `Mode: ${config.getPricingModeDisplayLabel(mode)}`;
     }
 
     disable() {

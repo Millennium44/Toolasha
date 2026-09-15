@@ -51,6 +51,7 @@ vi.mock('../../core/config.js', () => ({
         COLOR_ACCENT: '#abcdef',
         getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
         getPricingModeLabel: (mode) => `label:${mode}`,
+        getPricingModeDisplayLabel: (mode) => `label:${mode}`,
         setSettingValue: (key, value) => {
             settings.values[key] = value;
             for (const cb of settings.changeListeners[key] || []) cb(value);

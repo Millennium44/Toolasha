@@ -136,6 +136,31 @@ describe('Config.getSetting', () => {
     });
 });
 
+describe('Config.getPricingModeDisplayLabel', () => {
+    test('is the plain mode label while the patient tick is off', () => {
+        config.settingsMap = {
+            profitCalc_pricingMode: { value: 'optimistic' },
+            profitCalc_patientTick: { isTrue: false },
+        };
+        expect(config.getPricingModeDisplayLabel()).toBe('Buy: Bid / Sell: Ask');
+    });
+
+    test('carries the tick when on, for any mode with a patient side', () => {
+        config.settingsMap = {
+            profitCalc_pricingMode: { value: 'patientBuy' },
+            profitCalc_patientTick: { isTrue: true },
+            profitCalc_pricingNaming: { isTrue: true },
+        };
+        expect(config.getPricingModeDisplayLabel()).toBe('Patient Buy / Instant Sell (+1 tick)');
+        expect(config.getPricingModeDisplayLabel('hybrid')).toBe('Instant Buy / Patient Sell (+1 tick)');
+    });
+
+    test('an all-instant mode has nothing to tick, so no suffix', () => {
+        config.settingsMap = { profitCalc_patientTick: { isTrue: true } };
+        expect(config.getPricingModeDisplayLabel('conservative')).toBe('Buy: Ask / Sell: Bid');
+    });
+});
+
 describe('Config.setSetting', () => {
     beforeEach(() => {
         config.settingsMap = {

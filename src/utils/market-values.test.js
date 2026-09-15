@@ -22,6 +22,8 @@ import {
     reconcileBook,
     clampToBand,
     applyMarketValuesMessage,
+    nextPriceUp,
+    nextPriceDown,
     _resetMarketValues,
 } from './market-values.js';
 
@@ -50,6 +52,54 @@ describe('priceIncrement', () => {
         expect(priceIncrement(44671)).toBe(100);
         expect(priceIncrement(339020)).toBe(1000);
         expect(priceIncrement(33110000000)).toBe(100000000);
+    });
+});
+
+describe('nextPriceUp / nextPriceDown', () => {
+    test('one step along the ladder inside a tier', () => {
+        expect(nextPriceUp(1000)).toBe(1005);
+        expect(nextPriceDown(1005)).toBe(1000);
+        expect(nextPriceUp(44600)).toBe(44700);
+        expect(nextPriceDown(44700)).toBe(44600);
+        expect(nextPriceUp(600)).toBe(602);
+        expect(nextPriceDown(602)).toBe(600);
+    });
+
+    test('crossing up into a coarser tier lands on the boundary, not past it', () => {
+        expect(nextPriceUp(999)).toBe(1000);
+        expect(nextPriceUp(998)).toBe(1000);
+        expect(nextPriceUp(499)).toBe(500);
+        expect(nextPriceUp(2995)).toBe(3000);
+        expect(nextPriceUp(4990)).toBe(5000);
+        expect(nextPriceUp(9980)).toBe(10000);
+    });
+
+    test('crossing down into a finer tier uses the finer step', () => {
+        expect(nextPriceDown(1000)).toBe(998);
+        expect(nextPriceDown(500)).toBe(499);
+        expect(nextPriceDown(3000)).toBe(2995);
+        expect(nextPriceDown(5000)).toBe(4990);
+        expect(nextPriceDown(10000)).toBe(9980);
+    });
+
+    test('an off-ladder price snaps to the neighbouring ladder price', () => {
+        expect(nextPriceUp(1001)).toBe(1005);
+        expect(nextPriceDown(1003)).toBe(1000);
+        expect(nextPriceDown(999)).toBe(998);
+    });
+
+    test('small prices step by one and never go below 1', () => {
+        expect(nextPriceUp(1)).toBe(2);
+        expect(nextPriceUp(7)).toBe(8);
+        expect(nextPriceDown(8)).toBe(7);
+        expect(nextPriceDown(2)).toBe(1);
+        expect(nextPriceDown(1)).toBe(1);
+        expect(nextPriceUp(0)).toBe(1);
+    });
+
+    test('fractions stay on the correct side of the price', () => {
+        expect(nextPriceUp(999.5)).toBe(1000);
+        expect(nextPriceDown(1000.5)).toBe(1000);
     });
 });
 

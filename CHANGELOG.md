@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Patient +1 tick pricing
+
+- New "Patient orders: +1 tick" setting (off by default): profit calculations price a patient buy one market tick above the bid and a patient sell one tick below the ask, never crossing the spread. The Mode button shows "(+1 tick)" when it is on, and the own-use tooltip line and dungeon ROI consumable costs follow it too.
+
 ### Pricing mode switch in alchemy's Best Items
 
 - The Best Items modal now has a "Mode:" button beside its title, so the pricing mode can be changed without leaving the Alchemy screen; the table and the alchemy panel's "Pricing Mode:" line re-rank and relabel as soon as the mode (or its naming) changes.

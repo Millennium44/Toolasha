@@ -9,7 +9,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { _resetGameNumberSeparators } from '../../utils/number-parser.js';
 
 const observerState = vi.hoisted(() => ({ handler: null }));
-const settings = vi.hoisted(() => ({ hideInEnhanceSelector: false, loadoutMarksEnabled: true }));
+const settings = vi.hoisted(() => ({ hideInEnhanceSelector: false, loadoutMarksEnabled: true, patientTick: false }));
 const characterState = vi.hoisted(() => ({ data: null }));
 
 vi.mock('../../core/config.js', () => ({
@@ -19,7 +19,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_loadoutMarks') return settings.loadoutMarksEnabled;
             return true;
         },
-        getSettingValue: (_id, fallback) => fallback,
+        getSettingValue: (id, fallback) => (id === 'profitCalc_patientTick' ? settings.patientTick : fallback),
         COLOR_TOOLTIP_INFO: '#abc',
         COLOR_TEXT_SECONDARY: '#999',
         COLOR_TOOLTIP_PROFIT: '#0f0',
@@ -307,6 +307,23 @@ describe('own-use make vs buy', () => {
         // which for profitCalc_pricingMode is 'hybrid'
         expect(ownUseCompare(data({ pricingMode: undefined })).priceBasis).toBe('ask');
         expect(ownUseCompare(data({ pricingMode: 'sideways' })).priceBasis).toBe('ask');
+    });
+
+    test('with the patient tick on, a bid buy is one tick up and an ask buy is unchanged', () => {
+        settings.patientTick = true;
+        try {
+            // 45,000 is in the 30,000-49,999 tier, where one tick is 100
+            expect(ownUseCompare(data({ pricingMode: 'optimistic' })).buy).toBe(45_100);
+            expect(ownUseCompare(data({ pricingMode: 'hybrid' })).buy).toBe(50_000);
+            // An estimated bid has no queue to jump
+            const estimated = data({
+                pricingMode: 'optimistic',
+                itemPrice: { ask: 50_000, bid: 45_000, bidEstimated: true },
+            });
+            expect(ownUseCompare(estimated).buy).toBe(45_000);
+        } finally {
+            settings.patientTick = false;
+        }
     });
 
     test('the line names the book the buy figure came from', () => {

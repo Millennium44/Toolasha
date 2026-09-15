@@ -8,6 +8,7 @@ import config from '../core/config.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
 import { formatRelativeTime } from './formatters.js';
 import { refreshMarketValues, reconcileBook } from './market-values.js';
+import { patientTickPrice } from './patient-tick.js';
 
 // Track logged warnings to prevent console spam
 const loggedWarnings = new Set();
@@ -135,19 +136,28 @@ export function getItemPriceInfo(itemHrid, options = {}) {
         return unpriced;
     }
 
-    const resolveSide = (value, source) => {
+    // Patient +1 tick: only where the side was resolved from the user's profit mode
+    // (an explicit `mode` caller asked for that exact book side), and only for a
+    // price read off the live book — a value-map estimate has no queue to jump.
+    const tickable = !mode && context === 'profit';
+
+    const resolveSide = (value, source, basis) => {
         if (typeof value !== 'number' || value < 0) {
             return unpriced;
         }
-        return { price: value, source, estimated: source === 'value' };
+        const price =
+            tickable && source === 'book'
+                ? patientTickPrice(value, side, basis, { ask, bid, itemHrid, enhancementLevel })
+                : value;
+        return { price, source, estimated: source === 'value' };
     };
 
     // Return price based on mode
     switch (pricingMode) {
         case 'ask':
-            return resolveSide(ask, askSource);
+            return resolveSide(ask, askSource, 'ask');
         case 'bid':
-            return resolveSide(bid, bidSource);
+            return resolveSide(bid, bidSource, 'bid');
         case 'average': {
             if (typeof ask !== 'number' || typeof bid !== 'number') {
                 return unpriced;
@@ -162,7 +172,7 @@ export function getItemPriceInfo(itemHrid, options = {}) {
             return { price: (ask + bid) / 2, source: estimated ? 'value' : 'book', estimated };
         }
         default:
-            return resolveSide(ask, askSource);
+            return resolveSide(ask, askSource, 'ask');
     }
 }
 
