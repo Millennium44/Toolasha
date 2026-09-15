@@ -44,6 +44,9 @@ function draw(key) {
     return container.textContent;
 }
 
+/** The zone `lastResult` and `context` are stamped with, unless a test moves it */
+const ZONE = { actionHrid: '/actions/combat/chimerical_den', difficultyTier: 0 };
+
 beforeEach(() => {
     game.options = {};
     // Not in a dungeon unless a test says so; the reading is a live method and
@@ -56,7 +59,12 @@ beforeEach(() => {
         expected: 47_880_000,
         battles: 900,
         players: [],
+        ...ZONE,
     };
+    // The zone currently being fought — matched to `lastResult`'s own stamp so
+    // these tests are about the render, not about the zone-staleness guard;
+    // `luck-tiles.test.js`'s own describe below is what tests the guard itself
+    combatDropLuck.context = { ...ZONE };
     game.party = {
         battles: 900,
         players: [{ name: 'Millennium44', isCurrentPlayer: true, percent: -6.3 }],
@@ -289,5 +297,31 @@ describe('the only-numbers options', () => {
 
         expect(text).toContain('Millennium44');
         expect(text).toContain('34.7%');
+    });
+});
+
+describe('a zone switch leaves the tile blank rather than showing the old zone', () => {
+    test('a reading measured for the zone still being fought is shown', () => {
+        // The default fixture already has `context` matching `lastResult`'s
+        // stamp; this just pins that the happy path still draws
+        expect(draw('luck')).toContain('34.7%');
+    });
+
+    test('moving to a new zone without a battle measured there yet draws nothing', () => {
+        // `lastResult` still names the old zone — exactly what happens between
+        // the moment a new zone's first battle is seen and the moment its own
+        // analysis lands — and the tile must not show it as this zone's
+        combatDropLuck.context = { actionHrid: '/actions/combat/somewhere_else', difficultyTier: 0 };
+        expect(draw('luck')).toBe('');
+    });
+
+    test('a different difficulty tier of the same zone also draws nothing', () => {
+        combatDropLuck.context = { actionHrid: ZONE.actionHrid, difficultyTier: 5 };
+        expect(draw('luck')).toBe('');
+    });
+
+    test('no context at all (nothing fought yet this session) draws nothing, not a throw', () => {
+        combatDropLuck.context = null;
+        expect(draw('luck')).toBe('');
     });
 });

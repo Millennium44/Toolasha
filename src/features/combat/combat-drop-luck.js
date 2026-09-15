@@ -660,8 +660,44 @@ class CombatDropLuck {
         if (this._stale(context)) return null;
         const players = await this._playerLuck();
         if (this._stale(context)) return null;
-        this.lastResult = { percentile, income, expected, battles, hasBonuses, players };
+        this.lastResult = {
+            percentile,
+            income,
+            expected,
+            battles,
+            hasBonuses,
+            players,
+            // The zone this reading was measured for, so a caller comparing
+            // against the zone actually being fought can tell a fresh reading
+            // from one left over from the last one
+            actionHrid,
+            difficultyTier,
+        };
         return this.lastResult;
+    }
+
+    /**
+     * The last reading, but only when it was measured for the given zone.
+     *
+     * `lastResult` survives a zone switch on its own — nothing clears it when a
+     * fight ends and a new one starts elsewhere, because the overlay wants
+     * something to show between fights. That is right for the overlay's own
+     * zone (`this.context`, always the zone currently being fought) and wrong
+     * for anyone comparing against a zone read from somewhere else, such as the
+     * stats snapshot a chat message is built from: after a zone switch it can
+     * still name the previous zone's percentile until the new one has a
+     * measured battle of its own.
+     *
+     * @param {Object|null} [zone] - `{actionHrid, difficultyTier}` of the run in question
+     * @returns {Object|null} `lastResult`, or null when it belongs to a different zone
+     */
+    resultFor(zone) {
+        const { actionHrid, difficultyTier = 0 } = zone || {};
+        const result = this.lastResult;
+        if (!result || !actionHrid) return null;
+        if (result.actionHrid !== actionHrid) return null;
+        if ((result.difficultyTier || 0) !== (difficultyTier || 0)) return null;
+        return result;
     }
 
     /**
@@ -941,7 +977,10 @@ registerRow({
         const chest = combatDropLuck.dungeonChestLuck();
         if (chest) return drawChestRows(container, chest, { onlyNumbers, onlyPlayer });
 
-        const result = combatDropLuck.lastResult;
+        // The zone actually being fought, not just whatever was last measured —
+        // between the moment a new zone's first battle is seen and the moment
+        // its first analysis lands, `lastResult` still names the old zone
+        const result = combatDropLuck.resultFor(combatDropLuck.context);
         if (!result) return blank(container);
 
         // The percentile as a figure, not as a sentence. "93 runs in 100 beat

@@ -347,6 +347,78 @@ describe('watching a dungeon pay out', () => {
     });
 });
 
+describe('a reading only answers for the zone it was measured in', () => {
+    beforeEach(() => {
+        game.actionDetail = null; // not a dungeon
+        combatDropLuck.chests = null;
+        combatDropLuck.context = null;
+        combatDropLuck.lastResult = null;
+        combatDropLuck.isInitialized = true;
+        combatDropLuck.liveAt = Date.now();
+    });
+
+    /** One `new_battle` for a solo fight in the given zone, at tier 0 */
+    const battle = (actionHrid, battleId = 1) => ({
+        battleId,
+        players: [{ character: { id: 'me', name: 'Mine' }, combatDetails: {}, totalLootMap: {} }],
+    });
+
+    test('lastResult is stamped with the zone it was measured for', async () => {
+        game.actions = [{ actionHrid: '/actions/combat/zone_a', difficultyTier: 0 }];
+        combatDropLuck._rememberContext(battle('/actions/combat/zone_a'));
+
+        await combatDropLuck._analyse({ '/items/coin': 1000 });
+
+        expect(combatDropLuck.lastResult).toMatchObject({ actionHrid: '/actions/combat/zone_a', difficultyTier: 0 });
+    });
+
+    test('resultFor answers for that zone, and refuses a different one', async () => {
+        game.actions = [{ actionHrid: '/actions/combat/zone_a', difficultyTier: 0 }];
+        combatDropLuck._rememberContext(battle('/actions/combat/zone_a'));
+        await combatDropLuck._analyse({ '/items/coin': 1000 });
+
+        expect(combatDropLuck.resultFor({ actionHrid: '/actions/combat/zone_a', difficultyTier: 0 })).toBe(
+            combatDropLuck.lastResult
+        );
+        expect(combatDropLuck.resultFor({ actionHrid: '/actions/combat/zone_b', difficultyTier: 0 })).toBeNull();
+    });
+
+    test('a different difficulty tier of the same zone is also refused', async () => {
+        game.actions = [{ actionHrid: '/actions/combat/zone_a', difficultyTier: 0 }];
+        combatDropLuck._rememberContext(battle('/actions/combat/zone_a'));
+        await combatDropLuck._analyse({ '/items/coin': 1000 });
+
+        expect(combatDropLuck.resultFor({ actionHrid: '/actions/combat/zone_a', difficultyTier: 3 })).toBeNull();
+    });
+
+    test('proves the bug: without the stamp check, the old zone’s raw lastResult would answer for the new one', async () => {
+        // Measure zone A, then move to zone B without a battle there yet —
+        // `lastResult` is still zone A's, which is exactly the staleness a
+        // caller reading it directly (rather than through `resultFor`) hits
+        game.actions = [{ actionHrid: '/actions/combat/zone_a', difficultyTier: 0 }];
+        combatDropLuck._rememberContext(battle('/actions/combat/zone_a'));
+        await combatDropLuck._analyse({ '/items/coin': 1000 });
+
+        game.actions = [{ actionHrid: '/actions/combat/zone_b', difficultyTier: 0 }];
+        combatDropLuck._rememberContext(battle('/actions/combat/zone_b', 1));
+
+        // The raw field still names the old zone — the exact failure mode a
+        // caller bypassing `resultFor` would reproduce
+        expect(combatDropLuck.lastResult.actionHrid).toBe('/actions/combat/zone_a');
+        // resultFor is what actually guards against it
+        expect(combatDropLuck.resultFor({ actionHrid: '/actions/combat/zone_b', difficultyTier: 0 })).toBeNull();
+    });
+
+    test('no zone given answers null rather than whatever is last measured', async () => {
+        game.actions = [{ actionHrid: '/actions/combat/zone_a', difficultyTier: 0 }];
+        combatDropLuck._rememberContext(battle('/actions/combat/zone_a'));
+        await combatDropLuck._analyse({ '/items/coin': 1000 });
+
+        expect(combatDropLuck.resultFor()).toBeNull();
+        expect(combatDropLuck.resultFor({})).toBeNull();
+    });
+});
+
 describe('an analysis in flight when the character switches', () => {
     beforeEach(() => {
         combatDropLuck.context = {
