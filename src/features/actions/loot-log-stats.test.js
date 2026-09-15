@@ -493,6 +493,48 @@ describe('LootLogStats — the 💬 chat button on an entry', () => {
         expect(showToast).not.toHaveBeenCalled();
     });
 
+    test('text already in the box is budgeted for before the line is built', async () => {
+        // 370 bytes typed leaves 30: the builder names no drops and still has
+        // to cut, which it marks with "…" — the fill's own cut never does
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<input />';
+        document.body.appendChild(container);
+        const input = container.querySelector('input');
+        const typed = 'x'.repeat(370);
+        input.value = typed;
+        input.setSelectionRange(typed.length, typed.length);
+
+        chatButton().click();
+        await flush();
+
+        expect(input.value.startsWith(typed)).toBe(true);
+        expect(input.value.endsWith('…')).toBe(true);
+        expect(new TextEncoder().encode(input.value).length).toBeLessThanOrEqual(400);
+        expect(showToast).not.toHaveBeenCalled();
+    });
+
+    test('a second click inside the flash still restores the 💬 label', async () => {
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<input />';
+        document.body.appendChild(container);
+
+        vi.useFakeTimers();
+        try {
+            chatButton().click();
+            await vi.advanceTimersByTimeAsync(100);
+            chatButton().click();
+            await vi.advanceTimersByTimeAsync(100);
+            expect(chatButton().textContent).toBe('✓');
+
+            await vi.advanceTimersByTimeAsync(1500);
+            expect(chatButton().textContent).toBe('💬');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     test('with chat hidden, copies the line and says so', async () => {
         const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
 

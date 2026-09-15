@@ -463,6 +463,54 @@ describe('the Chat button on the popup', () => {
         expect(input.value).toContain('Combat Stats:');
     });
 
+    test('text already in the box shrinks the message by whole fields, not by a raw cut', async () => {
+        // 370 bytes typed leaves 30: room for "Combat Stats: 10m duration" and
+        // nothing more, so the builder drops fields rather than the fill
+        // slicing the full message mid-word
+        const input = chatInput();
+        const typed = `/w ${'x'.repeat(366)} `;
+        input.value = typed;
+        input.setSelectionRange(typed.length, typed.length);
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toBe(`${typed}Combat Stats: 10m duration`);
+        expect(utf8Length(input.value)).toBeLessThanOrEqual(400);
+        expect(showToast).not.toHaveBeenCalled();
+    });
+
+    test('a chat box already full is copied and said to be full, not hidden', async () => {
+        const input = chatInput();
+        input.value = 'z'.repeat(400);
+        vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(showToast).toHaveBeenCalledWith('chat is full — copied', expect.anything());
+    });
+
+    test('a second click inside the flash still restores the button’s own label', async () => {
+        chatInput();
+        await combatStatsUI.showPopup();
+        vi.useFakeTimers();
+        try {
+            chatButton().click();
+            await vi.advanceTimersByTimeAsync(100);
+            chatButton().click();
+            await vi.advanceTimersByTimeAsync(100);
+            expect(chatButton().textContent).toBe('✓ Filled');
+
+            await vi.advanceTimersByTimeAsync(1500);
+            expect(chatButton().textContent).toBe('💬 Chat');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     test('an archived run leaves the live-only readings out', async () => {
         const input = chatInput();
         mocks.luck = { percentile: 0.73, players: [] };

@@ -14,7 +14,14 @@ import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatte
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { signedPercent } from '../../utils/overlay-format.js';
-import { fillChatOrCopy, describeChatFill, CHAT_MAX_BYTES, utf8Length, trimToFit } from '../../utils/chat-fill.js';
+import {
+    fillChatOrCopy,
+    describeChatFill,
+    chatBudgetBytes,
+    CHAT_MAX_BYTES,
+    utf8Length,
+    trimToFit,
+} from '../../utils/chat-fill.js';
 import { showToast } from '../../utils/toast.js';
 import {
     buildGatheringSession,
@@ -1086,13 +1093,18 @@ class LootLogStats {
             actionName: (actionHrid) => this.getActionName(actionHrid),
             profit,
             luckPercentile: this.dropLuckPercentile(logData),
+            // Text already typed in the box shares the limit, so drops are
+            // named fewer before the fill has to cut the line mid-word
+            maxBytes: chatBudgetBytes(),
         });
         if (!text) return 'failed';
 
-        const { outcome, trimmed } = await fillChatOrCopy(text, { logPrefix: 'LootLogStats' });
+        const { outcome, trimmed, chatFull } = await fillChatOrCopy(text, { logPrefix: 'LootLogStats' });
         this.flashCopyButton(button, outcome === 'failed' ? '⚠' : '✓');
         if (outcome !== 'chat' || trimmed) {
-            showToast(describeChatFill(outcome, null, trimmed), { kind: outcome === 'failed' ? 'error' : 'info' });
+            showToast(describeChatFill(outcome, null, trimmed, chatFull), {
+                kind: outcome === 'failed' ? 'error' : 'info',
+            });
         }
         return outcome;
     }
@@ -1137,10 +1149,13 @@ class LootLogStats {
      * @param {string} text - What it should say for a moment
      */
     flashCopyButton(button, text) {
-        const original = button.textContent;
+        // The resting label is taken once: a second click inside the flash
+        // would otherwise read the flash mark as the label to restore
+        button.dataset.label ??= button.textContent;
         button.textContent = text;
-        setTimeout(() => {
-            if (button.isConnected) button.textContent = original;
+        clearTimeout(button._flashTimer);
+        button._flashTimer = setTimeout(() => {
+            if (button.isConnected) button.textContent = button.dataset.label;
         }, 1200);
     }
 

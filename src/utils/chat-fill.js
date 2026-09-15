@@ -124,8 +124,9 @@ function inputSpan(input) {
 /**
  * How many UTF-8 bytes a fill into the chat box has room for right now: the
  * game's limit less whatever the box already holds outside its selection (a
- * typed `/w Name ` included). The whole limit when chat is not on screen, since
- * the text then goes to the clipboard, which has no limit to share.
+ * typed `/w Name ` included). The whole limit when chat is not on screen or has
+ * no room left at all, since the text then goes to the clipboard, which has no
+ * limit to share — a zero budget would build an empty message and copy nothing.
  *
  * Builders pass this as their `maxBytes` so their own cuts (dropping fields,
  * naming fewer drops) happen before {@link fillChatInput}'s blunt byte cut has
@@ -139,7 +140,8 @@ export function chatBudgetBytes({ input = null } = {}) {
     try {
         const target = input || findChatInput();
         if (!target) return CHAT_MAX_BYTES;
-        return Math.max(CHAT_MAX_BYTES - inputSpan(target).usedBytes, 0);
+        const room = CHAT_MAX_BYTES - inputSpan(target).usedBytes;
+        return room > 0 ? room : CHAT_MAX_BYTES;
     } catch {
         return CHAT_MAX_BYTES;
     }

@@ -31,7 +31,7 @@ import { shortDuration } from '../../utils/overlay-format.js';
 import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { runningAction } from '../../utils/combat-actions.js';
-import { fillChatOrCopy, describeChatFill, CHAT_MAX_BYTES, utf8Length } from '../../utils/chat-fill.js';
+import { fillChatOrCopy, describeChatFill, chatBudgetBytes, utf8Length } from '../../utils/chat-fill.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { showToast } from '../../utils/toast.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
@@ -390,6 +390,11 @@ class CombatStatsUI {
     /**
      * The chat message for one player — the custom template when there is one,
      * otherwise the picked fields.
+     *
+     * Sized to the room left in the chat box, not the bare limit: text already
+     * typed there (a `/w Name `) shares the same 400 bytes, and the builder's
+     * field dropping has to happen before the fill's raw byte cut does.
+     *
      * @param {Object} stats - One player's stats
      * @param {Object} [runContext] - `{archived, combatData}`; defaults to the popup's
      * @returns {string}
@@ -398,6 +403,7 @@ class CombatStatsUI {
         return buildCombatChatMessage(stats, this.chatFields || normalizeChatFields(null), {
             ...this.chatContext(stats, runContext),
             template: this.customChatTemplate(),
+            maxBytes: chatBudgetBytes(),
         });
     }
 
@@ -412,17 +418,22 @@ class CombatStatsUI {
      */
     async shareStatsToChat(stats, { button = null } = {}) {
         const text = this.buildChatMessageFor(stats);
-        const { outcome, trimmed } = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
+        const { outcome, trimmed, chatFull } = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
 
         if (button) {
-            const original = button.textContent;
+            // The resting label is taken once: a second click inside the flash
+            // would otherwise read "✓ Filled" as the label to restore
+            button.dataset.label ??= button.textContent;
             button.textContent = { chat: '✓ Filled', clipboard: '✓ Copied' }[outcome] || '⚠ Failed';
-            setTimeout(() => {
-                if (button.isConnected) button.textContent = original;
+            clearTimeout(button._flashTimer);
+            button._flashTimer = setTimeout(() => {
+                if (button.isConnected) button.textContent = button.dataset.label;
             }, 1200);
         }
         if (outcome !== 'chat' || trimmed) {
-            showToast(describeChatFill(outcome, null, trimmed), { kind: outcome === 'failed' ? 'error' : 'info' });
+            showToast(describeChatFill(outcome, null, trimmed, chatFull), {
+                kind: outcome === 'failed' ? 'error' : 'info',
+            });
         }
         return { text, outcome };
     }
@@ -442,9 +453,9 @@ class CombatStatsUI {
         if (!stats) return 'no combat data yet';
 
         const text = this.buildChatMessageFor(stats, { archived: null, combatData });
-        const { outcome, trimmed } = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
+        const { outcome, trimmed, chatFull } = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
         if (outcome === 'failed') throw new Error('could not fill chat or copy');
-        return describeChatFill(outcome, text.length, trimmed);
+        return describeChatFill(outcome, text.length, trimmed, chatFull);
     }
 
     /**
@@ -1000,8 +1011,9 @@ class CombatStatsUI {
             const text = this.buildChatMessageFor(stats);
             preview.textContent = text;
             const bytes = utf8Length(text);
-            counter.textContent = `${bytes} / ${CHAT_MAX_BYTES} bytes`;
-            counter.style.color = bytes > CHAT_MAX_BYTES ? config.getSetting('color_loss') || '#f87171' : '#999';
+            const budget = chatBudgetBytes();
+            counter.textContent = `${bytes} / ${budget} bytes`;
+            counter.style.color = bytes > budget ? config.getSetting('color_loss') || '#f87171' : '#999';
         };
 
         if (this.customChatTemplate()) {

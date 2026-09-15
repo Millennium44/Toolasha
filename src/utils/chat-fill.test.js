@@ -308,8 +308,10 @@ describe('chatBudgetBytes', () => {
         expect(chatBudgetBytes()).toBe(CHAT_MAX_BYTES - 14);
     });
 
-    test('never negative', () => {
+    test('no room left budgets for the clipboard copy instead of an empty message', () => {
+        chat('z'.repeat(CHAT_MAX_BYTES));
+        expect(chatBudgetBytes()).toBe(CHAT_MAX_BYTES);
         chat('€'.repeat(200)); // 600 bytes, more than the game would ever hold
-        expect(chatBudgetBytes()).toBe(0);
+        expect(chatBudgetBytes()).toBe(CHAT_MAX_BYTES);
     });
 });
