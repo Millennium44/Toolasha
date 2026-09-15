@@ -563,3 +563,62 @@ describe('_forcedCatalystCombo', () => {
         expect(combo.catalystHrid).toBeNull();
     });
 });
+
+describe('essence and crate bonus drops follow the pricing mode', () => {
+    // A low item level keeps the bonus crate small_artisans_crate, and neither bonus
+    // item is openable, so both must be priced through getItemPrice like every other
+    // price in this file rather than a raw marketAPI.getPrice(...).bid lookup.
+    const ITEM_DETAIL_MAP = {
+        '/items/cheese': {
+            name: 'Cheese',
+            itemLevel: 10,
+            sellPrice: 100,
+            alchemyDetail: { isCoinifiable: true, bulkMultiplier: 1 },
+        },
+        '/items/alchemy_essence': { name: 'Alchemy Essence', isOpenable: false },
+        '/items/small_artisans_crate': { name: "Small Artisan's Crate", isOpenable: false },
+    };
+
+    const alchemyAction = { type: '/action_types/alchemy', baseTimeCost: 20e9 };
+
+    beforeEach(() => {
+        mocks.initClientData = {
+            itemDetailMap: ITEM_DETAIL_MAP,
+            actionDetailMap: { '/actions/alchemy/coinify': alchemyAction },
+        };
+        mocks.actionStats = { actionTime: 20, totalEfficiency: 0, efficiencyBreakdown: {} };
+    });
+
+    test('a non-openable essence is priced through getItemPrice, not a raw bid lookup', () => {
+        // getPrice() on the marketplace mock always returns null (→ .bid would be 0);
+        // getItemPrice() is mocked per-hrid, so a nonzero result here only comes from
+        // routing through the pricing-mode-aware helper.
+        mocks.itemPrices['/items/alchemy_essence'] = 777;
+
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+
+        const essenceDrop = result.dropRevenues.find((d) => d.itemHrid === '/items/alchemy_essence');
+        expect(essenceDrop.price).toBe(777);
+    });
+
+    test('a non-openable rare crate is priced through getItemPrice, not a raw bid lookup', () => {
+        mocks.itemPrices['/items/small_artisans_crate'] = 4321;
+
+        const result = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+
+        const crateDrop = result.dropRevenues.find((d) => d.itemHrid === '/items/small_artisans_crate');
+        expect(crateDrop.price).toBe(4321);
+    });
+
+    test('hybrid vs conservative: essence/crate prices move with whatever getItemPrice returns', () => {
+        // getItemPrice already encodes the pricing-mode choice; this file only has to
+        // hand the hrid through, so a mode-dependent mock price should show up unmodified.
+        mocks.itemPrices['/items/alchemy_essence'] = 100; // stand-in for "conservative" (bid)
+        const conservative = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+        expect(conservative.dropRevenues.find((d) => d.itemHrid === '/items/alchemy_essence').price).toBe(100);
+
+        mocks.itemPrices['/items/alchemy_essence'] = 150; // stand-in for "hybrid" (mid ask/bid)
+        const hybrid = alchemyProfitCalculator.calculateCoinifyProfit('/items/cheese');
+        expect(hybrid.dropRevenues.find((d) => d.itemHrid === '/items/alchemy_essence').price).toBe(150);
+    });
+});

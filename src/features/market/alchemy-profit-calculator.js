@@ -31,7 +31,6 @@ import {
 } from '../../utils/equipment-parser.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateHouseRareFind } from '../../utils/house-efficiency.js';
-import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from './expected-value-calculator.js';
 import {
     calculateActionsPerHour,
@@ -126,8 +125,7 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
     if (essenceItemDetails?.isOpenable) {
         essencePrice = expectedValueCalculator.getCachedValue('/items/alchemy_essence') || 0;
     } else {
-        const price = marketAPI.getPrice('/items/alchemy_essence', 0);
-        essencePrice = price?.bid ?? 0;
+        essencePrice = getItemPrice('/items/alchemy_essence', { context: 'profit', side: 'sell' }) || 0;
     }
 
     const essenceRevenuePerHour = essenceDropsPerHour * essencePrice;
@@ -171,8 +169,7 @@ function calculateAlchemyBonusDrops(itemLevel, actionsPerHour, equipment, itemDe
             expectedValueCalculator.calculateSingleContainer(crateHrid) ||
             0;
     } else {
-        const price = marketAPI.getPrice(crateHrid, 0);
-        cratePrice = price?.bid ?? 0;
+        cratePrice = getItemPrice(crateHrid, { context: 'profit', side: 'sell' }) || 0;
     }
 
     const rareRevenuePerHour = rareDropsPerHour * cratePrice;
