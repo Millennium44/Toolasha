@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Iron Cow item valuation
+
+- Iron Cow characters get an "Iron Cow item valuation" setting: Market (default, unchanged), Vendor (the NPC sell price) or Best (the higher of the vendor price and what coinifying the item yields at your alchemy level). It drives profit, loot, net worth, inventory badges, tooltips, combat stats, enhancing costs, the dungeon ROI board and the philo table on that character, with no pricing mode or tick applied, and is hidden for normal characters. Custom price overrides still win, and enhanced items keep market prices.
+
 ### Pricing changes reach every open profit figure
 
 - Changing the pricing mode, naming or a +1 tick from Settings or alchemy's Best Items now refreshes the skill page's profit sections, open crafting plan panels and an open dungeon ROI board, and clears the task "best alternative" figures, instead of leaving old numbers until you navigated away. A burst of changes redraws once.
