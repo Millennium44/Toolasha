@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Buy and Sell dropdowns say which side is instant
+
+- Each option now names both halves, so either wording shows whether it is an instant trade or a waiting order: "Buy: Ask (instant)", "Buy: Bid +1 (patient)", or "Sell: Patient (ask)" with the Instant/Patient wording.
+
 ### Enhancing tracker charges unlisted protections
 
 - A protection consumed on a failed enhance, with no market price to go on, was recorded as costing 0 coins because the vendor-price fallback read a field the game data doesn't have. It now uses the item's vendor price.

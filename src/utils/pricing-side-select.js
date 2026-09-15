@@ -182,9 +182,10 @@ export function currentPricingSideChoice(side) {
 }
 
 /**
- * An option's text: "Buy: Instant / Patient / Patient +1" under the
- * Instant/Patient naming, "Buy: Ask / Bid / Bid +1" (and "Sell: Bid / Ask /
- * Ask −1") under the Ask/Bid naming.
+ * An option's text, naming both halves so either wording says whether the
+ * side is an instant trade or a waiting order: "Buy: Ask (instant) / Bid
+ * (patient) / Bid +1 (patient)" under the Ask/Bid naming, "Buy: Instant (ask) /
+ * Patient (bid) / Patient +1 (bid)" under the Instant/Patient naming.
  * @param {'buy'|'sell'} side - Transaction side
  * @param {'instant'|'patient'|'patientTick'} choice - The option
  * @param {boolean} instantNaming - Whether `profitCalc_pricingNaming` is on
@@ -192,15 +193,13 @@ export function currentPricingSideChoice(side) {
  */
 export function pricingSideChoiceLabel(side, choice, instantNaming) {
     const prefix = side === 'buy' ? 'Buy' : 'Sell';
-    let word;
-    if (instantNaming) {
-        word = choice === 'instant' ? 'Instant' : 'Patient';
-    } else {
-        const basis = choice === 'instant' ? INSTANT_BASIS[side] : PATIENT_BASIS[side];
-        word = basis === 'ask' ? 'Ask' : 'Bid';
-    }
+    const basis = choice === 'instant' ? INSTANT_BASIS[side] : PATIENT_BASIS[side];
+    const speed = choice === 'instant' ? 'Instant' : 'Patient';
+    const bookSide = basis === 'ask' ? 'Ask' : 'Bid';
+    const word = instantNaming ? speed : bookSide;
+    const other = (instantNaming ? bookSide : speed).toLowerCase();
     const tick = choice === 'patientTick' ? (side === 'buy' ? ' +1' : ' −1') : '';
-    return `${prefix}: ${word}${tick}`;
+    return `${prefix}: ${word}${tick} (${other})`;
 }
 
 /**

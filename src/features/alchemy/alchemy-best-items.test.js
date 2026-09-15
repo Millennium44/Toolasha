@@ -906,14 +906,14 @@ describe('the Buy / Sell pricing dropdowns in the modal header', () => {
         expect(buySelect().value).toBe('instant');
         expect(sellSelect().value).toBe('patient');
         expect(Array.from(buySelect().options).map((o) => o.textContent)).toEqual([
-            'Buy: Ask',
-            'Buy: Bid',
-            'Buy: Bid +1',
+            'Buy: Ask (instant)',
+            'Buy: Bid (patient)',
+            'Buy: Bid +1 (patient)',
         ]);
         expect(Array.from(sellSelect().options).map((o) => o.textContent)).toEqual([
-            'Sell: Bid',
-            'Sell: Ask',
-            'Sell: Ask −1',
+            'Sell: Bid (instant)',
+            'Sell: Ask (patient)',
+            'Sell: Ask −1 (patient)',
         ]);
     });
 
@@ -966,8 +966,8 @@ describe('the Buy / Sell pricing dropdowns in the modal header', () => {
     test('a naming change retexts both dropdowns', () => {
         writeElsewhere('profitCalc_pricingNaming', true);
 
-        expect(selectedText(buySelect())).toBe('Buy: Instant');
-        expect(selectedText(sellSelect())).toBe('Sell: Patient');
+        expect(selectedText(buySelect())).toBe('Buy: Instant (ask)');
+        expect(selectedText(sellSelect())).toBe('Sell: Patient (ask)');
     });
 
     test('changing the setting while open re-ranks the rows and resyncs the dropdowns', async () => {

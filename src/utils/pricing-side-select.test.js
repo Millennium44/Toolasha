@@ -222,21 +222,29 @@ describe('applyPricingSideChoice', () => {
 
 describe('the dropdown element', () => {
     test('three options in the Ask/Bid naming', () => {
-        expect(optionTexts(createPricingSideSelect('buy'))).toEqual(['Buy: Ask', 'Buy: Bid', 'Buy: Bid +1']);
-        expect(optionTexts(createPricingSideSelect('sell'))).toEqual(['Sell: Bid', 'Sell: Ask', 'Sell: Ask −1']);
+        expect(optionTexts(createPricingSideSelect('buy'))).toEqual([
+            'Buy: Ask (instant)',
+            'Buy: Bid (patient)',
+            'Buy: Bid +1 (patient)',
+        ]);
+        expect(optionTexts(createPricingSideSelect('sell'))).toEqual([
+            'Sell: Bid (instant)',
+            'Sell: Ask (patient)',
+            'Sell: Ask −1 (patient)',
+        ]);
     });
 
     test('three options in the Instant/Patient naming', () => {
         live.values.profitCalc_pricingNaming = true;
         expect(optionTexts(createPricingSideSelect('buy'))).toEqual([
-            'Buy: Instant',
-            'Buy: Patient',
-            'Buy: Patient +1',
+            'Buy: Instant (ask)',
+            'Buy: Patient (bid)',
+            'Buy: Patient +1 (bid)',
         ]);
         expect(optionTexts(createPricingSideSelect('sell'))).toEqual([
-            'Sell: Instant',
-            'Sell: Patient',
-            'Sell: Patient −1',
+            'Sell: Instant (bid)',
+            'Sell: Patient (ask)',
+            'Sell: Patient −1 (ask)',
         ]);
     });
 
@@ -244,7 +252,7 @@ describe('the dropdown element', () => {
         const select = createPricingSideSelect('sell');
         live.values.profitCalc_pricingNaming = true;
         syncPricingSideSelect(select);
-        expect(optionTexts(select)).toEqual(['Sell: Instant', 'Sell: Patient', 'Sell: Patient −1']);
+        expect(optionTexts(select)).toEqual(['Sell: Instant (bid)', 'Sell: Patient (ask)', 'Sell: Patient −1 (ask)']);
     });
 
     test('shows the current choice, and follows a change made elsewhere on sync', () => {

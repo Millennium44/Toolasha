@@ -167,8 +167,8 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         // hybrid: instant buys, patient sells
         expect(buySelect().value).toBe('instant');
         expect(sellSelect().value).toBe('patient');
-        expect(selectedText(buySelect())).toBe('Buy: Ask');
-        expect(selectedText(sellSelect())).toBe('Sell: Ask');
+        expect(selectedText(buySelect())).toBe('Buy: Ask (instant)');
+        expect(selectedText(sellSelect())).toBe('Sell: Ask (patient)');
     });
 
     it('a choice writes the mode and tick, and re-renders the profit sections once', async () => {
@@ -182,7 +182,7 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         expect(mocks.settings.profitCalc_patientTickSell).toBe(false);
         expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(1);
         expect(buySelect().value).toBe('patientTick');
-        expect(selectedText(buySelect())).toBe('Buy: Bid +1');
+        expect(selectedText(buySelect())).toBe('Buy: Bid +1 (patient)');
     });
 
     it('every Buy × Sell combination lands on the right settings', async () => {
@@ -247,8 +247,8 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         writeElsewhere('profitCalc_pricingNaming', true);
         await settle();
 
-        expect(selectedText(buySelect())).toBe('Buy: Instant');
-        expect(selectedText(sellSelect())).toBe('Sell: Patient');
+        expect(selectedText(buySelect())).toBe('Buy: Instant (ask)');
+        expect(selectedText(sellSelect())).toBe('Sell: Patient (ask)');
         expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(1);
     });
 
