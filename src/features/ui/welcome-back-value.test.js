@@ -33,9 +33,33 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 
+// { itemHrid: { ask, bid } }, resolved into one number the way market-data.js's
+// getItemPrice(hrid, { context: 'profit', side: 'sell' }) resolves the user's
+// pricing mode for the sell side (mirrors getPricingMode in market-data.js).
 const market = vi.hoisted(() => ({ prices: {} }));
-vi.mock('../../api/marketplace.js', () => ({
-    default: { getPrice: (hrid) => market.prices[hrid] || null },
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: (hrid, options = {}) => {
+        const priceData = market.prices[hrid];
+        if (!priceData) return null;
+        const mode = settings.values.profitCalc_pricingMode || 'hybrid';
+        const side = options.side || 'sell';
+        let type;
+        switch (mode) {
+            case 'conservative':
+                type = side === 'buy' ? 'ask' : 'bid';
+                break;
+            case 'optimistic':
+                type = side === 'buy' ? 'bid' : 'ask';
+                break;
+            case 'patientBuy':
+                type = 'bid';
+                break;
+            case 'hybrid':
+            default:
+                type = 'ask';
+        }
+        return priceData[type] ?? null;
+    },
 }));
 
 const {

@@ -15,9 +15,9 @@
  * Three things it deliberately does not do:
  *
  * It does not re-price at "what I would get if I sold this instant" versus "what
- * I would pay to replace it" on its own terms — it uses `selectPrice`, so the
- * pricing mode set in Settings governs this the same as everything else in the
- * script.
+ * I would pay to replace it" on its own terms — it uses `getItemPrice` with the
+ * shared 'profit' context, so the pricing mode (and +1 tick toggle) set in
+ * Settings governs this the same as everything else in the script.
  *
  * It does not guess. An item with no market price contributes nothing to the
  * total and is counted instead, so the line can say "3 items unpriced" rather
@@ -33,10 +33,9 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
-import marketAPI from '../../api/marketplace.js';
 import { coinFormatter, formatKMB } from '../../utils/formatters.js';
 import { parseItemCount, gameDigitsSource } from '../../utils/number-parser.js';
-import { selectPrice } from '../../utils/pricing-helper.js';
+import { getItemPrice } from '../../utils/market-data.js';
 
 /** The mark this feature leaves, so a redraw does not stack a second line */
 export const ROW_CLASS = 'toolasha-welcome-back-value';
@@ -273,9 +272,7 @@ export function findWelcomeBackModal(node) {
  * @returns {number|null} Coins per unit, or null when unpriced
  */
 function marketPriceOf(hrid) {
-    const price = marketAPI.getPrice(hrid, 0);
-    if (!price) return null;
-    const value = selectPrice(price);
+    const value = getItemPrice(hrid, { context: 'profit', side: 'sell' });
     return Number.isFinite(value) && value > 0 ? value : null;
 }
 
