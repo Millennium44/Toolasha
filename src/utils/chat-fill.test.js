@@ -15,6 +15,7 @@ import {
     utf8Length,
     truncateToUtf8Bytes,
     trimToFit,
+    chatBudgetBytes,
 } from './chat-fill.js';
 
 const chat = (value = '') => {
@@ -203,7 +204,7 @@ describe('fillChatOrCopy', () => {
         const input = chat();
         const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
 
-        expect(await fillChatOrCopy('hello')).toEqual({ outcome: 'chat', trimmed: false });
+        expect(await fillChatOrCopy('hello')).toEqual({ outcome: 'chat', trimmed: false, chatFull: false });
         expect(input.value).toBe('hello');
         expect(write).not.toHaveBeenCalled();
     });
@@ -212,7 +213,7 @@ describe('fillChatOrCopy', () => {
         document.body.innerHTML = '';
         const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
 
-        expect(await fillChatOrCopy('hello')).toEqual({ outcome: 'clipboard', trimmed: false });
+        expect(await fillChatOrCopy('hello')).toEqual({ outcome: 'clipboard', trimmed: false, chatFull: false });
         expect(write).toHaveBeenCalledWith('hello');
     });
 
@@ -221,7 +222,7 @@ describe('fillChatOrCopy', () => {
         vi.spyOn(console, 'error').mockImplementation(() => {});
         vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('denied'));
 
-        expect(await fillChatOrCopy('hello')).toEqual({ outcome: 'failed', trimmed: false });
+        expect(await fillChatOrCopy('hello')).toEqual({ outcome: 'failed', trimmed: false, chatFull: false });
     });
 
     test('chat visible but the text needed trimming: says so, and copy still gets the full text', async () => {
@@ -231,7 +232,7 @@ describe('fillChatOrCopy', () => {
 
         const result = await fillChatOrCopy(long);
 
-        expect(result).toEqual({ outcome: 'chat', trimmed: true });
+        expect(result).toEqual({ outcome: 'chat', trimmed: true, chatFull: false });
         // The clipboard has no chat limit — only a fill into chat itself trims
         expect(write).not.toHaveBeenCalled();
     });
@@ -247,5 +248,68 @@ describe('describeChatFill', () => {
     test('says so when the text had to be trimmed to fit', () => {
         expect(describeChatFill('chat', 400, true)).toBe('filled chat — trimmed to fit (400 chars)');
         expect(describeChatFill('chat', null, true)).toBe('filled chat — trimmed to fit');
+    });
+});
+
+describe('multi-code-point emoji at the byte limit', () => {
+    test('a flag is kept or dropped whole, never cut to one regional indicator', () => {
+        // 🇺🇸 is two 4-byte regional indicators; a code-point cut at 4 bytes kept "🇺"
+        expect(truncateToUtf8Bytes('🇺🇸', 4)).toBe('');
+        expect(truncateToUtf8Bytes('a🇺🇸', 7)).toBe('a');
+    });
+
+    test('a ZWJ family is not cut down to a dangling joiner', () => {
+        const family = '👨‍👩‍👧'; // 18 bytes: three 4-byte emoji joined by two 3-byte ZWJs
+        expect(truncateToUtf8Bytes(`x${family}`, 12)).toBe('x');
+        expect(truncateToUtf8Bytes(`x${family}`, 19)).toBe(`x${family}`);
+    });
+
+    test('a skin-toned emoji keeps its modifier or goes entirely', () => {
+        expect(truncateToUtf8Bytes('👍🏽', 4)).toBe('');
+    });
+
+    test('filling past the limit ends on a whole emoji', () => {
+        const input = chat('x'.repeat(394));
+        fillChatInput('🇺🇸🇺🇸');
+        expect(input.value).toBe('x'.repeat(394));
+    });
+});
+
+describe('trimToFit under a budget smaller than the ellipsis', () => {
+    test('stays within the budget rather than returning a 3-byte "…"', () => {
+        expect(utf8Length(trimToFit('hello world', 2))).toBeLessThanOrEqual(2);
+        expect(trimToFit('hello world', 2)).toBe('he');
+        expect(trimToFit('hello world', 0)).toBe('');
+    });
+});
+
+describe('a chat box already at the limit', () => {
+    test('is copied and reported as full, not as chat being hidden', async () => {
+        chat('z'.repeat(CHAT_MAX_BYTES));
+        const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+
+        const result = await fillChatOrCopy('hello');
+
+        expect(result).toEqual({ outcome: 'clipboard', trimmed: false, chatFull: true });
+        expect(write).toHaveBeenCalledWith('hello');
+        expect(describeChatFill(result.outcome, null, result.trimmed, result.chatFull)).toBe('chat is full — copied');
+    });
+});
+
+describe('chatBudgetBytes', () => {
+    test('the whole limit with no chat on screen', () => {
+        document.body.innerHTML = '';
+        expect(chatBudgetBytes()).toBe(CHAT_MAX_BYTES);
+    });
+
+    test('less whatever the box holds outside its selection', () => {
+        const input = chat('/w Millennium hi');
+        input.setSelectionRange(14, 16); // "hi" selected, and replaced by a fill
+        expect(chatBudgetBytes()).toBe(CHAT_MAX_BYTES - 14);
+    });
+
+    test('never negative', () => {
+        chat('€'.repeat(200)); // 600 bytes, more than the game would ever hold
+        expect(chatBudgetBytes()).toBe(0);
     });
 });

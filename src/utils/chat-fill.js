@@ -37,11 +37,30 @@ export function utf8Length(text) {
     return new TextEncoder().encode(text).length;
 }
 
+/** Grapheme segmenter, or null where `Intl.Segmenter` is missing */
+const graphemeSegmenter =
+    typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+        ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+        : null;
+
 /**
- * Cut a string to fit a UTF-8 byte budget without splitting a code point or a
- * surrogate pair in half — a naive slice on `.length` (UTF-16 code units) can
- * land inside a multi-byte character or a surrogate pair and hand the game a
- * value one code unit short of a real character.
+ * A string's user-perceived characters. A ZWJ family, a flag or a skin-toned
+ * emoji is several code points and must be kept or dropped whole: cut between
+ * them and the game strips the dangling zero-width joiner, leaving separate
+ * emoji, or a lone regional indicator that renders as a boxed letter.
+ * Falls back to code points where the segmenter is unavailable.
+ * @param {string} text
+ * @returns {Iterable<string>}
+ */
+function graphemes(text) {
+    if (!graphemeSegmenter) return text;
+    return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
+}
+
+/**
+ * Cut a string to fit a UTF-8 byte budget without splitting a character — not
+ * a surrogate pair, not a multi-byte sequence, and not a multi-code-point
+ * emoji (see {@link graphemes}).
  *
  * @param {string} text
  * @param {number} maxBytes
@@ -53,9 +72,7 @@ export function truncateToUtf8Bytes(text, maxBytes) {
 
     let result = '';
     let bytes = 0;
-    // `for...of` walks a string by code point, so a surrogate pair (an emoji
-    // outside the BMP) is one step, never split mid-pair
-    for (const char of text) {
+    for (const char of graphemes(text)) {
         const charBytes = utf8Length(char);
         if (bytes + charBytes > maxBytes) break;
         result += char;
@@ -80,13 +97,52 @@ export function trimToFit(text, maxBytes) {
     if (utf8Length(text) <= maxBytes) return text;
 
     const ellipsis = '…';
-    const budget = Math.max(maxBytes - utf8Length(ellipsis), 0);
+    // A budget smaller than the ellipsis itself cannot carry one
+    if (maxBytes < utf8Length(ellipsis)) return truncateToUtf8Bytes(text, maxBytes);
+    const budget = maxBytes - utf8Length(ellipsis);
     let cut = truncateToUtf8Bytes(text, budget);
 
     const lastSpace = cut.lastIndexOf(' ');
     if (lastSpace > 0) cut = cut.slice(0, lastSpace);
 
     return cut + ellipsis;
+}
+
+/**
+ * UTF-8 bytes of the chat input's text outside its selection — what an
+ * insertion at the cursor has to share the limit with.
+ * @param {Element} input
+ * @returns {{start: number, end: number, current: string, usedBytes: number}}
+ */
+function inputSpan(input) {
+    const current = String(input.value ?? '');
+    const start = Number.isInteger(input.selectionStart) ? input.selectionStart : current.length;
+    const end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+    return { start, end, current, usedBytes: utf8Length(current.slice(0, start) + current.slice(end)) };
+}
+
+/**
+ * How many UTF-8 bytes a fill into the chat box has room for right now: the
+ * game's limit less whatever the box already holds outside its selection (a
+ * typed `/w Name ` included). The whole limit when chat is not on screen, since
+ * the text then goes to the clipboard, which has no limit to share.
+ *
+ * Builders pass this as their `maxBytes` so their own cuts (dropping fields,
+ * naming fewer drops) happen before {@link fillChatInput}'s blunt byte cut has
+ * to.
+ *
+ * @param {Object} [options]
+ * @param {Element|null} [options.input] - The input; found via `findChatInput` when omitted
+ * @returns {number}
+ */
+export function chatBudgetBytes({ input = null } = {}) {
+    try {
+        const target = input || findChatInput();
+        if (!target) return CHAT_MAX_BYTES;
+        return Math.max(CHAT_MAX_BYTES - inputSpan(target).usedBytes, 0);
+    } catch {
+        return CHAT_MAX_BYTES;
+    }
 }
 
 /**
@@ -103,7 +159,8 @@ export function trimToFit(text, maxBytes) {
  * @param {Element|null} [options.input] - The input to fill; found via `findChatInput` when omitted
  * @param {string} [options.logPrefix] - Module name for the error log
  * @returns {{filled: boolean, trimmed: boolean}} `filled`: whether anything landed in the box.
- *   `trimmed`: whether the inserted text had to be cut to fit.
+ *   `trimmed`: whether the inserted text had to be cut to fit — with `filled` false, the box is
+ *   on screen but already at the limit.
  */
 export function fillChatInput(text, { input = null, logPrefix = 'ChatFill' } = {}) {
     if (!text) return { filled: false, trimmed: false };
@@ -111,12 +168,8 @@ export function fillChatInput(text, { input = null, logPrefix = 'ChatFill' } = {
         const target = input || findChatInput();
         if (!target) return { filled: false, trimmed: false };
 
-        const current = String(target.value ?? '');
-        const start = Number.isInteger(target.selectionStart) ? target.selectionStart : current.length;
-        const end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : start;
-        const outside = current.slice(0, start) + current.slice(end);
-
-        const budget = Math.max(CHAT_MAX_BYTES - utf8Length(outside), 0);
+        const { start, end, current, usedBytes } = inputSpan(target);
+        const budget = Math.max(CHAT_MAX_BYTES - usedBytes, 0);
         const fits = utf8Length(text) <= budget;
         const insert = fits ? text : truncateToUtf8Bytes(text, budget);
         if (!insert) return { filled: false, trimmed: true };
@@ -151,21 +204,24 @@ export function fillChatInput(text, { input = null, logPrefix = 'ChatFill' } = {
  * @param {string} text - What to share
  * @param {Object} [options]
  * @param {string} [options.logPrefix] - Module name for the error log
- * @returns {Promise<{outcome: 'chat'|'clipboard'|'failed', trimmed: boolean}>} Where the text
- *   ended up, and whether it had to be cut to fit the chat box
+ * @returns {Promise<{outcome: 'chat'|'clipboard'|'failed', trimmed: boolean, chatFull: boolean}>}
+ *   Where the text ended up; whether it had to be cut to fit the chat box; and whether chat was
+ *   on screen but already at the limit, which is why it was copied instead
  */
 export async function fillChatOrCopy(text, { logPrefix = 'ChatFill' } = {}) {
-    if (!text) return { outcome: 'failed', trimmed: false };
+    if (!text) return { outcome: 'failed', trimmed: false, chatFull: false };
     const filledResult = fillChatInput(text, { logPrefix });
-    if (filledResult.filled) return { outcome: 'chat', trimmed: filledResult.trimmed };
+    if (filledResult.filled) return { outcome: 'chat', trimmed: filledResult.trimmed, chatFull: false };
+    const chatFull = filledResult.trimmed;
 
     try {
-        if (!navigator.clipboard?.writeText) return { outcome: 'failed', trimmed: false };
+        if (!navigator.clipboard?.writeText) return { outcome: 'failed', trimmed: false, chatFull };
         await navigator.clipboard.writeText(text);
-        return { outcome: 'clipboard', trimmed: false };
+        return { outcome: 'clipboard', trimmed: false, chatFull };
     } catch (error) {
-        console.error(`[${logPrefix}] Chat not visible and the clipboard refused:`, error);
-        return { outcome: 'failed', trimmed: false };
+        const why = chatFull ? 'Chat is full' : 'Chat not visible';
+        console.error(`[${logPrefix}] ${why} and the clipboard refused:`, error);
+        return { outcome: 'failed', trimmed: false, chatFull };
     }
 }
 
@@ -175,12 +231,13 @@ export async function fillChatOrCopy(text, { logPrefix = 'ChatFill' } = {}) {
  * @param {'chat'|'clipboard'|'failed'} outcome - From {@link fillChatOrCopy}
  * @param {number} [length] - Character count, appended when given
  * @param {boolean} [trimmed] - Whether the text had to be cut to fit the chat limit
+ * @param {boolean} [chatFull] - Whether chat was on screen but had no room left
  * @returns {string}
  */
-export function describeChatFill(outcome, length, trimmed = false) {
+export function describeChatFill(outcome, length, trimmed = false, chatFull = false) {
     const chars = Number.isFinite(length) ? ` (${length} chars)` : '';
     const suffix = trimmed ? ' — trimmed to fit' : '';
     if (outcome === 'chat') return `filled chat${suffix}${chars}`;
-    if (outcome === 'clipboard') return `chat not visible — copied${chars}`;
+    if (outcome === 'clipboard') return `${chatFull ? 'chat is full' : 'chat not visible'} — copied${chars}`;
     return 'could not fill chat or copy';
 }
