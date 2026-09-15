@@ -30,6 +30,7 @@ import { formatKeyCostNote, getKeyPricingMode, resolveKeyPricing } from '../../u
 import { shortDuration } from '../../utils/overlay-format.js';
 import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { runningAction } from '../../utils/combat-actions.js';
 import { fillChatOrCopy, describeChatFill, CHAT_MAX_BYTES, utf8Length } from '../../utils/chat-fill.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { showToast } from '../../utils/toast.js';
@@ -339,7 +340,9 @@ class CombatStatsUI {
                 // for the zone this snapshot is actually of — otherwise a zone
                 // switch can share the previous zone's luck under the new one's
                 // name until a battle in the new zone has been analysed
-                const live = (dataManager.getCurrentActions?.() || []).find(
+                // The running instance: the same zone can also sit queued at another tier
+                const live = runningAction(
+                    dataManager.getCurrentActions?.() || [],
                     (action) => action.actionHrid === actionHrid
                 );
                 const difficultyTier = Number(live?.difficultyTier) || 0;
@@ -578,7 +581,10 @@ class CombatStatsUI {
         if (!dataManager.getCurrentCharacterId?.()) return null;
 
         try {
-            const live = (dataManager.getCurrentActions?.() || []).find((action) => action.actionHrid === actionHrid);
+            const live = runningAction(
+                dataManager.getCurrentActions?.() || [],
+                (action) => action.actionHrid === actionHrid
+            );
             const difficultyTier = Number(live?.difficultyTier) || 0;
             const byZone = (await readScoped('simConsumableRatesByZone', 'combatExport', {})) || {};
             return { actionHrid, difficultyTier, simRecord: byZone[`${actionHrid}|${difficultyTier}`] || null };

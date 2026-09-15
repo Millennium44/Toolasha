@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The Combat Statistics popup has a "💬 Chat" button (Ctrl+click on a player card still works) with a "▾" field picker: checkboxes, a live preview and a character count, remembered per character. Drop luck percentile is now on by default; DPS, kills, key costs, top drop, boss ETA and zone are optional. A custom chat template still takes precedence.
 - Each loot-log entry gets a 💬 button that fills a one-line summary, and the command palette gains "Share combat stats to chat". Nothing is ever sent: the chat box is filled, or the text is copied when chat is hidden.
+- Shared messages fit the game's 400-byte chat limit (text already typed, such as "/w Name ", counts): optional fields drop first, loot-log lines list fewer drops, and the picker counts bytes. Drop luck, in chat and on its overlay tile, only shows for the zone it was measured in.
 
 ### +1 tick and pricing mode follow-ups
 
