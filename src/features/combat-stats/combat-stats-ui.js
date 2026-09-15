@@ -996,7 +996,7 @@ class CombatStatsUI {
                                 font-size: 12px;
                                 color: #aaa;
                             `;
-                            pricingNote.textContent = `Pricing: ${config.getPricingModeLabel(pricingMode)}`;
+                            pricingNote.textContent = `Pricing: ${config.getPricingModeDisplayLabel(pricingMode)}`;
                             breakdownDiv.appendChild(pricingNote);
 
                             // Column header

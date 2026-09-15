@@ -10,8 +10,6 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, expectedValueCalculator } from '../../utils/bundle-bridge.js';
-import config from '../../core/config.js';
-import marketAPI from '../../api/marketplace.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
@@ -21,6 +19,7 @@ import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import { manualAchievementCombatBuffs, deriveAchievementCombatBuffs } from '../../utils/achievement-combat-buffs.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import { getItemPrice } from '../../utils/market-data.js';
 
 /**
  * The combat scrolls the player currently has active.
@@ -1337,30 +1336,26 @@ export function calculateDungeonKeyCosts(dropMap, getBuyPrice) {
 
 /**
  * Get the sell price for an item based on the global pricing mode.
- * @param {Object|null} priceData - { bid, ask } from marketAPI.getPrice()
+ * Routes through {@link getItemPrice} so custom price overrides, the
+ * empty-book value-map fallback and the patient +1 tick all apply the same
+ * way they do everywhere else profit is priced.
+ * @param {string} itemHrid - Item HRID
  * @returns {number}
  */
-function getSellPrice(priceData) {
-    if (!priceData) return 0;
-    const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-    if (mode === 'conservative' || mode === 'patientBuy') {
-        return priceData.bid > 0 ? priceData.bid : 0;
-    }
-    return priceData.ask > 0 ? priceData.ask : 0;
+function getSellPrice(itemHrid) {
+    if (!itemHrid) return 0;
+    return getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) ?? 0;
 }
 
 /**
  * Get the buy price for an item based on the global pricing mode.
- * @param {Object|null} priceData - { bid, ask } from marketAPI.getPrice()
+ * Routes through {@link getItemPrice}; see {@link getSellPrice}.
+ * @param {string} itemHrid - Item HRID
  * @returns {number}
  */
-function getBuyPrice(priceData) {
-    if (!priceData) return 0;
-    const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-    if (mode === 'optimistic' || mode === 'patientBuy') {
-        return priceData.bid > 0 ? priceData.bid : 0;
-    }
-    return priceData.ask > 0 ? priceData.ask : 0;
+function getBuyPrice(itemHrid) {
+    if (!itemHrid) return 0;
+    return getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) ?? 0;
 }
 
 /**
@@ -1402,8 +1397,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     const dropMap = calculateExpectedDrops(simResult, gameData, playerHrid);
     for (const [itemHrid, total] of dropMap.entries()) {
         if (total <= 0) continue;
-        let unitValue =
-            itemHrid === '/items/coin' ? 1 : taxedDropValue(itemHrid, getSellPrice(marketAPI.getPrice(itemHrid)));
+        let unitValue = itemHrid === '/items/coin' ? 1 : taxedDropValue(itemHrid, getSellPrice(itemHrid));
         if (unitValue === 0) {
             // The EV fallback already nets the sale tax (see expected-value-calculator),
             // so it is taken as-is.
@@ -1426,7 +1420,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     const consumableEntries = [];
     const consumablesUsed = simResult.consumablesUsed?.[playerHrid] || {};
     for (const [itemHrid, count] of Object.entries(consumablesUsed)) {
-        const unitCost = getBuyPrice(marketAPI.getPrice(itemHrid));
+        const unitCost = getBuyPrice(itemHrid);
         const perHour = (count / hours) * unitCost;
         costPerHour += perHour;
         if (unitCost > 0) {
@@ -1444,7 +1438,7 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     // same helper rather than reading this one, so nothing double-counts.
     let keyCostPerHour = 0;
     if (simResult.isDungeon) {
-        for (const key of calculateDungeonKeyCosts(dropMap, (keyHrid) => getBuyPrice(marketAPI.getPrice(keyHrid)))) {
+        for (const key of calculateDungeonKeyCosts(dropMap, getBuyPrice)) {
             keyCostPerHour += key.totalCost / hours;
         }
         costPerHour += keyCostPerHour;

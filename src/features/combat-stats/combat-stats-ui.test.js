@@ -31,6 +31,7 @@ vi.mock('../../core/config.js', () => ({
         getSetting: () => true,
         getSettingValue: (_key, fallback) => fallback ?? null,
         getPricingModeLabel: () => 'Hybrid',
+        getPricingModeDisplayLabel: () => 'Hybrid',
         onSettingChange: (key, callback) => {
             (settingListeners[key] ??= []).push(callback);
             return () => {

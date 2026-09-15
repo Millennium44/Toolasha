@@ -5,7 +5,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import marketAPI from '../../api/marketplace.js';
+import { getItemPrice } from '../../utils/market-data.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import {
     expectedValueCalculator,
@@ -4334,7 +4334,7 @@ class CombatSimUI {
             this._displayResults(simResult, hours, gameData);
             this._switchTab('results');
             const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            const modeLabel = config.getPricingModeLabel(mode);
+            const modeLabel = config.getPricingModeDisplayLabel(mode);
             const missingNote = missingMembers.length
                 ? ` | Missing: ${missingMembers.join(', ')} (open their profiles)`
                 : '';
@@ -4976,9 +4976,8 @@ class CombatSimUI {
             const dropData = [...dropMap.entries()]
                 .filter(([, total]) => total > 0)
                 .map(([itemHrid, total]) => {
-                    const price = marketAPI.getPrice(itemHrid);
                     // Revenue: sell price for the pricing mode, net of the sale tax
-                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(price));
+                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid));
                     if (unitValue === 0 && itemHrid === '/items/coin') {
                         unitValue = 1;
                     }
@@ -5064,10 +5063,7 @@ class CombatSimUI {
 
             // Compute dungeon key costs from drop map
             if (simResult.isDungeon) {
-                const getBuyPriceForKey = (keyHrid) => {
-                    const price = marketAPI.getPrice(keyHrid);
-                    return this._getBuyPrice(price);
-                };
+                const getBuyPriceForKey = (keyHrid) => this._getBuyPrice(keyHrid);
                 dungeonKeyCosts = calculateDungeonKeyCosts(dropMap, getBuyPriceForKey);
                 for (const key of dungeonKeyCosts) {
                     keyCostPerHr += (key.count / hours) * key.unitCost;
@@ -5079,8 +5075,7 @@ class CombatSimUI {
         // Consumable costs — same column layout as drops
         const consumableEntries = Object.entries(consumableTotals)
             .map(([itemHrid, total]) => {
-                const price = marketAPI.getPrice(itemHrid);
-                const unitCost = this._getBuyPrice(price);
+                const unitCost = this._getBuyPrice(itemHrid);
                 return { itemHrid, total, unitCost, totalCost: total * unitCost };
             })
             .sort((a, b) => b.totalCost - a.totalCost);
@@ -5814,8 +5809,7 @@ class CombatSimUI {
             const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
             for (const [itemHrid, total] of dropMap.entries()) {
                 if (total <= 0) continue;
-                const price = marketAPI.getPrice(itemHrid);
-                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(price));
+                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid));
                 if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
                 if (unitValue === 0) {
                     const evData = (expectedValueCalculator() || bundledExpectedValueCalculator).calculateExpectedValue(
@@ -5831,8 +5825,7 @@ class CombatSimUI {
         let consumableCostPerHr = 0;
         const selfConsumables = simResult.consumablesUsed?.[activeTab] || {};
         for (const [itemHrid, count] of Object.entries(selfConsumables)) {
-            const price = marketAPI.getPrice(itemHrid);
-            const unitCost = this._getBuyPrice(price);
+            const unitCost = this._getBuyPrice(itemHrid);
             consumableCostPerHr += (count / hours) * unitCost;
         }
 
@@ -5840,10 +5833,7 @@ class CombatSimUI {
         let keyCostPerHrMetric = 0;
         if (simResult.isDungeon && gameData) {
             const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
-            const getBuyPriceForKey = (keyHrid) => {
-                const price = marketAPI.getPrice(keyHrid);
-                return this._getBuyPrice(price);
-            };
+            const getBuyPriceForKey = (keyHrid) => this._getBuyPrice(keyHrid);
             const keyCosts = calculateDungeonKeyCosts(dropMap, getBuyPriceForKey);
             for (const key of keyCosts) {
                 keyCostPerHrMetric += (key.count / hours) * key.unitCost;
@@ -6482,34 +6472,28 @@ class CombatSimUI {
 
     /**
      * Get the sell price for an item based on the global pricing mode.
-     * @param {Object} priceData - { bid, ask } from marketAPI
+     * Routes through {@link getItemPrice} so custom price overrides, the
+     * empty-book value-map fallback and the patient +1 tick all apply the
+     * same way they do everywhere else profit is priced.
+     * @param {string} itemHrid - Item HRID
      * @returns {number}
      * @private
      */
-    _getSellPrice(priceData) {
-        if (!priceData) return 0;
-        const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        // conservative/patientBuy → bid; hybrid/optimistic → ask
-        if (mode === 'conservative' || mode === 'patientBuy') {
-            return priceData.bid > 0 ? priceData.bid : 0;
-        }
-        return priceData.ask > 0 ? priceData.ask : 0;
+    _getSellPrice(itemHrid) {
+        if (!itemHrid) return 0;
+        return getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) ?? 0;
     }
 
     /**
      * Get the buy price for an item based on the global pricing mode.
-     * @param {Object} priceData - { bid, ask } from marketAPI
+     * Routes through {@link getItemPrice}; see {@link _getSellPrice}.
+     * @param {string} itemHrid - Item HRID
      * @returns {number}
      * @private
      */
-    _getBuyPrice(priceData) {
-        if (!priceData) return 0;
-        const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        // optimistic/patientBuy → bid; conservative/hybrid → ask
-        if (mode === 'optimistic' || mode === 'patientBuy') {
-            return priceData.bid > 0 ? priceData.bid : 0;
-        }
-        return priceData.ask > 0 ? priceData.ask : 0;
+    _getBuyPrice(itemHrid) {
+        if (!itemHrid) return 0;
+        return getItemPrice(itemHrid, { context: 'profit', side: 'buy' }) ?? 0;
     }
 
     /**

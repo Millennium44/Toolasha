@@ -42,6 +42,10 @@ const mocks = vi.hoisted(() => ({
     drops: new Map(),
     /** itemHrid → { bid, ask }; anything absent is unlisted, as most things are */
     prices: {},
+    /** The `getItemPrice` mock's profit pricing mode, mirroring `profitCalc_pricingMode` */
+    pricingMode: 'hybrid',
+    /** The `getItemPrice` mock's patient-tick switch, mirroring `profitCalc_patientTick` */
+    patientTick: false,
     /** What `buildGameDataPayload` and `buildAllPlayerDTOs` hand the panel */
     gameData: { itemDetailMap: {} },
     playerDTOs: [{ hrid: 'player1', equipment: {} }],
@@ -79,6 +83,7 @@ vi.mock('../../core/config.js', () => ({
         getSettingValue: (_key, fallback) => fallback,
         getSetting: (_key, fallback = false) => fallback,
         getPricingModeLabel: () => 'Hybrid',
+        getPricingModeDisplayLabel: () => 'Hybrid',
     },
 }));
 
@@ -261,7 +266,41 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({ default: {} }));
 vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: (hrid) => ({ price: mocks.itemPrices[hrid] ?? 0 }),
 }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
+// A minimal stand-in for the real pricing-mode/patient-tick resolution: reads
+// straight off `mocks.prices` (which already stands in for marketAPI.getPrice)
+// so the Results detail view's `_getSellPrice`/`_getBuyPrice` — which now route
+// through this instead of mapping ask/bid themselves — keep working, and the
+// tick tests below can flip `mocks.patientTick` to prove they honour it.
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrices: () => ({}),
+    getItemPrice: (hrid, options = {}) => {
+        const price = mocks.prices[hrid] || { bid: 0, ask: 0 };
+        const side = options.side === 'buy' ? 'buy' : 'sell';
+        let book;
+        switch (mocks.pricingMode) {
+            case 'conservative':
+                book = side === 'buy' ? 'ask' : 'bid';
+                break;
+            case 'optimistic':
+                book = side === 'buy' ? 'bid' : 'ask';
+                break;
+            case 'patientBuy':
+                book = 'bid';
+                break;
+            default:
+                book = 'ask';
+        }
+        const raw = price[book];
+        if (!(raw > 0)) return null;
+        // A buy priced at the bid moves up a tick, a sell priced at the ask
+        // moves down one — the same patient leg `patientTickPrice` improves.
+        const patientLeg = (side === 'buy' && book === 'bid') || (side === 'sell' && book === 'ask');
+        if (mocks.patientTick && patientLeg) {
+            return side === 'buy' ? raw + 1 : raw - 1;
+        }
+        return raw;
+    },
+}));
 vi.mock('../../utils/enhancement-calculator.js', () => ({ calculateEnhancement: () => ({}) }));
 vi.mock('../../utils/enhancement-config.js', () => ({
     getEnhancingParams: () => ({}),
@@ -2767,6 +2806,8 @@ describe('the summary at the top of the Results tab', () => {
     beforeEach(() => {
         mocks.drops = new Map();
         mocks.prices = {};
+        mocks.pricingMode = 'hybrid';
+        mocks.patientTick = false;
         ui.buildPanel();
     });
 
@@ -2774,6 +2815,8 @@ describe('the summary at the top of the Results tab', () => {
         ui.destroy();
         mocks.drops = new Map();
         mocks.prices = {};
+        mocks.pricingMode = 'hybrid';
+        mocks.patientTick = false;
     });
 
     test('leads with the per-day numbers, above every section that argues them', () => {
@@ -2801,6 +2844,46 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('24.0K');
         expect(shown).toContain('Revenue 28.8K/day');
         expect(shown).toContain('Costs 4.8K/day');
+    });
+
+    test('a patientBuy consumable cost steps one tick above the bid when the patient tick is on', () => {
+        // Regression for the Results detail view mapping ask/bid itself and
+        // never honouring `profitCalc_patientTick`. `_getBuyPrice` now routes
+        // through `getItemPrice`, so under patientBuy pricing the cheese buy
+        // price sits at the bid, ticked up one when the setting is on.
+        mocks.prices['/items/cheese'] = { bid: 10, ask: 12 };
+        mocks.pricingMode = 'patientBuy';
+
+        mocks.patientTick = false;
+        const off = showFight(oneHourFight({ consumablesUsed: { player1: { '/items/cheese': 20 } } })).textContent;
+        // 20 × 10 = 200/hr = 4.8K/day
+        expect(off).toContain('Costs 4.8K/day');
+
+        mocks.patientTick = true;
+        const on = showFight(oneHourFight({ consumablesUsed: { player1: { '/items/cheese': 20 } } })).textContent;
+        // 20 × 11 = 220/hr = 5.28K/day, rounded to 5.3K — this line fails
+        // pre-fix, since the old local ask/bid mapping never applied the tick
+        expect(on).toContain('Costs 5.3K/day');
+    });
+
+    test('an optimistic sell price steps one tick below the ask when the patient tick is on', () => {
+        // Same regression on the revenue side: `_getSellPrice` now routes
+        // through `getItemPrice` too, so under optimistic pricing (patient
+        // sell) the drop's sell price sits at the ask, ticked down one.
+        mocks.drops = new Map([['/items/cheese', 100]]);
+        mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
+        mocks.pricingMode = 'optimistic';
+
+        mocks.patientTick = false;
+        const off = showFight(oneHourFight()).textContent;
+        // 100 × 10 ask, net of 5% market tax = 950/hr = 22.8K/day
+        expect(off).toContain('Revenue 22.8K/day');
+
+        mocks.patientTick = true;
+        const on = showFight(oneHourFight()).textContent;
+        // 100 × 9 ticked ask, net of 5% tax = 855/hr = 20.52K/day, rounded to
+        // 20.5K — this line fails pre-fix
+        expect(on).toContain('Revenue 20.5K/day');
     });
 
     test('XP/hr is the same total the XP section adds up', () => {
