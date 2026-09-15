@@ -419,6 +419,40 @@ describe('patient +1 tick', () => {
         expect(calc.catalystPrice).toBe(nextPriceUp(2000));
     });
 
+    test('catalytic tea bought patiently in global mode steps up too, and not in an explicit mode', () => {
+        mocks.globalPricingMode = 'optimistic';
+        mocks.patientTickBuy = true;
+        calc.useCatalyticTea = true;
+
+        calc.pricingMode = 'global';
+        calc.loadDefaultPrices();
+        // 12 drinks an hour at the ticked 400 bid, spread over 675 actions
+        expect(calc.calculateRow(WIDGET_HRID, widget()).teaCostPerAction).toBeCloseTo((nextPriceUp(400) * 12) / 675, 6);
+
+        calc.pricingMode = 'optimistic';
+        calc.loadDefaultPrices();
+        expect(calc.calculateRow(WIDGET_HRID, widget()).teaCostPerAction).toBeCloseTo((400 * 12) / 675, 6);
+    });
+
+    test('a listed essence is quoted on the table own sell side, not the global mode', () => {
+        const ESSENCE = '/items/alchemy_essence';
+        mocks.prices[`${ESSENCE}+0`] = { ask: 300, bid: 200 };
+        // What the canonical calculator hands back under global hybrid with the sell tick
+        mocks.bonusDrops = [
+            { itemHrid: ESSENCE, isEssence: true, dropRate: 0.1, revenuePerAttempt: 0.1 * nextPriceDown(300) },
+        ];
+        mocks.globalPricingMode = 'hybrid';
+        mocks.patientTickSell = true;
+
+        calc.pricingMode = 'conservative';
+        calc._bonusRevenueCache.clear();
+        expect(calc.getBonusRevenuePerAction(WIDGET_HRID)).toBeCloseTo(0.1 * 200 * TAX, 6);
+
+        calc.pricingMode = 'global';
+        calc._bonusRevenueCache.clear();
+        expect(calc.getBonusRevenuePerAction(WIDGET_HRID)).toBeCloseTo(0.1 * nextPriceDown(300) * TAX, 6);
+    });
+
     test('an explicitly chosen mode prices at its exact sides', () => {
         mocks.patientTickBuy = true;
         mocks.patientTickSell = true;

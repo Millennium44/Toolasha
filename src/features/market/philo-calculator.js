@@ -718,7 +718,10 @@ class PhiloCalculator {
                 drinkConcentration: this.getDrinkConcentrationForLevel(this.drinkConcentrationLevel),
                 itemDetailMap: gameData?.itemDetailMap || {},
                 getItemPrice: (hrid) => {
-                    const resolved = resolveItemPrice(hrid, { side: 'buy', mode: buyType, context: 'profit' });
+                    // Following Global, no explicit mode: getItemPrice resolves the same buy
+                    // side and applies the patient tick the catalyst and inputs already take
+                    const mode = this.pricingMode === GLOBAL_PRICING_MODE ? undefined : buyType;
+                    const resolved = resolveItemPrice(hrid, { side: 'buy', mode, context: 'profit' });
                     return resolved.missing ? null : resolved.price;
                 },
             });
@@ -745,12 +748,24 @@ class PhiloCalculator {
         let total = 0;
         try {
             const transmute = alchemyProfitCalculator.calculateTransmuteProfit(itemHrid);
+            const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap || {};
+            const sellType = this.getPriceType('sell');
             for (const drop of transmute?.dropRevenues || []) {
                 if (!drop?.isEssence && !drop?.isRare) continue;
+                // The canonical calculator prices a listed drop on the global mode (and its
+                // tick); this table has its own mode, so a listed, non-openable drop is
+                // re-quoted on that side. Openable crates stay at their expected value, and
+                // a drop with no book keeps the calculator's value-map figure.
+                let revenue = drop.revenuePerAttempt || 0;
+                const book = itemDetailMap[drop.itemHrid]?.isOpenable ? null : marketAPI.getPrice(drop.itemHrid, 0);
+                const quote = book?.[sellType];
+                if (quote > 0 && drop.dropRate > 0) {
+                    revenue = drop.dropRate * this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid);
+                }
                 // Taxed, unlike the canonical calculator: essences and crates
                 // are sold like any other drop, and this table taxes every
                 // sold drop uniformly.
-                total += calculatePriceAfterTax(drop.revenuePerAttempt || 0);
+                total += calculatePriceAfterTax(revenue);
             }
         } catch (error) {
             console.error('[PhiloCalculator] Failed to resolve bonus drop revenue:', error);
