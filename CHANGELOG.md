@@ -3037,6 +3037,84 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.54.0](https://github.com/Millennium44/Toolasha/compare/v3.53.0...v3.54.0) (2026-09-15)
+
+
+### Features
+
+* Buy and Sell pricing dropdowns with a patient tick per side ([fcab9ff](https://github.com/Millennium44/Toolasha/commit/fcab9ff70ec515e3d08006df45452e256a07acf8))
+* one-click "+1 tick" toggle buttons next to the Mode buttons ([18109cb](https://github.com/Millennium44/Toolasha/commit/18109cb48be3121c6b6202d8c7cb5dfee57d2c1a))
+* patient +1 tick pricing toggle ([c9fbd9f](https://github.com/Millennium44/Toolasha/commit/c9fbd9feb5ac9a916cd6e1a309adccc2acb7c76e))
+* per-character Iron Cow item valuation (market, vendor, or best of vendor and coinify) ([54fa3c4](https://github.com/Millennium44/Toolasha/commit/54fa3c4acc5bae93a92c19fa2e8298921d08027e))
+* pricing dropdown tooltips flag a mismatch with the listing auto-fill strategy ([d8e374c](https://github.com/Millennium44/Toolasha/commit/d8e374c8e6a08be38afd69c992ee79c4feb16395))
+* pricing dropdowns say which side is instant or patient ([d5bdb92](https://github.com/Millennium44/Toolasha/commit/d5bdb92583b286d06736f14557591303534f0570))
+* pricing mode switch in alchemy's Best Items modal ([d45be6d](https://github.com/Millennium44/Toolasha/commit/d45be6d9cf971f284bd574e8b6d99210718699d6))
+* share combat stats to chat from a button, a field picker, the loot log and the palette ([0869f8e](https://github.com/Millennium44/Toolasha/commit/0869f8e103bb738cd2075eae499dc8f62742087d))
+
+
+### Bug Fixes
+
+* a queued action dragged ahead of a party fight no longer reads as running ([03a232c](https://github.com/Millennium44/Toolasha/commit/03a232c4b9b03edab3a33237cb40ad092e125b54))
+* action filter refreshes profit sections for every pricing-affecting change ([ff9b813](https://github.com/Millennium44/Toolasha/commit/ff9b813e1d72b0353ab1cd03b0f6c509b8e3238d))
+* alchemy essence and non-openable rare crates follow the pricing mode ([0e89a58](https://github.com/Millennium44/Toolasha/commit/0e89a585a6bf86bcf2fe12e993b7161c8d38e9f7))
+* alchemy history trackers read the full queue for the running action ([83b130f](https://github.com/Millennium44/Toolasha/commit/83b130f1ca9cd2c5f11878306ad1acb0373ee5ae))
+* battle counter and boss ETA survive a queue edit behind the running fight ([00a906e](https://github.com/Millennium44/Toolasha/commit/00a906e64234f8e78642784912d77252e21a517f))
+* chat fill keeps emoji whole, fits tiny budgets and reports a full chat box ([c418c30](https://github.com/Millennium44/Toolasha/commit/c418c304a581bbf7d59141246629123f52515947))
+* chat message shares dungeon chest luck instead of omitting it ([259ce7a](https://github.com/Millennium44/Toolasha/commit/259ce7a05d760307f05bb532e7ae08d7c8b252cb))
+* combat and loot-log chat sharing budget for text already in the chat box ([9a0b3c5](https://github.com/Millennium44/Toolasha/commit/9a0b3c58c46eacaaa0f31ba90b6ad028009e6314))
+* combat and loot-log chat sharing fit the game's 400-byte chat limit ([4a3b1a2](https://github.com/Millennium44/Toolasha/commit/4a3b1a2dde1e56b6323f79ea3b9b5e5e42c4dd9e))
+* combat sim history metrics re-price after a pricing mode or tick change ([0bf6748](https://github.com/Millennium44/Toolasha/commit/0bf6748db85b3573ea01884d0042a7efc6c26afa))
+* combat sim profit and consumable/key costs now honor the patient tick ([544e4e9](https://github.com/Millennium44/Toolasha/commit/544e4e91dfd842116588dcea87068f6cdf67cd65))
+* combat stats chat picker survives a changed default template ([a1fb48d](https://github.com/Millennium44/Toolasha/commit/a1fb48d563b973d5aec055ef343c3e44e9f8c837))
+* combat stats pick the running zone instance for its tier ([0e302a0](https://github.com/Millennium44/Toolasha/commit/0e302a0d6952571a361bee6e2dd32cdbdbdab3de))
+* combat stats popup and chat verb abandon a character switch mid-load ([bf3f3ee](https://github.com/Millennium44/Toolasha/commit/bf3f3eecd2db5cb144d9e8d8190d175b94ddc621))
+* combat XP session survives a queued zone removed behind the running fight ([b4f7e17](https://github.com/Millennium44/Toolasha/commit/b4f7e1795dc578481295201ef3612f433af3a4bc))
+* crafting plan panel rebuilds on a pricing change made elsewhere ([285ce06](https://github.com/Millennium44/Toolasha/commit/285ce06a9422144ba57bb15bd26a3a2896b3d998))
+* crafting plan's pricing toggle uses the shared mode cycle and hybrid default ([53ff3cf](https://github.com/Millennium44/Toolasha/commit/53ff3cf014d710fcfab5a153644c2bcc48bef88b))
+* drop luck reading only answers for the zone it was measured in ([b067b5e](https://github.com/Millennium44/Toolasha/commit/b067b5eace8c0d337169cdf194029e1c08722572))
+* dungeon ROI board redraws when a pricing setting changes while open ([81398d1](https://github.com/Millennium44/Toolasha/commit/81398d13b50f5936b58596adcb5205b39d613dec))
+* enhancing session survives a second enhance queued behind the running one ([1f20d2e](https://github.com/Millennium44/Toolasha/commit/1f20d2e36f9c37f8016ed452b5f81b58c65a2204))
+* enhancing tracker charges an unlisted protection its vendor price ([d419bfc](https://github.com/Millennium44/Toolasha/commit/d419bfcc3192d4037d477f25f3aab94fa45cf848))
+* expected value calculator re-registers its refresh listeners after a character switch ([63556de](https://github.com/Millennium44/Toolasha/commit/63556dee80d7a721fe1e720255d8fc663d6407c7))
+* expected-value-calculator recomputes when prices or pricing settings change ([49e53d7](https://github.com/Millennium44/Toolasha/commit/49e53d7cb5572bb94d95db9779ade01bf4d8229f))
+* key craft basis ticks its recipe materials on a patient global buy side ([513745d](https://github.com/Millennium44/Toolasha/commit/513745d6095a7bafed6268ae25615af6a46f030d))
+* net worth re-prices when the Iron Cow valuation changes ([ea07049](https://github.com/Millennium44/Toolasha/commit/ea070496fee4d1c18e8205abd1512fa51d852009))
+* patient +1 tick reaches philo, key and token pricing when they follow the global mode ([c0fa49f](https://github.com/Millennium44/Toolasha/commit/c0fa49fcd8371eebc220d4a4e7141953c9de94f1))
+* patient tick key migration keeps its flag unset when the migrated map does not save ([40286e4](https://github.com/Millennium44/Toolasha/commit/40286e4ebdd3ad0808aa42feb83dddb553b7c0f2))
+* philo calculator's refinement cost and self-return follow the table's own pricing mode ([9969401](https://github.com/Millennium44/Toolasha/commit/996940128ba92c7804a8fdc742edb62ebd5db507))
+* philo table prices its tea and bonus drops on its own pricing mode ([0038f48](https://github.com/Millennium44/Toolasha/commit/0038f48c05ebf8d4c04d3b2a8b25796afa7cdd36))
+* pricing mode labels next to ticked profit figures show the tick suffix ([9f04b8d](https://github.com/Millennium44/Toolasha/commit/9f04b8da367788e8f6c1244c13fbdf6eb6c43340))
+* shared boss ETA stays quiet wherever the header chip does ([8e2a20d](https://github.com/Millennium44/Toolasha/commit/8e2a20d84575853d2a3fef68c63a5763abd7f987))
+* task best-alternative figures drop stale profit cache on a pricing change ([823d54f](https://github.com/Millennium44/Toolasha/commit/823d54fa0e80cb7869d243cc002fe5f001ea0173))
+* task profit panel rebuilds on a pricing mode or +1 tick change ([aaccca4](https://github.com/Millennium44/Toolasha/commit/aaccca4be557226301bd12e48f92f4be26a3845a))
+* welcome-back value line follows the +1 tick toggle, not just raw bid/ask ([1826104](https://github.com/Millennium44/Toolasha/commit/18261040bbb1b6ce99b4af7b64adc5b2ff19191d))
+* welcome-back value prices consumed items at the buy side ([ddba198](https://github.com/Millennium44/Toolasha/commit/ddba1986d67e4f0ee4eddc496676909fd7ecefdc))
+* wire the remaining six sites to the Iron Cow valuation option ([0455749](https://github.com/Millennium44/Toolasha/commit/045574982245b968f4911d55d1f3f57db66d8405))
+
+
+### Code Refactoring
+
+* drop alchemy-profit.js's dead ask/bid price computation ([61e3d91](https://github.com/Millennium44/Toolasha/commit/61e3d91cf89530eb2ce71b8bc87e3d78f212869c))
+* drop the unused pricing-helper module ([58cca24](https://github.com/Millennium44/Toolasha/commit/58cca247dd444574b92cee962932d9d3a0eaeff2))
+
+
+### Documentation
+
+* changelog for alchemy history sessions following the running action ([9917bca](https://github.com/Millennium44/Toolasha/commit/9917bca2796d58a53aa9f6e0cca5631e6c726ef0))
+* changelog for dungeon chest luck in the chat message ([12f241f](https://github.com/Millennium44/Toolasha/commit/12f241f7c62fab2e076f16db4f3be8cc4e6554a4))
+* changelog for Iron Cow item valuation ([ae8e547](https://github.com/Millennium44/Toolasha/commit/ae8e5474d0e06c2b348e8caf066e0a42d85b419c))
+* changelog for the audit round ([ffe360e](https://github.com/Millennium44/Toolasha/commit/ffe360e96ad315e7915af2da98fc17128506baca))
+* changelog for the Buy and Sell pricing dropdowns ([0ac52cf](https://github.com/Millennium44/Toolasha/commit/0ac52cf6a3c6ae6fab895d8aea58d9fe755e5cce))
+* changelog for the crafted key materials following +1 tick ([2cab392](https://github.com/Millennium44/Toolasha/commit/2cab3922c90e9e16e52fda5dceb86749df7f169d))
+* changelog for the one-click +1 tick toggle ([86e796c](https://github.com/Millennium44/Toolasha/commit/86e796c923240a32c95793f8bcf3a5a19f07adbf))
+* changelog for the pricing refresh, philo and chat flag leftovers ([9a2c033](https://github.com/Millennium44/Toolasha/commit/9a2c033520aed7e582baae30c27ae56599bea581))
+
+
+### Tests
+
+* cover alchemy profit display's pricing-change relabel and rebuild ([4d2fc0c](https://github.com/Millennium44/Toolasha/commit/4d2fc0c25691aa7070898e7283d66c2d5c03cfd2))
+* Iron Cow valuation options, central price path and EV invalidation ([0b3c443](https://github.com/Millennium44/Toolasha/commit/0b3c443ea27f795f007912d56e86606febe98df2))
+
 ## [3.53.0](https://github.com/Millennium44/Toolasha/compare/v3.52.1...v3.53.0) (2026-09-15)
 
 ### Features
