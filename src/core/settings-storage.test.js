@@ -164,6 +164,30 @@ describe('one-time rewrites of superseded schema defaults', () => {
         expect(settings.labyrinthPathUnknownMode.value).toBe('shroud');
         expect(stored.get(FLAG)).toBe(true);
     });
+
+    test('a rewrite that fails to save leaves the flag unset, so the next load tries again', async () => {
+        stored.set(`json:${KEY}`, oldDefaults());
+        // storage.setJSON answers a refused or failed write with false rather than throwing
+        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+
+        const settings = await settingsStorage.loadSettings();
+
+        // The in-memory settings are rewritten regardless...
+        expect(settings.labyrinthLiveCombatSim.isTrue).toBe(false);
+        expect(settings.labyrinthPathUnknownMode.value).toBe('shroud');
+        // ...but the refused write never landed, and the flag was not set
+        expect(stored.get(`json:${KEY}`).labyrinthLiveCombatSim.isTrue).toBe(true);
+        expect(stored.get(`json:${KEY}`).labyrinthPathUnknownMode.value).toBe('clearable');
+        expect(stored.get(FLAG)).toBeUndefined();
+
+        const reloaded = await settingsStorage.loadSettings();
+
+        expect(reloaded.labyrinthLiveCombatSim.isTrue).toBe(false);
+        expect(reloaded.labyrinthPathUnknownMode.value).toBe('shroud');
+        expect(stored.get(`json:${KEY}`).labyrinthLiveCombatSim.isTrue).toBe(false);
+        expect(stored.get(`json:${KEY}`).labyrinthPathUnknownMode.value).toBe('shroud');
+        expect(stored.get(FLAG)).toBe(true);
+    });
 });
 
 describe('one-time migration of the patient tick to one switch per side', () => {

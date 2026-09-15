@@ -336,7 +336,12 @@ class SettingsStorage {
             }
 
             if (next !== saved) {
-                await storage.setJSON(characterKey, next, this.storageArea, true);
+                // Storage answers a refused or failed write with false, not a
+                // throw. The flag waits for a load whose write lands: set over an
+                // unsaved map, it would stop the rewrite for good and a reload
+                // would find the old default back.
+                const written = await storage.setJSON(characterKey, next, this.storageArea, true);
+                if (written === false) return next;
             }
             await storage.set(flagKey, true, this.storageArea, true);
             return next;
