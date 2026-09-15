@@ -41,6 +41,27 @@ export function ordinalRank(percentile) {
 }
 
 /**
+ * How far a session's take sat from what was modelled, as a signed whole
+ * percent in parentheses — "(+2% vs expected)". Rides beside the ordinal so
+ * a session that reads unlucky by percentile (common on a zone where a rare
+ * carries the value) can still be seen as ordinary against the mean.
+ *
+ * Empty whenever there is nothing honest to pair it with: no reading yet, or
+ * `percentOfExpected` itself returning null (no expectation to compare
+ * against) — the field then reads exactly as it did before this existed.
+ *
+ * @param {Object} ctx - Needs `luckOverExpected`
+ * @returns {string}
+ */
+function overExpectedNote(ctx) {
+    const pct = ctx?.luckOverExpected;
+    if (!Number.isFinite(pct)) return '';
+    const rounded = Math.round(pct);
+    const sign = rounded >= 0 ? '+' : '';
+    return ` (${sign}${rounded}% vs expected)`;
+}
+
+/**
  * Every field the chat message can carry, in the order they are joined.
  *
  * `value` answers the bare figure (what a template variable is replaced with)
@@ -143,7 +164,7 @@ export const COMBAT_CHAT_FIELDS = [
         // field rather than a second one. `ctx.luckIsChest` says which the
         // number behind `ctx.luckPercentile` is, so `part` can call it out.
         value: (_stats, ctx) => (Number.isFinite(ctx.luckPercentile) ? ordinalRank(ctx.luckPercentile) : null),
-        part: (v, ctx) => (ctx?.luckIsChest ? `chest luck ${v} pct` : `${v} pct luck`),
+        part: (v, ctx) => (ctx?.luckIsChest ? `chest luck ${v} pct` : `${v} pct luck`) + overExpectedNote(ctx),
     },
     {
         key: 'dps',
@@ -273,6 +294,8 @@ export function isCustomChatTemplate(value, defaultValue) {
  * @param {number|null} [context.luckPercentile] - Drop luck in [0, 1], or null
  * @param {boolean} [context.luckIsChest] - Whether `luckPercentile` is a dungeon's
  *   chest reading rather than the per-monster model, so the field can say so
+ * @param {number|null} [context.luckOverExpected] - The session's take as a signed
+ *   percent of what was modelled, or null when there is nothing to compare against
  * @param {number|null} [context.dps] - Live DPS, or null
  * @param {number|null} [context.kills] - Live kill count, or null
  * @param {string|null} [context.bossEta] - Boss ETA text, or null

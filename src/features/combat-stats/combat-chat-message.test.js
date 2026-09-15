@@ -68,6 +68,44 @@ describe('buildCombatChatMessage — the default fields', () => {
         expect(message.endsWith('0 deaths | chest luck 62nd pct')).toBe(true);
     });
 
+    test('luck pairs the percentile with how far the take sat over expectation', () => {
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, {
+            luckPercentile: 0.38,
+            luckOverExpected: 2.4,
+        });
+        expect(message.endsWith('0 deaths | 38th pct luck (+2% vs expected)')).toBe(true);
+    });
+
+    test('a below-expectation session gets an explicit minus sign', () => {
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, {
+            luckPercentile: 0.09,
+            luckOverExpected: -50.4,
+        });
+        expect(message.endsWith('0 deaths | 9th pct luck (-50% vs expected)')).toBe(true);
+    });
+
+    test('a dungeon’s chest luck carries the same over-expected bracket, live numbers', () => {
+        // MillenniumTest, Pirate Cove T2, live on the test server: 892 chests
+        // against 878 expected — about +1.6%, which rounds to +2%.
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, {
+            luckPercentile: 0.89,
+            luckIsChest: true,
+            luckOverExpected: (892 / 878 - 1) * 100,
+        });
+        expect(message.endsWith('0 deaths | chest luck 89th pct (+2% vs expected)')).toBe(true);
+    });
+
+    test('no expectation to compare against — the bracket is omitted, same text as before', () => {
+        for (const luckOverExpected of [null, undefined, NaN]) {
+            const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, {
+                luckPercentile: 0.73,
+                luckOverExpected,
+            });
+            expect(message.endsWith('0 deaths | 73rd pct luck')).toBe(true);
+            expect(message).not.toContain('vs expected');
+        }
+    });
+
     test('the price side follows the context', () => {
         const message = buildCombatChatMessage(stats(), ['income', 'dailyProfit'], { priceKey: 'bid' });
         expect(message).toBe('Combat Stats: 4000 income | 45000 profit/d');

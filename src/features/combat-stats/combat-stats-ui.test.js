@@ -508,6 +508,100 @@ describe('the Chat button on the popup', () => {
         expect(input.value).not.toContain('luck');
     });
 
+    test('a solo run’s luck is paired with how far the take sat over the modelled mean', async () => {
+        const input = chatInput();
+        // Solo: the session figures (players: []) are this player's own
+        mocks.luck = {
+            percentile: 0.73,
+            income: 1200,
+            expected: 1000,
+            players: [],
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+        };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toContain('73rd pct luck (+20% vs expected)');
+    });
+
+    test('a solo run below the modelled mean gets an explicit minus sign', async () => {
+        const input = chatInput();
+        mocks.luck = {
+            percentile: 0.12,
+            income: 500,
+            expected: 1000,
+            players: [],
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+        };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toContain('12th pct luck (-50% vs expected)');
+    });
+
+    test('a party member’s luck has no over-expected bracket — only the session total is known, not their own share', async () => {
+        const input = chatInput();
+        // A party: `players` is non-empty, so the placed-player branch is used,
+        // which only ever carries a percentile — never a per-player income and
+        // expectation to pair it with (see combat-stats-ui.js chatContext)
+        mocks.luck = {
+            percentile: 0.73,
+            income: 1200,
+            expected: 1000,
+            players: [{ name: 'LiveGuy', percentile: 0.73 }],
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+        };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toContain('73rd pct luck');
+        expect(input.value).not.toContain('vs expected');
+    });
+
+    test('dungeon chest luck carries the same bracket, live numbers', async () => {
+        const input = chatInput();
+        mocks.luck = null;
+        // MillenniumTest, Pirate Cove T2, live on the test server: 892 chests
+        // against 878 expected — about +1.6%, rounding to +2%.
+        mocks.chest = {
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+            result: { players: [{ name: 'LiveGuy', luck: { percentile: 0.89, chests: 892, expected: 878 } }] },
+        };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toContain('chest luck 89th pct (+2% vs expected)');
+    });
+
+    test('a chest reading with nothing to compare against keeps today’s bare text', async () => {
+        const input = chatInput();
+        mocks.luck = null;
+        mocks.chest = {
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+            result: { players: [{ name: 'LiveGuy', luck: { percentile: 0.62, chests: 5, expected: 0 } }] },
+        };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toContain('chest luck 62nd pct');
+        expect(input.value).not.toContain('vs expected');
+    });
+
     test('with chat hidden, copies the message instead and says so', async () => {
         const written = [];
         vi.spyOn(navigator.clipboard, 'writeText').mockImplementation(async (value) => written.push(value));
@@ -616,6 +710,33 @@ describe('the chat field picker', () => {
         expect(popover().querySelector('.toolasha-combat-chat-count').textContent).toBe(
             `${utf8Length(preview())} / 400 bytes`
         );
+    });
+
+    test('the preview shows the same over-expected bracket the fill puts in the chat box', async () => {
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<form><input /></form>';
+        document.body.appendChild(container);
+        const input = container.querySelector('input');
+
+        mocks.luck = {
+            percentile: 0.73,
+            income: 1200,
+            expected: 1000,
+            players: [],
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+        };
+
+        await combatStatsUI.showPopup();
+        caret().click();
+        const previewText = preview();
+        expect(previewText).toContain('(+20% vs expected)');
+
+        popup().querySelector('.toolasha-combat-chat-btn').click();
+        await flush();
+
+        expect(input.value).toBe(previewText);
     });
 
     test('the count turns red if the message it is handed is over the limit', async () => {

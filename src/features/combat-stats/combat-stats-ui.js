@@ -35,6 +35,7 @@ import { fillChatOrCopy, describeChatFill, chatBudgetBytes, utf8Length } from '.
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { showToast } from '../../utils/toast.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+import { percentOfExpected } from '../../utils/combat-drop-model.js';
 
 /** Per-character storage key for the chat field picker's selection */
 const CHAT_FIELDS_KEY = 'combatStatsChatFields';
@@ -378,6 +379,16 @@ class CombatStatsUI {
      * dungeon's chest reading where that model has nothing to say. Either way it
      * rides the same `luckPercentile`; `luckIsChest` says which one it is.
      *
+     * Beside the percentile, `luckOverExpected` says how far the actual take sat
+     * from what was modelled — the other half of the same question, because a
+     * zone whose value rides on one rare reads an ordinary session as unlucky by
+     * percentile alone. It is only filled in where a per-player expectation
+     * actually exists: solo (the session figures already are this player's own)
+     * and a dungeon's chests (measured per player already). A party's normal-zone
+     * reading has only the session's combined income and expectation, not this
+     * one player's share, so pairing it with their own percentile would compare
+     * two different things — left null there, same as when nothing was modelled.
+     *
      * @param {Object} stats - One player's stats
      * @param {Object} [options] - `{archived, combatData}` of the run being shared
      * @returns {Object} Context for `buildCombatChatMessage`
@@ -385,6 +396,7 @@ class CombatStatsUI {
     chatContext(stats, { archived = null, combatData = null } = {}) {
         let luckPercentile = null;
         let luckIsChest = false;
+        let luckOverExpected = null;
         let dps = null;
         let kills = null;
         let bossEta = null;
@@ -406,9 +418,11 @@ class CombatStatsUI {
                 if (luck) {
                     const placed = luck.players?.find((player) => player.name === stats.name);
                     if (placed) luckPercentile = placed.percentile;
-                    // Solo, the session percentile is the player's own
+                    // Solo, the session percentile is the player's own, and so
+                    // is the session's income/expectation
                     else if (!luck.players?.length && stats.name === dataManager.getCurrentCharacterName?.()) {
                         luckPercentile = luck.percentile;
+                        luckOverExpected = percentOfExpected(luck.income, luck.expected);
                     }
                 } else {
                     // A dungeon has no per-monster model, so `resultFor` never
@@ -422,6 +436,7 @@ class CombatStatsUI {
                     if (Number.isFinite(percentile)) {
                         luckPercentile = percentile;
                         luckIsChest = true;
+                        luckOverExpected = percentOfExpected(player.luck.chests, player.luck.expected);
                     }
                 }
             } catch (error) {
@@ -450,6 +465,7 @@ class CombatStatsUI {
             formatNum: this.chatFormatNum(),
             luckPercentile,
             luckIsChest,
+            luckOverExpected,
             dps,
             kills,
             bossEta,
