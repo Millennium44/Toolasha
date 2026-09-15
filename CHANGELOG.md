@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy history sessions no longer split when something else is queued
+
+- Coinify, decompose and transmute history decided from each queue update alone, so queuing any other action ended a running session and queuing a second alchemy item switched the session to it. They now follow the action actually running in the full queue.
+
 ### Share combat stats to chat
 
 - The Combat Statistics popup has a "💬 Chat" button (Ctrl+click on a player card still works) with a "▾" field picker: checkboxes, a live preview and a character count, remembered per character. Drop luck percentile is now on by default; DPS, kills, key costs, top drop, boss ETA and zone are optional. A custom chat template still takes precedence.
