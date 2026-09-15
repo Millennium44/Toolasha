@@ -19,6 +19,7 @@ const store = vi.hoisted(() => ({
     writes: [],
     /** Fired inside every read, so a test can land a switch in one */
     onRead: null,
+    settingListeners: {},
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -46,6 +47,21 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/dom.js', () => ({ dismissTooltips: () => {} }));
+vi.mock('../../core/config.js', () => ({
+    default: {
+        onSettingChange: (key, cb) => {
+            (store.settingListeners[key] ??= []).push(cb);
+            return () => {
+                store.settingListeners[key] = (store.settingListeners[key] || []).filter((c) => c !== cb);
+            };
+        },
+    },
+}));
+
+/** A pricing setting written from outside this module (Settings panel, a dropdown) */
+function writePricingSetting(key) {
+    for (const cb of store.settingListeners[key] || []) cb();
+}
 
 const { default: actionPanelSort } = await import('./action-panel-sort.js');
 
@@ -58,6 +74,65 @@ beforeEach(() => {
     // onCharacterSwitching clears the pins but not the mode, which is a panel
     // preference rather than character data until the next load replaces it
     actionPanelSort.sortMode = 'default';
+});
+
+describe('cachedStats and a pricing-setting change', () => {
+    beforeEach(async () => {
+        actionPanelSort.disable();
+        store.settingListeners = {};
+        await actionPanelSort.initialize();
+    });
+
+    /** Put something in the profit/xp cache, as registerPanel + updateProfit/updateExpPerHour do */
+    function cacheSomething() {
+        const panel = document.createElement('div');
+        actionPanelSort.registerPanel(panel, '/actions/milking/cow');
+        actionPanelSort.updateProfit(panel, 4000);
+        actionPanelSort.updateExpPerHour(panel, 1000);
+    }
+
+    test('a pricing-mode change from outside drops the cache — the old figures were priced under it', () => {
+        cacheSomething();
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toEqual({
+            profitPerHour: 4000,
+            expPerHour: 1000,
+        });
+
+        writePricingSetting('profitCalc_pricingMode');
+
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toBeNull();
+    });
+
+    test('either patient tick changing from outside drops the cache too', () => {
+        cacheSomething();
+        writePricingSetting('profitCalc_patientTickBuy');
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toBeNull();
+
+        cacheSomething();
+        writePricingSetting('profitCalc_patientTickSell');
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toBeNull();
+    });
+
+    test('disable() unregisters the listeners, so a stray write after teardown touches nothing', () => {
+        expect(store.settingListeners.profitCalc_pricingMode.length).toBeGreaterThan(0);
+
+        actionPanelSort.disable();
+
+        expect(store.settingListeners.profitCalc_pricingMode).toHaveLength(0);
+        expect(store.settingListeners.profitCalc_patientTickBuy).toHaveLength(0);
+        expect(store.settingListeners.profitCalc_patientTickSell).toHaveLength(0);
+    });
+
+    test('a character-switch cycle (disable + initialize, as panel-observer.js does) does not stack listeners', async () => {
+        for (let i = 0; i < 3; i++) {
+            actionPanelSort.disable();
+            await actionPanelSort.initialize();
+        }
+
+        expect(store.settingListeners.profitCalc_pricingMode).toHaveLength(1);
+        expect(store.settingListeners.profitCalc_patientTickBuy).toHaveLength(1);
+        expect(store.settingListeners.profitCalc_patientTickSell).toHaveLength(1);
+    });
 });
 
 describe('a character switch inside the pin read', () => {

@@ -6,10 +6,15 @@
  * Used by max-produceable and gathering-stats features.
  */
 
+import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import { dismissTooltips } from '../../utils/dom.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+
+/** Settings whose value changes what a cached profitPerHour actually means */
+const PRICING_VALUE_SETTING_KEYS = Object.freeze(['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]);
 
 /**
  * Who the pins and the sort mode belong to.
@@ -33,6 +38,11 @@ class ActionPanelSort {
         this.handlers = {};
         this.pinChangeListeners = [];
         this.sortModeListeners = [];
+        // Unregister functions for the pricing-value config listeners set up in
+        // initialize(); torn down in disable() so a character-switch cycle
+        // (cleanup() + initialize(), same as every other feature) doesn't stack
+        // a fresh copy of each on top of the last.
+        this.pricingChangeUnregisters = [];
     }
 
     /**
@@ -117,6 +127,22 @@ class ActionPanelSort {
                 };
                 dataManager.on('character_initialized', this.handlers.characterInit);
             }
+
+            // cachedStats holds profitPerHour figures priced under whatever mode
+            // was active when each panel last redrew. A mode or tick change
+            // (Settings panel, alchemy Best Items, the skill toolbar dropdowns)
+            // makes every cached figure stale the same way a character switch
+            // does — clear it the same way, rather than let getBestAlternativeProfitPerHour
+            // (task-profit-calculator.js) mix figures priced under old and new modes.
+            if (this.pricingChangeUnregisters.length === 0) {
+                for (const key of PRICING_VALUE_SETTING_KEYS) {
+                    this.pricingChangeUnregisters.push(
+                        config.onSettingChange(key, () => {
+                            this.cachedStats = {};
+                        })
+                    );
+                }
+            }
         })();
 
         try {
@@ -157,6 +183,8 @@ class ActionPanelSort {
             dataManager.off('character_initialized', this.handlers.characterInit);
             this.handlers.characterInit = null;
         }
+        this.pricingChangeUnregisters.forEach((unregister) => unregister());
+        this.pricingChangeUnregisters = [];
         this.initialized = false;
         this._loading = null;
     }
