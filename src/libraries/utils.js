@@ -43,7 +43,6 @@ import * as materialCalculator from '../utils/material-calculator.js';
 // crafting plan (actions) both size runs with it
 import * as artisanMaterialMode from '../utils/artisan-material-mode.js';
 import * as tokenValuation from '../utils/token-valuation.js';
-import * as pricingHelper from '../utils/pricing-helper.js';
 import * as cleanupRegistry from '../utils/cleanup-registry.js';
 // Owned here so the ui bundle's Settings writes and the utils bundle's price
 // reads share one overridesCache (otherwise overrides don't apply until reload)
@@ -206,7 +205,6 @@ toolashaRoot.Utils = {
     materialCalculator,
     artisanMaterialMode,
     tokenValuation,
-    pricingHelper,
     cleanupRegistry,
     customPriceOverrides,
     houseCostCalculator,

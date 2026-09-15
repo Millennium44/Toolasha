@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Share combat stats to chat
+
+- The Combat Statistics popup has a "💬 Chat" button (Ctrl+click on a player card still works) with a "▾" field picker: checkboxes, a live preview and a character count, remembered per character. Drop luck percentile is now on by default; DPS, kills, key costs, top drop, boss ETA and zone are optional. A custom chat template still takes precedence.
+- Each loot-log entry gets a 💬 button that fills a one-line summary, and the command palette gains "Share combat stats to chat". Nothing is ever sent: the chat box is filled, or the text is copied when chat is hidden.
+
+### +1 tick and pricing mode follow-ups
+
+- Chest and crate expected values now recompute when the pricing mode, +1 tick or market prices change, instead of staying at their page-load figures.
+- Combat sim, welcome-back value, and the philo calculator, key cost and dungeon token value (when they follow the global mode) honour +1 tick; alchemy essence and non-openable crates follow the pricing mode instead of always the bid.
+- The task profit panel refreshes on a mode click, profit and offline-progress labels show "(+1 tick)", and the crafting plan's Mode button cycles in the same order as the others with Hybrid as its default.
+
 ### A queued action dragged ahead of a party fight no longer reads as running
 
 - During a party fight, dragging a queued action into the first queued slot made Toolasha treat it as running (a queued cooking action showed "Red Culinary Hat not equipped"). The queue now follows the game's own order, party actions first and then by ordinal, everywhere Toolasha asks which action is running.
