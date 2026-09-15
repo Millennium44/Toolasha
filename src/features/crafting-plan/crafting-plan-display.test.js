@@ -46,9 +46,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => state.settings[key],
+        getSettingValue: (key, def) => state.settings[key] ?? def,
         setSetting: (key, value) => {
             state.settings[key] = value;
         },
+        getPricingModeDisplayLabel: (mode) => `label:${mode}`,
     },
 }));
 vi.mock('./crafting-plan-calculator.js', () => ({
@@ -226,6 +228,54 @@ function craftPlanBuying(itemHrid, itemName, quantity) {
 function findBuyButton(section) {
     return [...section.querySelectorAll('button')].find((b) => b.textContent === 'Buy Missing Materials');
 }
+
+/** The "Pricing:" mode-toggle button — the label span's next sibling. */
+function findPricingButton(section) {
+    const label = [...section.querySelectorAll('span')].find((el) => el.textContent === 'Pricing:');
+    return label?.nextElementSibling ?? null;
+}
+
+describe('the pricing mode toggle', () => {
+    beforeEach(() => {
+        state.inventory = [];
+        state.plan = craftPlanBuying('/items/wood', 'Wood', 100);
+        state.missing = [];
+        state.settings = {};
+    });
+
+    test('with nothing stored, the button reads the hybrid default, not ask/Conservative', () => {
+        const section = buildPlanUI('/actions/crafting/wooden_bow');
+        expect(findPricingButton(section).textContent).toBe('label:hybrid');
+    });
+
+    test('each rebuild picks the next mode up from the freshly stored setting, in PRICING_MODE_CYCLE order', () => {
+        let section = buildPlanUI('/actions/crafting/wooden_bow');
+        findPricingButton(section).click();
+        expect(state.settings['profitCalc_pricingMode']).toBe('conservative');
+
+        // Re-render (as onToggle would trigger) picks up the stored mode and cycles from there
+        section = buildPlanUI('/actions/crafting/wooden_bow');
+        findPricingButton(section).click();
+        expect(state.settings['profitCalc_pricingMode']).toBe('optimistic');
+
+        section = buildPlanUI('/actions/crafting/wooden_bow');
+        findPricingButton(section).click();
+        expect(state.settings['profitCalc_pricingMode']).toBe('patientBuy');
+
+        section = buildPlanUI('/actions/crafting/wooden_bow');
+        findPricingButton(section).click();
+        expect(state.settings['profitCalc_pricingMode']).toBe('hybrid');
+    });
+
+    test('calls onToggle after cycling the mode', () => {
+        const onToggle = vi.fn();
+        const section = buildPlanUI('/actions/crafting/wooden_bow', onToggle);
+
+        findPricingButton(section).click();
+
+        expect(onToggle).toHaveBeenCalledTimes(1);
+    });
+});
 
 describe('the Buy Missing Materials button', () => {
     beforeEach(() => {

@@ -22,6 +22,7 @@ import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
+import { nextPricingMode } from '../../utils/pricing-mode.js';
 import {
     effectiveInventoryRows,
     heldInInventory,
@@ -179,13 +180,6 @@ function reservedShoppingNote(items, outputHrid) {
     return '';
 }
 
-const PRICING_MODES = [
-    { value: 'conservative', label: 'Instant Buy' },
-    { value: 'hybrid', label: 'Instant Buy / Patient Sell' },
-    { value: 'optimistic', label: 'Patient Buy / Patient Sell' },
-    { value: 'patientBuy', label: 'Patient Buy' },
-];
-
 const PRODUCTION_TYPES = [
     '/action_types/brewing',
     '/action_types/cooking',
@@ -209,7 +203,7 @@ function getPrimaryOutput(actionDetail) {
  * @returns {string}
  */
 function getPricingMode() {
-    return config.getSetting('profitCalc_pricingMode') || 'ask';
+    return config.getSettingValue('profitCalc_pricingMode', 'hybrid');
 }
 
 /**
@@ -396,7 +390,8 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
     content.appendChild(summary);
 
     // === Pricing mode toggle ===
-    const currentMode = PRICING_MODES.find((m) => m.value === mode) || PRICING_MODES[0];
+    // Shares PRICING_MODE_CYCLE/nextPricingMode with the action-panel toolbar and the
+    // alchemy Best Items modal so all three "Mode:" buttons step through the same order.
     const pricingRow = document.createElement('div');
     pricingRow.style.cssText = `
         display: flex;
@@ -409,7 +404,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
     const pricingLabel = document.createElement('span');
     pricingLabel.textContent = 'Pricing:';
     const pricingBtn = document.createElement('button');
-    pricingBtn.textContent = currentMode.label;
+    pricingBtn.textContent = config.getPricingModeDisplayLabel(mode);
     pricingBtn.style.cssText = `
         font-size: 0.85em;
         padding: 1px 6px;
@@ -420,9 +415,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
         cursor: pointer;
     `;
     pricingBtn.addEventListener('click', () => {
-        const idx = PRICING_MODES.findIndex((m) => m.value === mode);
-        const next = PRICING_MODES[(idx + 1) % PRICING_MODES.length];
-        config.setSetting('profitCalc_pricingMode', next.value);
+        config.setSetting('profitCalc_pricingMode', nextPricingMode(mode));
         if (onToggle) onToggle();
     });
     pricingRow.appendChild(pricingLabel);
