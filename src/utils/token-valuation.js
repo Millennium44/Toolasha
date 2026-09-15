@@ -6,7 +6,8 @@
 
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
-import { getItemPrice } from './market-data.js';
+import { getItemPrice, getItemPriceInfo, getItemPrices } from './market-data.js';
+import { isPatientTickEnabled, patientTickPrice } from './patient-tick.js';
 
 /** Essence a dungeon token falls back to when its shop prices nothing. */
 const TOKEN_ESSENCE_MAP = {
@@ -58,7 +59,18 @@ export function calculateDungeonTokenValue(
     if (!gameData) return null;
 
     const mode = tokenPricingSide(pricingModeSetting, respectModeSetting);
-    const priceOf = (hrid) => (hrid ? getItemPrice(hrid, { mode }) : null);
+    // Following the global mode, a sale at the ask is a patient one and takes the
+    // +1 tick like every other profit price. Respect switched off pins the bid,
+    // an exact side, and a custom price or value estimate has no queue to jump.
+    const tickable = mode === 'ask' && pricingModeSetting === 'profitCalc_pricingMode' && isPatientTickEnabled();
+    const priceOf = (hrid) => {
+        if (!hrid) return null;
+        if (!tickable) return getItemPrice(hrid, { mode });
+        const { price, source } = getItemPriceInfo(hrid, { mode });
+        if (source !== 'book') return price;
+        const book = getItemPrices(hrid);
+        return patientTickPrice(price, 'sell', 'ask', { ask: book?.ask, bid: book?.bid, itemHrid: hrid });
+    };
 
     // Only single-currency lines price a token cleanly
     const tokenShop = Object.values(gameData.shopItemDetailMap || {}).filter((line) => {

@@ -45,6 +45,7 @@ import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { describeCraft } from '../features/crafting-plan/craft-arbitrage-adapter.js';
 import { getPricingMode } from './market-data.js';
+import { isPatientTickEnabled, patientTickPrice } from './patient-tick.js';
 import { coinFormatter, timeReadable } from './formatters.js';
 
 /** The setting that says how a key is valued */
@@ -122,16 +123,39 @@ export function getKeyPricingMode() {
  * directly, falling back to the ask when the chosen side is missing — so that
  * turning the craft comparison on cannot move the buy figure underneath it.
  *
+ * With `followsGlobal` — the key setting is `synced` or `craft`, which take their
+ * side from `profitCalc_pricingMode` — a bid quote gets the patient +1 tick the
+ * way every other profit price does. An explicit `ask` or `bid` setting is the
+ * user picking an exact side, so it is never moved.
+ *
  * @param {string} keyHrid - Key item HRID
  * @param {string} mode - 'ask' or 'bid'
+ * @param {boolean} [followsGlobal=false] - Whether the side came from the global pricing mode
  * @returns {number|null} Price, or null when the market has nothing
  */
-function buyPriceFor(keyHrid, mode) {
+function buyPriceFor(keyHrid, mode, followsGlobal = false) {
     const prices = marketAPI.getPrice(keyHrid);
     if (!prices) return null;
 
-    const price = prices[mode] ?? prices.ask;
-    return Number.isFinite(price) && price > 0 ? price : null;
+    const basis = prices[mode] != null ? mode : 'ask';
+    const price = prices[basis];
+    if (!(Number.isFinite(price) && price > 0)) return null;
+    if (!followsGlobal) return price;
+    return patientTickPrice(price, 'buy', basis, { ask: prices.ask, bid: prices.bid, itemHrid: keyHrid });
+}
+
+/**
+ * Whether a costing at `mode` is following the global pricing mode, and so
+ * takes the patient tick: the setting is `synced` or `craft` and the side asked
+ * for is the one that setting resolved to. Callers that echo
+ * `getKeyPricingMode()` back as `mode` still follow it; a caller asking for the
+ * other side has asked for an exact book price.
+ * @param {{setting: string, priceSide: string}} resolved - From `resolveKeyPricing`
+ * @param {string} mode - The side being costed
+ * @returns {boolean}
+ */
+function followsGlobalMode(resolved, mode) {
+    return (resolved.setting === 'synced' || resolved.setting === 'craft') && mode === resolved.priceSide;
 }
 
 /**
@@ -197,7 +221,7 @@ export function describeKeyCost(keyHrid, options = {}) {
 
     if (!keyHrid) return empty;
 
-    const buyPrice = buyPriceFor(keyHrid, mode);
+    const buyPrice = buyPriceFor(keyHrid, mode, followsGlobalMode(resolved, mode));
 
     let craft = null;
     try {
@@ -281,10 +305,13 @@ const craftCostCache = new Map();
 export function getKeyUnitCost(keyHrid) {
     if (!keyHrid) return null;
 
-    const { priceSide, basis } = resolveKeyPricing();
-    if (basis !== 'craft') return buyPriceFor(keyHrid, priceSide);
+    const resolved = resolveKeyPricing();
+    const { priceSide, basis } = resolved;
+    if (basis !== 'craft') return buyPriceFor(keyHrid, priceSide, followsGlobalMode(resolved, priceSide));
 
-    const cacheKey = `${keyHrid}|${priceSide}|${dataManager.getCurrentCharacterId?.() ?? '?'}`;
+    // The tick is in the key for the same reason the side is: toggling it must miss
+    const tick = isPatientTickEnabled() ? 'tick' : '';
+    const cacheKey = `${keyHrid}|${priceSide}|${tick}|${dataManager.getCurrentCharacterId?.() ?? '?'}`;
     const cached = craftCostCache.get(cacheKey);
     if (cached && Date.now() - cached.at < CRAFT_COST_TTL_MS) return cached.unitCost;
 

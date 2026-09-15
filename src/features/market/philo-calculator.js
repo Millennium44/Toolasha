@@ -24,6 +24,7 @@ import {
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { settingsUI as sharedSettingsUI } from '../../utils/bundle-bridge.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
@@ -362,7 +363,30 @@ class PhiloCalculator {
             return this.philoPrice || 0;
         }
         const type = sellType || this.getPriceType('sell');
-        return (type === 'bid' ? this.philoBid : this.philoAsk) || 0;
+        const quote = (type === 'bid' ? this.philoBid : this.philoAsk) || 0;
+        return this.patientQuote(quote, 'sell', type, { ask: this.philoAsk, bid: this.philoBid }, PHILO_HRID) || 0;
+    }
+
+    /**
+     * The patient +1 tick, on a raw order-book quote, when this table follows
+     * the global pricing mode. An explicitly chosen mode prices at exactly the
+     * book side it names; a manual price or override never reaches here.
+     * @param {number|null} price - Quote at `basis`
+     * @param {'buy'|'sell'} side - Transaction side
+     * @param {string} basis - 'ask' or 'bid'
+     * @param {{ask: number|null, bid: number|null}} book - The item's book, for the no-crossing check
+     * @param {string} itemHrid - Item HRID, for the band clamp
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @returns {number|null} The ticked price, or `price` unchanged
+     */
+    patientQuote(price, side, basis, book, itemHrid, enhancementLevel = 0) {
+        if (this.pricingMode !== GLOBAL_PRICING_MODE) return price;
+        return patientTickPrice(price, side, basis, {
+            ask: book?.ask ?? null,
+            bid: book?.bid ?? null,
+            itemHrid,
+            enhancementLevel,
+        });
     }
 
     /**
@@ -379,9 +403,11 @@ class PhiloCalculator {
         if (!this._manualCatalystPrice) {
             const catalystPriceData = marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
             const buyType = this.getPriceType('buy');
+            const otherType = buyType === 'ask' ? 'bid' : 'ask';
             const preferred = catalystPriceData?.[buyType];
-            const other = catalystPriceData?.[buyType === 'ask' ? 'bid' : 'ask'];
-            this.catalystPrice = preferred > 0 ? preferred : other > 0 ? other : 0;
+            const other = catalystPriceData?.[otherType];
+            const [price, basis] = preferred > 0 ? [preferred, buyType] : other > 0 ? [other, otherType] : [0, null];
+            this.catalystPrice = this.patientQuote(price, 'buy', basis, catalystPriceData, PRIME_CATALYST_HRID);
         }
     }
 
@@ -756,7 +782,8 @@ class PhiloCalculator {
         const buyType = this.getPriceType('buy');
         const quoteAt = (level) => {
             const priceData = marketAPI.getPrice(itemHrid, level);
-            return priceData?.[buyType] > 0 ? priceData[buyType] : null;
+            if (!(priceData?.[buyType] > 0)) return null;
+            return this.patientQuote(priceData[buyType], 'buy', buyType, priceData, itemHrid, level);
         };
 
         let itemCost = quoteAt(0);
@@ -873,9 +900,11 @@ class PhiloCalculator {
                 } else if (drop.itemHrid === PHILO_HRID) {
                     dropValue = calculatePriceAfterTax(this.getPhiloPrice(sellType));
                 } else {
-                    const quote = marketAPI.getPrice(drop.itemHrid, 0)?.[sellType];
+                    const book = marketAPI.getPrice(drop.itemHrid, 0);
+                    const quote = book?.[sellType];
                     if (!(quote > 0)) continue;
-                    dropValue = calculatePriceAfterTax(quote);
+                    // Only the patient column (a sale at the ask) can move
+                    dropValue = calculatePriceAfterTax(this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid));
                 }
 
                 const avgCount = (drop.minCount + drop.maxCount) / 2;
@@ -1403,7 +1432,10 @@ class PhiloCalculator {
         label.textContent = 'Pricing: ';
 
         const globalMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        const globalLabel = PRICING_MODES[globalMode]?.label || globalMode;
+        // The global label carries "(+1 tick)" when the tick applies, since only
+        // Global follows it; the explicit modes below price at their exact sides
+        const globalLabel =
+            config.getPricingModeDisplayLabel?.(globalMode) || PRICING_MODES[globalMode]?.label || globalMode;
         label.title =
             `Defaults to ${PRICING_MODES[DEFAULT_PRICING_MODE].label} regardless of the global profit ` +
             `pricing mode (currently ${globalLabel}): a philo hunt only pays if it still pays when the ` +

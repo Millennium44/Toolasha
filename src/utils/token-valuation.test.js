@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ initClientData: null, settings: {}, prices: {} }));
+const game = vi.hoisted(() => ({ initClientData: null, settings: {}, prices: {}, sources: {} }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: () => game.initClientData },
@@ -12,10 +12,16 @@ vi.mock('../core/config.js', () => ({
 // order book (which the dungeon token valuation used to do) skips them entirely
 vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid, { mode } = {}) => game.prices[hrid]?.[mode] ?? null,
+    getItemPriceInfo: (hrid, { mode } = {}) => {
+        const price = game.prices[hrid]?.[mode] ?? null;
+        return { price, source: price === null ? null : (game.sources[hrid] ?? 'book'), estimated: false };
+    },
+    getItemPrices: (hrid) => game.prices[hrid] ?? null,
 }));
 
 const { labyrinthTokenValue, labyrinthRewardValue, shopPurchasePrice, calculateDungeonTokenValue } =
     await import('./token-valuation.js');
+const { nextPriceDown } = await import('./market-values.js');
 
 /**
  * A shop where an essence is the best conversion and a scroll is the reward
@@ -114,6 +120,7 @@ describe('calculateDungeonTokenValue', () => {
 
     beforeEach(() => {
         game.settings = {};
+        game.sources = {};
         game.prices = {
             '/items/cape': { ask: 1000, bid: 900 },
             '/items/chimerical_essence': { ask: 200, bid: 180 },
@@ -156,6 +163,40 @@ describe('calculateDungeonTokenValue', () => {
 
         game.settings.expectedValue_respectPricingMode = false;
         expect(calculateDungeonTokenValue(TOKEN)).toBe(90); // back to the bid
+    });
+
+    describe('patient +1 tick', () => {
+        test('following the global mode, a sale at the ask steps one tick down', () => {
+            game.settings.profitCalc_pricingMode = 'hybrid';
+            game.settings.profitCalc_patientTick = true;
+            expect(calculateDungeonTokenValue(TOKEN)).toBeCloseTo(nextPriceDown(1000) / 10, 10);
+        });
+
+        test('the instant side the global mode picks is never moved', () => {
+            game.settings.profitCalc_pricingMode = 'conservative';
+            game.settings.profitCalc_patientTick = true;
+            expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
+        });
+
+        test('with respect switched off the bid is an exact side and stays put', () => {
+            game.settings.profitCalc_pricingMode = 'hybrid';
+            game.settings.profitCalc_patientTick = true;
+            game.settings.expectedValue_respectPricingMode = false;
+            expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
+        });
+
+        test('with the tick off the ask is exact', () => {
+            game.settings.profitCalc_pricingMode = 'hybrid';
+            game.settings.profitCalc_patientTick = false;
+            expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
+        });
+
+        test('a custom price has no queue to jump', () => {
+            game.settings.profitCalc_pricingMode = 'hybrid';
+            game.settings.profitCalc_patientTick = true;
+            game.sources['/items/cape'] = 'custom';
+            expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
+        });
     });
 
     test('nothing priceable in the shop falls back to the essence', () => {

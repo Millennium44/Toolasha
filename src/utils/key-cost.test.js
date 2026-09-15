@@ -17,7 +17,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const settings = vi.hoisted(() => ({ keyPricingMode: 'ask', pricingMode: 'hybrid' }));
+const settings = vi.hoisted(() => ({ keyPricingMode: 'ask', pricingMode: 'hybrid', patientTick: false }));
 
 const game = vi.hoisted(() => ({ initClientData: null, itemDetails: {} }));
 
@@ -33,7 +33,11 @@ const player = vi.hoisted(() => ({ id: 'char-1', artisan: 0 }));
 
 vi.mock('../core/config.js', () => ({
     default: {
-        getSettingValue: (id) => (id === 'profitCalc_pricingMode' ? settings.pricingMode : settings.keyPricingMode),
+        getSettingValue: (id) => {
+            if (id === 'profitCalc_pricingMode') return settings.pricingMode;
+            if (id === 'profitCalc_patientTick') return settings.patientTick;
+            return settings.keyPricingMode;
+        },
     },
 }));
 
@@ -87,6 +91,7 @@ const {
     invalidateKeyCostCache,
     resolveKeyPricing,
 } = await import('./key-cost.js');
+const { nextPriceUp } = await import('./market-values.js');
 
 const ESSENCE = '/items/chimerical_essence';
 const CHEST_KEY = '/items/chimerical_chest_key';
@@ -108,6 +113,7 @@ function essenceRecipe(itemHrid, count = 5) {
 beforeEach(() => {
     settings.keyPricingMode = 'ask';
     settings.pricingMode = 'hybrid';
+    settings.patientTick = false;
     player.id = 'char-1';
     player.artisan = 0;
     invalidateKeyCostCache();
@@ -137,6 +143,55 @@ beforeEach(() => {
         [CHEST_KEY]: { ask: 8000, bid: 4000 },
         [ENTRY_KEY]: { ask: 20000, bid: 15000 },
     };
+});
+
+describe('patient +1 tick', () => {
+    test('synced to a patient global buy side, the bid steps one tick up', () => {
+        settings.keyPricingMode = 'synced';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTick = true;
+
+        expect(describeKeyCost(ENTRY_KEY).buyPrice).toBe(nextPriceUp(15000));
+        expect(getKeyUnitCost(ENTRY_KEY)).toBe(nextPriceUp(15000));
+        // A caller echoing the resolved side back (as combat stats does) still follows it
+        expect(describeKeyCost(ENTRY_KEY, { mode: 'bid' }).buyPrice).toBe(nextPriceUp(15000));
+        // Asking for the other side is asking for an exact price
+        expect(describeKeyCost(ENTRY_KEY, { mode: 'ask' }).buyPrice).toBe(20000);
+    });
+
+    test('the craft basis follows the global side too, and its cache misses when the tick flips', () => {
+        settings.keyPricingMode = 'craft';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTick = true;
+
+        // No recipe, so the craft basis settles on the market quote
+        expect(getKeyUnitCost(ENTRY_KEY)).toBe(nextPriceUp(15000));
+        settings.patientTick = false;
+        expect(getKeyUnitCost(ENTRY_KEY)).toBe(15000);
+    });
+
+    test('an explicit bid setting is an exact side and is never moved', () => {
+        settings.keyPricingMode = 'bid';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTick = true;
+
+        expect(describeKeyCost(ENTRY_KEY).buyPrice).toBe(15000);
+        expect(getKeyUnitCost(ENTRY_KEY)).toBe(15000);
+    });
+
+    test('with the tick off, synced is exact', () => {
+        settings.keyPricingMode = 'synced';
+        settings.pricingMode = 'patientBuy';
+
+        expect(getKeyUnitCost(ENTRY_KEY)).toBe(15000);
+    });
+
+    test('an instant global buy side has no queue to jump', () => {
+        settings.keyPricingMode = 'synced';
+        settings.patientTick = true;
+
+        expect(getKeyUnitCost(ENTRY_KEY)).toBe(20000);
+    });
 });
 
 describe('describeKeyCost', () => {
