@@ -6,7 +6,7 @@
  * made coming back as an empty map and being written over the stored one, and
  * a second tab overwriting the first's samples.
  */
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -52,7 +52,7 @@ const storageMock = vi.hoisted(() => {
     };
 });
 
-const game = vi.hoisted(() => ({ characterId: 'char1', handlers: {}, skills: [], month: null }));
+const game = vi.hoisted(() => ({ characterId: 'char1', handlers: {}, skills: [], month: null, actions: [] }));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -62,10 +62,13 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterGameMode: () => 'standard',
         getCurrentCharacterName: () => 'Main',
         getSkills: () => game.skills,
+        getCurrentActions: () => game.actions,
         on: (event, handler) => {
             game.handlers[event] = handler;
         },
-        off: () => {},
+        off: (event, handler) => {
+            if (game.handlers[event] === handler) delete game.handlers[event];
+        },
     },
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
@@ -228,6 +231,78 @@ describe('a reconnect init parked across a switch', () => {
 
         const theirs = storageMock.storeFor('xpHistory').get('xpHistory_char2');
         expect(theirs.milking.map((sample) => sample.xp)).toEqual([5]);
+    });
+});
+
+describe('combat session survives a queue edit behind the running fight', () => {
+    // actionsUpdatedHandler is only wired up inside initialize(), and dataManager.getCurrentActions()
+    // (game.actions) is what it reads to tell a queue edit apart from the running fight itself ending —
+    // the delta (endCharacterActions) alone cannot, since it lists only what changed.
+    const combatSkill = (t, xp) => ({
+        endCharacterSkills: [{ skillHrid: '/skills/attack', experience: xp, updatedAt: new Date(t).toISOString() }],
+    });
+    const FIGHT = { id: 'fight1', actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 };
+
+    beforeEach(async () => {
+        game.actions = [];
+        await xpTracker.initialize();
+        xpTracker.characterId = 'char1';
+    });
+
+    afterEach(() => {
+        xpTracker.disable();
+    });
+
+    test('removing a queued zone while the running fight continues keeps the session', () => {
+        game.actions = [FIGHT];
+        xpTracker._onActionCompleted(combatSkill(HOUR, 100));
+        expect(xpTracker.combatSession.attack).toBeTruthy();
+
+        // The delta names only the removed queued zone; the merged queue still runs FIGHT
+        game.handlers.actions_updated({
+            endCharacterActions: [{ id: 'zone2', actionHrid: '/actions/combat/other_zone', isDone: true }],
+        });
+
+        expect(xpTracker.combatSession.attack).toBeTruthy();
+    });
+
+    test('the running fight actually ending resets the session', () => {
+        game.actions = [FIGHT];
+        xpTracker._onActionCompleted(combatSkill(HOUR, 100));
+        expect(xpTracker.combatSession.attack).toBeTruthy();
+
+        game.actions = []; // nothing left running after the merge
+        game.handlers.actions_updated({
+            endCharacterActions: [{ ...FIGHT, isDone: true }],
+        });
+
+        expect(xpTracker.combatSession).toEqual({});
+    });
+
+    test('a real switch to a different running fight resets the session', () => {
+        game.actions = [FIGHT];
+        xpTracker._onActionCompleted(combatSkill(HOUR, 100));
+        expect(xpTracker.combatSession.attack).toBeTruthy();
+
+        // FIGHT ended and a different zone is now the one actually running
+        const NEXT_FIGHT = { id: 'fight2', actionHrid: '/actions/combat/other_zone', isDone: false, ordinal: 1 };
+        game.actions = [NEXT_FIGHT];
+        game.handlers.actions_updated({
+            endCharacterActions: [{ ...FIGHT, isDone: true }, NEXT_FIGHT],
+        });
+
+        expect(xpTracker.combatSession).toEqual({});
+    });
+
+    test('cancelling the action still resets the session unconditionally', () => {
+        game.actions = [FIGHT];
+        xpTracker._onActionCompleted(combatSkill(HOUR, 100));
+        expect(xpTracker.combatSession.attack).toBeTruthy();
+
+        xpTracker._resetCombatSession();
+
+        expect(xpTracker.combatSession).toEqual({});
+        expect(xpTracker.combatActionId).toBeNull();
     });
 });
 

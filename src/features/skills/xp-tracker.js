@@ -13,6 +13,7 @@ import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-re
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { monthToDateFor } from './skill-checkpoints.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 
 const STORE_NAME = 'xpHistory';
 const WINDOW_10M = 10 * 60 * 1000;
@@ -233,6 +234,9 @@ class XPTracker {
             label: 'XPTracker',
         });
         this.combatSession = {}; // skillId → { startExp, startTime, lastExp }
+        // Id of the combat queue action combatSession is currently accruing for; see
+        // _resetCombatSession's caller in actionsUpdatedHandler.
+        this.combatActionId = null;
         this.timerRegistry = createTimerRegistry();
         this.unregisterObservers = [];
         this.tooltipObserver = null;
@@ -284,20 +288,30 @@ class XPTracker {
             const combatDone = data.endCharacterActions.some(
                 (a) => a?.actionHrid?.startsWith('/actions/combat/') && a.isDone === true
             );
-            if (combatDone) this._resetCombatSession();
+            if (!combatDone) return;
+
+            // The delta lists only what changed, so removing a queued zone while still
+            // fighting the running one also produces a finished combat row here. Reset
+            // only when the fight combatSession has been accruing for is no longer the
+            // one actually running, per dataManager's merged queue (already folded in by
+            // the time this fires, since this listens on dataManager rather than the raw
+            // socket — see the dataManager.on() call below).
+            const running = runningCombatAction(dataManager.getCurrentActions());
+            const sameFightRunning = this.combatActionId != null && running?.id === this.combatActionId;
+            if (!sameFightRunning) this._resetCombatSession();
         };
 
         const cancelActionHandler = () => {
             this._resetCombatSession();
         };
 
-        webSocketHook.on('actions_updated', actionsUpdatedHandler);
+        dataManager.on('actions_updated', actionsUpdatedHandler);
         webSocketHook.on('cancel_character_action', cancelActionHandler);
 
         this.unregisterObservers.push(() => {
             dataManager.off('character_initialized', characterInitHandler);
             dataManager.off('action_completed', actionCompletedHandler);
-            webSocketHook.off('actions_updated', actionsUpdatedHandler);
+            dataManager.off('actions_updated', actionsUpdatedHandler);
             webSocketHook.off('cancel_character_action', cancelActionHandler);
         });
 
@@ -327,6 +341,7 @@ class XPTracker {
         if (this.characterId !== charId) this.history.reset();
         this.characterId = charId;
         this.combatSession = {};
+        this.combatActionId = null;
 
         // Load persisted history for this character. An unreadable store
         // leaves whatever is in memory standing rather than blanking it.
@@ -405,6 +420,11 @@ class XPTracker {
                 } else {
                     this.combatSession[skillId].lastExp = skillEntry.experience;
                 }
+
+                // Remember which queue action combat XP is currently accruing for, so a
+                // later actions_updated delta can tell a queue edit behind this fight
+                // apart from the fight itself ending; see actionsUpdatedHandler above.
+                this.combatActionId = runningCombatAction(dataManager.getCurrentActions())?.id ?? this.combatActionId;
             }
         });
 
@@ -418,6 +438,7 @@ class XPTracker {
      */
     _resetCombatSession() {
         this.combatSession = {};
+        this.combatActionId = null;
     }
 
     /**
