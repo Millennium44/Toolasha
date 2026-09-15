@@ -18,6 +18,7 @@ import {
     createPricingSideSelect,
     PRICING_SELECT_BACKGROUND,
     PRICING_SIDE_SETTING_KEYS,
+    PRICING_SIDE_TOOLTIP_SETTING_KEYS,
     syncPricingSideSelect,
 } from '../../utils/pricing-side-select.js';
 import actionPanelSort from './action-panel-sort.js';
@@ -81,7 +82,8 @@ class ActionFilter {
         // Keep the Buy/Sell dropdowns in step with every setting they show,
         // wherever it changes: the Settings panel, the Best Items header, the
         // naming convention, or a dropdown on this toolbar itself
-        for (const key of PRICING_SIDE_SETTING_KEYS) {
+        // The auto-fill settings move only the dropdowns' tooltips, never a price
+        for (const key of [...PRICING_SIDE_SETTING_KEYS, ...PRICING_SIDE_TOOLTIP_SETTING_KEYS]) {
             this.unregisterHandlers.push(
                 config.onSettingChange(key, () => {
                     if (this._updatePricingSelects) this._updatePricingSelects();

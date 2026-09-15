@@ -28,6 +28,7 @@ import {
     createPricingSideSelect,
     PRICING_SELECT_BACKGROUND,
     PRICING_SIDE_SETTING_KEYS,
+    PRICING_SIDE_TOOLTIP_SETTING_KEYS,
     syncPricingSideSelect,
 } from '../../utils/pricing-side-select.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
@@ -105,6 +106,10 @@ class AlchemyBestItems {
         };
         this.pricingUnsubscribers = [
             ...PRICING_SIDE_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
+            // The auto-fill settings move only the dropdowns' tooltips: no re-rank
+            ...PRICING_SIDE_TOOLTIP_SETTING_KEYS.map((key) =>
+                config.onSettingChange(key, () => this.updatePricingSelects())
+            ),
             config.onSettingsLoaded(onPricingChange),
         ];
     }

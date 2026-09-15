@@ -1279,7 +1279,7 @@ export const settingsGroups = {
                     { value: 'match', label: 'Match best sell price' },
                     { value: 'undercut', label: 'Undercut by 1 (best sell - 1)' },
                 ],
-                help: 'When creating sell listings, choose whether to match or undercut the current best sell price',
+                help: 'When creating sell listings, choose whether to match or undercut the current best sell price. Only the listing form uses this: profit estimates follow the Sell pricing dropdown and its −1 tick, set separately.',
             },
             market_autoFillBuyStrategy: {
                 id: 'market_autoFillBuyStrategy',
@@ -1295,7 +1295,7 @@ export const settingsGroups = {
                     { value: 'match', label: 'Match best buy price' },
                     { value: 'undercut', label: 'Undercut by 1 (best buy - 1)' },
                 ],
-                help: 'When creating buy listings, choose whether to outbid, match, or undercut the current best buy price',
+                help: 'When creating buy listings, choose whether to outbid, match, or undercut the current best buy price. Only the listing form uses this: profit estimates follow the Buy pricing dropdown and its +1 tick, set separately.',
             },
             market_autoClickMax: {
                 id: 'market_autoClickMax',
@@ -1687,14 +1687,14 @@ export const settingsGroups = {
                 label: 'Patient buys: +1 tick',
                 type: 'checkbox',
                 default: false,
-                help: 'When the pricing mode above buys at the bid, assume you jump the queue: a patient buy is priced one market tick above the bid. Instant buys (at the ask) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone.',
+                help: 'When the pricing mode above buys at the bid, assume you jump the queue: a patient buy is priced one market tick above the bid. Instant buys (at the ask) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone. The listing auto-fill strategy is separate: if you outbid by 1 when listing, turn this on to match it.',
             },
             profitCalc_patientTickSell: {
                 id: 'profitCalc_patientTickSell',
                 label: 'Patient sells: −1 tick',
                 type: 'checkbox',
                 default: false,
-                help: 'When the pricing mode above sells at the ask, assume you jump the queue: a patient sell is priced one market tick below the ask. Instant sells (at the bid) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone.',
+                help: 'When the pricing mode above sells at the ask, assume you jump the queue: a patient sell is priced one market tick below the ask. Instant sells (at the bid) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone. The listing auto-fill strategy is separate: if you undercut by 1 when listing, turn this on to match it.',
             },
             pricing_testerShop: {
                 id: 'pricing_testerShop',

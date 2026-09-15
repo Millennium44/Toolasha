@@ -877,6 +877,7 @@ describe('the Buy / Sell pricing dropdowns in the modal header', () => {
         'profitCalc_patientTickBuy',
         'profitCalc_patientTickSell',
     ];
+    const AUTO_FILL_KEYS = ['fillMarketOrderPrice', 'market_autoFillBuyStrategy', 'market_autoFillSellStrategy'];
 
     /** Pick an option the way a player does */
     function choose(select, choice) {
@@ -1001,15 +1002,33 @@ describe('the Buy / Sell pricing dropdowns in the modal header', () => {
         expect(calculator.coinify).not.toHaveBeenCalled();
     });
 
+    test('an auto-fill strategy change updates the tooltips live, without re-ranking', async () => {
+        settings.values.profitCalc_pricingMode = 'optimistic';
+        settings.values.market_autoFillSellStrategy = 'match';
+        writeElsewhere('profitCalc_patientTickSell', true);
+        await bestItems.loadRankings('coinify');
+        expect(sellSelect().title).toMatch(/assumes ask −1, but your listing auto-fill doesn't undercut/);
+        calculator.coinify.mockClear();
+
+        writeElsewhere('market_autoFillSellStrategy', 'undercut');
+        expect(sellSelect().title).not.toMatch(/auto-fill/);
+
+        writeElsewhere('market_autoFillBuyStrategy', 'outbid');
+        expect(buySelect().title).toMatch(/outbids by 1, but profit assumes the plain bid/);
+
+        expect(calculator.coinify).not.toHaveBeenCalled();
+        expect(settings.values.profitCalc_patientTickBuy).toBe(false);
+    });
+
     test('every listener is removed on disable', () => {
-        for (const key of PRICING_KEYS) {
+        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS]) {
             expect(settings.changeListeners[key]).toHaveLength(1);
         }
         expect(settings.loadedListeners).toHaveLength(1);
 
         bestItems.disable();
 
-        for (const key of PRICING_KEYS) {
+        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS]) {
             expect(settings.changeListeners[key]).toHaveLength(0);
         }
         expect(settings.loadedListeners).toHaveLength(0);

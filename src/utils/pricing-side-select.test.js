@@ -36,6 +36,8 @@ vi.mock('./market-values.js', () => ({
 const {
     PRICING_SIDE_CHOICES,
     PRICING_SIDE_SETTING_KEYS,
+    PRICING_SIDE_TOOLTIP_SETTING_KEYS,
+    autoFillMismatchNote,
     applyPricingSideChoice,
     createPricingSideSelect,
     currentPricingSideChoice,
@@ -81,6 +83,62 @@ describe('a pricing mode is a buy side and a sell side', () => {
                 'profitCalc_pricingNaming',
             ].sort()
         );
+    });
+});
+
+describe('autoFillMismatchNote', () => {
+    // side × dropdown choice × auto-fill strategy → a pattern the note must match, or '' for none
+    const EXPECTED = {
+        buy: {
+            instant: { outbid: '', match: '', undercut: '' },
+            patient: {
+                outbid: /outbids by 1, but profit assumes the plain bid/,
+                match: '',
+                undercut: /undercuts the bid by 1, which profit can't model/,
+            },
+            patientTick: {
+                outbid: '',
+                match: /assumes bid \+1, but your listing auto-fill doesn't outbid/,
+                undercut: /assumes bid \+1, but your listing auto-fill undercuts/,
+            },
+        },
+        sell: {
+            instant: { outbid: '', match: '', undercut: '' },
+            patient: { outbid: '', match: '', undercut: /undercuts by 1, but profit assumes the plain ask/ },
+            patientTick: {
+                outbid: '',
+                match: /assumes ask −1, but your listing auto-fill doesn't undercut/,
+                undercut: '',
+            },
+        },
+    };
+    const cases = [];
+    for (const [side, byChoice] of Object.entries(EXPECTED)) {
+        for (const [choice, byStrategy] of Object.entries(byChoice)) {
+            for (const [strategy, expected] of Object.entries(byStrategy)) {
+                cases.push({ side, choice, strategy, expected });
+            }
+        }
+    }
+
+    test.each(cases)('$side $choice with auto-fill $strategy', ({ side, choice, strategy, expected }) => {
+        const note = autoFillMismatchNote(side, choice, strategy);
+        if (expected === '') expect(note).toBe('');
+        else expect(note).toMatch(expected);
+    });
+
+    test('an unknown side, choice or strategy makes no claim', () => {
+        expect(autoFillMismatchNote('hold', 'patient', 'outbid')).toBe('');
+        expect(autoFillMismatchNote('buy', 'eventually', 'outbid')).toBe('');
+        expect(autoFillMismatchNote('buy', 'patientTick', 'sideways')).toBe('');
+        expect(autoFillMismatchNote('sell', 'patientTick', undefined)).toBe('');
+    });
+
+    test('the tooltip listens to auto-fill on/off and both strategies, none of which it prices', () => {
+        expect([...PRICING_SIDE_TOOLTIP_SETTING_KEYS].sort()).toEqual(
+            ['fillMarketOrderPrice', 'market_autoFillBuyStrategy', 'market_autoFillSellStrategy'].sort()
+        );
+        for (const key of PRICING_SIDE_TOOLTIP_SETTING_KEYS) expect(PRICING_SIDE_SETTING_KEYS).not.toContain(key);
     });
 });
 
@@ -212,6 +270,35 @@ describe('the dropdown element', () => {
         select.dispatchEvent(new Event('change'));
 
         expect(onChoose).toHaveBeenCalledWith('patient');
+        expect(live.writes).toEqual([]);
+    });
+
+    test('the tooltip gains the auto-fill note on sync, and loses it once the two agree', () => {
+        live.values.profitCalc_pricingMode = 'optimistic';
+        live.values.market_autoFillBuyStrategy = 'outbid';
+        const buy = createPricingSideSelect('buy');
+        expect(buy.title).toMatch(/one market tick above the bid/);
+        expect(buy.title).toMatch(/outbids by 1, but profit assumes the plain bid/);
+
+        live.values.profitCalc_patientTickBuy = true;
+        syncPricingSideSelect(buy);
+        expect(buy.title).not.toMatch(/auto-fill/);
+
+        live.values.market_autoFillBuyStrategy = 'match';
+        syncPricingSideSelect(buy);
+        expect(buy.title).toMatch(/doesn't outbid/);
+    });
+
+    test('no note while listing auto-fill is switched off, and syncing writes no setting', () => {
+        live.values.profitCalc_pricingMode = 'optimistic';
+        live.values.market_autoFillSellStrategy = 'undercut';
+        live.values.fillMarketOrderPrice = false;
+        const sell = createPricingSideSelect('sell');
+        expect(sell.title).not.toMatch(/auto-fill/);
+
+        live.values.fillMarketOrderPrice = true;
+        syncPricingSideSelect(sell);
+        expect(sell.title).toMatch(/undercuts by 1, but profit assumes the plain ask/);
         expect(live.writes).toEqual([]);
     });
 

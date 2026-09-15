@@ -67,6 +67,85 @@ const SIDE_TITLES = Object.freeze({
 export const PRICING_SELECT_BACKGROUND = '#1e1e1e';
 
 /**
+ * The marketplace listing auto-fill strategy per side. These price real orders
+ * and are never written from here: a dropdown only mentions a mismatch in its
+ * tooltip, because changing a profit view must not change how orders are placed.
+ */
+export const AUTO_FILL_STRATEGY_SETTINGS = Object.freeze({
+    buy: 'market_autoFillBuyStrategy',
+    sell: 'market_autoFillSellStrategy',
+});
+
+/** With auto-fill off the listing form is left as the game fills it, so no strategy applies */
+const AUTO_FILL_ENABLED_SETTING = 'fillMarketOrderPrice';
+
+/**
+ * Settings that change only a dropdown's tooltip. Kept apart from
+ * {@link PRICING_SIDE_SETTING_KEYS} so a surface resyncs the dropdowns for them
+ * without re-pricing anything.
+ */
+export const PRICING_SIDE_TOOLTIP_SETTING_KEYS = Object.freeze([
+    AUTO_FILL_ENABLED_SETTING,
+    AUTO_FILL_STRATEGY_SETTINGS.buy,
+    AUTO_FILL_STRATEGY_SETTINGS.sell,
+]);
+
+/**
+ * The tooltip line for a patient side whose profit assumption disagrees with the
+ * listing auto-fill strategy for that side. Instant sides take the other side's
+ * listing rather than placing one, so they never carry a note.
+ *
+ * Buy: Patient +1 agrees with 'outbid', Patient with 'match'. Sell: Patient −1
+ * agrees with 'undercut', Patient with 'match'. A buy 'undercut' is below the
+ * bid, which no dropdown choice prices. An unrecognised strategy makes no claim.
+ *
+ * @param {'buy'|'sell'} side - Transaction side
+ * @param {'instant'|'patient'|'patientTick'} choice - What the side's dropdown shows
+ * @param {string} autoFillStrategy - That side's auto-fill strategy ('outbid'|'match'|'undercut')
+ * @returns {string} The note, or '' when the two agree or cannot be compared
+ */
+export function autoFillMismatchNote(side, choice, autoFillStrategy) {
+    if (side === 'buy') {
+        if (choice === 'patient') {
+            if (autoFillStrategy === 'outbid') {
+                return 'Your listing auto-fill outbids by 1, but profit assumes the plain bid.';
+            }
+            if (autoFillStrategy === 'undercut') {
+                return "Your listing auto-fill undercuts the bid by 1, which profit can't model: it assumes the plain bid.";
+            }
+        } else if (choice === 'patientTick') {
+            if (autoFillStrategy === 'match') {
+                return "Profit assumes bid +1, but your listing auto-fill doesn't outbid: it matches the bid.";
+            }
+            if (autoFillStrategy === 'undercut') {
+                return "Profit assumes bid +1, but your listing auto-fill undercuts the bid by 1, which profit can't model.";
+            }
+        }
+        return '';
+    }
+    if (side === 'sell') {
+        if (choice === 'patient' && autoFillStrategy === 'undercut') {
+            return 'Your listing auto-fill undercuts by 1, but profit assumes the plain ask.';
+        }
+        if (choice === 'patientTick' && autoFillStrategy === 'match') {
+            return "Profit assumes ask −1, but your listing auto-fill doesn't undercut: it matches the ask.";
+        }
+    }
+    return '';
+}
+
+/**
+ * The auto-fill mismatch note for a side under the current settings.
+ * @param {'buy'|'sell'} side - Transaction side
+ * @param {'instant'|'patient'|'patientTick'} choice - What the side's dropdown shows
+ * @returns {string}
+ */
+function currentAutoFillNote(side, choice) {
+    if (config.getSettingValue(AUTO_FILL_ENABLED_SETTING, true) === false) return '';
+    return autoFillMismatchNote(side, choice, config.getSettingValue(AUTO_FILL_STRATEGY_SETTINGS[side], 'match'));
+}
+
+/**
  * The book sides a stored pricing mode prices at. An unrecognised mode reads as
  * 'hybrid', the setting's default and what `getPricingMode` falls back to.
  * @param {string} mode - A `profitCalc_pricingMode` value
@@ -157,7 +236,9 @@ export function applyPricingSideChoice(side, choice) {
 
 /**
  * Bring a dropdown built by {@link createPricingSideSelect} up to date: option
- * text for the current naming, the selected choice, and the tooltip.
+ * text for the current naming, the selected choice, and the tooltip with any
+ * auto-fill mismatch note. A surface calls this for
+ * {@link PRICING_SIDE_TOOLTIP_SETTING_KEYS} changes as well as pricing ones.
  * @param {HTMLSelectElement} select - The dropdown
  * @returns {void}
  */
@@ -168,8 +249,10 @@ export function syncPricingSideSelect(select) {
     for (const option of select.options) {
         option.textContent = pricingSideChoiceLabel(side, option.value, instantNaming);
     }
-    select.value = currentPricingSideChoice(side);
-    select.title = SIDE_TITLES[side];
+    const choice = currentPricingSideChoice(side);
+    select.value = choice;
+    const note = currentAutoFillNote(side, choice);
+    select.title = note ? `${SIDE_TITLES[side]}\n\n${note}` : SIDE_TITLES[side];
 }
 
 /**

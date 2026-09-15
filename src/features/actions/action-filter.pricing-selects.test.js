@@ -83,6 +83,7 @@ const PRICING_KEYS = [
     'profitCalc_patientTickBuy',
     'profitCalc_patientTickSell',
 ];
+const AUTO_FILL_KEYS = ['fillMarketOrderPrice', 'market_autoFillBuyStrategy', 'market_autoFillSellStrategy'];
 
 /** Build a skill page title bar with one production tile carrying a profit section */
 function buildSkillPage() {
@@ -237,6 +238,26 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         expect(sellSelect().value).toBe('patientTick');
     });
 
+    it('an auto-fill strategy change updates the tooltips live, without re-rendering or writing a setting', () => {
+        mocks.settings.profitCalc_pricingMode = 'optimistic';
+        actionFilter.injectFilterInput(buildSkillPage());
+        expect(buySelect().title).not.toMatch(/auto-fill/);
+
+        writeElsewhere('market_autoFillBuyStrategy', 'outbid');
+        expect(buySelect().title).toMatch(/outbids by 1, but profit assumes the plain bid/);
+
+        writeElsewhere('market_autoFillSellStrategy', 'undercut');
+        expect(sellSelect().title).toMatch(/undercuts by 1, but profit assumes the plain ask/);
+
+        writeElsewhere('fillMarketOrderPrice', false);
+        expect(buySelect().title).not.toMatch(/auto-fill/);
+        expect(sellSelect().title).not.toMatch(/auto-fill/);
+
+        expect(mocks.displayProductionProfit).not.toHaveBeenCalled();
+        expect(mocks.settings.profitCalc_patientTickBuy).toBe(false);
+        expect(mocks.settings.profitCalc_pricingMode).toBe('optimistic');
+    });
+
     it('is torn down on cleanup, and its listeners never stack across re-initialization', async () => {
         actionFilter.injectFilterInput(buildSkillPage());
         actionFilter.cleanup();
@@ -247,11 +268,14 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
             await actionFilter.initialize();
             actionFilter.cleanup();
         }
-        for (const key of PRICING_KEYS) expect(mocks.changeListeners[key] || []).toHaveLength(0);
+        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS]) {
+            expect(mocks.changeListeners[key] || []).toHaveLength(0);
+        }
         expect(mocks.loadedListeners).toHaveLength(0);
 
         await actionFilter.initialize();
         expect(mocks.changeListeners.profitCalc_pricingMode).toHaveLength(1);
+        for (const key of AUTO_FILL_KEYS) expect(mocks.changeListeners[key]).toHaveLength(1);
         // one to resync, one to re-render for a change made from Settings
         expect(mocks.changeListeners.profitCalc_patientTickBuy).toHaveLength(2);
     });
