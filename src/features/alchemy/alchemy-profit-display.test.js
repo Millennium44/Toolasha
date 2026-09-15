@@ -40,6 +40,10 @@ const calculator = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => true,
+        getSettingValue: (key, def) => (key === 'profitCalc_pricingMode' ? 'optimistic' : def),
+        getPricingModeDisplayLabel: (mode) => `label:${mode}`,
+        onSettingChange: () => () => {},
+        onSettingsLoaded: () => () => {},
         COLOR_TEXT_PRIMARY: '#fff',
         COLOR_TEXT_SECONDARY: '#888',
         COLOR_INFO: '#09f',
@@ -504,6 +508,74 @@ describe('createActionSpeedTimeSection', () => {
         const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         expect(display.createActionSpeedTimeSection({}, repeatField('1'))).toBeNull();
+        expect(logged).toHaveBeenCalled();
+    });
+});
+
+describe('handlePricingChange', () => {
+    /** Build a minimal displayElement carrying the "Pricing Mode:" line the way createDisplay does. */
+    function displayElementWithModeLine(initialText) {
+        const root = document.createElement('div');
+        const modeDiv = document.createElement('div');
+        modeDiv.setAttribute('data-mwi-alchemy-pricing-mode', 'true');
+        modeDiv.textContent = initialText;
+        root.appendChild(modeDiv);
+        return root;
+    }
+
+    afterEach(() => {
+        display.displayElement = null;
+        display.isActive = false;
+    });
+
+    test('relabels the Pricing Mode line using the current mode', () => {
+        display.displayElement = displayElementWithModeLine('Pricing Mode: Stale');
+        display.isActive = false; // isolate the relabel from the rebuild path below
+
+        display.handlePricingChange();
+
+        const modeDiv = display.displayElement.querySelector('[data-mwi-alchemy-pricing-mode]');
+        expect(modeDiv.textContent).toBe('Pricing Mode: label:optimistic');
+    });
+
+    test('clears the fingerprint and rebuilds the display while active', () => {
+        display.displayElement = displayElementWithModeLine('Pricing Mode: Stale');
+        display.isActive = true;
+        display.lastFingerprint = 'some-stale-fingerprint';
+        const checkAndUpdate = vi.spyOn(display, 'checkAndUpdateDisplay').mockImplementation(() => {});
+
+        display.handlePricingChange();
+
+        expect(display.lastFingerprint).toBeNull();
+        expect(checkAndUpdate).toHaveBeenCalled();
+    });
+
+    test('an inactive display still relabels but does not force a rebuild', () => {
+        display.displayElement = displayElementWithModeLine('Pricing Mode: Stale');
+        display.isActive = false;
+        const checkAndUpdate = vi.spyOn(display, 'checkAndUpdateDisplay').mockImplementation(() => {});
+
+        display.handlePricingChange();
+
+        expect(checkAndUpdate).not.toHaveBeenCalled();
+    });
+
+    test('no display element on screen is a no-op, not a throw', () => {
+        display.displayElement = null;
+        display.isActive = false;
+
+        expect(() => display.handlePricingChange()).not.toThrow();
+    });
+
+    test('a failure inside the handler is caught and logged rather than left to break the panel', () => {
+        display.displayElement = displayElementWithModeLine('Pricing Mode: Stale');
+        display.isActive = false;
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(display.displayElement, 'querySelector').mockImplementation(() => {
+            throw new Error('boom');
+        });
+
+        expect(() => display.handlePricingChange()).not.toThrow();
         expect(logged).toHaveBeenCalled();
     });
 });
