@@ -200,6 +200,13 @@ class CombatBossEta {
      * @returns {string|null}
      */
     getEtaText() {
+        // Whatever the chip would refuse to show, sharing refuses too — the
+        // tracking state is not reset while a zone stays queued behind a
+        // skilling action, so without this a shared message names a boss
+        // countdown the header is not showing
+        const nameRow = document.querySelector(CURRENT_ACTION_SELECTOR)?.querySelector(ACTION_NAME_SELECTOR);
+        if (this._suppressed(nameRow)) return null;
+
         let info = null;
         if (this.isDungeon && this.maxWaves > 0 && this.currentWave > 0) {
             info = wavesToDungeonBoss(this.currentWave, this.maxWaves);
@@ -209,24 +216,31 @@ class CombatBossEta {
         return info ? formatBossEta(info, averageBattleMs(this.samples)) || null : null;
     }
 
-    _injectOrUpdate() {
-        const currentAction = document.querySelector(CURRENT_ACTION_SELECTOR);
-        const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);
-        if (!currentAction || !nameRow) return;
-
-        // Same guards as the battle counter: never show on a labyrinth fight
-        // (no boss-cycle concept there) or beside a skilling action queued in
-        // front of a stale combat state.
-        const isLabyrinthFight = /labyrinth/i.test(nameRow.textContent || '');
+    /**
+     * Same guards as the battle counter: never on a labyrinth fight (no
+     * boss-cycle concept there) or beside a skilling action queued in front of
+     * a stale combat state.
+     * @param {Element|null|undefined} nameRow - The header's action-name row, when on screen
+     * @returns {boolean}
+     */
+    _suppressed(nameRow) {
+        const isLabyrinthFight = /labyrinth/i.test(nameRow?.textContent || '');
         const runningAction = (dataManager.getCurrentActions() || [])
             .filter((action) => !action.isDone)
             .sort(compareActionQueueOrder)[0];
         const inSkillingAction =
             !!runningAction && !String(runningAction.actionHrid || '').startsWith('/actions/combat/');
+        return isLabyrinthFight || inSkillingAction;
+    }
+
+    _injectOrUpdate() {
+        const currentAction = document.querySelector(CURRENT_ACTION_SELECTOR);
+        const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);
+        if (!currentAction || !nameRow) return;
 
         let text = '';
         let title = '';
-        if (!isLabyrinthFight && !inSkillingAction) {
+        if (!this._suppressed(nameRow)) {
             let info = null;
             let noun = 'battle';
             if (this.isDungeon && this.maxWaves > 0 && this.currentWave > 0) {

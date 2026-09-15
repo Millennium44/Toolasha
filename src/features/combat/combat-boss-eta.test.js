@@ -213,6 +213,33 @@ describe('combat boss eta', () => {
         expect(etaText()).toBeNull();
     });
 
+    test('getEtaText goes quiet with the chip when a skilling action runs in front of a queued zone', () => {
+        game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        game.wsHandlers.new_battle({ battleId: 323 });
+        expect(combatBossEta.getEtaText()).toBe('7 to boss');
+
+        // The zone stays queued, so _checkCombatEnded resets nothing
+        game.actions = [
+            { actionHrid: '/actions/foraging/something', isDone: false, ordinal: -1, currentCount: 3 },
+            { actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 },
+        ];
+        game.dmHandlers.actions_updated({ endCharacterActions: game.actions });
+
+        expect(etaText()).toBeNull();
+        expect(combatBossEta.getEtaText()).toBeNull();
+    });
+
+    test('getEtaText says nothing on a labyrinth fight, as the chip does', () => {
+        buildHeader('Labyrinth - Chimerical Beast');
+        game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        game.wsHandlers.new_battle({ battleId: 323 });
+
+        expect(etaText()).toBeNull();
+        expect(combatBossEta.getEtaText()).toBeNull();
+    });
+
     test('changing zones resets the rolling average', () => {
         game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
         game.actionDetails[BOSS_ZONE] = bossZoneDetail;
