@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Chat message shares dungeon chest luck
 
 - In a dungeon the combat chat message's luck field was always left out, because the monster-drop model does not cover dungeons; it now shows your chest luck ("chest luck 62nd pct") once chests have been counted for that dungeon and tier.
+- Dungeon chest luck counted only the runs Toolasha had saved while a page was open, so a session with runs played unwatched divided all its chests by too few runs and read as the 100th percentile for everyone. It now takes the run count from the server's own battle number.
 
 ### Net worth follows the Iron Cow valuation straight away
 
