@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shared luck says how far off expectation it was
+
+- The chat message's luck field now pairs the percentile with a plain comparison against expectation, e.g. "chest luck 89th pct (+2% vs expected)", because a zone whose value rides on a rare pushes an ordinary session below the 50th percentile. The bracket is left out when there is no expectation to compare against, and for a party member in a normal zone, where only the session total is modelled.
+
 ### A trimmed chat message no longer ends on a dangling separator
 
 - When a shared message had to be cut to fit the chat box, backing off to the last space left the "|" that introduced the field it had just dropped, so the line promised a field it never delivered.
