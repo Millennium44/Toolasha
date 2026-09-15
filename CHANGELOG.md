@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: overnight tea cost too little, and the battle counter reset when you queued something
+
+- The welcome-back value priced consumed items at the sell side, so a night's tea and food cost read low; they now use the buy side.
+- Queuing, removing or dragging an action behind a running fight no longer resets the battle counter or wipes the boss ETA's timing, and removing a queued zone no longer resets the combat XP session; queuing a second enhance behind the running one no longer ends the enhancing session.
+- The combat sim's comparison against earlier runs re-prices after a pricing change, instead of showing the change as a gear difference.
+- The philo table prices its tea and bonus drops on its own pricing mode, and chest values keep refreshing after a character switch.
+- Chat sharing keeps emoji whole at the limit, sizes messages around text already in the chat box, says "chat is full" rather than "not visible", and no longer shares or saves the previous character's stats when you switch mid-load.
+- A failed save during the per-side +1 tick migration now retries on the next load instead of dropping the setting.
+- The Buy and Sell dropdown tooltips note when the listing auto-fill strategy outbids or undercuts differently from what profit assumes, and the tick and auto-fill settings' help text points at each other.
+
 ### Buy and Sell pricing dropdowns
 
 - The skill toolbar and alchemy's Best Items header now have a Buy dropdown (Instant / Patient / Patient +1) and a Sell dropdown (Instant / Patient / Patient −1) in place of the Mode button, so each side and its one-tick-inside-the-spread price can be switched without opening Settings.
