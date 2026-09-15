@@ -442,6 +442,14 @@ class CombatDropLuck {
     /**
      * How the dungeon's chests have fallen, per player.
      *
+     * The completion count behind the percentile prefers the server's own
+     * `battleId` (the run in progress minus one) over the tracker/storage
+     * count, because it is the one source that cannot miss a run that
+     * completed off-screen — while no Toolasha page was open, on another
+     * device, or without a chat message the tracker could key off. The
+     * tracker/storage count is kept as the fallback for when there is no
+     * usable `battleId` yet, and as a floor in the unlikely case it is ahead.
+     *
      * @returns {{partySize: number, players: Array<Object>, counted: string,
      *   entryKey: Object|null}|null} Null outside a dungeon
      */
@@ -451,9 +459,26 @@ class CombatDropLuck {
 
         const partySize = tracked.partySize || 1;
         const gaps = this.context?.levelGaps || {};
-        // The tracker's count is the whole party's, so it applies to everybody;
-        // the chest-rise count is per player and only stands in when it has to
-        const party = (tracked.restored || 0) + tracked.completions;
+        // The tracker/storage count is the whole party's, so it applies to
+        // everybody; the chest-rise count is per player and only stands in
+        // when neither of the other two has anything.
+        const fromStorage = (tracked.restored || 0) + tracked.completions;
+        // battleId numbers the run in progress, so the run before it is the
+        // last one that actually finished and paid out. It is the server's
+        // own counter, read off the same `new_battle` message that carries
+        // the chest totals below — so the two can never be out of step with
+        // each other — and unlike the tracker/storage count it cannot miss a
+        // completion that happened while no Toolasha page was open, on
+        // another device, or without a party chat message to key off.
+        const fromBattleId = tracked.battleId > 0 ? tracked.battleId - 1 : null;
+        // The tracker/storage count can only ever be short, never long, so if
+        // it is somehow ahead of the server's own counter that is the more
+        // trustworthy figure — take whichever is larger rather than
+        // preferring one over the other. In practice this only happens when
+        // a completion is recorded between this battleId arriving and the
+        // next one (the tracker sees it immediately; the counter waits for
+        // the next `new_battle`), and resolves itself on the next message.
+        const party = fromBattleId !== null ? Math.max(fromBattleId, fromStorage) : fromStorage;
         const fromTracker = party > 0;
 
         const players = Object.entries(tracked.tallies).map(([name, tally]) => {

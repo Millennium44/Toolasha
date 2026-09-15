@@ -175,9 +175,11 @@ describe('watching a dungeon pay out', () => {
         expect(mine.luck).toBeNull();
     });
 
-    test('completions from before the reload are recovered from the tracker history', async () => {
+    test('without a usable battleId, completions from before the reload are recovered from the tracker history', async () => {
         // The chests come back on their own; the runs behind them are counted
-        // from what the tracker has been writing down all along
+        // from what the tracker has been writing down all along. battleId 0
+        // stands in for a payload that never carried one, so the storage
+        // count is what's left to fall back on.
         game.runs = [
             { dungeonName: 'Chimerical Den', timestamp: '2026-08-03T01:10:00Z' },
             { dungeonName: 'Chimerical Den', timestamp: '2026-08-03T01:20:00Z' },
@@ -187,7 +189,7 @@ describe('watching a dungeon pay out', () => {
             { dungeonName: 'Pirate Cove', timestamp: '2026-08-03T01:30:00Z' },
         ];
 
-        combatDropLuck._rememberContext({ ...battle(40, [7, 6]), combatStartTime: '2026-08-03T01:00:00Z' });
+        combatDropLuck._rememberContext({ ...battle(0, [7, 6]), combatStartTime: '2026-08-03T01:00:00Z' });
 
         // The restore is fired off the message handler rather than awaited there,
         // so let it land before reading
@@ -198,6 +200,44 @@ describe('watching a dungeon pay out', () => {
         expect(luck.counted).toBe('tracker');
         expect(luck.players[0].luck.completions).toBe(2);
         expect(luck.players[0].luck.chests).toBe(7);
+    });
+
+    test('the live session: battleId gives the true run count, not the undercount from before this tab opened', async () => {
+        // MillenniumTest, party of 5, Pirate Cove T2, 2026-09-15. The session
+        // started 2026-09-12T01:02:44Z; battleId 678 at the first new_battle
+        // after page load means 677 runs have actually completed. The tracker
+        // only saw 554 of them written to storage before this tab opened —
+        // the other 123 happened off-screen — so the old completions figure
+        // (554 restored + 1 watched = 555) badly undercounts, and dividing
+        // 891 chests by 555 instead of 677 is what used to read as the 100th
+        // percentile for every player in the party.
+        const startedAt = '2026-09-12T01:02:44Z';
+        game.runs = Array.from({ length: 554 }, (_, i) => ({
+            dungeonName: 'Chimerical Den',
+            timestamp: new Date(new Date(startedAt).getTime() + (i + 1) * 60000).toISOString(),
+        }));
+
+        const players = [891, 875, 880, 885, 890].map((chests, index) => ({
+            character: { id: index === 0 ? 'me' : `p${index}`, name: index === 0 ? 'Mine' : `Player ${index}` },
+            combatDetails: { combatLevel: 100, combatStats: { combatDropQuantity: 0.295 } },
+            totalLootMap: { 1: { itemHrid: '/items/chimerical_chest', count: chests } },
+        }));
+
+        combatDropLuck._rememberContext({ battleId: 678, combatStartTime: startedAt, players });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const luck = combatDropLuck.dungeonChestLuck();
+        expect(luck.restored).toBe(554);
+        expect(luck.counted).toBe('tracker');
+
+        const [mine] = luck.players;
+        // The server's own counter, not the storage undercount of 555
+        expect(mine.luck.completions).toBe(677);
+        expect(mine.luck.chests).toBe(891);
+        // 891 / 677 ≈ 1.32 against a mean of 1.295 — ordinary luck, not the
+        // 100th percentile every player used to read
+        expect(mine.luck.percentile).toBeLessThan(1);
+        expect(mine.luck.percentile).toBeGreaterThan(0.5);
     });
 
     test('each rise is one completion, and the party splits the five', () => {
@@ -253,9 +293,11 @@ describe('watching a dungeon pay out', () => {
         expect(theirs.observed).toBe(0);
     });
 
-    test('without the tracker it falls back to watching the chests', () => {
-        combatDropLuck._rememberContext(battle(1, [0, 0]));
-        combatDropLuck._rememberContext(battle(2, [4, 3]));
+    test('without a battleId or the tracker, it falls back to watching the chests', () => {
+        // battleId 0 stands in for a payload without one, so neither of the
+        // two counted sources has anything and only the chest rises do
+        combatDropLuck._rememberContext(battle(0, [0, 0]));
+        combatDropLuck._rememberContext(battle(0, [4, 3]));
 
         expect(combatDropLuck.dungeonChestLuck().counted).toBe('chests');
         expect(combatDropLuck.dungeonChestLuck().players[0].luck.completions).toBe(1);
@@ -336,14 +378,34 @@ describe('watching a dungeon pay out', () => {
     });
 
     test('the same session across a reload is not a new one', () => {
+        // battleId is the server's own counter and survives a reload intact —
+        // confirmed live, where a session reloaded three days in still read
+        // battleId 678 rather than starting back at 1 — so a reload's first
+        // message picks the completion count up where it left off rather
+        // than falling back to what this tab watched.
         const session = '2026-08-03T01:00:00Z';
         combatDropLuck._rememberContext({ ...battle(40, [63, 50]), combatStartTime: session });
-        // A reload restarts the battle numbering it saw, but not the session
-        combatDropLuck._rememberContext({ ...battle(1, [65, 50]), combatStartTime: session });
+        combatDropLuck._rememberContext({ ...battle(41, [65, 50]), combatStartTime: session });
 
         const [mine] = combatDropLuck.dungeonChestLuck().players;
         expect(mine.chests).toBe(65);
-        expect(mine.luck.completions).toBe(1);
+        expect(mine.luck.completions).toBe(40);
+    });
+
+    test('takes the larger of the two when the tracker somehow outruns battleId', () => {
+        // Ordinarily the tracker/storage count can only be short of battleId,
+        // never ahead of it — but a completion the tracker sees fires before
+        // the *next* new_battle carries the higher battleId, so there is a
+        // brief window where the two disagree the other way. It resolves
+        // itself on the next message; until then, prefer the larger.
+        combatDropLuck._rememberContext(battle(1, [0, 0]));
+        combatDropLuck._rememberContext(battle(2, [4, 3]));
+        combatDropLuck._onDungeonCompleted({ keyCountsMap: {} });
+        combatDropLuck._onDungeonCompleted({ keyCountsMap: {} });
+
+        // battleId 2 says one completion (battleId - 1); the tracker says two
+        const [mine] = combatDropLuck.dungeonChestLuck().players;
+        expect(mine.luck.completions).toBe(2);
     });
 });
 
