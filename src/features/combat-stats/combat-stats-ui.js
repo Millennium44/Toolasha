@@ -443,11 +443,17 @@ class CombatStatsUI {
      * @returns {Promise<string>} What happened, for the palette's toast
      */
     async shareLatestToChat() {
+        // Captured before the awaits: a switch landing inside them would fill
+        // the arriving character's chat with the departing character's run
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
         const combatData = combatStatsDataCollector.getLatestData();
         if (!combatData?.players?.length) return 'no combat data yet';
 
         if (!marketAPI.isLoaded()) await marketAPI.fetch();
-        this.chatFields = await this.loadChatFields();
+        const chatFields = await this.loadChatFields();
+        if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId)
+            return 'character switched — nothing shared';
+        this.chatFields = chatFields;
 
         const stats = ownStats(calculateAllPlayerStats(combatData, this.liveDurationSeconds(combatData)));
         if (!stats) return 'no combat data yet';
@@ -496,6 +502,13 @@ class CombatStatsUI {
      * switching back to Live restores the run in progress.
      */
     async showPopup() {
+        // Captured before the first await. A character switch's teardown
+        // closes the popup and clears `chatFields`, but cannot stop this from
+        // resuming afterwards and drawing the departing character's run — with
+        // their field selection, which a tick would then save under the
+        // arriving character's key.
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+
         // Ensure market data is loaded
         if (!marketAPI.isLoaded()) {
             const marketData = await marketAPI.fetch();
@@ -555,12 +568,16 @@ class CombatStatsUI {
         }
 
         // The chat picker's selection, read now so the popover opens synchronously
-        this.chatFields = await this.loadChatFields();
+        const chatFields = await this.loadChatFields();
 
         // The sim's own guess at what this zone eats, for the burn-vs-sim line.
         // Read here rather than in the card because the card is synchronous and
         // a row that renders a frame late reads as a bug.
-        this.burnContext = await this.loadBurnContext(combatData);
+        const burnContext = await this.loadBurnContext(combatData);
+
+        if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId) return;
+        this.chatFields = chatFields;
+        this.burnContext = burnContext;
 
         // Calculate statistics — archived runs go through the same pathway
         const playerStats = combatData ? calculateAllPlayerStats(combatData, durationSeconds) : [];

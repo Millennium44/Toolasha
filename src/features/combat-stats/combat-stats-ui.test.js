@@ -615,6 +615,42 @@ describe('the chat field picker', () => {
     });
 });
 
+describe('a character switch while the popup is loading', () => {
+    /** loadChatFields resolves, and the switch lands before showPopup resumes */
+    const switchDuringLoad = () => {
+        const original = combatStatsUI.loadChatFields.bind(combatStatsUI);
+        vi.spyOn(combatStatsUI, 'loadChatFields').mockImplementation(async () => {
+            const fields = await original();
+            store.charId = 'char-2';
+            return fields;
+        });
+    };
+
+    test('draws nothing, rather than the departing character’s run for the arriving one', async () => {
+        store.values.set('combatStatsChatFields_char-1', ['dps']);
+        switchDuringLoad();
+
+        await combatStatsUI.showPopup();
+
+        expect(popup()).toBeNull();
+        // Not left holding char-1's selection for a later popup to save as char-2's
+        expect(combatStatsUI.chatFields).toBeNull();
+    });
+
+    test('the palette verb fills nothing into the arriving character’s chat', async () => {
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<input />';
+        document.body.appendChild(container);
+        switchDuringLoad();
+
+        const result = await combatStatsUI.shareLatestToChat();
+
+        expect(container.querySelector('input').value).toBe('');
+        expect(result).toMatch(/character switched/);
+    });
+});
+
 describe('the "Share combat stats to chat" palette verb', () => {
     afterEach(() => {
         combatStatsUI.cleanup();
