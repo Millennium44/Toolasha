@@ -137,8 +137,13 @@ export const COMBAT_CHAT_FIELDS = [
         variable: '{luck}',
         label: 'Drop luck',
         defaultOn: true,
+        // A dungeon has no per-monster model to place a session in — its luck
+        // comes from `dungeonChestLuckFor` instead, watching chests rather than
+        // loot value, but it is still "how this run compares" and gets the same
+        // field rather than a second one. `ctx.luckIsChest` says which the
+        // number behind `ctx.luckPercentile` is, so `part` can call it out.
         value: (_stats, ctx) => (Number.isFinite(ctx.luckPercentile) ? ordinalRank(ctx.luckPercentile) : null),
-        part: (v) => `${v} pct luck`,
+        part: (v, ctx) => (ctx?.luckIsChest ? `chest luck ${v} pct` : `${v} pct luck`),
     },
     {
         key: 'dps',
@@ -266,6 +271,8 @@ export function isCustomChatTemplate(value, defaultValue) {
  * @param {string} [context.priceKey='ask'] - Which side income and profit are reported on
  * @param {Function} [context.formatNum] - Number formatter matching the cards
  * @param {number|null} [context.luckPercentile] - Drop luck in [0, 1], or null
+ * @param {boolean} [context.luckIsChest] - Whether `luckPercentile` is a dungeon's
+ *   chest reading rather than the per-monster model, so the field can say so
  * @param {number|null} [context.dps] - Live DPS, or null
  * @param {number|null} [context.kills] - Live kill count, or null
  * @param {string|null} [context.bossEta] - Boss ETA text, or null
@@ -296,7 +303,7 @@ export function buildCombatChatMessage(stats, fields, context = {}) {
 
     const wanted = new Set(fields || DEFAULT_COMBAT_CHAT_FIELDS);
     const included = COMBAT_CHAT_FIELDS.filter((f) => wanted.has(f.key) && values[f.key] !== null);
-    return fitFieldsToLimit(included, values, ctx.maxBytes);
+    return fitFieldsToLimit(included, values, ctx.maxBytes, ctx);
 }
 
 /**
@@ -313,11 +320,12 @@ export function buildCombatChatMessage(stats, fields, context = {}) {
  * @param {Array<Object>} included - `COMBAT_CHAT_FIELDS` entries with a value to show, in message order
  * @param {Object<string, string|null>} values - Field key to value, from `buildCombatChatMessage`
  * @param {number} maxBytes
+ * @param {Object} [ctx] - The same context `value()` saw, for a `part()` whose wording depends on it
  * @returns {string}
  */
-function fitFieldsToLimit(included, values, maxBytes) {
+function fitFieldsToLimit(included, values, maxBytes, ctx) {
     const render = (fields) => {
-        const parts = fields.map((f) => f.part(values[f.key]));
+        const parts = fields.map((f) => f.part(values[f.key], ctx));
         return parts.length > 0 ? `${COMBAT_CHAT_HEADER}: ${parts.join(' | ')}` : COMBAT_CHAT_HEADER;
     };
 

@@ -374,12 +374,17 @@ class CombatStatsUI {
      * run gets none of them — the fields drop out instead of borrowing tonight's
      * figures for last week's run.
      *
+     * Luck itself has two sources: the per-monster model everywhere else, and a
+     * dungeon's chest reading where that model has nothing to say. Either way it
+     * rides the same `luckPercentile`; `luckIsChest` says which one it is.
+     *
      * @param {Object} stats - One player's stats
      * @param {Object} [options] - `{archived, combatData}` of the run being shared
      * @returns {Object} Context for `buildCombatChatMessage`
      */
     chatContext(stats, { archived = null, combatData = null } = {}) {
         let luckPercentile = null;
+        let luckIsChest = false;
         let dps = null;
         let kills = null;
         let bossEta = null;
@@ -404,6 +409,19 @@ class CombatStatsUI {
                     // Solo, the session percentile is the player's own
                     else if (!luck.players?.length && stats.name === dataManager.getCurrentCharacterName?.()) {
                         luckPercentile = luck.percentile;
+                    }
+                } else {
+                    // A dungeon has no per-monster model, so `resultFor` never
+                    // has an answer for one — it pays from a reward table on
+                    // completion, not per monster. What it can be asked instead
+                    // is how its chests are running, watched per character the
+                    // same way the model's percentile is.
+                    const chest = combatDropLuck?.dungeonChestLuckFor?.({ actionHrid, difficultyTier });
+                    const player = chest?.players?.find((entry) => entry.name === stats.name);
+                    const percentile = player?.luck?.percentile;
+                    if (Number.isFinite(percentile)) {
+                        luckPercentile = percentile;
+                        luckIsChest = true;
                     }
                 }
             } catch (error) {
@@ -431,6 +449,7 @@ class CombatStatsUI {
             priceKey: getKeyPricingMode(),
             formatNum: this.chatFormatNum(),
             luckPercentile,
+            luckIsChest,
             dps,
             kills,
             bossEta,

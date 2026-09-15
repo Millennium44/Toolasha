@@ -379,6 +379,10 @@ class CombatDropLuck {
         }
         this.chests.battleId = battleId;
         this.chests.partySize = players.length || this.chests.partySize;
+        // Carried alongside the zone so a caller asking for a specific tier's
+        // reading (the chat message, comparing against the tier actually being
+        // fought) can tell this one apart from a different tier of the same zone
+        this.chests.difficultyTier = difficultyTier || 0;
 
         const chestItems = dungeonChestItems(dataManager.getActionDetails(actionHrid), difficultyTier);
         const characterId = dataManager.getCurrentCharacterId();
@@ -698,6 +702,29 @@ class CombatDropLuck {
         if (result.actionHrid !== actionHrid) return null;
         if ((result.difficultyTier || 0) !== (difficultyTier || 0)) return null;
         return result;
+    }
+
+    /**
+     * `dungeonChestLuck()`, but only when the chests it would answer with were
+     * measured for the given zone and tier.
+     *
+     * Mirrors `resultFor` for the monster model. `this.chests` survives a zone
+     * switch the same way `lastResult` does — the overlay tile wants it to, so it
+     * can keep showing a dungeon's reading between battles — which makes it the
+     * wrong thing for a caller to read directly once there is any chance the run
+     * being asked about is not the one currently fought.
+     *
+     * @param {Object|null} [zone] - `{actionHrid, difficultyTier}` of the run in question
+     * @returns {Object|null} `dungeonChestLuck()`'s result, or null when nothing has
+     *   been measured or it belongs to a different zone or tier
+     */
+    dungeonChestLuckFor(zone) {
+        const { actionHrid, difficultyTier = 0 } = zone || {};
+        const tracked = this.chests;
+        if (!tracked || !actionHrid) return null;
+        if (tracked.actionHrid !== actionHrid) return null;
+        if ((tracked.difficultyTier || 0) !== (difficultyTier || 0)) return null;
+        return this.dungeonChestLuck();
     }
 
     /**

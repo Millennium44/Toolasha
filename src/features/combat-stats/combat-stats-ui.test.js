@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     template: null,
     /** combatDropLuck.lastResult */
     luck: null,
+    /** combatDropLuck.dungeonChestLuckFor's answer, `{actionHrid, difficultyTier, result}` */
+    chest: null,
     /** dataManager.getCurrentActions() — the zone(s) actually being fought */
     currentActions: [],
     /** damageBreakdown() */
@@ -105,6 +107,13 @@ vi.mock('../combat/combat-drop-luck.js', () => ({
             if (result.actionHrid !== actionHrid) return null;
             if ((result.difficultyTier || 0) !== difficultyTier) return null;
             return result;
+        },
+        dungeonChestLuckFor({ actionHrid, difficultyTier = 0 } = {}) {
+            const chest = mocks.chest;
+            if (!chest || !actionHrid) return null;
+            if (chest.actionHrid !== actionHrid) return null;
+            if ((chest.difficultyTier || 0) !== difficultyTier) return null;
+            return chest.result;
         },
     },
 }));
@@ -196,6 +205,7 @@ afterEach(() => {
     mocks.template = null;
     schemaMocks.chatMessageSetting.default = [{ type: 'text', value: 'Combat Stats: ' }];
     mocks.luck = null;
+    mocks.chest = null;
     mocks.damage = null;
     mocks.bossEta = null;
     mocks.currentActions = [];
@@ -446,6 +456,50 @@ describe('the Chat button on the popup', () => {
     test('luck for the same zone but a different difficulty tier is also left out', async () => {
         const input = chatInput();
         mocks.luck = { percentile: 0.73, players: [], actionHrid: '/actions/combat/chimerical_den', difficultyTier: 3 };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).not.toContain('luck');
+    });
+
+    test('a dungeon with no per-monster model falls back to the chest reading for this zone and tier', async () => {
+        const input = chatInput();
+        mocks.luck = null; // the model has nothing to say about a dungeon
+        mocks.chest = {
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+            result: { players: [{ name: 'LiveGuy', luck: { percentile: 0.62 } }] },
+        };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toContain('chest luck 62nd pct');
+    });
+
+    test('a chest reading for a different zone or tier is left out, same as the model’s guard', async () => {
+        const input = chatInput();
+        mocks.luck = null;
+        mocks.chest = {
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 3,
+            result: { players: [{ name: 'LiveGuy', luck: { percentile: 0.62 } }] },
+        };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).not.toContain('luck');
+    });
+
+    test('a dungeon with no chests measured yet leaves luck out entirely', async () => {
+        const input = chatInput();
+        mocks.luck = null;
+        mocks.chest = null;
 
         await combatStatsUI.showPopup();
         chatButton().click();

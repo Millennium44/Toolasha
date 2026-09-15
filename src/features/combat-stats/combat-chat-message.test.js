@@ -60,6 +60,14 @@ describe('buildCombatChatMessage — the default fields', () => {
         }
     });
 
+    test('a dungeon’s chest reading says so, rather than reading like the monster model', () => {
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, {
+            luckPercentile: 0.62,
+            luckIsChest: true,
+        });
+        expect(message.endsWith('0 deaths | chest luck 62nd pct')).toBe(true);
+    });
+
     test('the price side follows the context', () => {
         const message = buildCombatChatMessage(stats(), ['income', 'dailyProfit'], { priceKey: 'bid' });
         expect(message).toBe('Combat Stats: 4000 income | 45000 profit/d');
@@ -180,6 +188,21 @@ describe('buildCombatChatMessage — a custom template', () => {
         });
         // The user's own words stay; a figure with no data is marked, not "null"
         expect(message).toBe('GG 57000/d, luck 12th, — dps');
+    });
+
+    test('the {luck} variable takes whatever reading is behind it, chest or model, the same way', () => {
+        // A custom template's own words carry the meaning; the variable does not
+        // need to say "chest" itself the way the field-list wording does
+        const template = [
+            { type: 'text', value: 'luck ' },
+            { type: 'variable', key: '{luck}' },
+        ];
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, {
+            template,
+            luckPercentile: 0.62,
+            luckIsChest: true,
+        });
+        expect(message).toBe('luck 62nd');
     });
 
     test('the template wins over the field selection', () => {

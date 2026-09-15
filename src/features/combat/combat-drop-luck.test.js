@@ -347,6 +347,74 @@ describe('watching a dungeon pay out', () => {
     });
 });
 
+describe('the chest reading only answers for the zone and tier it was measured in', () => {
+    const battle = (battleId, difficultyTier = 0) => {
+        game.actions = [{ actionHrid: '/actions/combat/chimerical_den', difficultyTier }];
+        return {
+            battleId,
+            players: [
+                {
+                    character: { id: 'me', name: 'Mine' },
+                    combatDetails: { combatLevel: 100, combatStats: { combatDropQuantity: 0.5 } },
+                    totalLootMap: { 1: { itemHrid: '/items/chimerical_chest', count: 4 } },
+                },
+            ],
+        };
+    };
+
+    beforeEach(() => {
+        game.actionDetail = {
+            combatZoneInfo: {
+                isDungeon: true,
+                dungeonInfo: { rewardDropTable: [{ itemHrid: '/items/chimerical_chest', dropRate: 1 }] },
+            },
+        };
+        combatDropLuck.chests = null;
+        combatDropLuck.context = null;
+        combatDropLuck.liveAt = Date.now();
+    });
+
+    test('answers for the zone and tier it was measured at', () => {
+        combatDropLuck._rememberContext(battle(1, 0));
+        combatDropLuck._rememberContext(battle(2, 0));
+
+        const chest = combatDropLuck.dungeonChestLuckFor({
+            actionHrid: '/actions/combat/chimerical_den',
+            difficultyTier: 0,
+        });
+        expect(chest).toEqual(combatDropLuck.dungeonChestLuck());
+    });
+
+    test('refuses a different zone', () => {
+        combatDropLuck._rememberContext(battle(1, 0));
+        combatDropLuck._rememberContext(battle(2, 0));
+
+        expect(
+            combatDropLuck.dungeonChestLuckFor({ actionHrid: '/actions/combat/sinister_circus', difficultyTier: 0 })
+        ).toBeNull();
+    });
+
+    test('refuses a different difficulty tier of the same zone', () => {
+        combatDropLuck._rememberContext(battle(1, 3));
+        combatDropLuck._rememberContext(battle(2, 3));
+
+        expect(
+            combatDropLuck.dungeonChestLuckFor({ actionHrid: '/actions/combat/chimerical_den', difficultyTier: 0 })
+        ).toBeNull();
+        expect(
+            combatDropLuck.dungeonChestLuckFor({ actionHrid: '/actions/combat/chimerical_den', difficultyTier: 3 })
+        ).not.toBeNull();
+    });
+
+    test('nothing measured yet answers null rather than throwing', () => {
+        expect(
+            combatDropLuck.dungeonChestLuckFor({ actionHrid: '/actions/combat/chimerical_den', difficultyTier: 0 })
+        ).toBeNull();
+        expect(combatDropLuck.dungeonChestLuckFor()).toBeNull();
+        expect(combatDropLuck.dungeonChestLuckFor({})).toBeNull();
+    });
+});
+
 describe('a reading only answers for the zone it was measured in', () => {
     beforeEach(() => {
         game.actionDetail = null; // not a dungeon
