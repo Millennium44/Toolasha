@@ -168,32 +168,38 @@ describe('calculateDungeonTokenValue', () => {
     describe('patient +1 tick', () => {
         test('following the global mode, a sale at the ask steps one tick down', () => {
             game.settings.profitCalc_pricingMode = 'hybrid';
-            game.settings.profitCalc_patientTick = true;
+            game.settings.profitCalc_patientTickSell = true;
             expect(calculateDungeonTokenValue(TOKEN)).toBeCloseTo(nextPriceDown(1000) / 10, 10);
+        });
+
+        test('a token is sold, so the buy tick alone leaves the ask exact', () => {
+            game.settings.profitCalc_pricingMode = 'hybrid';
+            game.settings.profitCalc_patientTickBuy = true;
+            expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
         });
 
         test('the instant side the global mode picks is never moved', () => {
             game.settings.profitCalc_pricingMode = 'conservative';
-            game.settings.profitCalc_patientTick = true;
+            game.settings.profitCalc_patientTickSell = true;
             expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
         });
 
         test('with respect switched off the bid is an exact side and stays put', () => {
             game.settings.profitCalc_pricingMode = 'hybrid';
-            game.settings.profitCalc_patientTick = true;
+            game.settings.profitCalc_patientTickSell = true;
             game.settings.expectedValue_respectPricingMode = false;
             expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
         });
 
         test('with the tick off the ask is exact', () => {
             game.settings.profitCalc_pricingMode = 'hybrid';
-            game.settings.profitCalc_patientTick = false;
+            game.settings.profitCalc_patientTickSell = false;
             expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
         });
 
         test('a custom price has no queue to jump', () => {
             game.settings.profitCalc_pricingMode = 'hybrid';
-            game.settings.profitCalc_patientTick = true;
+            game.settings.profitCalc_patientTickSell = true;
             game.sources['/items/cape'] = 'custom';
             expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
         });

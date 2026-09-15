@@ -25,6 +25,7 @@ import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper
 import { affordableActions } from '../../utils/material-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 
 /**
  * Action type constants for classification
@@ -129,7 +130,9 @@ class MaxProduceable {
             this.updateAllCounts();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        config.onSettingChange('profitCalc_patientTick', this.pricingModeHandler);
+        for (const key of PATIENT_TICK_SETTING_KEYS) {
+            config.onSettingChange(key, this.pricingModeHandler);
+        }
 
         this.maxProduceableSettingHandler = () => this.updateAllCounts();
         this.profitPerHourSettingHandler = () => this.updateAllCounts();
@@ -972,7 +975,9 @@ class MaxProduceable {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-                config.offSettingChange('profitCalc_patientTick', this.pricingModeHandler);
+                for (const key of PATIENT_TICK_SETTING_KEYS) {
+                    config.offSettingChange(key, this.pricingModeHandler);
+                }
                 this.pricingModeHandler = null;
             }
 

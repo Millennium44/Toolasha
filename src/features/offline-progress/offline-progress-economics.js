@@ -17,6 +17,7 @@ import domObserver from '../../core/dom-observer.js';
 import { calculateOfflineEconomics } from '../../utils/offline-economics-calculator.js';
 import { formatPrice } from '../../utils/market-data.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 
 const UI_ID = 'mwi-offline-economics';
 const MODAL_ANCHOR_CLASS = 'OfflineProgressModal_offlineProgress';
@@ -160,7 +161,9 @@ class OfflineProgressEconomics {
 
         this.pricingModeChangeHandler = () => this.recompute();
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeChangeHandler);
-        config.onSettingChange('profitCalc_patientTick', this.pricingModeChangeHandler);
+        for (const key of PATIENT_TICK_SETTING_KEYS) {
+            config.onSettingChange(key, this.pricingModeChangeHandler);
+        }
 
         this.setupCleanupObserver(modalContentNode);
     }
@@ -221,7 +224,9 @@ class OfflineProgressEconomics {
         }
         if (this.pricingModeChangeHandler) {
             config.offSettingChange('profitCalc_pricingMode', this.pricingModeChangeHandler);
-            config.offSettingChange('profitCalc_patientTick', this.pricingModeChangeHandler);
+            for (const key of PATIENT_TICK_SETTING_KEYS) {
+                config.offSettingChange(key, this.pricingModeChangeHandler);
+            }
             this.pricingModeChangeHandler = null;
         }
         if (this.currentBlock) {

@@ -45,7 +45,8 @@ export const IRON_COW_SETTINGS = new Set([
     'market_showQueueLength',
     // Profit / pricing calculations
     'profitCalc_pricingMode',
-    'profitCalc_patientTick',
+    'profitCalc_patientTickBuy',
+    'profitCalc_patientTickSell',
     'profitCalc_pricingNaming',
     'actionPanel_showProfitPerHour_gathering',
     'actionPanel_showProfitPerHour_production',

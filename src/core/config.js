@@ -829,16 +829,40 @@ class Config {
     }
 
     /**
-     * The pricing mode label as the Mode button shows it: {@link getPricingModeLabel}
-     * plus " (+1 tick)" when `profitCalc_patientTick` is on and the mode has a
-     * patient side for the tick to apply to (every mode but 'conservative').
+     * The pricing mode label with the patient ticks folded in, per side: a buy
+     * at the bid carries " +1" when `profitCalc_patientTickBuy` is on, a sell at
+     * the ask carries " −1" when `profitCalc_patientTickSell` is on — e.g.
+     * "Patient Buy +1 / Instant Sell" or "Buy: Bid +1 / Sell: Ask −1". A tick on
+     * an instant side has nothing to move, so it never shows, and a mode with no
+     * tick in effect is exactly {@link getPricingModeLabel}.
+     *
+     * The keys are literals, not `PATIENT_TICK_SETTING_KEYS` from
+     * `utils/patient-tick.js`: core loads before utils, so it cannot import it.
      * @param {string} [mode] - Pricing mode key; defaults to the current `profitCalc_pricingMode`
      * @returns {string} Display label
      */
     getPricingModeDisplayLabel(mode = this.getSettingValue('profitCalc_pricingMode', 'hybrid')) {
-        const label = this.getPricingModeLabel(mode);
-        const hasPatientSide = mode !== 'conservative';
-        return hasPatientSide && this.getSetting('profitCalc_patientTick') === true ? `${label} (+1 tick)` : label;
+        // Mirrors getPricingMode's 'profit' branch in utils/market-data.js
+        const MODE_SIDES = {
+            conservative: { buy: 'ask', sell: 'bid' },
+            hybrid: { buy: 'ask', sell: 'ask' },
+            optimistic: { buy: 'bid', sell: 'ask' },
+            patientBuy: { buy: 'bid', sell: 'bid' },
+        };
+        const sides = MODE_SIDES[mode];
+        const buyTick = sides?.buy === 'bid' && this.getSetting('profitCalc_patientTickBuy') === true;
+        const sellTick = sides?.sell === 'ask' && this.getSetting('profitCalc_patientTickSell') === true;
+        if (!buyTick && !sellTick) return this.getPricingModeLabel(mode);
+
+        const buyMark = buyTick ? ' +1' : '';
+        const sellMark = sellTick ? ' −1' : '';
+        if (this.getSetting('profitCalc_pricingNaming')) {
+            const buyWord = sides.buy === 'ask' ? 'Instant' : 'Patient';
+            const sellWord = sides.sell === 'bid' ? 'Instant' : 'Patient';
+            return `${buyWord} Buy${buyMark} / ${sellWord} Sell${sellMark}`;
+        }
+        const bookWord = (basis) => (basis === 'ask' ? 'Ask' : 'Bid');
+        return `Buy: ${bookWord(sides.buy)}${buyMark} / Sell: ${bookWord(sides.sell)}${sellMark}`;
     }
 
     /**

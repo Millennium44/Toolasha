@@ -191,7 +191,7 @@ describe('calculateSimRevenue drop tax', () => {
  */
 /**
  * `getSellPrice`/`getBuyPrice` used to map `profitCalc_pricingMode` onto
- * ask/bid themselves, so the patient +1 tick (`profitCalc_patientTick`) —
+ * ask/bid themselves, so the patient ticks (`profitCalc_patientTickBuy`/`Sell`) —
  * which only the central `getItemPrice` applied — never reached the sim's
  * drop revenue, consumable cost or dungeon key cost. They now route through
  * `getItemPrice`, so these prove the tick actually moves the numbers, and

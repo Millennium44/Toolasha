@@ -166,6 +166,86 @@ describe('one-time rewrites of superseded schema defaults', () => {
     });
 });
 
+describe('one-time migration of the patient tick to one switch per side', () => {
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_key_migrations_v1_${KEY}`;
+    const SIDES = ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
+
+    /** A saved map from before the split, as an existing user's would be */
+    const oldTick = (entry) => ({
+        profitCalc_patientTick: { id: 'profitCalc_patientTick', type: 'checkbox', ...entry },
+    });
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('the old tick on turns both sides on, persisted, and leaves the old entry for older builds', async () => {
+        stored.set(`json:${KEY}`, oldTick({ isTrue: true }));
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const key of SIDES) {
+            expect(settings[key].isTrue).toBe(true);
+            expect(stored.get(`json:${KEY}`)[key].isTrue).toBe(true);
+        }
+        expect(stored.get(`json:${KEY}`).profitCalc_patientTick.isTrue).toBe(true);
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('the old checkbox shape that stored its state in .value counts as on', async () => {
+        stored.set(`json:${KEY}`, oldTick({ value: true }));
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const key of SIDES) expect(settings[key].isTrue).toBe(true);
+    });
+
+    test('the old tick off leaves both sides off and writes nothing for them', async () => {
+        stored.set(`json:${KEY}`, oldTick({ isTrue: false }));
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const key of SIDES) {
+            expect(settings[key].isTrue).toBe(false);
+            expect(stored.get(`json:${KEY}`)[key]).toBeUndefined();
+        }
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('no old tick at all (a fresh install) leaves both sides off, flagged', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        for (const key of SIDES) expect(settings[key].isTrue).toBe(false);
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('runs once: after the flag is set, the old tick is not carried again', async () => {
+        stored.set(`json:${KEY}`, oldTick({ isTrue: true }));
+        await settingsStorage.loadSettings();
+
+        // A map carrying the old tick on and no per-side values, after the flag
+        stored.set(`json:${KEY}`, oldTick({ isTrue: true }));
+        const settings = await settingsStorage.loadSettings();
+
+        for (const key of SIDES) expect(settings[key].isTrue).toBe(false);
+    });
+
+    test('a side that already has a stored value keeps it', async () => {
+        stored.set(`json:${KEY}`, {
+            ...oldTick({ isTrue: true }),
+            profitCalc_patientTickSell: { id: 'profitCalc_patientTickSell', type: 'checkbox', isTrue: false },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.profitCalc_patientTickBuy.isTrue).toBe(true);
+        expect(settings.profitCalc_patientTickSell.isTrue).toBe(false);
+    });
+});
+
 describe('the marketplace buy-strategy default change is new-installs-only, by design', () => {
     // market_autoFillBuyStrategy's schema default moved from 'outbid' to
     // 'match', but — unlike the labyrinth defaults above — it has no

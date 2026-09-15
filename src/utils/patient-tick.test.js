@@ -1,10 +1,14 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ tick: true, band: null }));
+const mocks = vi.hoisted(() => ({ tickBuy: true, tickSell: true, band: null }));
 
 vi.mock('../core/config.js', () => ({
     default: {
-        getSettingValue: (key, fallback) => (key === 'profitCalc_patientTick' ? mocks.tick : fallback),
+        getSettingValue: (key, fallback) => {
+            if (key === 'profitCalc_patientTickBuy') return mocks.tickBuy;
+            if (key === 'profitCalc_patientTickSell') return mocks.tickSell;
+            return fallback;
+        },
     },
 }));
 
@@ -19,11 +23,55 @@ vi.mock('./market-values.js', async (importOriginal) => {
 
 vi.mock('../core/data-manager.js', () => ({ default: {} }));
 
-import { patientTickPrice, isPatientTickEnabled } from './patient-tick.js';
+import {
+    patientTickPrice,
+    isPatientTickOn,
+    patientTickSettingFor,
+    PATIENT_TICK_SETTING_KEYS,
+    PATIENT_TICK_BUY_SETTING,
+    PATIENT_TICK_SELL_SETTING,
+} from './patient-tick.js';
 
 beforeEach(() => {
-    mocks.tick = true;
+    mocks.tickBuy = true;
+    mocks.tickSell = true;
     mocks.band = null;
+});
+
+describe('the per-side tick settings', () => {
+    test('one key per side, listed together for listeners', () => {
+        expect(PATIENT_TICK_BUY_SETTING).toBe('profitCalc_patientTickBuy');
+        expect(PATIENT_TICK_SELL_SETTING).toBe('profitCalc_patientTickSell');
+        expect(PATIENT_TICK_SETTING_KEYS).toEqual([PATIENT_TICK_BUY_SETTING, PATIENT_TICK_SELL_SETTING]);
+        expect(patientTickSettingFor('buy')).toBe(PATIENT_TICK_BUY_SETTING);
+        expect(patientTickSettingFor('sell')).toBe(PATIENT_TICK_SELL_SETTING);
+        expect(patientTickSettingFor('average')).toBeNull();
+    });
+
+    test('isPatientTickOn reads only the side it is asked about', () => {
+        mocks.tickBuy = true;
+        mocks.tickSell = false;
+        expect(isPatientTickOn('buy')).toBe(true);
+        expect(isPatientTickOn('sell')).toBe(false);
+
+        mocks.tickBuy = false;
+        mocks.tickSell = true;
+        expect(isPatientTickOn('buy')).toBe(false);
+        expect(isPatientTickOn('sell')).toBe(true);
+
+        expect(isPatientTickOn(undefined)).toBe(false);
+    });
+
+    test('the schema, the migration and the display label all name these same keys', async () => {
+        // core/ cannot import this module, so config.js and settings-storage.js
+        // repeat the literals; the schema is the one they must agree with
+        const { settingsGroups } = await import('../core/settings-schema.js');
+        const schema = Object.assign({}, ...Object.values(settingsGroups).map((group) => group.settings));
+        for (const key of PATIENT_TICK_SETTING_KEYS) {
+            expect(schema[key]).toMatchObject({ id: key, type: 'checkbox', default: false });
+        }
+        expect(schema.profitCalc_patientTick).toBeUndefined();
+    });
 });
 
 describe('patientTickPrice', () => {
@@ -39,10 +87,21 @@ describe('patientTickPrice', () => {
     });
 
     test('off, nothing moves', () => {
-        mocks.tick = false;
-        expect(isPatientTickEnabled()).toBe(false);
+        mocks.tickBuy = false;
+        mocks.tickSell = false;
         expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1000);
         expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(1000);
+    });
+
+    test('the buy tick moves buys only, the sell tick sells only', () => {
+        mocks.tickSell = false;
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1005);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(1000);
+
+        mocks.tickBuy = false;
+        mocks.tickSell = true;
+        expect(patientTickPrice(1000, 'buy', 'bid', { ask: 1100 })).toBe(1000);
+        expect(patientTickPrice(1000, 'sell', 'ask', { bid: 900 })).toBe(998);
     });
 
     test('the tick never crosses the spread', () => {

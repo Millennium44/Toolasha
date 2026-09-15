@@ -71,6 +71,29 @@ const SAVE_ALL_KEYS = Symbol('settings.saveAllKeys');
 /** Bump the suffix when a new batch is added to DEFAULT_REWRITES */
 const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
 
+/**
+ * Settings replaced by other settings, carried across once.
+ *
+ * Not a DEFAULT_REWRITES case: no default changed. A setting was split, and a
+ * user who had the old one on must find the new ones on. Each `from` that is
+ * stored on is copied as on into every `to` the stored map does not already
+ * have a value for; a `from` that is off or absent writes nothing, which leaves
+ * the new settings on their schema default.
+ *
+ * The old entry is left where it is. The save paths carry ids the schema no
+ * longer names, so it would survive anyway — and keeping it means an older
+ * build loaded on the same profile still reads the value it knows.
+ *
+ * Guarded by its own persisted per-character flag, so it runs once.
+ */
+const KEY_MIGRATIONS = [
+    // The patient tick became one switch per side; the old one moved both
+    { from: 'profitCalc_patientTick', to: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'] },
+];
+
+/** Bump the suffix when a new batch is added to KEY_MIGRATIONS */
+const KEY_MIGRATION_FLAG_KEY = 'settings_key_migrations_v1';
+
 // Task data stored per character under a `_<charId>` suffix, outside the
 // settings map (task-reroll-protection.js / task-auto-reroll.js) — copied along
 // with the map so "make this alt like my main" carries the task lists too
@@ -201,6 +224,7 @@ class SettingsStorage {
             }
 
             saved = await this.applyDefaultRewrites(saved, characterKey);
+            saved = await this.applyKeyMigrations(saved, characterKey);
         } else {
             console.warn(`[SettingsStorage] ${characterKey} could not be read; answering with schema defaults`);
         }
@@ -320,6 +344,50 @@ class SettingsStorage {
             // A failed rewrite must not cost the user their settings; the flag
             // stays unset, so the next load tries again
             console.error('[SettingsStorage] Default rewrite failed:', error);
+            return saved;
+        }
+    }
+
+    /**
+     * Carry replaced settings over to the settings that replaced them, once.
+     *
+     * See KEY_MIGRATIONS. Same shape as {@link applyDefaultRewrites}: the flag is
+     * stored per character beside that character's settings and set even when
+     * there is nothing to carry (a fresh install has only the new settings), and
+     * the migrated map is written back straight away so the new ids are stored
+     * rather than living in memory until something else happens to save.
+     *
+     * @param {Object|null} saved - The stored settings map, or null when none
+     * @param {string} characterKey - Storage key the map was loaded from
+     * @returns {Promise<Object|null>} The map to merge, migrations applied
+     */
+    async applyKeyMigrations(saved, characterKey) {
+        const flagKey = `${KEY_MIGRATION_FLAG_KEY}_${characterKey}`;
+        try {
+            if (await storage.get(flagKey, this.storageArea, false)) return saved;
+
+            let next = saved;
+            for (const { from, to } of KEY_MIGRATIONS) {
+                // valueOf, and truthiness: a boolean the loader would read as on
+                // (including the old `.value` shape) is on here too
+                if (!saved?.[from] || !valueOf(saved[from])) continue;
+                for (const id of to) {
+                    // A value already stored for the new id is the newer intent
+                    if (saved[id]) continue;
+                    next = next === saved ? { ...saved } : next;
+                    next[id] = { id, type: 'checkbox', isTrue: true };
+                }
+            }
+
+            if (next !== saved) {
+                await storage.setJSON(characterKey, next, this.storageArea, true);
+            }
+            await storage.set(flagKey, true, this.storageArea, true);
+            return next;
+        } catch (error) {
+            // Same rule as the default rewrites: a failed migration must not
+            // cost the user their settings, and an unset flag retries next load
+            console.error('[SettingsStorage] Key migration failed:', error);
             return saved;
         }
     }

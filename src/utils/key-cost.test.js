@@ -18,7 +18,12 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { patientTickPrice } from './patient-tick.js';
 
-const settings = vi.hoisted(() => ({ keyPricingMode: 'ask', pricingMode: 'hybrid', patientTick: false }));
+const settings = vi.hoisted(() => ({
+    keyPricingMode: 'ask',
+    pricingMode: 'hybrid',
+    patientTickBuy: false,
+    patientTickSell: false,
+}));
 
 const game = vi.hoisted(() => ({ initClientData: null, itemDetails: {} }));
 
@@ -36,7 +41,8 @@ vi.mock('../core/config.js', () => ({
     default: {
         getSettingValue: (id) => {
             if (id === 'profitCalc_pricingMode') return settings.pricingMode;
-            if (id === 'profitCalc_patientTick') return settings.patientTick;
+            if (id === 'profitCalc_patientTickBuy') return settings.patientTickBuy;
+            if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
             return settings.keyPricingMode;
         },
     },
@@ -133,7 +139,8 @@ function essenceRecipe(itemHrid, count = 5) {
 beforeEach(() => {
     settings.keyPricingMode = 'ask';
     settings.pricingMode = 'hybrid';
-    settings.patientTick = false;
+    settings.patientTickBuy = false;
+    settings.patientTickSell = false;
     player.id = 'char-1';
     player.artisan = 0;
     invalidateKeyCostCache();
@@ -169,7 +176,7 @@ describe('patient +1 tick', () => {
     test('synced to a patient global buy side, the bid steps one tick up', () => {
         settings.keyPricingMode = 'synced';
         settings.pricingMode = 'patientBuy';
-        settings.patientTick = true;
+        settings.patientTickBuy = true;
 
         expect(describeKeyCost(ENTRY_KEY).buyPrice).toBe(nextPriceUp(15000));
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(nextPriceUp(15000));
@@ -182,18 +189,18 @@ describe('patient +1 tick', () => {
     test('the craft basis follows the global side too, and its cache misses when the tick flips', () => {
         settings.keyPricingMode = 'craft';
         settings.pricingMode = 'patientBuy';
-        settings.patientTick = true;
+        settings.patientTickBuy = true;
 
         // No recipe, so the craft basis settles on the market quote
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(nextPriceUp(15000));
-        settings.patientTick = false;
+        settings.patientTickBuy = false;
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(15000);
     });
 
     test('the craft basis ticks its recipe materials too, not just a keyless market quote', () => {
         settings.keyPricingMode = 'craft';
         settings.pricingMode = 'patientBuy';
-        settings.patientTick = true;
+        settings.patientTickBuy = true;
 
         // Essence bids at 900; a patient buy queues one tick above it
         const tickedEssence = nextPriceUp(900);
@@ -204,7 +211,7 @@ describe('patient +1 tick', () => {
     test('with the tick off, the craft basis prices its materials at the exact bid', () => {
         settings.keyPricingMode = 'craft';
         settings.pricingMode = 'patientBuy';
-        settings.patientTick = false;
+        settings.patientTickBuy = false;
 
         expect(describeKeyCost(CHEST_KEY).craftCost).toBe(4500);
     });
@@ -212,7 +219,7 @@ describe('patient +1 tick', () => {
     test('an explicit mode on the craft basis prices materials at the exact side, never ticked', () => {
         settings.keyPricingMode = 'craft';
         settings.pricingMode = 'patientBuy';
-        settings.patientTick = true;
+        settings.patientTickBuy = true;
 
         // The setting resolves to 'bid'; asking for 'ask' explicitly is asking
         // for an exact book price, both for the key and for its materials
@@ -226,7 +233,7 @@ describe('patient +1 tick', () => {
         // craft's materials do
         settings.keyPricingMode = 'synced';
         settings.pricingMode = 'patientBuy';
-        settings.patientTick = true;
+        settings.patientTickBuy = true;
 
         const cost = describeKeyCost(CHEST_KEY);
         expect(cost.basis).toBe('market');
@@ -236,7 +243,7 @@ describe('patient +1 tick', () => {
     test('an explicit bid setting is an exact side and is never moved', () => {
         settings.keyPricingMode = 'bid';
         settings.pricingMode = 'patientBuy';
-        settings.patientTick = true;
+        settings.patientTickBuy = true;
 
         expect(describeKeyCost(ENTRY_KEY).buyPrice).toBe(15000);
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(15000);
@@ -249,9 +256,19 @@ describe('patient +1 tick', () => {
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(15000);
     });
 
+    test('keys are only bought, so the sell tick alone never moves one', () => {
+        settings.keyPricingMode = 'synced';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTickSell = true;
+
+        expect(describeKeyCost(ENTRY_KEY).buyPrice).toBe(15000);
+        settings.keyPricingMode = 'craft';
+        expect(describeKeyCost(CHEST_KEY).craftCost).toBe(4500);
+    });
+
     test('an instant global buy side has no queue to jump', () => {
         settings.keyPricingMode = 'synced';
-        settings.patientTick = true;
+        settings.patientTickBuy = true;
 
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(20000);
     });

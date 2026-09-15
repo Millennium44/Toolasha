@@ -12,7 +12,14 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { isMobileMode } from '../../utils/mobile.js';
-import { nextPricingMode } from '../../utils/pricing-mode.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import {
+    applyPricingSideChoice,
+    createPricingSideSelect,
+    PRICING_SELECT_BACKGROUND,
+    PRICING_SIDE_SETTING_KEYS,
+    syncPricingSideSelect,
+} from '../../utils/pricing-side-select.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
 
@@ -31,8 +38,11 @@ class ActionFilter {
         this.filterValue = ''; // Current filter text
         this.filterInput = null; // Reference to the input element
         this.sortButton = null; // Reference to the sort toggle button
-        this.modeButton = null; // Reference to the profit mode toggle button
-        this.tickButton = null; // Reference to the "+1 tick" toggle button
+        this.buyPricingSelect = null; // Reference to the Buy pricing dropdown
+        this.sellPricingSelect = null; // Reference to the Sell pricing dropdown
+        // True while a dropdown writes the pricing settings, so the tick
+        // listeners leave the one re-render to the dropdown
+        this._applyingPricingChoice = false;
         this.noResultsMessage = null; // Reference to "No matching actions" message
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
@@ -41,8 +51,7 @@ class ActionFilter {
         this.currentTitleElement = null; // Track which title we're attached to
         this.refreshButton = null; // Reference to the manual price refresh button
         this._priceRefreshInFlight = false; // Guards against a second click while fetching
-        this._updateModeBtn = null;
-        this._updateTickBtn = null;
+        this._updatePricingSelects = null;
         this._updateCraftBtn = null;
         this._updateSortBtn = null;
         // Mobile-only collapsible row — see injectFilterInput(). Desktop never
@@ -69,24 +78,27 @@ class ActionFilter {
 
         this.unregisterHandlers.push(unregisterTitleObserver);
 
-        // Re-update button labels when config finishes loading from storage
-        this.unregisterHandlers.push(
-            config.onSettingChange('profitCalc_pricingMode', () => {
-                if (this._updateModeBtn) this._updateModeBtn();
-                // The tick button dims under Conservative mode, so a mode change
-                // can flip its effective state even though the setting itself didn't move
-                if (this._updateTickBtn) this._updateTickBtn();
-            })
-        );
-        // The patient tick can be changed from the settings panel as well as the
-        // toggle button below, so nothing else re-renders the open profit sections for it
-        this.unregisterHandlers.push(
-            config.onSettingChange('profitCalc_patientTick', async () => {
-                if (this._updateModeBtn) this._updateModeBtn();
-                if (this._updateTickBtn) this._updateTickBtn();
-                await this._refreshProfitDisplays();
-            })
-        );
+        // Keep the Buy/Sell dropdowns in step with every setting they show,
+        // wherever it changes: the Settings panel, the Best Items header, the
+        // naming convention, or a dropdown on this toolbar itself
+        for (const key of PRICING_SIDE_SETTING_KEYS) {
+            this.unregisterHandlers.push(
+                config.onSettingChange(key, () => {
+                    if (this._updatePricingSelects) this._updatePricingSelects();
+                })
+            );
+        }
+        // The patient ticks can be changed from the Settings panel, and nothing
+        // else re-renders the open profit sections for them. A dropdown on this
+        // toolbar refreshes once for its own write, so it is skipped here.
+        for (const key of PATIENT_TICK_SETTING_KEYS) {
+            this.unregisterHandlers.push(
+                config.onSettingChange(key, async () => {
+                    if (this._applyingPricingChoice) return;
+                    await this._refreshProfitDisplays();
+                })
+            );
+        }
         this.unregisterHandlers.push(
             config.onSettingChange('profitCalc_craftUpgradeItems', () => {
                 if (this._updateCraftBtn) this._updateCraftBtn();
@@ -94,7 +106,7 @@ class ActionFilter {
         );
 
         // A character switch reloads settings with an empty previous map, so the
-        // per-key change callbacks above never fire — the mode/craft buttons and
+        // per-key change callbacks above never fire — the pricing dropdowns, the craft button and
         // the profit sections they drive would keep the previous character's
         // pricing mode. This channel fires whenever settings finish loading, so
         // Action Filter — which panel-observer.js's cleanup() tears down and
@@ -103,8 +115,7 @@ class ActionFilter {
         // Ported from upstream Celasha/Toolasha#630.
         this.unregisterHandlers.push(
             config.onSettingsLoaded(() => {
-                if (this._updateModeBtn) this._updateModeBtn();
-                if (this._updateTickBtn) this._updateTickBtn();
+                if (this._updatePricingSelects) this._updatePricingSelects();
                 if (this._updateCraftBtn) this._updateCraftBtn();
                 this._refreshProfitDisplays();
             })
@@ -142,8 +153,8 @@ class ActionFilter {
         this.filterValue = '';
         this.filterInput = null;
         this.sortButton = null;
-        this.modeButton = null;
-        this.tickButton = null;
+        this.buyPricingSelect = null;
+        this.sellPricingSelect = null;
         this.refreshButton = null;
         this.noResultsMessage = null;
         this.controlsToggle = null;
@@ -331,85 +342,59 @@ class ActionFilter {
             sortBtn.style.display = 'none';
         }
 
-        // Create profit mode toggle button
-        const modeBtn = document.createElement('button');
-        modeBtn.id = 'mwi-action-profit-mode';
-        const updateModeBtn = () => {
-            const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            modeBtn.textContent = `Mode: ${config.getPricingModeLabel(mode)}`;
-        };
-        modeBtn.style.cssText = `
+        // Buy / Sell pricing dropdowns. The pricing mode is a buy side and a sell
+        // side, and each side's patient tick rides on it; the dropdowns write
+        // those settings and hold no state of their own.
+        const pricingSelectCss = `
             padding: 8px 12px;
             font-size: 14px;
             border: 1px solid rgba(255, 255, 255, 0.23);
             border-radius: 4px;
-            background: transparent;
+            background-color: ${PRICING_SELECT_BACKGROUND};
+            color: inherit;
             cursor: pointer;
             font-family: inherit;
             flex-shrink: 0;
         `;
-        updateModeBtn();
-        this._updateModeBtn = updateModeBtn;
-        modeBtn.addEventListener('click', async () => {
-            const current = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            config.setSettingValue('profitCalc_pricingMode', nextPricingMode(current));
-            updateModeBtn();
+        const choosePricingSide = (side) => async (choice) => {
+            // Each setting written fires its listeners, and the tick listeners
+            // re-render the profit sections: hold those off and refresh once
+            this._applyingPricingChoice = true;
+            try {
+                applyPricingSideChoice(side, choice);
+            } finally {
+                this._applyingPricingChoice = false;
+            }
+            if (this._updatePricingSelects) this._updatePricingSelects();
             await this._refreshProfitDisplays();
-        });
-        if (controlsHost) {
-            controlsHost.appendChild(modeBtn);
-        } else {
-            sortBtn.insertAdjacentElement('afterend', modeBtn);
-        }
-        this.modeButton = modeBtn;
-
-        if (!config.getSetting('actionPanel_showPricingMode')) {
-            modeBtn.style.display = 'none';
-        }
-
-        // Create "+1 tick" toggle button — a one-click way to flip
-        // profitCalc_patientTick without opening Settings. Sits next to the Mode
-        // button and shares its visibility gate.
-        const tickBtn = document.createElement('button');
-        tickBtn.id = 'mwi-action-tick-toggle';
-        tickBtn.textContent = '+1 tick';
-        const updateTickBtn = () => {
-            const enabled = config.getSetting('profitCalc_patientTick') === true;
-            const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            const hasPatientSide = mode !== 'conservative';
-            const active = enabled && hasPatientSide;
-            tickBtn.style.borderColor = active ? config.COLOR_ACCENT : 'rgba(255, 255, 255, 0.23)';
-            tickBtn.style.color = active ? config.COLOR_ACCENT : 'inherit';
-            tickBtn.style.opacity = hasPatientSide ? '1' : '0.5';
-            tickBtn.title = hasPatientSide
-                ? 'Patient buys price one tick above the bid and patient sells one tick below the ask'
-                : 'No effect in Conservative mode (Instant Buy / Instant Sell) — there is no patient side for the tick to apply to';
         };
-        tickBtn.style.cssText = `
-            padding: 8px 12px;
-            font-size: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.23);
-            border-radius: 4px;
-            background: transparent;
-            cursor: pointer;
-            font-family: inherit;
-            flex-shrink: 0;
-        `;
-        updateTickBtn();
-        this._updateTickBtn = updateTickBtn;
-        tickBtn.addEventListener('click', () => {
-            const current = config.getSetting('profitCalc_patientTick') === true;
-            config.setSettingValue('profitCalc_patientTick', !current);
+        const buySelect = createPricingSideSelect('buy', {
+            cssText: pricingSelectCss,
+            onChoose: choosePricingSide('buy'),
         });
+        buySelect.id = 'mwi-action-pricing-buy';
+        const sellSelect = createPricingSideSelect('sell', {
+            cssText: pricingSelectCss,
+            onChoose: choosePricingSide('sell'),
+        });
+        sellSelect.id = 'mwi-action-pricing-sell';
+        this._updatePricingSelects = () => {
+            syncPricingSideSelect(buySelect);
+            syncPricingSideSelect(sellSelect);
+        };
         if (controlsHost) {
-            controlsHost.appendChild(tickBtn);
+            controlsHost.appendChild(buySelect);
+            controlsHost.appendChild(sellSelect);
         } else {
-            modeBtn.insertAdjacentElement('afterend', tickBtn);
+            sortBtn.insertAdjacentElement('afterend', buySelect);
+            buySelect.insertAdjacentElement('afterend', sellSelect);
         }
-        this.tickButton = tickBtn;
+        this.buyPricingSelect = buySelect;
+        this.sellPricingSelect = sellSelect;
 
         if (!config.getSetting('actionPanel_showPricingMode')) {
-            tickBtn.style.display = 'none';
+            buySelect.style.display = 'none';
+            sellSelect.style.display = 'none';
         }
 
         // Create craft toggle button
@@ -442,7 +427,7 @@ class ActionFilter {
         if (controlsHost) {
             controlsHost.appendChild(craftBtn);
         } else {
-            tickBtn.insertAdjacentElement('afterend', craftBtn);
+            sellSelect.insertAdjacentElement('afterend', craftBtn);
         }
         this.craftButton = craftBtn;
 
@@ -777,14 +762,14 @@ class ActionFilter {
             this.sortButton = null;
         }
 
-        if (this.modeButton && this.modeButton.parentElement) {
-            this.modeButton.remove();
-            this.modeButton = null;
+        if (this.buyPricingSelect && this.buyPricingSelect.parentElement) {
+            this.buyPricingSelect.remove();
+            this.buyPricingSelect = null;
         }
 
-        if (this.tickButton && this.tickButton.parentElement) {
-            this.tickButton.remove();
-            this.tickButton = null;
+        if (this.sellPricingSelect && this.sellPricingSelect.parentElement) {
+            this.sellPricingSelect.remove();
+            this.sellPricingSelect = null;
         }
 
         if (this.craftButton && this.craftButton.parentElement) {
@@ -810,8 +795,7 @@ class ActionFilter {
         this.controlsToggle = null;
         this._controlsExpanded = false;
 
-        this._updateModeBtn = null;
-        this._updateTickBtn = null;
+        this._updatePricingSelects = null;
         this._updateCraftBtn = null;
         this._updateSortBtn = null;
 
@@ -854,7 +838,7 @@ class ActionFilter {
 
     /**
      * Re-render all visible profit sections using the current pricing mode.
-     * Called after the mode button changes profitCalc_pricingMode.
+     * Called after a pricing dropdown writes the pricing settings.
      */
     async _refreshProfitDisplays() {
         const DROP_TABLE_SELECTOR = 'div.SkillActionDetail_dropTable__3ViVp';

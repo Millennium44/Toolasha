@@ -15,6 +15,7 @@ import { calculateExperienceMultiplier } from '../../utils/experience-parser.js'
 import { calculateActionsPerHour } from '../../utils/profit-helpers.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 
 class AlchemyProfitDisplay {
@@ -84,7 +85,7 @@ class AlchemyProfitDisplay {
         this.pricingUnsubscribers = [
             config.onSettingChange('profitCalc_pricingMode', onPricingChange),
             config.onSettingChange('profitCalc_pricingNaming', onPricingChange),
-            config.onSettingChange('profitCalc_patientTick', onPricingChange),
+            ...PATIENT_TICK_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
             config.onSettingsLoaded(onPricingChange),
         ];
 

@@ -252,16 +252,31 @@ describe('patient +1 tick', () => {
         reconciled.result = null;
         getCustomPrice.mockReturnValue(null);
         setting.mode = 'optimistic'; // patient buy at bid, patient sell at ask
-        setting.tick = true;
-        config.getSettingValue.mockImplementation((key, fallback) =>
-            key === 'profitCalc_patientTick' ? setting.tick : (setting.mode ?? fallback)
-        );
+        setting.tickBuy = true;
+        setting.tickSell = true;
+        config.getSettingValue.mockImplementation((key, fallback) => {
+            if (key === 'profitCalc_patientTickBuy') return setting.tickBuy;
+            if (key === 'profitCalc_patientTickSell') return setting.tickSell;
+            return setting.mode ?? fallback;
+        });
         marketAPI.getPrice.mockReturnValue({ ask: 500, bid: 400 });
     });
-    const setting = { mode: 'optimistic', tick: true };
+    const setting = { mode: 'optimistic', tickBuy: true, tickSell: true };
 
     test('a patient buy is one tick above the bid, a patient sell one tick below the ask', () => {
         expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(410);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(490);
+    });
+
+    test('the buy tick moves patient buys only, leaving patient sells at the ask', () => {
+        setting.tickSell = false;
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(410);
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(500);
+    });
+
+    test('the sell tick moves patient sells only, leaving patient buys at the bid', () => {
+        setting.tickBuy = false;
+        expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(400);
         expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(490);
     });
 
@@ -272,7 +287,8 @@ describe('patient +1 tick', () => {
     });
 
     test('off, the book prices are used as they stand', () => {
-        setting.tick = false;
+        setting.tickBuy = false;
+        setting.tickSell = false;
         expect(getItemPrice('/items/cheese', { context: 'profit', side: 'buy' })).toBe(400);
         expect(getItemPrice('/items/cheese', { context: 'profit', side: 'sell' })).toBe(500);
     });

@@ -1,0 +1,207 @@
+/**
+ * Buy / Sell pricing dropdowns
+ *
+ * `profitCalc_pricingMode` is really a pair — which side of the book purchases
+ * are priced at, and which side sales are — and the per-side patient ticks sit
+ * on top of it. Two dropdowns say that directly: Buy is Instant (ask), Patient
+ * (bid) or Patient +1 (bid plus one tick); Sell is Instant (bid), Patient (ask)
+ * or Patient −1 (ask minus one tick).
+ *
+ * The dropdowns own no state. Each reads the settings to show its choice and
+ * writes the settings when changed; the stored mode stays the four-value
+ * setting everything else reads. The skill toolbar and the alchemy Best Items
+ * header both build theirs here, so the two cannot drift apart.
+ */
+
+import config from '../core/config.js';
+import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn, patientTickSettingFor } from './patient-tick.js';
+
+const PRICING_MODE_SETTING = 'profitCalc_pricingMode';
+const PRICING_NAMING_SETTING = 'profitCalc_pricingNaming';
+
+/**
+ * Every setting a pricing dropdown shows. A surface holding one listens on all
+ * of these (plus the settings-loaded channel) to stay in sync.
+ */
+export const PRICING_SIDE_SETTING_KEYS = Object.freeze([
+    PRICING_MODE_SETTING,
+    PRICING_NAMING_SETTING,
+    ...PATIENT_TICK_SETTING_KEYS,
+]);
+
+/** A dropdown's options, in the order they are listed */
+export const PRICING_SIDE_CHOICES = Object.freeze(['instant', 'patient', 'patientTick']);
+
+/**
+ * The book side each pricing mode prices each transaction side at. Mirrors
+ * `getPricingMode`'s 'profit' branch in market-data.js, which stays the one
+ * authority on what a stored mode means for a price.
+ */
+const MODE_SIDES = Object.freeze({
+    conservative: Object.freeze({ buy: 'ask', sell: 'bid' }),
+    hybrid: Object.freeze({ buy: 'ask', sell: 'ask' }),
+    optimistic: Object.freeze({ buy: 'bid', sell: 'ask' }),
+    patientBuy: Object.freeze({ buy: 'bid', sell: 'bid' }),
+});
+
+/** The book side an instant order fills against */
+const INSTANT_BASIS = Object.freeze({ buy: 'ask', sell: 'bid' });
+/** The book side a patient order queues on */
+const PATIENT_BASIS = Object.freeze({ buy: 'bid', sell: 'ask' });
+
+/** Shared tooltip per dropdown */
+const SIDE_TITLES = Object.freeze({
+    buy:
+        'How purchases are priced.\n' +
+        'Instant: buy at the ask.\n' +
+        'Patient: place a buy order at the bid.\n' +
+        'Patient +1: place it one market tick above the bid, first in the queue (never crossing the spread).',
+    sell:
+        'How sales are priced.\n' +
+        'Instant: sell at the bid.\n' +
+        'Patient: place a sell order at the ask.\n' +
+        'Patient −1: place it one market tick below the ask, first in the queue (never crossing the spread).',
+});
+
+/** Background for the select and its option list — dark, like the game's panels */
+export const PRICING_SELECT_BACKGROUND = '#1e1e1e';
+
+/**
+ * The book sides a stored pricing mode prices at. An unrecognised mode reads as
+ * 'hybrid', the setting's default and what `getPricingMode` falls back to.
+ * @param {string} mode - A `profitCalc_pricingMode` value
+ * @returns {{buy: 'ask'|'bid', sell: 'ask'|'bid'}}
+ */
+export function sidesOfPricingMode(mode) {
+    return MODE_SIDES[mode] || MODE_SIDES.hybrid;
+}
+
+/**
+ * The pricing mode for a buy side and a sell side.
+ * @param {'ask'|'bid'} buy - Book side purchases are priced at
+ * @param {'ask'|'bid'} sell - Book side sales are priced at
+ * @returns {string} The `profitCalc_pricingMode` value
+ */
+export function pricingModeFromSides(buy, sell) {
+    for (const [mode, sides] of Object.entries(MODE_SIDES)) {
+        if (sides.buy === buy && sides.sell === sell) return mode;
+    }
+    return 'hybrid';
+}
+
+/**
+ * What a side's dropdown should show for the current settings. A tick switched
+ * on for a side the mode prices instantly has nothing to move, so it shows as
+ * Instant.
+ * @param {'buy'|'sell'} side - Transaction side
+ * @returns {'instant'|'patient'|'patientTick'}
+ */
+export function currentPricingSideChoice(side) {
+    const mode = config.getSettingValue(PRICING_MODE_SETTING, 'hybrid');
+    if (sidesOfPricingMode(mode)[side] === INSTANT_BASIS[side]) return 'instant';
+    return isPatientTickOn(side) ? 'patientTick' : 'patient';
+}
+
+/**
+ * An option's text: "Buy: Instant / Patient / Patient +1" under the
+ * Instant/Patient naming, "Buy: Ask / Bid / Bid +1" (and "Sell: Bid / Ask /
+ * Ask −1") under the Ask/Bid naming.
+ * @param {'buy'|'sell'} side - Transaction side
+ * @param {'instant'|'patient'|'patientTick'} choice - The option
+ * @param {boolean} instantNaming - Whether `profitCalc_pricingNaming` is on
+ * @returns {string}
+ */
+export function pricingSideChoiceLabel(side, choice, instantNaming) {
+    const prefix = side === 'buy' ? 'Buy' : 'Sell';
+    let word;
+    if (instantNaming) {
+        word = choice === 'instant' ? 'Instant' : 'Patient';
+    } else {
+        const basis = choice === 'instant' ? INSTANT_BASIS[side] : PATIENT_BASIS[side];
+        word = basis === 'ask' ? 'Ask' : 'Bid';
+    }
+    const tick = choice === 'patientTick' ? (side === 'buy' ? ' +1' : ' −1') : '';
+    return `${prefix}: ${word}${tick}`;
+}
+
+/**
+ * Write a side's choice into the settings: the combined pricing mode first
+ * (keeping the other side as it is), then that side's tick. Only what actually
+ * changes is written, so a listener fires for a real change and nothing else.
+ * Instant turns the side's tick off, so no tick lingers unseen behind it.
+ * @param {'buy'|'sell'} side - Transaction side
+ * @param {'instant'|'patient'|'patientTick'} choice - The option chosen
+ * @returns {boolean} Whether any setting was written
+ */
+export function applyPricingSideChoice(side, choice) {
+    const tickKey = patientTickSettingFor(side);
+    if (!tickKey || !PRICING_SIDE_CHOICES.includes(choice)) return false;
+
+    const mode = config.getSettingValue(PRICING_MODE_SETTING, 'hybrid');
+    const sides = { ...sidesOfPricingMode(mode) };
+    sides[side] = choice === 'instant' ? INSTANT_BASIS[side] : PATIENT_BASIS[side];
+    const nextMode = pricingModeFromSides(sides.buy, sides.sell);
+    const nextTick = choice === 'patientTick';
+
+    let written = false;
+    if (nextMode !== mode) {
+        config.setSettingValue(PRICING_MODE_SETTING, nextMode);
+        written = true;
+    }
+    if (isPatientTickOn(side) !== nextTick) {
+        config.setSetting(tickKey, nextTick);
+        written = true;
+    }
+    return written;
+}
+
+/**
+ * Bring a dropdown built by {@link createPricingSideSelect} up to date: option
+ * text for the current naming, the selected choice, and the tooltip.
+ * @param {HTMLSelectElement} select - The dropdown
+ * @returns {void}
+ */
+export function syncPricingSideSelect(select) {
+    const side = select?.dataset?.mwiPricingSide;
+    if (side !== 'buy' && side !== 'sell') return;
+    const instantNaming = Boolean(config.getSetting(PRICING_NAMING_SETTING));
+    for (const option of select.options) {
+        option.textContent = pricingSideChoiceLabel(side, option.value, instantNaming);
+    }
+    select.value = currentPricingSideChoice(side);
+    select.title = SIDE_TITLES[side];
+}
+
+/**
+ * Build a Buy or Sell pricing dropdown, synced to the current settings.
+ *
+ * The dropdown does not write the settings itself: `onChoose` gets the choice,
+ * so the surface decides how to batch the write with its own refresh — usually
+ * {@link applyPricingSideChoice} and then one re-render.
+ *
+ * @param {'buy'|'sell'} side - Transaction side
+ * @param {Object} [options]
+ * @param {string} [options.cssText] - Inline style, to match the surface's buttons
+ * @param {function(string): void} [options.onChoose] - Called with the chosen option
+ * @returns {HTMLSelectElement}
+ */
+export function createPricingSideSelect(side, { cssText = '', onChoose } = {}) {
+    const select = document.createElement('select');
+    select.dataset.mwiPricingSide = side;
+    select.setAttribute('aria-label', side === 'buy' ? 'Buy-side pricing' : 'Sell-side pricing');
+    select.style.cssText = cssText;
+    for (const choice of PRICING_SIDE_CHOICES) {
+        const option = document.createElement('option');
+        option.value = choice;
+        // The open list is drawn by the browser; without its own colours it is
+        // white text on a white menu in some browsers
+        option.style.backgroundColor = PRICING_SELECT_BACKGROUND;
+        option.style.color = '#fff';
+        select.appendChild(option);
+    }
+    select.addEventListener('change', () => {
+        if (typeof onChoose === 'function') onChoose(select.value);
+    });
+    syncPricingSideSelect(select);
+    return select;
+}

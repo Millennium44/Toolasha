@@ -712,7 +712,8 @@ describe('cache invalidation on pricing changes', () => {
 
     test.each([
         'profitCalc_pricingMode',
-        'profitCalc_patientTick',
+        'profitCalc_patientTickBuy',
+        'profitCalc_patientTickSell',
         'expectedValue_respectPricingMode',
         'expectedValue_includeCowbells',
     ])('a %s change schedules an invalidate, debounced', (settingKey) => {
@@ -753,7 +754,7 @@ describe('cache invalidation on pricing changes', () => {
 
         mocks.settingChangeCallbacks.get('profitCalc_pricingMode').forEach((cb) => cb());
         vi.advanceTimersByTime(100);
-        mocks.settingChangeCallbacks.get('profitCalc_patientTick').forEach((cb) => cb());
+        mocks.settingChangeCallbacks.get('profitCalc_patientTickSell').forEach((cb) => cb());
         vi.advanceTimersByTime(100);
         mocks.marketListeners.forEach((cb) => cb());
         vi.advanceTimersByTime(299); // just under the window from the last trigger
@@ -839,7 +840,8 @@ describe('cache invalidation on pricing changes', () => {
 
         for (const key of [
             'profitCalc_pricingMode',
-            'profitCalc_patientTick',
+            'profitCalc_patientTickBuy',
+            'profitCalc_patientTickSell',
             'expectedValue_respectPricingMode',
             'expectedValue_includeCowbells',
         ]) {

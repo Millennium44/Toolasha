@@ -45,7 +45,7 @@ import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { describeCraft } from '../features/crafting-plan/craft-arbitrage-adapter.js';
 import { getPricingMode } from './market-data.js';
-import { isPatientTickEnabled, patientTickPrice } from './patient-tick.js';
+import { isPatientTickOn, patientTickPrice } from './patient-tick.js';
 import { coinFormatter, timeReadable } from './formatters.js';
 
 /** The setting that says how a key is valued */
@@ -333,7 +333,7 @@ export function getKeyUnitCost(keyHrid) {
     if (basis !== 'craft') return buyPriceFor(keyHrid, priceSide, followsGlobalMode(resolved, priceSide));
 
     // The tick is in the key for the same reason the side is: toggling it must miss
-    const tick = isPatientTickEnabled() ? 'tick' : '';
+    const tick = isPatientTickOn('buy') ? 'tick' : '';
     const cacheKey = `${keyHrid}|${priceSide}|${tick}|${dataManager.getCurrentCharacterId?.() ?? '?'}`;
     const cached = craftCostCache.get(cacheKey);
     if (cached && Date.now() - cached.at < CRAFT_COST_TTL_MS) return cached.unitCost;

@@ -1,12 +1,13 @@
 /**
  * Pricing mode cycle
  *
- * The order the "Mode:" buttons step through the profit calculator's pricing
- * modes. One list, so the action-panel toolbar and the alchemy Best Items modal
- * cannot drift apart. Constants and a pure function only — no module state.
+ * The order a cycling pricing button steps through the profit calculator's
+ * pricing modes — the crafting plan's. (The skill toolbar and the alchemy Best
+ * Items header use Buy/Sell dropdowns instead: utils/pricing-side-select.js.)
+ * Constants and a pure function only — no module state.
  */
 
-/** Pricing modes in the order a "Mode:" button cycles them */
+/** Pricing modes in the order a cycling pricing button steps through them */
 export const PRICING_MODE_CYCLE = Object.freeze(['hybrid', 'conservative', 'optimistic', 'patientBuy']);
 
 /**

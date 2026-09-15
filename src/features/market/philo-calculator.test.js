@@ -14,7 +14,8 @@ const mocks = vi.hoisted(() => ({
     actionStats: { actionTime: 8, totalEfficiency: 50 },
     bonusDrops: [],
     globalPricingMode: 'hybrid',
-    patientTick: false,
+    patientTickBuy: false,
+    patientTickSell: false,
     characterId: 'char1',
 }));
 
@@ -90,7 +91,8 @@ vi.mock('../../core/config.js', () => ({
         getSetting: () => true,
         getSettingValue: (key, fallback) => {
             if (key === 'profitCalc_pricingMode') return mocks.globalPricingMode;
-            if (key === 'profitCalc_patientTick') return mocks.patientTick;
+            if (key === 'profitCalc_patientTickBuy') return mocks.patientTickBuy;
+            if (key === 'profitCalc_patientTickSell') return mocks.patientTickSell;
             return fallback;
         },
         COLOR_PROFIT: '#0f0',
@@ -153,7 +155,8 @@ beforeEach(() => {
     mocks.actionStats = { actionTime: 8, totalEfficiency: 50 };
     mocks.bonusDrops = [];
     mocks.globalPricingMode = 'hybrid';
-    mocks.patientTick = false;
+    mocks.patientTickBuy = false;
+    mocks.patientTickSell = false;
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -375,7 +378,8 @@ describe('patient +1 tick', () => {
 
     test('following the global mode, patient buys step up and patient sells step down', () => {
         mocks.globalPricingMode = 'optimistic';
-        mocks.patientTick = true;
+        mocks.patientTickBuy = true;
+        mocks.patientTickSell = true;
         calc.pricingMode = 'global';
         calc.loadDefaultPrices();
 
@@ -390,9 +394,25 @@ describe('patient +1 tick', () => {
         );
     });
 
+    test('each side ticks under its own setting', () => {
+        mocks.globalPricingMode = 'optimistic';
+        calc.pricingMode = 'global';
+
+        mocks.patientTickBuy = true;
+        calc.loadDefaultPrices();
+        expect(calc.calculateRow(WIDGET_HRID, widget()).cost).toBe(nextPriceUp(800));
+        expect(calc.philoPrice).toBe(5_000_000);
+
+        mocks.patientTickBuy = false;
+        mocks.patientTickSell = true;
+        calc.loadDefaultPrices();
+        expect(calc.calculateRow(WIDGET_HRID, widget()).cost).toBe(800);
+        expect(calc.philoPrice).toBe(nextPriceDown(5_000_000));
+    });
+
     test('the catalyst bought patiently in global mode steps up too', () => {
         mocks.globalPricingMode = 'optimistic';
-        mocks.patientTick = true;
+        mocks.patientTickBuy = true;
         mocks.prices['/items/prime_catalyst+0'] = { ask: 3000, bid: 2000 };
         calc.pricingMode = 'global';
         calc.loadDefaultPrices();
@@ -400,7 +420,8 @@ describe('patient +1 tick', () => {
     });
 
     test('an explicitly chosen mode prices at its exact sides', () => {
-        mocks.patientTick = true;
+        mocks.patientTickBuy = true;
+        mocks.patientTickSell = true;
         calc.pricingMode = 'optimistic';
         calc.loadDefaultPrices();
 

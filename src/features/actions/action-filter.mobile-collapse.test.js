@@ -1,11 +1,10 @@
 /** @vitest-environment happy-dom */
 
 /**
- * Mobile mode collapses the sort/pricing-mode/craft/refresh row behind one
- * compact toggle, on the same row as the filter input, instead of the three
- * full-width rows the toolbar used to take above the action list. Desktop is
- * untouched: no wrapper, no toggle, the four buttons attach straight to the
- * title bar exactly as before.
+ * Mobile mode collapses the sort/pricing/craft/refresh row behind one compact
+ * toggle, on the same row as the filter input, instead of the three full-width
+ * rows the toolbar used to take above the action list. Desktop is untouched:
+ * no wrapper, no toggle, the controls attach straight to the title bar.
  *
  * The open/closed state is device-local (`toolasha_local_` prefix — see
  * `DEVICE_LOCAL_KEY_PREFIXES` in core/settings-storage.js) so a phone and a
@@ -62,6 +61,12 @@ vi.mock('../../api/marketplace.js', () => ({
     default: { fetch: vi.fn(async () => true) },
 }));
 
+vi.mock('../../utils/market-values.js', () => ({
+    nextPriceUp: (price) => price + 1,
+    nextPriceDown: (price) => price - 1,
+    clampToBand: (price) => price,
+}));
+
 vi.mock('./action-panel-sort.js', () => ({
     default: {
         onSortModeChange: vi.fn(() => () => {}),
@@ -103,8 +108,8 @@ const toggle = () => document.querySelector('#mwi-action-controls-toggle');
 const wrapper = () => document.querySelector('#mwi-action-controls');
 const filterInput = () => document.querySelector('#mwi-action-filter');
 const sortBtn = () => document.querySelector('#mwi-action-sort-toggle');
-const modeBtn = () => document.querySelector('#mwi-action-profit-mode');
-const tickBtn = () => document.querySelector('#mwi-action-tick-toggle');
+const buySelect = () => document.querySelector('#mwi-action-pricing-buy');
+const sellSelect = () => document.querySelector('#mwi-action-pricing-sell');
 const craftBtn = () => document.querySelector('#mwi-action-craft-toggle');
 const refreshBtn = () => document.querySelector('#mwi-action-price-refresh');
 
@@ -129,7 +134,7 @@ describe('ActionFilter mobile collapsible controls row', () => {
     });
 
     describe('desktop mode', () => {
-        it('renders exactly as before — no toggle, no wrapper, buttons attached straight to the title bar', async () => {
+        it('renders with no toggle and no wrapper, controls attached straight to the title bar', async () => {
             mocks.device.mobile = false;
             const title = makeTitle();
             actionFilter.injectFilterInput(title);
@@ -139,29 +144,29 @@ describe('ActionFilter mobile collapsible controls row', () => {
             expect(wrapper()).toBeNull();
             expect(filterInput()).not.toBeNull();
             expect(sortBtn()).not.toBeNull();
-            expect(modeBtn()).not.toBeNull();
-            expect(tickBtn()).not.toBeNull();
+            expect(buySelect()).not.toBeNull();
+            expect(sellSelect()).not.toBeNull();
             expect(craftBtn()).not.toBeNull();
             expect(refreshBtn()).not.toBeNull();
 
-            // Pin the exact DOM shape of the title bar: input, sort, mode, tick,
+            // Pin the exact DOM shape of the title bar: input, sort, buy, sell,
             // craft, refresh, as direct siblings — nothing wrapped, nothing inserted.
             const ids = Array.from(title.children).map((el) => el.id);
             expect(ids).toEqual([
                 'mwi-action-filter',
                 'mwi-action-sort-toggle',
-                'mwi-action-profit-mode',
-                'mwi-action-tick-toggle',
+                'mwi-action-pricing-buy',
+                'mwi-action-pricing-sell',
                 'mwi-action-craft-toggle',
                 'mwi-action-price-refresh',
                 '', // the skill name div
             ]);
 
-            // Every button is visible immediately — nothing hidden pending a
+            // Every control is visible immediately — nothing hidden pending a
             // toggle that does not exist on desktop.
             expect(sortBtn().style.display).not.toBe('none');
-            expect(modeBtn().style.display).not.toBe('none');
-            expect(tickBtn().style.display).not.toBe('none');
+            expect(buySelect().style.display).not.toBe('none');
+            expect(sellSelect().style.display).not.toBe('none');
             expect(craftBtn().style.display).not.toBe('none');
             expect(refreshBtn().style.display).not.toBe('none');
         });
@@ -172,7 +177,7 @@ describe('ActionFilter mobile collapsible controls row', () => {
             mocks.device.mobile = true;
         });
 
-        it('hides the buttons behind a toggle by default, and the filter input stays visible and usable', async () => {
+        it('hides the controls behind a toggle by default, and the filter input stays visible and usable', async () => {
             const title = makeTitle();
             actionFilter.injectFilterInput(title);
             await flush();
@@ -185,15 +190,17 @@ describe('ActionFilter mobile collapsible controls row', () => {
             expect(wrapper().style.display).toBe('none');
             expect(toggle().getAttribute('aria-expanded')).toBe('false');
 
-            // The controls are inside the wrapper, not loose on the title bar.
-            expect(wrapper().contains(sortBtn())).toBe(true);
-            expect(wrapper().contains(modeBtn())).toBe(true);
-            expect(wrapper().contains(tickBtn())).toBe(true);
-            expect(wrapper().contains(craftBtn())).toBe(true);
-            expect(wrapper().contains(refreshBtn())).toBe(true);
+            // The controls are inside the wrapper, in toolbar order, not loose on the title bar.
+            expect(Array.from(wrapper().children).map((el) => el.id)).toEqual([
+                'mwi-action-sort-toggle',
+                'mwi-action-pricing-buy',
+                'mwi-action-pricing-sell',
+                'mwi-action-craft-toggle',
+                'mwi-action-price-refresh',
+            ]);
         });
 
-        it('tapping the toggle reveals the buttons, tapping again hides them', async () => {
+        it('tapping the toggle reveals the controls, tapping again hides them', async () => {
             const title = makeTitle();
             actionFilter.injectFilterInput(title);
             await flush();
@@ -261,6 +268,8 @@ describe('ActionFilter mobile collapsible controls row', () => {
             expect(wrapper()).toBeNull();
             expect(filterInput()).toBeNull();
             expect(sortBtn()).toBeNull();
+            expect(buySelect()).toBeNull();
+            expect(sellSelect()).toBeNull();
         });
     });
 });

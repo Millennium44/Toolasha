@@ -1682,12 +1682,19 @@ export const settingsGroups = {
                     { value: 'patientBuy', label: 'Buy: Bid / Sell: Bid (Patient Buy / Instant Sell)' },
                 ],
             },
-            profitCalc_patientTick: {
-                id: 'profitCalc_patientTick',
-                label: 'Patient orders: +1 tick',
+            profitCalc_patientTickBuy: {
+                id: 'profitCalc_patientTickBuy',
+                label: 'Patient buys: +1 tick',
                 type: 'checkbox',
                 default: false,
-                help: 'Assume you jump the queue on the patient side of the pricing mode above: a buy priced at the bid uses one market tick above the bid, and a sell priced at the ask uses one tick below the ask. Instant sides (buy at ask, sell at bid) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone.',
+                help: 'When the pricing mode above buys at the bid, assume you jump the queue: a patient buy is priced one market tick above the bid. Instant buys (at the ask) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone.',
+            },
+            profitCalc_patientTickSell: {
+                id: 'profitCalc_patientTickSell',
+                label: 'Patient sells: −1 tick',
+                type: 'checkbox',
+                default: false,
+                help: 'When the pricing mode above sells at the ask, assume you jump the queue: a patient sell is priced one market tick below the ask. Instant sells (at the bid) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone.',
             },
             pricing_testerShop: {
                 id: 'pricing_testerShop',

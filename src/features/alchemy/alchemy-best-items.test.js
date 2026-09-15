@@ -40,7 +40,12 @@ const experience = vi.hoisted(() => ({ totalMultiplier: 1 }));
 
 /** A small live config: values, change listeners and settings-loaded listeners */
 const settings = vi.hoisted(() => ({
-    values: { profitCalc_pricingMode: 'hybrid', profitCalc_patientTick: false },
+    values: {
+        profitCalc_pricingMode: 'hybrid',
+        profitCalc_pricingNaming: false,
+        profitCalc_patientTickBuy: false,
+        profitCalc_patientTickSell: false,
+    },
     changeListeners: {},
     loadedListeners: [],
 }));
@@ -48,12 +53,16 @@ const settings = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         // 'alchemy_bestItems' and other gates default to on; keys tests care
-        // about (profitCalc_patientTick) read back whatever was written.
+        // about (the pricing mode, naming and per-side ticks) read back whatever was written.
         getSetting: (key) => (Object.hasOwn(settings.values, key) ? settings.values[key] : true),
         COLOR_ACCENT: '#abcdef',
         getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
         getPricingModeLabel: (mode) => `label:${mode}`,
         getPricingModeDisplayLabel: (mode) => `label:${mode}`,
+        setSetting: (key, value) => {
+            settings.values[key] = value;
+            for (const cb of settings.changeListeners[key] || []) cb(value);
+        },
         setSettingValue: (key, value) => {
             settings.values[key] = value;
             for (const cb of settings.changeListeners[key] || []) cb(value);
@@ -829,9 +838,14 @@ describe('loadRankings — painting early, resolving the caps in the background'
     });
 });
 
-describe('the pricing mode switch in the modal header', () => {
+describe('the Buy / Sell pricing dropdowns in the modal header', () => {
     beforeEach(() => {
-        settings.values = { profitCalc_pricingMode: 'hybrid', profitCalc_patientTick: false };
+        settings.values = {
+            profitCalc_pricingMode: 'hybrid',
+            profitCalc_pricingNaming: false,
+            profitCalc_patientTickBuy: false,
+            profitCalc_patientTickSell: false,
+        };
         settings.changeListeners = {};
         settings.loadedListeners = [];
         game.initClientData = {
@@ -853,70 +867,126 @@ describe('the pricing mode switch in the modal header', () => {
         bestItems.disable();
     });
 
-    const modeButton = () => bestItems.modal.querySelector('[data-mwi-best-mode-btn]');
-    const tickButton = () => bestItems.modal.querySelector('[data-mwi-best-tick-btn]');
+    const buySelect = () => bestItems.modal.querySelector('[data-mwi-best-pricing-buy]');
+    const sellSelect = () => bestItems.modal.querySelector('[data-mwi-best-pricing-sell]');
+    const selectedText = (select) => select.options[select.selectedIndex].textContent;
     const profitCell = () => bestItems.modal.querySelector('tbody tr').children[4].textContent;
-    // COLOR_ACCENT is mocked as '#abcdef'.
-    const ACCENT_RGB = '#abcdef';
+    const PRICING_KEYS = [
+        'profitCalc_pricingMode',
+        'profitCalc_pricingNaming',
+        'profitCalc_patientTickBuy',
+        'profitCalc_patientTickSell',
+    ];
 
-    test('the button names the current mode, without a "(+1 tick)" suffix', () => {
-        expect(modeButton().textContent).toBe('Mode: label:hybrid');
+    /** Pick an option the way a player does */
+    function choose(select, choice) {
+        select.value = choice;
+        select.dispatchEvent(new Event('change'));
+    }
+
+    /** A write made somewhere else (the Settings panel, the skill toolbar) */
+    function writeElsewhere(key, value) {
+        settings.values[key] = value;
+        for (const cb of settings.changeListeners[key] || []) cb(value);
+    }
+
+    test('the header carries Buy and Sell dropdowns in place of the Mode and +1 tick buttons', () => {
+        expect(bestItems.modal.querySelector('[data-mwi-best-mode-btn]')).toBeNull();
+        expect(bestItems.modal.querySelector('[data-mwi-best-tick-btn]')).toBeNull();
+
+        expect(buySelect().tagName).toBe('SELECT');
+        expect(sellSelect().tagName).toBe('SELECT');
+        expect(buySelect().nextElementSibling).toBe(sellSelect());
+        // Styled like the header's other controls: same radius and font size
+        expect(buySelect().style.borderRadius).toBe('4px');
+        expect(buySelect().style.fontSize).toBe('0.75rem');
+
+        // hybrid: instant buys, patient sells, in the Ask/Bid naming
+        expect(buySelect().value).toBe('instant');
+        expect(sellSelect().value).toBe('patient');
+        expect(Array.from(buySelect().options).map((o) => o.textContent)).toEqual([
+            'Buy: Ask',
+            'Buy: Bid',
+            'Buy: Bid +1',
+        ]);
+        expect(Array.from(sellSelect().options).map((o) => o.textContent)).toEqual([
+            'Sell: Bid',
+            'Sell: Ask',
+            'Sell: Ask −1',
+        ]);
     });
 
-    test('the tick button starts off, next to the Mode button', () => {
-        expect(tickButton()).not.toBeNull();
-        expect(tickButton().textContent).toBe('+1 tick');
-        expect(tickButton().style.color).not.toBe(ACCENT_RGB);
+    test('a choice writes the mode and tick, and re-ranks once', async () => {
+        await bestItems.loadRankings('coinify');
+        expect(profitCell()).toContain('1.0K');
+        const loadSpy = vi.spyOn(bestItems, 'loadRankings');
+
+        // Instant → Patient +1 writes the mode and the tick, each with a listener
+        choose(buySelect(), 'patientTick');
+
+        expect(settings.values.profitCalc_pricingMode).toBe('optimistic');
+        expect(settings.values.profitCalc_patientTickBuy).toBe(true);
+        expect(settings.values.profitCalc_patientTickSell).toBe(false);
+        expect(loadSpy).toHaveBeenCalledTimes(1);
+        expect(profitCell()).toContain('7.0K');
+        expect(buySelect().value).toBe('patientTick');
+        loadSpy.mockRestore();
     });
 
-    test('clicking the tick button flips the setting and relabels/restyles it', () => {
-        tickButton().click();
+    test('every Buy × Sell combination lands on the right settings', () => {
+        const MODE_FOR = {
+            instant: { instant: 'conservative', patient: 'hybrid', patientTick: 'hybrid' },
+            patient: { instant: 'patientBuy', patient: 'optimistic', patientTick: 'optimistic' },
+            patientTick: { instant: 'patientBuy', patient: 'optimistic', patientTick: 'optimistic' },
+        };
+        for (const buy of ['instant', 'patient', 'patientTick']) {
+            for (const sell of ['instant', 'patient', 'patientTick']) {
+                choose(buySelect(), buy);
+                choose(sellSelect(), sell);
 
-        expect(settings.values.profitCalc_patientTick).toBe(true);
-        expect(tickButton().style.borderColor).toBe(ACCENT_RGB);
-        expect(tickButton().style.color).toBe(ACCENT_RGB);
-
-        tickButton().click();
-        expect(settings.values.profitCalc_patientTick).toBe(false);
-        expect(tickButton().style.color).not.toBe(ACCENT_RGB);
+                expect(settings.values.profitCalc_pricingMode).toBe(MODE_FOR[buy][sell]);
+                expect(settings.values.profitCalc_patientTickBuy).toBe(buy === 'patientTick');
+                expect(settings.values.profitCalc_patientTickSell).toBe(sell === 'patientTick');
+                expect(buySelect().value).toBe(buy);
+                expect(sellSelect().value).toBe(sell);
+            }
+        }
     });
 
-    test('an external setting change (e.g. the other toggle button, or Settings) updates it too', () => {
-        settings.values.profitCalc_patientTick = true;
-        for (const cb of settings.changeListeners.profitCalc_patientTick) cb(true);
+    test('an external change (Settings, or the skill toolbar) resyncs both dropdowns', () => {
+        writeElsewhere('profitCalc_pricingMode', 'patientBuy');
+        expect(buySelect().value).toBe('patient');
+        expect(sellSelect().value).toBe('instant');
 
-        expect(tickButton().style.color).toBe(ACCENT_RGB);
+        writeElsewhere('profitCalc_patientTickBuy', true);
+        expect(buySelect().value).toBe('patientTick');
     });
 
-    test('Conservative mode dims the tick button and explains why, but leaves it clickable', () => {
-        settings.values.profitCalc_pricingMode = 'conservative';
-        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('conservative');
+    test('a naming change retexts both dropdowns', () => {
+        writeElsewhere('profitCalc_pricingNaming', true);
 
-        expect(tickButton().style.opacity).toBe('0.5');
-        expect(tickButton().title).toMatch(/no effect/i);
-        expect(tickButton().disabled).toBeFalsy();
-
-        tickButton().click();
-        expect(settings.values.profitCalc_patientTick).toBe(true);
+        expect(selectedText(buySelect())).toBe('Buy: Instant');
+        expect(selectedText(sellSelect())).toBe('Sell: Patient');
     });
 
-    test('changing the setting while open re-ranks the rows and relabels the button', async () => {
+    test('changing the setting while open re-ranks the rows and resyncs the dropdowns', async () => {
         await bestItems.loadRankings('coinify');
         expect(profitCell()).toContain('1.0K');
 
-        settings.values.profitCalc_pricingMode = 'conservative';
-        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('conservative');
+        writeElsewhere('profitCalc_pricingMode', 'conservative');
 
-        expect(modeButton().textContent).toBe('Mode: label:conservative');
+        expect(sellSelect().value).toBe('instant');
         expect(profitCell()).toContain('7.0K');
     });
 
-    test('a character switch reloading settings re-ranks too', async () => {
+    test('a character switch reloading settings re-ranks and resyncs too', async () => {
         await bestItems.loadRankings('coinify');
         settings.values.profitCalc_pricingMode = 'optimistic';
+        settings.values.profitCalc_patientTickSell = true;
         for (const cb of settings.loadedListeners) cb();
 
-        expect(modeButton().textContent).toBe('Mode: label:optimistic');
+        expect(buySelect().value).toBe('patient');
+        expect(sellSelect().value).toBe('patientTick');
         expect(profitCell()).toContain('7.0K');
     });
 
@@ -925,35 +995,21 @@ describe('the pricing mode switch in the modal header', () => {
         bestItems.modal.style.display = 'none';
         calculator.coinify.mockClear();
 
-        settings.values.profitCalc_pricingMode = 'conservative';
-        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('conservative');
+        writeElsewhere('profitCalc_pricingMode', 'conservative');
 
         expect(bestItems.cachedRankings).toEqual({});
         expect(calculator.coinify).not.toHaveBeenCalled();
     });
 
-    test('clicking the button cycles the mode, wrapping at the end', () => {
-        modeButton().click();
-        expect(settings.values.profitCalc_pricingMode).toBe('conservative');
-        expect(modeButton().textContent).toBe('Mode: label:conservative');
-
-        modeButton().click();
-        modeButton().click();
-        expect(settings.values.profitCalc_pricingMode).toBe('patientBuy');
-
-        modeButton().click();
-        expect(settings.values.profitCalc_pricingMode).toBe('hybrid');
-    });
-
     test('every listener is removed on disable', () => {
-        for (const key of ['profitCalc_pricingMode', 'profitCalc_pricingNaming', 'profitCalc_patientTick']) {
+        for (const key of PRICING_KEYS) {
             expect(settings.changeListeners[key]).toHaveLength(1);
         }
         expect(settings.loadedListeners).toHaveLength(1);
 
         bestItems.disable();
 
-        for (const key of ['profitCalc_pricingMode', 'profitCalc_pricingNaming', 'profitCalc_patientTick']) {
+        for (const key of PRICING_KEYS) {
             expect(settings.changeListeners[key]).toHaveLength(0);
         }
         expect(settings.loadedListeners).toHaveLength(0);

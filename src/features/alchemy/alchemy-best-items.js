@@ -23,7 +23,13 @@ import {
     prefetchLiquidity,
 } from '../../utils/liquidity-cap.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
-import { nextPricingMode } from '../../utils/pricing-mode.js';
+import {
+    applyPricingSideChoice,
+    createPricingSideSelect,
+    PRICING_SELECT_BACKGROUND,
+    PRICING_SIDE_SETTING_KEYS,
+    syncPricingSideSelect,
+} from '../../utils/pricing-side-select.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 
@@ -73,6 +79,8 @@ class AlchemyBestItems {
         this.filterPriceMin = null;
         this.filterPriceMax = null;
         this.pricingUnsubscribers = [];
+        // True while a header dropdown writes the pricing settings — see choosePricingSide
+        this._applyingPricingChoice = false;
     }
 
     initialize() {
@@ -86,15 +94,17 @@ class AlchemyBestItems {
 
     /**
      * Re-rank when anything that decides the prices changes, so the modal never
-     * shows rows priced under a mode the button no longer names.
+     * shows rows priced under a mode the dropdowns no longer name.
      */
     subscribePricingChanges() {
         this.unsubscribePricingChanges();
-        const onPricingChange = () => this.handlePricingChange();
+        const onPricingChange = () => {
+            // A header dropdown's own write is handled once, by choosePricingSide
+            if (this._applyingPricingChoice) return;
+            this.handlePricingChange();
+        };
         this.pricingUnsubscribers = [
-            config.onSettingChange('profitCalc_pricingMode', onPricingChange),
-            config.onSettingChange('profitCalc_pricingNaming', onPricingChange),
-            config.onSettingChange('profitCalc_patientTick', onPricingChange),
+            ...PRICING_SIDE_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
             config.onSettingsLoaded(onPricingChange),
         ];
     }
@@ -107,13 +117,12 @@ class AlchemyBestItems {
     }
 
     /**
-     * A pricing setting changed: relabel the button, drop the stale rankings,
+     * A pricing setting changed: resync the dropdowns, drop the stale rankings,
      * and re-rank the open tab.
      */
     handlePricingChange() {
         try {
-            this.updateModeButton();
-            this.updateTickButton();
+            this.updatePricingSelects();
             this.invalidateCache();
             if (this.modal && this.modal.style.display !== 'none') {
                 this.loadRankings(this.currentType);
@@ -123,30 +132,33 @@ class AlchemyBestItems {
         }
     }
 
-    updateModeButton() {
-        const modeBtn = this.modal?.querySelector('[data-mwi-best-mode-btn]');
-        if (!modeBtn) return;
-        const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        modeBtn.textContent = `Mode: ${config.getPricingModeLabel(mode)}`;
+    /**
+     * Bring the header's Buy/Sell dropdowns up to date with the pricing
+     * settings: the chosen sides, the ticks, and the naming convention.
+     */
+    updatePricingSelects() {
+        if (!this.modal) return;
+        for (const select of this.modal.querySelectorAll('[data-mwi-pricing-side]')) {
+            syncPricingSideSelect(select);
+        }
     }
 
     /**
-     * Relabel/restyle the "+1 tick" toggle button to match the current
-     * profitCalc_patientTick and profitCalc_pricingMode settings.
+     * A header dropdown was changed: write the settings, then resync and
+     * re-rank once. Writing the mode and a tick fires this module's listeners
+     * once per setting written, which would re-rank twice; those are held
+     * off while the write runs.
+     * @param {'buy'|'sell'} side - Which dropdown
+     * @param {'instant'|'patient'|'patientTick'} choice - The option chosen
      */
-    updateTickButton() {
-        const tickBtn = this.modal?.querySelector('[data-mwi-best-tick-btn]');
-        if (!tickBtn) return;
-        const enabled = config.getSetting('profitCalc_patientTick') === true;
-        const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        const hasPatientSide = mode !== 'conservative';
-        const active = enabled && hasPatientSide;
-        tickBtn.style.borderColor = active ? config.COLOR_ACCENT : '#555';
-        tickBtn.style.color = active ? config.COLOR_ACCENT : '#fff';
-        tickBtn.style.opacity = hasPatientSide ? '1' : '0.5';
-        tickBtn.title = hasPatientSide
-            ? 'Patient buys price one tick above the bid and patient sells one tick below the ask'
-            : 'No effect in Conservative mode (Instant Buy / Instant Sell) — there is no patient side for the tick to apply to';
+    choosePricingSide(side, choice) {
+        this._applyingPricingChoice = true;
+        try {
+            applyPricingSideChoice(side, choice);
+        } finally {
+            this._applyingPricingChoice = false;
+        }
+        this.handlePricingChange();
     }
 
     disable() {
@@ -446,39 +458,26 @@ class AlchemyBestItems {
         title.setAttribute('data-mwi-best-title', 'true');
         header.appendChild(title);
 
-        // Pricing mode switch — the action-panel toolbar that carries one is not
-        // built on the Alchemy screen. Writing the setting is all it does: the
-        // setting listener relabels it and re-ranks.
-        const modeBtn = document.createElement('button');
-        modeBtn.setAttribute('data-mwi-best-mode-btn', 'true');
-        modeBtn.title = 'Switch the pricing mode used for these rankings';
-        modeBtn.style.cssText = `
+        // Buy / Sell pricing dropdowns — the action-panel toolbar that carries
+        // them is not built on the Alchemy screen. Writing the settings is all a
+        // change does: choosePricingSide resyncs them and re-ranks.
+        const pricingSelectCss = `
             padding: 3px 8px; border-radius: 4px; cursor: pointer;
             border: 1px solid #555; font-size: 0.75rem; color: #fff;
-            background: transparent; margin-left: auto; margin-right: 12px;
+            background-color: ${PRICING_SELECT_BACKGROUND}; margin-right: 12px;
         `;
-        modeBtn.addEventListener('click', () => {
-            const current = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            config.setSettingValue('profitCalc_pricingMode', nextPricingMode(current));
+        const buySelect = createPricingSideSelect('buy', {
+            cssText: `${pricingSelectCss} margin-left: auto;`,
+            onChoose: (choice) => this.choosePricingSide('buy', choice),
         });
-        header.appendChild(modeBtn);
-
-        // "+1 tick" toggle — one click to flip profitCalc_patientTick without
-        // opening Settings. Shares the Mode button's styling and stays in sync
-        // via subscribePricingChanges()/handlePricingChange().
-        const tickBtn = document.createElement('button');
-        tickBtn.setAttribute('data-mwi-best-tick-btn', 'true');
-        tickBtn.textContent = '+1 tick';
-        tickBtn.style.cssText = `
-            padding: 3px 8px; border-radius: 4px; cursor: pointer;
-            border: 1px solid #555; font-size: 0.75rem; color: #fff;
-            background: transparent; margin-right: 12px;
-        `;
-        tickBtn.addEventListener('click', () => {
-            const current = config.getSetting('profitCalc_patientTick') === true;
-            config.setSettingValue('profitCalc_patientTick', !current);
+        buySelect.setAttribute('data-mwi-best-pricing-buy', 'true');
+        header.appendChild(buySelect);
+        const sellSelect = createPricingSideSelect('sell', {
+            cssText: pricingSelectCss,
+            onChoose: (choice) => this.choosePricingSide('sell', choice),
         });
-        header.appendChild(tickBtn);
+        sellSelect.setAttribute('data-mwi-best-pricing-sell', 'true');
+        header.appendChild(sellSelect);
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '\u2715';
@@ -647,8 +646,7 @@ class AlchemyBestItems {
 
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
-        this.updateModeButton();
-        this.updateTickButton();
+        this.updatePricingSelects();
     }
 
     renderTable() {

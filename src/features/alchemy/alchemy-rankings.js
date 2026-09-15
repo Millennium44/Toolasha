@@ -73,6 +73,7 @@ import dataManager from '../../core/data-manager.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn } from '../../utils/patient-tick.js';
 
 /** The three alchemy actions an item can be put through */
 export const ALCHEMY_TYPES = ['coinify', 'decompose', 'transmute'];
@@ -323,7 +324,7 @@ function stateFingerprint(priceStamp) {
               .join(',')
         : '';
 
-    const tick = config.getSettingValue('profitCalc_patientTick', false) === true ? '+tick' : '';
+    const tick = `${isPatientTickOn('buy') ? '+buyTick' : ''}${isPatientTickOn('sell') ? '+sellTick' : ''}`;
     const pricingMode = `${config.getSettingValue('profitCalc_pricingMode', 'hybrid')}${tick}`;
 
     const houseRooms = dataManager.getHouseRooms();
@@ -355,7 +356,9 @@ export function clearAlchemyRateCache() {
 // The pricing mode decides what every alchemy output is worth. Registered once,
 // at import, because this module has no lifecycle of its own to hang it on.
 config.onSettingChange?.('profitCalc_pricingMode', clearAlchemyRateCache);
-config.onSettingChange?.('profitCalc_patientTick', clearAlchemyRateCache);
+for (const key of PATIENT_TICK_SETTING_KEYS) {
+    config.onSettingChange?.(key, clearAlchemyRateCache);
+}
 
 /**
  * What alchemy pays per hour, best first, in the shape the planner ranks.

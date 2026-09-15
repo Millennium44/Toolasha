@@ -47,6 +47,7 @@ import {
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
 }
@@ -602,11 +603,13 @@ class TaskProfitDisplay {
             }
         });
 
-        config.onSettingChange('profitCalc_patientTick', () => {
-            if (this.isInitialized) {
-                this.updateTaskProfits(true);
-            }
-        });
+        for (const key of PATIENT_TICK_SETTING_KEYS) {
+            config.onSettingChange(key, () => {
+                if (this.isInitialized) {
+                    this.updateTaskProfits(true);
+                }
+            });
+        }
     }
 
     /**

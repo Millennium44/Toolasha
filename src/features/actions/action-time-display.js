@@ -52,6 +52,7 @@ import { calculateEnhancementPredictions } from '../enhancement/enhancement-xp.j
 import { BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 
 /**
  * Format a completion Date as a clock string, respecting user's time/date format settings.
@@ -222,7 +223,7 @@ class ActionTimeDisplay {
                 'actionBar_showActionsPerHour',
                 'actionBar_showTimeRemaining',
                 'profitCalc_pricingMode',
-                'profitCalc_patientTick',
+                ...PATIENT_TICK_SETTING_KEYS,
             ];
             for (const key of actionBarSettings) {
                 config.onSettingChange(key, (newValue) => {

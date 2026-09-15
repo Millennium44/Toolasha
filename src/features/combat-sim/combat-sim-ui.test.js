@@ -44,7 +44,7 @@ const mocks = vi.hoisted(() => ({
     prices: {},
     /** The `getItemPrice` mock's profit pricing mode, mirroring `profitCalc_pricingMode` */
     pricingMode: 'hybrid',
-    /** The `getItemPrice` mock's patient-tick switch, mirroring `profitCalc_patientTick` */
+    /** The `getItemPrice` mock's patient-tick switch, standing in for both per-side tick settings at once */
     patientTick: false,
     /** What `buildGameDataPayload` and `buildAllPlayerDTOs` hand the panel */
     gameData: { itemDetailMap: {} },
@@ -2848,7 +2848,7 @@ describe('the summary at the top of the Results tab', () => {
 
     test('a patientBuy consumable cost steps one tick above the bid when the patient tick is on', () => {
         // Regression for the Results detail view mapping ask/bid itself and
-        // never honouring `profitCalc_patientTick`. `_getBuyPrice` now routes
+        // never honouring `profitCalc_patientTickBuy`. `_getBuyPrice` now routes
         // through `getItemPrice`, so under patientBuy pricing the cheese buy
         // price sits at the bid, ticked up one when the setting is on.
         mocks.prices['/items/cheese'] = { bid: 10, ask: 12 };

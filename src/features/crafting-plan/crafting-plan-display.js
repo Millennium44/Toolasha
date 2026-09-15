@@ -390,8 +390,8 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
     content.appendChild(summary);
 
     // === Pricing mode toggle ===
-    // Shares PRICING_MODE_CYCLE/nextPricingMode with the action-panel toolbar and the
-    // alchemy Best Items modal so all three "Mode:" buttons step through the same order.
+    // Steps through PRICING_MODE_CYCLE/nextPricingMode. (The action-panel toolbar and the
+    // alchemy Best Items modal have Buy/Sell dropdowns instead — utils/pricing-side-select.js.)
     const pricingRow = document.createElement('div');
     pricingRow.style.cssText = `
         display: flex;

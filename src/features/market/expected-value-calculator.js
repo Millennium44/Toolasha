@@ -12,6 +12,7 @@ import { getCustomPrice } from '../settings/custom-price-overrides.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-manager.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -83,11 +84,11 @@ class ExpectedValueCalculator {
 
         // Every setting resolveSellSideValue/resolveBuySideValue read, directly
         // (expectedValue_includeCowbells) or through getItemPrice's 'profit'
-        // context (profitCalc_pricingMode, profitCalc_patientTick) or through
+        // context (profitCalc_pricingMode, the per-side patient tick keys) or through
         // calculateDungeonTokenValue (expectedValue_respectPricingMode)
         this.settingUnsubscribers = [
             config.onSettingChange('profitCalc_pricingMode', trigger),
-            config.onSettingChange('profitCalc_patientTick', trigger),
+            ...PATIENT_TICK_SETTING_KEYS.map((key) => config.onSettingChange(key, trigger)),
             config.onSettingChange('expectedValue_respectPricingMode', trigger),
             config.onSettingChange('expectedValue_includeCowbells', trigger),
         ];

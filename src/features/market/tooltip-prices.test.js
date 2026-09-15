@@ -9,7 +9,12 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { _resetGameNumberSeparators } from '../../utils/number-parser.js';
 
 const observerState = vi.hoisted(() => ({ handler: null }));
-const settings = vi.hoisted(() => ({ hideInEnhanceSelector: false, loadoutMarksEnabled: true, patientTick: false }));
+const settings = vi.hoisted(() => ({
+    hideInEnhanceSelector: false,
+    loadoutMarksEnabled: true,
+    patientTickBuy: false,
+    patientTickSell: false,
+}));
 const characterState = vi.hoisted(() => ({ data: null }));
 
 vi.mock('../../core/config.js', () => ({
@@ -19,7 +24,11 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_loadoutMarks') return settings.loadoutMarksEnabled;
             return true;
         },
-        getSettingValue: (id, fallback) => (id === 'profitCalc_patientTick' ? settings.patientTick : fallback),
+        getSettingValue: (id, fallback) => {
+            if (id === 'profitCalc_patientTickBuy') return settings.patientTickBuy;
+            if (id === 'profitCalc_patientTickSell') return settings.patientTickSell;
+            return fallback;
+        },
         COLOR_TOOLTIP_INFO: '#abc',
         COLOR_TEXT_SECONDARY: '#999',
         COLOR_TOOLTIP_PROFIT: '#0f0',
@@ -309,8 +318,17 @@ describe('own-use make vs buy', () => {
         expect(ownUseCompare(data({ pricingMode: 'sideways' })).priceBasis).toBe('ask');
     });
 
-    test('with the patient tick on, a bid buy is one tick up and an ask buy is unchanged', () => {
-        settings.patientTick = true;
+    test('the sell tick alone leaves a bid buy exact', () => {
+        settings.patientTickSell = true;
+        try {
+            expect(ownUseCompare(data({ pricingMode: 'optimistic' })).buy).toBe(45_000);
+        } finally {
+            settings.patientTickSell = false;
+        }
+    });
+
+    test('with the buy tick on, a bid buy is one tick up and an ask buy is unchanged', () => {
+        settings.patientTickBuy = true;
         try {
             // 45,000 is in the 30,000-49,999 tier, where one tick is 100
             expect(ownUseCompare(data({ pricingMode: 'optimistic' })).buy).toBe(45_100);
@@ -322,7 +340,7 @@ describe('own-use make vs buy', () => {
             });
             expect(ownUseCompare(estimated).buy).toBe(45_000);
         } finally {
-            settings.patientTick = false;
+            settings.patientTickBuy = false;
         }
     });
 
