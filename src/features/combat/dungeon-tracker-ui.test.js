@@ -84,8 +84,17 @@ vi.mock('../../core/data-manager.js', () => ({
         off: vi.fn(),
     },
 }));
+const configListeners = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => world.settings[key] },
+    default: {
+        getSetting: (key) => world.settings[key],
+        onSettingChange: (key, cb) => {
+            (configListeners[key] ??= []).push(cb);
+            return () => {
+                configListeners[key] = (configListeners[key] || []).filter((c) => c !== cb);
+            };
+        },
+    },
 }));
 vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: vi.fn(),
@@ -131,6 +140,8 @@ beforeEach(async () => {
     world.settings.dungeonTrackerAverageWindow = 0;
     ui.isInitialized = false;
     ui.container = null;
+    ui.pricingChangeUnregisters = [];
+    for (const key of Object.keys(configListeners)) delete configListeners[key];
     if (ui.updateInterval) clearInterval(ui.updateInterval);
     await ui.initialize();
 });
@@ -285,5 +296,48 @@ describe('the average window reaches the panel too', () => {
 
         expect(ui.container.querySelector('#mwi-dt-pace').style.display).toBe('none');
         expect(text('#mwi-dt-header-avg')).toBe('--:--');
+    });
+});
+
+describe('the ROI board redraws on a pricing change made elsewhere', () => {
+    let state;
+
+    beforeEach(async () => {
+        state = (await import('./dungeon-tracker-ui-state.js')).default;
+        ui.roiBoard.render.mockClear();
+    });
+
+    afterEach(() => {
+        state.isRoiExpanded = false;
+    });
+
+    test('a mode or tick change redraws it while the section is open', () => {
+        state.isRoiExpanded = true;
+
+        for (const cb of configListeners.profitCalc_pricingMode || []) cb();
+        expect(ui.roiBoard.render).toHaveBeenCalledTimes(1);
+
+        for (const cb of configListeners.profitCalc_patientTickBuy || []) cb();
+        expect(ui.roiBoard.render).toHaveBeenCalledTimes(2);
+
+        for (const cb of configListeners.profitCalc_patientTickSell || []) cb();
+        expect(ui.roiBoard.render).toHaveBeenCalledTimes(3);
+    });
+
+    test('the same change is a no-op while the section is collapsed', () => {
+        state.isRoiExpanded = false;
+
+        for (const cb of configListeners.profitCalc_pricingMode || []) cb();
+        expect(ui.roiBoard.render).not.toHaveBeenCalled();
+    });
+
+    test('cleanup unregisters the pricing listeners, so a stray write after teardown draws nothing', () => {
+        expect(configListeners.profitCalc_pricingMode.length).toBeGreaterThan(0);
+
+        ui.cleanup();
+
+        expect(configListeners.profitCalc_pricingMode).toHaveLength(0);
+        expect(configListeners.profitCalc_patientTickBuy).toHaveLength(0);
+        expect(configListeners.profitCalc_patientTickSell).toHaveLength(0);
     });
 });

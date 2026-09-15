@@ -23,10 +23,17 @@ import {
 } from './dungeon-pace.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
+import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel } from '../../utils/panel-z-index.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
+
+/**
+ * Settings the ROI board's numbers are priced under — not its naming, which
+ * the board never displays (see dungeon-roi-board-ui.js's `livePricing`).
+ */
+const ROI_PRICING_SETTING_KEYS = Object.freeze(['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]);
 
 class DungeonTrackerUI {
     constructor() {
@@ -45,6 +52,9 @@ class DungeonTrackerUI {
         // Callback references for cleanup
         this.dungeonUpdateHandler = null;
         this.characterSwitchingHandler = null;
+        // Unregister functions for the ROI-pricing config listeners set up in
+        // initialize()
+        this.pricingChangeUnregisters = [];
     }
 
     /**
@@ -86,6 +96,13 @@ class DungeonTrackerUI {
         this.history = new DungeonTrackerUIHistory(this.state, this.formatTime.bind(this));
         this.interactions = new DungeonTrackerUIInteractions(this.state, this.chart, this.history);
         this.roiBoard = new DungeonRoiBoardUI(this.state);
+
+        // The ROI board prices every row live (market prices, patient ticks);
+        // updateRoiBoard() already no-ops while the section is collapsed, so
+        // this only redraws when there is something on screen to go stale.
+        for (const key of ROI_PRICING_SETTING_KEYS) {
+            this.pricingChangeUnregisters.push(config.onSettingChange(key, () => this.updateRoiBoard()));
+        }
 
         // Set up history delete callback
         this.history.onDelete(() => this.refreshHistoryAndStats());
@@ -1054,6 +1071,9 @@ class DungeonTrackerUI {
                 dataManager.off('character_switching', this.characterSwitchingHandler);
                 this.characterSwitchingHandler = null;
             }
+
+            this.pricingChangeUnregisters.forEach((unregister) => unregister());
+            this.pricingChangeUnregisters = [];
 
             // Clear update interval
             if (this.updateInterval) {

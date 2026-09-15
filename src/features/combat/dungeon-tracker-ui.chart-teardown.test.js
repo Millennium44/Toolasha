@@ -93,7 +93,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => world.settings[key] },
+    default: { getSetting: (key) => world.settings[key], onSettingChange: vi.fn(() => () => {}) },
 }));
 vi.mock('../../utils/panel-z-index.js', () => ({
     PANEL_Z_CAP: 100,
