@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chat message shares dungeon chest luck
+
+- In a dungeon the combat chat message's luck field was always left out, because the monster-drop model does not cover dungeons; it now shows your chest luck ("chest luck 62nd pct") once chests have been counted for that dungeon and tier.
+
 ### Net worth follows the Iron Cow valuation straight away
 
 - Switching an Iron Cow character between Market, Vendor and Best left net worth on the old figure until an unrelated inventory or price update; it now re-prices as soon as the setting changes.
