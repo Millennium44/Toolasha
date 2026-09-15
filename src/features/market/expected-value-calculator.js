@@ -46,6 +46,68 @@ class ExpectedValueCalculator {
 
         // Retry handler reference for cleanup
         this.retryHandler = null;
+
+        // Bumped by invalidateCache() so an initialize() pass started under the
+        // old settings can tell, after its awaits resume, that it has been
+        // superseded — see initialize()/calculateNestedContainers().
+        this.generation = 0;
+
+        // Coalesces a burst of setting changes / price ticks into one recompute
+        this._invalidateTimer = null;
+        this.INVALIDATE_DEBOUNCE_MS = 300;
+
+        // Unregister functions for the setting-change listeners, and the
+        // marketAPI price-update handler, so cleanup() can tear both down
+        this.settingUnsubscribers = [];
+        this._priceUpdateHandler = null;
+        this._listenersRegistered = false;
+    }
+
+    /**
+     * Watch everything that changes what a container's contents are worth, so a
+     * cache built under the old prices never outlives the setting that produced
+     * it. Registered (once — guarded by `_listenersRegistered`) the first time
+     * initialize() actually has data to work with, rather than eagerly at module
+     * load: this module is imported transitively by several others that never
+     * call initialize() at all, and registering unconditionally made every one
+     * of them depend on their test mocks implementing config.onSettingChange and
+     * marketAPI.on. Torn down in cleanup().
+     */
+    setupInvalidationListeners() {
+        if (this._listenersRegistered) {
+            return;
+        }
+        this._listenersRegistered = true;
+
+        const trigger = () => this.scheduleInvalidate();
+
+        // Every setting resolveSellSideValue/resolveBuySideValue read, directly
+        // (expectedValue_includeCowbells) or through getItemPrice's 'profit'
+        // context (profitCalc_pricingMode, profitCalc_patientTick) or through
+        // calculateDungeonTokenValue (expectedValue_respectPricingMode)
+        this.settingUnsubscribers = [
+            config.onSettingChange('profitCalc_pricingMode', trigger),
+            config.onSettingChange('profitCalc_patientTick', trigger),
+            config.onSettingChange('expectedValue_respectPricingMode', trigger),
+            config.onSettingChange('expectedValue_includeCowbells', trigger),
+        ];
+
+        this._priceUpdateHandler = trigger;
+        marketAPI.on(this._priceUpdateHandler);
+    }
+
+    /**
+     * Coalesce a burst of triggers (several settings changing together, or a
+     * flurry of price ticks) into a single invalidateCache() call.
+     */
+    scheduleInvalidate() {
+        if (this._invalidateTimer) {
+            clearTimeout(this._invalidateTimer);
+        }
+        this._invalidateTimer = setTimeout(() => {
+            this._invalidateTimer = null;
+            this.invalidateCache();
+        }, this.INVALIDATE_DEBOUNCE_MS);
     }
 
     /**
@@ -74,14 +136,34 @@ class ExpectedValueCalculator {
             this.retryHandler = null;
         }
 
+        // Only wire up the invalidation listeners once the calculator is actually
+        // about to do real work — registering them eagerly at module load broke
+        // every test file that imports this module transitively (alchemy-profit-
+        // calculator.js, bonus-revenue-calculator.js, ...) without mocking
+        // config.onSettingChange/marketAPI.on, since nothing in those files ever
+        // calls initialize().
+        this.setupInvalidationListeners();
+
         // Wait for market data to load
         if (!marketAPI.isLoaded()) {
             // Joins the startup fetch the entrypoint already began (or the cache)
             await marketAPI.fetch();
         }
 
+        // The generation this pass is computing under. Captured before the awaits
+        // below so that if invalidateCache() bumps it while this pass is still
+        // running (a pricing-mode switch mid-calculation), this pass can tell it
+        // has been superseded and must not publish its now-stale results.
+        const generation = this.generation;
+
         // Calculate all containers with 4-iteration convergence for nesting (now async with workers)
-        await this.calculateNestedContainers();
+        await this.calculateNestedContainers(generation);
+
+        if (generation !== this.generation) {
+            // A newer pass (started by the invalidation that superseded this one)
+            // owns isInitialized and the cache now; this one has nothing left to do.
+            return false;
+        }
 
         this.isInitialized = true;
 
@@ -94,8 +176,11 @@ class ExpectedValueCalculator {
     /**
      * Calculate all containers with nested convergence using workers
      * Iterates 4 times to resolve nested container values
+     * @param {number} generation - This pass's generation (see initialize()); the
+     *   loop aborts, without writing anything further, once invalidateCache() has
+     *   moved `this.generation` past it
      */
-    async calculateNestedContainers() {
+    async calculateNestedContainers(generation) {
         const initData = dataManager.getInitClientData();
         if (!initData || !initData.openableLootDropMap) {
             return;
@@ -106,6 +191,12 @@ class ExpectedValueCalculator {
 
         // Iterate 4 times for convergence (handles nesting depth)
         for (let iteration = 0; iteration < this.CONVERGENCE_ITERATIONS; iteration++) {
+            // Superseded before this iteration even started (e.g. by the previous
+            // iteration's await) — stop rather than compute numbers nobody will use
+            if (generation !== this.generation) {
+                return;
+            }
+
             // Build price map for all items (includes cached container EVs from previous iterations)
             const priceMap = this.buildPriceMap(containerHrids, initData);
 
@@ -121,6 +212,12 @@ class ExpectedValueCalculator {
             // Calculate all containers in parallel using workers
             try {
                 const results = await calculateEVBatch(containerData);
+
+                // The await above is the one place an invalidation can land mid-iteration;
+                // check again before publishing this iteration's numbers into the cache.
+                if (generation !== this.generation) {
+                    return;
+                }
 
                 // Update cache with results
                 for (const result of results) {
@@ -139,6 +236,11 @@ class ExpectedValueCalculator {
             } catch (error) {
                 // Worker failed, fall back to main thread calculation
                 console.warn('[ExpectedValueCalculator] Worker failed, falling back to main thread:', error);
+
+                if (generation !== this.generation) {
+                    return;
+                }
+
                 // Go through calculateContainerValue rather than writing the cache here:
                 // it is the one place that sets the value and its missing-drop count
                 // together, and that refuses to cache a figure the cycle guard truncated.
@@ -646,14 +748,20 @@ class ExpectedValueCalculator {
     }
 
     /**
-     * Invalidate cache (call when market data refreshes)
+     * Invalidate cache — call whenever something that feeds container pricing
+     * changes: a pricing-mode/tick/cowbell setting, or a market price update.
+     * Bumps the generation first, so any initialize() pass still in flight under
+     * the old settings finds out (see calculateNestedContainers()) and discards
+     * its results instead of writing them in after this clear.
      */
     invalidateCache() {
+        this.generation++;
         this.containerCache.clear();
         this.containerMissingCounts.clear();
         this.isInitialized = false;
 
-        // Re-initialize if data is available
+        // Re-initialize if data is available — recomputing with no game/market
+        // data loaded yet would just produce an empty cache
         if (dataManager.getInitClientData() && marketAPI.isLoaded()) {
             this.initialize();
         }
@@ -667,6 +775,20 @@ class ExpectedValueCalculator {
             dataManager.off('character_initialized', this.retryHandler);
             this.retryHandler = null;
         }
+
+        if (this._invalidateTimer) {
+            clearTimeout(this._invalidateTimer);
+            this._invalidateTimer = null;
+        }
+
+        this.settingUnsubscribers.forEach((unsubscribe) => unsubscribe());
+        this.settingUnsubscribers = [];
+
+        if (this._priceUpdateHandler) {
+            marketAPI.off(this._priceUpdateHandler);
+            this._priceUpdateHandler = null;
+        }
+        this._listenersRegistered = false;
 
         this.containerCache.clear();
         this.containerMissingCounts.clear();

@@ -17,14 +17,34 @@ const mocks = vi.hoisted(() => ({
     priceCalls: [],
     customPrices: {},
     dungeonTokenValues: {},
+    /** key -> Set<callback>, for config.onSettingChange */
+    settingChangeCallbacks: new Map(),
+    /** marketAPI.on(cb) registrations */
+    marketListeners: [],
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
-    default: { isLoaded: () => true, fetch: vi.fn(), getPrice: () => null },
+    default: {
+        isLoaded: () => true,
+        fetch: vi.fn(),
+        getPrice: () => null,
+        on: (cb) => mocks.marketListeners.push(cb),
+        off: (cb) => {
+            mocks.marketListeners = mocks.marketListeners.filter((registered) => registered !== cb);
+        },
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: (key) => mocks.settings[key] },
+    default: {
+        getSetting: (key) => mocks.settings[key],
+        getSettingValue: (key, def) => mocks.settings[key] ?? def,
+        onSettingChange: (key, cb) => {
+            if (!mocks.settingChangeCallbacks.has(key)) mocks.settingChangeCallbacks.set(key, new Set());
+            mocks.settingChangeCallbacks.get(key).add(cb);
+            return () => mocks.settingChangeCallbacks.get(key)?.delete(cb);
+        },
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -523,7 +543,7 @@ describe('the main-thread fallback when the worker pool fails', () => {
         // The fallback used to set containerCache alone, so a later nested lookup hit
         // the value cache, missed the count map, and called a partially priced chest
         // a firm figure
-        await expectedValueCalculator.calculateNestedContainers();
+        await expectedValueCalculator.calculateNestedContainers(expectedValueCalculator.generation);
 
         expect(expectedValueCalculator.containerCache.has(PARTIAL)).toBe(true);
         expect(expectedValueCalculator.containerMissingCounts.get(PARTIAL)).toBe(1);
@@ -546,7 +566,7 @@ describe('the main-thread fallback when the worker pool fails', () => {
             ],
         };
 
-        await expectedValueCalculator.calculateNestedContainers();
+        await expectedValueCalculator.calculateNestedContainers(expectedValueCalculator.generation);
 
         // Both figures are artefacts of where the recursion started
         expect(expectedValueCalculator.containerCache.has(OUTER)).toBe(false);
@@ -653,5 +673,184 @@ describe('formatExpectedValue', () => {
     test('nothing to say is a dash rather than a number', () => {
         expect(expectedValueCalculator.formatExpectedValue(null, round)).toBe('--');
         expect(expectedValueCalculator.formatExpectedValue({ expectedValue: null }, round)).toBe('--');
+    });
+});
+
+/**
+ * invalidateCache() never used to be called: containerCache filled in once at
+ * initialize() and then never recomputed, so a pricing-mode switch, the +1 tick
+ * toggle, or a market price update left every openable container (and anything
+ * priced off one — alchemy crate revenue, task profit, ...) reading stale
+ * numbers until the page reloaded. These tests are against the real
+ * setupInvalidationListeners() registration made when the module was imported
+ * at the top of this file — same as production, where it is registered once,
+ * permanently, at module load.
+ */
+describe('cache invalidation on pricing changes', () => {
+    beforeEach(async () => {
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockReset();
+        calculateEVBatch.mockImplementation(async (containerData) =>
+            containerData.map((c) => ({ containerHrid: c.containerHrid, ev: 42 }))
+        );
+
+        // The listeners this whole describe block exercises are wired up inside
+        // initialize() (see its doc comment), not eagerly at module load — so an
+        // initial pass has to run before there is anything to trigger.
+        if (!expectedValueCalculator._listenersRegistered) {
+            await expectedValueCalculator.initialize();
+        }
+    });
+
+    afterEach(() => {
+        if (expectedValueCalculator._invalidateTimer) {
+            clearTimeout(expectedValueCalculator._invalidateTimer);
+            expectedValueCalculator._invalidateTimer = null;
+        }
+        vi.useRealTimers();
+    });
+
+    test.each([
+        'profitCalc_pricingMode',
+        'profitCalc_patientTick',
+        'expectedValue_respectPricingMode',
+        'expectedValue_includeCowbells',
+    ])('a %s change schedules an invalidate, debounced', (settingKey) => {
+        vi.useFakeTimers();
+        const invalidateSpy = vi.spyOn(expectedValueCalculator, 'invalidateCache').mockImplementation(() => {});
+
+        const callbacks = mocks.settingChangeCallbacks.get(settingKey);
+        expect(callbacks?.size).toBeGreaterThan(0);
+        callbacks.forEach((cb) => cb());
+
+        // Not yet — the whole point of the debounce is to coalesce a burst
+        expect(invalidateSpy).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(299);
+        expect(invalidateSpy).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(invalidateSpy).toHaveBeenCalledTimes(1);
+
+        invalidateSpy.mockRestore();
+    });
+
+    test('a market price update also schedules an invalidate', () => {
+        vi.useFakeTimers();
+        const invalidateSpy = vi.spyOn(expectedValueCalculator, 'invalidateCache').mockImplementation(() => {});
+
+        expect(mocks.marketListeners.length).toBeGreaterThan(0);
+        mocks.marketListeners.forEach((cb) => cb());
+        vi.advanceTimersByTime(300);
+
+        expect(invalidateSpy).toHaveBeenCalledTimes(1);
+        invalidateSpy.mockRestore();
+    });
+
+    test('a burst of triggers coalesces into a single invalidate', () => {
+        vi.useFakeTimers();
+        const invalidateSpy = vi.spyOn(expectedValueCalculator, 'invalidateCache').mockImplementation(() => {});
+
+        mocks.settingChangeCallbacks.get('profitCalc_pricingMode').forEach((cb) => cb());
+        vi.advanceTimersByTime(100);
+        mocks.settingChangeCallbacks.get('profitCalc_patientTick').forEach((cb) => cb());
+        vi.advanceTimersByTime(100);
+        mocks.marketListeners.forEach((cb) => cb());
+        vi.advanceTimersByTime(299); // just under the window from the last trigger
+
+        expect(invalidateSpy).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(invalidateSpy).toHaveBeenCalledTimes(1);
+
+        invalidateSpy.mockRestore();
+    });
+
+    test('invalidateCache bumps the generation, clears the cache, and recomputes', async () => {
+        await expectedValueCalculator.initialize();
+        expect(expectedValueCalculator.isInitialized).toBe(true);
+        expectedValueCalculator.containerCache.set(CHEST_HRID, 999); // a stale figure
+        const generationBefore = expectedValueCalculator.generation;
+
+        expectedValueCalculator.invalidateCache();
+
+        expect(expectedValueCalculator.generation).toBe(generationBefore + 1);
+        // invalidateCache re-initializes synchronously (fire-and-forget); let its
+        // awaits settle before asserting the recomputed figure landed
+        await vi.waitFor(() => expect(expectedValueCalculator.isInitialized).toBe(true));
+        expect(expectedValueCalculator.containerCache.get(CHEST_HRID)).not.toBe(999);
+    });
+
+    test('invalidateCache does not recompute when game data is not loaded', () => {
+        mocks.initData = null;
+        const initSpy = vi.spyOn(expectedValueCalculator, 'initialize');
+
+        expectedValueCalculator.invalidateCache();
+
+        expect(initSpy).not.toHaveBeenCalled();
+        initSpy.mockRestore();
+    });
+
+    test('an initialize() pass superseded mid-flight reports failure and leaves isInitialized alone', async () => {
+        let resolveFirst;
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFirst = resolve;
+                })
+        );
+
+        const pass = expectedValueCalculator.initialize();
+        // Something else (invalidateCache) supersedes this pass while its first
+        // worker call is still pending
+        expectedValueCalculator.generation++;
+        resolveFirst([{ containerHrid: CHEST_HRID, ev: 111 }]);
+
+        const result = await pass;
+
+        expect(result).toBe(false);
+        expect(expectedValueCalculator.isInitialized).toBe(false);
+    });
+
+    test('a superseded calculateNestedContainers pass does not write its stale results into the cache', async () => {
+        let resolveFirst;
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFirst = resolve;
+                })
+        );
+
+        const generation = expectedValueCalculator.generation;
+        const pass = expectedValueCalculator.calculateNestedContainers(generation);
+
+        // Supersede mid-flight, the same way invalidateCache() would
+        expectedValueCalculator.generation++;
+        resolveFirst([{ containerHrid: CHEST_HRID, ev: 111 }]);
+        await pass;
+
+        expect(expectedValueCalculator.containerCache.has(CHEST_HRID)).toBe(false);
+    });
+
+    test('cleanup unregisters every setting listener and the market listener', () => {
+        expectedValueCalculator.cleanup();
+
+        for (const key of [
+            'profitCalc_pricingMode',
+            'profitCalc_patientTick',
+            'expectedValue_respectPricingMode',
+            'expectedValue_includeCowbells',
+        ]) {
+            expect(mocks.settingChangeCallbacks.get(key)?.size ?? 0).toBe(0);
+        }
+        expect(mocks.marketListeners.length).toBe(0);
+
+        // Re-register so listeners are live for any test file run after this one
+        // shares this module instance (vitest workers reuse the module registry
+        // within a file, but keeping the singleton's contract intact is cheap)
+        expectedValueCalculator.setupInvalidationListeners();
+        expect(mocks.marketListeners.length).toBeGreaterThan(0);
     });
 });
