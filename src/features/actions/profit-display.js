@@ -525,7 +525,7 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
 
     // Add pricing mode label
     const pricingMode = profitData.pricingMode || 'hybrid';
-    const modeLabel = config.getPricingModeLabel(pricingMode);
+    const modeLabel = config.getPricingModeDisplayLabel(pricingMode);
 
     const modeDiv = document.createElement('div');
     modeDiv.style.cssText = `
@@ -1175,7 +1175,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
 
     // Add pricing mode label
     const pricingMode = profitData.pricingMode || 'hybrid';
-    const modeLabel = config.getPricingModeLabel(pricingMode);
+    const modeLabel = config.getPricingModeDisplayLabel(pricingMode);
 
     const modeDiv = document.createElement('div');
     modeDiv.style.cssText = `

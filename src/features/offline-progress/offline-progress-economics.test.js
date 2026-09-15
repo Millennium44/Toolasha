@@ -47,6 +47,7 @@ vi.mock('../../core/config.js', () => ({
         getSetting: vi.fn((key) => settingValues[key] ?? true),
         getSettingValue: vi.fn((key, def) => settingValues[key] ?? def),
         getPricingModeLabel: vi.fn(() => 'Buy: Ask / Sell: Ask'),
+        getPricingModeDisplayLabel: vi.fn(() => 'Buy: Ask / Sell: Ask'),
         onSettingChange: (key, cb) => {
             if (!settingChangeCallbacks.has(key)) settingChangeCallbacks.set(key, new Set());
             settingChangeCallbacks.get(key).add(cb);

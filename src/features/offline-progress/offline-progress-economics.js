@@ -264,7 +264,7 @@ class OfflineProgressEconomics {
  */
 export function buildHeadingTooltip(economics) {
     const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-    let tooltip = `Pricing mode: ${config.getPricingModeLabel(mode)}`;
+    let tooltip = `Pricing mode: ${config.getPricingModeDisplayLabel(mode)}`;
 
     if (economics.isPartial) {
         const names = economics.unvaluedItems.map((item) => getItemDisplayName(item.itemHrid));
@@ -480,7 +480,7 @@ function renderRow(label, value, perDay, side, lines, unvaluedItems) {
     labelEl.style.color = '#cbd5e1';
     if (side) {
         const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        labelEl.title = `${config.getPricingModeLabel(mode)} (${side === 'sell' ? 'Sell' : 'Buy'} side)`;
+        labelEl.title = `${config.getPricingModeDisplayLabel(mode)} (${side === 'sell' ? 'Sell' : 'Buy'} side)`;
     }
 
     const valueEl = document.createElement('span');
