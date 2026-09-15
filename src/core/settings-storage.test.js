@@ -233,6 +233,26 @@ describe('one-time migration of the patient tick to one switch per side', () => 
         for (const key of SIDES) expect(settings[key].isTrue).toBe(false);
     });
 
+    test('a migrated map that fails to save leaves the flag unset, so the next load carries it again', async () => {
+        stored.set(`json:${KEY}`, oldTick({ isTrue: true }));
+        // storage.setJSON answers a refused or failed write with false rather than throwing
+        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+
+        const settings = await settingsStorage.loadSettings();
+
+        for (const key of SIDES) expect(settings[key].isTrue).toBe(true);
+        expect(stored.get(`json:${KEY}`).profitCalc_patientTickBuy).toBeUndefined();
+        expect(stored.get(FLAG)).toBeUndefined();
+
+        const reloaded = await settingsStorage.loadSettings();
+
+        for (const key of SIDES) {
+            expect(reloaded[key].isTrue).toBe(true);
+            expect(stored.get(`json:${KEY}`)[key].isTrue).toBe(true);
+        }
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
     test('a side that already has a stored value keeps it', async () => {
         stored.set(`json:${KEY}`, {
             ...oldTick({ isTrue: true }),
