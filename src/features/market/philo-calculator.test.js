@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
     patientTickBuy: false,
     patientTickSell: false,
     characterId: 'char1',
+    // Refine actions, keyed by HRID, merged into actionDetailMap so a test
+    // can give getRefinementCraftCost something to find.
+    refineActions: {},
 }));
 
 const storageMock = vi.hoisted(() => {
@@ -78,6 +81,7 @@ vi.mock('../../core/data-manager.js', () => ({
             },
             actionDetailMap: {
                 '/actions/alchemy/transmute': { baseTimeCost: 20e9, type: '/action_types/alchemy' },
+                ...mocks.refineActions,
             },
         }),
         getSkills: () => mocks.skills,
@@ -157,6 +161,7 @@ beforeEach(() => {
     mocks.globalPricingMode = 'hybrid';
     mocks.patientTickBuy = false;
     mocks.patientTickSell = false;
+    mocks.refineActions = {};
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -323,6 +328,64 @@ describe('cost basis', () => {
     test('an item with no reachable price is dropped rather than guessed at', () => {
         delete mocks.prices[`${WIDGET_HRID}+0`];
         expect(calc.calculateRow(WIDGET_HRID, widget())).toBeNull();
+    });
+
+    describe('refinement craft cost follows the table own buy side', () => {
+        beforeEach(() => {
+            // 10 test_shard per craft; the shard's ask/bid come from the
+            // default price table (200/100).
+            mocks.refineActions['/actions/refine_test'] = {
+                outputItems: [{ itemHrid: REFINED_HRID }],
+                inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
+            };
+        });
+
+        test('conservative buys the materials at ask', () => {
+            calc.pricingMode = 'conservative';
+            expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 200, 6);
+        });
+
+        test('optimistic buys the materials at bid, not ask', () => {
+            calc.pricingMode = 'optimistic';
+            expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 100, 6);
+        });
+
+        test('falls back to the other side when the mode own side is unlisted', () => {
+            mocks.prices[`${OTHER_HRID}+0`] = { ask: 200, bid: 0 };
+            calc.pricingMode = 'optimistic'; // buy: bid, but bid is unlisted
+            expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 200, 6);
+        });
+
+        test('global mode ticks the materials patiently, like every other buy read', () => {
+            // Optimistic buys at the bid — the patient side a buy tick moves.
+            mocks.globalPricingMode = 'optimistic';
+            mocks.patientTickBuy = true;
+            calc.pricingMode = 'global';
+            expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * nextPriceUp(100), 6);
+        });
+    });
+
+    describe('the enhanced self-return follows the table own sell side', () => {
+        test('an explicit mode reads the +0 quote straight, no tick', () => {
+            // No +0 ask (nobody selling), so the +0 quote fails and the level
+            // loop borrows the +2 listing as the cost basis.
+            mocks.prices[`${REFINED_HRID}+0`] = { ask: 0, bid: 900 };
+            mocks.prices[`${REFINED_HRID}+2`] = { ask: 5000, bid: 4500 };
+            calc.pricingMode = 'conservative'; // sell: bid
+            expect(calc.resolveItemCost(REFINED_HRID).selfReturnUnitValue).toBe(900);
+        });
+
+        test('global mode ticks the self-return patiently, like every other sell read', () => {
+            // Optimistic sells at the ask — the patient side a sell tick moves.
+            // No +0 bid (nobody bidding), so the buy-side +0 quote fails too
+            // and the level loop borrows the +2 listing (bid-priced under optimistic).
+            mocks.prices[`${REFINED_HRID}+0`] = { ask: 900, bid: 0 };
+            mocks.prices[`${REFINED_HRID}+2`] = { ask: 5000, bid: 4500 };
+            mocks.globalPricingMode = 'optimistic';
+            mocks.patientTickSell = true;
+            calc.pricingMode = 'global';
+            expect(calc.resolveItemCost(REFINED_HRID).selfReturnUnitValue).toBe(nextPriceDown(900));
+        });
     });
 });
 

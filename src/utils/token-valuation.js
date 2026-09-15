@@ -24,7 +24,7 @@ const TOKEN_ESSENCE_MAP = {
  * @returns {'ask'|'bid'}
  */
 function tokenPricingSide(pricingModeSetting, respectModeSetting) {
-    const pricingMode = config.getSettingValue(pricingModeSetting, 'conservative');
+    const pricingMode = config.getSettingValue(pricingModeSetting, 'hybrid');
     const respectPricingMode = config.getSettingValue(respectModeSetting, true);
     if (!respectPricingMode) return 'bid';
     // Conservative/Patient Buy sell into the bid; Hybrid/Optimistic wait for the ask

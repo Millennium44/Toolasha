@@ -133,15 +133,15 @@ describe('calculateDungeonTokenValue', () => {
     });
 
     test('a token is worth the best line its own shop offers', () => {
-        // Conservative is the default, so the bid: 900 / 10
-        expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
+        // Hybrid is the default (matching the schema and every other call site), so the ask: 1000 / 10
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
     });
 
     test('the token cost is found wherever it sits in the costs array', () => {
         // It used to be read from costs[0] only, so a line that listed coins first was
         // priced as though its first cost were the token
         game.initClientData.shopItemDetailMap.cape.costs = [{ itemHrid: TOKEN, count: 10 }];
-        expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(100);
 
         game.initClientData.shopItemDetailMap.cape.costs = [
             { itemHrid: '/items/other_token', count: 3 },
@@ -149,12 +149,12 @@ describe('calculateDungeonTokenValue', () => {
         ];
         // Two currencies say nothing clean about what one token alone is worth, so the
         // line is skipped and the essence fallback speaks instead
-        expect(calculateDungeonTokenValue(TOKEN)).toBe(180);
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(200);
     });
 
     test('a line that hands over several is counted as several', () => {
         game.initClientData.shopItemDetailMap.cape.outputCount = 3;
-        expect(calculateDungeonTokenValue(TOKEN)).toBe(270); // 3 × 900 / 10
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(300); // 3 × 1000 / 10
     });
 
     test('the pricing mode picks the side, and respecting it can be turned off', () => {
@@ -207,7 +207,7 @@ describe('calculateDungeonTokenValue', () => {
 
     test('nothing priceable in the shop falls back to the essence', () => {
         game.prices['/items/cape'] = { ask: 0, bid: 0 };
-        expect(calculateDungeonTokenValue(TOKEN)).toBe(180);
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(200);
     });
 
     test('nothing priceable at all is null rather than zero', () => {

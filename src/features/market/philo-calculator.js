@@ -572,6 +572,8 @@ class PhiloCalculator {
         // and a craft estimate priced at the raw recipe overstated the cost
         // by the whole bonus. Coins are not materials and are not reduced.
         const artisanBonus = calculateArtisanBonus(action);
+        const buyType = this.getPriceType('buy');
+        const otherBuyType = buyType === 'ask' ? 'bid' : 'ask';
         const lines = [];
         let cost = 0;
         for (const input of action.inputItems || []) {
@@ -582,8 +584,12 @@ class PhiloCalculator {
                 continue;
             }
             const priceData = marketAPI.getPrice(input.itemHrid, 0);
-            const price = priceData?.ask > 0 ? priceData.ask : priceData?.bid > 0 ? priceData.bid : null;
-            if (price === null) return null;
+            const preferred = priceData?.[buyType];
+            const other = priceData?.[otherBuyType];
+            const [rawPrice, basis] =
+                preferred > 0 ? [preferred, buyType] : other > 0 ? [other, otherBuyType] : [null, null];
+            if (rawPrice === null) return null;
+            const price = this.patientQuote(rawPrice, 'buy', basis, priceData, input.itemHrid);
             const effective = count * (1 - artisanBonus);
             cost += price * effective;
             const countText = artisanBonus > 0 ? `${effective.toFixed(1)} (${count} less artisan)` : `${count}`;
@@ -828,8 +834,14 @@ class PhiloCalculator {
         // quote (0 when the base has no market at all).
         let selfReturnUnitValue = itemCost;
         if (source === 'enhanced') {
+            const sellType = this.getPriceType('sell');
+            const otherSellType = sellType === 'ask' ? 'bid' : 'ask';
             const base = marketAPI.getPrice(itemHrid, 0);
-            selfReturnUnitValue = base?.bid > 0 ? base.bid : base?.ask > 0 ? base.ask : 0;
+            const preferred = base?.[sellType];
+            const other = base?.[otherSellType];
+            const [rawValue, basis] =
+                preferred > 0 ? [preferred, sellType] : other > 0 ? [other, otherSellType] : [0, null];
+            selfReturnUnitValue = basis ? this.patientQuote(rawValue, 'sell', basis, base, itemHrid) : 0;
         }
 
         return { itemCost, selfReturnUnitValue, source, fallbackLevel };
