@@ -21,11 +21,12 @@ const mocks = vi.hoisted(() => ({
     settingChangeCallbacks: new Map(),
     /** marketAPI.on(cb) registrations */
     marketListeners: [],
+    marketLoaded: true,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
     default: {
-        isLoaded: () => true,
+        isLoaded: () => mocks.marketLoaded,
         fetch: vi.fn(),
         getPrice: () => null,
         on: (cb) => mocks.marketListeners.push(cb),
@@ -833,6 +834,55 @@ describe('cache invalidation on pricing changes', () => {
         await pass;
 
         expect(expectedValueCalculator.containerCache.has(CHEST_HRID)).toBe(false);
+    });
+
+    test('cleanup while a pass is in flight leaves it unpublished, so re-initialize re-registers listeners', async () => {
+        let resolveFirst;
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFirst = resolve;
+                })
+        );
+
+        const pass = expectedValueCalculator.initialize();
+        // A character switch tears the feature down while the worker is busy
+        expectedValueCalculator.cleanup();
+        resolveFirst([{ containerHrid: CHEST_HRID, ev: 111 }]);
+
+        expect(await pass).toBe(false);
+        expect(expectedValueCalculator.isInitialized).toBe(false);
+        expect(expectedValueCalculator.containerCache.has(CHEST_HRID)).toBe(false);
+
+        // The registry's re-initialize must do real work, listeners included
+        expect(await expectedValueCalculator.initialize()).toBe(true);
+        expect(mocks.marketListeners.length).toBeGreaterThan(0);
+        expect(mocks.settingChangeCallbacks.get('profitCalc_pricingMode')?.size).toBeGreaterThan(0);
+    });
+
+    test('cleanup during the market fetch leaves the pass unpublished', async () => {
+        expectedValueCalculator.cleanup();
+        mocks.marketLoaded = false;
+        let resolveFetch;
+        const marketAPI = (await import('../../api/marketplace.js')).default;
+        marketAPI.fetch.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveFetch = resolve;
+                })
+        );
+
+        const pass = expectedValueCalculator.initialize();
+        expectedValueCalculator.cleanup();
+        mocks.marketLoaded = true;
+        resolveFetch();
+
+        expect(await pass).toBe(false);
+        expect(expectedValueCalculator.isInitialized).toBe(false);
+
+        expect(await expectedValueCalculator.initialize()).toBe(true);
+        expect(mocks.marketListeners.length).toBeGreaterThan(0);
     });
 
     test('cleanup unregisters every setting listener and the market listener', () => {

@@ -151,6 +151,13 @@ class ExpectedValueCalculator {
             await marketAPI.fetch();
         }
 
+        // cleanup() during that fetch removed the listeners this pass registered;
+        // publishing isInitialized now would make the next initialize() return
+        // early without registering them again
+        if (!this._listenersRegistered) {
+            return false;
+        }
+
         // The generation this pass is computing under. Captured before the awaits
         // below so that if invalidateCache() bumps it while this pass is still
         // running (a pricing-mode switch mid-calculation), this pass can tell it
@@ -772,6 +779,11 @@ class ExpectedValueCalculator {
      * Cleanup calculator state and handlers
      */
     cleanup() {
+        // Supersedes any pass still in flight. Without this a pass finishing after
+        // cleanup set isInitialized again, so the re-initialize after a character
+        // switch returned early and never re-registered the invalidation listeners.
+        this.generation++;
+
         if (this.retryHandler) {
             dataManager.off('character_initialized', this.retryHandler);
             this.retryHandler = null;
