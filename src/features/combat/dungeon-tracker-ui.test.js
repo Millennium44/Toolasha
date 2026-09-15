@@ -322,6 +322,9 @@ describe('the ROI board redraws on a pricing change made elsewhere', () => {
 
         for (const cb of configListeners.profitCalc_patientTickSell || []) cb();
         expect(ui.roiBoard.render).toHaveBeenCalledTimes(3);
+
+        for (const cb of configListeners.profitCalc_ironCowValuation || []) cb();
+        expect(ui.roiBoard.render).toHaveBeenCalledTimes(4);
     });
 
     test('the same change is a no-op while the section is collapsed', () => {
@@ -339,5 +342,6 @@ describe('the ROI board redraws on a pricing change made elsewhere', () => {
         expect(configListeners.profitCalc_pricingMode).toHaveLength(0);
         expect(configListeners.profitCalc_patientTickBuy).toHaveLength(0);
         expect(configListeners.profitCalc_patientTickSell).toHaveLength(0);
+        expect(configListeners.profitCalc_ironCowValuation).toHaveLength(0);
     });
 });

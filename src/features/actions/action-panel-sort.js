@@ -12,9 +12,14 @@ import dataManager from '../../core/data-manager.js';
 import { dismissTooltips } from '../../utils/dom.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
 /** Settings whose value changes what a cached profitPerHour actually means */
-const PRICING_VALUE_SETTING_KEYS = Object.freeze(['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]);
+const PRICING_VALUE_SETTING_KEYS = Object.freeze([
+    'profitCalc_pricingMode',
+    ...PATIENT_TICK_SETTING_KEYS,
+    IRONCOW_VALUATION_SETTING,
+]);
 
 /**
  * Who the pins and the sort mode belong to.

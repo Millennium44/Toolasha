@@ -24,6 +24,7 @@ import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
 import { nextPricingMode } from '../../utils/pricing-mode.js';
 import { PRICING_SIDE_SETTING_KEYS } from '../../utils/pricing-side-select.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import {
     effectiveInventoryRows,
     heldInInventory,
@@ -888,7 +889,7 @@ class CraftingPlanDisplay {
         // (Settings panel, alchemy Best Items, the skill toolbar dropdowns)
         // never touched this panel before. Coalesced the same way action-filter
         // does: several of these can change in one synchronous settings load.
-        for (const key of PRICING_SIDE_SETTING_KEYS) {
+        for (const key of [...PRICING_SIDE_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
             this.unregisterHandlers.push(config.onSettingChange(key, () => this._scheduleRebuildAll()));
         }
     }

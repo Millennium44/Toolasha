@@ -14,11 +14,13 @@ const state = vi.hoisted(() => ({
     sessions: [],
     snapshot: null,
     latestCombat: null,
+    settings: {},
+    characterGameMode: 'standard',
 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSettingValue: (key, fallback) => fallback,
+        getSettingValue: (key, fallback) => (key in state.settings ? state.settings[key] : fallback),
         getSetting: () => false,
     },
 }));
@@ -76,6 +78,7 @@ vi.mock('../../core/data-manager.js', () => {
         '/items/chimerical_chest_key': { name: 'Chimerical Chest Key' },
         '/items/pirate_entry_key': { name: 'Pirate Entry Key' },
         '/items/pirate_chest_key': { name: 'Pirate Chest Key' },
+        '/items/donut': { name: 'Donut', sellPrice: 40 },
     };
     return {
         default: {
@@ -84,6 +87,7 @@ vi.mock('../../core/data-manager.js', () => {
             getItemDetails: (hrid) => items[hrid] || null,
             getCurrentCharacterId: () => 'me',
             getCurrentCharacterName: () => 'Me',
+            getCurrentCharacterGameMode: () => state.characterGameMode,
         },
     };
 });
@@ -152,6 +156,15 @@ function run(dungeonName, tier, durationMs, team = ['Me']) {
     return { dungeonName, tier, duration: durationMs, team, teamKey: team.join(',') };
 }
 
+/** A one-hour session that burned `consumed` donuts, for the measured-consumable-price tests. */
+function sessionWithConsumable(consumed) {
+    return {
+        actionHrid: DEN,
+        durationSeconds: 3600,
+        players: [{ isCurrentPlayer: true, consumables: [{ itemHrid: '/items/donut', consumed }], experience: {} }],
+    };
+}
+
 /** A tracker panel with only the section the board draws into. */
 function panel() {
     const container = document.createElement('div');
@@ -169,6 +182,8 @@ beforeEach(() => {
     state.sessions = [];
     state.snapshot = null;
     state.latestCombat = null;
+    state.settings = {};
+    state.characterGameMode = 'standard';
 });
 
 afterEach(() => {
@@ -299,6 +314,34 @@ describe('drawing', () => {
         );
         expect(den0.children[1].textContent).toBe('1');
         expect(den0.firstChild.title).toContain('Party of 3 (from the filter)');
+    });
+
+    test('measured consumables are priced off the market ask for a normal character', async () => {
+        state.runs = [run('Chimerical Den', 0, 600_000)]; // clear 10:00 → 6 runs/hr
+        state.sessions = [sessionWithConsumable(6)]; // 6 donuts/hr @ ask 200 = 1200/hr
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+
+        await board.render(container);
+
+        const den0 = container.querySelector('.mwi-dt-roi-row');
+        const cells = [...den0.children].map((td) => td.textContent);
+        expect(cells[7]).toBe('200'); // 1200/hr ÷ 6 runs/hr, no "sim" mark
+    });
+
+    test('an Iron Cow character under vendor prices measured consumables off the vendor value, no tick', async () => {
+        state.characterGameMode = 'ironcow';
+        state.settings.profitCalc_ironCowValuation = 'vendor';
+        state.runs = [run('Chimerical Den', 0, 600_000)]; // clear 10:00 → 6 runs/hr
+        state.sessions = [sessionWithConsumable(6)]; // 6 donuts/hr @ vendor 40 = 240/hr
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+
+        await board.render(container);
+
+        const den0 = container.querySelector('.mwi-dt-roi-row');
+        const cells = [...den0.children].map((td) => td.textContent);
+        expect(cells[7]).toBe('40'); // 240/hr ÷ 6 runs/hr — the vendor price, not the market ask
     });
 
     test('the drop quantity bonus is read off the latest combat snapshot', async () => {

@@ -20,6 +20,7 @@ import {
     PRICING_SIDE_TOOLTIP_SETTING_KEYS,
     syncPricingSideSelect,
 } from '../../utils/pricing-side-select.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
 
@@ -112,6 +113,16 @@ class ActionFilter {
         this.unregisterHandlers.push(
             config.onSettingChange('profitCalc_craftUpgradeItems', () => {
                 if (this._updateCraftBtn) this._updateCraftBtn();
+            })
+        );
+
+        // Iron Cow valuation option: only read on an Iron Cow character, but
+        // when it changes the profit sections must re-price the same as a
+        // mode or tick change would. No dropdown shows this choice, so unlike
+        // the loop above there is nothing to resync — just the refresh.
+        this.unregisterHandlers.push(
+            config.onSettingChange(IRONCOW_VALUATION_SETTING, () => {
+                this._scheduleProfitRefresh();
             })
         );
 

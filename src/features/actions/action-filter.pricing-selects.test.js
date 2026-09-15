@@ -84,6 +84,7 @@ const PRICING_KEYS = [
     'profitCalc_patientTickSell',
 ];
 const AUTO_FILL_KEYS = ['fillMarketOrderPrice', 'market_autoFillBuyStrategy', 'market_autoFillSellStrategy'];
+const IRON_COW_KEY = 'profitCalc_ironCowValuation';
 
 /** Build a skill page title bar with one production tile carrying a profit section */
 function buildSkillPage() {
@@ -225,6 +226,21 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(2);
     });
 
+    it('the Iron Cow valuation option changing from outside re-renders the sections, with nothing for the dropdowns to resync', async () => {
+        actionFilter.injectFilterInput(buildSkillPage());
+        const buyBefore = buySelect().value;
+        const sellBefore = sellSelect().value;
+
+        writeElsewhere(IRON_COW_KEY, 'vendor');
+        await settle();
+
+        // No dropdown shows this choice — the mode/side selects are unchanged —
+        // but the profit sections still have to re-price
+        expect(buySelect().value).toBe(buyBefore);
+        expect(sellSelect().value).toBe(sellBefore);
+        expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(1);
+    });
+
     it('a naming change retexts both dropdowns and re-renders the sections (the mode label they draw depends on it)', async () => {
         actionFilter.injectFilterInput(buildSkillPage());
 
@@ -294,7 +310,7 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
             await actionFilter.initialize();
             actionFilter.cleanup();
         }
-        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS]) {
+        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS, IRON_COW_KEY]) {
             expect(mocks.changeListeners[key] || []).toHaveLength(0);
         }
         expect(mocks.loadedListeners).toHaveLength(0);
@@ -302,8 +318,9 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         await actionFilter.initialize();
         // One listener per key: it both resyncs the dropdowns and queues the
         // coalesced refresh, so mode/naming/tick keys and auto-fill keys alike
-        // carry exactly one.
-        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS]) {
+        // carry exactly one. The Iron Cow key has only the refresh, but still
+        // exactly one listener.
+        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS, IRON_COW_KEY]) {
             expect(mocks.changeListeners[key]).toHaveLength(1);
         }
     });

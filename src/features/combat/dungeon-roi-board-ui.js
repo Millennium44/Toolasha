@@ -25,6 +25,7 @@ import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/
 import { formatKMB } from '../../utils/formatters.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { captureOwner, stillOurs } from '../../utils/init-ownership.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 
 /** The tokens the dungeon shops take, which the expected-value calculator also special-cases */
 const DUNGEON_TOKENS = new Set([
@@ -148,10 +149,18 @@ function currentDropQuantity() {
 
 /**
  * What a consumable costs to replace, in the user's buy-side pricing mode.
+ *
+ * An Iron Cow character under 'vendor' or 'best' has no market book for
+ * this item, so it takes the Iron Cow value outright — no patient tick,
+ * same as `key-cost.js`'s `buyPriceFor`.
+ *
  * @param {string} itemHrid - The consumable
  * @returns {number|null}
  */
 function consumableBuyPrice(itemHrid) {
+    const ironCow = ironCowBook(itemHrid);
+    if (ironCow) return ironCow.ask;
+
     const prices = marketAPI.getPrice(itemHrid);
     if (!prices) return null;
     const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');

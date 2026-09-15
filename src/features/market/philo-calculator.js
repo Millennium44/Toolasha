@@ -26,6 +26,7 @@ import { settingsUI as sharedSettingsUI } from '../../utils/bundle-bridge.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -393,7 +394,10 @@ class PhiloCalculator {
      * Load default prices from market data (respecting the active pricing mode)
      */
     loadDefaultPrices() {
-        const philoPriceData = marketAPI.getPrice(PHILO_HRID, 0);
+        // Iron Cow, option not 'market': no book to buy or sell against, so
+        // both sides take the same Iron Cow value — same pattern as
+        // key-cost.js's buyPriceFor.
+        const philoPriceData = ironCowBook(PHILO_HRID) ?? marketAPI.getPrice(PHILO_HRID, 0);
         this.philoBid = philoPriceData?.bid > 0 ? philoPriceData.bid : 0;
         this.philoAsk = philoPriceData?.ask > 0 ? philoPriceData.ask : 0;
         if (!this._manualPhiloPrice) {
@@ -401,7 +405,7 @@ class PhiloCalculator {
         }
 
         if (!this._manualCatalystPrice) {
-            const catalystPriceData = marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
+            const catalystPriceData = ironCowBook(PRIME_CATALYST_HRID) ?? marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
             const buyType = this.getPriceType('buy');
             const otherType = buyType === 'ask' ? 'bid' : 'ask';
             const preferred = catalystPriceData?.[buyType];
@@ -583,7 +587,7 @@ class PhiloCalculator {
                 if (count > 0) lines.push(`${formatLargeNumber(count)} coins`);
                 continue;
             }
-            const priceData = marketAPI.getPrice(input.itemHrid, 0);
+            const priceData = ironCowBook(input.itemHrid) ?? marketAPI.getPrice(input.itemHrid, 0);
             const preferred = priceData?.[buyType];
             const other = priceData?.[otherBuyType];
             const [rawPrice, basis] =
@@ -763,7 +767,9 @@ class PhiloCalculator {
                 // re-quoted on that side. Openable crates stay at their expected value, and
                 // a drop with no book keeps the calculator's value-map figure.
                 let revenue = drop.revenuePerAttempt || 0;
-                const book = itemDetailMap[drop.itemHrid]?.isOpenable ? null : marketAPI.getPrice(drop.itemHrid, 0);
+                const book = itemDetailMap[drop.itemHrid]?.isOpenable
+                    ? null
+                    : (ironCowBook(drop.itemHrid) ?? marketAPI.getPrice(drop.itemHrid, 0));
                 const quote = book?.[sellType];
                 if (quote > 0 && drop.dropRate > 0) {
                     revenue = drop.dropRate * this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid);
@@ -802,7 +808,7 @@ class PhiloCalculator {
 
         const buyType = this.getPriceType('buy');
         const quoteAt = (level) => {
-            const priceData = marketAPI.getPrice(itemHrid, level);
+            const priceData = ironCowBook(itemHrid, level) ?? marketAPI.getPrice(itemHrid, level);
             if (!(priceData?.[buyType] > 0)) return null;
             return this.patientQuote(priceData[buyType], 'buy', buyType, priceData, itemHrid, level);
         };
@@ -836,7 +842,7 @@ class PhiloCalculator {
         if (source === 'enhanced') {
             const sellType = this.getPriceType('sell');
             const otherSellType = sellType === 'ask' ? 'bid' : 'ask';
-            const base = marketAPI.getPrice(itemHrid, 0);
+            const base = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
             const preferred = base?.[sellType];
             const other = base?.[otherSellType];
             const [rawValue, basis] =
@@ -927,7 +933,7 @@ class PhiloCalculator {
                 } else if (drop.itemHrid === PHILO_HRID) {
                     dropValue = calculatePriceAfterTax(this.getPhiloPrice(sellType));
                 } else {
-                    const book = marketAPI.getPrice(drop.itemHrid, 0);
+                    const book = ironCowBook(drop.itemHrid) ?? marketAPI.getPrice(drop.itemHrid, 0);
                     const quote = book?.[sellType];
                     if (!(quote > 0)) continue;
                     // Only the patient column (a sale at the ask) can move

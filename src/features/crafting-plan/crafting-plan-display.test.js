@@ -1051,6 +1051,18 @@ describe('rebuilding on a pricing change made elsewhere', () => {
         expect(panel.querySelector('#mwi-crafting-plan')).not.toBe(before);
     });
 
+    test('the Iron Cow valuation option changing from outside rebuilds it too', async () => {
+        craftingPlanDisplay.initialize();
+        const panel = mountPanel();
+        panels.subscriber({ panel, actionHrid: '/actions/crafting/wooden_bow' });
+        const before = panel.querySelector('#mwi-crafting-plan');
+
+        for (const cb of state.settingListeners.profitCalc_ironCowValuation || []) cb();
+        await microtask();
+
+        expect(panel.querySelector('#mwi-crafting-plan')).not.toBe(before);
+    });
+
     test('several pricing settings changing in one synchronous turn rebuild the panel once, not once per key', async () => {
         craftingPlanDisplay.initialize();
         const panel = mountPanel();
@@ -1111,6 +1123,7 @@ describe('rebuilding on a pricing change made elsewhere', () => {
         expect(state.settingListeners.profitCalc_patientTickBuy).toHaveLength(0);
         expect(state.settingListeners.profitCalc_patientTickSell).toHaveLength(0);
         expect(state.settingListeners.profitCalc_pricingNaming).toHaveLength(0);
+        expect(state.settingListeners.profitCalc_ironCowValuation).toHaveLength(0);
     });
 
     test('a character-switch cycle (disable + initialize) does not stack listeners', () => {

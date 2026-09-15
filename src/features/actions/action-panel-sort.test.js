@@ -113,6 +113,12 @@ describe('cachedStats and a pricing-setting change', () => {
         expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toBeNull();
     });
 
+    test('the Iron Cow valuation option changing from outside drops the cache too', () => {
+        cacheSomething();
+        writePricingSetting('profitCalc_ironCowValuation');
+        expect(actionPanelSort.getCachedStats('/actions/milking/cow')).toBeNull();
+    });
+
     test('disable() unregisters the listeners, so a stray write after teardown touches nothing', () => {
         expect(store.settingListeners.profitCalc_pricingMode.length).toBeGreaterThan(0);
 
@@ -121,6 +127,7 @@ describe('cachedStats and a pricing-setting change', () => {
         expect(store.settingListeners.profitCalc_pricingMode).toHaveLength(0);
         expect(store.settingListeners.profitCalc_patientTickBuy).toHaveLength(0);
         expect(store.settingListeners.profitCalc_patientTickSell).toHaveLength(0);
+        expect(store.settingListeners.profitCalc_ironCowValuation).toHaveLength(0);
     });
 
     test('a character-switch cycle (disable + initialize, as panel-observer.js does) does not stack listeners', async () => {
@@ -132,6 +139,7 @@ describe('cachedStats and a pricing-setting change', () => {
         expect(store.settingListeners.profitCalc_pricingMode).toHaveLength(1);
         expect(store.settingListeners.profitCalc_patientTickBuy).toHaveLength(1);
         expect(store.settingListeners.profitCalc_patientTickSell).toHaveLength(1);
+        expect(store.settingListeners.profitCalc_ironCowValuation).toHaveLength(1);
     });
 });
 

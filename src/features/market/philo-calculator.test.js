@@ -20,6 +20,14 @@ const mocks = vi.hoisted(() => ({
     // Refine actions, keyed by HRID, merged into actionDetailMap so a test
     // can give getRefinementCraftCost something to find.
     refineActions: {},
+    // Iron Cow valuation: only read while characterGameMode includes 'ironcow'
+    // (see utils/ironcow-valuation.js).
+    characterGameMode: 'standard',
+    ironCowValuation: 'market',
+    // Vendor (sellPrice) for every item the Iron Cow tests price — kept apart
+    // from `widget()`'s own sellPrice, which is what calculateRow is handed
+    // directly rather than what dataManager.getItemDetails would answer.
+    vendorPrices: {},
 }));
 
 const storageMock = vi.hoisted(() => {
@@ -73,7 +81,7 @@ vi.mock('../../api/marketplace.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => mocks.characterId,
-        getCurrentCharacterGameMode: () => 'standard',
+        getCurrentCharacterGameMode: () => mocks.characterGameMode,
         getInitClientData: () => ({
             itemDetailMap: {
                 [TEA_HRID]: { name: 'Catalytic Tea', consumableDetail: { buffs: [] } },
@@ -84,6 +92,10 @@ vi.mock('../../core/data-manager.js', () => ({
                 ...mocks.refineActions,
             },
         }),
+        // ironcow-valuation.js's own item read — separate from getInitClientData
+        // above, which the calculator reads itself. Only sellPrice matters here.
+        getItemDetails: (itemHrid) =>
+            itemHrid in mocks.vendorPrices ? { sellPrice: mocks.vendorPrices[itemHrid] } : null,
         getSkills: () => mocks.skills,
         getEquipment: () => new Map(),
         getActionDrinkSlots: () => [],
@@ -97,6 +109,7 @@ vi.mock('../../core/config.js', () => ({
             if (key === 'profitCalc_pricingMode') return mocks.globalPricingMode;
             if (key === 'profitCalc_patientTickBuy') return mocks.patientTickBuy;
             if (key === 'profitCalc_patientTickSell') return mocks.patientTickSell;
+            if (key === 'profitCalc_ironCowValuation') return mocks.ironCowValuation;
             return fallback;
         },
         COLOR_PROFIT: '#0f0',
@@ -162,6 +175,9 @@ beforeEach(() => {
     mocks.patientTickBuy = false;
     mocks.patientTickSell = false;
     mocks.refineActions = {};
+    mocks.characterGameMode = 'standard';
+    mocks.ironCowValuation = 'market';
+    mocks.vendorPrices = {};
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -385,6 +401,55 @@ describe('cost basis', () => {
             mocks.patientTickSell = true;
             calc.pricingMode = 'global';
             expect(calc.resolveItemCost(REFINED_HRID).selfReturnUnitValue).toBe(nextPriceDown(900));
+        });
+    });
+
+    describe('Iron Cow valuation', () => {
+        test('an Iron Cow character under vendor prices an item off the vendor value, no tick', () => {
+            mocks.characterGameMode = 'ironcow';
+            mocks.ironCowValuation = 'vendor';
+            mocks.vendorPrices[WIDGET_HRID] = 300;
+            // Optimistic + a buy tick would move a real market quote; the
+            // vendor value has no book to tick.
+            mocks.globalPricingMode = 'optimistic';
+            mocks.patientTickBuy = true;
+            calc.pricingMode = 'global';
+
+            const cost = calc.resolveItemCost(WIDGET_HRID);
+            expect(cost.itemCost).toBe(300);
+            expect(cost.selfReturnUnitValue).toBe(300);
+        });
+
+        test('a standard character ignores the option and prices off the market as before', () => {
+            mocks.ironCowValuation = 'vendor';
+            mocks.vendorPrices[WIDGET_HRID] = 300;
+
+            expect(calc.resolveItemCost(WIDGET_HRID).itemCost).toBe(1000);
+        });
+
+        test('loadDefaultPrices takes Philo and Prime Catalyst from the vendor value', () => {
+            mocks.characterGameMode = 'ironcow';
+            mocks.ironCowValuation = 'vendor';
+            mocks.vendorPrices[PHILO_HRID] = 3_000_000;
+            mocks.vendorPrices['/items/prime_catalyst'] = 900;
+
+            calc.loadDefaultPrices();
+
+            expect(calc.philoBid).toBe(3_000_000);
+            expect(calc.philoAsk).toBe(3_000_000);
+            expect(calc.catalystPrice).toBe(900);
+        });
+
+        test('a manually typed price still overrides the Iron Cow vendor value', () => {
+            mocks.characterGameMode = 'ironcow';
+            mocks.ironCowValuation = 'vendor';
+            mocks.vendorPrices[PHILO_HRID] = 3_000_000;
+            calc._manualPhiloPrice = true;
+            calc.philoPrice = 9_999_999;
+
+            calc.loadDefaultPrices();
+
+            expect(calc.philoPrice).toBe(9_999_999);
         });
     });
 });

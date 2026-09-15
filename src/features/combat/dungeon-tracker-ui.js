@@ -24,6 +24,7 @@ import {
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel } from '../../utils/panel-z-index.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -33,7 +34,11 @@ import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownershi
  * Settings the ROI board's numbers are priced under — not its naming, which
  * the board never displays (see dungeon-roi-board-ui.js's `livePricing`).
  */
-const ROI_PRICING_SETTING_KEYS = Object.freeze(['profitCalc_pricingMode', ...PATIENT_TICK_SETTING_KEYS]);
+const ROI_PRICING_SETTING_KEYS = Object.freeze([
+    'profitCalc_pricingMode',
+    ...PATIENT_TICK_SETTING_KEYS,
+    IRONCOW_VALUATION_SETTING,
+]);
 
 class DungeonTrackerUI {
     constructor() {
