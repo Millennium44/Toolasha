@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing tracker charges unlisted protections
+
+- A protection consumed on a failed enhance, with no market price to go on, was recorded as costing 0 coins because the vendor-price fallback read a field the game data doesn't have. It now uses the item's vendor price.
+
 ### Iron Cow item valuation
 
 - Iron Cow characters get an "Iron Cow item valuation" setting: Market (default, unchanged), Vendor (the NPC sell price) or Best (the higher of the vendor price and what coinifying the item yields at your alchemy level). It drives profit, loot, net worth, inventory badges, tooltips, combat stats, enhancing costs, the dungeon ROI board and the philo table on that character, with no pricing mode or tick applied, and is hidden for normal characters. Custom price overrides still win, and enhanced items keep market prices.

@@ -427,7 +427,7 @@ async function handleEnhancementResult(action, _data) {
                             `[EnhancementHandlers] Protection item not found in game data: ${protectionItemHrid}`
                         );
                     }
-                    protectionCost = protectionItem?.vendorSellPrice || 0;
+                    protectionCost = protectionItem?.sellPrice || 0;
                 }
 
                 await enhancementTracker.trackProtectionCost(protectionItemHrid, protectionCost);

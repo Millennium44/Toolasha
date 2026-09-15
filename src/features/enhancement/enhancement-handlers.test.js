@@ -67,6 +67,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({
             itemDetailMap: {
                 '/items/enchanted_cloak_refined': { name: 'Enchanted Cloak ★', enhancementCosts: [] },
+                '/items/mirror_of_protection': { name: 'Mirror of Protection', sellPrice: 1250 },
             },
         }),
         getCurrentActions: () => state.actions,
@@ -264,6 +265,19 @@ describe('two attempts landing before the first has finished writing', () => {
         // The failure mode this guards: 6 → 7 scored from a stale level 5,
         // reported as a Blessed double jump that never happened
         expect(results).not.toContainEqual(['success', 5, 7, true]);
+    });
+});
+
+describe('a protected failure with no market quote for the protection', () => {
+    // The market is empty in this file (getPrice returns null), so the charge
+    // falls back to the item's vendor price. The game data names that field
+    // sellPrice; reading a field that does not exist charged every such
+    // protection 0 coins.
+    test('is charged the protection item vendor price', async () => {
+        await state.handlers.action_completed(attempt(5, 78));
+        await state.handlers.action_completed(attempt(5, 79));
+
+        expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 1250]);
     });
 });
 
