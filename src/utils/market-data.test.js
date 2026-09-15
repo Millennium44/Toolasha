@@ -31,6 +31,16 @@ vi.mock('../features/settings/custom-price-overrides.js', () => ({
     getCustomPrice: vi.fn(),
 }));
 
+// The game mode and item details the Iron Cow valuation reads; a normal character by default
+const character = vi.hoisted(() => ({ gameMode: 'standard', items: {} }));
+vi.mock('../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterGameMode: () => character.gameMode,
+        getSkills: () => [{ skillHrid: '/skills/alchemy', level: 100 }],
+        getItemDetails: (hrid) => character.items[hrid] ?? null,
+    },
+}));
+
 // The reconciler is exercised in its own tests; here it is the thing under control, so a
 // test can say "this side came off the order book, that one was filled in from the value map"
 const reconciled = vi.hoisted(() => ({ result: null }));
@@ -325,6 +335,95 @@ describe('patient +1 tick', () => {
         clampToBand.mockImplementationOnce(() => 405);
         expect(getItemPrice('/items/cheese', { enhancementLevel: 2, context: 'profit', side: 'buy' })).toBe(405);
         expect(clampToBand).toHaveBeenCalledWith(410, '/items/cheese', 2);
+    });
+});
+
+describe('Iron Cow valuation', () => {
+    const setting = { valuation: 'vendor', mode: 'optimistic' };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        reconciled.result = null;
+        getCustomPrice.mockReturnValue(null);
+        character.gameMode = 'ironcow';
+        character.items = {
+            '/items/vendor_only': { sellPrice: 40, itemLevel: 1 },
+            '/items/coinify_wins': { sellPrice: 100, itemLevel: 10, alchemyDetail: { isCoinifiable: true } },
+            '/items/no_value': { sellPrice: 0 },
+        };
+        setting.valuation = 'vendor';
+        config.getSettingValue.mockImplementation((key, fallback) => {
+            if (key === 'profitCalc_ironCowValuation') return setting.valuation;
+            if (key === 'profitCalc_patientTickBuy' || key === 'profitCalc_patientTickSell') return true;
+            return setting.mode ?? fallback;
+        });
+        marketAPI.getPrice.mockReturnValue({ ask: 500, bid: 400 });
+    });
+
+    test("'vendor' gives buy and sell the same vendor price, with no tick", () => {
+        const buy = getItemPriceInfo('/items/vendor_only', { context: 'profit', side: 'buy' });
+        const sell = getItemPriceInfo('/items/vendor_only', { context: 'profit', side: 'sell' });
+        expect(buy).toEqual({ price: 40, source: 'vendor', estimated: false });
+        expect(sell).toEqual(buy);
+        expect(getItemPrice('/items/vendor_only', { mode: 'ask' })).toBe(40);
+    });
+
+    test("'best' gives buy and sell the same coinify value where it beats vendor", () => {
+        setting.valuation = 'best';
+        const buy = getItemPriceInfo('/items/coinify_wins', { context: 'profit', side: 'buy' });
+        const sell = getItemPriceInfo('/items/coinify_wins', { context: 'profit', side: 'sell' });
+        expect(buy.source).toBe('coinify');
+        expect(buy.price).toBeCloseTo(350);
+        expect(sell).toEqual(buy);
+    });
+
+    test("'market' prices off the book as before", () => {
+        setting.valuation = 'market';
+        expect(getItemPriceInfo('/items/vendor_only', { mode: 'ask' })).toEqual({
+            price: 500,
+            source: 'book',
+            estimated: false,
+        });
+    });
+
+    test('a custom override still wins', () => {
+        getCustomPrice.mockReturnValue(1234);
+        expect(getItemPriceInfo('/items/vendor_only', { context: 'profit', side: 'sell' })).toEqual({
+            price: 1234,
+            source: 'custom',
+            estimated: false,
+        });
+    });
+
+    test('coins stay at 1', () => {
+        expect(getItemPrice('/items/coin', { context: 'profit', side: 'sell' })).toBe(1);
+        expect(getItemPrices('/items/coin')).toMatchObject({ ask: 1, bid: 1, average: 1 });
+    });
+
+    test('an item with no vendor price and no coinify output keeps the market price', () => {
+        setting.valuation = 'best';
+        expect(getItemPriceInfo('/items/no_value', { mode: 'ask' }).source).toBe('book');
+    });
+
+    test('getItemPrices carries the valuation on every side', () => {
+        expect(getItemPrices('/items/vendor_only')).toEqual({
+            ask: 40,
+            bid: 40,
+            average: 40,
+            askEstimated: false,
+            bidEstimated: false,
+            source: 'vendor',
+        });
+    });
+
+    test('a normal character ignores the option', () => {
+        character.gameMode = 'standard';
+        expect(getItemPriceInfo('/items/vendor_only', { mode: 'bid' })).toEqual({
+            price: 400,
+            source: 'book',
+            estimated: false,
+        });
+        expect(getItemPrices('/items/vendor_only').ask).toBe(500);
     });
 });
 

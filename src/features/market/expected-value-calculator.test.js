@@ -715,6 +715,7 @@ describe('cache invalidation on pricing changes', () => {
         'profitCalc_pricingMode',
         'profitCalc_patientTickBuy',
         'profitCalc_patientTickSell',
+        'profitCalc_ironCowValuation',
         'expectedValue_respectPricingMode',
         'expectedValue_includeCowbells',
     ])('a %s change schedules an invalidate, debounced', (settingKey) => {
@@ -892,6 +893,7 @@ describe('cache invalidation on pricing changes', () => {
             'profitCalc_pricingMode',
             'profitCalc_patientTickBuy',
             'profitCalc_patientTickSell',
+            'profitCalc_ironCowValuation',
             'expectedValue_respectPricingMode',
             'expectedValue_includeCowbells',
         ]) {
