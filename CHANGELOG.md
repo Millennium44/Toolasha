@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pricing changes reach every open profit figure
+
+- Changing the pricing mode, naming or a +1 tick from Settings or alchemy's Best Items now refreshes the skill page's profit sections, open crafting plan panels and an open dungeon ROI board, and clears the task "best alternative" figures, instead of leaving old numbers until you navigated away. A burst of changes redraws once.
+- The philo table's refinement craft cost and enhanced self-return follow the table's own pricing mode and tick like its other columns.
+- "Use checkboxes instead" on the chat template is remembered per character, so a future change to the default template can't switch anyone back.
+
 ### Audit round: overnight tea cost too little, and the battle counter reset when you queued something
 
 - The welcome-back value priced consumed items at the sell side, so a night's tea and food cost read low; they now use the buy side.
