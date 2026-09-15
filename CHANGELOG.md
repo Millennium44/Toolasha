@@ -6,9 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### One-click +1 tick toggle
+### Buy and Sell pricing dropdowns
 
-- A "+1 tick" button now sits beside the Mode button in the skill toolbar and in alchemy's Best Items header, so patient pricing one tick inside the spread can be switched without opening Settings. It highlights when on and dims under Conservative, where there is no patient side to move.
+- The skill toolbar and alchemy's Best Items header now have a Buy dropdown (Instant / Patient / Patient +1) and a Sell dropdown (Instant / Patient / Patient −1) in place of the Mode button, so each side and its one-tick-inside-the-spread price can be switched without opening Settings.
+- The +1 tick is now set per side ("Patient buys: +1 tick" and "Patient sells: −1 tick" in Settings); anyone who had the old single setting on gets both sides on, once.
 
 ### Alchemy history sessions no longer split when something else is queued
 
