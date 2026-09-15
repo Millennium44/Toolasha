@@ -7,6 +7,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
+import { compareActionQueueOrder } from '../../utils/combat-actions.js';
 
 const STORE_NAME = 'queueSnapshots';
 
@@ -65,8 +66,9 @@ class QueueSnapshot {
             let totalQueueSeconds = 0;
             let hasInfiniteAction = false;
 
-            // Execution order is ascending ordinal; the array is insertion order
-            const ordered = [...actions].sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0));
+            // Execution order is the game's queue order (party actions first,
+            // then ordinal); the array is insertion order
+            const ordered = [...actions].sort(compareActionQueueOrder);
             for (const action of ordered) {
                 if (action.isDone) continue;
 

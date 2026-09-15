@@ -17,6 +17,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import actionTimeDisplay from '../actions/action-time-display.js';
+import { compareActionQueueOrder } from '../../utils/combat-actions.js';
 
 const UNCERTAIN_ACTION_TYPES = new Set(['/action_types/labyrinth', '/action_types/enhancing']);
 
@@ -66,11 +67,11 @@ function buildSegment({ actionObj, actionDetails, queuedIndex, startAt, endAt, c
  *      terminalCause is one of: 'idle' | 'action' | 'queue' | 'materials' | 'infinite' | 'unknown'
  */
 export function computeLiveProjection(now = Date.now()) {
-    // Execution order is ascending ordinal; the array is insertion order, so a
-    // repeating action requeued to the front would otherwise head the projection
+    // Execution order is the game's queue order (party actions first, then
+    // ordinal), not array order
     const actions = (dataManager.getCurrentActions() || [])
         .filter((action) => action && !action.isDone)
-        .sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0));
+        .sort(compareActionQueueOrder);
 
     if (actions.length === 0) {
         return { segments: [], terminalCause: 'idle', terminalAt: now, certainty: 'trustworthy' };

@@ -51,7 +51,7 @@ import {
 import { calculateEnhancementPredictions } from '../enhancement/enhancement-xp.js';
 import { BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
-import { runningAction } from '../../utils/combat-actions.js';
+import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 
 /**
  * Format a completion Date as a clock string, respecting user's time/date format settings.
@@ -604,7 +604,7 @@ class ActionTimeDisplay {
         if (!actionNameElement || !actionNameElement.textContent) return null;
 
         const actionNameText = this.getCleanActionName(actionNameElement);
-        const sorted = [...currentActions].sort((a, b) => a.ordinal - b.ordinal);
+        const sorted = [...currentActions].sort(compareActionQueueOrder);
         const currentAction = this.matchCurrentActionFromText(sorted.slice(0, 1), actionNameText);
 
         if (!currentAction) return null;
@@ -1078,10 +1078,11 @@ class ActionTimeDisplay {
         const cachedActions = dataManager.getCurrentActions();
         let action;
 
-        // Match against the front action (lowest ordinal = most active).
-        // dataManager keeps the queue in ordinal order; the sort is a cheap guard.
+        // Match against the front action under the game's queue order (party
+        // actions first, then ordinal). dataManager keeps that order; the sort
+        // is a cheap guard.
         if (cachedActions.length > 0) {
-            const sorted = cachedActions.sort((a, b) => a.ordinal - b.ordinal);
+            const sorted = cachedActions.sort(compareActionQueueOrder);
             action = this.matchCurrentActionFromText(sorted.slice(0, 1), actionNameText);
         }
 
@@ -2877,7 +2878,7 @@ class ActionTimeDisplay {
             const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
             if (actionNameElement && actionNameElement.textContent) {
                 const actionNameText = this.getCleanActionName(actionNameElement);
-                const sorted = [...currentActions].sort((a, b) => a.ordinal - b.ordinal);
+                const sorted = [...currentActions].sort(compareActionQueueOrder);
                 currentAction = this.matchCurrentActionFromText(sorted.slice(0, 1), actionNameText);
             }
 

@@ -26,6 +26,7 @@ import {
 } from './guild-shrine-store.js';
 import { mergeMarketListings } from '../utils/market-listings.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
+import { compareActionQueueOrder } from '../utils/combat-actions.js';
 
 /**
  * Whether two plain hrid -> value maps hold the same entries.
@@ -1222,31 +1223,41 @@ class DataManager {
         this.webSocketHook.on('actions_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
 
-            // Update action list.
-            //
-            // This used to rebuild the whole array once per incoming action —
-            // a full queue reorder is 30-odd actions against a 30-entry list,
-            // so ~900 comparisons and 30 fresh arrays for what is one pass.
-            // Collect the incoming ids first, filter once, then append.
-            const incoming = new Map();
-            for (const action of data.endCharacterActions) {
-                // Re-inserting keeps the *last* entry for a repeated id, and at
-                // the position the repeat arrived — what the per-action filter
-                // did when endCharacterActions carried the same id twice.
-                incoming.delete(action.id);
-                incoming.set(action.id, action);
-            }
-
-            // endCharacterActions can contain existing actions alongside new
-            // ones, so drop every incoming id before appending to avoid dupes.
-            this.characterActions = this.characterActions.filter((a) => !incoming.has(a.id));
-            for (const action of incoming.values()) {
-                if (action.isDone === false) {
-                    this.characterActions.push(action);
+            // Merge exactly as the game client's own handler does, so the cached
+            // queue is the list the game renders: a finished action is dropped, a
+            // known id is replaced where it stands, a new one is appended, and the
+            // list is re-sorted only when an ordinal moved or an action arrived.
+            // Replacing in place rather than dropping and re-appending is what
+            // keeps equal sort keys in the game's order. The id index keeps a full
+            // queue reorder (30-odd actions against a 30-entry list) to one pass.
+            let list = [...this.characterActions];
+            let indexById = null;
+            let changed = false;
+            for (const action of data.endCharacterActions || []) {
+                if (!action) continue;
+                if (action.isDone) {
+                    list = list.filter((existing) => existing.id !== action.id);
+                    indexById = null;
+                    continue;
+                }
+                if (!indexById) {
+                    indexById = new Map();
+                    for (let i = 0; i < list.length; i++) {
+                        if (!indexById.has(list[i].id)) indexById.set(list[i].id, i);
+                    }
+                }
+                const index = indexById.get(action.id);
+                if (index === undefined) {
+                    indexById.set(action.id, list.length);
+                    list.push(action);
+                    changed = true;
+                } else {
+                    if (list[index].ordinal !== action.ordinal) changed = true;
+                    list[index] = action;
                 }
             }
-            // Appending puts a reordered or requeued action at the back whatever its ordinal
-            this._sortActionsByOrdinal();
+            this.characterActions = list;
+            if (changed) this._sortActionsByOrdinal();
 
             // A different action taking the front slot starts that action's first unit now
             this._syncActionUnitBoundary();
@@ -2139,18 +2150,20 @@ class DataManager {
     }
 
     /**
-     * Keep `characterActions` in execution order: ascending `ordinal`, stable, a
-     * missing ordinal counting as 0 (as `runningAction` treats it). The server's
-     * arrays are not in that order — `actions_updated` appends whatever it
-     * carries and a requeued repeat keeps its slot with a higher ordinal — so
-     * every write sorts, and readers get the queue as the game will run it.
+     * Keep `characterActions` in the game's queue order: party actions
+     * (`partyID` non-zero) first, then ascending `ordinal`, stable — the
+     * comparator the game client sorts its own list with
+     * (`compareActionQueueOrder`). Ordinal alone is not that order: an action
+     * moved into the first queued slot behind a party fight got an ordinal far
+     * below the fight's (-4294967077 against 0, seen live) and still ran after it.
      */
     _sortActionsByOrdinal() {
-        this.characterActions.sort((a, b) => (a?.ordinal ?? 0) - (b?.ordinal ?? 0));
+        this.characterActions.sort(compareActionQueueOrder);
     }
 
     /**
-     * Get player's current actions, in execution order (ascending ordinal).
+     * Get player's current actions, in the game's queue order (party actions
+     * first, then ascending ordinal).
      * For "which action is running", use `runningAction()` from
      * `utils/combat-actions.js` rather than reading `[0]`.
      * @returns {Array} Current action queue
@@ -2186,13 +2199,13 @@ class DataManager {
     }
 
     /**
-     * The front action (lowest ordinal), or null when the queue is empty.
+     * The front action under the game's queue order, or null when the queue is empty.
      * @returns {Object|null}
      */
     _getFrontAction() {
         let front = null;
         for (const action of this.characterActions) {
-            if (!front || action.ordinal < front.ordinal) front = action;
+            if (!front || compareActionQueueOrder(action, front) < 0) front = action;
         }
         return front;
     }

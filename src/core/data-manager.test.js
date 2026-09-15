@@ -3,6 +3,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { runningAction } from '../utils/combat-actions.js';
 
 let webSocketHandlers = new Map();
 
@@ -671,11 +672,27 @@ describe('actions_updated', () => {
             ],
         });
 
+        // As the game's handler: a known id is replaced where it stands, a new
+        // one is appended
         expect(dataManager.characterActions).toEqual([
+            { id: 1, isDone: false, updated: true },
             { id: 3, isDone: false },
             { id: 4, isDone: false },
-            { id: 1, isDone: false, updated: true },
         ]);
+    });
+
+    test('a replacement whose ordinal did not move keeps its place among equals', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [
+            { id: 1, ordinal: 5, isDone: false },
+            { id: 2, ordinal: 5, isDone: false },
+        ];
+
+        webSocketHandlers.get('actions_updated')({
+            endCharacterActions: [{ id: 1, ordinal: 5, isDone: false, currentCount: 3 }],
+        });
+
+        expect(dataManager.characterActions.map((action) => action.id)).toEqual([1, 2]);
     });
 
     test('a repeated id in one message keeps the last copy', async () => {
@@ -691,9 +708,10 @@ describe('actions_updated', () => {
             ],
         });
 
+        // The second copy replaces the first where it was appended
         expect(dataManager.characterActions).toEqual([
-            { id: 8, isDone: false },
             { id: 7, isDone: false, take: 'second' },
+            { id: 8, isDone: false },
         ]);
     });
 });
@@ -749,6 +767,58 @@ describe('the action queue is kept in execution order', () => {
         });
 
         expect(ids(dataManager)).toEqual([2, 1]);
+    });
+
+    describe('the live party-fight drag reorder (MillenniumTest, test server)', () => {
+        const PIRATE_COVE = { id: 23384280, actionHrid: '/actions/combat/pirate_cove', ordinal: 0, partyID: 5530 };
+        const APPLE_GUMMY = { id: 23502584, actionHrid: '/actions/cooking/apple_gummy', ordinal: 221, partyID: 0 };
+        const RING = { id: 3, actionHrid: '/actions/crafting/philosophers_ring', ordinal: 219, partyID: 0 };
+        const SPEAR = { id: 4, actionHrid: '/actions/crafting/furious_spear_refined', ordinal: 220, partyID: 0 };
+        const live = (action) => ({ ...action, isDone: false });
+
+        test('Apple Gummy dragged to the first queued slot lands behind the fight, as the game lists it', async () => {
+            const { default: dataManager } = await import('./data-manager.js');
+            dataManager.characterActions = [PIRATE_COVE, RING, SPEAR, APPLE_GUMMY].map(live);
+
+            // The move: strictly lower than the running fight's ordinal
+            webSocketHandlers.get('actions_updated')({
+                endCharacterActions: [{ ...live(APPLE_GUMMY), ordinal: -4294967077 }],
+            });
+
+            expect(ids(dataManager)).toEqual([PIRATE_COVE.id, APPLE_GUMMY.id, RING.id, SPEAR.id]);
+            expect(runningAction(dataManager.getCurrentActions()).actionHrid).toBe('/actions/combat/pirate_cove');
+        });
+
+        test('the fight ending hands over to Apple Gummy', async () => {
+            const { default: dataManager } = await import('./data-manager.js');
+            dataManager.characterActions = [
+                live(PIRATE_COVE),
+                { ...live(APPLE_GUMMY), ordinal: -4294967077 },
+                live(RING),
+                live(SPEAR),
+            ];
+
+            webSocketHandlers.get('actions_updated')({
+                endCharacterActions: [{ ...live(PIRATE_COVE), isDone: true }],
+            });
+
+            expect(runningAction(dataManager.getCurrentActions()).actionHrid).toBe('/actions/cooking/apple_gummy');
+        });
+
+        test('a login snapshot in ordinal order comes out with the party fight first', async () => {
+            const { default: dataManager } = await import('./data-manager.js');
+            dataManager.characterActions = [];
+            const characterActions = [
+                { ...live(APPLE_GUMMY), ordinal: -4294967077 },
+                live(PIRATE_COVE),
+                live(RING),
+                live(SPEAR),
+            ];
+
+            await webSocketHandlers.get('init_character_data')(initPayload({ characterActions }));
+
+            expect(ids(dataManager)).toEqual([PIRATE_COVE.id, APPLE_GUMMY.id, RING.id, SPEAR.id]);
+        });
     });
 });
 

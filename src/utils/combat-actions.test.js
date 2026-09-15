@@ -1,5 +1,74 @@
 import { describe, test, expect } from 'vitest';
-import { runningAction, runningCombatAction } from './combat-actions.js';
+import { compareActionQueueOrder, runningAction, runningCombatAction } from './combat-actions.js';
+
+describe('the live party-fight queue after a drag reorder', () => {
+    // MillenniumTest on the test server, right after dragging Apple Gummy from
+    // the last queued slot to the first. The game's own list read: Pirate Cove,
+    // Apple Gummy, Philosopher's Ring, Furious Spear. Sorting by ordinal alone
+    // put Apple Gummy first and the header pill judged cooking.
+    const PIRATE_COVE = {
+        id: 23384280,
+        actionHrid: '/actions/combat/pirate_cove',
+        ordinal: 0,
+        partyID: 5530,
+        isDone: false,
+    };
+    const APPLE_GUMMY = {
+        id: 23502584,
+        actionHrid: '/actions/cooking/apple_gummy',
+        ordinal: -4294967077,
+        partyID: 0,
+        isDone: false,
+    };
+    const RING = { id: 3, actionHrid: '/actions/crafting/philosophers_ring', ordinal: 219, partyID: 0, isDone: false };
+    const SPEAR = {
+        id: 4,
+        actionHrid: '/actions/crafting/furious_spear_refined',
+        ordinal: 220,
+        partyID: 0,
+        isDone: false,
+    };
+    // The order an ordinal-only sort produced
+    const queue = () => [APPLE_GUMMY, PIRATE_COVE, RING, SPEAR].map((action) => ({ ...action }));
+
+    test('the running action is the party fight, not the lower-ordinal solo action', () => {
+        expect(runningAction(queue()).actionHrid).toBe('/actions/combat/pirate_cove');
+        expect(runningCombatAction(queue()).actionHrid).toBe('/actions/combat/pirate_cove');
+    });
+
+    test('sorting with the comparator reproduces the game list', () => {
+        expect(
+            queue()
+                .sort(compareActionQueueOrder)
+                .map((action) => action.id)
+        ).toEqual([PIRATE_COVE.id, APPLE_GUMMY.id, RING.id, SPEAR.id]);
+    });
+
+    test('once the party fight is done, the moved action runs next', () => {
+        const actions = queue().map((action) => (action.partyID ? { ...action, isDone: true } : action));
+        expect(runningAction(actions).actionHrid).toBe('/actions/cooking/apple_gummy');
+        expect(runningCombatAction(actions)).toBeNull();
+    });
+
+    test('a queue with no party action still runs the lowest ordinal', () => {
+        const actions = [
+            { ...RING },
+            { ...APPLE_GUMMY },
+            { id: 9, actionHrid: '/actions/combat/fly', ordinal: 0, partyID: 0, isDone: false },
+        ];
+        expect(runningAction(actions).actionHrid).toBe('/actions/cooking/apple_gummy');
+    });
+});
+
+describe('compareActionQueueOrder', () => {
+    test('party first, then ordinal; missing fields count as 0', () => {
+        expect(compareActionQueueOrder({ partyID: 1, ordinal: 9 }, { partyID: 0, ordinal: -9 })).toBeLessThan(0);
+        expect(compareActionQueueOrder({ partyID: 0, ordinal: -9 }, { partyID: 1, ordinal: 9 })).toBeGreaterThan(0);
+        expect(compareActionQueueOrder({ ordinal: 1 }, { ordinal: 2 })).toBeLessThan(0);
+        expect(compareActionQueueOrder({ partyID: 0, ordinal: 1 }, { ordinal: 1 })).toBe(0);
+        expect(compareActionQueueOrder({}, { ordinal: 1 })).toBeLessThan(0);
+    });
+});
 
 describe('runningCombatAction', () => {
     test('picks the lowest-ordinal unfinished combat action, not the first in the array', () => {

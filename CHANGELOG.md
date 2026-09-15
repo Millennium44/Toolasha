@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A queued action dragged ahead of a party fight no longer reads as running
+
+- During a party fight, dragging a queued action into the first queued slot made Toolasha treat it as running (a queued cooking action showed "Red Culinary Hat not equipped"). The queue now follows the game's own order, party actions first and then by ordinal, everywhere Toolasha asks which action is running.
+
 ### Patient +1 tick pricing
 
 - New "Patient orders: +1 tick" setting (off by default): profit calculations price a patient buy one market tick above the bid and a patient sell one tick below the ask, never crossing the spread. The Mode button shows "(+1 tick)" when it is on, and the own-use tooltip line and dungeon ROI consumable costs follow it too.

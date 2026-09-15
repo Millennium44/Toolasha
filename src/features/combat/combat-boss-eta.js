@@ -35,7 +35,7 @@ import {
     formatBossEta,
     bossEtaTooltip,
 } from '../../utils/boss-eta.js';
-import { runningCombatAction } from '../../utils/combat-actions.js';
+import { compareActionQueueOrder, runningCombatAction } from '../../utils/combat-actions.js';
 
 const ETA_ID = 'mwi-boss-eta';
 
@@ -196,7 +196,7 @@ class CombatBossEta {
         const isLabyrinthFight = /labyrinth/i.test(nameRow.textContent || '');
         const runningAction = (dataManager.getCurrentActions() || [])
             .filter((action) => !action.isDone)
-            .sort((a, b) => a.ordinal - b.ordinal)[0];
+            .sort(compareActionQueueOrder)[0];
         const inSkillingAction =
             !!runningAction && !String(runningAction.actionHrid || '').startsWith('/actions/combat/');
 

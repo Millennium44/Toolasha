@@ -315,6 +315,22 @@ describe('which action is judged', () => {
         expect(document.querySelector(PILL).dataset.code).toBe('production-hat');
     });
 
+    test('a solo action dragged below a running party fight is not judged', () => {
+        // The live queue after dragging Apple Gummy into the first queued slot:
+        // its ordinal is far below the fight's, but the fight has a party and
+        // the game keeps running it. This showed "Red Culinary Hat not equipped".
+        game.actions = [
+            { actionHrid: '/actions/cooking/apple_gummy', ordinal: -4294967077, partyID: 0, isDone: false },
+            { actionHrid: '/actions/combat/pirate_cove', ordinal: 0, partyID: 5530, isDone: false },
+            { actionHrid: '/actions/crafting/philosophers_ring', ordinal: 219, partyID: 0, isDone: false },
+        ];
+        stock('/items/red_culinary_hat');
+
+        warning.render();
+
+        expect(document.querySelector(PILL)).toBeNull();
+    });
+
     test('an empty queue says nothing', () => {
         stock('/items/red_culinary_hat');
 

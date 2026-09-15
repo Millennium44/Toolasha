@@ -32,6 +32,7 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { experienceToNextLevel, skillName } from '../../utils/skill-progress.js';
 import { levelFraction } from '../../utils/combat-level.js';
+import { compareActionQueueOrder } from '../../utils/combat-actions.js';
 
 /** Action types that do not train a single skill this row can report on */
 const NOT_A_TRAINED_SKILL = new Set(['/action_types/combat', '/action_types/labyrinth']);
@@ -46,11 +47,9 @@ function activeSkillHrid() {
     const actions = (dataManager.getCurrentActions?.() || []).filter((action) => action && !action.isDone);
     if (!actions.length) return null;
 
-    // Insertion order is not queue order — sort needed, same as
-    // action-time-display.js's own front-action lookup
-    const front = actions.reduce((lowest, action) =>
-        (action.ordinal ?? Infinity) < (lowest.ordinal ?? Infinity) ? action : lowest
-    );
+    // Insertion order is not queue order: the front is the first action under
+    // the game's own queue comparator (party actions first, then ordinal)
+    const front = actions.reduce((first, action) => (compareActionQueueOrder(action, first) < 0 ? action : first));
 
     const details = dataManager.getActionDetails?.(front.actionHrid);
     if (!details?.type || NOT_A_TRAINED_SKILL.has(details.type)) return null;

@@ -6,8 +6,9 @@
  * array with a *higher* ordinal, so "the current action" read as `actions[0]`,
  * `actions.find(a => !a.isDone)`, or the first match of a `for…of` routinely
  * returns an action that is queued *behind* the one actually running.
- * Execution order is ascending `ordinal`, so the running action is the
- * lowest-ordinal unfinished one.
+ * Execution order is the game's own queue order — party actions first, then
+ * ascending `ordinal` (see `compareActionQueueOrder`) — so the running action
+ * is the front unfinished one under that order.
  *
  * Reading the queue by position has bitten reader after reader with the same
  * bug: the boss-ETA chip printed a queued normal zone's cadence on a dungeon,
@@ -30,9 +31,36 @@
  */
 
 /**
+ * The game client's own action-queue comparator: actions in a party
+ * (`partyID` non-zero) sort ahead of solo ones, then ascending `ordinal`. The
+ * game sorts its list with this (a stable sort, no id tie-break) and runs the
+ * front of it.
+ *
+ * Ordinal alone is not execution order. Dragging a queued action into the
+ * first queued slot behind a running party fight gave it ordinal -4294967077
+ * while the fight sat at 0; the game kept fighting and listed the fight first
+ * because it has a party. Reading by ordinal alone judged the queued cooking
+ * action as running ("Red Culinary Hat not equipped" during combat).
+ *
+ * A missing `partyID` or `ordinal` counts as 0 (solo; the game's own check is
+ * `partyID !== 0`, and the wire always carries the field), so partial actions
+ * and test fixtures sort by ordinal as before.
+ *
+ * @param {{partyID?: number, ordinal?: number}} a
+ * @param {{partyID?: number, ordinal?: number}} b
+ * @returns {number} Negative when `a` runs before `b`
+ */
+export function compareActionQueueOrder(a, b) {
+    const aInParty = (a?.partyID ?? 0) !== 0;
+    const bInParty = (b?.partyID ?? 0) !== 0;
+    if (aInParty !== bInParty) return aInParty ? -1 : 1;
+    return (a?.ordinal ?? 0) - (b?.ordinal ?? 0);
+}
+
+/**
  * The action the game is actually running, reported only when it matches
- * `predicate`, chosen by execution order (lowest ordinal) rather than array
- * position.
+ * `predicate`, chosen by execution order (`compareActionQueueOrder`) rather
+ * than array position.
  *
  * The queue is a single timeline: only one action executes at a time, in
  * ascending-ordinal order, whatever mix of types sits in it. So "the running
@@ -74,7 +102,8 @@ export function runningAction(actions, predicate = () => true, { includeFinished
     const pool = active.length > 0 ? active : includeFinished ? present : active;
     if (pool.length === 0) return null;
 
-    const running = pool.reduce((lowest, a) => ((a.ordinal ?? 0) < (lowest.ordinal ?? 0) ? a : lowest));
+    // First of equals wins, as the game's stable sort keeps them
+    const running = pool.reduce((front, a) => (compareActionQueueOrder(a, front) < 0 ? a : front));
     return predicate(running) ? running : null;
 }
 
