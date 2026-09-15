@@ -12,7 +12,6 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { isMobileMode } from '../../utils/mobile.js';
-import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import {
     applyPricingSideChoice,
     createPricingSideSelect,
@@ -44,6 +43,12 @@ class ActionFilter {
         // True while a dropdown writes the pricing settings, so the tick
         // listeners leave the one re-render to the dropdown
         this._applyingPricingChoice = false;
+        // Set while a coalesced _refreshProfitDisplays() is queued for the next
+        // microtask, so a burst of setting writes in one synchronous turn (an
+        // import, a reset to defaults, several onSettingChange keys firing off
+        // one settings load) redraws the profit sections once instead of once
+        // per key.
+        this._pendingProfitRefresh = null;
         this.noResultsMessage = null; // Reference to "No matching actions" message
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
@@ -79,25 +84,28 @@ class ActionFilter {
 
         this.unregisterHandlers.push(unregisterTitleObserver);
 
-        // Keep the Buy/Sell dropdowns in step with every setting they show,
-        // wherever it changes: the Settings panel, the Best Items header, the
-        // naming convention, or a dropdown on this toolbar itself
-        // The auto-fill settings move only the dropdowns' tooltips, never a price
-        for (const key of [...PRICING_SIDE_SETTING_KEYS, ...PRICING_SIDE_TOOLTIP_SETTING_KEYS]) {
+        // The auto-fill settings move only the dropdowns' tooltips: no price or
+        // mode label they show ever changes, so there is nothing here to redraw.
+        for (const key of PRICING_SIDE_TOOLTIP_SETTING_KEYS) {
             this.unregisterHandlers.push(
                 config.onSettingChange(key, () => {
                     if (this._updatePricingSelects) this._updatePricingSelects();
                 })
             );
         }
-        // The patient ticks can be changed from the Settings panel, and nothing
-        // else re-renders the open profit sections for them. A dropdown on this
-        // toolbar refreshes once for its own write, so it is skipped here.
-        for (const key of PATIENT_TICK_SETTING_KEYS) {
+        // Mode, naming, and both patient ticks all feed the dropdowns AND the
+        // profit sections (which draw the same mode label via
+        // getPricingModeDisplayLabel). Each can change from the Settings panel,
+        // the alchemy Best Items header, or a dropdown on this toolbar itself —
+        // wherever it changes, resync the dropdowns and queue one coalesced
+        // refresh. A dropdown's own write goes through choosePricingSide below,
+        // which already refreshes once for the whole choice, so it is skipped here.
+        for (const key of PRICING_SIDE_SETTING_KEYS) {
             this.unregisterHandlers.push(
-                config.onSettingChange(key, async () => {
+                config.onSettingChange(key, () => {
+                    if (this._updatePricingSelects) this._updatePricingSelects();
                     if (this._applyingPricingChoice) return;
-                    await this._refreshProfitDisplays();
+                    this._scheduleProfitRefresh();
                 })
             );
         }
@@ -119,7 +127,7 @@ class ActionFilter {
             config.onSettingsLoaded(() => {
                 if (this._updatePricingSelects) this._updatePricingSelects();
                 if (this._updateCraftBtn) this._updateCraftBtn();
-                this._refreshProfitDisplays();
+                this._scheduleProfitRefresh();
             })
         );
 
@@ -839,6 +847,25 @@ class ActionFilter {
     }
 
     /**
+     * Queue one {@link _refreshProfitDisplays} for the next microtask, folding
+     * in every call made before that microtask runs. A settings import, a reset
+     * to defaults, or a character-switch settings load can change several of
+     * the keys above in one synchronous pass; without this each key's listener
+     * would re-render the same sections again.
+     * @returns {Promise<void>} Resolves once the coalesced refresh has run
+     */
+    _scheduleProfitRefresh() {
+        if (!this._pendingProfitRefresh) {
+            this._pendingProfitRefresh = Promise.resolve()
+                .then(() => this._refreshProfitDisplays())
+                .finally(() => {
+                    this._pendingProfitRefresh = null;
+                });
+        }
+        return this._pendingProfitRefresh;
+    }
+
+    /**
      * Re-render all visible profit sections using the current pricing mode.
      * Called after a pricing dropdown writes the pricing settings.
      */
@@ -881,6 +908,11 @@ class ActionFilter {
         // Unregister observers
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
+
+        // A queued coalesced refresh still resolves (it holds no handle to
+        // cancel), but nothing here awaits it after cleanup, and a fresh
+        // initialize() starts this flag over.
+        this._pendingProfitRefresh = null;
 
         // Clear filter
         this.clearFilter();

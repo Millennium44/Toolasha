@@ -206,25 +206,51 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         }
     });
 
-    it('follows changes made elsewhere, and a tick changed from Settings re-renders the sections', () => {
+    it('follows changes made elsewhere: a mode change or a tick change from Settings each re-render the sections once', async () => {
         actionFilter.injectFilterInput(buildSkillPage());
 
+        // A pricing-mode change made from the Settings panel or the alchemy Best
+        // Items header used to only relabel the dropdowns, leaving the open
+        // profit sections showing the old mode's numbers until the page was
+        // navigated away and back.
         writeElsewhere('profitCalc_pricingMode', 'patientBuy');
+        await settle();
         expect(buySelect().value).toBe('patient');
         expect(sellSelect().value).toBe('instant');
+        expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(1);
 
         writeElsewhere('profitCalc_patientTickBuy', true);
+        await settle();
         expect(buySelect().value).toBe('patientTick');
-        expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(1);
+        expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(2);
     });
 
-    it('a naming change retexts both dropdowns', () => {
+    it('a naming change retexts both dropdowns and re-renders the sections (the mode label they draw depends on it)', async () => {
         actionFilter.injectFilterInput(buildSkillPage());
 
         writeElsewhere('profitCalc_pricingNaming', true);
+        await settle();
 
         expect(selectedText(buySelect())).toBe('Buy: Instant');
         expect(selectedText(sellSelect())).toBe('Sell: Patient');
+        expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(1);
+    });
+
+    it('a burst of pricing-setting changes in one synchronous turn re-renders the sections once, not once per key', async () => {
+        // Mirrors a settings import or a reset to defaults: several of the keys
+        // that feed the profit sections change back to back, synchronously,
+        // before anything has a chance to await.
+        actionFilter.injectFilterInput(buildSkillPage());
+
+        writeElsewhere('profitCalc_pricingMode', 'patientBuy');
+        writeElsewhere('profitCalc_patientTickBuy', true);
+        writeElsewhere('profitCalc_patientTickSell', true);
+        writeElsewhere('profitCalc_pricingNaming', true);
+        // Nothing has run yet — the refresh is queued for the next microtask
+        expect(mocks.displayProductionProfit).not.toHaveBeenCalled();
+
+        await settle();
+        expect(mocks.displayProductionProfit).toHaveBeenCalledTimes(1);
     });
 
     it('a character switch (settings loaded, no per-key callbacks) resyncs both dropdowns', () => {
@@ -274,10 +300,12 @@ describe('action filter: Buy / Sell pricing dropdowns', () => {
         expect(mocks.loadedListeners).toHaveLength(0);
 
         await actionFilter.initialize();
-        expect(mocks.changeListeners.profitCalc_pricingMode).toHaveLength(1);
-        for (const key of AUTO_FILL_KEYS) expect(mocks.changeListeners[key]).toHaveLength(1);
-        // one to resync, one to re-render for a change made from Settings
-        expect(mocks.changeListeners.profitCalc_patientTickBuy).toHaveLength(2);
+        // One listener per key: it both resyncs the dropdowns and queues the
+        // coalesced refresh, so mode/naming/tick keys and auto-fill keys alike
+        // carry exactly one.
+        for (const key of [...PRICING_KEYS, ...AUTO_FILL_KEYS]) {
+            expect(mocks.changeListeners[key]).toHaveLength(1);
+        }
     });
 
     it('both hide under the pricing mode visibility gate', () => {
