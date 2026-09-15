@@ -53,6 +53,7 @@ import { BASE_SUCCESS_RATES } from '../../utils/enhancement-calculator.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
 /**
  * Format a completion Date as a clock string, respecting user's time/date format settings.
@@ -224,6 +225,7 @@ class ActionTimeDisplay {
                 'actionBar_showTimeRemaining',
                 'profitCalc_pricingMode',
                 ...PATIENT_TICK_SETTING_KEYS,
+                IRONCOW_VALUATION_SETTING,
             ];
             for (const key of actionBarSettings) {
                 config.onSettingChange(key, (newValue) => {

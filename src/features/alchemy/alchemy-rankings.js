@@ -74,6 +74,7 @@ import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
 /** The three alchemy actions an item can be put through */
 export const ALCHEMY_TYPES = ['coinify', 'decompose', 'transmute'];
@@ -356,7 +357,7 @@ export function clearAlchemyRateCache() {
 // The pricing mode decides what every alchemy output is worth. Registered once,
 // at import, because this module has no lifecycle of its own to hang it on.
 config.onSettingChange?.('profitCalc_pricingMode', clearAlchemyRateCache);
-for (const key of PATIENT_TICK_SETTING_KEYS) {
+for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
     config.onSettingChange?.(key, clearAlchemyRateCache);
 }
 

@@ -11,6 +11,7 @@ import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/
 import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
 import { treasureTracker } from '../../utils/bundle-bridge.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { salesTaxNetted } from './sales-tax-view.js';
 
 /**
@@ -104,16 +105,19 @@ export function calculateIncome(lootMap) {
                     totalBid += adjustedEv * itemCount;
                 }
             } else {
-                // Other items: get market price
-                const prices = marketAPI.getPrice(loot.itemHrid);
+                // Other items: market price, or an Iron Cow character's own valuation
+                const ironCow = ironCowBook(loot.itemHrid);
+                const prices = ironCow ?? marketAPI.getPrice(loot.itemHrid);
                 if (prices) {
                     // Drops are sold on the market, so the sale tax comes off
                     // what they fetch when the reader has asked for net income.
                     // Coin is handled above (face value, never sold); containers
-                    // use an expected value that is already net of the tax.
-                    const mult = salesTaxNetted()
-                        ? 1 - (loot.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX)
-                        : 1;
+                    // use an expected value that is already net of the tax. A
+                    // vendor or coinify value is not a market sale and is untaxed.
+                    const mult =
+                        !ironCow && salesTaxNetted()
+                            ? 1 - (loot.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX)
+                            : 1;
                     totalAsk += prices.ask * itemCount * mult;
                     totalBid += prices.bid * itemCount * mult;
                 }
@@ -277,7 +281,7 @@ export function calculateConsumableCosts(consumables, durationSeconds) {
         // silently corrupted the run's cost total and the forecast's per-item
         // cost with a number nothing backs; null lets both correctly report
         // the item as unpriced instead.
-        const prices = marketAPI.getPrice(consumable.itemHrid);
+        const prices = ironCowBook(consumable.itemHrid) ?? marketAPI.getPrice(consumable.itemHrid);
         const itemPrice = Number(prices?.ask) > 0 ? Number(prices.ask) : null;
         const itemCost = itemPrice === null ? 0 : itemPrice * consumed;
 
@@ -367,7 +371,7 @@ export function formatLootList(lootMap) {
                 totalValue = ev * loot.count;
             }
         } else {
-            const prices = marketAPI.getPrice(loot.itemHrid);
+            const prices = ironCowBook(loot.itemHrid) ?? marketAPI.getPrice(loot.itemHrid);
             if (prices) {
                 totalValue = prices.ask * loot.count;
             }

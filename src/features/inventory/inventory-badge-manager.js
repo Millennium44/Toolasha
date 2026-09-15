@@ -19,6 +19,7 @@ import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 
 // How long the per-item pricing loop may run before handing the thread back.
 // High-enhancement equipment runs calculateEnhancementPath (100+ ms per +20
@@ -464,7 +465,7 @@ class InventoryBadgeManager {
                     } else {
                         // Enhancement calculation failed, fallback to market price
                         const key = `${itemHrid}:${enhancementLevel}`;
-                        const marketPrice = priceCache.get(key);
+                        const marketPrice = ironCowBook(itemHrid, enhancementLevel) ?? priceCache.get(key);
                         if (marketPrice) {
                             askPrice = marketPrice.ask > 0 ? marketPrice.ask : 0;
                             bidPrice = marketPrice.bid > 0 ? marketPrice.bid : 0;
@@ -474,7 +475,7 @@ class InventoryBadgeManager {
             } else {
                 // Use market price (for non-equipment or low enhancement levels)
                 const key = `${itemHrid}:${enhancementLevel}`;
-                const marketPrice = priceCache.get(key);
+                const marketPrice = ironCowBook(itemHrid, enhancementLevel) ?? priceCache.get(key);
 
                 // Start with whatever market data exists
                 if (marketPrice) {

@@ -27,6 +27,7 @@ import { refreshMarketValues, marketValueFor, reconcileBook } from '../../utils/
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -125,6 +126,12 @@ export async function calculateItemValue(item, priceCache = null) {
  * @returns {{ask:number|null, bid:number|null, average:number|null}|number|null}
  */
 function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
+    // An Iron Cow character's own valuation outranks the batch cache, which is the raw book
+    const ironCow = ironCowBook(itemHrid, enhancementLevel);
+    if (ironCow) {
+        return { ask: ironCow.ask, bid: ironCow.bid, average: ironCow.ask };
+    }
+
     const raw = priceCache
         ? priceCache.get(`${itemHrid}:${enhancementLevel}`)
         : getItemPrices(itemHrid, enhancementLevel);

@@ -1704,6 +1704,27 @@ export const settingsGroups = {
                 hidden: !isTestServer(),
                 help: "Test server only. Buy-side prices floor at the Tester shop's coin prices — house materials, ability books, enhancement materials — and the simulators' Upgrade tabs price equipment as bought from the shop at +10 and mirrored up with Philosopher's Mirrors (guaranteed, consuming a copy one level below) beyond that.",
             },
+            profitCalc_ironCowValuation: {
+                id: 'profitCalc_ironCowValuation',
+                label: 'Iron Cow: value items at',
+                type: 'select',
+                default: 'market',
+                ironCowOnly: true,
+                options: [
+                    { value: 'market', label: 'Market price (ask / bid)' },
+                    { value: 'vendor', label: 'Vendor sell price' },
+                    { value: 'best', label: 'Better of vendor price and coinify' },
+                ],
+                help:
+                    'Shown only on an Iron Cow character, and saved for this character alone. An Iron Cow ' +
+                    'character cannot trade, so this values loot, inventory, net worth and profit at what you can ' +
+                    'turn an item into instead of at the market: its vendor price, or the better of that and the ' +
+                    'coins one item yields when coinified (vendor price × 5 × the coinify success rate at your ' +
+                    'alchemy level, without catalysts or teas). The same figure is used whether an item is bought ' +
+                    'or sold, the pricing mode and patient ticks do not apply, and custom price overrides still ' +
+                    'win. Enhanced items, and items with neither a vendor price nor a coinify value, keep their ' +
+                    'market price.',
+            },
             profitCalc_pricingNaming: {
                 id: 'profitCalc_pricingNaming',
                 label: 'Pricing mode naming convention',

@@ -15,6 +15,7 @@ import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
 class GatheringStats {
     constructor() {
@@ -99,7 +100,7 @@ class GatheringStats {
             this.updateAllStats();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        for (const key of PATIENT_TICK_SETTING_KEYS) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
             config.onSettingChange(key, this.pricingModeHandler);
         }
 
@@ -694,7 +695,7 @@ class GatheringStats {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-                for (const key of PATIENT_TICK_SETTING_KEYS) {
+                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
                     config.offSettingChange(key, this.pricingModeHandler);
                 }
                 this.pricingModeHandler = null;

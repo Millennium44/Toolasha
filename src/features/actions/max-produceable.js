@@ -26,6 +26,7 @@ import { affordableActions } from '../../utils/material-calculator.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
 /**
  * Action type constants for classification
@@ -130,7 +131,7 @@ class MaxProduceable {
             this.updateAllCounts();
         };
         config.onSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-        for (const key of PATIENT_TICK_SETTING_KEYS) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
             config.onSettingChange(key, this.pricingModeHandler);
         }
 
@@ -975,7 +976,7 @@ class MaxProduceable {
 
             if (this.pricingModeHandler) {
                 config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-                for (const key of PATIENT_TICK_SETTING_KEYS) {
+                for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
                     config.offSettingChange(key, this.pricingModeHandler);
                 }
                 this.pricingModeHandler = null;

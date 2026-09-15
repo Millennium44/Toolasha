@@ -31,6 +31,7 @@ import {
     PRICING_SIDE_TOOLTIP_SETTING_KEYS,
     syncPricingSideSelect,
 } from '../../utils/pricing-side-select.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 
@@ -106,6 +107,7 @@ class AlchemyBestItems {
         };
         this.pricingUnsubscribers = [
             ...PRICING_SIDE_SETTING_KEYS.map((key) => config.onSettingChange(key, onPricingChange)),
+            config.onSettingChange(IRONCOW_VALUATION_SETTING, onPricingChange),
             // The auto-fill settings move only the dropdowns' tooltips: no re-rank
             ...PRICING_SIDE_TOOLTIP_SETTING_KEYS.map((key) =>
                 config.onSettingChange(key, () => this.updatePricingSelects())

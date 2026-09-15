@@ -20,6 +20,11 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import {
+    COINIFY_BASE_SUCCESS_RATE,
+    COINIFY_COINS_PER_SELL_PRICE,
+    UNDER_LEVEL_PENALTY_NUMERATOR,
+} from '../../utils/ironcow-valuation.js';
 import { SECONDS_PER_HOUR, MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
@@ -41,7 +46,7 @@ import {
 
 // Base success rates for alchemy actions
 const BASE_SUCCESS_RATES = {
-    COINIFY: 0.7, // 70%
+    COINIFY: COINIFY_BASE_SUCCESS_RATE, // 70%
     DECOMPOSE: 0.6, // 60%
     // TRANSMUTE: varies by item (from alchemyDetail.transmuteSuccessRate)
 };
@@ -60,8 +65,9 @@ const CATALYST_BONUSES = {
     prime: 0.25, // 25% multiplicative
 };
 
-// Under-level penalty: perLevel = 0.9 / itemLevel per level below the item's level
-const UNDER_LEVEL_PENALTY_NUMERATOR = 0.9;
+// Under-level penalty: perLevel = UNDER_LEVEL_PENALTY_NUMERATOR (0.9) / itemLevel per level
+// below the item's level. The coinify constants live in utils/ironcow-valuation.js, which
+// values an item at its coinify output and must agree with this calculator.
 
 // The alchemy coin fee lives in utils/alchemy-fees.js — see getAlchemyCoinCost.
 
@@ -718,7 +724,7 @@ class AlchemyProfitCalculator {
 
             // Calculate output value (coins produced)
             // Formula: sellPrice × bulkMultiplier × 5
-            const coinsProduced = (itemDetails.sellPrice || 0) * bulkMultiplier * 5;
+            const coinsProduced = (itemDetails.sellPrice || 0) * bulkMultiplier * COINIFY_COINS_PER_SELL_PRICE;
 
             // Calculate per-hour values
             // Actions per hour (for display breakdown) - includes efficiency for display purposes

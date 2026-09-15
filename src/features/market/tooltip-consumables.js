@@ -7,6 +7,7 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { numberFormatter } from '../../utils/formatters.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import dom from '../../utils/dom.js';
 import tooltipObserver from '../../core/tooltip-observer.js';
 
@@ -246,7 +247,7 @@ class TooltipConsumables {
         const restorePerSecond = recoveryDuration > 0 ? restoreAmount / recoveryDuration : 0;
 
         // Get market price for cost calculations
-        const price = marketAPI.getPrice(itemHrid, 0);
+        const price = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
         const askPrice = price?.ask || 0;
 
         // Cost per HP or MP

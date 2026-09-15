@@ -13,6 +13,7 @@ import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-manager.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -89,6 +90,7 @@ class ExpectedValueCalculator {
         this.settingUnsubscribers = [
             config.onSettingChange('profitCalc_pricingMode', trigger),
             ...PATIENT_TICK_SETTING_KEYS.map((key) => config.onSettingChange(key, trigger)),
+            config.onSettingChange(IRONCOW_VALUATION_SETTING, trigger),
             config.onSettingChange('expectedValue_respectPricingMode', trigger),
             config.onSettingChange('expectedValue_includeCowbells', trigger),
         ];

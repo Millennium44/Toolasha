@@ -45,6 +45,7 @@ import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { describeCraft } from '../features/crafting-plan/craft-arbitrage-adapter.js';
 import { getPricingMode } from './market-data.js';
+import { ironCowBook } from './ironcow-valuation.js';
 import { isPatientTickOn, patientTickPrice } from './patient-tick.js';
 import { coinFormatter, timeReadable } from './formatters.js';
 
@@ -134,6 +135,10 @@ export function getKeyPricingMode() {
  * @returns {number|null} Price, or null when the market has nothing
  */
 function buyPriceFor(keyHrid, mode, followsGlobal = false) {
+    // No book for an Iron Cow valuation, so no side to pick and no tick to take
+    const ironCow = ironCowBook(keyHrid);
+    if (ironCow) return ironCow.ask;
+
     const prices = marketAPI.getPrice(keyHrid);
     if (!prices) return null;
 

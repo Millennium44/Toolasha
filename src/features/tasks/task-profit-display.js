@@ -48,6 +48,7 @@ import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
 }
@@ -603,7 +604,7 @@ class TaskProfitDisplay {
             }
         });
 
-        for (const key of PATIENT_TICK_SETTING_KEYS) {
+        for (const key of [...PATIENT_TICK_SETTING_KEYS, IRONCOW_VALUATION_SETTING]) {
             config.onSettingChange(key, () => {
                 if (this.isInitialized) {
                     this.updateTaskProfits(true);

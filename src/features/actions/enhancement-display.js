@@ -22,6 +22,7 @@ import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -242,7 +243,7 @@ function generateCostsByLevelTable(
                 if (cost.itemHrid === '/items/coin') {
                     itemPrice = 1;
                 } else {
-                    const marketData = marketAPI.getPrice(cost.itemHrid, 0);
+                    const marketData = ironCowBook(cost.itemHrid) ?? marketAPI.getPrice(cost.itemHrid, 0);
                     if (marketData && marketData.ask) {
                         itemPrice = marketData.ask;
                     } else {
@@ -270,7 +271,7 @@ function generateCostsByLevelTable(
             const protectionItemDetail = gameData.itemDetailMap[protectionItemHrid];
             let protectionPrice = 0;
 
-            const protectionMarketData = marketAPI.getPrice(protectionItemHrid, 0);
+            const protectionMarketData = ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
             if (protectionMarketData && protectionMarketData.ask) {
                 protectionPrice = protectionMarketData.ask;
             } else {
@@ -322,7 +323,9 @@ function generateCostsByLevelTable(
     let totalSavings = 0;
 
     if (isPhilosopherMirror) {
-        const mirrorPrice = marketAPI.getPrice('/items/philosophers_mirror', 0)?.ask || 0;
+        const mirrorPrice =
+            (ironCowBook('/items/philosophers_mirror') ?? marketAPI.getPrice('/items/philosophers_mirror', 0))?.ask ||
+            0;
 
         // Calculate mirror cost for each level (starts at +3)
         for (let level = 3; level <= 20; level++) {
@@ -1157,7 +1160,7 @@ function formatEnhancementDisplay(
             if (cost.itemHrid === '/items/coin') {
                 itemPrice = 1;
             } else {
-                const marketData = marketAPI.getPrice(cost.itemHrid, 0);
+                const marketData = ironCowBook(cost.itemHrid) ?? marketAPI.getPrice(cost.itemHrid, 0);
                 if (marketData && marketData.ask) {
                     itemPrice = marketData.ask;
                 } else {
@@ -1182,7 +1185,8 @@ function formatEnhancementDisplay(
 
                 // Get protection item price
                 let protectionPrice = 0;
-                const protectionMarketData = marketAPI.getPrice(protectionItemHrid, 0);
+                const protectionMarketData =
+                    ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
                 if (protectionMarketData && protectionMarketData.ask) {
                     protectionPrice = protectionMarketData.ask;
                 } else {

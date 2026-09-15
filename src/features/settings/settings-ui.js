@@ -14,6 +14,7 @@ import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 import { detectedModeLabel, isMobileMode } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import spawnCensus from '../combat/spawn-census.js';
@@ -578,6 +579,8 @@ class SettingsUI {
             // Add settings in this group
             for (const [settingId, settingDef] of Object.entries(group.settings)) {
                 if (settingDef.hidden) continue;
+                // Rebuilt on every character change, so this reads the character on screen
+                if (settingDef.ironCowOnly && !isIronCowCharacter()) continue;
                 const settingEl = this.createSettingElement(settingId, settingDef);
                 content.appendChild(settingEl);
             }

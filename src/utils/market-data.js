@@ -7,6 +7,7 @@ import marketAPI from '../api/marketplace.js';
 import config from '../core/config.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
 import { formatRelativeTime } from './formatters.js';
+import { getIronCowValue } from './ironcow-valuation.js';
 import { refreshMarketValues, reconcileBook } from './market-values.js';
 import { patientTickPrice } from './patient-tick.js';
 
@@ -73,9 +74,10 @@ export function getItemPrice(itemHrid, options = {}) {
  *
  * @param {string} itemHrid - Item HRID
  * @param {Object} options - Same options as {@link getItemPrice}
- * @returns {{price: number|null, source: 'custom'|'book'|'value'|null, estimated: boolean}}
+ * @returns {{price: number|null, source: 'custom'|'book'|'value'|'vendor'|'coinify'|null, estimated: boolean}}
  *   `source` is `'custom'` for a user override, `'book'` for a live order-book price,
- *   `'value'` for one derived from the official value map, `null` when unpriced.
+ *   `'value'` for one derived from the official value map, `'vendor'` / `'coinify'` for an
+ *   Iron Cow character valued by `profitCalc_ironCowValuation`, `null` when unpriced.
  *   `estimated` is true exactly when `source === 'value'`.
  */
 export function getItemPriceInfo(itemHrid, options = {}) {
@@ -102,6 +104,13 @@ export function getItemPriceInfo(itemHrid, options = {}) {
     const customPrice = getCustomPrice(itemHrid, enhancementLevel, side);
     if (customPrice !== null) {
         return { price: customPrice, source: 'custom', estimated: false };
+    }
+
+    // An Iron Cow character valuing items off-market: one figure for both sides,
+    // and no pricing mode or patient tick, because there is no book to price against
+    const ironCowValue = getIronCowValue(itemHrid, enhancementLevel);
+    if (ironCowValue) {
+        return { price: ironCowValue.price, source: ironCowValue.source, estimated: false };
     }
 
     // Get raw price data from API, reconciled against the official market value:
@@ -227,9 +236,16 @@ export function getPriceAgeString() {
  * @param {number} [enhancementLevel=0] - Enhancement level
  * @returns {Object|null} Object with {ask, bid, average, askEstimated, bidEstimated} or null if no
  *   market data. The `*Estimated` flags are true when that side was filled in from the official
- *   value map rather than read off a live order book.
+ *   value map rather than read off a live order book. An Iron Cow character valued by
+ *   `profitCalc_ironCowValuation` gets that value on every side, with `source` naming it.
  */
 export function getItemPrices(itemHrid, enhancementLevel = 0) {
+    const ironCowValue = getIronCowValue(itemHrid, enhancementLevel);
+    if (ironCowValue) {
+        const { price, source } = ironCowValue;
+        return { ask: price, bid: price, average: price, askEstimated: false, bidEstimated: false, source };
+    }
+
     refreshMarketValues();
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
     const { ask, bid, askSource, bidSource } = reconcileBook(

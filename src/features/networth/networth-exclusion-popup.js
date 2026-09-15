@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { networthFormatter } from '../../utils/formatters.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { getExclusions, isExcluded, addExclusion, removeExclusion, clearExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
@@ -22,6 +23,8 @@ import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
  */
 function priceAtWornLevel(eq) {
     const level = eq.enhancementLevel || 0;
+    const ironCow = ironCowBook(eq.itemHrid, level);
+    if (ironCow) return ironCow;
     const price = marketAPI.getPrice(eq.itemHrid, level);
     if (price || level === 0) return price;
     return marketAPI.getPrice(eq.itemHrid);

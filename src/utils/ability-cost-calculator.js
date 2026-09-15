@@ -6,6 +6,7 @@
 
 import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
+import { ironCowBook } from './ironcow-valuation.js';
 
 /**
  * List of starter abilities that give 50 XP per book (others give 500)
@@ -91,7 +92,7 @@ export function explainAbilityLevelUpCost(abilityHrid, currentLevel, currentXp, 
     const learnBook = currentLevel === 0;
     if (learnBook) books += 1;
 
-    const prices = marketAPI.getPrice(bookHrid, 0);
+    const prices = ironCowBook(bookHrid) ?? marketAPI.getPrice(bookHrid, 0);
     // Match MCS behavior: if only one side of the order book exists, use it for both
     // (getPrice normalizes missing sides to null)
     let ask = prices?.ask ?? null;

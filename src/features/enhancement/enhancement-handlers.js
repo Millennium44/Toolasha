@@ -13,6 +13,7 @@ import { calculateSuccessXP, calculateFailureXP, calculateAdjustedAttemptCount }
 import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 
 // Id of the queue action the tracker last saw running as the enhance row. Read against
 // dataManager's merged queue in handleActionsUpdated so a second enhance queued behind the
@@ -414,7 +415,7 @@ async function handleEnhancementResult(action, _data) {
             // Successful enhancements do NOT consume a protection item
             if (shouldTrack && newLevel <= previousLevel) {
                 // Use market price (like Ultimate Tracker) instead of vendor price
-                const marketPrice = marketAPI.getPrice(protectionItemHrid, 0);
+                const marketPrice = ironCowBook(protectionItemHrid) ?? marketAPI.getPrice(protectionItemHrid, 0);
                 let protectionCost = marketPrice?.ask || marketPrice?.bid || 0;
 
                 // Fall back to vendor price if market price unavailable

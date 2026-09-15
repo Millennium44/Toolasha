@@ -9,6 +9,7 @@ import marketAPI from '../../api/marketplace.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { ironCowBook } from '../../utils/ironcow-valuation.js';
 
 /**
  * Whether a `battle_unit_fetched` payload is an end-of-session summary rather
@@ -136,7 +137,7 @@ class CombatSummary {
                     totalPriceBid += itemCount;
                 } else {
                     // Other items: get market price
-                    const prices = marketAPI.getPrice(loot.itemHrid);
+                    const prices = ironCowBook(loot.itemHrid) ?? marketAPI.getPrice(loot.itemHrid);
                     if (prices) {
                         totalPriceAsk += prices.ask * itemCount;
                         totalPriceBid += prices.bid * itemCount;

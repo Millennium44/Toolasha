@@ -103,6 +103,15 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/ironcow-valuation.js',
+        // Constants and pure functions that read the setting and the current
+        // character from config and dataManager (both shared globals) at call
+        // time; nothing is cached here. Imported by market-data and by the raw
+        // price readers in actions, combat, market, sim, ui and utils, and every
+        // copy answers the same valuation for the same character.
+        'stateless Iron Cow valuation; setting and game mode are read at call time from shared core',
+    ],
+    [
         'src/utils/combat-actions.js',
         // Pure functions over the actions array they are handed, no module
         // state. Imported wherever a feature asks "which action is running" —
