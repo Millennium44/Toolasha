@@ -63,6 +63,7 @@ class CombatBattleCounter {
         this.currentWave = 0;
         this.isDungeon = false;
         this.labyrinthAttempt = 0;
+        this.combatActionId = null;
         document.getElementById(COUNTER_ID)?.remove();
     }
 
@@ -112,7 +113,13 @@ class CombatBattleCounter {
             (a) => !a.isDone && !a.actionHrid?.startsWith('/actions/combat/') && a.currentCount === 0
         );
 
-        if (combatEnded || (hasNewNonCombatAction && !hasCombatAction)) {
+        // The delta names only actions that changed, so a queued zone being removed
+        // or a cooking action queued behind the fight trips both tests above. The
+        // merged queue says whether the fight that sent the last new_battle still runs.
+        const running = runningCombatAction(dataManager.getCurrentActions());
+        const sameFightRunning = this.combatActionId != null && running?.id === this.combatActionId;
+
+        if ((combatEnded || (hasNewNonCombatAction && !hasCombatAction)) && !sameFightRunning) {
             this._reset();
             return;
         }
@@ -183,6 +190,7 @@ class CombatBattleCounter {
         // the first in array order — a requeued repeat sits first with a higher
         // ordinal, which made a dungeon show "Battle #N" instead of "Wave N".
         const combatAction = runningCombatAction(dataManager.getCurrentActions());
+        this.combatActionId = combatAction?.id ?? null;
         this.isDungeon = combatAction
             ? dataManager.getActionDetails(combatAction.actionHrid)?.combatZoneInfo?.isDungeon === true
             : false;

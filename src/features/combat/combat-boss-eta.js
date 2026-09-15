@@ -77,6 +77,8 @@ class CombatBossEta {
         // be indistinguishable from "no battle seen yet" there.
         this.lastBattleAt = null;
         this.samples = [];
+        // Id of the queue action the last new_battle belonged to; see _checkCombatEnded
+        this.combatActionId = null;
     }
 
     initialize() {
@@ -124,7 +126,13 @@ class CombatBossEta {
             (a) => !a.isDone && !a.actionHrid?.startsWith('/actions/combat/') && a.currentCount === 0
         );
 
-        if (combatEnded || (hasNewNonCombatAction && !hasCombatAction)) {
+        // The delta names only actions that changed, so a queued zone being removed
+        // or a cooking action queued behind the fight trips both tests above. The
+        // merged queue says whether the fight that sent the last new_battle still runs.
+        const running = runningCombatAction(dataManager.getCurrentActions());
+        const sameFightRunning = this.combatActionId != null && running?.id === this.combatActionId;
+
+        if ((combatEnded || (hasNewNonCombatAction && !hasCombatAction)) && !sameFightRunning) {
             this._reset();
             return;
         }
@@ -142,6 +150,7 @@ class CombatBossEta {
         // ordinal, and reading it printed a queued normal zone's cadence on a
         // dungeon ("9 to boss" on a 50-wave dungeon).
         const combatAction = runningCombatAction(actions);
+        this.combatActionId = combatAction?.id ?? null;
         const zoneDetail = combatAction ? dataManager.getActionDetails(combatAction.actionHrid) : null;
         const zoneInfo = zoneDetail?.combatZoneInfo;
         const fightInfo = zoneInfo?.fightInfo;

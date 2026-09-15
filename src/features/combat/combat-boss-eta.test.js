@@ -270,6 +270,42 @@ describe('combat boss eta', () => {
         expect(etaText()).toBeNull();
     });
 
+    test('queuing a cooking action behind the running fight keeps the rolling average', () => {
+        const fight = { id: 1, actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 };
+        game.actions = [fight];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        game.wsHandlers.new_battle({ battleId: 321 });
+        vi.setSystemTime(10_000);
+        game.wsHandlers.new_battle({ battleId: 322 });
+        expect(etaText()).toBe('· 8 to boss · ~1m 30s left');
+
+        const cooking = {
+            id: 2,
+            actionHrid: '/actions/cooking/apple_gummy',
+            isDone: false,
+            ordinal: 1,
+            currentCount: 0,
+        };
+        game.actions = [fight, cooking];
+        game.dmHandlers.actions_updated({ endCharacterActions: [cooking] });
+
+        expect(etaText()).toBe('· 8 to boss · ~1m 30s left');
+    });
+
+    test('removing a queued zone from behind the running fight keeps the rolling average', () => {
+        game.actions = [{ id: 1, actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        game.wsHandlers.new_battle({ battleId: 321 });
+        vi.setSystemTime(10_000);
+        game.wsHandlers.new_battle({ battleId: 322 });
+
+        game.dmHandlers.actions_updated({
+            endCharacterActions: [{ id: 3, actionHrid: '/actions/combat/other_zone', isDone: true, ordinal: 1 }],
+        });
+
+        expect(etaText()).toBe('· 8 to boss · ~1m 30s left');
+    });
+
     test('falls back to parsing the battle counter span when new_battle carries no battleId', () => {
         game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
         game.actionDetails[BOSS_ZONE] = bossZoneDetail;

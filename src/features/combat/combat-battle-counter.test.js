@@ -235,6 +235,51 @@ describe('combat battle counter', () => {
         expect(counterText()).toBeNull();
     });
 
+    describe('an actions_updated delta about a queued action leaves the running fight alone', () => {
+        const FIGHT = { id: 1, actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0, partyID: 0 };
+
+        beforeEach(() => {
+            game.actions = [FIGHT];
+            game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
+            game.wsHandlers.new_battle({ battleId: 7 });
+            expect(counterText()).toBe('· Battle #7');
+        });
+
+        test('queuing a cooking action behind the fight', () => {
+            const cooking = { id: 2, actionHrid: '/actions/cooking/apple_gummy', isDone: false, ordinal: 1 };
+            game.actions = [FIGHT, { ...cooking, currentCount: 0 }];
+            game.dmHandlers.actions_updated({ endCharacterActions: [{ ...cooking, currentCount: 0 }] });
+
+            expect(counterText()).toBe('· Battle #7');
+        });
+
+        test('removing a queued zone from behind the fight', () => {
+            game.dmHandlers.actions_updated({
+                endCharacterActions: [{ id: 3, actionHrid: '/actions/combat/other_zone', isDone: true, ordinal: 1 }],
+            });
+
+            expect(counterText()).toBe('· Battle #7');
+        });
+
+        test('a solo action dragged to the first queued slot behind a party fight', () => {
+            // The live queue: the dragged action's ordinal is far below the fight's,
+            // and the fight keeps running because party actions sort first
+            const partyFight = { ...FIGHT, partyID: 5530 };
+            const gummy = {
+                id: 2,
+                actionHrid: '/actions/cooking/apple_gummy',
+                isDone: false,
+                ordinal: -4294967077,
+                partyID: 0,
+                currentCount: 0,
+            };
+            game.actions = [partyFight, gummy];
+            game.dmHandlers.actions_updated({ endCharacterActions: [gummy] });
+
+            expect(counterText()).toBe('· Battle #7');
+        });
+    });
+
     test('a fresh non-combat action starting up front re-evaluates and clears a stale counter', () => {
         game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
         game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
