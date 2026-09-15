@@ -194,7 +194,9 @@ export function summarizeWelcomeBack({ items = [], experience = 0, durationMs = 
     let unpriced = 0;
 
     for (const { hrid, count } of items) {
-        const unit = hrid === COIN_HRID ? 1 : priceOf(hrid);
+        // A gain is sold, a consumable is replaced by buying it: the same split
+        // the offline-progress economics block prices on
+        const unit = hrid === COIN_HRID ? 1 : priceOf(hrid, count >= 0 ? 'sell' : 'buy');
         if (!Number.isFinite(unit) || unit <= 0) {
             unpriced += 1;
             continue;
@@ -267,12 +269,13 @@ export function findWelcomeBackModal(node) {
 }
 
 /**
- * Price a single item at whatever the pricing mode says it is worth.
+ * Price a single item at whatever the pricing mode says it is worth on one side.
  * @param {string} hrid - Item hrid
+ * @param {'buy'|'sell'} [side='sell'] - 'sell' for a gain, 'buy' for a consumable
  * @returns {number|null} Coins per unit, or null when unpriced
  */
-function marketPriceOf(hrid) {
-    const value = getItemPrice(hrid, { context: 'profit', side: 'sell' });
+function marketPriceOf(hrid, side = 'sell') {
+    const value = getItemPrice(hrid, { context: 'profit', side });
     return Number.isFinite(value) && value > 0 ? value : null;
 }
 

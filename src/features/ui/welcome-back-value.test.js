@@ -206,6 +206,20 @@ describe('the arithmetic', () => {
         expect(summary.xpPerHour).toBe(10_000);
     });
 
+    test('gains are priced at the sell side and consumables at the buy side', () => {
+        // Conservative sells into the bid and buys at the ask: a consumed tea is
+        // replaced at 30, not credited back at the 25 it would sell for
+        market.prices['/items/milk'] = { ask: 20, bid: 10 };
+        market.prices['/items/efficiency_tea'] = { ask: 30, bid: 25 };
+        const modal = document.createElement('div');
+        modal.innerHTML = tile('milk', '1000') + tile('efficiency_tea', '-100');
+
+        const row = enrichModal(modal);
+
+        expect(row.textContent).toContain('Net 7,000');
+        expect(row.textContent).toContain('− 3,000 used');
+    });
+
     test('coins are worth themselves, whatever the market says', () => {
         const summary = summarizeWelcomeBack({
             items: [{ hrid: '/items/coin', count: 5000 }],
