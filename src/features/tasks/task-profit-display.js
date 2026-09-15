@@ -592,6 +592,21 @@ class TaskProfitDisplay {
                 this.refresh();
             }
         });
+
+        // Pricing settings: task profit/reward figures are computed from the
+        // shared pricing mode and +1 tick toggle, so a change has to force a
+        // rebuild the same way taskEfficiencyRatingMode already does.
+        config.onSettingChange('profitCalc_pricingMode', () => {
+            if (this.isInitialized) {
+                this.updateTaskProfits(true);
+            }
+        });
+
+        config.onSettingChange('profitCalc_patientTick', () => {
+            if (this.isInitialized) {
+                this.updateTaskProfits(true);
+            }
+        });
     }
 
     /**
