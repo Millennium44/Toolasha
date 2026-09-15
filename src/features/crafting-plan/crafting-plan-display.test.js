@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
     openMaterialsList: vi.fn(async () => true),
     openBillOwner: null,
     settings: {},
+    settingListeners: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -51,6 +52,12 @@ vi.mock('../../core/config.js', () => ({
             state.settings[key] = value;
         },
         getPricingModeDisplayLabel: (mode) => `label:${mode}`,
+        onSettingChange: (key, cb) => {
+            (state.settingListeners[key] ??= []).push(cb);
+            return () => {
+                state.settingListeners[key] = (state.settingListeners[key] || []).filter((c) => c !== cb);
+            };
+        },
     },
 }));
 vi.mock('./crafting-plan-calculator.js', () => ({
@@ -974,5 +981,145 @@ describe('the count-input listener', () => {
         craftingPlanDisplay.disable();
 
         expect(panels.attachCalls).toHaveLength(0);
+    });
+});
+
+/**
+ * The panel used to rebuild only on `actions_updated` or its own Mode button —
+ * a pricing-mode or tick change made anywhere else (the Settings panel, the
+ * skill toolbar's Buy/Sell dropdowns, the alchemy Best Items header) left an
+ * open plan showing stale prices and a stale mode label until something else
+ * happened to trigger a rebuild.
+ */
+describe('rebuilding on a pricing change made elsewhere', () => {
+    function mountPanel() {
+        const panel = document.createElement('div');
+        panel.className = 'SkillActionDetail_skillActionDetail__abc';
+        document.body.appendChild(panel);
+        return panel;
+    }
+
+    /** Let a MutationObserver's callback (panel-close) run */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    /** A microtask turn — where the coalesced rebuild-all is queued */
+    const microtask = () => Promise.resolve();
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        state.inventory = [];
+        state.settings = { actionPanel_bestCraftingPlan: true };
+        state.settingListeners = {};
+        state.plan = craftPlanBuying('/items/wood', 'Wood', 100);
+        state.missing = [];
+        ledger.enabled = false;
+        ledger.owners = new Set();
+        ledger.releaseMissingCalls = [];
+        panels.subscriber = null;
+        panels.refreshSubscriber = null;
+        craftingPlanDisplay.disable();
+    });
+
+    afterEach(() => {
+        craftingPlanDisplay.disable();
+        document.body.innerHTML = '';
+    });
+
+    test('a pricing-mode change from outside rebuilds the open plan panel', async () => {
+        craftingPlanDisplay.initialize();
+        const panel = mountPanel();
+        panels.subscriber({ panel, actionHrid: '/actions/crafting/wooden_bow' });
+        expect(findPricingButton(panel.querySelector('#mwi-crafting-plan')).textContent).toBe('label:hybrid');
+
+        state.settings.profitCalc_pricingMode = 'optimistic';
+        for (const cb of state.settingListeners.profitCalc_pricingMode || []) cb();
+        await microtask();
+
+        expect(findPricingButton(panel.querySelector('#mwi-crafting-plan')).textContent).toBe('label:optimistic');
+    });
+
+    test('a patient-tick change from outside rebuilds it too', async () => {
+        craftingPlanDisplay.initialize();
+        const panel = mountPanel();
+        panels.subscriber({ panel, actionHrid: '/actions/crafting/wooden_bow' });
+        const before = panel.querySelector('#mwi-crafting-plan');
+
+        for (const cb of state.settingListeners.profitCalc_patientTickBuy || []) cb();
+        await microtask();
+
+        // A fresh section was built in place of the old one
+        expect(panel.querySelector('#mwi-crafting-plan')).not.toBe(before);
+    });
+
+    test('several pricing settings changing in one synchronous turn rebuild the panel once, not once per key', async () => {
+        craftingPlanDisplay.initialize();
+        const panel = mountPanel();
+        panels.subscriber({ panel, actionHrid: '/actions/crafting/wooden_bow' });
+
+        let rebuilds = 0;
+        state.planFor = (quantity) => {
+            rebuilds += 1;
+            return craftPlanBuying('/items/wood', 'Wood', quantity);
+        };
+
+        for (const cb of state.settingListeners.profitCalc_pricingMode || []) cb();
+        for (const cb of state.settingListeners.profitCalc_patientTickBuy || []) cb();
+        for (const cb of state.settingListeners.profitCalc_patientTickSell || []) cb();
+        for (const cb of state.settingListeners.profitCalc_pricingNaming || []) cb();
+        // Nothing has run yet — it is queued for the next microtask
+        expect(rebuilds).toBe(0);
+
+        await microtask();
+        expect(rebuilds).toBe(1);
+    });
+
+    test('a change while no plan panel is open rebuilds nothing there is nothing to rebuild', async () => {
+        craftingPlanDisplay.initialize();
+
+        for (const cb of state.settingListeners.profitCalc_pricingMode || []) cb();
+        // No panel ever registered — nothing throws, nothing is drawn
+        await microtask();
+        expect(document.querySelector('#mwi-crafting-plan')).toBeNull();
+    });
+
+    test('a closed panel is dropped from the rebuild set and is not touched again', async () => {
+        craftingPlanDisplay.initialize();
+        const panel = mountPanel();
+        panels.subscriber({ panel, actionHrid: '/actions/crafting/wooden_bow' });
+
+        panel.remove();
+        await settle();
+
+        let rebuilds = 0;
+        state.planFor = (quantity) => {
+            rebuilds += 1;
+            return craftPlanBuying('/items/wood', 'Wood', quantity);
+        };
+        for (const cb of state.settingListeners.profitCalc_pricingMode || []) cb();
+        await microtask();
+
+        expect(rebuilds).toBe(0);
+    });
+
+    test('disable() unregisters the pricing listeners, so a stray write after teardown does nothing', () => {
+        craftingPlanDisplay.initialize();
+        expect(state.settingListeners.profitCalc_pricingMode.length).toBeGreaterThan(0);
+
+        craftingPlanDisplay.disable();
+
+        expect(state.settingListeners.profitCalc_pricingMode).toHaveLength(0);
+        expect(state.settingListeners.profitCalc_patientTickBuy).toHaveLength(0);
+        expect(state.settingListeners.profitCalc_patientTickSell).toHaveLength(0);
+        expect(state.settingListeners.profitCalc_pricingNaming).toHaveLength(0);
+    });
+
+    test('a character-switch cycle (disable + initialize) does not stack listeners', () => {
+        for (let i = 0; i < 3; i++) {
+            craftingPlanDisplay.disable();
+            craftingPlanDisplay.initialize();
+        }
+
+        expect(state.settingListeners.profitCalc_pricingMode).toHaveLength(1);
+        expect(state.settingListeners.profitCalc_patientTickBuy).toHaveLength(1);
     });
 });

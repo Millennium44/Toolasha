@@ -23,6 +23,7 @@ import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
 import { nextPricingMode } from '../../utils/pricing-mode.js';
+import { PRICING_SIDE_SETTING_KEYS } from '../../utils/pricing-side-select.js';
 import {
     effectiveInventoryRows,
     heldInInventory,
@@ -844,6 +845,14 @@ class CraftingPlanDisplay {
         // every one of them on a full teardown, which a WeakMap cannot iterate).
         this.inputListenerCleanups = new WeakMap();
         this.activeInputCleanups = new Set();
+        // Panels currently carrying a plan, so a pricing-setting change can
+        // rebuild every open one. `rebuildFns` is a WeakMap for the same reason
+        // as `panelObservers` (no forced retention of a closed panel), but a
+        // WeakMap cannot be iterated — this Set is what makes that possible.
+        this.activePanels = new Set();
+        // Set while a coalesced rebuild-all is queued for the next microtask —
+        // see _scheduleRebuildAll().
+        this._pendingPricingRebuild = null;
     }
 
     initialize() {
@@ -872,6 +881,36 @@ class CraftingPlanDisplay {
             if (rebuild) rebuild();
         });
         this.unregisterHandlers.push(unregisterRefresh);
+
+        // The pricing mode, its display naming, and either patient tick all
+        // change the numbers (and the mode label) an open plan is showing —
+        // and unlike the toolbar's own Mode button, a change made elsewhere
+        // (Settings panel, alchemy Best Items, the skill toolbar dropdowns)
+        // never touched this panel before. Coalesced the same way action-filter
+        // does: several of these can change in one synchronous settings load.
+        for (const key of PRICING_SIDE_SETTING_KEYS) {
+            this.unregisterHandlers.push(config.onSettingChange(key, () => this._scheduleRebuildAll()));
+        }
+    }
+
+    /**
+     * Rebuild every currently open plan panel once, on the next microtask —
+     * folding in every pricing-setting change made before that microtask runs.
+     * @returns {Promise<void>}
+     */
+    _scheduleRebuildAll() {
+        if (!this._pendingPricingRebuild) {
+            this._pendingPricingRebuild = Promise.resolve()
+                .then(() => {
+                    for (const panel of this.activePanels) {
+                        this.rebuildFns.get(panel)?.();
+                    }
+                })
+                .finally(() => {
+                    this._pendingPricingRebuild = null;
+                });
+        }
+        return this._pendingPricingRebuild;
     }
 
     /**
@@ -907,6 +946,7 @@ class CraftingPlanDisplay {
             obs.disconnect();
             this.activeObservers.delete(obs);
             this.rebuildFns.delete(panel);
+            this.activePanels.delete(panel);
             const cleanup = this.inputListenerCleanups.get(panel);
             if (cleanup) {
                 cleanup();
@@ -956,6 +996,8 @@ class CraftingPlanDisplay {
 
         const ui = buildPlanUI(currentActionHrid, rebuild, false, panel);
         if (!ui) return;
+
+        this.activePanels.add(panel);
 
         // The Produce/count field has no listener of its own — only the
         // toggles above call `rebuild`. Debounce it so a typed multi-digit
@@ -1041,6 +1083,8 @@ class CraftingPlanDisplay {
         this.panelObservers = new WeakMap();
         this.processedPanels = new WeakSet();
         this.rebuildFns = new WeakMap();
+        this.activePanels.clear();
+        this._pendingPricingRebuild = null;
 
         // Every count-input listener this feature attached, gone with it —
         // a character switch re-runs initialize() against a different bag,
