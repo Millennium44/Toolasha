@@ -32,6 +32,20 @@ const mocks = vi.hoisted(() => ({
 /** Per-character storage, keyed as character-key would key it */
 const store = vi.hoisted(() => ({ values: new Map(), charId: 'char-1', charName: 'LiveGuy' }));
 
+/**
+ * The schema default `chatTemplateDefault()` reads. A real module export, so a
+ * test can mutate `.default` in place to simulate a future build changing it
+ * out from under a value Reset stored earlier.
+ */
+const schemaMocks = vi.hoisted(() => ({
+    chatMessageSetting: { default: [{ type: 'text', value: 'Combat Stats: ' }] },
+}));
+vi.mock('../../core/settings-schema.js', () => ({
+    settingsGroups: {
+        combat: { settings: { combatStatsChatMessage: schemaMocks.chatMessageSetting } },
+    },
+}));
+
 // Real subscribe/unsubscribe bookkeeping, unlike a no-op stub, so a test can
 // prove a cleanup+initialize cycle does not accumulate listeners.
 const settingListeners = vi.hoisted(() => ({}));
@@ -175,10 +189,12 @@ afterEach(() => {
     combatStatsUI.closePopup();
     combatStatsUI.viewing = 'live';
     combatStatsUI.chatFields = null;
+    combatStatsUI.chatUseCheckboxes = false;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     document.body.innerHTML = '';
     mocks.template = null;
+    schemaMocks.chatMessageSetting.default = [{ type: 'text', value: 'Combat Stats: ' }];
     mocks.luck = null;
     mocks.damage = null;
     mocks.bossEta = null;
@@ -612,6 +628,93 @@ describe('the chat field picker', () => {
         expect(popover()).toBeTruthy();
         caret().click();
         expect(popover()).toBeNull();
+    });
+});
+
+describe('the checkboxes-vs-template flag', () => {
+    const caret = () => popup().querySelector('.toolasha-combat-chat-caret');
+    const popover = () => popup().querySelector('.toolasha-combat-chat-popover');
+    const box = (key) => popover().querySelector(`input[data-field="${key}"]`);
+    const templateNote = () => popover().querySelector('.toolasha-combat-chat-template-note');
+    const useFieldsButton = () => popover().querySelector('.toolasha-combat-chat-use-fields');
+    const CUSTOM_TEMPLATE = [
+        { type: 'text', value: 'Mine: ' },
+        { type: 'variable', key: '{exp}' },
+    ];
+
+    test('with no flag stored, a custom template wins as before', async () => {
+        mocks.template = CUSTOM_TEMPLATE;
+        await combatStatsUI.showPopup();
+        caret().click();
+
+        expect(templateNote()).toBeTruthy();
+        expect(box('duration')).toBeNull();
+    });
+
+    test('Reset keeps the checkboxes winning even after the schema default changes later', async () => {
+        mocks.template = CUSTOM_TEMPLATE;
+        await combatStatsUI.showPopup();
+        caret().click();
+        useFieldsButton().click();
+
+        // The flag is what was persisted, not just today's default text
+        expect(store.values.get('combatStatsChatUseCheckboxes_char-1')).toBe(true);
+        expect(templateNote()).toBeNull();
+        expect(box('duration').checked).toBe(true);
+
+        // A later build changes what the schema default is
+        schemaMocks.chatMessageSetting.default = [{ type: 'text', value: 'New Default: ' }];
+
+        combatStatsUI.closePopup();
+        await combatStatsUI.showPopup();
+        caret().click();
+
+        // Reset stored the *old* default text, which no longer equals the new
+        // one — comparing text alone would read this character as custom again
+        expect(templateNote()).toBeNull();
+        expect(box('duration').checked).toBe(true);
+    });
+
+    test('the flag is scoped per character', async () => {
+        mocks.template = CUSTOM_TEMPLATE;
+        store.values.set('combatStatsChatUseCheckboxes_char-1', true);
+
+        await combatStatsUI.showPopup();
+        caret().click();
+        expect(box('duration')).toBeTruthy();
+
+        combatStatsUI.closePopup();
+        store.charId = 'char-2';
+        await combatStatsUI.showPopup();
+        caret().click();
+        // char-2 never reset, so the still-custom template decides for it
+        expect(templateNote()).toBeTruthy();
+    });
+
+    describe('editing the template in Settings', () => {
+        afterEach(() => {
+            combatStatsUI.cleanup();
+            for (const key of Object.keys(settingListeners)) delete settingListeners[key];
+        });
+
+        test('a genuine edit clears the flag; rewriting the default text does not', async () => {
+            store.values.set('combatStatsChatUseCheckboxes_char-1', true);
+            combatStatsUI.initialize();
+            combatStatsUI.chatUseCheckboxes = true;
+
+            // Reset itself rewrites the setting to the default text — must not
+            // undo the flag it just set
+            for (const cb of settingListeners.combatStatsChatMessage) cb(schemaMocks.chatMessageSetting.default);
+            expect(combatStatsUI.chatUseCheckboxes).toBe(true);
+
+            // An actual template edit in Settings — must clear it
+            const edited = [{ type: 'text', value: 'Edited: ' }];
+            for (const cb of settingListeners.combatStatsChatMessage) cb(edited);
+            expect(combatStatsUI.chatUseCheckboxes).toBe(false);
+
+            await flush();
+            expect(store.values.get('combatStatsChatUseCheckboxes_char-1')).toBe(false);
+        });
     });
 });
 

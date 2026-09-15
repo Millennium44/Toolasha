@@ -38,6 +38,12 @@ import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 /** Per-character storage key for the chat field picker's selection */
 const CHAT_FIELDS_KEY = 'combatStatsChatFields';
+/**
+ * Per-character storage key: true when the checkbox fields should drive the
+ * chat message even though the stored template text happens to differ from
+ * the schema default (e.g. because that default changed after Reset ran).
+ */
+const CHAT_USE_CHECKBOXES_KEY = 'combatStatsChatUseCheckboxes';
 /** The palette verb */
 export const SHARE_TO_CHAT_COMMAND = 'Share combat stats to chat';
 
@@ -140,6 +146,8 @@ class CombatStatsUI {
         this.popup = null;
         /** Unregister function `onSettingChange` handed back, undone in `cleanup()`. */
         this.unregisterSettingChange = null;
+        /** Unregister function for the `combatStatsChatMessage` watcher, undone in `cleanup()`. */
+        this.unregisterChatTemplateChange = null;
         /**
          * Which run the popup is showing: 'live', or an archived session's key.
          * On the instance rather than the popup so reopening the popup shows
@@ -153,6 +161,8 @@ class CombatStatsUI {
         this.burnContext = null;
         /** The chat picker's field keys for this character; null until read */
         this.chatFields = null;
+        /** Whether this character's Reset chose the checkboxes over the stored template text */
+        this.chatUseCheckboxes = false;
         /** `{archived, combatData}` for the popup on screen, so a card's share knows its run */
         this.popupContext = { archived: null, combatData: null };
         /** The open field-picker popover, if any */
@@ -176,6 +186,17 @@ class CombatStatsUI {
             } else {
                 this.removeButton();
             }
+        });
+
+        // A template edit in Settings takes back over from the checkboxes —
+        // but only when the new text is actually custom. Reset itself writes
+        // the default text, which would otherwise re-trigger this and undo
+        // the flag it just set.
+        this.unregisterChatTemplateChange = config.onSettingChange('combatStatsChatMessage', (value) => {
+            if (!this.chatUseCheckboxes) return;
+            if (!isCustomChatTemplate(value, chatTemplateDefault())) return;
+            this.chatUseCheckboxes = false;
+            this.saveChatUseCheckboxes(false);
         });
 
         // Start observing for Combat panel
@@ -297,6 +318,17 @@ class CombatStatsUI {
         return isCustomChatTemplate(value, chatTemplateDefault()) ? value : null;
     }
 
+    /**
+     * The template that should actually drive the chat message: null whenever
+     * the checkboxes are in charge — either because the stored text is still
+     * the default, or because this character's `chatUseCheckboxes` flag says
+     * to use them regardless of what the stored text compares equal to.
+     * @returns {Array|string|null}
+     */
+    effectiveChatTemplate() {
+        return this.chatUseCheckboxes ? null : this.customChatTemplate();
+    }
+
     /** @returns {Promise<string[]>} This character's picked fields, defaults when never picked */
     async loadChatFields() {
         try {
@@ -313,6 +345,25 @@ class CombatStatsUI {
             await writeScoped(CHAT_FIELDS_KEY, fields, 'settings');
         } catch (error) {
             console.error('[Combat Stats] Saving the chat field selection failed:', error);
+        }
+    }
+
+    /** @returns {Promise<boolean>} This character's `chatUseCheckboxes` flag, false when never set */
+    async loadChatUseCheckboxes() {
+        try {
+            return !!(await readScoped(CHAT_USE_CHECKBOXES_KEY, 'settings', false));
+        } catch (error) {
+            console.error('[Combat Stats] Reading the chat checkbox flag failed:', error);
+            return false;
+        }
+    }
+
+    /** @param {boolean} useCheckboxes - Saved for this character */
+    async saveChatUseCheckboxes(useCheckboxes) {
+        try {
+            await writeScoped(CHAT_USE_CHECKBOXES_KEY, useCheckboxes, 'settings');
+        } catch (error) {
+            console.error('[Combat Stats] Saving the chat checkbox flag failed:', error);
         }
     }
 
@@ -402,7 +453,7 @@ class CombatStatsUI {
     buildChatMessageFor(stats, runContext = this.popupContext) {
         return buildCombatChatMessage(stats, this.chatFields || normalizeChatFields(null), {
             ...this.chatContext(stats, runContext),
-            template: this.customChatTemplate(),
+            template: this.effectiveChatTemplate(),
             maxBytes: chatBudgetBytes(),
         });
     }
@@ -450,10 +501,14 @@ class CombatStatsUI {
         if (!combatData?.players?.length) return 'no combat data yet';
 
         if (!marketAPI.isLoaded()) await marketAPI.fetch();
-        const chatFields = await this.loadChatFields();
+        const [chatFields, chatUseCheckboxes] = await Promise.all([
+            this.loadChatFields(),
+            this.loadChatUseCheckboxes(),
+        ]);
         if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId)
             return 'character switched — nothing shared';
         this.chatFields = chatFields;
+        this.chatUseCheckboxes = chatUseCheckboxes;
 
         const stats = ownStats(calculateAllPlayerStats(combatData, this.liveDurationSeconds(combatData)));
         if (!stats) return 'no combat data yet';
@@ -568,7 +623,10 @@ class CombatStatsUI {
         }
 
         // The chat picker's selection, read now so the popover opens synchronously
-        const chatFields = await this.loadChatFields();
+        const [chatFields, chatUseCheckboxes] = await Promise.all([
+            this.loadChatFields(),
+            this.loadChatUseCheckboxes(),
+        ]);
 
         // The sim's own guess at what this zone eats, for the burn-vs-sim line.
         // Read here rather than in the card because the card is synchronous and
@@ -577,6 +635,7 @@ class CombatStatsUI {
 
         if ((dataManager.getCurrentCharacterId?.() ?? null) !== characterId) return;
         this.chatFields = chatFields;
+        this.chatUseCheckboxes = chatUseCheckboxes;
         this.burnContext = burnContext;
 
         // Calculate statistics — archived runs go through the same pathway
@@ -1033,7 +1092,7 @@ class CombatStatsUI {
             counter.style.color = bytes > budget ? config.getSetting('color_loss') || '#f87171' : '#999';
         };
 
-        if (this.customChatTemplate()) {
+        if (this.effectiveChatTemplate()) {
             const note = document.createElement('div');
             note.className = 'toolasha-combat-chat-template-note';
             note.textContent =
@@ -1047,6 +1106,10 @@ class CombatStatsUI {
                 'font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;';
             reset.onclick = () => {
                 config.setSettingValue('combatStatsChatMessage', chatTemplateDefault());
+                // The flag, not today's text equality, is what keeps the checkboxes
+                // winning later even if a future build changes the default text.
+                this.chatUseCheckboxes = true;
+                this.saveChatUseCheckboxes(true);
                 this.openChatPopover(anchor, stats, textColor);
             };
             popover.appendChild(note);
@@ -1938,6 +2001,10 @@ class CombatStatsUI {
             this.unregisterSettingChange();
             this.unregisterSettingChange = null;
         }
+        if (this.unregisterChatTemplateChange) {
+            this.unregisterChatTemplateChange();
+            this.unregisterChatTemplateChange = null;
+        }
         if (this.observer) {
             this.observer.disconnect();
             this.observer = null;
@@ -1947,6 +2014,7 @@ class CombatStatsUI {
         unregisterCommand(SHARE_TO_CHAT_COMMAND);
         // The selection is per character, and cleanup is what a switch runs
         this.chatFields = null;
+        this.chatUseCheckboxes = false;
 
         // Remove injected buttons
         const buttons = document.querySelectorAll('.toolasha-combat-stats-btn');
