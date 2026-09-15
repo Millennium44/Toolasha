@@ -14,7 +14,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### +1 tick and pricing mode follow-ups
 
 - Chest and crate expected values now recompute when the pricing mode, +1 tick or market prices change, instead of staying at their page-load figures.
-- Combat sim, welcome-back value, and the philo calculator, key cost and dungeon token value (when they follow the global mode) honour +1 tick; alchemy essence and non-openable crates follow the pricing mode instead of always the bid.
+- Combat sim, welcome-back value, and the philo calculator, key cost (including a crafted key's materials) and dungeon token value (when they follow the global mode) honour +1 tick; alchemy essence and non-openable crates follow the pricing mode instead of always the bid.
 - The task profit panel refreshes on a mode click, profit and offline-progress labels show "(+1 tick)", and the crafting plan's Mode button cycles in the same order as the others with Hybrid as its default.
 
 ### A queued action dragged ahead of a party fight no longer reads as running
