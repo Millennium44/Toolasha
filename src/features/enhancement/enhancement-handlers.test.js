@@ -70,6 +70,12 @@ vi.mock('../../core/data-manager.js', () => ({
             },
         }),
         getCurrentActions: () => state.actions,
+        on: (type, fn) => {
+            state.handlers[type] = fn;
+        },
+        off: (type, fn) => {
+            if (state.handlers[type] === fn) delete state.handlers[type];
+        },
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
@@ -148,8 +154,13 @@ describe('the run ending in the queue', () => {
         ...extra,
     });
 
+    // dataManager merges endCharacterActions into the full queue before actions_updated fires
+    // (see handleActionsUpdated's comment) and drops isDone rows entirely — state.actions is what
+    // handleActionsUpdated actually reads, and must reflect that merged result, not the raw delta.
+
     test('an isDone row — cancelled, finished, or out of materials — finalizes the session', async () => {
         state.current = { id: 's1', targetLevel: 15, protectFrom: 2 };
+        state.actions = []; // the merged queue: the isDone row is gone, nothing replaced it
         await state.handlers['actions_updated']({ endCharacterActions: [enhanceRow({ isDone: true })] });
 
         expect(state.calls).toContainEqual(['finalize']);
@@ -157,6 +168,7 @@ describe('the run ending in the queue', () => {
     });
 
     test('an isDone row with no session does nothing', async () => {
+        state.actions = [];
         await state.handlers['actions_updated']({ endCharacterActions: [enhanceRow({ isDone: true })] });
 
         expect(state.calls).toEqual([]);
@@ -164,11 +176,56 @@ describe('the run ending in the queue', () => {
 
     test('an ended run alongside the next queued one is a start, not a stop', async () => {
         state.current = { id: 's1', targetLevel: 15, protectFrom: 2 };
+        // The old row is gone post-merge; the next queued one (a different target) is now running.
+        state.actions = [enhanceRow({ id: 'a2', isDone: false, enhancingMaxLevel: 18, ordinal: 1 })];
         await state.handlers['actions_updated']({
-            endCharacterActions: [enhanceRow({ isDone: true }), enhanceRow({ isDone: false })],
+            endCharacterActions: [enhanceRow({ isDone: true }), enhanceRow({ id: 'a2', isDone: false })],
         });
 
+        expect(state.calls).toContainEqual(['finalize']);
+        expect(state.calls).toContainEqual(['pendingStart']);
+    });
+
+    test('a second enhance queued behind the running one leaves the running session alone', async () => {
+        // TLA-audit: the running action (a1) keeps its lowest ordinal; the newly queued one (a2,
+        // a different target) sits behind it. The delta carries only a2 — the row that changed —
+        // but the merged queue still runs a1, so nothing about the live session should react.
+        state.actions = [
+            enhanceRow({ id: 'a1', isDone: false, ordinal: 0 }),
+            enhanceRow({ id: 'a2', isDone: false, ordinal: 1, enhancingMaxLevel: 20 }),
+        ];
+        await state.handlers['actions_updated']({ endCharacterActions: [enhanceRow({ id: 'a1', isDone: false })] });
+        state.current = { id: 's1', itemHrid: '/items/enchanted_cloak_refined', targetLevel: 15, protectFrom: 2 };
+        state.calls = []; // discard the priming call's own pendingStart — it establishes a1 as tracked
+
+        // The queue edit that queued a2 behind the running a1
+        await state.handlers['actions_updated']({ endCharacterActions: [enhanceRow({ id: 'a2', isDone: false })] });
+
         expect(state.calls).not.toContainEqual(['finalize']);
+        expect(state.calls).not.toContainEqual(['pendingStart']);
+        expect(state.current).toEqual({
+            id: 's1',
+            itemHrid: '/items/enchanted_cloak_refined',
+            targetLevel: 15,
+            protectFrom: 2,
+        });
+    });
+
+    test('a real switch to a different running target still finalizes and starts fresh', async () => {
+        state.actions = [enhanceRow({ id: 'a1', isDone: false, ordinal: 0 })];
+        await state.handlers['actions_updated']({ endCharacterActions: [enhanceRow({ id: 'a1', isDone: false })] });
+        state.current = { id: 's1', targetLevel: 15, protectFrom: 2 };
+
+        // a1 finished and a2 (a different target) is now the one actually running
+        state.actions = [enhanceRow({ id: 'a2', isDone: false, ordinal: 1, enhancingMaxLevel: 20 })];
+        await state.handlers['actions_updated']({
+            endCharacterActions: [
+                enhanceRow({ id: 'a1', isDone: true }),
+                enhanceRow({ id: 'a2', isDone: false, enhancingMaxLevel: 20 }),
+            ],
+        });
+
+        expect(state.calls).toContainEqual(['finalize']);
         expect(state.calls).toContainEqual(['pendingStart']);
     });
 });

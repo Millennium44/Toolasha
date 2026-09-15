@@ -298,9 +298,12 @@ const KNOWN_SAFE = {
         '(`if (this.characterSwitchingHandler) dataManager.off(...)`), and `waitForChat()` is idempotent, ' +
         'so a resumed tail replaces rather than orphans.',
     'src/features/enhancement/enhancement-feature.js#initialize':
-        '`setupEnhancementHandlers()` registers module-level named functions through `webSocketHook.on`, ' +
-        'which dedupes on `handlers.includes(handler)` — the same reference cannot be registered twice, ' +
-        'so a resumed tail adds nothing for `cleanupEnhancementHandlers()` to miss.',
+        '`setupEnhancementHandlers()` registers `handleActionCompleted` through `webSocketHook.on`, which ' +
+        'dedupes on `handlers.includes(handler)` — the same reference cannot be registered twice there. ' +
+        'Its `actions_updated` listener now goes through `dataManager.on`, which does not dedupe, but the ' +
+        'handler itself is idempotent per event: the module-level `trackedEnhanceActionId` it reads and ' +
+        'writes first is what a second, orphaned copy of the handler would also see already updated, so a ' +
+        'duplicate invocation from a resumed tail no-ops instead of double-processing the same delta.',
     'src/features/guild/guild-trial-abilities-ui.js#initialize':
         'The tail explicitly `webSocketHook.off`s any previous `onTrialTick` before installing the new ' +
         'one, over a module-level singleton, so at most one registration exists at any time.',

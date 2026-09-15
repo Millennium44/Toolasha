@@ -14,16 +14,27 @@ import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
 
+// Id of the queue action the tracker last saw running as the enhance row. Read against
+// dataManager's merged queue in handleActionsUpdated so a second enhance queued behind the
+// running one (present in the delta, not yet running) is never mistaken for a switch or a stop.
+let trackedEnhanceActionId = null;
+
 /**
  * Setup enhancement event handlers
  */
 export function setupEnhancementHandlers() {
+    // A fresh setup re-derives this from scratch via the bootstrap below rather than carrying
+    // over a stale id from whatever ran before it (a previous character, or a prior setup/
+    // cleanup cycle within the same one).
+    trackedEnhanceActionId = null;
+
     // Listen for action_completed (when enhancement completes)
     webSocketHook.on('action_completed', handleActionCompleted);
 
-    // Listen for actions_updated to detect new enhancing queues (handles page-load mid-session
-    // and sets pending start so the next action_completed creates a session regardless of currentCount)
-    webSocketHook.on('actions_updated', handleActionsUpdated);
+    // Listen on dataManager rather than the raw socket: dataManager merges the actions_updated
+    // delta into the full queue before re-emitting, so by the time this fires
+    // dataManager.getCurrentActions() already reflects the merge (see handleActionsUpdated).
+    dataManager.on('actions_updated', handleActionsUpdated);
 
     // TLA-043 Layer A: handlers are registered above FIRST so a completion can never land in a
     // gap between subscribing and inspecting current state. Only now do we check DataManager's
@@ -60,6 +71,7 @@ function bootstrapFromCurrentEnhancingAction() {
     if (itemHrid && enhancementTracker.findExtendableSession(itemHrid, level)) return;
 
     enhancementTracker.setPendingStart();
+    trackedEnhanceActionId = activeEnhancingAction.id;
 }
 
 /**
@@ -73,22 +85,27 @@ async function handleActionsUpdated(data) {
 
     const actions = data.endCharacterActions;
     if (!Array.isArray(actions)) return;
+    // Cheap short-circuit: nothing about the enhancing queue changed in this delta at all.
+    if (!actions.some((a) => a?.actionHrid === '/actions/enhancing/enhance')) return;
 
-    const enhancingRows = actions.filter((a) => a.actionHrid === '/actions/enhancing/enhance');
-    if (!enhancingRows.length) return;
+    // Decide from the merged queue (dataManager has already folded this delta into it before
+    // emitting), not the delta rows — the delta lists only what changed, so a second enhance
+    // queued behind the running one would otherwise be mistaken for the row actually running
+    // and wrongly end the live session's stats/history.
+    const enhancingAction = runningAction(
+        dataManager.getCurrentActions(),
+        (action) => action.actionHrid === '/actions/enhancing/enhance'
+    );
 
-    // One message can carry an ended run alongside the next queued one, so a
-    // live row wins; only when EVERY enhancing row in the message has ended is
-    // this a stop. isDone: true is the queue entry ENDING — cancelled,
-    // finished, or starved of materials. Nothing else ever says so: without
-    // this, running dry left the session "In Progress" (and on the briefing)
-    // indefinitely, since only a differently-configured restart finalized it.
-    //
-    // Picked by execution order (lowest ordinal), not array position: a
-    // repeating enhance queued back onto itself can sit ahead of the row
-    // actually running within this same message.
-    const enhancingAction = runningAction(enhancingRows, undefined, { includeFinished: true });
-    if (enhancingAction.isDone === true) {
+    if (enhancingAction && enhancingAction.id === trackedEnhanceActionId) {
+        // Same run still executing (e.g. a differently-targeted enhance queued behind it) —
+        // nothing to react to.
+        return;
+    }
+    trackedEnhanceActionId = enhancingAction?.id ?? null;
+
+    if (!enhancingAction) {
+        // No enhance action is running anymore — a real stop.
         if (enhancementTracker.getCurrentSession()) {
             await enhancementTracker.finalizeCurrentSession();
         }
@@ -465,5 +482,6 @@ async function handleEnhancementResult(action, _data) {
  */
 export function cleanupEnhancementHandlers() {
     webSocketHook.off('action_completed', handleActionCompleted);
-    webSocketHook.off('actions_updated', handleActionsUpdated);
+    dataManager.off('actions_updated', handleActionsUpdated);
+    trackedEnhanceActionId = null;
 }
