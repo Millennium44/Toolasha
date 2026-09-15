@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A trimmed chat message no longer ends on a dangling separator
+
+- When a shared message had to be cut to fit the chat box, backing off to the last space left the "|" that introduced the field it had just dropped, so the line promised a field it never delivered.
+
 ### Chat message shares dungeon chest luck
 
 - In a dungeon the combat chat message's luck field was always left out, because the monster-drop model does not cover dungeons; it now shows your chest luck ("chest luck 62nd pct") once chests have been counted for that dungeon and tier.

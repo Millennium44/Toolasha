@@ -105,6 +105,11 @@ export function trimToFit(text, maxBytes) {
     const lastSpace = cut.lastIndexOf(' ');
     if (lastSpace > 0) cut = cut.slice(0, lastSpace);
 
+    // Backing off to a space can leave the separator that preceded the dropped
+    // field, so the message reads "0 deaths | …" — the pipe promises a field
+    // that is not coming
+    cut = cut.replace(/[\s|,;:·]+$/u, '');
+
     return cut + ellipsis;
 }
 

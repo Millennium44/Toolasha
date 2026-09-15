@@ -197,6 +197,16 @@ describe('trimToFit', () => {
         expect(utf8Length(trimmed)).toBeLessThanOrEqual(10);
         expect(trimmed.endsWith('…')).toBe(true);
     });
+
+    test('the separator before a dropped field goes with it', () => {
+        // Backing off to the space left the pipe that introduced the field the
+        // cut just removed, so the message promised a field it never delivered
+        const trimmed = trimToFit('Combat Stats: 1h duration | 500 income', 31);
+
+        expect(utf8Length(trimmed)).toBeLessThanOrEqual(31);
+        expect(trimmed).toBe('Combat Stats: 1h duration…');
+        expect(trimmed).not.toMatch(/[|\s]…$/u);
+    });
 });
 
 describe('fillChatOrCopy', () => {
