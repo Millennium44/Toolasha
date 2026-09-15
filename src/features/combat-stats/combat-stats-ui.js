@@ -5,10 +5,20 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { settingsGroups } from '../../core/settings-schema.js';
 import marketAPI from '../../api/marketplace.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculateAllPlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
 import { loadSessions } from './combat-session-history.js';
+import {
+    buildCombatChatMessage,
+    COMBAT_CHAT_FIELDS,
+    isCustomChatTemplate,
+    normalizeChatFields,
+} from './combat-chat-message.js';
+import combatDropLuck from '../combat/combat-drop-luck.js';
+import combatBossEta from '../combat/combat-boss-eta.js';
+import { damageBreakdown } from '../combat/damage-tracker.js';
 import {
     formatWithSeparator,
     coinFormatter,
@@ -19,8 +29,37 @@ import {
 import { formatKeyCostNote, getKeyPricingMode, resolveKeyPricing } from '../../utils/key-cost.js';
 import { shortDuration } from '../../utils/overlay-format.js';
 import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
-import { readScoped } from '../../utils/character-key.js';
+import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { fillChatOrCopy, describeChatFill } from '../../utils/chat-fill.js';
+import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { showToast } from '../../utils/toast.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
+
+/** Per-character storage key for the chat field picker's selection */
+const CHAT_FIELDS_KEY = 'combatStatsChatFields';
+/** The palette verb */
+export const SHARE_TO_CHAT_COMMAND = 'Share combat stats to chat';
+
+/** The template setting's schema default, to tell a custom template from an untouched one */
+function chatTemplateDefault() {
+    for (const group of Object.values(settingsGroups || {})) {
+        const setting = group?.settings?.combatStatsChatMessage;
+        if (setting) return setting.default;
+    }
+    return null;
+}
+
+/**
+ * The logged-in character's stats among a run's players, or the first player
+ * when the run does not include them by name.
+ * @param {Array<Object>} playerStats
+ * @returns {Object|null}
+ */
+function ownStats(playerStats) {
+    if (!playerStats?.length) return null;
+    const name = dataManager.getCurrentCharacterName?.();
+    return playerStats.find((stats) => stats.name === name) || playerStats[0];
+}
 
 /**
  * An archived run as one line in the session picker.
@@ -111,6 +150,12 @@ class CombatStatsUI {
         this.sessions = [];
         /** `{actionHrid, difficultyTier, simRecord}` for the burn-vs-sim line */
         this.burnContext = null;
+        /** The chat picker's field keys for this character; null until read */
+        this.chatFields = null;
+        /** `{archived, combatData}` for the popup on screen, so a card's share knows its run */
+        this.popupContext = { archived: null, combatData: null };
+        /** The open field-picker popover, if any */
+        this.chatPopover = null;
     }
 
     /**
@@ -134,6 +179,16 @@ class CombatStatsUI {
 
         // Start observing for Combat panel
         this.startObserver();
+
+        // A keyboard route to the Chat button. Offered only once there is a run
+        // to share; with one, it always fills (or copies) and says which.
+        registerCommand({
+            name: SHARE_TO_CHAT_COMMAND,
+            hint: 'Put your latest combat stats in the chat box (not sent)',
+            kind: 'verb',
+            when: () => !!combatStatsDataCollector.getLatestData()?.players?.length,
+            run: () => this.shareLatestToChat(),
+        });
     }
 
     /**
@@ -224,103 +279,179 @@ class CombatStatsUI {
     }
 
     /**
-     * Share statistics to chat (triggered by Ctrl+Click on player card)
-     * @param {Object} stats - Player statistics
+     * Numbers as the cards show them: K/M/B when abbreviation is on.
+     * @returns {Function}
      */
-    shareStatsToChat(stats) {
-        // Get chat message format from config (use getSettingValue for template type)
-        const messageTemplate = config.getSettingValue('combatStatsChatMessage');
-        const priceKey = getKeyPricingMode();
-
-        // Convert array format to string if needed
-        let message = '';
-        if (Array.isArray(messageTemplate)) {
-            // Format numbers
-            const useKMB = isAbbreviationEnabled();
-            const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
-
-            // Build message from array
-            message = messageTemplate
-                .map((item) => {
-                    if (item.type === 'variable') {
-                        // Replace variable with actual value
-                        switch (item.key) {
-                            case '{income}':
-                                return formatNum(stats.income[priceKey]);
-                            case '{dailyIncome}':
-                                return formatNum(stats.dailyIncome[priceKey]);
-                            case '{dailyConsumableCosts}':
-                                return formatNum(stats.dailyConsumableCosts);
-                            case '{dailyProfit}':
-                                return formatNum(stats.dailyProfit[priceKey]);
-                            case '{exp}':
-                                return formatNum(stats.expPerHour);
-                            case '{deathCount}':
-                                return stats.deathCount.toString();
-                            case '{encountersPerHour}':
-                                return formatNum(stats.encountersPerHour);
-                            case '{duration}':
-                                return stats.durationFormatted || '0s';
-                            default:
-                                return item.key;
-                        }
-                    } else {
-                        // Plain text
-                        return item.value;
-                    }
-                })
-                .join('');
-        } else {
-            // Legacy string format (shouldn't happen, but handle it)
-            const useKMB = isAbbreviationEnabled();
-            const formatNum = (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
-
-            message = (messageTemplate || 'Combat Stats: {income} income | {dailyProfit} profit/d | {exp} exp/h')
-                .replace('{income}', formatNum(stats.income[priceKey]))
-                .replace('{dailyIncome}', formatNum(stats.dailyIncome[priceKey]))
-                .replace('{dailyProfit}', formatNum(stats.dailyProfit[priceKey]))
-                .replace('{dailyConsumableCosts}', formatNum(stats.dailyConsumableCosts))
-                .replace('{exp}', formatNum(stats.expPerHour))
-                .replace('{deathCount}', stats.deathCount.toString());
-        }
-
-        // Insert into chat
-        this.insertToChat(message);
+    chatFormatNum() {
+        const useKMB = isAbbreviationEnabled();
+        return (num) => (useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num)));
     }
 
     /**
-     * Insert text into chat input
-     * @param {string} text - Text to insert
+     * The custom chat template, or null when the setting is still its default.
+     * @returns {Array|string|null}
      */
-    insertToChat(text) {
-        const chatSelector =
-            '#root > div > div > div.GamePage_gamePanel__3uNKN > div.GamePage_contentPanel__Zx4FH > div.GamePage_middlePanel__uDts7 > div.GamePage_chatPanel__mVaVt > div > div.Chat_chatInputContainer__2euR8 > form > input';
-        const chatInput = document.querySelector(chatSelector);
+    customChatTemplate() {
+        const value = config.getSettingValue('combatStatsChatMessage');
+        return isCustomChatTemplate(value, chatTemplateDefault()) ? value : null;
+    }
 
-        if (!chatInput) {
-            console.error('[Combat Stats] Chat input not found');
-            return;
+    /** @returns {Promise<string[]>} This character's picked fields, defaults when never picked */
+    async loadChatFields() {
+        try {
+            return normalizeChatFields(await readScoped(CHAT_FIELDS_KEY, 'settings', null));
+        } catch (error) {
+            console.error('[Combat Stats] Reading the chat field selection failed:', error);
+            return normalizeChatFields(null);
+        }
+    }
+
+    /** @param {string[]} fields - Field keys, saved for this character */
+    async saveChatFields(fields) {
+        try {
+            await writeScoped(CHAT_FIELDS_KEY, fields, 'settings');
+        } catch (error) {
+            console.error('[Combat Stats] Saving the chat field selection failed:', error);
+        }
+    }
+
+    /**
+     * The live readings a chat message can carry, for one player.
+     *
+     * Luck, DPS, kills and boss ETA describe the run in progress, so an archived
+     * run gets none of them — the fields drop out instead of borrowing tonight's
+     * figures for last week's run.
+     *
+     * @param {Object} stats - One player's stats
+     * @param {Object} [options] - `{archived, combatData}` of the run being shared
+     * @returns {Object} Context for `buildCombatChatMessage`
+     */
+    chatContext(stats, { archived = null, combatData = null } = {}) {
+        let luckPercentile = null;
+        let dps = null;
+        let kills = null;
+        let bossEta = null;
+
+        if (!archived) {
+            try {
+                const luck = combatDropLuck?.lastResult;
+                if (luck) {
+                    const placed = luck.players?.find((player) => player.name === stats.name);
+                    if (placed) luckPercentile = placed.percentile;
+                    // Solo, the session percentile is the player's own
+                    else if (!luck.players?.length && stats.name === dataManager.getCurrentCharacterName?.()) {
+                        luckPercentile = luck.percentile;
+                    }
+                }
+            } catch (error) {
+                console.error('[Combat Stats] Reading drop luck for chat failed:', error);
+            }
+            try {
+                const row = damageBreakdown()?.players?.find((player) => player.name === stats.name);
+                if (row) {
+                    dps = row.dps;
+                    kills = row.kills;
+                }
+            } catch (error) {
+                console.error('[Combat Stats] Reading damage for chat failed:', error);
+            }
+            try {
+                bossEta = combatBossEta?.getEtaText?.() || null;
+            } catch (error) {
+                console.error('[Combat Stats] Reading boss ETA for chat failed:', error);
+            }
         }
 
-        // Use native value setter for React compatibility
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        const start = chatInput.selectionStart || 0;
-        const end = chatInput.selectionEnd || 0;
+        const actionHrid = combatData?.actionHrid;
+        const zoneName = actionHrid ? dataManager.getActionDetails?.(actionHrid)?.name || null : null;
 
-        // Insert text at cursor position
-        const newValue = chatInput.value.substring(0, start) + text + chatInput.value.substring(end);
-        nativeInputValueSetter.call(chatInput, newValue);
+        return {
+            priceKey: getKeyPricingMode(),
+            formatNum: this.chatFormatNum(),
+            luckPercentile,
+            dps,
+            kills,
+            bossEta,
+            zoneName,
+        };
+    }
 
-        // Dispatch input event for React
-        const event = new Event('input', {
-            bubbles: true,
-            cancelable: true,
+    /**
+     * The chat message for one player — the custom template when there is one,
+     * otherwise the picked fields.
+     * @param {Object} stats - One player's stats
+     * @param {Object} [runContext] - `{archived, combatData}`; defaults to the popup's
+     * @returns {string}
+     */
+    buildChatMessageFor(stats, runContext = this.popupContext) {
+        return buildCombatChatMessage(stats, this.chatFields || normalizeChatFields(null), {
+            ...this.chatContext(stats, runContext),
+            template: this.customChatTemplate(),
         });
-        chatInput.dispatchEvent(event);
+    }
 
-        // Set cursor position after inserted text
-        chatInput.selectionStart = chatInput.selectionEnd = start + text.length;
-        chatInput.focus();
+    /**
+     * Put one player's stats in the chat box — filled and focused, never sent.
+     * With chat hidden the text goes to the clipboard instead, and says so.
+     *
+     * @param {Object} stats - Player statistics
+     * @param {Object} [options]
+     * @param {HTMLElement|null} [options.button] - Flashed to confirm
+     * @returns {Promise<{text: string, outcome: string}>}
+     */
+    async shareStatsToChat(stats, { button = null } = {}) {
+        const text = this.buildChatMessageFor(stats);
+        const outcome = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
+
+        if (button) {
+            const original = button.textContent;
+            button.textContent = { chat: '✓ Filled', clipboard: '✓ Copied' }[outcome] || '⚠ Failed';
+            setTimeout(() => {
+                if (button.isConnected) button.textContent = original;
+            }, 1200);
+        }
+        if (outcome !== 'chat') {
+            showToast(describeChatFill(outcome), { kind: outcome === 'failed' ? 'error' : 'info' });
+        }
+        return { text, outcome };
+    }
+
+    /**
+     * The palette verb: the latest live run's figures for this character.
+     * @returns {Promise<string>} What happened, for the palette's toast
+     */
+    async shareLatestToChat() {
+        const combatData = combatStatsDataCollector.getLatestData();
+        if (!combatData?.players?.length) return 'no combat data yet';
+
+        if (!marketAPI.isLoaded()) await marketAPI.fetch();
+        this.chatFields = await this.loadChatFields();
+
+        const stats = ownStats(calculateAllPlayerStats(combatData, this.liveDurationSeconds(combatData)));
+        if (!stats) return 'no combat data yet';
+
+        const text = this.buildChatMessageFor(stats, { archived: null, combatData });
+        const outcome = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
+        if (outcome === 'failed') throw new Error('could not fill chat or copy');
+        return describeChatFill(outcome, text.length);
+    }
+
+    /**
+     * How long the live run has lasted.
+     *
+     * Live data recalculates from its start time (always current); a stored
+     * fallback uses its snapshot duration, because a stored start time may be
+     * from an earlier session and would inflate it.
+     *
+     * @param {Object|null} combatData
+     * @param {boolean} [isLive=true]
+     * @returns {number|null} Seconds
+     */
+    liveDurationSeconds(combatData, isLive = true) {
+        if (isLive && combatData?.combatStartTime) {
+            return Date.now() / 1000 - new Date(combatData.combatStartTime).getTime() / 1000;
+        }
+        return combatData?.durationSeconds || null;
     }
 
     /**
@@ -398,18 +529,11 @@ class CombatStatsUI {
                 combatData = null;
             }
 
-            // Calculate duration:
-            // - Live data: recalculate from combatStartTime (real-time, always correct)
-            // - Stored fallback: use snapshot durationSeconds (avoids inflated duration when
-            //   stored combatStartTime is from a previous combat session)
-            if (isLive && combatData?.combatStartTime) {
-                const combatStartTime = new Date(combatData.combatStartTime).getTime() / 1000;
-                const currentTime = Date.now() / 1000;
-                durationSeconds = currentTime - combatStartTime;
-            } else if (combatData?.durationSeconds) {
-                durationSeconds = combatData.durationSeconds;
-            }
+            durationSeconds = this.liveDurationSeconds(combatData, isLive);
         }
+
+        // The chat picker's selection, read now so the popover opens synchronously
+        this.chatFields = await this.loadChatFields();
 
         // The sim's own guess at what this zone eats, for the burn-vs-sim line.
         // Read here rather than in the card because the card is synchronous and
@@ -420,7 +544,7 @@ class CombatStatsUI {
         const playerStats = combatData ? calculateAllPlayerStats(combatData, durationSeconds) : [];
 
         // Create and show popup
-        this.createPopup(playerStats, { archived });
+        this.createPopup(playerStats, { archived, combatData });
     }
 
     /**
@@ -489,13 +613,15 @@ class CombatStatsUI {
     /**
      * Create and display the statistics popup
      * @param {Array} playerStats - Array of player statistics
-     * @param {Object} [context] - `{archived}`: the archived session on show, or null for Live
+     * @param {Object} [context] - `{archived, combatData}`: the archived session on show (null for
+     *   Live), and the snapshot the cards were computed from
      */
-    createPopup(playerStats, { archived = null } = {}) {
+    createPopup(playerStats, { archived = null, combatData = null } = {}) {
         // Remove existing popup if any
         if (this.popup) {
             this.closePopup();
         }
+        this.popupContext = { archived, combatData };
 
         // Get text color from config
         const textColor = config.COLOR_TEXT_PRIMARY;
@@ -696,6 +822,8 @@ class CombatStatsUI {
         // of last night's run would read as editing the archive
         if (!archived) buttonContainer.appendChild(resetButton);
         if (copyButton) buttonContainer.appendChild(copyButton);
+        const me = ownStats(playerStats);
+        if (me) buttonContainer.appendChild(this.createChatControls(me, textColor));
         buttonContainer.appendChild(closeButton);
 
         header.appendChild(title);
@@ -761,6 +889,170 @@ class CombatStatsUI {
     }
 
     /**
+     * The "💬 Chat" button and its "▾" field picker.
+     * @param {Object} stats - The player the button shares (this character)
+     * @param {string} textColor
+     * @returns {HTMLElement}
+     */
+    createChatControls(stats, textColor) {
+        const group = document.createElement('span');
+        group.className = 'toolasha-combat-chat-controls';
+        group.style.cssText = 'position: relative; display: inline-flex;';
+
+        const buttonStyle = `
+            background: #4a4a4a;
+            border: 1px solid #5a5a5a;
+            color: ${textColor};
+            font-size: 12px;
+            cursor: pointer;
+            padding: 6px 10px;
+        `;
+
+        const chatButton = document.createElement('button');
+        chatButton.className = 'toolasha-combat-chat-btn';
+        chatButton.textContent = '💬 Chat';
+        chatButton.title =
+            `Put ${stats.name}'s stats in the chat box — filled, not sent. ` +
+            'Ctrl+click any player card to share that player instead.';
+        chatButton.style.cssText = `${buttonStyle} border-radius: 4px 0 0 4px;`;
+        chatButton.onclick = () => this.shareStatsToChat(stats, { button: chatButton });
+
+        const caret = document.createElement('button');
+        caret.className = 'toolasha-combat-chat-caret';
+        caret.textContent = '▾';
+        caret.title = 'Choose what the chat message includes';
+        caret.style.cssText = `${buttonStyle} border-left: none; border-radius: 0 4px 4px 0; padding: 6px 7px;`;
+        caret.onclick = (event) => {
+            event.stopPropagation();
+            if (this.chatPopover) this.closeChatPopover();
+            else this.openChatPopover(group, stats, textColor);
+        };
+
+        group.appendChild(chatButton);
+        group.appendChild(caret);
+        return group;
+    }
+
+    /**
+     * Open the field picker under the Chat button: checkboxes, a live preview and
+     * a character count — or, with a custom template in use, a note saying so
+     * and a way back to the checkboxes.
+     * @param {HTMLElement} anchor - The controls group it hangs from
+     * @param {Object} stats - The player being previewed
+     * @param {string} textColor
+     */
+    openChatPopover(anchor, stats, textColor) {
+        this.closeChatPopover();
+
+        const popover = document.createElement('div');
+        popover.className = 'toolasha-combat-chat-popover';
+        popover.style.cssText = `
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            z-index: 10001;
+            width: 320px;
+            max-width: 80vw;
+            background: #202020;
+            border: 1px solid #4a4a4a;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 12px;
+            color: ${textColor};
+            text-align: left;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+        `;
+        popover.onclick = (event) => event.stopPropagation();
+
+        const preview = document.createElement('div');
+        preview.className = 'toolasha-combat-chat-preview';
+        preview.style.cssText = `
+            margin-top: 8px;
+            padding: 6px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 4px;
+            font-family: monospace;
+            word-break: break-word;
+            white-space: pre-wrap;
+        `;
+        const counter = document.createElement('div');
+        counter.className = 'toolasha-combat-chat-count';
+        counter.style.cssText = 'margin-top: 4px; color: #999; text-align: right;';
+
+        const refresh = () => {
+            const text = this.buildChatMessageFor(stats);
+            preview.textContent = text;
+            counter.textContent = `${text.length} chars`;
+        };
+
+        if (this.customChatTemplate()) {
+            const note = document.createElement('div');
+            note.className = 'toolasha-combat-chat-template-note';
+            note.textContent =
+                'A custom chat template is in use (Settings → Combat Statistics: Chat message format), ' +
+                'so it decides what the message says.';
+            const reset = document.createElement('button');
+            reset.className = 'toolasha-combat-chat-use-fields';
+            reset.textContent = 'Use checkboxes instead (resets the template)';
+            reset.style.cssText =
+                'margin-top: 6px; background: #4a4a4a; border: 1px solid #5a5a5a; color: inherit; ' +
+                'font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 4px;';
+            reset.onclick = () => {
+                config.setSettingValue('combatStatsChatMessage', chatTemplateDefault());
+                this.openChatPopover(anchor, stats, textColor);
+            };
+            popover.appendChild(note);
+            popover.appendChild(reset);
+        } else {
+            const list = document.createElement('div');
+            list.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr; gap: 3px 10px;';
+            const selected = new Set(this.chatFields || normalizeChatFields(null));
+
+            for (const field of COMBAT_CHAT_FIELDS) {
+                const label = document.createElement('label');
+                label.style.cssText = 'display: flex; align-items: center; gap: 4px; cursor: pointer;';
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.dataset.field = field.key;
+                box.checked = selected.has(field.key);
+                box.onchange = () => {
+                    if (box.checked) selected.add(field.key);
+                    else selected.delete(field.key);
+                    // Schema order, so the message reads the same however it was ticked
+                    this.chatFields = COMBAT_CHAT_FIELDS.map((f) => f.key).filter((key) => selected.has(key));
+                    this.saveChatFields(this.chatFields);
+                    refresh();
+                };
+                label.appendChild(box);
+                label.appendChild(document.createTextNode(field.label));
+                list.appendChild(label);
+            }
+
+            const hint = document.createElement('div');
+            hint.style.cssText = 'margin-top: 6px; color: #999;';
+            hint.textContent = 'Saved for this character. Fields with no data right now are left out.';
+            popover.appendChild(list);
+            popover.appendChild(hint);
+        }
+
+        popover.appendChild(preview);
+        popover.appendChild(counter);
+        refresh();
+
+        anchor.appendChild(popover);
+        this.chatPopover = popover;
+    }
+
+    /** Close the field picker, if open */
+    closeChatPopover() {
+        if (this.chatPopover) {
+            this.chatPopover.remove();
+            this.chatPopover = null;
+        }
+    }
+
+    /**
      * Get the current items sprite URL from the DOM
      * Extracts the sprite URL with webpack hash from an existing item icon
      * @returns {string|null} Items sprite URL or null if not found
@@ -821,6 +1113,7 @@ class CombatStatsUI {
         `;
 
         // Add Ctrl+Click handler to share to chat
+        card.title = `Ctrl+click to put ${stats.name}'s stats in the chat box (not sent)`;
         card.onclick = (e) => {
             if (e.ctrlKey || e.metaKey) {
                 this.shareStatsToChat(stats);
@@ -1583,6 +1876,7 @@ class CombatStatsUI {
      */
     closePopup() {
         this.hideChestTooltip();
+        this.closeChatPopover();
         if (this.popup) {
             this.popup.remove();
             this.popup = null;
@@ -1603,6 +1897,9 @@ class CombatStatsUI {
         }
 
         this.closePopup();
+        unregisterCommand(SHARE_TO_CHAT_COMMAND);
+        // The selection is per character, and cleanup is what a switch runs
+        this.chatFields = null;
 
         // Remove injected buttons
         const buttons = document.querySelectorAll('.toolasha-combat-stats-btn');

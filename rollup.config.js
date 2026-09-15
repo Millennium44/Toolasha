@@ -245,6 +245,8 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/number-parser.js')), 'Toolasha.Utils.numberParser'],
     [normalize(join(__dirname, 'src/utils/party-lint.js')), 'Toolasha.Utils.partyLint'],
     [normalize(join(__dirname, 'src/utils/profile-command.js')), 'Toolasha.Utils.profileCommand'],
+    // Filled from the combat bundle (Statistics popup) and the ui bundle (loot log)
+    [normalize(join(__dirname, 'src/utils/chat-fill.js')), 'Toolasha.Utils.chatFill'],
     [normalize(join(__dirname, 'src/utils/progress-eta.js')), 'Toolasha.Utils.progressEta'],
     [normalize(join(__dirname, 'src/utils/room-skills.js')), 'Toolasha.Utils.roomSkills'],
     [normalize(join(__dirname, 'src/utils/table-columns.js')), 'Toolasha.Utils.tableColumns'],

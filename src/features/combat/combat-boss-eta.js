@@ -185,6 +185,21 @@ class CombatBossEta {
         this._injectOrUpdate();
     }
 
+    /**
+     * The chip's text without the chip, for sharing — "12 to boss · ~3m left".
+     * Null when there is no boss to count towards (no cycle, no battle seen yet).
+     * @returns {string|null}
+     */
+    getEtaText() {
+        let info = null;
+        if (this.isDungeon && this.maxWaves > 0 && this.currentWave > 0) {
+            info = wavesToDungeonBoss(this.currentWave, this.maxWaves);
+        } else if (this.hasBossCycle && this.battleNumber > 0) {
+            info = battlesToBoss(this.battleNumber, this.battlesPerBoss);
+        }
+        return info ? formatBossEta(info, averageBattleMs(this.samples)) || null : null;
+    }
+
     _injectOrUpdate() {
         const currentAction = document.querySelector(CURRENT_ACTION_SELECTOR);
         const nameRow = currentAction?.querySelector(ACTION_NAME_SELECTOR);

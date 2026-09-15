@@ -4,8 +4,17 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { LootLogStats, buildLootLogRows, buildLootLogSummaryText, LOOT_LOG_CSV_COLUMNS } from './loot-log-stats.js';
+import {
+    LootLogStats,
+    buildLootLogRows,
+    buildLootLogSummaryText,
+    buildLootLogChatLine,
+    LOOT_LOG_CSV_COLUMNS,
+} from './loot-log-stats.js';
 import lootLogHistory from './loot-log-history.js';
+import { showToast } from '../../utils/toast.js';
+
+vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -353,6 +362,100 @@ describe('buildLootLogSummaryText, the copy-button text', () => {
         );
 
         expect(text).toBe('Tree × 5\nTotal: 0/0 (ask/bid)');
+    });
+});
+
+describe('buildLootLogChatLine, the chat-button text', () => {
+    const resolve = {
+        itemInfo: (hrid) => {
+            if (hrid === '/items/coin') return { name: 'Coins', askPerItem: 1, bidPerItem: 1 };
+            if (hrid === '/items/log') return { name: 'Log', askPerItem: 40, bidPerItem: 30 };
+            if (hrid === '/items/branch') return { name: 'Branch', askPerItem: 5, bidPerItem: 4 };
+            return { name: hrid.split('/').pop(), askPerItem: 0, bidPerItem: 0 };
+        },
+        actionName: () => 'Tree',
+    };
+    const entry = {
+        actionHrid: '/actions/woodcutting/tree',
+        actionCount: 100,
+        drops: { '/items/coin': 50, '/items/log': 10, '/items/branch': 2, '/items/leaf': 7 },
+    };
+
+    test('one line: action, the most valuable drops, total, profit', () => {
+        const line = buildLootLogChatLine(entry, { ...resolve, profit: { askProfit: 12, bidProfit: -3 } });
+        expect(line).toBe('Tree × 100 | 10 Log, 50 Coins, 2 Branch +1 more | total 460/358 | profit 12/-3');
+        expect(line).not.toContain('\n');
+    });
+
+    test('luck joins when there is a verdict, and is left out when there is not', () => {
+        expect(buildLootLogChatLine(entry, { ...resolve, luckPercentile: 0.42 })).toMatch(/ \| 42nd pct luck$/);
+        expect(buildLootLogChatLine(entry, { ...resolve, luckPercentile: null })).not.toContain('luck');
+    });
+
+    test('no profit and no drops still reads as a line, never "null"', () => {
+        const line = buildLootLogChatLine({ actionHrid: 'x', actionCount: 5, drops: {} }, resolve);
+        expect(line).toBe('Tree × 5 | total 0/0');
+    });
+
+    test('an empty entry is an empty string', () => {
+        expect(buildLootLogChatLine(null, resolve)).toBe('');
+    });
+});
+
+describe('LootLogStats — the 💬 chat button on an entry', () => {
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const entry = { actionHrid: '/actions/woodcutting/tree', actionCount: 100, drops: { '/items/log': 10 } };
+    let stats;
+    let secondDiv;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        document.body.innerHTML = '';
+        stats = new LootLogStats();
+        stats.calculateTotalValue = () => ({ askTotal: 400, bidTotal: 300 });
+        stats.calculateProfit = () => ({ askProfit: 12, bidProfit: -3, inputs: [] });
+        stats.calculateExpectedRunValue = () => null;
+        stats.buildItemBreakdown = () => document.createElement('div');
+        stats.resolveItemPricing = () => ({ name: 'Log', askPerItem: 40, bidPerItem: 30 });
+        stats.getActionName = () => 'Tree';
+        secondDiv = document.createElement('div');
+        document.body.appendChild(secondDiv);
+        stats.injectTotalValue(secondDiv, entry);
+    });
+
+    const chatButton = () => secondDiv.querySelector('.mwi-loot-log-chat');
+
+    test('sits right after the copy button', () => {
+        expect(chatButton()).toBeTruthy();
+        expect(chatButton().previousElementSibling.className).toBe('mwi-loot-log-copy');
+    });
+
+    test('fills the chat box with the one-line summary, unsent', async () => {
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<input />';
+        document.body.appendChild(container);
+        const input = container.querySelector('input');
+        let sent = false;
+        input.addEventListener('keydown', () => (sent = true));
+
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toBe('Tree × 100 | 10 Log | total 400/300 | profit 12/-3');
+        expect(sent).toBe(false);
+        expect(showToast).not.toHaveBeenCalled();
+    });
+
+    test('with chat hidden, copies the line and says so', async () => {
+        const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+
+        chatButton().click();
+        await flush();
+
+        expect(write).toHaveBeenCalledWith('Tree × 100 | 10 Log | total 400/300 | profit 12/-3');
+        expect(showToast).toHaveBeenCalledWith('chat not visible — copied', expect.anything());
+        write.mockRestore();
     });
 });
 

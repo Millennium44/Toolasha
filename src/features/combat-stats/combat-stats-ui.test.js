@@ -17,7 +17,18 @@ const mocks = vi.hoisted(() => ({
     live: null,
     /** The archive, newest first */
     sessions: [],
+    /** The `combatStatsChatMessage` setting; null = never edited */
+    template: null,
+    /** combatDropLuck.lastResult */
+    luck: null,
+    /** damageBreakdown() */
+    damage: null,
+    /** combatBossEta.getEtaText() */
+    bossEta: null,
 }));
+
+/** Per-character storage, keyed as character-key would key it */
+const store = vi.hoisted(() => ({ values: new Map(), charId: 'char-1', charName: 'LiveGuy' }));
 
 // Real subscribe/unsubscribe bookkeeping, unlike a no-op stub, so a test can
 // prove a cleanup+initialize cycle does not accumulate listeners.
@@ -29,7 +40,10 @@ vi.mock('../../core/config.js', () => ({
         COLOR_TEXT_SECONDARY: '#999',
         COLOR_TOOLTIP_PROFIT: '#5f5',
         getSetting: () => true,
-        getSettingValue: (_key, fallback) => fallback ?? null,
+        getSettingValue: (key, fallback) => (key === 'combatStatsChatMessage' ? mocks.template : (fallback ?? null)),
+        setSettingValue: vi.fn((key, value) => {
+            if (key === 'combatStatsChatMessage') mocks.template = value;
+        }),
         getPricingModeLabel: () => 'Hybrid',
         getPricingModeDisplayLabel: () => 'Hybrid',
         onSettingChange: (key, callback) => {
@@ -44,8 +58,31 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: (hrid) => ({ name: hrid.split('/').pop(), rarity: 0 }),
         getActionDetails: (hrid) => (hrid === '/actions/combat/chimerical_den' ? { name: 'Chimerical Den' } : null),
+        getCurrentCharacterId: () => store.charId,
+        getCurrentCharacterName: () => store.charName,
     },
 }));
+vi.mock('../../utils/character-key.js', () => ({
+    characterKey: (base) => `${base}_${store.charId}`,
+    readScoped: async (base, _storeName, fallback) => {
+        const key = `${base}_${store.charId}`;
+        return store.values.has(key) ? store.values.get(key) : fallback;
+    },
+    writeScoped: async (base, value) => {
+        store.values.set(`${base}_${store.charId}`, value);
+        return true;
+    },
+}));
+vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
+vi.mock('../combat/damage-tracker.js', () => ({ damageBreakdown: () => mocks.damage }));
+vi.mock('../combat/combat-drop-luck.js', () => ({
+    default: {
+        get lastResult() {
+            return mocks.luck;
+        },
+    },
+}));
+vi.mock('../combat/combat-boss-eta.js', () => ({ default: { getEtaText: () => mocks.bossEta } }));
 vi.mock('../../api/marketplace.js', () => ({
     default: { isLoaded: () => true, fetch: async () => ({}), getPrice: () => null },
 }));
@@ -74,7 +111,15 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     },
 }));
 
-const { default: combatStatsUI, archivedSessionLabel, combatSessionText } = await import('./combat-stats-ui.js');
+const {
+    default: combatStatsUI,
+    archivedSessionLabel,
+    combatSessionText,
+    SHARE_TO_CHAT_COMMAND,
+} = await import('./combat-stats-ui.js');
+const { registeredCommands, resetCommands } = await import('../../utils/command-registry.js');
+const { showToast } = await import('../../utils/toast.js');
+const config = (await import('../../core/config.js')).default;
 
 /** Coins only, so the real calculator prices the run without a market */
 const player = (name, coins, isCurrentPlayer = false) => ({
@@ -114,7 +159,18 @@ beforeEach(() => {
 afterEach(() => {
     combatStatsUI.closePopup();
     combatStatsUI.viewing = 'live';
+    combatStatsUI.chatFields = null;
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.body.innerHTML = '';
+    mocks.template = null;
+    mocks.luck = null;
+    mocks.damage = null;
+    mocks.bossEta = null;
+    store.values.clear();
+    store.charId = 'char-1';
+    store.charName = 'LiveGuy';
+    showToast.mockClear();
 });
 
 describe('naming an archived run in the picker', () => {
@@ -310,6 +366,193 @@ describe('the Copy button on the popup', () => {
 
         expect(popup()).toBeTruthy();
         expect(copyButton()).toBeUndefined();
+    });
+});
+
+describe('the Chat button on the popup', () => {
+    const chatButton = () => popup().querySelector('.toolasha-combat-chat-btn');
+    const chatInput = () => {
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<form><input /></form>';
+        document.body.appendChild(container);
+        return container.querySelector('input');
+    };
+
+    test('fills the chat box with this character’s stats — focused, never sent', async () => {
+        const input = chatInput();
+        let sent = false;
+        input.addEventListener('keydown', () => (sent = true));
+        mocks.luck = { percentile: 0.73, players: [] };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value.startsWith('Combat Stats: 10m duration')).toBe(true);
+        expect(input.value).toContain('0 deaths | 73rd pct luck');
+        expect(input.value).not.toContain('\n');
+        expect(document.activeElement).toBe(input);
+        expect(sent).toBe(false);
+        expect(showToast).not.toHaveBeenCalled();
+    });
+
+    test('with chat hidden, copies the message instead and says so', async () => {
+        const written = [];
+        vi.spyOn(navigator.clipboard, 'writeText').mockImplementation(async (value) => written.push(value));
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(written[0]).toContain('Combat Stats: 10m duration');
+        expect(showToast).toHaveBeenCalledWith('chat not visible — copied', expect.anything());
+    });
+
+    test('Ctrl+click on a card still shares that player, and the card says so', async () => {
+        const input = chatInput();
+        await combatStatsUI.showPopup();
+
+        const cards = [...popup().querySelectorAll('div')].filter((el) => el.title?.startsWith('Ctrl+click'));
+        expect(cards).toHaveLength(1);
+        expect(cards[0].title).toContain('LiveGuy');
+
+        cards[0].dispatchEvent(new MouseEvent('click', { ctrlKey: true, bubbles: true }));
+        await flush();
+        expect(input.value).toContain('Combat Stats:');
+    });
+
+    test('an archived run leaves the live-only readings out', async () => {
+        const input = chatInput();
+        mocks.luck = { percentile: 0.73, players: [] };
+        mocks.damage = { players: [{ name: 'A', dps: 500, kills: 3 }] };
+        store.charName = 'A';
+        store.values.set('combatStatsChatFields_char-1', ['zone', 'luck', 'dps', 'kills']);
+
+        await combatStatsUI.showPopup();
+        picker().value = ARCHIVED.key;
+        picker().dispatchEvent(new Event('change'));
+        await flush();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).toBe('Combat Stats: Chimerical Den');
+    });
+});
+
+describe('the chat field picker', () => {
+    const caret = () => popup().querySelector('.toolasha-combat-chat-caret');
+    const popover = () => popup().querySelector('.toolasha-combat-chat-popover');
+    const box = (key) => popover().querySelector(`input[data-field="${key}"]`);
+    const preview = () => popover().querySelector('.toolasha-combat-chat-preview').textContent;
+
+    test('opens with the defaults ticked, a live preview and a character count', async () => {
+        await combatStatsUI.showPopup();
+        caret().click();
+
+        expect(box('duration').checked).toBe(true);
+        expect(box('luck').checked).toBe(true);
+        expect(box('dps').checked).toBe(false);
+        expect(preview().startsWith('Combat Stats: 10m duration')).toBe(true);
+        expect(popover().querySelector('.toolasha-combat-chat-count').textContent).toBe(`${preview().length} chars`);
+    });
+
+    test('ticking a field updates the preview and is saved for this character only', async () => {
+        mocks.damage = { players: [{ name: 'LiveGuy', dps: 1234, kills: 9 }] };
+        await combatStatsUI.showPopup();
+        caret().click();
+
+        box('dps').checked = true;
+        box('dps').dispatchEvent(new Event('change'));
+        expect(preview()).toContain('1,234 DPS');
+        expect(store.values.get('combatStatsChatFields_char-1')).toContain('dps');
+
+        // Another character has their own selection
+        combatStatsUI.closePopup();
+        store.charId = 'char-2';
+        await combatStatsUI.showPopup();
+        caret().click();
+        expect(box('dps').checked).toBe(false);
+
+        // And the first one's is still there
+        combatStatsUI.closePopup();
+        store.charId = 'char-1';
+        await combatStatsUI.showPopup();
+        caret().click();
+        expect(box('dps').checked).toBe(true);
+    });
+
+    test('a custom template is named, previewed, and can be traded back for the checkboxes', async () => {
+        mocks.template = [
+            { type: 'text', value: 'Mine: ' },
+            { type: 'variable', key: '{exp}' },
+        ];
+        await combatStatsUI.showPopup();
+        caret().click();
+
+        expect(popover().querySelector('.toolasha-combat-chat-template-note')).toBeTruthy();
+        expect(box('duration')).toBeNull();
+        expect(preview()).toBe('Mine: 0');
+
+        popover().querySelector('.toolasha-combat-chat-use-fields').click();
+
+        expect(config.setSettingValue).toHaveBeenCalledWith('combatStatsChatMessage', expect.any(Array));
+        expect(box('duration').checked).toBe(true);
+        expect(preview().startsWith('Combat Stats:')).toBe(true);
+    });
+
+    test('the caret toggles the popover closed again', async () => {
+        await combatStatsUI.showPopup();
+        caret().click();
+        expect(popover()).toBeTruthy();
+        caret().click();
+        expect(popover()).toBeNull();
+    });
+});
+
+describe('the "Share combat stats to chat" palette verb', () => {
+    afterEach(() => {
+        combatStatsUI.cleanup();
+        resetCommands();
+        for (const key of Object.keys(settingListeners)) delete settingListeners[key];
+    });
+
+    const command = () => registeredCommands().find((c) => c.name === SHARE_TO_CHAT_COMMAND);
+
+    test('is registered as a verb on initialize and withdrawn on cleanup', () => {
+        combatStatsUI.initialize();
+        expect(command()?.kind).toBe('verb');
+
+        combatStatsUI.cleanup();
+        expect(command()).toBeUndefined();
+    });
+
+    test('is only offered once there is combat data', () => {
+        combatStatsUI.initialize();
+        mocks.live = null;
+        expect(command()).toBeUndefined();
+        mocks.live = { battleId: 1, durationSeconds: 60, players: [player('LiveGuy', 1, true)] };
+        expect(command()).toBeTruthy();
+    });
+
+    test('fills chat and answers with what it did', async () => {
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<input />';
+        document.body.appendChild(container);
+
+        combatStatsUI.initialize();
+        const result = await command().run();
+
+        const value = container.querySelector('input').value;
+        expect(value.startsWith('Combat Stats:')).toBe(true);
+        expect(result).toBe(`filled chat (${value.length} chars)`);
+    });
+
+    test('with chat hidden, answers that it copied', async () => {
+        vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+        combatStatsUI.initialize();
+        expect(await command().run()).toMatch(/^chat not visible — copied \(\d+ chars\)$/);
     });
 });
 

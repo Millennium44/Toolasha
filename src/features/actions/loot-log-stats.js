@@ -14,6 +14,8 @@ import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatte
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { signedPercent } from '../../utils/overlay-format.js';
+import { fillChatOrCopy, describeChatFill } from '../../utils/chat-fill.js';
+import { showToast } from '../../utils/toast.js';
 import {
     buildGatheringSession,
     gatheringLootValue,
@@ -143,6 +145,55 @@ export function buildLootLogSummaryText(logData, { itemInfo, actionName, profit 
     }
 
     return lines.join('\n');
+}
+
+/**
+ * A loot-log entry as ONE line, for the chat box.
+ *
+ * Chat input is single-line, so this is the compact cousin of
+ * {@link buildLootLogSummaryText}: the action and count, the few most valuable
+ * drops, the totals and profit, and the luck verdict when there is one. Pure,
+ * with the same resolvers.
+ *
+ * @param {Object} logData - A loot log entry (`{actionHrid, actionCount, drops}`)
+ * @param {Object} resolve
+ * @param {Function} resolve.itemInfo - `(baseHrid) => {name, askPerItem, bidPerItem}`
+ * @param {Function} resolve.actionName - `(actionHrid) => string`
+ * @param {{askProfit: number, bidProfit: number}|null} [resolve.profit]
+ * @param {number|null} [resolve.luckPercentile] - In [0, 1]; omitted when not finite
+ * @param {number} [resolve.topDrops=3] - How many drops to name
+ * @returns {string}
+ */
+export function buildLootLogChatLine(logData, { itemInfo, actionName, profit, luckPercentile, topDrops = 3 } = {}) {
+    if (!logData) return '';
+
+    let askTotal = 0;
+    let bidTotal = 0;
+    const drops = [];
+    for (const [hrid, count] of Object.entries(logData.drops || {})) {
+        const info = itemInfo(hrid.replace(/::\d+$/, ''));
+        const ask = (info.askPerItem || 0) * count;
+        askTotal += ask;
+        bidTotal += (info.bidPerItem || 0) * count;
+        drops.push({ name: info.name, count, ask });
+    }
+    drops.sort((a, b) => b.ask - a.ask || b.count - a.count);
+
+    const parts = [`${actionName(logData.actionHrid)} × ${numberFormatter(logData.actionCount || 0)}`];
+    if (drops.length > 0) {
+        const named = drops.slice(0, topDrops).map((drop) => `${numberFormatter(drop.count)} ${drop.name}`);
+        const more = drops.length - named.length;
+        parts.push(named.join(', ') + (more > 0 ? ` +${more} more` : ''));
+    }
+    parts.push(`total ${formatKMB(askTotal)}/${formatKMB(bidTotal)}`);
+    if (profit) parts.push(`profit ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`);
+    if (Number.isFinite(luckPercentile)) {
+        const rank = Math.min(Math.max(Math.round(luckPercentile * 100), 1), 99);
+        const lastTwo = rank % 100;
+        const suffix = lastTwo >= 11 && lastTwo <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[rank % 10] || 'th';
+        parts.push(`${rank}${suffix} pct luck`);
+    }
+    return parts.join(' | ');
 }
 
 /**
@@ -855,6 +906,19 @@ class LootLogStats {
             this.copyLootLogSummary(logData, profit, copyButton);
         });
         wrapper.appendChild(copyButton);
+
+        // The same session as one line in the chat box — filled, never sent
+        const chatButton = document.createElement('button');
+        chatButton.className = 'mwi-loot-log-chat';
+        chatButton.textContent = '💬';
+        chatButton.title = 'Put this session in the chat box as one line (not sent)';
+        chatButton.style.cssText = copyButton.style.cssText;
+        chatButton.style.marginLeft = '4px';
+        chatButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.shareLootLogToChat(logData, profit, chatButton);
+        });
+        wrapper.appendChild(chatButton);
         if (profit) {
             const profitLine = document.createElement('div');
             profitLine.style.cssText = `text-align: right; font-weight: bold; color: ${this.getProfitColor(profit.askProfit, profit.bidProfit)};`;
@@ -980,6 +1044,65 @@ class LootLogStats {
     }
 
     /**
+     * Put one session in the chat box as a single line; copy it when chat is hidden.
+     * @param {Object} logData - The loot log entry the button sits next to
+     * @param {{askProfit: number, bidProfit: number}|null} profit - From `calculateProfit`
+     * @param {HTMLElement} button - The button clicked, for feedback
+     * @returns {Promise<string>} Where the line went: 'chat' | 'clipboard' | 'failed'
+     */
+    async shareLootLogToChat(logData, profit, button) {
+        const text = buildLootLogChatLine(logData, {
+            itemInfo: (baseHrid) => this.resolveItemPricing(baseHrid),
+            actionName: (actionHrid) => this.getActionName(actionHrid),
+            profit,
+            luckPercentile: this.dropLuckPercentile(logData),
+        });
+        if (!text) return 'failed';
+
+        const outcome = await fillChatOrCopy(text, { logPrefix: 'LootLogStats' });
+        this.flashCopyButton(button, outcome === 'failed' ? '⚠' : '✓');
+        if (outcome !== 'chat') {
+            showToast(describeChatFill(outcome), { kind: outcome === 'failed' ? 'error' : 'info' });
+        }
+        return outcome;
+    }
+
+    /**
+     * The entry's drop-luck percentile, when the loot log shows one.
+     * @param {Object} logData
+     * @returns {number|null}
+     */
+    dropLuckPercentile(logData) {
+        try {
+            if (!config.getSetting('lootLogDropLuck')) return null;
+            const reading = this.buildLuckReading(logData);
+            return reading ? this.luckPercentileFor(reading, logData) : null;
+        } catch (error) {
+            console.error('[LootLogStats] Drop luck for chat failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * A reading's percentile, through the session cache the luck line fills.
+     * @param {Object} reading - From `buildLuckReading`
+     * @param {Object} logData
+     * @returns {number}
+     */
+    luckPercentileFor(reading, logData) {
+        const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}`;
+        let percentile = this.luckCache.get(key);
+        if (percentile === undefined) {
+            percentile = gatheringSessionLuck(reading.session, reading.income).percentile;
+            // Prices move and entries churn; the cache is a session-length
+            // convenience, not a store, so it is dropped rather than evicted
+            if (this.luckCache.size > 200) this.luckCache.clear();
+            this.luckCache.set(key, percentile);
+        }
+        return percentile;
+    }
+
+    /**
      * @param {HTMLElement} button
      * @param {string} text - What it should say for a moment
      */
@@ -1026,15 +1149,7 @@ class LootLogStats {
      */
     fillInDropLuck(line, reading, logData) {
         try {
-            const key = `${logData.actionHrid}|${logData.actionCount}|${Math.round(reading.income)}`;
-            let percentile = this.luckCache.get(key);
-            if (percentile === undefined) {
-                percentile = gatheringSessionLuck(reading.session, reading.income).percentile;
-                // Prices move and entries churn; the cache is a session-length
-                // convenience, not a store, so it is dropped rather than evicted
-                if (this.luckCache.size > 200) this.luckCache.clear();
-                this.luckCache.set(key, percentile);
-            }
+            const percentile = this.luckPercentileFor(reading, logData);
 
             const { text, tone } = describeRunLuck(percentile);
             const color = { lucky: config.COLOR_PROFIT, unlucky: config.COLOR_LOSS, normal: '#aaa' }[tone];
