@@ -5771,10 +5771,19 @@ class CombatSimUI {
      * @private
      */
     _ensureHistoryMetrics(activeTab) {
+        // Revenue and costs are priced when computed, while the live detail view prices on
+        // every render, so metrics priced under a different mode or tick are stale: a
+        // baseline delta against them reports the pricing change as a gear change.
+        const pricing = [
+            config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
+            config.getSettingValue('profitCalc_patientTickBuy', false) === true,
+            config.getSettingValue('profitCalc_patientTickSell', false) === true,
+        ].join('|');
         for (const entry of this._simHistory) {
-            if (!entry.metrics || entry.metricsTab !== activeTab) {
+            if (!entry.metrics || entry.metricsTab !== activeTab || entry.metricsPricing !== pricing) {
                 entry.metrics = this._computeMetrics(entry.simResult, entry.hours, entry.gameData, activeTab);
                 entry.metricsTab = activeTab;
+                entry.metricsPricing = pricing;
             }
         }
     }

@@ -80,7 +80,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 100,
-        getSettingValue: (_key, fallback) => fallback,
+        // The pricing keys follow the `getItemPrice` mock's switches, so a cache stamped
+        // on them sees the same change the prices do
+        getSettingValue: (key, fallback) => {
+            if (key === 'profitCalc_pricingMode') return mocks.pricingMode;
+            if (key === 'profitCalc_patientTickBuy' || key === 'profitCalc_patientTickSell') return mocks.patientTick;
+            return fallback;
+        },
         getSetting: (_key, fallback = false) => fallback,
         getPricingModeLabel: () => 'Hybrid',
         getPricingModeDisplayLabel: () => 'Hybrid',
@@ -2884,6 +2890,23 @@ describe('the summary at the top of the Results tab', () => {
         // 100 × 9 ticked ask, net of 5% tax = 855/hr = 20.52K/day, rounded to
         // 20.5K — this line fails pre-fix
         expect(on).toContain('Revenue 20.5K/day');
+    });
+
+    test('a history run priced before a pricing change is re-priced rather than compared stale', () => {
+        mocks.drops = new Map([['/items/cheese', 100]]);
+        mocks.prices['/items/cheese'] = { bid: 8, ask: 10 };
+        mocks.pricingMode = 'optimistic';
+        pushHistory('Baseline');
+        const entry = ui._simHistory[ui._simHistory.length - 1];
+
+        ui._ensureHistoryMetrics('player1');
+        const before = entry.metrics.revenuePerHr;
+        expect(before).toBeGreaterThan(0);
+
+        // The live detail view now prices the drop at 9; the baseline's metrics must follow
+        mocks.patientTick = true;
+        ui._ensureHistoryMetrics('player1');
+        expect(entry.metrics.revenuePerHr).toBeCloseTo((before * 9) / 10, 6);
     });
 
     test('XP/hr is the same total the XP section adds up', () => {
