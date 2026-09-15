@@ -28,6 +28,7 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
+import { runningAlchemyAction } from './alchemy-running-action.js';
 
 const DECOMPOSE_ACTION_HRID = '/actions/alchemy/decompose';
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
@@ -51,7 +52,7 @@ class DecomposeHistoryTracker {
         // thing in the message that scales with a batch.
         this.itemCounts = createItemCountLedger();
         this.handlers = {
-            actionsUpdated: (data) => this.handleActionsUpdated(data),
+            actionsUpdated: () => this.handleActionsUpdated(),
             actionCompleted: (data) => this.handleActionCompleted(data),
             initCharacterData: () => this.handleReconnect(),
             characterSwitched: (data) => this.handleCharacterSwitched(data),
@@ -81,7 +82,15 @@ class DecomposeHistoryTracker {
         this.isInitialized = true;
         this.characterId = dataManager.getCurrentCharacterId();
 
-        webSocketHook.on('actions_updated', this.handlers.actionsUpdated);
+        // Subscribed on dataManager's re-emitted `actions_updated`, not the raw
+        // websocket event: dataManager merges the delta into its cached queue
+        // and only then re-emits, so `dataManager.getCurrentActions()` inside
+        // `handleActionsUpdated` is guaranteed to already reflect this update.
+        // Listening on the raw event instead would depend on registration
+        // order between this tracker and dataManager's own websocket handler —
+        // both listen for the same event name, and whichever registered first
+        // runs first.
+        dataManager.on('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.on('action_completed', this.handlers.actionCompleted);
         webSocketHook.on('init_character_data', this.handlers.initCharacterData);
         dataManager.on('character_switched', this.handlers.characterSwitched);
@@ -100,7 +109,7 @@ class DecomposeHistoryTracker {
      * @returns {Promise<void>}
      */
     async disable() {
-        webSocketHook.off('actions_updated', this.handlers.actionsUpdated);
+        dataManager.off('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.off('action_completed', this.handlers.actionCompleted);
         webSocketHook.off('init_character_data', this.handlers.initCharacterData);
         dataManager.off('character_switched', this.handlers.characterSwitched);
@@ -115,12 +124,16 @@ class DecomposeHistoryTracker {
     }
 
     /**
-     * Handle actions_updated — detect session start or end
-     * @param {Object} data - WebSocket message data
+     * Handle actions_updated — detect session start or end.
+     *
+     * Reads the full queue (`dataManager.getCurrentActions()`) rather than the
+     * `actions_updated` delta that triggered this call: the delta only lists
+     * actions that changed, so it cannot say on its own whether the decompose
+     * is still the one running. See `alchemy-running-action.js` for why, and
+     * `initialize()` for why this is safe to read synchronously here.
      */
-    async handleActionsUpdated(data) {
-        const actions = data.endCharacterActions || [];
-        const decomposeAction = actions.find((a) => a.actionHrid === DECOMPOSE_ACTION_HRID);
+    async handleActionsUpdated() {
+        const decomposeAction = runningAlchemyAction(dataManager.getCurrentActions(), DECOMPOSE_ACTION_HRID);
 
         if (decomposeAction) {
             const inputItemHrid = this.extractItemHrid(decomposeAction.primaryItemHash);

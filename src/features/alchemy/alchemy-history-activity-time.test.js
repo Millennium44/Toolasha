@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ items: {}, prices: {} }));
+const game = vi.hoisted(() => ({ items: {}, prices: {}, actions: [] }));
 
 const store = vi.hoisted(() => {
     const saved = [];
@@ -35,6 +35,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: (hrid) => game.items[hrid] ?? null,
         getCurrentCharacterId: () => 'char-1',
+        getCurrentActions: () => game.actions,
         on: () => {},
         off: () => {},
     },
@@ -81,6 +82,7 @@ beforeEach(() => {
         },
     };
     game.prices = { '/items/shard': 700, '/items/dust': 20 };
+    game.actions = [];
     store.reset();
     for (const tracker of [coinifyHistoryTracker, transmuteHistoryTracker, decomposeHistoryTracker]) {
         tracker.activeSession = null;
@@ -124,15 +126,16 @@ const decomposeCompleted = (currentCount, dust) => ({
     endCharacterItems: [{ id: 'duststack', itemHrid: '/items/dust', count: dust }],
 });
 
-/** @returns {Object} An actions_updated message still running the same transmute */
-const transmuteStillRunning = () => ({
-    endCharacterActions: [
+/** Puts the same running transmute at the front of the mocked queue */
+const transmuteStillRunning = () => {
+    game.actions = [
         {
             actionHrid: '/actions/alchemy/transmute',
             primaryItemHash: 'char-1::/item_locations/inventory::/items/gem::0',
+            ordinal: 0,
         },
-    ],
-});
+    ];
+};
 
 describe('a session records when it was last seen acting', () => {
     test('a new session starts with its activity time at its start', async () => {
@@ -176,7 +179,8 @@ describe('a session records when it was last seen acting', () => {
         await transmuteHistoryTracker.startSession('/items/gem', START);
 
         vi.setSystemTime(START + 2 * HOUR);
-        await transmuteHistoryTracker.handleActionsUpdated(transmuteStillRunning());
+        transmuteStillRunning();
+        await transmuteHistoryTracker.handleActionsUpdated();
 
         expect(transmuteHistoryTracker.activeSession.id).toBe(`transmute_${START}`);
         expect(transmuteHistoryTracker.activeSession.lastActivityTime).toBe(START + 2 * HOUR);
