@@ -32,6 +32,7 @@ class ActionFilter {
         this.filterInput = null; // Reference to the input element
         this.sortButton = null; // Reference to the sort toggle button
         this.modeButton = null; // Reference to the profit mode toggle button
+        this.tickButton = null; // Reference to the "+1 tick" toggle button
         this.noResultsMessage = null; // Reference to "No matching actions" message
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
@@ -41,6 +42,7 @@ class ActionFilter {
         this.refreshButton = null; // Reference to the manual price refresh button
         this._priceRefreshInFlight = false; // Guards against a second click while fetching
         this._updateModeBtn = null;
+        this._updateTickBtn = null;
         this._updateCraftBtn = null;
         this._updateSortBtn = null;
         // Mobile-only collapsible row — see injectFilterInput(). Desktop never
@@ -71,13 +73,17 @@ class ActionFilter {
         this.unregisterHandlers.push(
             config.onSettingChange('profitCalc_pricingMode', () => {
                 if (this._updateModeBtn) this._updateModeBtn();
+                // The tick button dims under Conservative mode, so a mode change
+                // can flip its effective state even though the setting itself didn't move
+                if (this._updateTickBtn) this._updateTickBtn();
             })
         );
-        // The patient tick is changed from the settings panel, not the Mode button,
-        // so nothing else re-renders the open profit sections for it
+        // The patient tick can be changed from the settings panel as well as the
+        // toggle button below, so nothing else re-renders the open profit sections for it
         this.unregisterHandlers.push(
             config.onSettingChange('profitCalc_patientTick', async () => {
                 if (this._updateModeBtn) this._updateModeBtn();
+                if (this._updateTickBtn) this._updateTickBtn();
                 await this._refreshProfitDisplays();
             })
         );
@@ -98,6 +104,7 @@ class ActionFilter {
         this.unregisterHandlers.push(
             config.onSettingsLoaded(() => {
                 if (this._updateModeBtn) this._updateModeBtn();
+                if (this._updateTickBtn) this._updateTickBtn();
                 if (this._updateCraftBtn) this._updateCraftBtn();
                 this._refreshProfitDisplays();
             })
@@ -136,6 +143,7 @@ class ActionFilter {
         this.filterInput = null;
         this.sortButton = null;
         this.modeButton = null;
+        this.tickButton = null;
         this.refreshButton = null;
         this.noResultsMessage = null;
         this.controlsToggle = null;
@@ -328,7 +336,7 @@ class ActionFilter {
         modeBtn.id = 'mwi-action-profit-mode';
         const updateModeBtn = () => {
             const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            modeBtn.textContent = `Mode: ${config.getPricingModeDisplayLabel(mode)}`;
+            modeBtn.textContent = `Mode: ${config.getPricingModeLabel(mode)}`;
         };
         modeBtn.style.cssText = `
             padding: 8px 12px;
@@ -357,6 +365,51 @@ class ActionFilter {
 
         if (!config.getSetting('actionPanel_showPricingMode')) {
             modeBtn.style.display = 'none';
+        }
+
+        // Create "+1 tick" toggle button — a one-click way to flip
+        // profitCalc_patientTick without opening Settings. Sits next to the Mode
+        // button and shares its visibility gate.
+        const tickBtn = document.createElement('button');
+        tickBtn.id = 'mwi-action-tick-toggle';
+        tickBtn.textContent = '+1 tick';
+        const updateTickBtn = () => {
+            const enabled = config.getSetting('profitCalc_patientTick') === true;
+            const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+            const hasPatientSide = mode !== 'conservative';
+            const active = enabled && hasPatientSide;
+            tickBtn.style.borderColor = active ? config.COLOR_ACCENT : 'rgba(255, 255, 255, 0.23)';
+            tickBtn.style.color = active ? config.COLOR_ACCENT : 'inherit';
+            tickBtn.style.opacity = hasPatientSide ? '1' : '0.5';
+            tickBtn.title = hasPatientSide
+                ? 'Patient buys price one tick above the bid and patient sells one tick below the ask'
+                : 'No effect in Conservative mode (Instant Buy / Instant Sell) — there is no patient side for the tick to apply to';
+        };
+        tickBtn.style.cssText = `
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.23);
+            border-radius: 4px;
+            background: transparent;
+            cursor: pointer;
+            font-family: inherit;
+            flex-shrink: 0;
+        `;
+        updateTickBtn();
+        this._updateTickBtn = updateTickBtn;
+        tickBtn.addEventListener('click', () => {
+            const current = config.getSetting('profitCalc_patientTick') === true;
+            config.setSettingValue('profitCalc_patientTick', !current);
+        });
+        if (controlsHost) {
+            controlsHost.appendChild(tickBtn);
+        } else {
+            modeBtn.insertAdjacentElement('afterend', tickBtn);
+        }
+        this.tickButton = tickBtn;
+
+        if (!config.getSetting('actionPanel_showPricingMode')) {
+            tickBtn.style.display = 'none';
         }
 
         // Create craft toggle button
@@ -389,7 +442,7 @@ class ActionFilter {
         if (controlsHost) {
             controlsHost.appendChild(craftBtn);
         } else {
-            modeBtn.insertAdjacentElement('afterend', craftBtn);
+            tickBtn.insertAdjacentElement('afterend', craftBtn);
         }
         this.craftButton = craftBtn;
 
@@ -729,6 +782,11 @@ class ActionFilter {
             this.modeButton = null;
         }
 
+        if (this.tickButton && this.tickButton.parentElement) {
+            this.tickButton.remove();
+            this.tickButton = null;
+        }
+
         if (this.craftButton && this.craftButton.parentElement) {
             this.craftButton.remove();
             this.craftButton = null;
@@ -753,6 +811,7 @@ class ActionFilter {
         this._controlsExpanded = false;
 
         this._updateModeBtn = null;
+        this._updateTickBtn = null;
         this._updateCraftBtn = null;
         this._updateSortBtn = null;
 

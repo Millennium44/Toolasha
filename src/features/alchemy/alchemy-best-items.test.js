@@ -40,14 +40,16 @@ const experience = vi.hoisted(() => ({ totalMultiplier: 1 }));
 
 /** A small live config: values, change listeners and settings-loaded listeners */
 const settings = vi.hoisted(() => ({
-    values: { profitCalc_pricingMode: 'hybrid' },
+    values: { profitCalc_pricingMode: 'hybrid', profitCalc_patientTick: false },
     changeListeners: {},
     loadedListeners: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => true,
+        // 'alchemy_bestItems' and other gates default to on; keys tests care
+        // about (profitCalc_patientTick) read back whatever was written.
+        getSetting: (key) => (Object.hasOwn(settings.values, key) ? settings.values[key] : true),
         COLOR_ACCENT: '#abcdef',
         getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
         getPricingModeLabel: (mode) => `label:${mode}`,
@@ -829,7 +831,7 @@ describe('loadRankings — painting early, resolving the caps in the background'
 
 describe('the pricing mode switch in the modal header', () => {
     beforeEach(() => {
-        settings.values = { profitCalc_pricingMode: 'hybrid' };
+        settings.values = { profitCalc_pricingMode: 'hybrid', profitCalc_patientTick: false };
         settings.changeListeners = {};
         settings.loadedListeners = [];
         game.initClientData = {
@@ -852,10 +854,50 @@ describe('the pricing mode switch in the modal header', () => {
     });
 
     const modeButton = () => bestItems.modal.querySelector('[data-mwi-best-mode-btn]');
+    const tickButton = () => bestItems.modal.querySelector('[data-mwi-best-tick-btn]');
     const profitCell = () => bestItems.modal.querySelector('tbody tr').children[4].textContent;
+    // COLOR_ACCENT is mocked as '#abcdef'.
+    const ACCENT_RGB = '#abcdef';
 
-    test('the button names the current mode', () => {
+    test('the button names the current mode, without a "(+1 tick)" suffix', () => {
         expect(modeButton().textContent).toBe('Mode: label:hybrid');
+    });
+
+    test('the tick button starts off, next to the Mode button', () => {
+        expect(tickButton()).not.toBeNull();
+        expect(tickButton().textContent).toBe('+1 tick');
+        expect(tickButton().style.color).not.toBe(ACCENT_RGB);
+    });
+
+    test('clicking the tick button flips the setting and relabels/restyles it', () => {
+        tickButton().click();
+
+        expect(settings.values.profitCalc_patientTick).toBe(true);
+        expect(tickButton().style.borderColor).toBe(ACCENT_RGB);
+        expect(tickButton().style.color).toBe(ACCENT_RGB);
+
+        tickButton().click();
+        expect(settings.values.profitCalc_patientTick).toBe(false);
+        expect(tickButton().style.color).not.toBe(ACCENT_RGB);
+    });
+
+    test('an external setting change (e.g. the other toggle button, or Settings) updates it too', () => {
+        settings.values.profitCalc_patientTick = true;
+        for (const cb of settings.changeListeners.profitCalc_patientTick) cb(true);
+
+        expect(tickButton().style.color).toBe(ACCENT_RGB);
+    });
+
+    test('Conservative mode dims the tick button and explains why, but leaves it clickable', () => {
+        settings.values.profitCalc_pricingMode = 'conservative';
+        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('conservative');
+
+        expect(tickButton().style.opacity).toBe('0.5');
+        expect(tickButton().title).toMatch(/no effect/i);
+        expect(tickButton().disabled).toBeFalsy();
+
+        tickButton().click();
+        expect(settings.values.profitCalc_patientTick).toBe(true);
     });
 
     test('changing the setting while open re-ranks the rows and relabels the button', async () => {

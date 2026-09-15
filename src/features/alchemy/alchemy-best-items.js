@@ -113,6 +113,7 @@ class AlchemyBestItems {
     handlePricingChange() {
         try {
             this.updateModeButton();
+            this.updateTickButton();
             this.invalidateCache();
             if (this.modal && this.modal.style.display !== 'none') {
                 this.loadRankings(this.currentType);
@@ -126,7 +127,26 @@ class AlchemyBestItems {
         const modeBtn = this.modal?.querySelector('[data-mwi-best-mode-btn]');
         if (!modeBtn) return;
         const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        modeBtn.textContent = `Mode: ${config.getPricingModeDisplayLabel(mode)}`;
+        modeBtn.textContent = `Mode: ${config.getPricingModeLabel(mode)}`;
+    }
+
+    /**
+     * Relabel/restyle the "+1 tick" toggle button to match the current
+     * profitCalc_patientTick and profitCalc_pricingMode settings.
+     */
+    updateTickButton() {
+        const tickBtn = this.modal?.querySelector('[data-mwi-best-tick-btn]');
+        if (!tickBtn) return;
+        const enabled = config.getSetting('profitCalc_patientTick') === true;
+        const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+        const hasPatientSide = mode !== 'conservative';
+        const active = enabled && hasPatientSide;
+        tickBtn.style.borderColor = active ? config.COLOR_ACCENT : '#555';
+        tickBtn.style.color = active ? config.COLOR_ACCENT : '#fff';
+        tickBtn.style.opacity = hasPatientSide ? '1' : '0.5';
+        tickBtn.title = hasPatientSide
+            ? 'Patient buys price one tick above the bid and patient sells one tick below the ask'
+            : 'No effect in Conservative mode (Instant Buy / Instant Sell) — there is no patient side for the tick to apply to';
     }
 
     disable() {
@@ -443,6 +463,23 @@ class AlchemyBestItems {
         });
         header.appendChild(modeBtn);
 
+        // "+1 tick" toggle — one click to flip profitCalc_patientTick without
+        // opening Settings. Shares the Mode button's styling and stays in sync
+        // via subscribePricingChanges()/handlePricingChange().
+        const tickBtn = document.createElement('button');
+        tickBtn.setAttribute('data-mwi-best-tick-btn', 'true');
+        tickBtn.textContent = '+1 tick';
+        tickBtn.style.cssText = `
+            padding: 3px 8px; border-radius: 4px; cursor: pointer;
+            border: 1px solid #555; font-size: 0.75rem; color: #fff;
+            background: transparent; margin-right: 12px;
+        `;
+        tickBtn.addEventListener('click', () => {
+            const current = config.getSetting('profitCalc_patientTick') === true;
+            config.setSettingValue('profitCalc_patientTick', !current);
+        });
+        header.appendChild(tickBtn);
+
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '\u2715';
         closeBtn.style.cssText = 'background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;';
@@ -611,6 +648,7 @@ class AlchemyBestItems {
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
         this.updateModeButton();
+        this.updateTickButton();
     }
 
     renderTable() {

@@ -104,6 +104,7 @@ const wrapper = () => document.querySelector('#mwi-action-controls');
 const filterInput = () => document.querySelector('#mwi-action-filter');
 const sortBtn = () => document.querySelector('#mwi-action-sort-toggle');
 const modeBtn = () => document.querySelector('#mwi-action-profit-mode');
+const tickBtn = () => document.querySelector('#mwi-action-tick-toggle');
 const craftBtn = () => document.querySelector('#mwi-action-craft-toggle');
 const refreshBtn = () => document.querySelector('#mwi-action-price-refresh');
 
@@ -139,16 +140,18 @@ describe('ActionFilter mobile collapsible controls row', () => {
             expect(filterInput()).not.toBeNull();
             expect(sortBtn()).not.toBeNull();
             expect(modeBtn()).not.toBeNull();
+            expect(tickBtn()).not.toBeNull();
             expect(craftBtn()).not.toBeNull();
             expect(refreshBtn()).not.toBeNull();
 
-            // Pin the exact DOM shape of the title bar: input, sort, mode, craft,
-            // refresh, as direct siblings — nothing wrapped, nothing inserted.
+            // Pin the exact DOM shape of the title bar: input, sort, mode, tick,
+            // craft, refresh, as direct siblings — nothing wrapped, nothing inserted.
             const ids = Array.from(title.children).map((el) => el.id);
             expect(ids).toEqual([
                 'mwi-action-filter',
                 'mwi-action-sort-toggle',
                 'mwi-action-profit-mode',
+                'mwi-action-tick-toggle',
                 'mwi-action-craft-toggle',
                 'mwi-action-price-refresh',
                 '', // the skill name div
@@ -158,6 +161,7 @@ describe('ActionFilter mobile collapsible controls row', () => {
             // toggle that does not exist on desktop.
             expect(sortBtn().style.display).not.toBe('none');
             expect(modeBtn().style.display).not.toBe('none');
+            expect(tickBtn().style.display).not.toBe('none');
             expect(craftBtn().style.display).not.toBe('none');
             expect(refreshBtn().style.display).not.toBe('none');
         });
@@ -181,9 +185,10 @@ describe('ActionFilter mobile collapsible controls row', () => {
             expect(wrapper().style.display).toBe('none');
             expect(toggle().getAttribute('aria-expanded')).toBe('false');
 
-            // The four controls are inside the wrapper, not loose on the title bar.
+            // The controls are inside the wrapper, not loose on the title bar.
             expect(wrapper().contains(sortBtn())).toBe(true);
             expect(wrapper().contains(modeBtn())).toBe(true);
+            expect(wrapper().contains(tickBtn())).toBe(true);
             expect(wrapper().contains(craftBtn())).toBe(true);
             expect(wrapper().contains(refreshBtn())).toBe(true);
         });
