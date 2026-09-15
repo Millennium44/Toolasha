@@ -1,9 +1,10 @@
 /**
  * Alchemy panel reader.
  *
- * Reads the open alchemy panel's item rows and turns them into priced inputs
- * and outputs, plus a fingerprint of the panel's visible state so the display
- * only recomputes when something the player can see has moved.
+ * Reads the open alchemy panel's item rows and turns them into structured
+ * inputs and outputs (item hrid, enhancement level, count/drop rate), plus a
+ * fingerprint of the panel's visible state so the display only recomputes
+ * when something the player can see has moved.
  *
  * This module reads; it does not calculate. Every profit figure the panel shows
  * comes from `alchemy-profit-calculator.js`, which works off game data rather
@@ -16,10 +17,8 @@
  * it back up. It was deleted rather than left as a trap.
  */
 
-import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { runningAction } from '../../utils/combat-actions.js';
-import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 
 /**
@@ -146,55 +145,15 @@ class AlchemyProfit {
     }
 
     /**
-     * Calculate the cost to create an enhanced item
-     * @param {string} itemHrid - Item HRID
-     * @param {number} targetLevel - Target enhancement level
-     * @param {string} priceType - 'ask' or 'bid'
-     * @returns {number} Total cost to create the enhanced item
-     */
-    calculateEnhancementCost(itemHrid, targetLevel, priceType) {
-        if (targetLevel === 0) {
-            const priceData = marketAPI.getPrice(itemHrid, 0);
-            return priceType === 'ask' ? priceData?.ask || 0 : priceData?.bid || 0;
-        }
-
-        const gameData = dataManager.getInitClientData();
-        if (!gameData) return 0;
-
-        const itemData = gameData.itemDetailMap?.[itemHrid];
-        if (!itemData) return 0;
-
-        // Start with base item cost
-        const basePriceData = marketAPI.getPrice(itemHrid, 0);
-        let totalCost = priceType === 'ask' ? basePriceData?.ask || 0 : basePriceData?.bid || 0;
-
-        // Add enhancement material costs for each level
-        const enhancementMaterials = itemData.enhancementCosts;
-        if (!enhancementMaterials || !Array.isArray(enhancementMaterials)) {
-            return totalCost;
-        }
-
-        // Enhance from level 0 to targetLevel
-        for (let level = 0; level < targetLevel; level++) {
-            for (const cost of enhancementMaterials) {
-                const materialHrid = cost.itemHrid;
-                const materialCount = cost.count || 0;
-
-                if (materialHrid === '/items/coin') {
-                    totalCost += materialCount; // Coins are 1:1
-                } else {
-                    const materialPrice = marketAPI.getPrice(materialHrid, 0);
-                    const price = priceType === 'ask' ? materialPrice?.ask || 0 : materialPrice?.bid || 0;
-                    totalCost += price * materialCount;
-                }
-            }
-        }
-
-        return totalCost;
-    }
-
-    /**
-     * Extract item data (HRID, prices, count, drop rate) from DOM element
+     * Extract item data (HRID, count, drop rate) from DOM element
+     *
+     * Used to carry raw ask/bid prices (and the calculateEnhancementCost helper
+     * that filled them in when the market had no listing for a +N item), but
+     * nothing read them — extractRequirements()/extractDrops() callers only use
+     * .itemHrid and .enhancementLevel (see tea-recommendation.js and
+     * alchemy-profit-display.js). Removed rather than left to drift further out
+     * of sync with the pricing-mode-aware prices alchemy-profit-calculator.js
+     * actually shows.
      * @param {HTMLElement} element - Item container element
      * @param {boolean} isRequirement - True if this is a requirement (has count), false if drop (has drop rate)
      * @param {number} index - Index in the list (for extracting count/rate text)
@@ -224,41 +183,7 @@ class AlchemyProfit {
                 }
             }
 
-            // Get market prices
-            let ask = 0,
-                bid = 0;
-            if (itemHrid === '/items/coin') {
-                ask = bid = 1;
-            } else {
-                // Check if this is an openable container (loot crate)
-                const itemDetails = dataManager.getItemDetails(itemHrid);
-                if (itemDetails?.isOpenable) {
-                    // Use expected value calculator for openable containers
-                    const containerValue = expectedValueCalculator.getCachedValue(itemHrid);
-                    if (containerValue !== null && containerValue > 0) {
-                        ask = bid = containerValue;
-                    } else {
-                        // Fallback to marketplace if EV not available
-                        const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
-                        ask = priceData?.ask || 0;
-                        bid = priceData?.bid || 0;
-                    }
-                } else {
-                    // Regular item - use marketplace price
-                    const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
-                    if (priceData && (priceData.ask > 0 || priceData.bid > 0)) {
-                        // Market data exists for this specific enhancement level
-                        ask = priceData.ask || 0;
-                        bid = priceData.bid || 0;
-                    } else {
-                        // No market data for this enhancement level - calculate cost
-                        ask = this.calculateEnhancementCost(itemHrid, enhancementLevel, 'ask');
-                        bid = this.calculateEnhancementCost(itemHrid, enhancementLevel, 'bid');
-                    }
-                }
-            }
-
-            const result = { itemHrid, ask, bid, enhancementLevel };
+            const result = { itemHrid, enhancementLevel };
 
             // Get count or drop rate
             if (isRequirement && index >= 0) {
