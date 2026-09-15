@@ -12,6 +12,7 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { isMobileMode } from '../../utils/mobile.js';
+import { nextPricingMode } from '../../utils/pricing-mode.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
 
@@ -315,7 +316,6 @@ class ActionFilter {
         }
 
         // Create profit mode toggle button
-        const PROFIT_MODES = ['hybrid', 'conservative', 'optimistic', 'patientBuy'];
         const modeBtn = document.createElement('button');
         modeBtn.id = 'mwi-action-profit-mode';
         const updateModeBtn = () => {
@@ -336,8 +336,7 @@ class ActionFilter {
         this._updateModeBtn = updateModeBtn;
         modeBtn.addEventListener('click', async () => {
             const current = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-            const nextIndex = (PROFIT_MODES.indexOf(current) + 1) % PROFIT_MODES.length;
-            config.setSettingValue('profitCalc_pricingMode', PROFIT_MODES[nextIndex]);
+            config.setSettingValue('profitCalc_pricingMode', nextPricingMode(current));
             updateModeBtn();
             await this._refreshProfitDisplays();
         });

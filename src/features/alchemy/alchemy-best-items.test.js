@@ -38,8 +38,36 @@ const market = vi.hoisted(() => ({
 
 const experience = vi.hoisted(() => ({ totalMultiplier: 1 }));
 
+/** A small live config: values, change listeners and settings-loaded listeners */
+const settings = vi.hoisted(() => ({
+    values: { profitCalc_pricingMode: 'hybrid' },
+    changeListeners: {},
+    loadedListeners: [],
+}));
+
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, COLOR_ACCENT: '#abcdef' },
+    default: {
+        getSetting: () => true,
+        COLOR_ACCENT: '#abcdef',
+        getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
+        getPricingModeLabel: (mode) => `label:${mode}`,
+        setSettingValue: (key, value) => {
+            settings.values[key] = value;
+            for (const cb of settings.changeListeners[key] || []) cb(value);
+        },
+        onSettingChange: (key, cb) => {
+            (settings.changeListeners[key] ||= []).push(cb);
+            return () => {
+                settings.changeListeners[key] = settings.changeListeners[key].filter((c) => c !== cb);
+            };
+        },
+        onSettingsLoaded: (cb) => {
+            settings.loadedListeners.push(cb);
+            return () => {
+                settings.loadedListeners = settings.loadedListeners.filter((c) => c !== cb);
+            };
+        },
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -795,6 +823,106 @@ describe('loadRankings — painting early, resolving the caps in the background'
 
         expect(bestItems.cachedRankings.coinify).toBe(settled);
         withCapsSpy.mockRestore();
+    });
+});
+
+describe('the pricing mode switch in the modal header', () => {
+    beforeEach(() => {
+        settings.values = { profitCalc_pricingMode: 'hybrid' };
+        settings.changeListeners = {};
+        settings.loadedListeners = [];
+        game.initClientData = {
+            itemDetailMap: {
+                '/items/cheese': { name: 'Cheese', itemLevel: 10, alchemyDetail: { isCoinifiable: true } },
+            },
+        };
+        // The calculator reads the pricing mode live; so does this stand-in
+        calculator.coinify.mockImplementation(() =>
+            profit({ profitPerHour: settings.values.profitCalc_pricingMode === 'hybrid' ? 1000 : 7000 })
+        );
+        bestItems.initialize();
+        bestItems.createModal();
+        bestItems.modal.style.display = 'flex';
+        bestItems.currentType = 'coinify';
+    });
+
+    afterEach(() => {
+        bestItems.disable();
+    });
+
+    const modeButton = () => bestItems.modal.querySelector('[data-mwi-best-mode-btn]');
+    const profitCell = () => bestItems.modal.querySelector('tbody tr').children[4].textContent;
+
+    test('the button names the current mode', () => {
+        expect(modeButton().textContent).toBe('Mode: label:hybrid');
+    });
+
+    test('changing the setting while open re-ranks the rows and relabels the button', async () => {
+        await bestItems.loadRankings('coinify');
+        expect(profitCell()).toContain('1.0K');
+
+        settings.values.profitCalc_pricingMode = 'conservative';
+        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('conservative');
+
+        expect(modeButton().textContent).toBe('Mode: label:conservative');
+        expect(profitCell()).toContain('7.0K');
+    });
+
+    test('a character switch reloading settings re-ranks too', async () => {
+        await bestItems.loadRankings('coinify');
+        settings.values.profitCalc_pricingMode = 'optimistic';
+        for (const cb of settings.loadedListeners) cb();
+
+        expect(modeButton().textContent).toBe('Mode: label:optimistic');
+        expect(profitCell()).toContain('7.0K');
+    });
+
+    test('a closed modal only drops its cache, it does not re-rank', () => {
+        bestItems.cachedRankings.coinify = [{ itemHrid: '/items/old' }];
+        bestItems.modal.style.display = 'none';
+        calculator.coinify.mockClear();
+
+        settings.values.profitCalc_pricingMode = 'conservative';
+        for (const cb of settings.changeListeners.profitCalc_pricingMode) cb('conservative');
+
+        expect(bestItems.cachedRankings).toEqual({});
+        expect(calculator.coinify).not.toHaveBeenCalled();
+    });
+
+    test('clicking the button cycles the mode, wrapping at the end', () => {
+        modeButton().click();
+        expect(settings.values.profitCalc_pricingMode).toBe('conservative');
+        expect(modeButton().textContent).toBe('Mode: label:conservative');
+
+        modeButton().click();
+        modeButton().click();
+        expect(settings.values.profitCalc_pricingMode).toBe('patientBuy');
+
+        modeButton().click();
+        expect(settings.values.profitCalc_pricingMode).toBe('hybrid');
+    });
+
+    test('every listener is removed on disable', () => {
+        for (const key of ['profitCalc_pricingMode', 'profitCalc_pricingNaming', 'profitCalc_patientTick']) {
+            expect(settings.changeListeners[key]).toHaveLength(1);
+        }
+        expect(settings.loadedListeners).toHaveLength(1);
+
+        bestItems.disable();
+
+        for (const key of ['profitCalc_pricingMode', 'profitCalc_pricingNaming', 'profitCalc_patientTick']) {
+            expect(settings.changeListeners[key]).toHaveLength(0);
+        }
+        expect(settings.loadedListeners).toHaveLength(0);
+    });
+
+    test('initializing twice does not stack listeners', () => {
+        bestItems.disable();
+        bestItems.initialize();
+        bestItems.disable();
+        bestItems.initialize();
+
+        expect(settings.changeListeners.profitCalc_pricingMode).toHaveLength(1);
     });
 });
 

@@ -23,6 +23,7 @@ import {
     prefetchLiquidity,
 } from '../../utils/liquidity-cap.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
+import { nextPricingMode } from '../../utils/pricing-mode.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 
@@ -71,6 +72,7 @@ class AlchemyBestItems {
         this.filterProfitMax = null;
         this.filterPriceMin = null;
         this.filterPriceMax = null;
+        this.pricingUnsubscribers = [];
     }
 
     initialize() {
@@ -79,10 +81,57 @@ class AlchemyBestItems {
 
         this.isInitialized = true;
         this.addAlchemyTab();
+        this.subscribePricingChanges();
+    }
+
+    /**
+     * Re-rank when anything that decides the prices changes, so the modal never
+     * shows rows priced under a mode the button no longer names.
+     */
+    subscribePricingChanges() {
+        this.unsubscribePricingChanges();
+        const onPricingChange = () => this.handlePricingChange();
+        this.pricingUnsubscribers = [
+            config.onSettingChange('profitCalc_pricingMode', onPricingChange),
+            config.onSettingChange('profitCalc_pricingNaming', onPricingChange),
+            config.onSettingChange('profitCalc_patientTick', onPricingChange),
+            config.onSettingsLoaded(onPricingChange),
+        ];
+    }
+
+    unsubscribePricingChanges() {
+        for (const unsubscribe of this.pricingUnsubscribers) {
+            if (typeof unsubscribe === 'function') unsubscribe();
+        }
+        this.pricingUnsubscribers = [];
+    }
+
+    /**
+     * A pricing setting changed: relabel the button, drop the stale rankings,
+     * and re-rank the open tab.
+     */
+    handlePricingChange() {
+        try {
+            this.updateModeButton();
+            this.invalidateCache();
+            if (this.modal && this.modal.style.display !== 'none') {
+                this.loadRankings(this.currentType);
+            }
+        } catch (error) {
+            console.error('[AlchemyBestItems] Re-ranking after a pricing change failed:', error);
+        }
+    }
+
+    updateModeButton() {
+        const modeBtn = this.modal?.querySelector('[data-mwi-best-mode-btn]');
+        if (!modeBtn) return;
+        const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+        modeBtn.textContent = `Mode: ${config.getPricingModeLabel(mode)}`;
     }
 
     disable() {
         try {
+            this.unsubscribePricingChanges();
             if (this.tabWatcher) {
                 this.tabWatcher();
                 this.tabWatcher = null;
@@ -377,6 +426,23 @@ class AlchemyBestItems {
         title.setAttribute('data-mwi-best-title', 'true');
         header.appendChild(title);
 
+        // Pricing mode switch — the action-panel toolbar that carries one is not
+        // built on the Alchemy screen. Writing the setting is all it does: the
+        // setting listener relabels it and re-ranks.
+        const modeBtn = document.createElement('button');
+        modeBtn.setAttribute('data-mwi-best-mode-btn', 'true');
+        modeBtn.title = 'Switch the pricing mode used for these rankings';
+        modeBtn.style.cssText = `
+            padding: 3px 8px; border-radius: 4px; cursor: pointer;
+            border: 1px solid #555; font-size: 0.75rem; color: #fff;
+            background: transparent; margin-left: auto; margin-right: 12px;
+        `;
+        modeBtn.addEventListener('click', () => {
+            const current = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+            config.setSettingValue('profitCalc_pricingMode', nextPricingMode(current));
+        });
+        header.appendChild(modeBtn);
+
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '\u2715';
         closeBtn.style.cssText = 'background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;';
@@ -544,6 +610,7 @@ class AlchemyBestItems {
 
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
+        this.updateModeButton();
     }
 
     renderTable() {

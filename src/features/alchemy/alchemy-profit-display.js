@@ -34,6 +34,7 @@ class AlchemyProfitDisplay {
         this.cachedInputField = null; // Cache input field since it gets removed when action starts
         this.speedTimeInputListeners = null; // { field, onInput, onChange } attached to the Repeat input
         this._alchemyTargetLevel = null;
+        this.pricingUnsubscribers = []; // config listener unregister functions
     }
 
     /**
@@ -77,7 +78,35 @@ class AlchemyProfitDisplay {
         };
         dataManager.on('consumables_updated', this.consumablesChangeHandler);
 
+        // Pricing settings: the figures and the "Pricing Mode:" line both follow
+        // them, and the state fingerprint does not include them
+        const onPricingChange = () => this.handlePricingChange();
+        this.pricingUnsubscribers = [
+            config.onSettingChange('profitCalc_pricingMode', onPricingChange),
+            config.onSettingChange('profitCalc_pricingNaming', onPricingChange),
+            config.onSettingChange('profitCalc_patientTick', onPricingChange),
+            config.onSettingsLoaded(onPricingChange),
+        ];
+
         this.isActive = true;
+    }
+
+    /**
+     * A pricing setting changed: relabel the mode line now, then force a rebuild
+     * so the figures are recalculated under the new prices.
+     */
+    handlePricingChange() {
+        try {
+            const modeDiv = this.displayElement?.querySelector?.('[data-mwi-alchemy-pricing-mode]');
+            if (modeDiv) {
+                const mode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+                modeDiv.textContent = `Pricing Mode: ${config.getPricingModeLabel(mode)}`;
+            }
+            this.lastFingerprint = null;
+            if (this.isActive) this.checkAndUpdateDisplay();
+        } catch (error) {
+            console.error('[Alchemy Profit Display] Refresh after a pricing change failed:', error);
+        }
     }
 
     /**
@@ -963,6 +992,7 @@ class AlchemyProfitDisplay {
             color: #888;
             font-size: 0.85em;
         `;
+        modeDiv.setAttribute('data-mwi-alchemy-pricing-mode', 'true');
         modeDiv.textContent = `Pricing Mode: ${modeLabel}`;
         topLevelContent.appendChild(modeDiv);
 
@@ -1488,6 +1518,11 @@ class AlchemyProfitDisplay {
      */
     disable() {
         try {
+            for (const unsubscribe of this.pricingUnsubscribers) {
+                if (typeof unsubscribe === 'function') unsubscribe();
+            }
+            this.pricingUnsubscribers = [];
+
             if (this.updateTimeout) {
                 clearTimeout(this.updateTimeout);
                 this.updateTimeout = null;

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Pricing mode switch in alchemy's Best Items
+
+- The Best Items modal now has a "Mode:" button beside its title, so the pricing mode can be changed without leaving the Alchemy screen; the table and the alchemy panel's "Pricing Mode:" line re-rank and relabel as soon as the mode (or its naming) changes.
+
 <!-- shipped in 3.53.0 -->
 
 ### Node 24 and refreshed development dependencies
