@@ -157,4 +157,16 @@ describe('pricing settings', () => {
             .map(([, handler]) => handler);
         expect(new Set(handlers).size).toBe(1);
     });
+
+    test('the Iron Cow valuation re-prices net worth with the same handler as the pricing mode', () => {
+        configMock.onSettingChange.mockClear();
+        networthFeature.setupEventListeners();
+
+        const calls = configMock.onSettingChange.mock.calls;
+        const handlerFor = (key) => calls.find(([k]) => k === key)?.[1];
+        // Switching Market / Vendor / Best on an Iron Cow character used to leave
+        // net worth on the old figure until an unrelated item or price update
+        expect(handlerFor('profitCalc_ironCowValuation')).toBeTypeOf('function');
+        expect(handlerFor('profitCalc_ironCowValuation')).toBe(handlerFor('networth_pricingMode'));
+    });
 });

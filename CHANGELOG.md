@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Net worth follows the Iron Cow valuation straight away
+
+- Switching an Iron Cow character between Market, Vendor and Best left net worth on the old figure until an unrelated inventory or price update; it now re-prices as soon as the setting changes.
+
 ### Buy and Sell dropdowns say which side is instant
 
 - Each option now names both halves, so either wording shows whether it is an instant trade or a waiting order: "Buy: Ask (instant)", "Buy: Bid +1 (patient)", or "Sell: Patient (ask)" with the Instant/Patient wording.

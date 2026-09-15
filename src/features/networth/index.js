@@ -28,9 +28,14 @@ import goldSourcesPanel from './gold-sources-panel.js';
 import { initExclusions } from './networth-exclusions.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
 import { terminateItemValueWorkerPool } from '../../utils/networth-worker-manager.js';
+import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 
-/** The settings that change what everything is worth, so a change re-prices the lot */
-const PRICING_SETTINGS = ['networth_pricingMode', 'networth_valueSource'];
+/**
+ * The settings that change what everything is worth, so a change re-prices the
+ * lot. The Iron Cow valuation replaces the market price outright on an Iron Cow
+ * character, so it belongs here as much as the pricing mode does.
+ */
+const PRICING_SETTINGS = ['networth_pricingMode', 'networth_valueSource', IRONCOW_VALUATION_SETTING];
 
 class NetworthFeature {
     constructor() {
