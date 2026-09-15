@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     template: null,
     /** combatDropLuck.lastResult */
     luck: null,
+    /** dataManager.getCurrentActions() — the zone(s) actually being fought */
+    currentActions: [],
     /** damageBreakdown() */
     damage: null,
     /** combatBossEta.getEtaText() */
@@ -60,6 +62,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: (hrid) => (hrid === '/actions/combat/chimerical_den' ? { name: 'Chimerical Den' } : null),
         getCurrentCharacterId: () => store.charId,
         getCurrentCharacterName: () => store.charName,
+        // The zone actually being fought, for chatContext to look up the
+        // difficulty tier `combatDropLuck.resultFor` needs
+        getCurrentActions: () => mocks.currentActions,
     },
 }));
 vi.mock('../../utils/character-key.js', () => ({
@@ -79,6 +84,13 @@ vi.mock('../combat/combat-drop-luck.js', () => ({
     default: {
         get lastResult() {
             return mocks.luck;
+        },
+        resultFor({ actionHrid, difficultyTier = 0 } = {}) {
+            const result = mocks.luck;
+            if (!result || !actionHrid) return null;
+            if (result.actionHrid !== actionHrid) return null;
+            if ((result.difficultyTier || 0) !== difficultyTier) return null;
+            return result;
         },
     },
 }));
@@ -119,6 +131,7 @@ const {
 } = await import('./combat-stats-ui.js');
 const { registeredCommands, resetCommands } = await import('../../utils/command-registry.js');
 const { showToast } = await import('../../utils/toast.js');
+const { utf8Length } = await import('../../utils/chat-fill.js');
 const config = (await import('../../core/config.js')).default;
 
 /** Coins only, so the real calculator prices the run without a market */
@@ -150,9 +163,11 @@ beforeEach(() => {
         battleId: 5,
         combatStartTime: null,
         durationSeconds: 600,
+        actionHrid: '/actions/combat/chimerical_den',
         players: [player('LiveGuy', 5000, true)],
     };
     mocks.sessions = [ARCHIVED];
+    mocks.currentActions = [{ actionHrid: '/actions/combat/chimerical_den', difficultyTier: 0 }];
     vi.stubGlobal('alert', vi.fn());
 });
 
@@ -167,6 +182,7 @@ afterEach(() => {
     mocks.luck = null;
     mocks.damage = null;
     mocks.bossEta = null;
+    mocks.currentActions = [];
     store.values.clear();
     store.charId = 'char-1';
     store.charName = 'LiveGuy';
@@ -383,7 +399,7 @@ describe('the Chat button on the popup', () => {
         const input = chatInput();
         let sent = false;
         input.addEventListener('keydown', () => (sent = true));
-        mocks.luck = { percentile: 0.73, players: [] };
+        mocks.luck = { percentile: 0.73, players: [], actionHrid: '/actions/combat/chimerical_den', difficultyTier: 0 };
 
         await combatStatsUI.showPopup();
         chatButton().click();
@@ -395,6 +411,31 @@ describe('the Chat button on the popup', () => {
         expect(document.activeElement).toBe(input);
         expect(sent).toBe(false);
         expect(showToast).not.toHaveBeenCalled();
+    });
+
+    test('luck measured for a different zone is left out, not shown as this one’s', async () => {
+        // The scenario the zone stamp exists for: the tracker's last reading is
+        // still the zone that was just left, and the character is now fighting
+        // somewhere else — sharing it here would attribute it to the wrong zone
+        const input = chatInput();
+        mocks.luck = { percentile: 0.73, players: [], actionHrid: '/actions/combat/somewhere_else', difficultyTier: 0 };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).not.toContain('luck');
+    });
+
+    test('luck for the same zone but a different difficulty tier is also left out', async () => {
+        const input = chatInput();
+        mocks.luck = { percentile: 0.73, players: [], actionHrid: '/actions/combat/chimerical_den', difficultyTier: 3 };
+
+        await combatStatsUI.showPopup();
+        chatButton().click();
+        await flush();
+
+        expect(input.value).not.toContain('luck');
     });
 
     test('with chat hidden, copies the message instead and says so', async () => {
@@ -446,7 +487,7 @@ describe('the chat field picker', () => {
     const box = (key) => popover().querySelector(`input[data-field="${key}"]`);
     const preview = () => popover().querySelector('.toolasha-combat-chat-preview').textContent;
 
-    test('opens with the defaults ticked, a live preview and a character count', async () => {
+    test('opens with the defaults ticked, a live preview and a byte count', async () => {
         await combatStatsUI.showPopup();
         caret().click();
 
@@ -454,7 +495,23 @@ describe('the chat field picker', () => {
         expect(box('luck').checked).toBe(true);
         expect(box('dps').checked).toBe(false);
         expect(preview().startsWith('Combat Stats: 10m duration')).toBe(true);
-        expect(popover().querySelector('.toolasha-combat-chat-count').textContent).toBe(`${preview().length} chars`);
+        expect(popover().querySelector('.toolasha-combat-chat-count').textContent).toBe(
+            `${utf8Length(preview())} / 400 bytes`
+        );
+    });
+
+    test('the count turns red if the message it is handed is over the limit', async () => {
+        // The builder itself always trims to fit, so this proves the counter's
+        // own defensive check reacts rather than trusting that can never happen
+        const over = vi.spyOn(combatStatsUI, 'buildChatMessageFor').mockReturnValue('x'.repeat(500));
+        await combatStatsUI.showPopup();
+        caret().click();
+
+        const counter = popover().querySelector('.toolasha-combat-chat-count');
+        expect(counter.textContent).toBe('500 / 400 bytes');
+        expect(counter.style.color).not.toBe('rgb(153, 153, 153)');
+
+        over.mockRestore();
     });
 
     test('ticking a field updates the preview and is saved for this character only', async () => {
@@ -553,6 +610,27 @@ describe('the "Share combat stats to chat" palette verb', () => {
         vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
         combatStatsUI.initialize();
         expect(await command().run()).toMatch(/^chat not visible — copied \(\d+ chars\)$/);
+    });
+
+    test('a message too long for chat is trimmed to fit, and says so', async () => {
+        // The builder already trims to the game's limit, so this proves
+        // `fillChatInput`'s own safety-net trim — the one that accounts for
+        // whatever the box already had in it — rather than the builder's
+        const over = vi.spyOn(combatStatsUI, 'buildChatMessageFor').mockReturnValue('x'.repeat(500));
+
+        const container = document.createElement('div');
+        container.className = 'Chat_chatInputContainer__x';
+        container.innerHTML = '<input />';
+        document.body.appendChild(container);
+
+        combatStatsUI.initialize();
+        const result = await command().run();
+
+        const value = container.querySelector('input').value;
+        expect(utf8Length(value)).toBeLessThanOrEqual(400);
+        expect(result).toMatch(/^filled chat — trimmed to fit/);
+
+        over.mockRestore();
     });
 });
 

@@ -15,7 +15,16 @@
  *   than printed as "null" or "0".
  * - **Template** — the older `combatStatsChatMessage` setting. When the user has
  *   edited it away from its default it wins, so a custom format keeps working.
+ *
+ * Either way the result is held to the game's own chat limit (400 UTF-8 bytes,
+ * see `chat-fill.js`). The two paths cannot be trimmed the same way: a fields
+ * message can give up whole fields and stay readable, but a custom template's
+ * words are the user's own and cutting one out mid-sentence would be worse
+ * than cutting the tail off — so a template is cut at the byte limit on a
+ * separator boundary and marked with "…" instead.
  */
+
+import { CHAT_MAX_BYTES, utf8Length, trimToFit } from '../../utils/chat-fill.js';
 
 /**
  * A percentile as a rank — "73rd". The same wording as `formatOrdinal` in
@@ -175,6 +184,41 @@ export const DEFAULT_COMBAT_CHAT_FIELDS = COMBAT_CHAT_FIELDS.filter((f) => f.def
 export const COMBAT_CHAT_HEADER = 'Combat Stats';
 
 /**
+ * Which selected field gives way first when the message does not fit the
+ * chat limit, lowest priority first.
+ *
+ * Off-by-default extras go first — nobody who ticked one expected it to cost
+ * the fields everyone has on by default. Luck goes next: real information,
+ * but the one most default fields can do without. What is left is the
+ * default set itself, thinnest first; `duration` is last because a message
+ * of bare numbers with nothing saying how long they cover reads as nothing
+ * at all.
+ *
+ * A field not in this list (there should not be one) is treated as lowest
+ * priority of all, so it drops before anything named here rather than
+ * silently surviving every cut.
+ *
+ * @type {string[]}
+ */
+const CHAT_FIELD_DROP_ORDER = [
+    'bossEta',
+    'topDrop',
+    'kills',
+    'dps',
+    'zone',
+    'keyCosts',
+    'luck',
+    'deathCount',
+    'exp',
+    'dailyConsumableCosts',
+    'encountersPerHour',
+    'dailyIncome',
+    'dailyProfit',
+    'income',
+    'duration',
+];
+
+/**
  * A number through the caller's formatter, or null when it is not a number.
  * @param {Object} ctx - Needs `formatNum`
  * @param {*} value
@@ -227,6 +271,7 @@ export function isCustomChatTemplate(value, defaultValue) {
  * @param {string|null} [context.bossEta] - Boss ETA text, or null
  * @param {string|null} [context.zoneName] - Zone name, or null
  * @param {Array|string|null} [context.template] - A custom template; when given, it decides the message
+ * @param {number} [context.maxBytes] - The chat limit to fit under; defaults to the game's own
  * @returns {string}
  */
 export function buildCombatChatMessage(stats, fields, context = {}) {
@@ -234,6 +279,7 @@ export function buildCombatChatMessage(stats, fields, context = {}) {
     const ctx = {
         priceKey: 'ask',
         formatNum: (n) => String(Math.round(n)),
+        maxBytes: CHAT_MAX_BYTES,
         ...context,
     };
 
@@ -246,13 +292,61 @@ export function buildCombatChatMessage(stats, fields, context = {}) {
         }
     }
 
-    if (ctx.template) return renderTemplate(ctx.template, values);
+    if (ctx.template) return trimToFit(renderTemplate(ctx.template, values), ctx.maxBytes);
 
     const wanted = new Set(fields || DEFAULT_COMBAT_CHAT_FIELDS);
-    const parts = COMBAT_CHAT_FIELDS.filter((f) => wanted.has(f.key) && values[f.key] !== null).map((f) =>
-        f.part(values[f.key])
-    );
-    return parts.length > 0 ? `${COMBAT_CHAT_HEADER}: ${parts.join(' | ')}` : COMBAT_CHAT_HEADER;
+    const included = COMBAT_CHAT_FIELDS.filter((f) => wanted.has(f.key) && values[f.key] !== null);
+    return fitFieldsToLimit(included, values, ctx.maxBytes);
+}
+
+/**
+ * Render the selected fields, dropping the lowest-priority ones until the
+ * message fits — never the highest-priority one present (`duration`, unless
+ * the user never ticked it), since a message with nothing anchoring it to a
+ * run reads as no run at all rather than as a run with less said about it.
+ *
+ * The field that happens to render *first* is not necessarily the one kept:
+ * `zone` sits first in `COMBAT_CHAT_FIELDS` so it reads naturally at the
+ * front of a message, but it is also an off-by-default extra and the lowest
+ * priority there is — it goes before default fields positioned after it.
+ *
+ * @param {Array<Object>} included - `COMBAT_CHAT_FIELDS` entries with a value to show, in message order
+ * @param {Object<string, string|null>} values - Field key to value, from `buildCombatChatMessage`
+ * @param {number} maxBytes
+ * @returns {string}
+ */
+function fitFieldsToLimit(included, values, maxBytes) {
+    const render = (fields) => {
+        const parts = fields.map((f) => f.part(values[f.key]));
+        return parts.length > 0 ? `${COMBAT_CHAT_HEADER}: ${parts.join(' | ')}` : COMBAT_CHAT_HEADER;
+    };
+
+    let remaining = included;
+    let message = render(remaining);
+    if (utf8Length(message) <= maxBytes) return message;
+
+    const rank = (field) => {
+        const index = CHAT_FIELD_DROP_ORDER.indexOf(field.key);
+        return index === -1 ? -1 : index;
+    };
+    // The single highest-priority field present is protected; everything else
+    // is a drop candidate, lowest priority removed first
+    const keep = remaining.reduce((best, field) => (rank(field) > rank(best) ? field : best), remaining[0]);
+    const droppable = remaining.filter((field) => field !== keep).sort((a, b) => rank(a) - rank(b));
+
+    while (utf8Length(message) > maxBytes && droppable.length > 0) {
+        droppable.shift();
+        // Rendered in `COMBAT_CHAT_FIELDS` order, not drop order, so the
+        // message reads the same as it always would with these fields on
+        const keepSet = new Set([keep, ...droppable]);
+        remaining = included.filter((field) => keepSet.has(field));
+        message = render(remaining);
+    }
+
+    // Even the protected field alone does not fit — a pathological case (a
+    // very low byte budget, or a value too long to shorten by dropping
+    // fields), so fall back to the same byte-accurate cut a custom template gets
+    return utf8Length(message) <= maxBytes ? message : trimToFit(message, maxBytes);
 }
 
 /**

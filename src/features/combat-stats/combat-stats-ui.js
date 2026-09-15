@@ -30,7 +30,7 @@ import { formatKeyCostNote, getKeyPricingMode, resolveKeyPricing } from '../../u
 import { shortDuration } from '../../utils/overlay-format.js';
 import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
-import { fillChatOrCopy, describeChatFill } from '../../utils/chat-fill.js';
+import { fillChatOrCopy, describeChatFill, CHAT_MAX_BYTES, utf8Length } from '../../utils/chat-fill.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { showToast } from '../../utils/toast.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
@@ -331,10 +331,19 @@ class CombatStatsUI {
         let dps = null;
         let kills = null;
         let bossEta = null;
+        const actionHrid = combatData?.actionHrid || null;
 
         if (!archived) {
             try {
-                const luck = combatDropLuck?.lastResult;
+                // The tracker's own reading only, and only when it was measured
+                // for the zone this snapshot is actually of — otherwise a zone
+                // switch can share the previous zone's luck under the new one's
+                // name until a battle in the new zone has been analysed
+                const live = (dataManager.getCurrentActions?.() || []).find(
+                    (action) => action.actionHrid === actionHrid
+                );
+                const difficultyTier = Number(live?.difficultyTier) || 0;
+                const luck = combatDropLuck?.resultFor?.({ actionHrid, difficultyTier });
                 if (luck) {
                     const placed = luck.players?.find((player) => player.name === stats.name);
                     if (placed) luckPercentile = placed.percentile;
@@ -362,7 +371,6 @@ class CombatStatsUI {
             }
         }
 
-        const actionHrid = combatData?.actionHrid;
         const zoneName = actionHrid ? dataManager.getActionDetails?.(actionHrid)?.name || null : null;
 
         return {
@@ -401,7 +409,7 @@ class CombatStatsUI {
      */
     async shareStatsToChat(stats, { button = null } = {}) {
         const text = this.buildChatMessageFor(stats);
-        const outcome = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
+        const { outcome, trimmed } = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
 
         if (button) {
             const original = button.textContent;
@@ -410,8 +418,8 @@ class CombatStatsUI {
                 if (button.isConnected) button.textContent = original;
             }, 1200);
         }
-        if (outcome !== 'chat') {
-            showToast(describeChatFill(outcome), { kind: outcome === 'failed' ? 'error' : 'info' });
+        if (outcome !== 'chat' || trimmed) {
+            showToast(describeChatFill(outcome, null, trimmed), { kind: outcome === 'failed' ? 'error' : 'info' });
         }
         return { text, outcome };
     }
@@ -431,9 +439,9 @@ class CombatStatsUI {
         if (!stats) return 'no combat data yet';
 
         const text = this.buildChatMessageFor(stats, { archived: null, combatData });
-        const outcome = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
+        const { outcome, trimmed } = await fillChatOrCopy(text, { logPrefix: 'Combat Stats' });
         if (outcome === 'failed') throw new Error('could not fill chat or copy');
-        return describeChatFill(outcome, text.length);
+        return describeChatFill(outcome, text.length, trimmed);
     }
 
     /**
@@ -981,9 +989,13 @@ class CombatStatsUI {
         counter.style.cssText = 'margin-top: 4px; color: #999; text-align: right;';
 
         const refresh = () => {
+            // The builder already trims to the game's own limit, so this is
+            // what actually lands in chat — not a raw length nobody can act on
             const text = this.buildChatMessageFor(stats);
             preview.textContent = text;
-            counter.textContent = `${text.length} chars`;
+            const bytes = utf8Length(text);
+            counter.textContent = `${bytes} / ${CHAT_MAX_BYTES} bytes`;
+            counter.style.color = bytes > CHAT_MAX_BYTES ? config.getSetting('color_loss') || '#f87171' : '#999';
         };
 
         if (this.customChatTemplate()) {

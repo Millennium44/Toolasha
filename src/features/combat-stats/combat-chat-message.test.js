@@ -17,6 +17,7 @@ import {
     normalizeChatFields,
     ordinalRank,
 } from './combat-chat-message.js';
+import { utf8Length } from '../../utils/chat-fill.js';
 
 const stats = (overrides = {}) => ({
     name: 'Me',
@@ -110,6 +111,54 @@ describe('buildCombatChatMessage — optional fields', () => {
 
     test('nothing ticked is just the header', () => {
         expect(buildCombatChatMessage(stats(), [])).toBe('Combat Stats');
+    });
+});
+
+describe('buildCombatChatMessage — the chat byte limit', () => {
+    const all = COMBAT_CHAT_FIELDS.map((f) => f.key);
+
+    test('a message that already fits is untouched', () => {
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, { maxBytes: 400 });
+        expect(utf8Length(message)).toBeLessThanOrEqual(400);
+        expect(message).not.toContain('…');
+    });
+
+    test('off-by-default extras go before luck, and luck before the default set', () => {
+        // Every field on, and a budget wide enough for the defaults but not for
+        // the extras and luck too — the bare-header case flushed out that this
+        // was ever miscounted before
+        const message = buildCombatChatMessage(stats(), all, {
+            dps: 1234.4,
+            kills: 17,
+            bossEta: '3 to boss · ~2m left',
+            zoneName: 'Chimerical Den',
+            luckPercentile: 0.73,
+            maxBytes: 90,
+        });
+        expect(message).not.toMatch(/DPS|kills|zone|Chimerical Den|to boss|luck/);
+        expect(utf8Length(message)).toBeLessThanOrEqual(90);
+    });
+
+    test('never drops the first field, even under a very tight budget', () => {
+        // 30 bytes fits "Combat Stats: 2h 5m duration" (28) alone but not that
+        // plus a second field, so every other default field gives way to it
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, { maxBytes: 30 });
+        expect(message).toBe('Combat Stats: 2h 5m duration');
+    });
+
+    test('a budget too tight even for the first field cuts it on a byte boundary with an ellipsis', () => {
+        const message = buildCombatChatMessage(stats(), DEFAULT_COMBAT_CHAT_FIELDS, { maxBytes: 10 });
+        expect(utf8Length(message)).toBeLessThanOrEqual(10);
+        expect(message.endsWith('…')).toBe(true);
+    });
+
+    test('an emoji-bearing formatted number still respects the byte budget, not the character count', () => {
+        // A pathological formatter to prove the trim counts bytes, not `.length`
+        const message = buildCombatChatMessage(stats(), ['income'], {
+            formatNum: () => '💬'.repeat(60),
+            maxBytes: 50,
+        });
+        expect(utf8Length(message)).toBeLessThanOrEqual(50);
     });
 });
 

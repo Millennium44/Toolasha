@@ -13,6 +13,7 @@ import {
 } from './loot-log-stats.js';
 import lootLogHistory from './loot-log-history.js';
 import { showToast } from '../../utils/toast.js';
+import { utf8Length } from '../../utils/chat-fill.js';
 
 vi.mock('../../utils/toast.js', () => ({ showToast: vi.fn() }));
 
@@ -399,6 +400,51 @@ describe('buildLootLogChatLine, the chat-button text', () => {
 
     test('an empty entry is an empty string', () => {
         expect(buildLootLogChatLine(null, resolve)).toBe('');
+    });
+});
+
+describe('buildLootLogChatLine, the chat byte limit', () => {
+    const resolve = {
+        itemInfo: (hrid) => {
+            if (hrid === '/items/coin') return { name: 'Coins', askPerItem: 1, bidPerItem: 1 };
+            if (hrid === '/items/log') return { name: 'Log', askPerItem: 40, bidPerItem: 30 };
+            if (hrid === '/items/branch') return { name: 'Branch', askPerItem: 5, bidPerItem: 4 };
+            return { name: hrid.split('/').pop(), askPerItem: 0, bidPerItem: 0 };
+        },
+        actionName: () => 'Tree',
+    };
+    const entry = {
+        actionHrid: '/actions/woodcutting/tree',
+        actionCount: 100,
+        drops: { '/items/coin': 50, '/items/log': 10, '/items/branch': 2, '/items/leaf': 7 },
+    };
+
+    test('under budget is untouched', () => {
+        const line = buildLootLogChatLine(entry, resolve);
+        expect(utf8Length(line)).toBeLessThanOrEqual(400);
+        expect(line).not.toContain('…');
+    });
+
+    test('too many named drops to fit: the "+N more" count grows as fewer are named', () => {
+        // Wide enough for the action, one drop, the total and "+N more" —
+        // narrower than what three named drops would take
+        const line = buildLootLogChatLine(entry, { ...resolve, maxBytes: 55 });
+        expect(utf8Length(line)).toBeLessThanOrEqual(55);
+        expect(line).toMatch(/\+\d+ more/);
+        expect(line.startsWith('Tree × 100')).toBe(true);
+    });
+
+    test('no room to name any drop: "+N more" alone, not zero drops silently', () => {
+        const line = buildLootLogChatLine(entry, { ...resolve, maxBytes: 30 });
+        expect(utf8Length(line)).toBeLessThanOrEqual(30);
+        expect(line).toContain('+4 more');
+        expect(line).not.toMatch(/Log|Coins|Branch/);
+    });
+
+    test('a budget too tight even for the action name cuts on a byte boundary with an ellipsis', () => {
+        const line = buildLootLogChatLine(entry, { ...resolve, maxBytes: 8 });
+        expect(utf8Length(line)).toBeLessThanOrEqual(8);
+        expect(line.endsWith('…')).toBe(true);
     });
 });
 

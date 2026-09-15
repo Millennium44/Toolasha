@@ -14,7 +14,7 @@ import { formatKMB, numberFormatter, formatDateTime } from '../../utils/formatte
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { signedPercent } from '../../utils/overlay-format.js';
-import { fillChatOrCopy, describeChatFill } from '../../utils/chat-fill.js';
+import { fillChatOrCopy, describeChatFill, CHAT_MAX_BYTES, utf8Length, trimToFit } from '../../utils/chat-fill.js';
 import { showToast } from '../../utils/toast.js';
 import {
     buildGatheringSession,
@@ -161,10 +161,15 @@ export function buildLootLogSummaryText(logData, { itemInfo, actionName, profit 
  * @param {Function} resolve.actionName - `(actionHrid) => string`
  * @param {{askProfit: number, bidProfit: number}|null} [resolve.profit]
  * @param {number|null} [resolve.luckPercentile] - In [0, 1]; omitted when not finite
- * @param {number} [resolve.topDrops=3] - How many drops to name
+ * @param {number} [resolve.topDrops=3] - How many drops to name, at most — cut further to
+ *   fit `maxBytes` before anything else gives way
+ * @param {number} [resolve.maxBytes] - The chat limit to fit under; defaults to the game's own
  * @returns {string}
  */
-export function buildLootLogChatLine(logData, { itemInfo, actionName, profit, luckPercentile, topDrops = 3 } = {}) {
+export function buildLootLogChatLine(
+    logData,
+    { itemInfo, actionName, profit, luckPercentile, topDrops = 3, maxBytes = CHAT_MAX_BYTES } = {}
+) {
     if (!logData) return '';
 
     let askTotal = 0;
@@ -179,21 +184,46 @@ export function buildLootLogChatLine(logData, { itemInfo, actionName, profit, lu
     }
     drops.sort((a, b) => b.ask - a.ask || b.count - a.count);
 
-    const parts = [`${actionName(logData.actionHrid)} × ${numberFormatter(logData.actionCount || 0)}`];
-    if (drops.length > 0) {
-        const named = drops.slice(0, topDrops).map((drop) => `${numberFormatter(drop.count)} ${drop.name}`);
-        const more = drops.length - named.length;
-        parts.push(named.join(', ') + (more > 0 ? ` +${more} more` : ''));
-    }
-    parts.push(`total ${formatKMB(askTotal)}/${formatKMB(bidTotal)}`);
-    if (profit) parts.push(`profit ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`);
-    if (Number.isFinite(luckPercentile)) {
+    const luckPart = () => {
+        if (!Number.isFinite(luckPercentile)) return null;
         const rank = Math.min(Math.max(Math.round(luckPercentile * 100), 1), 99);
         const lastTwo = rank % 100;
         const suffix = lastTwo >= 11 && lastTwo <= 13 ? 'th' : { 1: 'st', 2: 'nd', 3: 'rd' }[rank % 10] || 'th';
-        parts.push(`${rank}${suffix} pct luck`);
+        return `${rank}${suffix} pct luck`;
+    };
+
+    // The action and its count lead every version of the line and never move;
+    // everything else is rebuilt as `shown` shrinks
+    const build = (shown) => {
+        const parts = [`${actionName(logData.actionHrid)} × ${numberFormatter(logData.actionCount || 0)}`];
+        if (drops.length > 0) {
+            const named = drops.slice(0, shown).map((drop) => `${numberFormatter(drop.count)} ${drop.name}`);
+            const more = drops.length - named.length;
+            const namedText = named.join(', ');
+            const dropsPart = more > 0 ? (namedText ? `${namedText} +${more} more` : `+${more} more`) : namedText;
+            if (dropsPart) parts.push(dropsPart);
+        }
+        parts.push(`total ${formatKMB(askTotal)}/${formatKMB(bidTotal)}`);
+        if (profit) parts.push(`profit ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`);
+        const luck = luckPart();
+        if (luck) parts.push(luck);
+        return parts.join(' | ');
+    };
+
+    // Named drops are the one part with room to give: cut how many are listed
+    // before anything else — the totals, profit and luck stay put — until the
+    // line fits, or there is nothing left to name
+    let shown = topDrops;
+    let text = build(shown);
+    while (utf8Length(text) > maxBytes && shown > 0) {
+        shown -= 1;
+        text = build(shown);
     }
-    return parts.join(' | ');
+
+    // Even naming nothing does not fit — the action name itself, or the totals,
+    // are the overflow now, so fall back to the same byte-accurate cut the
+    // combat chat message uses for its own worst case
+    return utf8Length(text) <= maxBytes ? text : trimToFit(text, maxBytes);
 }
 
 /**
@@ -1059,10 +1089,10 @@ class LootLogStats {
         });
         if (!text) return 'failed';
 
-        const outcome = await fillChatOrCopy(text, { logPrefix: 'LootLogStats' });
+        const { outcome, trimmed } = await fillChatOrCopy(text, { logPrefix: 'LootLogStats' });
         this.flashCopyButton(button, outcome === 'failed' ? '⚠' : '✓');
-        if (outcome !== 'chat') {
-            showToast(describeChatFill(outcome), { kind: outcome === 'failed' ? 'error' : 'info' });
+        if (outcome !== 'chat' || trimmed) {
+            showToast(describeChatFill(outcome, null, trimmed), { kind: outcome === 'failed' ? 'error' : 'info' });
         }
         return outcome;
     }
