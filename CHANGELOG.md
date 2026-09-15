@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One-click +1 tick toggle
+
+- A "+1 tick" button now sits beside the Mode button in the skill toolbar and in alchemy's Best Items header, so patient pricing one tick inside the spread can be switched without opening Settings. It highlights when on and dims under Conservative, where there is no patient side to move.
+
 ### Alchemy history sessions no longer split when something else is queued
 
 - Coinify, decompose and transmute history decided from each queue update alone, so queuing any other action ended a running session and queuing a second alchemy item switched the session to it. They now follow the action actually running in the full queue.
