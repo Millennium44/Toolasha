@@ -159,6 +159,24 @@ function followsGlobalMode(resolved, mode) {
 }
 
 /**
+ * Passed to `describeCraft` as its `mode` option in place of an explicit
+ * `ask`/`bid`, so the recipe's materials price through `computeBestCraftingPlan`'s
+ * "no raw mode" branch — the one that hands `getItemPrice` no explicit `mode` and
+ * lets it resolve the side from the global pricing setting instead, which is also
+ * the only branch that carries the patient +1 tick (`getItemPrice` only ticks when
+ * `!mode`). `computeBestCraftingPlan` only special-cases the literal strings
+ * `'ask'`, `'bid'` and `'average'`; anything else falls through to that branch, so
+ * this can be any other truthy string.
+ *
+ * Without this, `describeCraft` was always called with a resolved side
+ * (`'ask'`/`'bid'`), which `computeBestCraftingPlan` forwards to `getItemPrice` as
+ * an explicit `mode` — the exact-book-price path, never ticked. That silently
+ * left key-craft materials priced a tick behind the key's own market quote
+ * whenever the `craft` setting followed the global buy side.
+ */
+const FOLLOWS_GLOBAL_MODE = 'followsGlobalMode';
+
+/**
  * What one key costs, bought and crafted, and which of those the setting takes.
  *
  * Either side may be missing and the result is still usable: a key with no
@@ -221,11 +239,16 @@ export function describeKeyCost(keyHrid, options = {}) {
 
     if (!keyHrid) return empty;
 
-    const buyPrice = buyPriceFor(keyHrid, mode, followsGlobalMode(resolved, mode));
+    const followsGlobal = followsGlobalMode(resolved, mode);
+    const buyPrice = buyPriceFor(keyHrid, mode, followsGlobal);
 
     let craft = null;
     try {
-        craft = describeCraft(keyHrid, { mode, memo: options.memo, actionStats: options.actionStats });
+        craft = describeCraft(keyHrid, {
+            mode: followsGlobal ? FOLLOWS_GLOBAL_MODE : mode,
+            memo: options.memo,
+            actionStats: options.actionStats,
+        });
     } catch (error) {
         console.error(`[KeyCost] Could not cost the recipe for ${keyHrid}:`, error);
     }

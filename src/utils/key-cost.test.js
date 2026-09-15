@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { patientTickPrice } from './patient-tick.js';
 
 const settings = vi.hoisted(() => ({ keyPricingMode: 'ask', pricingMode: 'hybrid', patientTick: false }));
 
@@ -61,10 +62,29 @@ vi.mock('./market-data.js', () => ({
     // ask, patientBuy at the bid.
     getPricingMode: (context, side) =>
         context === 'profit' && side === 'buy' && settings.pricingMode === 'patientBuy' ? 'bid' : 'ask',
+    // Mirrors the two things the real getItemPrice does that this suite cares
+    // about: an explicit `mode` is an exact book side, and a caller that hands
+    // no `mode` at all (computeBestCraftingPlan's "follow global" branch, taken
+    // whenever `mode` is not the literal 'ask'/'bid'/'average') resolves the side
+    // from the pricing-mode setting and picks up the patient tick. That second
+    // branch is what `describeKeyCost` now routes a key's own craft materials
+    // through whenever the key setting follows the global buy side.
     getItemPrice: (hrid, options = {}) => {
         const entry = market.book[hrid];
         if (!entry) return null;
-        return entry[options.mode || 'ask'] ?? entry.ask ?? null;
+
+        const resolvedMode =
+            options.mode || (settings.pricingMode === 'patientBuy' && options.side === 'buy' ? 'bid' : 'ask');
+        const basis = entry[resolvedMode] != null ? resolvedMode : 'ask';
+        const price = entry[basis];
+        if (price == null) return null;
+        if (options.mode || options.context !== 'profit') return price;
+
+        return patientTickPrice(price, options.side || 'sell', basis, {
+            ask: entry.ask,
+            bid: entry.bid,
+            itemHrid: hrid,
+        });
     },
 }));
 
@@ -168,6 +188,49 @@ describe('patient +1 tick', () => {
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(nextPriceUp(15000));
         settings.patientTick = false;
         expect(getKeyUnitCost(ENTRY_KEY)).toBe(15000);
+    });
+
+    test('the craft basis ticks its recipe materials too, not just a keyless market quote', () => {
+        settings.keyPricingMode = 'craft';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTick = true;
+
+        // Essence bids at 900; a patient buy queues one tick above it
+        const tickedEssence = nextPriceUp(900);
+        expect(tickedEssence).toBeGreaterThan(900);
+        expect(describeKeyCost(CHEST_KEY).craftCost).toBe(5 * tickedEssence);
+    });
+
+    test('with the tick off, the craft basis prices its materials at the exact bid', () => {
+        settings.keyPricingMode = 'craft';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTick = false;
+
+        expect(describeKeyCost(CHEST_KEY).craftCost).toBe(4500);
+    });
+
+    test('an explicit mode on the craft basis prices materials at the exact side, never ticked', () => {
+        settings.keyPricingMode = 'craft';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTick = true;
+
+        // The setting resolves to 'bid'; asking for 'ask' explicitly is asking
+        // for an exact book price, both for the key and for its materials
+        expect(describeKeyCost(CHEST_KEY, { mode: 'ask' }).craftCost).toBe(5000);
+    });
+
+    test('synced also ticks the craft-cost comparison, even though its basis stays market', () => {
+        // 'synced' stays on the market basis for the KEY itself, but the same
+        // "does this mode follow the global side" gate governs the materials
+        // priced for the buy-vs-craft comparison, so they tick the same way
+        // craft's materials do
+        settings.keyPricingMode = 'synced';
+        settings.pricingMode = 'patientBuy';
+        settings.patientTick = true;
+
+        const cost = describeKeyCost(CHEST_KEY);
+        expect(cost.basis).toBe('market');
+        expect(cost.craftCost).toBe(5 * nextPriceUp(900));
     });
 
     test('an explicit bid setting is an exact side and is never moved', () => {
