@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.53.0 -->
+
 ### Node 24 and refreshed development dependencies
 
 - CI and the release workflows now run on Node 24 (Node 20 reached end of life), `package.json` requires Node 22.12+, and `.nvmrc` records the version.
@@ -2968,39 +2970,35 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.53.0](https://github.com/Millennium44/Toolasha/compare/v3.52.1...v3.53.0) (2026-09-15)
 
-
 ### Features
 
-* load chartjs-plugin-datalabels 2.2.0 ([ccc62aa](https://github.com/Millennium44/Toolasha/commit/ccc62aa804b8eb971cdedd2db84c12e9d1b9e39d))
-
+- load chartjs-plugin-datalabels 2.2.0 ([ccc62aa](https://github.com/Millennium44/Toolasha/commit/ccc62aa804b8eb971cdedd2db84c12e9d1b9e39d))
 
 ### Documentation
 
-* add CC BY-NC-SA 4.0 license ([1441a83](https://github.com/Millennium44/Toolasha/commit/1441a837ed5f87dbcec314821009723f2a139bf2))
-* changelog for the merged Dependabot updates ([bd573f7](https://github.com/Millennium44/Toolasha/commit/bd573f7268830ae1c62df66cd542f23cd2c9609e))
-* changelog for the repository housekeeping ([77be675](https://github.com/Millennium44/Toolasha/commit/77be675c4b7956f20b05bcce38641d1cbf0cb071))
-* correct repository setup details ([f568fa3](https://github.com/Millennium44/Toolasha/commit/f568fa343137ef9421bbdcb4f146f3484180a8c5))
-
+- add CC BY-NC-SA 4.0 license ([1441a83](https://github.com/Millennium44/Toolasha/commit/1441a837ed5f87dbcec314821009723f2a139bf2))
+- changelog for the merged Dependabot updates ([bd573f7](https://github.com/Millennium44/Toolasha/commit/bd573f7268830ae1c62df66cd542f23cd2c9609e))
+- changelog for the repository housekeeping ([77be675](https://github.com/Millennium44/Toolasha/commit/77be675c4b7956f20b05bcce38641d1cbf0cb071))
+- correct repository setup details ([f568fa3](https://github.com/Millennium44/Toolasha/commit/f568fa343137ef9421bbdcb4f146f3484180a8c5))
 
 ### Tests
 
-* give the config source-scan test a 30 s timeout ([8bbd016](https://github.com/Millennium44/Toolasha/commit/8bbd016cf35b26df3b90afc8577053b976cd8cc5))
-* make house, enhancement-storage and risk-of-ruin tests pass on Vitest 5 ([cf5b4db](https://github.com/Millennium44/Toolasha/commit/cf5b4dbebf27fc60fa8fe75ab9f482c5991a39aa))
-
+- give the config source-scan test a 30 s timeout ([8bbd016](https://github.com/Millennium44/Toolasha/commit/8bbd016cf35b26df3b90afc8577053b976cd8cc5))
+- make house, enhancement-storage and risk-of-ruin tests pass on Vitest 5 ([cf5b4db](https://github.com/Millennium44/Toolasha/commit/cf5b4dbebf27fc60fa8fe75ab9f482c5991a39aa))
 
 ### Miscellaneous Chores
 
-* add Dependabot update checks ([9e68e3b](https://github.com/Millennium44/Toolasha/commit/9e68e3bd118bfa3f3084c733b4dbfea5914f0091))
-* **deps:** bump @rollup/plugin-commonjs from 25.0.8 to 29.0.3 ([#114](https://github.com/Millennium44/Toolasha/issues/114)) ([deb02e3](https://github.com/Millennium44/Toolasha/commit/deb02e3c61bb5e697807463c3278893dc8466c0d))
-* **deps:** bump @rollup/plugin-node-resolve from 15.3.1 to 16.0.3 ([#112](https://github.com/Millennium44/Toolasha/issues/112)) ([57624da](https://github.com/Millennium44/Toolasha/commit/57624da42c6fba2b60ee55d3cf04c35c9aa292e1))
-* **deps:** bump eslint from 9.39.5 to 10.10.0 ([#115](https://github.com/Millennium44/Toolasha/issues/115)) ([3c63c38](https://github.com/Millennium44/Toolasha/commit/3c63c388eb4765d977a60f77f16d9d1cb0c016e2))
-* **deps:** bump the development-dependencies group across 1 directory with 2 updates ([#117](https://github.com/Millennium44/Toolasha/issues/117)) ([a23dc31](https://github.com/Millennium44/Toolasha/commit/a23dc31e02a401d0749078337edae4eb16360f99))
-* **deps:** bump the github-actions group across 1 directory with 4 updates ([#116](https://github.com/Millennium44/Toolasha/issues/116)) ([dc0407c](https://github.com/Millennium44/Toolasha/commit/dc0407c59945b4bb31146fead3eed6fe1597f7a6))
-* **deps:** bump vitest from 4.1.11 to 5.0.0 ([#113](https://github.com/Millennium44/Toolasha/issues/113)) ([e12e1ca](https://github.com/Millennium44/Toolasha/commit/e12e1ca3e7a2fc9a021d21d2462bd886e52d1b2b))
-* give Dependabot commits Conventional Commit subjects ([12d818a](https://github.com/Millennium44/Toolasha/commit/12d818a3f0de31e23a174960e352ce39c086ae97))
-* improve repository maintenance ([350792c](https://github.com/Millennium44/Toolasha/commit/350792ccfd142a0d6d454afc6fa3a0c64ed7ce89))
-* run CI on Node 24 and refresh the dev dependency lockfile ([582a2a6](https://github.com/Millennium44/Toolasha/commit/582a2a6cfc452708cea5a202cb1daf809e1ecf8a))
-* upgrade @rollup/plugin-terser to 1.0.0 ([f659122](https://github.com/Millennium44/Toolasha/commit/f659122a0c88b14537d615d5b7f6fda5add89f30))
+- add Dependabot update checks ([9e68e3b](https://github.com/Millennium44/Toolasha/commit/9e68e3bd118bfa3f3084c733b4dbfea5914f0091))
+- **deps:** bump @rollup/plugin-commonjs from 25.0.8 to 29.0.3 ([#114](https://github.com/Millennium44/Toolasha/issues/114)) ([deb02e3](https://github.com/Millennium44/Toolasha/commit/deb02e3c61bb5e697807463c3278893dc8466c0d))
+- **deps:** bump @rollup/plugin-node-resolve from 15.3.1 to 16.0.3 ([#112](https://github.com/Millennium44/Toolasha/issues/112)) ([57624da](https://github.com/Millennium44/Toolasha/commit/57624da42c6fba2b60ee55d3cf04c35c9aa292e1))
+- **deps:** bump eslint from 9.39.5 to 10.10.0 ([#115](https://github.com/Millennium44/Toolasha/issues/115)) ([3c63c38](https://github.com/Millennium44/Toolasha/commit/3c63c388eb4765d977a60f77f16d9d1cb0c016e2))
+- **deps:** bump the development-dependencies group across 1 directory with 2 updates ([#117](https://github.com/Millennium44/Toolasha/issues/117)) ([a23dc31](https://github.com/Millennium44/Toolasha/commit/a23dc31e02a401d0749078337edae4eb16360f99))
+- **deps:** bump the github-actions group across 1 directory with 4 updates ([#116](https://github.com/Millennium44/Toolasha/issues/116)) ([dc0407c](https://github.com/Millennium44/Toolasha/commit/dc0407c59945b4bb31146fead3eed6fe1597f7a6))
+- **deps:** bump vitest from 4.1.11 to 5.0.0 ([#113](https://github.com/Millennium44/Toolasha/issues/113)) ([e12e1ca](https://github.com/Millennium44/Toolasha/commit/e12e1ca3e7a2fc9a021d21d2462bd886e52d1b2b))
+- give Dependabot commits Conventional Commit subjects ([12d818a](https://github.com/Millennium44/Toolasha/commit/12d818a3f0de31e23a174960e352ce39c086ae97))
+- improve repository maintenance ([350792c](https://github.com/Millennium44/Toolasha/commit/350792ccfd142a0d6d454afc6fa3a0c64ed7ce89))
+- run CI on Node 24 and refresh the dev dependency lockfile ([582a2a6](https://github.com/Millennium44/Toolasha/commit/582a2a6cfc452708cea5a202cb1daf809e1ecf8a))
+- upgrade @rollup/plugin-terser to 1.0.0 ([f659122](https://github.com/Millennium44/Toolasha/commit/f659122a0c88b14537d615d5b7f6fda5add89f30))
 
 ## [3.52.1](https://github.com/Millennium44/Toolasha/compare/v3.52.0...v3.52.1) (2026-09-14)
 
