@@ -10,6 +10,7 @@ import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
+import { BADGE_MODE_SETTING, showsItemPriceBadges } from './inventory-badge-mode.js';
 import inventorySort from './inventory-sort.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -33,9 +34,9 @@ class InventoryBadgePrices {
      * Setup setting change listener (always active, even when feature is disabled)
      */
     setupSettingListener() {
-        // Listen for main toggle changes
-        config.onSettingChange('invBadgePrices', (enabled) => {
-            if (enabled) {
+        // Listen for main toggle changes — one value of the shared badge setting
+        config.onSettingChange(BADGE_MODE_SETTING, () => {
+            if (showsItemPriceBadges()) {
                 this.initialize();
             } else {
                 this.disable();
@@ -59,7 +60,7 @@ class InventoryBadgePrices {
      * Initialize badge prices feature
      */
     initialize() {
-        if (!config.getSetting('invBadgePrices')) {
+        if (!showsItemPriceBadges()) {
             return;
         }
 

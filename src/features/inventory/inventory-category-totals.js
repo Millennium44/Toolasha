@@ -12,6 +12,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import inventorySort from './inventory-sort.js';
+import { stackBadgeValueKey } from './inventory-badge-mode.js';
 import { formatKMB } from '../../utils/formatters.js';
 import * as dom from '../../utils/dom.js';
 
@@ -134,14 +135,11 @@ class InventoryCategoryTotals {
             return;
         }
 
-        // Derive pricing mode from inventory sort controls (same source as badges)
-        let valueKey;
-        if (inventorySort.currentMode === 'none') {
-            const badgesOnNone = config.getSettingValue('invSort_badgesOnNone', 'None');
-            valueKey = badgesOnNone !== 'None' ? badgesOnNone.toLowerCase() + 'Value' : 'askValue';
-        } else {
-            valueKey = inventorySort.currentMode + 'Value';
-        }
+        // Derive pricing mode from inventory sort controls (same source as badges).
+        // Totals are shown whether or not badges are, so a mode that draws no
+        // badge still falls back to the sorted side, or to Ask when unsorted
+        const mode = inventorySort.currentMode;
+        const valueKey = stackBadgeValueKey(mode) ?? (mode === 'none' ? 'askValue' : `${mode}Value`);
 
         for (const categoryDiv of inventoryElem.children) {
             const labelEl = categoryDiv.querySelector('[class*="Inventory_label"]');

@@ -12,6 +12,7 @@ import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import estimatedListingAge from './estimated-listing-age.js';
+import { showsMyListingsAge, formatListingTimestamp } from './listing-age-display.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 
@@ -196,7 +197,7 @@ class ListingPriceDisplay {
 
         // Handle order book updates to re-render with populated cache (if Top Order Age enabled)
         let orderBookHandler = null;
-        if (config.getSetting('market_showTopOrderAge')) {
+        if (showsMyListingsAge()) {
             orderBookHandler = (data) => {
                 if (data.marketItemOrderBooks) {
                     // Delay re-render to let estimatedListingAge populate cache first (race condition)
@@ -454,7 +455,7 @@ class ListingPriceDisplay {
         // Check if we should mark as fully processed
         let fullyProcessed = true;
 
-        if (config.getSetting('market_showTopOrderAge')) {
+        if (showsMyListingsAge()) {
             // Only mark as processed if cache has data for all listings
             for (const listing of Object.values(this.allListings)) {
                 // The cache entry is `{data, lastUpdated}`; the book is one level
@@ -498,7 +499,7 @@ class ListingPriceDisplay {
 
         // Create "Top Order Age" header (if setting enabled)
         let topOrderAgeHeader = null;
-        if (config.getSetting('market_showTopOrderAge')) {
+        if (showsMyListingsAge()) {
             topOrderAgeHeader = document.createElement('th');
             topOrderAgeHeader.classList.add('mwi-listing-price-header');
             topOrderAgeHeader.textContent = 'Top Order Age';
@@ -512,7 +513,7 @@ class ListingPriceDisplay {
 
         // Create "Listed" header (if setting enabled)
         let listedHeader = null;
-        if (config.getSetting('market_showListingAge')) {
+        if (showsMyListingsAge()) {
             listedHeader = document.createElement('th');
             listedHeader.classList.add('mwi-listing-price-header');
             listedHeader.textContent = 'Listed';
@@ -998,7 +999,7 @@ class ListingPriceDisplay {
                 row.insertBefore(topOrderCell, insertBeforeCell);
 
                 // Create Top Order Age cell (if setting enabled)
-                if (config.getSetting('market_showTopOrderAge')) {
+                if (showsMyListingsAge()) {
                     const topOrderAgeCell = this.createTopOrderAgeCell(
                         itemHrid,
                         enhancementLevel,
@@ -1010,7 +1011,7 @@ class ListingPriceDisplay {
                 }
 
                 // Create Total Price cell
-                const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
+                const currentInsertIndex = insertIndex + (showsMyListingsAge() ? 2 : 1);
                 const totalPriceCell = this.createTotalPriceCell(
                     itemHrid,
                     isSell,
@@ -1023,7 +1024,7 @@ class ListingPriceDisplay {
                 row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
 
                 // Create Listed Age cell (if setting enabled)
-                if (config.getSetting('market_showListingAge') && dataset.createdTimestamp) {
+                if (showsMyListingsAge() && dataset.createdTimestamp) {
                     const listedInsertIndex = currentInsertIndex + 1;
                     const listedAgeCell = this.createListedAgeCell(dataset.createdTimestamp);
                     row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
@@ -1051,7 +1052,7 @@ class ListingPriceDisplay {
                 );
                 row.dataset.mwiTopOrderPrice =
                     topOrderPriceVal !== null && topOrderPriceVal >= 0 ? String(topOrderPriceVal) : '';
-                if (config.getSetting('market_showTopOrderAge')) {
+                if (showsMyListingsAge()) {
                     const ageMs = this._getTopOrderAgeMs(itemHrid, enhancementLevel, isSell, ownListingIds, price);
                     row.dataset.mwiTopOrderAgeMs = ageMs !== null ? String(ageMs) : '';
                 }
@@ -1060,16 +1061,16 @@ class ListingPriceDisplay {
                 const topOrderCell = this.createPlaceholderCell();
                 row.insertBefore(topOrderCell, insertBeforeCell);
 
-                if (config.getSetting('market_showTopOrderAge')) {
+                if (showsMyListingsAge()) {
                     const topOrderAgeCell = this.createPlaceholderCell();
                     row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
                 }
 
-                const currentInsertIndex = insertIndex + (config.getSetting('market_showTopOrderAge') ? 2 : 1);
+                const currentInsertIndex = insertIndex + (showsMyListingsAge() ? 2 : 1);
                 const totalPriceCell = this.createPlaceholderCell();
                 row.insertBefore(totalPriceCell, row.children[currentInsertIndex]);
 
-                if (config.getSetting('market_showListingAge')) {
+                if (showsMyListingsAge()) {
                     const listedInsertIndex = currentInsertIndex + 1;
                     const listedAgeCell = this.createPlaceholderCell();
                     row.insertBefore(listedAgeCell, row.children[listedInsertIndex]);
@@ -1298,10 +1299,11 @@ class ListingPriceDisplay {
      * @returns {HTMLElement} Table cell element
      */
     createListedAgeCell(createdTimestamp) {
-        // Calculate age in milliseconds
+        // Written the way the listing-age format setting asks — this column used
+        // to format elapsed time unconditionally, so picking Date/Time did
+        // nothing here while the order book honoured it
         const createdDate = new Date(createdTimestamp);
-        const ageMs = Date.now() - createdDate.getTime();
-        return createStyledCell(formatRelativeTime(ageMs), config.COLOR_TEXT_SECONDARY); // Gray for time display
+        return createStyledCell(formatListingTimestamp(createdDate.getTime()), config.COLOR_TEXT_SECONDARY);
     }
 
     /**

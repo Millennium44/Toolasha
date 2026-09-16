@@ -192,7 +192,7 @@ describe('one-time rewrites of superseded schema defaults', () => {
 
 describe('one-time migration of the patient tick to one switch per side', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_key_migrations_v1_${KEY}`;
+    const FLAG = `settings_key_migrations_v2_${KEY}`;
     const SIDES = ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
 
     /** A saved map from before the split, as an existing user's would be */
@@ -299,7 +299,7 @@ describe('one-time migration of the patient tick to one switch per side', () => 
  */
 describe('one-time merge of the labyrinth sim budget', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_key_migrations_v1_${KEY}`;
+    const FLAG = `settings_key_migrations_v2_${KEY}`;
 
     /** A saved map as an existing user's would be, before the merge */
     const oldBudget = (overrides = {}) => {
@@ -438,6 +438,165 @@ describe('one-time merge of the labyrinth sim budget', () => {
         expect(reloaded.labyrinthSimCaps.value).toBe('precision');
         expect(stored.get(`json:${KEY}`).labyrinthSimCaps.value).toBe('precision');
         expect(stored.get(`json:${KEY}`).labyrinthSimMaxHours.value).toBe(96);
+        expect(stored.get(FLAG)).toBe(true);
+    });
+});
+
+describe('one-time migration of the three listing-age switches to one choice', () => {
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_key_migrations_v2_${KEY}`;
+
+    /**
+     * A saved map from before the merge.
+     * @param {boolean} listed - market_showListingAge
+     * @param {boolean} topOrder - market_showTopOrderAge
+     * @param {boolean} orderBook - market_showEstimatedListingAge
+     * @returns {Object} The stored settings map
+     */
+    const oldAge = (listed, topOrder, orderBook) => ({
+        market_showListingAge: { id: 'market_showListingAge', type: 'checkbox', isTrue: listed },
+        market_showTopOrderAge: { id: 'market_showTopOrderAge', type: 'checkbox', isTrue: topOrder },
+        market_showEstimatedListingAge: {
+            id: 'market_showEstimatedListingAge',
+            type: 'checkbox',
+            isTrue: orderBook,
+        },
+    });
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test.each([
+        [false, false, false, 'off'],
+        [true, false, false, 'myListings'],
+        [false, true, false, 'myListings'], // The top-order column is a My Listings age column
+        [true, true, false, 'myListings'],
+        [false, false, true, 'orderBook'],
+        [true, false, true, 'both'],
+        [false, true, true, 'both'],
+        [true, true, true, 'both'],
+    ])('listed=%s topOrder=%s orderBook=%s becomes %s', async (listed, topOrder, orderBook, expected) => {
+        stored.set(`json:${KEY}`, oldAge(listed, topOrder, orderBook));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe(expected);
+        expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe(expected);
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('the old entries are left where they are, for an older build on the same profile', async () => {
+        stored.set(`json:${KEY}`, oldAge(true, false, false));
+
+        await settingsStorage.loadSettings();
+
+        expect(stored.get(`json:${KEY}`).market_showListingAge.isTrue).toBe(true);
+    });
+
+    test('a fresh install writes nothing and keeps the schema default', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('orderBook');
+        expect(stored.get(`json:${KEY}`)?.market_listingAge).toBeUndefined();
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('runs once: a later load does not overwrite a re-picked value', async () => {
+        stored.set(`json:${KEY}`, oldAge(true, false, true));
+        await settingsStorage.loadSettings();
+
+        const map = stored.get(`json:${KEY}`);
+        map.market_listingAge = { id: 'market_listingAge', type: 'select', value: 'off' };
+        stored.set(`json:${KEY}`, map);
+
+        const settings = await settingsStorage.loadSettings();
+        expect(settings.market_listingAge.value).toBe('off');
+    });
+
+    test('a refused write leaves the flag unset, so the next load migrates again', async () => {
+        stored.set(`json:${KEY}`, oldAge(true, false, true));
+        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('both');
+        expect(stored.get(`json:${KEY}`).market_listingAge).toBeUndefined();
+        expect(stored.get(FLAG)).toBeUndefined();
+
+        const reloaded = await settingsStorage.loadSettings();
+
+        expect(reloaded.market_listingAge.value).toBe('both');
+        expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe('both');
+        expect(stored.get(FLAG)).toBe(true);
+    });
+});
+
+describe('one-time migration of the inventory badge switches to one choice', () => {
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_key_migrations_v2_${KEY}`;
+
+    /**
+     * A saved map from before the merge.
+     * @param {boolean} whenSorting - invSort_showBadges
+     * @param {string} onNone - invSort_badgesOnNone ('None' | 'Ask' | 'Bid')
+     * @param {boolean} itemPrices - invBadgePrices
+     * @returns {Object} The stored settings map
+     */
+    const oldBadges = (whenSorting, onNone, itemPrices) => ({
+        invSort_showBadges: { id: 'invSort_showBadges', type: 'checkbox', isTrue: whenSorting },
+        invSort_badgesOnNone: { id: 'invSort_badgesOnNone', type: 'select', value: onNone },
+        invBadgePrices: { id: 'invBadgePrices', type: 'checkbox', isTrue: itemPrices },
+    });
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test.each([
+        [false, 'None', false, 'off'], // 'None' doubled as the off switch
+        [true, 'None', false, 'sorting'],
+        [false, 'Ask', false, 'alwaysAsk'],
+        [false, 'Bid', false, 'alwaysBid'],
+        [true, 'Ask', false, 'alwaysAsk'],
+        [false, 'None', true, 'prices'],
+        // Both badge systems on: the stack value wins, because the category and
+        // custom-tab totals add up exactly what it shows
+        [true, 'None', true, 'sorting'],
+        [false, 'Bid', true, 'alwaysBid'],
+    ])('sorting=%s onNone=%s prices=%s becomes %s', async (whenSorting, onNone, itemPrices, expected) => {
+        stored.set(`json:${KEY}`, oldBadges(whenSorting, onNone, itemPrices));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.inv_valueBadges.value).toBe(expected);
+        expect(stored.get(`json:${KEY}`).inv_valueBadges.value).toBe(expected);
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('a fresh install keeps the schema default and stores nothing', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.inv_valueBadges.value).toBe('off');
+        expect(stored.get(`json:${KEY}`)?.inv_valueBadges).toBeUndefined();
+    });
+
+    test('a refused write leaves the flag unset, so the next load migrates again', async () => {
+        stored.set(`json:${KEY}`, oldBadges(true, 'None', false));
+        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.inv_valueBadges.value).toBe('sorting');
+        expect(stored.get(FLAG)).toBeUndefined();
+
+        const reloaded = await settingsStorage.loadSettings();
+
+        expect(reloaded.inv_valueBadges.value).toBe('sorting');
         expect(stored.get(FLAG)).toBe(true);
     });
 });

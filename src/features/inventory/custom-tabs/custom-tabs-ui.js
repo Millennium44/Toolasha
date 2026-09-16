@@ -14,6 +14,7 @@ import config from '../../../core/config.js';
 import domObserver from '../../../core/dom-observer.js';
 import dataManager from '../../../core/data-manager.js';
 import inventorySort from '../inventory-sort.js';
+import { stackBadgeValueKey } from '../inventory-badge-mode.js';
 import inventoryBadgeManager from '../inventory-badge-manager.js';
 // Lazy accessor: in production multi-bundle builds, the Market bundle can't statically import
 // from Combat (it loads first). Resolve at runtime through the bundle bridge, with a fallback
@@ -1893,17 +1894,7 @@ export default class CustomTabsUI {
             }
 
             // Sum badge values across all tiles in this section
-            const valueKey = (() => {
-                const mode = inventorySort.currentMode;
-                if (mode === 'ask' || mode === 'bid') {
-                    return config.getSetting('invSort_showBadges') ? mode + 'Value' : null;
-                }
-                if (mode === 'none') {
-                    const badgesOnNone = config.getSettingValue('invSort_badgesOnNone', 'None');
-                    return badgesOnNone !== 'None' ? badgesOnNone.toLowerCase() + 'Value' : null;
-                }
-                return null;
-            })();
+            const valueKey = stackBadgeValueKey(inventorySort.currentMode);
             if (valueKey) {
                 const total = sectionTiles.reduce((sum, t) => sum + (parseFloat(t.dataset[valueKey]) || 0), 0);
                 if (total > 0) {
@@ -1941,17 +1932,7 @@ export default class CustomTabsUI {
 
             // Show rolled-up value on the collapsed header (own items + all descendants)
             // Must peek BEFORE claiming tiles so values are still in the map.
-            const valueKey = (() => {
-                const mode = inventorySort.currentMode;
-                if (mode === 'ask' || mode === 'bid') {
-                    return config.getSetting('invSort_showBadges') ? mode + 'Value' : null;
-                }
-                if (mode === 'none') {
-                    const badgesOnNone = config.getSettingValue('invSort_badgesOnNone', 'None');
-                    return badgesOnNone !== 'None' ? badgesOnNone.toLowerCase() + 'Value' : null;
-                }
-                return null;
-            })();
+            const valueKey = stackBadgeValueKey(inventorySort.currentMode);
             if (valueKey) {
                 const total = this._peekTileValue(tab, tileMap, valueKey);
                 if (total > 0) {

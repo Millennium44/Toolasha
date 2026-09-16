@@ -1006,12 +1006,13 @@ function registerFeatures() {
             async: false,
             // A badge is only drawn for an item worth something, so the anchor is
             // not "an inventory" but "an item the manager has priced above zero"
-            healthCheck: () =>
-                whenSetting('invBadgePrices', () => {
-                    const items = '[class*="Inventory_items"] [class*="Item_itemContainer"]';
-                    if (!anyPositiveDataset(items, 'askPrice')) return null;
-                    return Boolean(document.querySelector('.mwi-badge-price-ask, .mwi-badge-price-bid'));
-                }),
+            healthCheck: () => {
+                // One value of the shared badge setting, not a switch of its own
+                if (config.getSettingValue('inv_valueBadges', 'off') !== 'prices') return true;
+                const items = '[class*="Inventory_items"] [class*="Item_itemContainer"]';
+                if (!anyPositiveDataset(items, 'askPrice')) return null;
+                return Boolean(document.querySelector('.mwi-badge-price-ask, .mwi-badge-price-bid'));
+            },
         },
         {
             key: 'invCategoryTotals',

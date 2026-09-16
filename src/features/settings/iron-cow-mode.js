@@ -30,9 +30,7 @@ export const IRON_COW_SETTINGS = new Set([
     'market_tradeHistory',
     'market_tradeHistoryComparisonMode',
     'market_listingPricePrecision',
-    'market_showListingAge',
-    'market_showTopOrderAge',
-    'market_showEstimatedListingAge',
+    'market_listingAge',
     'market_listingAgeFormat',
     // market_listingTimeFormat / market_listingDateFormat are deliberately absent: the
     // market_ prefix is legacy naming, and they are general date/time display preferences
@@ -68,10 +66,8 @@ export const IRON_COW_SETTINGS = new Set([
     'labyrinthShopPrices',
     // Inventory value display
     'invWorth',
-    'invBadgePrices',
     'invCategoryTotals',
-    'invSort_showBadges',
-    'invSort_badgesOnNone',
+    'inv_valueBadges',
     'invSort_netOfTax',
     // Net worth
     'networth',

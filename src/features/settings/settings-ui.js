@@ -628,20 +628,45 @@ class SettingsUI {
     }
 
     /**
-     * Apply disabled/greyed-out state for settings controlled by a parent checkbox
-     * Reads disabledBy from schema and applies opacity + pointer-events
+     * Whether a setting another row depends on is currently on.
+     *
+     * A checkbox parent is its own boolean. A select parent counts as on unless
+     * it is sitting on its own off value, which is how the merged rows (listing
+     * age, inventory value badges) say "nothing to show" — a child of one of
+     * those is exactly as pointless as a child of an unticked checkbox.
+     *
+     * @param {string} parentId - The setting id named by `disabledBy`/`requires`
+     * @returns {boolean}
+     */
+    _parentSettingIsOn(parentId) {
+        const entry = this.config.settingsMap[parentId];
+        if (!entry) return false;
+        if (Object.hasOwn(entry, 'isTrue')) return Boolean(entry.isTrue);
+        const value = entry.value;
+        return Boolean(value) && value !== 'off' && value !== 'none' && value !== 'None';
+    }
+
+    /**
+     * Apply disabled/greyed-out state for settings controlled by a parent setting.
+     *
+     * Two directions, and they are opposites. `disabledBy` greys a row while its
+     * parent is ON — the enhancement bench under auto-detect, where the parent
+     * takes the decision away. `requires` greys a row while its parent is OFF —
+     * the dungeon-tracker and portrait-DPS sub-rows, which configure something
+     * that is not running. Both only paint; neither writes a value.
      */
     applyDisabledByState() {
         for (const group of Object.values(settingsGroups)) {
             for (const [settingId, settingDef] of Object.entries(group.settings)) {
-                if (!settingDef.disabledBy) continue;
+                if (!settingDef.disabledBy && !settingDef.requires) continue;
 
-                const parentEntry = this.config.settingsMap[settingDef.disabledBy];
-                const parentValue = parentEntry?.isTrue ?? false;
+                const disabled = settingDef.disabledBy
+                    ? this._parentSettingIsOn(settingDef.disabledBy)
+                    : !this._parentSettingIsOn(settingDef.requires);
                 const settingEl = document.querySelector(`.toolasha-setting[data-setting-id="${settingId}"]`);
                 if (!settingEl) continue;
 
-                if (parentValue) {
+                if (disabled) {
                     settingEl.style.opacity = '0.4';
                     settingEl.style.pointerEvents = 'none';
                 } else {
@@ -992,8 +1017,8 @@ class SettingsUI {
                     typeof settingDef.options === 'function' ? settingDef.options() : settingDef.options || [];
                 const optionsHTML = options
                     .map((option) => {
-                        const optValue = typeof option === 'object' ? option.value : option;
-                        const optLabel = typeof option === 'object' ? option.label : option;
+                        // Every select in the schema states {value, label}
+                        const { value: optValue, label: optLabel } = option;
                         const selected = optValue === value ? 'selected' : '';
                         return `<option value="${optValue}" ${selected}>${liveOptionLabel(
                             settingId,
@@ -2351,10 +2376,12 @@ class SettingsUI {
             this.config.applyColorSettings();
         }
 
-        // Update disabled state for dependent settings
-        if (isCheckboxType) {
-            this.applyDisabledByState();
+        // Update disabled state for dependent settings. A select can be a parent
+        // too — the merged listing-age and value-badge rows both have children
+        // that are pointless while the parent sits on its off value
+        this.applyDisabledByState();
 
+        if (isCheckboxType) {
             // When enhanceSim_autoDetect is toggled, manage gear input display
             if (settingId === 'enhanceSim_autoDetect') {
                 if (value) {

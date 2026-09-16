@@ -1556,12 +1556,23 @@ export const settingsGroups = {
                 max: 4,
                 help: 'Decimal places for the abbreviated Top Order and Total prices on My Listings (e.g. 1.2M vs 1.23M)',
             },
-            market_showListingAge: {
-                id: 'market_showListingAge',
-                label: 'Market: Show listing age on My Listings',
-                type: 'checkbox',
-                default: false,
-                help: 'Display how long ago each listing was created on the My Listings tab (e.g., "3h 45m"). Requires "Market: Show prices on individual listings" to be on.',
+            market_listingAge: {
+                id: 'market_listingAge',
+                label: 'Market: Where to show listing age',
+                type: 'select',
+                default: 'orderBook',
+                options: [
+                    { value: 'off', label: 'Nowhere' },
+                    { value: 'myListings', label: 'My Listings only' },
+                    { value: 'orderBook', label: 'Order book only' },
+                    { value: 'both', label: 'Both' },
+                ],
+                help:
+                    'How old each listing is, on the order book (estimated from listing IDs) and/or on My Listings. ' +
+                    'The My Listings side adds two columns: "Listed", the exact age of your own listing, and "Top ' +
+                    'Order Age", the estimated age of the top competing order — both live in the table that "Market: ' +
+                    'Show prices on individual listings" builds, so that setting has to be on for either to appear. ' +
+                    'The format below applies to every one of them.',
             },
             market_badgeOnlyWhenFinished: {
                 id: 'market_badgeOnlyWhenFinished',
@@ -1588,20 +1599,6 @@ export const settingsGroups = {
                 ],
                 help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\u2019s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
             },
-            market_showTopOrderAge: {
-                id: 'market_showTopOrderAge',
-                label: 'Market: Show top order age on My Listings',
-                type: 'checkbox',
-                default: false,
-                help: 'Display estimated age of the top competing order for each of your listings. Requires "Market: Show prices on individual listings" to be on.',
-            },
-            market_showEstimatedListingAge: {
-                id: 'market_showEstimatedListingAge',
-                label: 'Market: Show estimated age on order book',
-                type: 'checkbox',
-                default: true,
-                help: 'Estimates creation time for all market listings using listing ID interpolation',
-            },
             market_listingAgeFormat: {
                 id: 'market_listingAgeFormat',
                 label: 'Market: Listing age display format',
@@ -1611,7 +1608,8 @@ export const settingsGroups = {
                     { value: 'elapsed', label: 'Elapsed Time (e.g., "3h 45m")' },
                     { value: 'datetime', label: 'Date/Time (e.g., "01-13 14:30")' },
                 ],
-                help: 'Choose how to display listing creation times',
+                help: 'How every listing age above is written — on the order book and on My Listings alike',
+                requires: 'market_listingAge',
             },
             market_listingTimeFormat: {
                 id: 'market_listingTimeFormat',
@@ -1866,37 +1864,37 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
-            invSort_showBadges: {
-                id: 'invSort_showBadges',
-                label: 'Show stack value badges when sorting by Ask/Bid',
-                type: 'checkbox',
-                default: false,
-            },
-            invSort_badgesOnNone: {
-                id: 'invSort_badgesOnNone',
-                label: 'Badge type when "None" sort is selected',
+            inv_valueBadges: {
+                id: 'inv_valueBadges',
+                label: 'Value badges on inventory items',
                 type: 'select',
-                default: 'None',
-                options: ['None', 'Ask', 'Bid'],
+                default: 'off',
+                options: [
+                    { value: 'off', label: 'None' },
+                    { value: 'sorting', label: 'Stack value, only while sorting by Ask/Bid' },
+                    { value: 'alwaysAsk', label: 'Stack value always (Ask when not sorting)' },
+                    { value: 'alwaysBid', label: 'Stack value always (Bid when not sorting)' },
+                    { value: 'prices', label: 'Per-item ask and bid prices on the icons' },
+                ],
+                help:
+                    'Stack value is one number per stack — what the whole pile is worth — priced on the side you are ' +
+                    'sorting by, or on the side chosen here when the sort is None. It is also what the category ' +
+                    'totals and the custom-tab section totals add up, so turning it off empties those. Per-item ask ' +
+                    'and bid prices are the other badge: two small unit prices on the icon itself, and no stack ' +
+                    'value. The two overlap on the same tile, so this is one choice rather than two switches.',
             },
             invSort_netOfTax: {
                 id: 'invSort_netOfTax',
                 label: 'Show badge values net of market tax',
                 type: 'checkbox',
                 default: false,
+                requires: 'inv_valueBadges',
             },
             invSort_sortEquipment: {
                 id: 'invSort_sortEquipment',
                 label: 'Enable sorting for Equipment category',
                 type: 'checkbox',
                 default: false,
-            },
-            invBadgePrices: {
-                id: 'invBadgePrices',
-                label: 'Show price badges on item icons',
-                type: 'checkbox',
-                default: false,
-                help: 'Displays per-item ask and bid prices on inventory items',
             },
             invCategoryTotals: {
                 id: 'invCategoryTotals',
@@ -2268,6 +2266,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Displays dungeon progress panel with wave counter, run history, and statistics',
+                requires: 'dungeonTracker',
             },
             dungeonTrackerChatAnnotations: {
                 id: 'dungeonTrackerChatAnnotations',
@@ -2275,6 +2274,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds colored timer annotations to "Key counts" messages (green if fast, red if slow)',
+                requires: 'dungeonTracker',
             },
             dungeonTrackerAverageWindow: {
                 id: 'dungeonTrackerAverageWindow',
@@ -2583,6 +2583,7 @@ export const settingsGroups = {
                     { value: 'below', label: 'Below the portrait' },
                 ],
                 help: 'Above sits over the name; below sits under the ability bar',
+                requires: 'portraitDps',
             },
             portraitDps_timeToKill: {
                 id: 'portraitDps_timeToKill',
@@ -2590,6 +2591,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds "dead ~8s" to each enemy tile — its remaining health over the rate it is being hit at. Dashed until the fight has both a health reading and a rate; nothing is ever extrapolated from a guess',
+                requires: 'portraitDps',
             },
             portraitDps_waveClear: {
                 id: 'portraitDps_waveClear',
@@ -2597,6 +2599,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'One "wave ~19s" figure on the topmost enemy tile: every living enemy\'s remaining health over the party\'s combined rate. Dashed until every health bar is known and a rate exists — a countdown that silently excluded a monster would lie',
+                requires: 'portraitDps',
             },
             portraitDps_manaRunway: {
                 id: 'portraitDps_manaRunway',
@@ -2604,6 +2607,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds "mana ~40s" to a player\'s meter when their mana is draining and under a minute from empty, measured net of regeneration and refills. Steady or rising mana shows a dash — there is nothing to warn about',
+                requires: 'portraitDps',
             },
             portraitDps_sustain: {
                 id: 'portraitDps_sustain',
@@ -2611,6 +2615,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds "taken 220/s" from the incoming-damage tracker, and "net −35/s" where regeneration is measurable — red when the net is negative, which is the reading that says a zone is not survivable',
+                requires: 'portraitDps',
             },
             portraitDps_accuracy: {
                 id: 'portraitDps_accuracy',
@@ -2618,6 +2623,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds "94% hit · 31% crit" to each player\'s meter once 20 swings back it. Fewer swings show a dash rather than one fight\'s luck dressed up as a rate',
+                requires: 'portraitDps',
             },
             portraitDps_enemyOutgoing: {
                 id: 'portraitDps_enemyOutgoing',
@@ -2625,6 +2631,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'A red "hits for 210/s" line on each enemy tile — what that enemy is doing to the party this fight, from the incoming-damage split. Dashed until a hit can be pinned to that enemy',
+                requires: 'portraitDps',
             },
             portraitDps_enrage: {
                 id: 'portraitDps_enrage',
@@ -2632,6 +2639,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help: 'Adds "enrage 1:42" counting down when the monster\'s sheet carries an enrage timer and spawn time, amber under 30 seconds. Monsters whose sheet states no timer show a dash',
+                requires: 'portraitDps',
             },
             dungeonPace: {
                 id: 'dungeonPace',

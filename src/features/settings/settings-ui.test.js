@@ -118,6 +118,14 @@ const schema = {
         settings: {
             actionBar_enabled: { id: 'actionBar_enabled', label: 'Action bar', type: 'checkbox', default: true },
             combatSim: { id: 'combatSim', label: 'Combat simulator', type: 'checkbox', default: true },
+            dungeonTracker: { id: 'dungeonTracker', label: 'Dungeon tracker', type: 'checkbox', default: false },
+            dungeonTrackerUI: {
+                id: 'dungeonTrackerUI',
+                label: 'Dungeon tracker panel',
+                type: 'checkbox',
+                default: true,
+                requires: 'dungeonTracker',
+            },
             spawnCensus: { id: 'spawnCensus', label: 'Spawn Census', type: 'checkbox', default: false },
             spawnCensusExport: {
                 id: 'spawnCensusExport',
@@ -1589,6 +1597,40 @@ describe('the Buy and Sell pricing rows', () => {
 
         expect(settingsUI.pricingRowUnsubscribes).toEqual([]);
         for (const callbacks of Object.values(mocks.listeners)) expect(callbacks).toEqual([]);
+    });
+});
+
+describe('a sub-setting whose parent feature is off', () => {
+    // `disabledBy` greys a row while its parent is ON (the enhancement bench
+    // under auto-detect). A sub-feature is the opposite case: the row configures
+    // something that is not running, and used to render as live as any other
+    test('renders greyed and unclickable, and goes back to normal when the parent is switched on', () => {
+        mocks.settingsMap['dungeonTracker'].isTrue = false;
+        drawPanel();
+
+        expect(row('dungeonTrackerUI').style.opacity).toBe('0.4');
+        expect(row('dungeonTrackerUI').style.pointerEvents).toBe('none');
+
+        mocks.settingsMap['dungeonTracker'].isTrue = true;
+        settingsUI.applyDisabledByState();
+
+        expect(row('dungeonTrackerUI').style.opacity).toBe('');
+        expect(row('dungeonTrackerUI').style.pointerEvents).toBe('');
+    });
+
+    test('greying writes nothing — the child keeps the value it had', () => {
+        mocks.settingsMap['dungeonTracker'].isTrue = false;
+        drawPanel();
+
+        expect(mocks.written).toEqual([]);
+        expect(mocks.settingsMap['dungeonTrackerUI'].isTrue).toBe(true);
+    });
+
+    test('the parent being on leaves the row alone, so it is not greyed by accident', () => {
+        mocks.settingsMap['dungeonTracker'].isTrue = true;
+        drawPanel();
+
+        expect(row('dungeonTrackerUI').style.opacity).toBe('');
     });
 });
 

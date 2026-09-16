@@ -33,7 +33,7 @@ const settings = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settings[key] ?? false,
-        getSettingValue: () => 1,
+        getSettingValue: (key, fallback = 1) => settings[key] ?? fallback,
         COLOR_TEXT_SECONDARY: '#999',
     },
 }));
@@ -148,8 +148,9 @@ describe('a processed table is left alone on the next order-book message', () =>
 
     beforeEach(() => {
         for (const key of Object.keys(settings)) delete settings[key];
-        // The setting that gates the "is every book in hand?" check
-        settings['market_showTopOrderAge'] = true;
+        // The setting that gates the "is every book in hand?" check — the top
+        // order age column rides the My Listings side of the merged age setting
+        settings['market_listingAge'] = 'myListings';
         listingPriceDisplay.allListings = {
             1: { id: 1, itemHrid: ITEM, enhancementLevel: 0, price: 100, orderQuantity: 1, filledQuantity: 0 },
         };
@@ -180,6 +181,67 @@ describe('a processed table is left alone on the next order-book message', () =>
         const node = table();
         listingPriceDisplay.updateTable(node);
         expect(node.classList.contains('mwi-listing-prices-set')).toBe(false);
+    });
+});
+
+describe('the My Listings age columns', () => {
+    /** @returns {HTMLElement} A My Listings table with only the game's own columns */
+    const table = () => {
+        const node = document.createElement('table');
+        node.innerHTML =
+            '<thead><tr><th>Item</th><th>Type</th><th>Price</th><th>Quantity</th><th>Cancel</th></tr></thead>' +
+            '<tbody></tbody>';
+        return node;
+    };
+
+    /** @param {HTMLElement} node - A table @returns {string[]} Its injected header texts */
+    const headers = (node) => [...node.querySelectorAll('.mwi-listing-price-header')].map((th) => th.textContent);
+
+    beforeEach(() => {
+        for (const key of Object.keys(settings)) delete settings[key];
+    });
+
+    test('both age columns appear together on the My Listings side', () => {
+        settings['market_listingAge'] = 'myListings';
+        const node = table();
+        listingPriceDisplay.addTableHeaders(node);
+        expect(headers(node)).toEqual(['Top Order Price', 'Top Order Age', 'Total Price', 'Listed']);
+    });
+
+    test('neither appears when age is only wanted on the order book', () => {
+        settings['market_listingAge'] = 'orderBook';
+        const node = table();
+        listingPriceDisplay.addTableHeaders(node);
+        expect(headers(node)).toEqual(['Top Order Price', 'Total Price']);
+    });
+
+    test('nor when age is off entirely', () => {
+        settings['market_listingAge'] = 'off';
+        const node = table();
+        listingPriceDisplay.addTableHeaders(node);
+        expect(headers(node)).toEqual(['Top Order Price', 'Total Price']);
+    });
+
+    test('"Both" is the My Listings side too', () => {
+        settings['market_listingAge'] = 'both';
+        const node = table();
+        listingPriceDisplay.addTableHeaders(node);
+        expect(headers(node)).toContain('Top Order Age');
+        expect(headers(node)).toContain('Listed');
+    });
+
+    // The Listed column used to format elapsed time whatever the format setting
+    // said, so picking Date/Time did nothing here while the order book obeyed it
+    test('the Listed cell honours the elapsed format', () => {
+        settings['market_listingAgeFormat'] = 'elapsed';
+        const cell = listingPriceDisplay.createListedAgeCell(new Date(Date.now() - 3 * 3600_000).toISOString());
+        expect(cell.textContent).toMatch(/^\d+h/);
+    });
+
+    test('the Listed cell honours the date/time format', () => {
+        settings['market_listingAgeFormat'] = 'datetime';
+        const cell = listingPriceDisplay.createListedAgeCell(new Date(Date.now() - 3 * 3600_000).toISOString());
+        expect(cell.textContent).toMatch(/^\d{2}-\d{2} /);
     });
 });
 

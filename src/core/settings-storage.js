@@ -89,8 +89,39 @@ const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
 const KEY_MIGRATIONS = [
     // The patient tick became one switch per side; the old one moved both
     { from: 'profitCalc_patientTick', to: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'] },
-    // Eleven labyrinth sim-budget settings became three
-    { derive: deriveLabyrinthSimBudget },
+    // Eleven labyrinth sim-budget settings became three. A reconciling entry:
+    // it decides for itself which ids to write, because two of the survivors
+    // are ids the user already has stored
+    { reconcile: deriveLabyrinthSimBudget },
+    // Three switches answered one question — where to show listing age — and
+    // nothing stopped a player setting them incoherently. The top-order-age
+    // column is one of the two My Listings age columns, so it rides that side
+    {
+        from: ['market_showListingAge', 'market_showTopOrderAge', 'market_showEstimatedListingAge'],
+        to: 'market_listingAge',
+        derive: ([listed, topOrder, orderBook]) => {
+            const mine = Boolean(listed) || Boolean(topOrder);
+            const book = Boolean(orderBook);
+            if (mine && book) return 'both';
+            if (mine) return 'myListings';
+            if (book) return 'orderBook';
+            return 'off';
+        },
+    },
+    // The stack-value badge under two sort states, plus a second badge system on
+    // the same tile. Both on is not expressible: the stack value wins, because
+    // the category and custom-tab totals add up exactly what it shows
+    {
+        from: ['invSort_showBadges', 'invSort_badgesOnNone', 'invBadgePrices'],
+        to: 'inv_valueBadges',
+        derive: ([whenSorting, onNone, itemPrices]) => {
+            if (onNone === 'Ask') return 'alwaysAsk';
+            if (onNone === 'Bid') return 'alwaysBid';
+            if (whenSorting) return 'sorting';
+            if (itemPrices) return 'prices';
+            return 'off';
+        },
+    },
 ];
 
 /**
@@ -174,7 +205,7 @@ function deriveLabyrinthSimBudget(saved) {
 }
 
 /** Bump the suffix when a new batch is added to KEY_MIGRATIONS */
-const KEY_MIGRATION_FLAG_KEY = 'settings_key_migrations_v1';
+const KEY_MIGRATION_FLAG_KEY = 'settings_key_migrations_v2';
 
 // Task data stored per character under a `_<charId>` suffix, outside the
 // settings map (task-reroll-protection.js / task-auto-reroll.js) — copied along
@@ -454,21 +485,32 @@ class SettingsStorage {
             if (await storage.get(flagKey, this.storageArea, false)) return saved;
 
             let next = saved;
-            for (const migration of KEY_MIGRATIONS) {
+            for (const { from, to, derive, reconcile } of KEY_MIGRATIONS) {
                 // A reconciling migration works out for itself which ids to
                 // write — including ids that already hold a stored value, which
                 // is the whole point when several old settings are being merged
                 // into one of their own number. See deriveLabyrinthSimBudget.
-                if (migration.derive) {
+                if (reconcile) {
                     if (!saved) continue;
-                    for (const [id, entry] of Object.entries(migration.derive(saved))) {
+                    for (const [id, entry] of Object.entries(reconcile(saved))) {
                         next = next === saved ? { ...saved } : next;
                         next[id] = entry;
                     }
                     continue;
                 }
 
-                const { from, to } = migration;
+                // Several old keys folded into one new one: the new value is a
+                // function of all of them, so the whole set is read at once
+                if (derive) {
+                    if (saved?.[to]) continue; // Already answered under the new key
+                    if (!from.some((id) => saved?.[id])) continue; // Nothing stored to carry
+                    const value = derive(from.map((id) => (saved?.[id] ? valueOf(saved[id]) : undefined)));
+                    if (value === undefined) continue;
+                    next = next === saved ? { ...saved } : next;
+                    next[to] = { id: to, type: 'select', value };
+                    continue;
+                }
+
                 // valueOf, and truthiness: a boolean the loader would read as on
                 // (including the old `.value` shape) is on here too
                 if (!saved?.[from] || !valueOf(saved[from])) continue;

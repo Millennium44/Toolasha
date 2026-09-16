@@ -9,6 +9,7 @@ import marketAPI from '../../api/marketplace.js';
 import { formatKMB } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
+import { BADGE_MODE_SETTING, stackBadgeValueKey } from './inventory-badge-mode.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
@@ -52,19 +53,10 @@ class InventorySort {
             }
         });
 
-        config.onSettingChange('invSort_showBadges', () => {
+        config.onSettingChange(BADGE_MODE_SETTING, () => {
             if (this.isInitialized) {
                 this.refresh();
-                // Force badge re-render so toggling the setting adds/removes badges immediately
-                inventoryBadgeManager.clearProcessedTracking();
-                inventoryBadgeManager.renderAllBadges();
-            }
-        });
-
-        config.onSettingChange('invSort_badgesOnNone', () => {
-            if (this.isInitialized) {
-                this.refresh();
-                // Force badge re-render so toggling the setting adds/removes badges immediately
+                // Force badge re-render so changing the setting adds/removes badges immediately
                 inventoryBadgeManager.clearProcessedTracking();
                 inventoryBadgeManager.renderAllBadges();
             }
@@ -448,21 +440,10 @@ class InventorySort {
         let showBadges = false;
         let badgeValueKey = null;
 
-        if (this.currentMode === 'none') {
-            // When sort mode is 'none', check invSort_badgesOnNone setting
-            const badgesOnNone = config.getSettingValue('invSort_badgesOnNone', 'None');
-            if (badgesOnNone !== 'None') {
-                showBadges = true;
-                badgeValueKey = badgesOnNone.toLowerCase() + 'Value'; // 'askValue' or 'bidValue'
-            }
-        } else {
-            // When sort mode is 'ask' or 'bid', check invSort_showBadges setting
-            const showBadgesSetting = config.getSetting('invSort_showBadges');
-            if (showBadgesSetting) {
-                showBadges = true;
-                badgeValueKey = this.currentMode + 'Value'; // 'askValue' or 'bidValue'
-            }
-        }
+        // One setting answers both sort states: whether a stack badge belongs
+        // here at all, and which side it is priced on
+        badgeValueKey = stackBadgeValueKey(this.currentMode);
+        showBadges = badgeValueKey !== null;
 
         // Show badge if enabled
         if (showBadges && badgeValueKey) {

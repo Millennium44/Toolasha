@@ -215,12 +215,12 @@ class Config {
                 description: 'Moves listings with something to collect to the top of My Listings',
                 settingKey: 'market_collectableListingsToTop',
             },
-            market_showEstimatedListingAge: {
+            market_listingAge: {
                 enabled: true,
                 name: 'Estimated Listing Age',
                 category: 'Market',
                 description: 'Estimates creation time for all market listings using listing ID interpolation',
-                settingKey: 'market_showEstimatedListingAge',
+                settingKey: 'market_listingAge',
             },
             market_showOrderTotals: {
                 enabled: true,
@@ -499,19 +499,12 @@ class Config {
                 description: 'Sorts inventory by Ask/Bid price',
                 settingKey: 'invSort',
             },
-            inventorySortBadges: {
-                enabled: false,
-                name: 'Inventory Sort Price Badges',
-                category: 'Economy',
-                description: 'Shows stack value badges on items when sorting',
-                settingKey: 'invSort_showBadges',
-            },
             inventoryBadgePrices: {
                 enabled: false,
-                name: 'Inventory Price Badges',
+                name: 'Inventory Value Badges',
                 category: 'Economy',
-                description: 'Shows stack value badges on items (independent of sorting)',
-                settingKey: 'invBadgePrices',
+                description: 'Shows stack value, or per-item ask/bid prices, on inventory items',
+                settingKey: 'inv_valueBadges',
             },
 
             // Enhancement Features

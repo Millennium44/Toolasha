@@ -472,7 +472,7 @@ describe('inventory badge prices health check', () => {
         `<div class="Inventory_items__6SXv0"><div class="Item_itemContainer__x7kH1" ${dataset}>${extra}</div></div>`;
 
     beforeEach(() => {
-        settings.invBadgePrices = true;
+        settings.inv_valueBadges = 'prices';
     });
 
     test('says nothing when nothing in view is worth anything', () => {

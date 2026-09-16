@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One setting each for listing age and inventory value badges
+
+- Three listing-age switches become one choice of where to show it (off, my listings, the order book, or both), and the Elapsed/Date-Time format is now honoured on My Listings as well as the order book, where it used to be ignored. The top-order-age column rides with the My Listings side.
+- Two badge switches and a select whose "None" doubled as off become one choice: off, while sorting, always at ask, always at bid, or per-item prices. Net of tax is unchanged. Anyone who had both badge systems on keeps the stack-value badge.
+- Child settings now grey out while their parent feature is off — the two dungeon tracker rows and the eight portrait DPS rows — instead of looking live.
+- Stored values are carried over, so nothing needs re-picking.
+
 ### One labyrinth simulation budget instead of eleven settings
 
 - The four "Uncapped" switches, two precisions and five ceilings become one budget choice (capped or run to precision), one precision and one hour ceiling. The panels keep their own Uncapped boxes and Max hrs inputs as views onto it, and stored values are carried over, so nothing needs re-picking. What goes: setting one panel uncapped but not another, a separate precision for the Automation tab, and a custom Max fights on Single Sim or Upgrade, which now use the 20,000-fight budget they already defaulted to.

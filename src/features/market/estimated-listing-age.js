@@ -9,11 +9,11 @@
 
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
-import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import marketAPI from '../../api/marketplace.js';
-import { formatRelativeTime, formatDateTime } from '../../utils/formatters.js';
+import { formatRelativeTime } from '../../utils/formatters.js';
+import { showsOrderBookAge, formatListingTimestamp } from './listing-age-display.js';
 import { readScoped } from '../../utils/character-key.js';
 import { GAME } from '../../utils/selectors.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
@@ -589,16 +589,8 @@ class EstimatedListingAge {
      * @returns {string} Formatted time string
      */
     formatTimestamp(timestamp) {
-        const ageFormat = config.getSettingValue('market_listingAgeFormat', 'datetime');
-
-        if (ageFormat === 'elapsed') {
-            // Show elapsed time (e.g., "3h 45m")
-            const ageMs = Date.now() - timestamp;
-            return formatRelativeTime(ageMs);
-        } else {
-            // Show date/time (e.g., "01-13 14:30:45" or "01-13 2:30:45 PM")
-            return formatDateTime(new Date(timestamp));
-        }
+        // Shared with the My Listings columns, which honour the same format
+        return formatListingTimestamp(timestamp);
     }
 
     /**
@@ -656,7 +648,7 @@ class EstimatedListingAge {
         }
 
         // Display-only features: DOM observers for age columns
-        if (config.getSetting('market_showEstimatedListingAge')) {
+        if (showsOrderBookAge()) {
             // Setup DOM observer for order book table
             this.setupObserver();
 
@@ -1600,7 +1592,7 @@ class EstimatedListingAge {
         this.saveOrderBooksCache();
 
         // Re-render display elements only if the listing age display is enabled
-        if (!config.getSetting('market_showEstimatedListingAge')) {
+        if (!showsOrderBookAge()) {
             return;
         }
 

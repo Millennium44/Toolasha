@@ -178,7 +178,6 @@ const MARKET_EXTRAS = [
     'market_showListingPrices',
     'market_listingRefreshNavigator',
     'market_tradeHistory',
-    'market_showEstimatedListingAge',
     'market_showOrderTotals',
     'market_showHistoryViewer',
     'market_showPhiloCalculator',
@@ -209,8 +208,6 @@ const MARKET_EXTRAS = [
     'networth_includeTaskTokens',
     'networth_historyChart',
     'invWorth',
-    'invSort_showBadges',
-    'invBadgePrices',
     'invCategoryTotals',
     // Alchemy & crafting economics
     'alchemy_profitDisplay',
