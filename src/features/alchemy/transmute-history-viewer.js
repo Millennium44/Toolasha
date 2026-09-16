@@ -601,21 +601,12 @@ class TransmuteHistoryViewer {
                     font-weight: bold;
                     color: ${profitDetail.profit >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS};
                 `;
-                let catalystLine;
-                if (profitDetail.catalystHrid) {
-                    catalystLine =
-                        `Catalyst (${this.getItemName(profitDetail.catalystHrid)}): ` +
-                        `−${formatKMB(profitDetail.catalystCost, 1)}${profitDetail.catalystUnpriced ? ' (unpriced, not counted)' : ''}`;
-                } else if (profitDetail.catalystUnrecorded) {
-                    catalystLine = 'Catalyst: not recorded (predates tracking) — not counted';
-                } else {
-                    catalystLine = 'Catalyst: none';
-                }
                 profitCell.title =
                     `Output value: ${formatKMB(profitDetail.revenue, 1)}\n` +
                     `${formatInputCostLine(profitDetail)}\n` +
                     `Transmute coins: −${formatKMB(profitDetail.coinCost, 1)}\n` +
-                    `${catalystLine} (see totals row below)\n` +
+                    `${this.formatCatalystLine(profitDetail)} (see totals row below)\n` +
+                    `${this.formatRepairLine(session)}` +
                     `Excludes teas`;
                 row.appendChild(profitCell);
 
@@ -689,7 +680,10 @@ class TransmuteHistoryViewer {
                     catalystRecordedSessions: 0,
                     catalystUnrecordedSessions: 0,
                     catalystUnpricedSessions: 0,
+                    catalystEstimatedSessions: 0,
                     catalystHrids: new Set(),
+                    repairedSessions: 0,
+                    unreliableSessions: 0,
                     impossible: false,
                 };
                 groups.set(hrid, group);
@@ -704,22 +698,27 @@ class TransmuteHistoryViewer {
             if (detail.inputUnpriced) group.inputUnpriced = true;
             group.coinCost += detail.coinCost;
 
-            if (detail.catalystHrid) {
+            if (detail.catalystEntries.length > 0) {
                 group.catalystRecordedSessions++;
-                group.catalystHrids.add(detail.catalystHrid);
-                if (detail.catalystUnpriced) {
-                    group.catalystUnpricedSessions++;
-                } else {
-                    group.catalystCost += detail.catalystCost;
-                }
+                for (const entry of detail.catalystEntries) group.catalystHrids.add(entry.hrid);
+                if (detail.catalystUnpriced) group.catalystUnpricedSessions++;
+                if (detail.catalystEstimated) group.catalystEstimatedSessions++;
+                group.catalystCost += detail.catalystCost;
             } else if (detail.catalystUnrecorded) {
                 group.catalystUnrecordedSessions++;
             }
 
+            if (session.repair?.outcome === 'repaired') group.repairedSessions++;
+            if (session.repair?.outcome === 'unreliable') group.unreliableSessions++;
+
             const resultCount = Object.values(session.results || {}).reduce((sum, r) => sum + (r.count || 0), 0);
             const successes = session.totalSuccesses || 0;
             const attempts = session.totalAttempts || 0;
-            if (resultCount > successes || (detail.netConsumed === 0 && attempts > 0)) {
+            if (
+                session.repair?.outcome === 'unreliable' ||
+                resultCount > successes ||
+                (detail.netConsumed === 0 && attempts > 0)
+            ) {
                 group.impossible = true;
             }
         }
@@ -777,8 +776,9 @@ class TransmuteHistoryViewer {
             {
                 label: 'Catalyst Cost',
                 title:
-                    'Recorded catalyst at session start × successes × current buy price. ' +
-                    'A mid-session catalyst swap is not reflected — only the catalyst in the slot when the session began is priced.',
+                    'Catalysts actually seen being consumed, at current buy price — a mid-session swap is costed ' +
+                    'against both. Sessions recorded before that tracking existed are estimated as the catalyst in ' +
+                    'the slot at session start × successes, and are marked ◇.',
             },
             { label: 'Coin Cost' },
             { label: 'Net' },
@@ -814,7 +814,9 @@ class TransmuteHistoryViewer {
         legend.textContent =
             '* input unpriced — total is incomplete    ' +
             '† catalyst on some sessions could not be priced — excluded, not zero    ' +
-            '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero';
+            '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero    ' +
+            '◇ catalyst estimated on some sessions, not measured    ' +
+            '§ self-return counts on some sessions were derived from the successes, not observed';
         container.appendChild(legend);
     }
 
@@ -853,8 +855,16 @@ class TransmuteHistoryViewer {
         itemCell.style.cssText = 'padding: 6px 10px; display: flex; align-items: center; gap: 8px;';
         this.appendItemIcon(itemCell, group.inputItemHrid, 18);
         const nameSpan = document.createElement('span');
-        nameSpan.textContent = (group.impossible ? '⚠ ' : '') + this.getItemName(group.inputItemHrid);
+        // A repaired group is sound arithmetic over a derived number, not an
+        // observed one, and the row has to keep saying which it is
+        const repairedMark = group.repairedSessions > 0 ? '§' : '';
+        nameSpan.textContent = (group.impossible ? '⚠ ' : '') + this.getItemName(group.inputItemHrid) + repairedMark;
         if (group.impossible) itemCell.title = impossibleTitle;
+        else if (repairedMark) {
+            itemCell.title =
+                `${group.repairedSessions} session(s) in this group had their self-return count derived from ` +
+                'the successes, not observed — they were recorded through the batched-message counting bug.';
+        }
         itemCell.appendChild(nameSpan);
         row.appendChild(itemCell);
 
@@ -922,6 +932,8 @@ class TransmuteHistoryViewer {
                 acc.inputUnpriced = acc.inputUnpriced || group.inputUnpriced;
                 acc.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
                 acc.catalystUnpricedSessions += group.catalystUnpricedSessions;
+                acc.catalystEstimatedSessions += group.catalystEstimatedSessions;
+                acc.repairedSessions += group.repairedSessions;
                 if (group.impossible) {
                     acc.hasImpossibleGroup = true;
                 } else {
@@ -941,6 +953,8 @@ class TransmuteHistoryViewer {
                 inputUnpriced: false,
                 catalystUnrecordedSessions: 0,
                 catalystUnpricedSessions: 0,
+                catalystEstimatedSessions: 0,
+                repairedSessions: 0,
                 hasImpossibleGroup: false,
             }
         );
@@ -994,6 +1008,56 @@ class TransmuteHistoryViewer {
     }
 
     /**
+     * The catalyst line of a session's profit tooltip.
+     *
+     * An estimate says so in as many words. Presenting `predictedCatalystHrid ×
+     * successes` in the same voice as a measured count is exactly the mistake
+     * the input-pricing fallback exists to avoid making twice.
+     *
+     * @param {Object} detail - A `computeSessionProfit` result
+     * @returns {string} The line
+     */
+    formatCatalystLine(detail) {
+        if (detail.catalystEntries.length === 0) {
+            return detail.catalystUnrecorded
+                ? 'Catalyst: not recorded (predates tracking) — not counted'
+                : 'Catalyst: none';
+        }
+
+        const parts = detail.catalystEntries.map(
+            (entry) =>
+                `${this.getItemName(entry.hrid)} x${entry.count}` +
+                (entry.unpriced ? ' (unpriced, not counted)' : ` −${formatKMB(entry.cost, 1)}`)
+        );
+        const basis = detail.catalystEstimated
+            ? ' (estimated — the catalyst in the slot at session start × successes)'
+            : ' (recorded)';
+        return `Catalyst: ${parts.join(', ')}${basis}`;
+    }
+
+    /**
+     * The repair line of a session's profit tooltip, or nothing for a session
+     * that was never touched.
+     *
+     * A repaired count is derived from the successes, not observed on the wire,
+     * and the record has to keep saying so — see `transmute-session-repair.js`.
+     *
+     * @param {Object} session
+     * @returns {string} The line, newline-terminated, or ''
+     */
+    formatRepairLine(session) {
+        const repair = session?.repair;
+        if (!repair) return '';
+        if (repair.outcome === 'unreliable') {
+            return `⚠ Recorded counts are internally impossible (${repair.reason}) — not repaired, treat as unreliable\n`;
+        }
+        return (
+            `⚠ Self-return count repaired: recorded ${repair.from}, derived ${repair.to} from the successes ` +
+            '(the batched-message counting bug)\n'
+        );
+    }
+
+    /**
      * Format a group's catalyst-cost cell text + tooltip.
      * @param {{catalystRecordedSessions: number, catalystUnrecordedSessions: number,
      *   catalystUnpricedSessions: number, catalystCost: number}} group
@@ -1013,8 +1077,15 @@ class TransmuteHistoryViewer {
         let text = formatKMB(group.catalystCost, 1);
         if (group.catalystUnpricedSessions > 0) text += '†';
         if (group.catalystUnrecordedSessions > 0) text += '‡';
+        if (group.catalystEstimatedSessions > 0) text += '◇';
 
         const notes = [];
+        if (group.catalystEstimatedSessions > 0) {
+            notes.push(
+                `${group.catalystEstimatedSessions} session(s) predate recorded catalyst consumption — ` +
+                    'estimated from the catalyst in the slot at session start × successes, not measured.'
+            );
+        }
         if (group.catalystUnpricedSessions > 0) {
             notes.push(
                 `${group.catalystUnpricedSessions} session(s) used a catalyst the market can't price — excluded.`
@@ -1054,18 +1125,23 @@ class TransmuteHistoryViewer {
      * fails — an unknown cost is not a zero one.
      *
      * Catalysts are consumed only on success (see `alchemy-profit-calculator.js`:
-     * `catalystCostPerAttempt = catalystPrice * successRate`), so a session's
-     * exact catalyst cost is `totalSuccesses × catalyst price`.
-     * `session.predictedCatalystHrid` is the catalyst recorded at session
-     * *start* — a mid-session catalyst swap is not reflected. `null` means "not
-     * recorded" (sessions saved before this field existed), never "none used";
-     * `catalystUnrecorded` distinguishes the two so callers do not read it as
-     * zero-cost.
+     * `catalystCostPerAttempt = catalystPrice * successRate`).
+     *
+     * `session.catalystsUsed` is what the tracker actually watched being spent,
+     * hrid → count, recorded per message — so a mid-session catalyst swap is
+     * costed against both catalysts, each for the part of the run it was in the
+     * slot for. Sessions recorded before that existed have only
+     * `session.predictedCatalystHrid`, the catalyst in the slot when the run
+     * BEGAN, times `totalSuccesses`: an estimate, reported as one through
+     * `catalystEstimated` so nothing presents it as measured. `null` there
+     * still means "not recorded", never "none used"; `catalystUnrecorded` keeps
+     * those apart so callers do not read the gap as zero-cost.
      *
      * @param {Object} session
      * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number,
      *   inputBasis: string|null, inputUnpriced: boolean, catalystHrid: string|null, catalystCost: number,
-     *   catalystUnrecorded: boolean, catalystUnpriced: boolean}}
+     *   catalystUnrecorded: boolean, catalystUnpriced: boolean, catalystEstimated: boolean,
+     *   catalystEntries: Array<{hrid: string, count: number, cost: number, unpriced: boolean}>}}
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
@@ -1101,21 +1177,7 @@ class TransmuteHistoryViewer {
         // is the one that was actually billed, so it overrides the item's current one.
         const coinCost = getAlchemyCoinCost(itemDetails, 'transmute', bulkMultiplier) * attempts;
 
-        // Catalyst cost — see the docstring above. `null` (unrecorded) is kept
-        // apart from "no catalyst" (`totalSuccesses === 0`): a session with
-        // successes but no recorded hrid is a gap in the data, not a free run.
-        const catalystHrid = session.predictedCatalystHrid ?? null;
-        const catalystUnrecorded = catalystHrid === null && session.totalSuccesses > 0;
-        let catalystCost = 0;
-        let catalystUnpriced = false;
-        if (catalystHrid) {
-            const catalystPrice = getItemPrice(catalystHrid, { context: 'profit', side: 'buy' });
-            if (catalystPrice > 0) {
-                catalystCost = session.totalSuccesses * catalystPrice;
-            } else {
-                catalystUnpriced = true;
-            }
-        }
+        const catalyst = this.computeCatalystCost(session);
 
         return {
             profit: revenue - inputCost - coinCost,
@@ -1125,10 +1187,61 @@ class TransmuteHistoryViewer {
             netConsumed,
             inputBasis,
             inputUnpriced,
-            catalystHrid,
+            ...catalyst,
+        };
+    }
+
+    /**
+     * What this session's catalysts cost, measured where the wire recorded them
+     * and estimated where it did not.
+     *
+     * See the `computeSessionProfit` docstring. `catalystHrid` stays the single
+     * hrid whenever there is exactly one, so every existing caller keeps
+     * working; `catalystEntries` is the whole picture for a run that swapped.
+     *
+     * @param {Object} session
+     * @returns {{catalystHrid: string|null, catalystCost: number, catalystUnrecorded: boolean,
+     *   catalystUnpriced: boolean, catalystEstimated: boolean,
+     *   catalystEntries: Array<{hrid: string, count: number, cost: number, unpriced: boolean}>}}
+     */
+    computeCatalystCost(session) {
+        const recorded = session.catalystsUsed;
+        const hasRecorded = !!recorded && typeof recorded === 'object';
+
+        // Recorded counts are preferred; the prediction is what a session saved
+        // before catalyst consumption was tracked has instead, and is labelled
+        // so rather than quietly standing in for a measurement
+        const used = hasRecorded
+            ? Object.entries(recorded).map(([hrid, count]) => ({ hrid, count: Number(count) || 0 }))
+            : session.predictedCatalystHrid
+              ? [{ hrid: session.predictedCatalystHrid, count: session.totalSuccesses || 0 }]
+              : [];
+
+        const catalystEntries = [];
+        let catalystCost = 0;
+        let catalystUnpriced = false;
+        for (const { hrid, count } of used) {
+            if (count <= 0) continue;
+            const price = getItemPrice(hrid, { context: 'profit', side: 'buy' });
+            const unpriced = !(price > 0);
+            const cost = unpriced ? 0 : count * price;
+            if (unpriced) catalystUnpriced = true;
+            else catalystCost += cost;
+            catalystEntries.push({ hrid, count, cost, unpriced });
+        }
+
+        // "Nothing recorded" is a gap in the data, not a free run — but only
+        // for a session that predates the tracking. One that recorded its
+        // catalysts and spent none genuinely used none.
+        const catalystUnrecorded = !hasRecorded && !session.predictedCatalystHrid && session.totalSuccesses > 0;
+
+        return {
+            catalystHrid: catalystEntries.length === 1 ? catalystEntries[0].hrid : null,
             catalystCost,
             catalystUnrecorded,
             catalystUnpriced,
+            catalystEstimated: !hasRecorded && catalystEntries.length > 0,
+            catalystEntries,
         };
     }
 
@@ -1168,7 +1281,16 @@ class TransmuteHistoryViewer {
             const name = this.getItemName(itemHrid);
 
             if (result.isSelfReturn) {
-                text.textContent = `${name} x${result.count} (self-return)`;
+                // A derived count is not an observed one, and the row says so
+                // wherever it is read — see `transmute-session-repair.js`
+                if (result.countBasis === 'derived') {
+                    text.textContent = `${name} x${result.count} (self-return, derived)`;
+                    text.title =
+                        `Recorded as ${result.recordedCount} by the batched-message counting bug; ` +
+                        'derived from the successes, not observed.';
+                } else {
+                    text.textContent = `${name} x${result.count} (self-return)`;
+                }
                 text.style.color = '#888';
             } else {
                 const total = formatKMB(result.totalValue || 0, 1);
@@ -1883,7 +2005,16 @@ class TransmuteHistoryViewer {
     exportHistory() {
         const escape = (val) => `"${String(val === null || val === undefined ? '' : val).replace(/"/g, '""')}"`;
 
-        const headers = ['Session Start', 'Input Item', 'Attempts', 'Successes', 'Failures', 'Results', 'Profit'];
+        const headers = [
+            'Session Start',
+            'Input Item',
+            'Attempts',
+            'Successes',
+            'Failures',
+            'Results',
+            'Profit',
+            'Data Note',
+        ];
 
         const rows = this.sessions.map((session) => {
             const start = formatDateTime(new Date(session.startTime));
@@ -1899,7 +2030,9 @@ class TransmuteHistoryViewer {
                 .map(([hrid, result]) => {
                     const name = this.getItemName(hrid);
                     if (result.isSelfReturn) {
-                        return `${name} x${result.count} (self-return)`;
+                        return result.countBasis === 'derived'
+                            ? `${name} x${result.count} (self-return, derived from ${result.recordedCount})`
+                            : `${name} x${result.count} (self-return)`;
                     }
                     const total = formatKMB(result.totalValue || 0, 1);
                     const each = formatKMB(result.priceEach || 0, 1);
@@ -1907,6 +2040,10 @@ class TransmuteHistoryViewer {
                 });
 
             const profit = (this.profitCache.get(session.id) || this.computeSessionProfit(session)).profit;
+
+            // A repaired or flagged session must not leave the export looking
+            // like a clean observation of the wire
+            const dataNote = this.formatRepairLine(session).trim();
 
             return [
                 start,
@@ -1916,6 +2053,7 @@ class TransmuteHistoryViewer {
                 failures,
                 resultParts.join('; '),
                 Math.round(profit),
+                dataNote,
             ]
                 .map(escape)
                 .join(',');

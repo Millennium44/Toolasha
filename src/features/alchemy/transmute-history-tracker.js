@@ -24,6 +24,7 @@ import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
+import { ensureSessionsRepaired } from './transmute-session-repair.js';
 
 const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
 const COIN_ITEM_HRID = '/items/coin';
@@ -304,7 +305,63 @@ class TransmuteHistoryTracker {
         }
         // Failure — totalAttempts already incremented, nothing more to record
 
+        this.recordCatalystUse(action, noted, successCount, attemptCount);
+
         await this.saveActiveSession();
+    }
+
+    /**
+     * Record the catalyst this message actually spent.
+     *
+     * The viewer used to price catalysts as `predictedCatalystHrid ×
+     * totalSuccesses` — the catalyst that happened to be in the slot when the
+     * session STARTED, multiplied by a count nobody observed. Swap the catalyst
+     * mid-run and the whole session is costed against the wrong item.
+     *
+     * The message says both things. `secondaryItemHash` is the catalyst this
+     * action was played with, which is how `coinify-history-tracker.js` and
+     * `decompose-history-tracker.js` already track theirs; and the catalyst's
+     * own stack appears in `endCharacterItems`, one lower per success (measured
+     * live: prime_catalyst 962662 → 962661 across consecutive messages). The
+     * observed decrement is preferred, because it is the only figure that is
+     * measured rather than inferred, and the success count is the fallback for
+     * a message with no baseline for that stack yet.
+     *
+     * Read through the FOLDED ledger, never the raw rows: a batched message
+     * carries the catalyst stack once per packed action, and counting those
+     * snapshots would multiply the consumption exactly the way self-returns
+     * were multiplied. `noted` is already folded — see `alchemy-item-deltas.js`.
+     *
+     * @param {Object} action - `endCharacterAction` from the message
+     * @param {Array<{row: Object, delta: number|null}>} noted - The folded ledger entries
+     * @param {number} successCount - Successes this message covered
+     * @param {number} attemptCount - Attempts this message covered
+     * @returns {void}
+     */
+    recordCatalystUse(action, noted, successCount, attemptCount) {
+        const catalystHrid = this.extractItemHrid(action.secondaryItemHash);
+        if (!catalystHrid || !this.activeSession) {
+            return;
+        }
+
+        if (!this.activeSession.catalystsUsed) {
+            this.activeSession.catalystsUsed = {};
+        }
+
+        // A spend outside [0, attempts] is not this action's doing — the player
+        // bought or sold catalysts while the run was going — and the successes
+        // are the honest answer for that message
+        let observed = null;
+        for (const { row, delta } of noted) {
+            if (row.itemHrid !== catalystHrid || delta === null) continue;
+            const spent = -delta;
+            if (spent < 0 || spent > attemptCount) continue;
+            observed = (observed ?? 0) + spent;
+        }
+
+        const consumed = observed ?? successCount;
+        this.activeSession.catalystsUsed[catalystHrid] =
+            (this.activeSession.catalystsUsed[catalystHrid] || 0) + consumed;
     }
 
     /**
@@ -361,6 +418,11 @@ class TransmuteHistoryTracker {
             predictedRate: stamp?.predictedRate ?? null,
             predictedAt: stamp?.predictedAt ?? null,
             predictedCatalystHrid: stamp?.predictedCatalystHrid ?? null,
+            // What was actually spent, hrid → count, recorded per message as
+            // the run goes. Kept ALONGSIDE the prediction above rather than
+            // replacing it: the prediction is still the only answer a session
+            // saved before this existed has. See `recordCatalystUse`.
+            catalystsUsed: {},
             results: {},
         };
         this.lastCurrentCount = null;
@@ -407,12 +469,21 @@ class TransmuteHistoryTracker {
     }
 
     /**
-     * Load all sessions from storage
+     * Load all sessions from storage.
+     *
+     * The one-time self-return repair runs here, on the way out, so every
+     * reader — the viewer, the totals table, the gold attribution — sees the
+     * same corrected history without any of them having to know the repair
+     * exists. It is a no-op after the first load of a scope whose write landed;
+     * see `transmute-session-repair.js`.
+     *
      * @returns {Array} Array of session objects
      */
     async loadSessions() {
+        const scope = this.getCharacterScope();
         try {
-            return await sessionStore.load(this.getCharacterScope());
+            const sessions = await sessionStore.load(scope);
+            return await ensureSessionsRepaired(scope, sessions, (repaired) => sessionStore.save(scope, repaired));
         } catch (error) {
             console.error('[TransmuteHistoryTracker] Failed to load sessions:', error);
             return [];
