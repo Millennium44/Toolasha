@@ -783,7 +783,8 @@ export const settingsGroups = {
             },
             expectedValue_respectPricingMode: {
                 id: 'expectedValue_respectPricingMode',
-                label: 'Use pricing mode for expected value calculations',
+                label: 'Use pricing mode for dungeon token valuation',
+                help: 'Only affects how dungeon tokens (Chimerical, Sinister, Enchanted, Pirate) are valued. Ordinary drops are always priced at sell, regardless of this setting.',
                 type: 'checkbox',
                 default: true,
             },
@@ -1553,7 +1554,7 @@ export const settingsGroups = {
                 label: 'Market: Show listing age on My Listings',
                 type: 'checkbox',
                 default: false,
-                help: 'Display how long ago each listing was created on the My Listings tab (e.g., "3h 45m")',
+                help: 'Display how long ago each listing was created on the My Listings tab (e.g., "3h 45m"). Requires "Market: Show prices on individual listings" to be on.',
             },
             market_badgeOnlyWhenFinished: {
                 id: 'market_badgeOnlyWhenFinished',
@@ -1585,7 +1586,7 @@ export const settingsGroups = {
                 label: 'Market: Show top order age on My Listings',
                 type: 'checkbox',
                 default: false,
-                help: 'Display estimated age of the top competing order for each of your listings (requires estimated listing age feature to be active)',
+                help: 'Display estimated age of the top competing order for each of your listings. Requires "Market: Show prices on individual listings" to be on.',
             },
             market_showEstimatedListingAge: {
                 id: 'market_showEstimatedListingAge',
@@ -1749,10 +1750,12 @@ export const settingsGroups = {
                     'risk-of-ruin model, and the consumables panel’s dungeon readiness card. Changing it moves your ' +
                     'net worth and your combat profit/hr, not only the dungeon card. “Same as the profit calculation ' +
                     'pricing mode” follows that setting’s buy side — keys are only ever bought, so its sell side has ' +
-                    'nothing to say here. “What it costs you to craft one” values a key at your own crafting cost ' +
-                    'instead of a market price, with the materials priced on that same buy side; a key you cannot ' +
-                    'craft, or whose recipe has a material with no price, falls back to its market price rather than ' +
-                    'being counted as free.',
+                    'nothing to say here — and it also takes that setting’s patient-tick delay on a bid quote the ' +
+                    'same way ordinary profit prices do, so it can read differently from picking a plain "Bid" here, ' +
+                    'which is an exact book price and never ticks. “What it costs you to craft one” values a key at ' +
+                    'your own crafting cost instead of a market price, with the materials priced on that same buy ' +
+                    'side; a key you cannot craft, or whose recipe has a material with no price, falls back to its ' +
+                    'market price rather than being counted as free.',
             },
             profitCalc_liquidityCap: {
                 id: 'profitCalc_liquidityCap',
