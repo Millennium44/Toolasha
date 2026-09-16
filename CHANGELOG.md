@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: settings that could be lost, and switches that need a reload
+
+- Copying settings from another character, or importing a settings file written by an older build, could silently lose your listing-age, badge and labyrinth choices: the old settings arrived but the record said there was nothing left to carry across, so they fell back to defaults. Both paths now redo the carry-over for the settings they land.
+- Settings carried across from replaced settings are now recorded one at a time rather than as a batch, so a later addition can never redo an earlier one and quietly overwrite a value you have since changed by hand.
+- Five switches that only take effect at startup — Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, the overlay tab button and the labyrinth monster stat check — now say they need a page refresh, which they always did.
+
 ### Audit round: three fixes in yesterday's consolidated settings
 
 - Switching Iron Cow mode off left a gated row looking fully live while its parent was still off, because the unlock pass wiped the greying the dependency pass had just applied.
