@@ -6,152 +6,56 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Enhancement path costs stay as they were, and sync pulls keep your settings
+### Settings that did nothing, or did not do what they said
 
-- "Enhancement path: use crafting cost for base item if cheaper" is switched on once for existing characters. Its default changed when the switch started being honoured, and without this every existing user's enhancement path would have quietly started costing the base item at the market ask instead of the cheaper crafting cost. A stored "off" could not have been a real choice, because the setting did nothing until now.
-- A sync pull now carries replaced settings across the way importing a file and copying from another character already did, so pulling a payload written by an older build no longer drops your listing-age, badge and labyrinth choices back to defaults.
+- Eight switches were ignored when turned off, even after a reload, because a feature missing from an internal map counted as always on: Goal Planner, Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, Session Briefing, Iron Cow Farm, the overlay tab button and the labyrinth monster stat check. Presets that switch those off now take effect too.
+- "Enhancement path: use crafting cost for base item if cheaper" had been behaving as on while shipping off. It is switched on once for existing characters so nobody's figures move: a stored "off" could not have been a real choice, because the setting did nothing until now.
+- Combat income costed dungeon keys at market prices even with key pricing set to "craft", while the note under the figure said they were costed at what it costs you to craft one. Those figures change for anyone on that setting.
+- Net worth on the game's market value now ignores the pricing mode for cowbells and guild shrines, as its own help says, so those two figures change for anyone on that source.
+- Turning "Auto-fill marketplace orders" off stops the fill straight away rather than at the next reload; the multi-outcome foraging total obeys its own setting, which nothing had ever read; and dismissing the What's New dialog no longer switches on "new settings start turned off" behind your back.
+- Five switches that only take effect at startup now say they need a page refresh, which they always did. Three descriptions were corrected: the expected-value pricing switch only affects dungeon token values, the two listing-age options need "Show prices on individual listings" rather than the estimated-age feature, and key pricing's "synced" also inherits the patient tick, so it can differ from a plain "bid".
+- A one-time rewrite of a superseded default used to mark itself done even when the save was refused, leaving that character on the old default for good. It now retries on the next load.
 
-### Inventory totals no longer vanish with the badges
+### Fewer settings, and pricing moves to Buy and Sell dropdowns
 
-- Custom-tab section totals used to disappear when value badges were off or set to per-item prices, while the category totals carried on regardless. Both now always show, summed the same way: the side you are sorting by, or the ask side when there is no sort. The setting governs the per-item badge, which is what its help now says.
+- Pricing is now a Buy dropdown (Instant / Patient / Patient +1) and a Sell dropdown (Instant / Patient / Patient −1), on the skill toolbar, in alchemy's Best Items, in Pricing & Profit and in the What's New panel — in place of the Mode button and two "+1 tick" checkboxes that were each a no-op in two of the four modes with nothing to show it. Each option names both halves, so either wording tells you whether it is an instant trade or a waiting order, and a tooltip says when your listing auto-fill outbids or undercuts differently from what profit assumes.
+- The +1 tick is set per side, so you can outbid on buys without undercutting your own sales. Anyone who had the old single setting on gets both sides on, once.
+- Three listing-age switches become one choice of where to show it, and the Elapsed/Date-Time format is now honoured on My Listings as well as the order book. Two badge switches and a select whose "None" doubled as off become one choice; custom-tab and category totals now both always show, summed the same way, since the setting governs the per-item badge.
+- Eleven labyrinth simulation settings become three: one budget choice, one precision and one hour ceiling. The panels keep their own Uncapped boxes and Max hrs inputs as views onto it. What goes: uncapping one panel but not another, a separate precision for the Automation tab, and a custom Max fights on Single Sim or Upgrade.
+- Child settings grey out while their parent feature is off instead of looking live. Stored values are carried across everywhere, so nothing needs re-picking; new installs start with listing age on "Both" and value badges on "Stack value, only while sorting by Ask/Bid".
 
-### Audit round: settings that could be lost, and switches that need a reload
+### Pricing changes reach every figure that shows them
 
-- Copying settings from another character, or importing a settings file written by an older build, could silently lose your listing-age, badge and labyrinth choices: the old settings arrived but the record said there was nothing left to carry across, so they fell back to defaults. Both paths now redo the carry-over for the settings they land.
-- Settings carried across from replaced settings are now recorded one at a time rather than as a batch, so a later addition can never redo an earlier one and quietly overwrite a value you have since changed by hand.
-- Five switches that only take effect at startup — Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, the overlay tab button and the labyrinth monster stat check — now say they need a page refresh, which they always did.
+- Changing the pricing mode, naming or a +1 tick now refreshes the skill page's profit sections, open crafting plan panels and an open dungeon ROI board, clears the task "best alternative" figures, recomputes chest and crate expected values, and re-prices the combat sim's comparison against earlier runs — instead of leaving old numbers until you navigated away. A burst of changes redraws once.
+- The +1 tick reaches the combat sim, the welcome-back value, and the philo calculator, key cost (including a crafted key's materials) and dungeon token value when those follow the global mode. Alchemy essence and non-openable crates follow the pricing mode instead of always the bid, and the philo table's own columns follow its own mode and tick.
+- The welcome-back value priced consumed items at the sell side, so a night's tea and food read too cheap; they now use the buy side.
+- A protection consumed on a failed enhance with no market price was recorded as costing 0 coins, because the vendor-price fallback read a field the game data does not have.
+- Iron Cow characters get an "Iron Cow item valuation" setting: Market (default, unchanged), Vendor, or Best (the higher of vendor price and what coinifying yields at your alchemy level). It drives profit, loot, net worth, badges, tooltips, combat stats, enhancing costs, the dungeon ROI board and the philo table, and net worth re-prices as soon as it changes. Custom price overrides still win, and enhanced items keep market prices.
 
-### Audit round: three fixes in yesterday's consolidated settings
+### Share your combat stats in chat
 
-- Switching Iron Cow mode off left a gated row looking fully live while its parent was still off, because the unlock pass wiped the greying the dependency pass had just applied.
-- The Top Order Age column ignored the listing age format, so picking Date/Time moved every other age column and left that one reading elapsed time.
-- Inventory category totals did not re-sum when the value-badge mode changed, so switching to "always Bid" left them totalling the ask side until something else redrew them.
-- The value-badge setting's help no longer claims category totals disappear with it; they do not, and never did.
+- The Combat Statistics popup has a "💬 Chat" button (Ctrl+click on a player card still works) with a "▾" field picker: checkboxes, a live preview and a byte count, remembered per character. Each loot-log entry gets a 💬 button for a one-line summary, and the command palette gains "Share combat stats to chat". Nothing is ever sent — the chat box is filled, or the text is copied when chat is hidden.
+- Messages fit the game's 400-byte chat limit, counting anything you have already typed such as "/w Name ": optional fields drop first, loot-log lines list fewer drops, emoji are kept whole, and a trimmed line no longer ends on the separator of the field it just dropped.
+- Luck is reported with how far off expectation it was, e.g. "chest luck 89th pct (+2% vs expected)", because a zone whose value rides on a rare pushes an ordinary session below the 50th percentile. In a dungeon it now shows chest luck, which used to be left out entirely, and only for the zone and tier it was measured in.
+- Dungeon chest luck counted only the runs saved while a page was open, so a session with runs played unwatched read as the 100th percentile for everyone. It now takes the run count from the server's own battle number.
 
-### The "Last: Buy / Sell" chip comes back after a tab switch
+### What Toolasha thinks you are running
 
-- The chip was only ever redrawn when a fresh price arrived, so switching marketplace tabs and back made it vanish until the item next traded — which on a quiet book could be a very long time. It now redraws from the last figures it had, the way the neighbouring market widgets already did.
+- During a party fight, dragging a queued action into the first queued slot made Toolasha treat it as running — a queued cooking action showed "Red Culinary Hat not equipped". The queue now follows the game's own order, party actions first and then by ordinal, everywhere Toolasha asks which action is running.
+- Queuing, removing or dragging an action behind a running fight no longer resets the battle counter or wipes the boss ETA's timing, removing a queued zone no longer resets the combat XP session, and queuing a second enhance behind the running one no longer ends the enhancing session.
+- Coinify, decompose and transmute history decided from each queue update alone, so queuing any other action ended a running session and queuing a second alchemy item switched the session to it. They now follow the action actually running.
 
-### Market nav row additions keep their size
+### Your settings survive copying, importing and syncing
 
-- The item-hop arrows, the Next button and the "Last: Buy / Sell" chip no longer shrink or wrap their labels onto several lines when the game's marketplace nav row is crowded — for instance when another script adds a bar of its own to the same row. Toolasha only protects what it puts there; the row is the game's.
+- Copying settings from another character, importing a settings file written by an older build, or pulling a sync payload could silently lose your listing-age, badge and labyrinth choices: the settings arrived but the record said there was nothing left to carry across, so they fell back to defaults. All three paths now redo the carry-over for what they land.
+- Replaced settings are recorded one at a time rather than as a batch, so a later addition can never redo an earlier one and quietly overwrite a value you have since changed by hand.
+- Switching Iron Cow mode off left a gated row looking fully live while its parent was still off, and the mode now has an explicit "off" value for the badge setting rather than disabling it to whatever the default happens to be.
 
-### What's New shows the pricing dropdowns, and two new defaults
+### The marketplace nav row
 
-- The Buy and Sell pricing rows in the What's New panel now carry the real dropdown instead of only a link to Settings, writing through the same path, with Iron Cow locking respected.
-- New installs start with listing age on "Both" and inventory value badges on "Stack value, only while sorting by Ask/Bid". Anyone with a stored value keeps it.
-- Iron Cow now has an explicit "off" value for the badge setting; without it, disabling badges under that mode would have landed on the new default instead of off.
-
-### One setting each for listing age and inventory value badges
-
-- Three listing-age switches become one choice of where to show it (off, my listings, the order book, or both), and the Elapsed/Date-Time format is now honoured on My Listings as well as the order book, where it used to be ignored. The top-order-age column rides with the My Listings side.
-- Two badge switches and a select whose "None" doubled as off become one choice: off, while sorting, always at ask, always at bid, or per-item prices. Net of tax is unchanged. Anyone who had both badge systems on keeps the stack-value badge.
-- Child settings now grey out while their parent feature is off — the two dungeon tracker rows and the eight portrait DPS rows — instead of looking live.
-- Stored values are carried over, so nothing needs re-picking.
-
-### One labyrinth simulation budget instead of eleven settings
-
-- The four "Uncapped" switches, two precisions and five ceilings become one budget choice (capped or run to precision), one precision and one hour ceiling. The panels keep their own Uncapped boxes and Max hrs inputs as views onto it, and stored values are carried over, so nothing needs re-picking. What goes: setting one panel uncapped but not another, a separate precision for the Automation tab, and a custom Max fights on Single Sim or Upgrade, which now use the 20,000-fight budget they already defaulted to.
-
-### Switches that were ignored now work
-
-- Eight settings did nothing when switched off, because a feature with no entry in the internal feature map counted as always on: Goal Planner, Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, Session Briefing, Iron Cow Farm, the overlay tab button, and the labyrinth monster stat check. Presets that switch those off now take effect too.
-- "Enhancement path: use crafting cost for base item if cheaper" had been behaving as on while shipping off, so its default is now on and nobody's figures move; switching it off finally works.
-- The multi-outcome foraging total obeys its own setting, which nothing had ever read.
-- Dismissing the What's New dialog no longer switches on "new settings start turned off" behind your back; only choosing it does.
-- Net worth on the game's market value ignores the pricing mode for cowbells and guild shrines, as its own help says, so those two figures change for anyone on that source.
-
-### Settings shows pricing as the Buy and Sell dropdowns
-
-- Pricing & Profit now carries the same Buy and Sell dropdowns as the skill toolbar, in place of the pricing mode dropdown and the two "+1 tick" checkboxes, which were each a no-op in two of the four modes with nothing to show it. The settings behind them are unchanged, so nothing to re-pick; Iron Cow still locks them and settings search still finds them.
-
-### Settings that did not do what they said
-
-- Combat income costed dungeon keys at market prices even with key pricing set to "craft", while the note under the figure said they were costed at what it costs you to craft one. The craft basis now reaches the costing, so those figures change for anyone on that setting.
-- Turning "Auto-fill marketplace orders" off now stops the fill straight away, instead of carrying on until a reload.
-- Three descriptions corrected: the expected-value pricing switch only affects dungeon token values, the two listing-age options need "Show prices on individual listings" rather than the estimated-age feature, and key pricing's "synced" also inherits the patient tick, so it can differ from a plain "bid".
-
-### A default that fails to save is rewritten next time
-
-- The one-time rewrite of a superseded default marked itself done even when the save was refused, so the character kept the old default for good with nothing on screen to show it. It now retries on the next load, as the settings key migration already did.
-
-### Shared luck says how far off expectation it was
-
-- The chat message's luck field now pairs the percentile with a plain comparison against expectation, e.g. "chest luck 89th pct (+2% vs expected)", because a zone whose value rides on a rare pushes an ordinary session below the 50th percentile. The bracket is left out when there is no expectation to compare against, and for a party member in a normal zone, where only the session total is modelled.
-
-### A trimmed chat message no longer ends on a dangling separator
-
-- When a shared message had to be cut to fit the chat box, backing off to the last space left the "|" that introduced the field it had just dropped, so the line promised a field it never delivered.
-
-### Chat message shares dungeon chest luck
-
-- In a dungeon the combat chat message's luck field was always left out, because the monster-drop model does not cover dungeons; it now shows your chest luck ("chest luck 62nd pct") once chests have been counted for that dungeon and tier.
-- Dungeon chest luck counted only the runs Toolasha had saved while a page was open, so a session with runs played unwatched divided all its chests by too few runs and read as the 100th percentile for everyone. It now takes the run count from the server's own battle number.
-
-### Net worth follows the Iron Cow valuation straight away
-
-- Switching an Iron Cow character between Market, Vendor and Best left net worth on the old figure until an unrelated inventory or price update; it now re-prices as soon as the setting changes.
-
-### Buy and Sell dropdowns say which side is instant
-
-- Each option now names both halves, so either wording shows whether it is an instant trade or a waiting order: "Buy: Ask (instant)", "Buy: Bid +1 (patient)", or "Sell: Patient (ask)" with the Instant/Patient wording.
-
-### Enhancing tracker charges unlisted protections
-
-- A protection consumed on a failed enhance, with no market price to go on, was recorded as costing 0 coins because the vendor-price fallback read a field the game data doesn't have. It now uses the item's vendor price.
-
-### Iron Cow item valuation
-
-- Iron Cow characters get an "Iron Cow item valuation" setting: Market (default, unchanged), Vendor (the NPC sell price) or Best (the higher of the vendor price and what coinifying the item yields at your alchemy level). It drives profit, loot, net worth, inventory badges, tooltips, combat stats, enhancing costs, the dungeon ROI board and the philo table on that character, with no pricing mode or tick applied, and is hidden for normal characters. Custom price overrides still win, and enhanced items keep market prices.
-
-### Pricing changes reach every open profit figure
-
-- Changing the pricing mode, naming or a +1 tick from Settings or alchemy's Best Items now refreshes the skill page's profit sections, open crafting plan panels and an open dungeon ROI board, and clears the task "best alternative" figures, instead of leaving old numbers until you navigated away. A burst of changes redraws once.
-- The philo table's refinement craft cost and enhanced self-return follow the table's own pricing mode and tick like its other columns.
-- "Use checkboxes instead" on the chat template is remembered per character, so a future change to the default template can't switch anyone back.
-
-### Audit round: overnight tea cost too little, and the battle counter reset when you queued something
-
-- The welcome-back value priced consumed items at the sell side, so a night's tea and food cost read low; they now use the buy side.
-- Queuing, removing or dragging an action behind a running fight no longer resets the battle counter or wipes the boss ETA's timing, and removing a queued zone no longer resets the combat XP session; queuing a second enhance behind the running one no longer ends the enhancing session.
-- The combat sim's comparison against earlier runs re-prices after a pricing change, instead of showing the change as a gear difference.
-- The philo table prices its tea and bonus drops on its own pricing mode, and chest values keep refreshing after a character switch.
-- Chat sharing keeps emoji whole at the limit, sizes messages around text already in the chat box, says "chat is full" rather than "not visible", and no longer shares or saves the previous character's stats when you switch mid-load.
-- A failed save during the per-side +1 tick migration now retries on the next load instead of dropping the setting.
-- The Buy and Sell dropdown tooltips note when the listing auto-fill strategy outbids or undercuts differently from what profit assumes, and the tick and auto-fill settings' help text points at each other.
-
-### Buy and Sell pricing dropdowns
-
-- The skill toolbar and alchemy's Best Items header now have a Buy dropdown (Instant / Patient / Patient +1) and a Sell dropdown (Instant / Patient / Patient −1) in place of the Mode button, so each side and its one-tick-inside-the-spread price can be switched without opening Settings.
-- The +1 tick is now set per side ("Patient buys: +1 tick" and "Patient sells: −1 tick" in Settings); anyone who had the old single setting on gets both sides on, once.
-
-### Alchemy history sessions no longer split when something else is queued
-
-- Coinify, decompose and transmute history decided from each queue update alone, so queuing any other action ended a running session and queuing a second alchemy item switched the session to it. They now follow the action actually running in the full queue.
-
-### Share combat stats to chat
-
-- The Combat Statistics popup has a "💬 Chat" button (Ctrl+click on a player card still works) with a "▾" field picker: checkboxes, a live preview and a character count, remembered per character. Drop luck percentile is now on by default; DPS, kills, key costs, top drop, boss ETA and zone are optional. A custom chat template still takes precedence.
-- Each loot-log entry gets a 💬 button that fills a one-line summary, and the command palette gains "Share combat stats to chat". Nothing is ever sent: the chat box is filled, or the text is copied when chat is hidden.
-- Shared messages fit the game's 400-byte chat limit (text already typed, such as "/w Name ", counts): optional fields drop first, loot-log lines list fewer drops, and the picker counts bytes. Drop luck, in chat and on its overlay tile, only shows for the zone it was measured in.
-
-### +1 tick and pricing mode follow-ups
-
-- Chest and crate expected values now recompute when the pricing mode, +1 tick or market prices change, instead of staying at their page-load figures.
-- Combat sim, welcome-back value, and the philo calculator, key cost (including a crafted key's materials) and dungeon token value (when they follow the global mode) honour +1 tick; alchemy essence and non-openable crates follow the pricing mode instead of always the bid.
-- The task profit panel refreshes on a mode click, profit and offline-progress labels show "(+1 tick)", and the crafting plan's Mode button cycles in the same order as the others with Hybrid as its default.
-
-### A queued action dragged ahead of a party fight no longer reads as running
-
-- During a party fight, dragging a queued action into the first queued slot made Toolasha treat it as running (a queued cooking action showed "Red Culinary Hat not equipped"). The queue now follows the game's own order, party actions first and then by ordinal, everywhere Toolasha asks which action is running.
-
-### Patient +1 tick pricing
-
-- New "Patient orders: +1 tick" setting (off by default): profit calculations price a patient buy one market tick above the bid and a patient sell one tick below the ask, never crossing the spread. The Mode button shows "(+1 tick)" when it is on, and the own-use tooltip line and dungeon ROI consumable costs follow it too.
-
-### Pricing mode switch in alchemy's Best Items
-
-- The Best Items modal now has a "Mode:" button beside its title, so the pricing mode can be changed without leaving the Alchemy screen; the table and the alchemy panel's "Pricing Mode:" line re-rank and relabel as soon as the mode (or its naming) changes.
+- The item-hop arrows, the Next button and the "Last: Buy / Sell" chip no longer shrink or wrap their labels onto several lines when the game's nav row is crowded — for instance when another script adds a bar of its own to the same row. Toolasha only protects what it puts there; the row is the game's.
+- The "Last: Buy / Sell" chip was only redrawn when a fresh price arrived, so switching marketplace tabs and back made it vanish until the item next traded. It now redraws from the last figures it had.
+- The Top Order Age column ignored the listing age format, and inventory category totals did not re-sum when the value-badge mode changed.
 
 <!-- shipped in 3.53.0 -->
 
