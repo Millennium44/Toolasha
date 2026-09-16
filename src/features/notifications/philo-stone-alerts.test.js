@@ -60,11 +60,7 @@ vi.mock('./notification-service.js', () => ({
     },
 }));
 
-const {
-    default: philoStoneAlerts,
-    MASTER_SETTING,
-    TRANSMUTE_ACTION_HRID,
-} = await import('./philo-stone-alerts.js');
+const { default: philoStoneAlerts, MASTER_SETTING, TRANSMUTE_ACTION_HRID } = await import('./philo-stone-alerts.js');
 
 /** An inventory row for the stone, the shape `dataManager.getInventory()` hands back */
 function philoStack(count) {

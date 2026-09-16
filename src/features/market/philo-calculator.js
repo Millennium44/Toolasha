@@ -27,8 +27,8 @@ import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
+import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
 
-const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const PRIME_CATALYST_ADDITIVE_BONUS = 0.25; // 25% additive boost
 const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';

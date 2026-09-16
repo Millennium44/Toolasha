@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy history stops costing untradable inputs at nothing
+
+- Transmuting, coinifying or decomposing an item with no market price — a refined cape, say — costed the item consumed at zero, so a session that destroyed one read as a loss of only the coin fee. Refined inputs are now costed the way the Philosopher's Stone calculator already costs them: their refinement materials, artisan bonus included, or the market price when there is one and it is cheaper. An input that still cannot be priced says so and marks the profit incomplete rather than quietly counting it as free.
+- New, off by default: notify when transmuting produces a Philosopher's Stone.
+
 ### Settings that did nothing, or did not do what they said
 
 - Eight switches were ignored when turned off, even after a reload, because a feature missing from an internal map counted as always on: Goal Planner, Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, Session Briefing, Iron Cow Farm, the overlay tab button and the labyrinth monster stat check. Presets that switch those off now take effect too.
