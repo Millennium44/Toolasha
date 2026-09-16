@@ -48,7 +48,30 @@ const mocks = vi.hoisted(() => ({
     launcherHidden: false,
     /** Times `overlayTabButton.setLauncherHidden()` was called */
     launcherShowCalls: 0,
+    /** setting key → callbacks registered through `config.onSettingChange` */
+    listeners: {},
 }));
+
+/**
+ * Tell whoever is listening that a setting changed, as config does on a write.
+ * @param {string} id - The setting key
+ */
+function fireSettingChange(id) {
+    for (const callback of mocks.listeners[id] || []) callback();
+}
+
+/**
+ * A write made somewhere other than this panel — the skill toolbar's own
+ * dropdowns, say — landing in the settings and announcing itself.
+ * @param {string} id - The setting key
+ * @param {*} value - Its new value
+ */
+function writeFromElsewhere(id, value) {
+    mocks.settingsMap[id] ||= { id };
+    mocks.settingsMap[id].value = value;
+    mocks.settingsMap[id].isTrue = value;
+    fireSettingChange(id);
+}
 
 /** Controllable stand-in for the census singleton the export button drives. */
 const censusMock = vi.hoisted(() => ({
@@ -58,6 +81,13 @@ const censusMock = vi.hoisted(() => ({
     downloadResult: false,
     loadCalls: 0,
     flushCalls: 0,
+}));
+
+// Reached by the pricing dropdowns through patient-tick.js; nothing here prices anything
+vi.mock('../../utils/market-values.js', () => ({
+    nextPriceUp: (price) => price + 1,
+    nextPriceDown: (price) => price - 1,
+    clampToBand: (price) => price,
 }));
 
 vi.mock('../../utils/mobile.js', () => ({
@@ -153,6 +183,55 @@ const schema = {
             },
         },
     },
+    // The Buy/Sell pricing rows are a view over three stored keys, whose own
+    // rows are hidden: the group has two rows and five schema entries
+    pricingProfit: {
+        title: 'Pricing & Profit',
+        icon: '💹',
+        settings: {
+            profitCalc_pricingSideBuy: {
+                id: 'profitCalc_pricingSideBuy',
+                label: 'Buy pricing: instant, patient, or patient +1 tick',
+                type: 'pricingSide',
+                side: 'buy',
+                help: 'Ask (instant buy) takes the ask; Bid +1 (patient buy) jumps the queue.',
+            },
+            profitCalc_pricingSideSell: {
+                id: 'profitCalc_pricingSideSell',
+                label: 'Sell pricing: instant, patient, or patient −1 tick',
+                type: 'pricingSide',
+                side: 'sell',
+                help: 'Bid (instant sell) takes the bid; Ask −1 (patient sell) jumps the queue.',
+            },
+            profitCalc_pricingMode: {
+                id: 'profitCalc_pricingMode',
+                label: 'Profit calculation pricing mode',
+                type: 'select',
+                default: 'hybrid',
+                hidden: true,
+                options: [
+                    { value: 'conservative', label: 'Buy: Ask / Sell: Bid' },
+                    { value: 'hybrid', label: 'Buy: Ask / Sell: Ask' },
+                    { value: 'optimistic', label: 'Buy: Bid / Sell: Ask' },
+                    { value: 'patientBuy', label: 'Buy: Bid / Sell: Bid' },
+                ],
+            },
+            profitCalc_patientTickBuy: {
+                id: 'profitCalc_patientTickBuy',
+                label: 'Patient buys: +1 tick',
+                type: 'checkbox',
+                default: false,
+                hidden: true,
+            },
+            profitCalc_patientTickSell: {
+                id: 'profitCalc_patientTickSell',
+                label: 'Patient sells: −1 tick',
+                type: 'checkbox',
+                default: false,
+                hidden: true,
+            },
+        },
+    },
     market: {
         title: 'Market',
         icon: '💰',
@@ -195,11 +274,24 @@ vi.mock('../../core/config.js', () => ({
         getSettingValue: (id, fallback = null) => mocks.settingsMap[id]?.value ?? fallback,
         setSetting: (id, value) => {
             mocks.written.push([id, value]);
-            if (mocks.settingsMap[id]) mocks.settingsMap[id].isTrue = value;
+            if (mocks.settingsMap[id]) {
+                mocks.settingsMap[id].isTrue = value;
+                // The pricing dropdowns read a tick through getSettingValue,
+                // which the real config answers from the same stored entry
+                mocks.settingsMap[id].value = value;
+            }
+            fireSettingChange(id);
         },
         setSettingValue: (id, value) => {
             mocks.written.push([id, value]);
             if (mocks.settingsMap[id]) mocks.settingsMap[id].value = value;
+            fireSettingChange(id);
+        },
+        onSettingChange: (key, callback) => {
+            (mocks.listeners[key] ||= []).push(callback);
+            return () => {
+                mocks.listeners[key] = (mocks.listeners[key] || []).filter((cb) => cb !== callback);
+            };
         },
         clearSettingsCache: () => {
             mocks.cacheClears += 1;
@@ -395,6 +487,7 @@ beforeEach(() => {
     mocks.paletteOpened = 0;
     mocks.launcherHidden = false;
     mocks.launcherShowCalls = 0;
+    mocks.listeners = {};
     mocks.settingsMap = {};
     censusMock.initialized = true;
     censusMock.rosterSize = 0;
@@ -1344,6 +1437,158 @@ describe('editing a gear row', () => {
 
         const stored = mocks.written.findLast(([id]) => id === 'enhanceSim_gear_enhancer')[1];
         expect(stored).toEqual({ enabled: true, tier: 'holy', level: 15 });
+    });
+});
+
+describe('the Buy and Sell pricing rows', () => {
+    /**
+     * @param {'buy'|'sell'} side - Transaction side
+     * @returns {HTMLSelectElement|null} That side's dropdown in the panel
+     */
+    function pricingSelect(side) {
+        const id = side === 'buy' ? 'profitCalc_pricingSideBuy' : 'profitCalc_pricingSideSell';
+        return document.querySelector(`[data-pricing-side-row="${id}"]`);
+    }
+
+    /**
+     * Pick an option the way a player does.
+     * @param {'buy'|'sell'} side - Transaction side
+     * @param {string} choice - 'instant' | 'patient' | 'patientTick'
+     */
+    function choose(side, choice) {
+        const select = pricingSelect(side);
+        select.value = choice;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    test('the group shows two dropdowns, and the three old rows are gone', () => {
+        drawPanel();
+
+        expect(row('profitCalc_pricingSideBuy')).not.toBe(null);
+        expect(row('profitCalc_pricingSideSell')).not.toBe(null);
+        for (const id of ['profitCalc_pricingMode', 'profitCalc_patientTickBuy', 'profitCalc_patientTickSell']) {
+            expect(row(id), id).toBe(null);
+        }
+        expect(pricingSelect('buy').dataset.mwiPricingSide).toBe('buy');
+        expect(pricingSelect('sell').dataset.mwiPricingSide).toBe('sell');
+        // Not a setting of its own: an id would make the card's change handler
+        // try to store the row
+        expect(pricingSelect('buy').id).toBe('');
+    });
+
+    test('picking Bid +1 writes the mode and the buy tick together', () => {
+        drawPanel();
+        mocks.written = [];
+
+        choose('buy', 'patientTick');
+
+        expect(mocks.written).toEqual([
+            ['profitCalc_pricingMode', 'optimistic'],
+            ['profitCalc_patientTickBuy', true],
+        ]);
+        expect(pricingSelect('buy').value).toBe('patientTick');
+        // The sell side was left where it was
+        expect(pricingSelect('sell').value).toBe('patient');
+    });
+
+    test('choosing Instant clears that side’s tick and leaves the other alone', () => {
+        drawPanel();
+        choose('sell', 'patientTick');
+        mocks.written = [];
+
+        choose('sell', 'instant');
+
+        expect(mocks.written).toEqual([
+            ['profitCalc_pricingMode', 'conservative'],
+            ['profitCalc_patientTickSell', false],
+        ]);
+        expect(pricingSelect('sell').value).toBe('instant');
+    });
+
+    test('a change made on another surface resyncs the rows', () => {
+        drawPanel();
+        expect(pricingSelect('buy').value).toBe('instant');
+
+        // The skill toolbar's own dropdown, writing the same settings
+        writeFromElsewhere('profitCalc_pricingMode', 'optimistic');
+        writeFromElsewhere('profitCalc_patientTickBuy', true);
+
+        expect(pricingSelect('buy').value).toBe('patientTick');
+        expect(pricingSelect('sell').value).toBe('patient');
+    });
+
+    test('the naming checkbox retexts the options', () => {
+        drawPanel();
+        expect(Array.from(pricingSelect('buy').options).map((o) => o.textContent)).toEqual([
+            'Buy: Ask (instant)',
+            'Buy: Bid (patient)',
+            'Buy: Bid +1 (patient)',
+        ]);
+
+        writeFromElsewhere('profitCalc_pricingNaming', true);
+
+        expect(Array.from(pricingSelect('buy').options).map((o) => o.textContent)).toEqual([
+            'Buy: Instant (ask)',
+            'Buy: Patient (bid)',
+            'Buy: Patient +1 (bid)',
+        ]);
+    });
+
+    test('Iron Cow locks the rows and blocks a write', async () => {
+        drawPanel();
+        chip().click();
+        await settle();
+
+        for (const id of ['profitCalc_pricingSideBuy', 'profitCalc_pricingSideSell']) {
+            expect(row(id).dataset.ironCowLocked, id).toBe('true');
+            expect(row(id).style.pointerEvents, id).toBe('none');
+        }
+
+        mocks.written = [];
+        choose('buy', 'patientTick');
+        expect(mocks.written).toEqual([]);
+        // and the dropdown is put back where the settings say it is
+        expect(pricingSelect('buy').value).toBe('instant');
+    });
+
+    test('turning Iron Cow back off gives the rows back', async () => {
+        drawPanel();
+        chip().click();
+        await settle();
+        chip().click();
+        await settle();
+
+        for (const id of ['profitCalc_pricingSideBuy', 'profitCalc_pricingSideSell']) {
+            expect(row(id).dataset.ironCowLocked, id).toBe(undefined);
+            expect(row(id).style.pointerEvents, id).toBe('');
+        }
+        mocks.written = [];
+        choose('buy', 'patient');
+        expect(mocks.written).toEqual([['profitCalc_pricingMode', 'optimistic']]);
+    });
+
+    test('the old search terms still find them', async () => {
+        drawPanel();
+
+        await typeSearch('patient');
+        expect(row('profitCalc_pricingSideBuy').style.display).toBe('flex');
+        expect(row('profitCalc_pricingSideSell').style.display).toBe('flex');
+        expect(row('networth').style.display).toBe('none');
+
+        await typeSearch('+1 tick');
+        expect(row('profitCalc_pricingSideBuy').style.display).toBe('flex');
+
+        await typeSearch('ask');
+        expect(row('profitCalc_pricingSideBuy').style.display).toBe('flex');
+        expect(row('profitCalc_pricingSideSell').style.display).toBe('flex');
+    });
+
+    test('tearing the panel down drops the listeners that kept them in step', () => {
+        drawPanel();
+        settingsUI.cleanupDOM();
+
+        expect(settingsUI.pricingRowUnsubscribes).toEqual([]);
+        for (const callbacks of Object.values(mocks.listeners)) expect(callbacks).toEqual([]);
     });
 });
 

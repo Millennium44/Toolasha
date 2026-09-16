@@ -15,6 +15,15 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import {
+    PRICING_MODE_SETTING,
+    PRICING_SELECT_BACKGROUND,
+    PRICING_SIDE_SETTING_KEYS,
+    PRICING_SIDE_TOOLTIP_SETTING_KEYS,
+    applyPricingSideChoice,
+    createPricingSideSelect,
+    syncPricingSideSelect,
+} from '../../utils/pricing-side-select.js';
 import { detectedModeLabel, isMobileMode } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import spawnCensus from '../combat/spawn-census.js';
@@ -121,6 +130,7 @@ class SettingsUI {
         this.searchFilterTimer = null; // Pending debounced search filter pass
         this.restoreButton = null;
         this.diagnosticsSection = null; // The Diagnostics group, built lazily on open
+        this.pricingRowUnsubscribes = []; // Settings listeners keeping the Buy/Sell rows in step
     }
 
     /**
@@ -260,6 +270,8 @@ class SettingsUI {
 
         this.diagnosticsSection?.destroy();
         this.diagnosticsSection = null;
+
+        this.unwatchPricingSideRows();
 
         // Clear state
         this.settingsPanel = null;
@@ -508,6 +520,9 @@ class SettingsUI {
         // Add change listener
         card.addEventListener('change', (e) => this.handleSettingChange(e));
 
+        // The Buy/Sell pricing rows follow their settings wherever those are written
+        this.watchPricingSideRows();
+
         // Add click listener for template edit buttons
         card.addEventListener('click', (e) => {
             if (e.target.classList.contains('toolasha-template-edit-btn')) {
@@ -638,7 +653,11 @@ class SettingsUI {
 
         // Iron Cow locking pass
         const ironCowActive = ironCowMode.isEnabled();
-        for (const id of IRON_COW_SETTINGS) {
+        const lockedIds = [...IRON_COW_SETTINGS];
+        // A pricing row stores nothing, so the mode's list of keys cannot name
+        // it; it is locked exactly when the keys it writes are
+        if (IRON_COW_SETTINGS.has(PRICING_MODE_SETTING)) lockedIds.push(...this.pricingSideRowIds());
+        for (const id of lockedIds) {
             const el = document.querySelector(`.toolasha-setting[data-setting-id="${id}"]`);
             if (!el) continue;
             if (ironCowActive) {
@@ -732,10 +751,112 @@ class SettingsUI {
         inputContainer.className = 'toolasha-setting-input';
         inputContainer.innerHTML = inputHTML;
 
+        // A pricing row's control is a live element rather than markup: it is
+        // the same dropdown the skill toolbar and alchemy Best Items build, so
+        // the three surfaces cannot drift apart
+        if (settingDef.type === 'pricingSide') {
+            inputContainer.appendChild(this.createPricingSideRowControl(settingDef));
+        }
+
         div.appendChild(labelContainer);
         div.appendChild(inputContainer);
 
         return div;
+    }
+
+    /**
+     * Every `pricingSide` row in the schema, in schema order.
+     *
+     * These rows store nothing of their own — they write the pricing mode and
+     * the two per-side ticks — so anything that works from setting ids (the
+     * Iron Cow lock below) has to find them by type.
+     * @returns {string[]} Row ids
+     */
+    pricingSideRowIds() {
+        const ids = [];
+        for (const group of Object.values(settingsGroups)) {
+            for (const [id, def] of Object.entries(group.settings)) {
+                if (def.type === 'pricingSide') ids.push(id);
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * Whether Iron Cow mode currently owns the pricing settings, so the Buy and
+     * Sell rows must neither respond nor write. The mode locks the keys behind
+     * the rows, which is where the question has to be asked: the rows have ids
+     * of their own and are not in its list.
+     * @returns {boolean} True while the mode holds the pricing settings
+     */
+    pricingRowsLocked() {
+        return ironCowMode.isEnabled() && IRON_COW_SETTINGS.has(PRICING_MODE_SETTING);
+    }
+
+    /**
+     * The Buy or Sell dropdown a `pricingSide` row shows.
+     *
+     * The dropdown carries no `id`: the card's delegated change handler keys off
+     * one and would try to store the row as a setting, and this row is a view
+     * over three keys rather than a fourth. A choice is written by
+     * `applyPricingSideChoice`, which sets the mode and that side's tick
+     * together, and both rows then resync.
+     *
+     * @param {Object} settingDef - The schema row ({id, side, ...})
+     * @returns {HTMLSelectElement} The dropdown
+     */
+    createPricingSideRowControl(settingDef) {
+        const side = settingDef.side === 'sell' ? 'sell' : 'buy';
+        const select = createPricingSideSelect(side, {
+            cssText:
+                'padding: 4px 8px; border-radius: 4px; cursor: pointer; border: 1px solid #555; ' +
+                `font-size: 13px; color: #fff; background-color: ${PRICING_SELECT_BACKGROUND};`,
+            onChoose: (choice) => {
+                // Pointer-events already stop a click while the mode holds
+                // these, but a keyboard or a script can still reach the element
+                if (!this.pricingRowsLocked()) applyPricingSideChoice(side, choice);
+                this.syncPricingSideRows();
+            },
+        });
+        select.dataset.pricingSideRow = settingDef.id;
+        return select;
+    }
+
+    /**
+     * Bring every Buy/Sell pricing dropdown in the panel back in step with the
+     * settings — after this panel writes them, and after anything else does.
+     */
+    syncPricingSideRows() {
+        for (const select of document.querySelectorAll('.toolasha-setting select[data-mwi-pricing-side]')) {
+            syncPricingSideSelect(select);
+        }
+    }
+
+    /**
+     * Follow the settings the pricing rows show, whoever writes them: the skill
+     * toolbar and alchemy Best Items carry the same dropdowns, the naming
+     * checkbox in this very panel retexts their options, and the listing
+     * auto-fill settings change their tooltips.
+     */
+    watchPricingSideRows() {
+        this.unwatchPricingSideRows();
+        const resync = () => this.syncPricingSideRows();
+        for (const key of [...PRICING_SIDE_SETTING_KEYS, ...PRICING_SIDE_TOOLTIP_SETTING_KEYS]) {
+            const off = this.config.onSettingChange?.(key, resync);
+            if (typeof off === 'function') this.pricingRowUnsubscribes.push(off);
+        }
+    }
+
+    /** Drop the pricing-row listeners; the rows they redraw are gone. */
+    unwatchPricingSideRows() {
+        for (const off of this.pricingRowUnsubscribes) {
+            try {
+                off();
+            } catch (error) {
+                console.error('[SettingsUI] Dropping a pricing row listener failed:', error);
+            }
+        }
+        this.pricingRowUnsubscribes = [];
     }
 
     /**
@@ -1009,6 +1130,11 @@ class SettingsUI {
                     </div>
                 `;
             }
+
+            // The dropdown is appended as an element by createSettingElement,
+            // so the row's input container starts empty
+            case 'pricingSide':
+                return '';
 
             case 'button': {
                 // A row that IS an action: nothing stored, nothing collected on

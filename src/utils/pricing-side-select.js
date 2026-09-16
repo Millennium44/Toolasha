@@ -16,7 +16,12 @@
 import config from '../core/config.js';
 import { PATIENT_TICK_SETTING_KEYS, isPatientTickOn, patientTickSettingFor } from './patient-tick.js';
 
-const PRICING_MODE_SETTING = 'profitCalc_pricingMode';
+/**
+ * The stored four-value pricing mode the two dropdowns are a view over.
+ * Exported so a surface can ask whether that key is locked (Iron Cow) without
+ * naming the literal a second time.
+ */
+export const PRICING_MODE_SETTING = 'profitCalc_pricingMode';
 const PRICING_NAMING_SETTING = 'profitCalc_pricingNaming';
 
 /**

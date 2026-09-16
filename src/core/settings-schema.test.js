@@ -67,6 +67,55 @@ describe('time format defaults', () => {
     });
 });
 
+describe('the Buy and Sell pricing rows', () => {
+    test('each row is a view over the pricing settings and stores nothing itself', () => {
+        for (const [id, side] of [
+            ['profitCalc_pricingSideBuy', 'buy'],
+            ['profitCalc_pricingSideSell', 'sell'],
+        ]) {
+            const setting = getSettingDefinition(id);
+            expect(setting.type, id).toBe('pricingSide');
+            expect(setting.side, id).toBe(side);
+            // No default: the choice lives in the three keys below, and a
+            // default here would invent a fourth stored preference
+            expect(setting.default, id).toBe(undefined);
+        }
+    });
+
+    test('the three settings behind them are untouched, with their rows hidden rather than dropped', () => {
+        // Hidden, not deleted: the schema entry is what gives a key its default
+        // and its stored shape, so removing it would move everybody's saved value
+        const mode = getSettingDefinition('profitCalc_pricingMode');
+        expect(mode.type).toBe('select');
+        expect(mode.default).toBe('hybrid');
+        expect(mode.hidden).toBe(true);
+        expect(mode.options.map((o) => o.value)).toEqual(['conservative', 'hybrid', 'optimistic', 'patientBuy']);
+
+        for (const id of ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell']) {
+            const tick = getSettingDefinition(id);
+            expect(tick.type, id).toBe('checkbox');
+            expect(tick.default, id).toBe(false);
+            expect(tick.hidden, id).toBe(true);
+        }
+    });
+
+    test('the words the old rows were searched by still appear on the new ones', () => {
+        // The settings search matches label + help, and these two rows replaced
+        // a mode dropdown and two "+1 tick" / "−1 tick" checkboxes
+        const buy = getSettingDefinition('profitCalc_pricingSideBuy');
+        const sell = getSettingDefinition('profitCalc_pricingSideSell');
+        const buyText = `${buy.label} ${buy.help}`.toLowerCase();
+        const sellText = `${sell.label} ${sell.help}`.toLowerCase();
+
+        for (const term of ['patient', 'instant', 'ask', 'bid', 'pricing mode']) {
+            expect(buyText, term).toContain(term);
+            expect(sellText, term).toContain(term);
+        }
+        expect(buyText).toContain('+1 tick');
+        expect(sellText).toContain('−1 tick');
+    });
+});
+
 describe('startup recovery defaults', () => {
     test('automatic recovery ships off, and its help says what turning it on does', () => {
         const setting = getSettingDefinition('startupRecovery_autoReload');

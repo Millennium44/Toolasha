@@ -1671,11 +1671,54 @@ export const settingsGroups = {
         title: 'Pricing & Profit',
         icon: '💹',
         settings: {
+            // The Buy and Sell dropdowns are a view over the three settings
+            // below, which stay exactly as they are: the mode and the two
+            // per-side ticks. Their own rows are hidden rather than deleted —
+            // the schema entry is what gives each key its default, its stored
+            // shape and its place in an export, and a row is not a setting.
+            //
+            // Two dropdowns instead of a mode plus two checkboxes because each
+            // checkbox is a no-op in two of the four modes (with the shipped
+            // 'hybrid' the buy tick can never move a number) and nothing said
+            // so. `createPricingSideSelect` is the same control the skill
+            // toolbar and alchemy Best Items carry, so there is one
+            // implementation of the choice rather than three.
+            profitCalc_pricingSideBuy: {
+                id: 'profitCalc_pricingSideBuy',
+                label: 'Buy pricing: instant, patient, or patient +1 tick',
+                type: 'pricingSide',
+                side: 'buy',
+                help:
+                    'How purchases are priced everywhere profit is shown. Ask (instant buy) takes the ask; Bid ' +
+                    '(patient buy) assumes a buy order placed at the bid; Bid +1 (patient buy) assumes it one ' +
+                    'market tick above the bid, first in the queue and never crossing the spread. This dropdown ' +
+                    'and the Sell one below it replace the old pricing mode dropdown and the "Patient buys: +1 ' +
+                    'tick" checkbox — together they set the same pricing mode (instant buy / instant sell, ' +
+                    'instant buy / patient sell, patient buy / patient sell, patient buy / instant sell) and this ' +
+                    "side's patient tick. The listing auto-fill strategy is separate; a dropdown says in its " +
+                    'tooltip when the two disagree.',
+            },
+            profitCalc_pricingSideSell: {
+                id: 'profitCalc_pricingSideSell',
+                label: 'Sell pricing: instant, patient, or patient −1 tick',
+                type: 'pricingSide',
+                side: 'sell',
+                help:
+                    'How sales are priced everywhere profit is shown. Bid (instant sell) takes the bid; Ask ' +
+                    '(patient sell) assumes a sell order placed at the ask; Ask −1 (patient sell) assumes it one ' +
+                    'market tick below the ask, first in the queue and never crossing the spread. Replaces the ' +
+                    '"Patient sells: −1 tick" checkbox; with the Buy dropdown above it also picks the pricing ' +
+                    'mode (instant buy / instant sell, instant buy / patient sell, patient buy / patient sell, ' +
+                    'patient buy / instant sell). The listing auto-fill strategy is separate; a dropdown says in ' +
+                    'its tooltip when the two disagree.',
+            },
             profitCalc_pricingMode: {
                 id: 'profitCalc_pricingMode',
                 label: 'Profit calculation pricing mode',
                 type: 'select',
                 default: 'hybrid',
+                // Shown as the Buy and Sell dropdowns above
+                hidden: true,
                 options: [
                     { value: 'conservative', label: 'Buy: Ask / Sell: Bid (Instant Buy / Instant Sell)' },
                     { value: 'hybrid', label: 'Buy: Ask / Sell: Ask (Instant Buy / Patient Sell)' },
@@ -1688,6 +1731,8 @@ export const settingsGroups = {
                 label: 'Patient buys: +1 tick',
                 type: 'checkbox',
                 default: false,
+                // Shown as the Buy dropdown above
+                hidden: true,
                 help: 'When the pricing mode above buys at the bid, assume you jump the queue: a patient buy is priced one market tick above the bid. Instant buys (at the ask) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone. The listing auto-fill strategy is separate: if you outbid by 1 when listing, turn this on to match it.',
             },
             profitCalc_patientTickSell: {
@@ -1695,6 +1740,8 @@ export const settingsGroups = {
                 label: 'Patient sells: −1 tick',
                 type: 'checkbox',
                 default: false,
+                // Shown as the Sell dropdown above
+                hidden: true,
                 help: 'When the pricing mode above sells at the ask, assume you jump the queue: a patient sell is priced one market tick below the ask. Instant sells (at the bid) are unchanged, the tick never crosses the spread, and estimated or custom prices are left alone. The listing auto-fill strategy is separate: if you undercut by 1 when listing, turn this on to match it.',
             },
             pricing_testerShop: {
