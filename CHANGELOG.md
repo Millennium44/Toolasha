@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market nav row additions keep their size
+
+- The item-hop arrows, the Next button and the "Last: Buy / Sell" chip no longer shrink or wrap their labels onto several lines when the game's marketplace nav row is crowded — for instance when another script adds a bar of its own to the same row. Toolasha only protects what it puts there; the row is the game's.
+
 ### What's New shows the pricing dropdowns, and two new defaults
 
 - The Buy and Sell pricing rows in the What's New panel now carry the real dropdown instead of only a link to Settings, writing through the same path, with Iron Cow locking respected.
