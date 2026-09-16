@@ -20,15 +20,33 @@
  * `endCharacterItems` rows are on the wire either way, and this reads them
  * directly.
  *
- * ## Delta, not absolute total
+ * ## The baseline comes from inventory, not from the first message
  *
- * `endCharacterItems` rows carry a stack's new ABSOLUTE total, not the
- * amount gained by this action — the same trap the transmute tracker's own
- * comments warn about. A stone stack sitting at 3 says nothing on its own;
- * only "3, up from 2" is news. This keeps the last-seen total and only
- * speaks when it goes up. The first sighting has nothing to compare against
- * and only establishes that baseline — it is not announced, since it may be
- * describing a stack the player already had rather than one just produced.
+ * `endCharacterItems` carries only CHANGED stacks — one row per stack whose
+ * count moved, holding its new absolute total (see this same note in
+ * `transmute-history-tracker.js`). That means a stone row inside a transmute
+ * `action_completed` essentially always IS the gain: the row would not exist
+ * if the stack had not just moved. Treating the first such row as "no
+ * baseline yet, say nothing" would eat the first stone after every page
+ * load, character switch, or settings toggle — not a rare edge, the exact
+ * moment this feature exists for.
+ *
+ * So the baseline is seeded from the character's actual inventory
+ * (`dataManager.getInventory()`), read once when this module starts and
+ * again on `character_initialized` for the ordinary case where it starts
+ * before that data has arrived. It is never read from inside the
+ * `action_completed` path: `dataManager` mutates `characterItems` from its
+ * own handler on that same message, and reading it mid-handler would
+ * reintroduce exactly the handler-ordering race this module is written to
+ * avoid.
+ *
+ * A session can still reach `check()` with no baseline seeded — inventory
+ * genuinely unavailable, or a stone arriving before `character_initialized`
+ * has ever fired. That case announces rather than stays silent, treating the
+ * row as a gain of (at least) one. The two ways to get this wrong are not
+ * symmetric: a false positive tells the player about a stone they may
+ * already have had, a false negative is a missed ~540M jackpot. The module
+ * leans the way that costs less.
  *
  * ## Once per stone, not once per session
  *
@@ -54,15 +72,21 @@ export const MASTER_SETTING = 'notifications_philosophersStone';
 /** The one action this cares about */
 export const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
 
+/** Where a stack has to live to count — a stone elsewhere is not a gain here */
+const INVENTORY_LOCATION_HRID = '/item_locations/inventory';
+
 /** Prefix for the notification service's event keys */
 const EVENT_KEY_PREFIX = 'philosophers-stone';
 
 class PhiloStoneAlerts {
     constructor() {
-        /** Last known absolute count of the stone stack; null until first seen */
+        /** Last known absolute count of the stone stack, once seeded */
         this.lastCount = null;
+        /** Whether `lastCount` came from a real inventory read this session */
+        this.hasBaseline = false;
         this.unregisterHandlers = [];
         this.characterSwitchingHandler = null;
+        this.characterInitializedHandler = null;
     }
 
     /**
@@ -74,12 +98,50 @@ class PhiloStoneAlerts {
             return;
         }
 
+        // Covers the case where the character's data is already loaded by the
+        // time this feature starts (a re-init after a character switch, or a
+        // settings toggle mid-session)
+        this.seedBaseline();
+
         this.registerWebSocketListeners();
+
+        // Covers the ordinary startup case: this feature initializes before
+        // `init_character_data` has ever arrived, so there is nothing to seed
+        // from yet. Re-seeding here rather than only once means a reload of
+        // the same character also refreshes the baseline, which is harmless —
+        // the stack cannot have shrunk between two reads of the same login.
+        this.characterInitializedHandler = () => this.seedBaseline();
+        dataManager.on('character_initialized', this.characterInitializedHandler);
 
         this.characterSwitchingHandler = () => {
             this.disable();
         };
         dataManager.on('character_switching', this.characterSwitchingHandler);
+    }
+
+    /**
+     * Read the stone stack straight out of inventory and take it as the
+     * starting point for future deltas.
+     *
+     * Never called from the `action_completed` path — see the module comment
+     * for why that would race `dataManager`'s own handler on the same message.
+     */
+    seedBaseline() {
+        try {
+            const inventory = dataManager.getInventory();
+            // Not loaded yet; `character_initialized` will call this again
+            // once it is
+            if (!inventory) return;
+
+            const row = inventory.find(
+                (item) => item?.itemHrid === PHILO_HRID && item?.itemLocationHrid === INVENTORY_LOCATION_HRID
+            );
+            const count = Number(row?.count);
+            this.lastCount = Number.isFinite(count) ? count : 0;
+            this.hasBaseline = true;
+        } catch (error) {
+            console.error('[PhiloStoneAlerts] Seeding the inventory baseline failed:', error);
+        }
     }
 
     /** Listen for finished transmute attempts */
@@ -119,23 +181,34 @@ class PhiloStoneAlerts {
         if (!config.getSetting(MASTER_SETTING)) return;
         if (data?.endCharacterAction?.actionHrid !== TRANSMUTE_ACTION_HRID) return;
 
-        const row = (data.endCharacterItems || []).find((r) => r?.itemHrid === PHILO_HRID);
+        const row = (data.endCharacterItems || []).find(
+            (r) => r?.itemHrid === PHILO_HRID && r?.itemLocationHrid === INVENTORY_LOCATION_HRID
+        );
         if (!row) return;
 
         const count = Number(row.count);
         if (!Number.isFinite(count)) return;
 
-        const previous = this.lastCount;
-
-        // No baseline yet: this message only establishes one. Whatever this
-        // row's total is, it may be a stack the player already had rather than
-        // one produced just now, so nothing is announced on the strength of it
-        // alone.
-        if (previous === null) {
-            this.lastCount = count;
+        if (!this.hasBaseline) {
+            // Inventory could not be seeded this session — the fallback from
+            // the module comment: announce a gain of (at least) one rather
+            // than stay silent, and take this row as the baseline going
+            // forward so a later, properly-seeded message does not re-count
+            // whatever this one already reported.
+            const name = this.itemName();
+            const result = notificationService.notify(
+                `${EVENT_KEY_PREFIX}:${count}`,
+                `Transmuting produced a ${name}!`,
+                { title: "Philosopher's Stone!" }
+            );
+            if (result?.fired) {
+                this.lastCount = count;
+                this.hasBaseline = true;
+            }
             return;
         }
 
+        const previous = this.lastCount;
         const gained = count - previous;
         if (gained <= 0) {
             this.lastCount = count;
@@ -166,10 +239,15 @@ class PhiloStoneAlerts {
             dataManager.off('character_switching', this.characterSwitchingHandler);
             this.characterSwitchingHandler = null;
         }
+        if (this.characterInitializedHandler) {
+            dataManager.off('character_initialized', this.characterInitializedHandler);
+            this.characterInitializedHandler = null;
+        }
 
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.lastCount = null;
+        this.hasBaseline = false;
     }
 }
 
