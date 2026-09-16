@@ -449,8 +449,15 @@ class WhatsNew {
         // The safe path: keep every current value, and hold the conservative
         // policy so genuinely-new on-by-default switches stay off until asked
         // for. Dismissal lands here too — the person who closes a dialog unread
-        // is exactly the person who least wants their config touched.
-        config.setSetting('whatsNew_newDefaultsOff', true);
+        // is exactly the person who least wants their config touched — but a
+        // plain dismissal (Escape, or a click outside) must not turn anything
+        // on, including the policy switch itself. Every other way of landing
+        // here — clicking "Keep my current settings", or backing out of a
+        // "Copy from another character" pick — is a choice the person actually
+        // made, so it still persists the policy the same as before.
+        if (answer !== null) {
+            config.setSetting('whatsNew_newDefaultsOff', true);
+        }
         for (const id of conservative) config.setSetting(id, false);
 
         // The full popup still follows after startup, live switches and all —

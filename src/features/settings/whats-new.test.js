@@ -188,7 +188,13 @@ describe('the returning-user picker', () => {
         expect(whatsNew._pending.turnedOff).toEqual(new Set(conservative));
     });
 
-    test('dismissal (null) behaves exactly like keepCurrent', async () => {
+    test('dismissal (null) holds the conservative policy for this update, but does not persist the "new defaults off" switch itself', async () => {
+        // A plain dismissal — Escape, or a click outside the dialog — must not
+        // switch anything on by itself, including whatsNew_newDefaultsOff: the
+        // person who closes a dialog unread never chose "always keep new
+        // defaults off", only "not now". Before this fix, applyPolicy's next
+        // run would find that setting on and hold back every future on-by-default
+        // feature this person never opted out of.
         defineSchema(['newFeatureA'], ['newTuning']);
         const inherited = ['newFeatureA', 'newTuning'];
         const conservative = conservativeOverrides(inherited, (id) => mocks.definitions[id] || null);
@@ -198,7 +204,9 @@ describe('the returning-user picker', () => {
 
         expect(mocks.appliedPresets).toEqual([]);
         const written = Object.fromEntries(mocks.written);
-        expect(written.whatsNew_newDefaultsOff).toBe(true);
+        expect(written.whatsNew_newDefaultsOff).toBeUndefined();
+        expect(mocks.written.some(([id]) => id === 'whatsNew_newDefaultsOff')).toBe(false);
+        // This update's own genuinely-new on-by-default switches still stay off
         for (const id of conservative) expect(written[id]).toBe(false);
         expect(whatsNew._pending.turnedOff).toEqual(new Set(conservative));
     });
