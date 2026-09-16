@@ -154,6 +154,8 @@ class TradeHistoryDisplay {
         const historyDiv = document.createElement('div');
         historyDiv.className = 'mwi-trade-history';
 
+        // The nav row is the game's own and may also carry another script's bar; whatever
+        // squeezes the row, an item Toolasha put there must hold its size rather than wrap.
         historyDiv.style.cssText = `
             display: inline-flex;
             align-items: center;
@@ -166,6 +168,7 @@ class TradeHistoryDisplay {
             background: rgba(0,0,0,0.8);
             border-radius: 4px;
             white-space: nowrap;
+            flex-shrink: 0;
         `;
 
         // Build content

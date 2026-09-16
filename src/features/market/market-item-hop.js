@@ -235,6 +235,10 @@ class MarketItemHop {
         btn.className = BTN_CLASS;
         btn.textContent = label;
         btn.title = title;
+        // The nav row is the game's own and may also carry another script's bar; whatever
+        // squeezes the row, an item Toolasha put there must hold its size rather than wrap.
+        btn.style.flexShrink = '0';
+        btn.style.whiteSpace = 'nowrap';
         btn.addEventListener('click', () => this._step(direction));
         return btn;
     }

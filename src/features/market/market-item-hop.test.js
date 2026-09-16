@@ -237,6 +237,18 @@ describe('Market Item Hop', () => {
             settle();
             expect(document.getElementById('mwi-item-hop-prev')).toBeNull();
         });
+
+        // The nav row is the game's own and may also carry another script's bar; an item
+        // Toolasha put there must hold its size rather than get squeezed into wrapping.
+        test('cannot shrink or wrap in the shared nav row', () => {
+            openFromGrid('plank');
+            const prev = document.getElementById('mwi-item-hop-prev');
+            const next = document.getElementById('mwi-item-hop-next');
+            expect(prev.style.flexShrink).toBe('0');
+            expect(prev.style.whiteSpace).toBe('nowrap');
+            expect(next.style.flexShrink).toBe('0');
+            expect(next.style.whiteSpace).toBe('nowrap');
+        });
     });
 
     describe('teardown', () => {

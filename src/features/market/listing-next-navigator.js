@@ -127,6 +127,10 @@ class ListingNextNavigator {
             btn.type = 'button';
             btn.id = NEXT_BTN_ID;
             btn.className = BTN_CLASS;
+            // The nav row is the game's own and may also carry another script's bar; whatever
+            // squeezes the row, an item Toolasha put there must hold its size rather than wrap.
+            btn.style.flexShrink = '0';
+            btn.style.whiteSpace = 'nowrap';
             btn.addEventListener('click', () => this._handleClick());
             container.appendChild(btn);
             this.nextBtn = btn;

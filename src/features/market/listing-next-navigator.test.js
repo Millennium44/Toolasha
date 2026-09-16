@@ -130,6 +130,13 @@ describe('while the open item is the session’s current listing', () => {
         expect(mocks.navigate).not.toHaveBeenCalled();
         expect(refreshNavigator.getSessionProgress().index).toBe(0);
     });
+
+    // The nav row is the game's own and may also carry another script's bar; an item
+    // Toolasha put there must hold its size rather than get squeezed into wrapping.
+    test('cannot shrink or wrap in the shared nav row', () => {
+        expect(nextButton().style.flexShrink).toBe('0');
+        expect(nextButton().style.whiteSpace).toBe('nowrap');
+    });
 });
 
 describe('on the last listing', () => {
