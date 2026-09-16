@@ -75,6 +75,10 @@ const EARLY_RECOVERY_ATTEMPTS = 10;
  * that reload while being scoped to the one tab. IndexedDB is async and shared
  * across tabs, so it can answer neither question. A tab that reloads and lands
  * in the same state again therefore stops and asks, instead of looping.
+ *
+ * Cleared the moment a load does produce a character payload — see
+ * {@link DataManager#_clearRecoveryGuards} — so the mark means "this failure",
+ * not "this tab, forever".
  */
 const RELOAD_GUARD_KEY = 'toolasha.missedCharacterData.autoReloaded';
 
@@ -87,8 +91,20 @@ const RELOAD_GUARD_KEY = 'toolasha.missedCharacterData.autoReloaded';
  * then reloads cannot start closing sockets again on the page that comes back.
  * A read that throws is taken as "already used", because failing towards not
  * closing costs a reload and failing the other way is a loop.
+ *
+ * Cleared with the reload mark once a payload arrives; see
+ * {@link DataManager#_clearRecoveryGuards}.
  */
 const SOCKET_CLOSE_GUARD_KEY = 'toolasha.missedCharacterData.socketClosed';
+
+/**
+ * Both once-per-tab recovery marks, for the one place that clears them.
+ *
+ * They are cleared together and only together: each is spent on one half of a
+ * single recovery attempt, and what makes that attempt finished is the payload
+ * arriving, which ends both halves at once.
+ */
+const RECOVERY_GUARD_KEYS = [SOCKET_CLOSE_GUARD_KEY, RELOAD_GUARD_KEY];
 
 /**
  * How long the reconnect is given to deliver a fresh `init_character_data`
@@ -739,6 +755,45 @@ class DataManager {
     }
 
     /**
+     * Give this tab its recovery back, now that a load has demonstrably worked.
+     *
+     * Both marks say "already spent". Nothing used to unspend them, and
+     * `sessionStorage` outlives a reload, so what the comments describe as
+     * "once per failure" was in practice once per *tab*, for the life of that
+     * tab: a tab that recovered at breakfast would, hours and a dozen clean
+     * logins later, go straight to the toast on the next miss. The comments'
+     * intent is to stop a loop — "this tab reloaded once for this same failure
+     * and came back into it" — and a load that produced a character payload is
+     * exactly the proof that it is not the same failure any more.
+     *
+     * Called with the payload in hand, not merely when a socket opens: a socket
+     * that opens and then misses its one-shot message is the failure, so
+     * clearing on `open` would clear the guard in the very case it exists for
+     * and re-arm the loop.
+     *
+     * Every storage access is individually non-fatal. A tab that cannot clear
+     * the marks is left exactly where it is today — recovery unavailable — which
+     * costs a toast, never a loop.
+     * @private
+     */
+    _clearRecoveryGuards() {
+        // The in-memory twin of the close mark. Cleared alongside the stored
+        // one so the two cannot disagree within a page: leaving it set would
+        // keep refusing the close on a page that has been told it may try again.
+        this._reconnectRecoveryAttempted = false;
+
+        for (const key of RECOVERY_GUARD_KEYS) {
+            try {
+                window.sessionStorage?.removeItem(key);
+            } catch {
+                // Site data blocked, a hardened profile, a non-browser host.
+                // The mark stays set and recovery stays unavailable in this
+                // tab — the behaviour that shipped, and never a loop.
+            }
+        }
+    }
+
+    /**
      * Note that the player has begun using this page.
      *
      * Capture-phase and `once` per event type, so the listeners remove
@@ -1198,6 +1253,15 @@ class DataManager {
             // handler runs, so the player is never told to reload a session
             // that has already recovered.
             this._dismissMissedCharacterDataPrompt();
+
+            // The payload is in hand, so this tab's one recovery close and one
+            // recovery reload are spent on a failure that is over. Gated on the
+            // payload naming a character, because that is what
+            // _handleInitCharacterData insists on before it stores anything: a
+            // malformed message is not a load that worked.
+            if (data?.character?.id && data.character?.name) {
+                this._clearRecoveryGuards();
+            }
 
             // Bind ownership HERE, synchronously, and not inside
             // _handleInitCharacterData. That handler runs deferred behind

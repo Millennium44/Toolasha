@@ -86,6 +86,46 @@ const enterProvenMissedState = () => {
     hookMock.attachedAfterSocketOpen = true;
 };
 
+/**
+ * The smallest init_character_data the real handler will accept and store.
+ * @param {Object} [overrides] - Fields to replace on the payload
+ * @returns {Object} A payload shaped like the wire message
+ */
+const characterPayload = (overrides = {}) => ({
+    type: 'init_character_data',
+    character: { id: 30404, name: 'Testling' },
+    characterSkills: [],
+    characterItems: [],
+    characterActions: [],
+    characterQuests: [],
+    ...overrides,
+});
+
+/**
+ * Deliver a payload the way the hook does, through the registered handler.
+ * @param {Object} [payload] - The message body
+ * @returns {void}
+ */
+const deliverCharacterPayload = (payload = characterPayload()) => {
+    hookMock.handlers.get('init_character_data')?.(payload, { socket: {} });
+};
+
+/**
+ * What a page that has just come back from a recovery starts with: fresh
+ * in-memory state, and whatever the previous page left in sessionStorage.
+ * @returns {void}
+ */
+const startFreshPage = () => {
+    dataManager.cleanupIntervals();
+    dataManager.characterData = null;
+    dataManager.currentCharacterId = null;
+    dataManager.currentCharacterName = null;
+    dataManager.missedCharacterDataPrompt = null;
+    dataManager._missedCharacterDataReported = false;
+    dataManager._pageInteracted = false;
+    dataManager._reconnectRecoveryAttempted = false;
+};
+
 beforeEach(() => {
     vi.useFakeTimers();
     errors = [];
@@ -137,6 +177,8 @@ beforeEach(() => {
 
     dataManager.cleanupIntervals();
     dataManager.characterData = null;
+    dataManager.currentCharacterId = null;
+    dataManager.currentCharacterName = null;
     dataManager.missedCharacterDataPrompt = null;
     dataManager._missedCharacterDataReported = false;
     dataManager._pageInteracted = false;
@@ -345,6 +387,92 @@ describe('the close is gated exactly as the reload is', () => {
         expect(hookMock.closes).toBe(0);
         expect(reloads).toBe(0);
         expect(toastCalls).toHaveLength(1);
+    });
+});
+
+describe('the once-per-failure marks are given back once a load works', () => {
+    // Nothing used to clear either mark, and sessionStorage outlives a reload,
+    // so "once per failure" was in practice once per tab for the life of that
+    // tab: a tab that had spent its recovery hours and a dozen clean logins ago
+    // went straight to the toast on the next miss.
+
+    test('a character payload clears both marks', () => {
+        window.sessionStorage.setItem(CLOSE_GUARD_KEY, '1');
+        window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1');
+        dataManager._reconnectRecoveryAttempted = true;
+
+        deliverCharacterPayload();
+
+        expect(window.sessionStorage.getItem(CLOSE_GUARD_KEY)).toBeNull();
+        expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBeNull();
+        expect(dataManager._reconnectRecoveryAttempted).toBe(false);
+    });
+
+    test('a later failure in the same tab gets the whole recovery again', () => {
+        // The tab spends both halves on one failure...
+        enterProvenMissedState();
+        dataManager.initialize();
+        vi.advanceTimersByTime(EARLY_WINDOW_MS + RECONNECT_WINDOW_MS);
+        expect(hookMock.closes).toBe(1);
+        expect(reloads).toBe(1);
+
+        // ...the page that comes back logs in fine...
+        startFreshPage();
+        deliverCharacterPayload();
+
+        // ...and a miss on some later load is a new failure, not the old one.
+        startFreshPage();
+        hookMock.closes = 0;
+        reloads = 0;
+        dataManager.initialize();
+        vi.advanceTimersByTime(EARLY_WINDOW_MS);
+
+        expect(hookMock.closes).toBe(1);
+        expect(toastCalls).toHaveLength(0);
+    });
+
+    test('a failure that never recovers keeps its marks, so the loop is still prevented', () => {
+        enterProvenMissedState();
+        dataManager.initialize();
+        vi.advanceTimersByTime(EARLY_WINDOW_MS + RECONNECT_WINDOW_MS);
+        expect(reloads).toBe(1);
+
+        // The page comes back into the same failure: no payload, so nothing is
+        // cleared and neither half may be spent a second time.
+        startFreshPage();
+        hookMock.closes = 0;
+        reloads = 0;
+        dataManager.initialize();
+        vi.advanceTimersByTime(EARLY_WINDOW_MS + RECONNECT_WINDOW_MS);
+
+        expect(hookMock.closes).toBe(0);
+        expect(reloads).toBe(0);
+        expect(toastCalls).toHaveLength(1);
+    });
+
+    test('a payload with no character is not a load that worked', () => {
+        window.sessionStorage.setItem(CLOSE_GUARD_KEY, '1');
+        window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1');
+
+        deliverCharacterPayload(characterPayload({ character: { name: 'Nameless' } }));
+
+        expect(window.sessionStorage.getItem(CLOSE_GUARD_KEY)).toBe('1');
+        expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe('1');
+    });
+
+    test('storage refusing the clear leaves the tab where it was, and throws nothing', () => {
+        window.sessionStorage.setItem(CLOSE_GUARD_KEY, '1');
+        window.sessionStorage.setItem(RELOAD_GUARD_KEY, '1');
+        vi.spyOn(window.sessionStorage, 'removeItem').mockImplementation(() => {
+            throw new Error('site data blocked');
+        });
+
+        expect(() => deliverCharacterPayload()).not.toThrow();
+
+        // Unchanged: recovery stays unavailable in this tab, which costs a
+        // toast and never a loop.
+        expect(window.sessionStorage.getItem(CLOSE_GUARD_KEY)).toBe('1');
+        expect(window.sessionStorage.getItem(RELOAD_GUARD_KEY)).toBe('1');
     });
 });
 
