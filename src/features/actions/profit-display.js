@@ -26,6 +26,10 @@ import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 
+// The only gathering action type whose drop table is a set of mutually exclusive outcomes
+// rather than a guaranteed haul — see the actionPanel_foragingTotal gate in renderGatheringProfit.
+const FORAGING_ACTION_TYPE = '/action_types/foraging';
+
 const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
 export const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : value);
 
@@ -144,6 +148,16 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
             }
         });
         existingProfit.remove();
+    }
+
+    // The "overall profit" total only means something where an action can land on more
+    // than one outcome — Foraging's maps, whose drop table is a set of mutually exclusive
+    // rewards rather than a guaranteed haul. Woodcutting and Milking (and any single-outcome
+    // Foraging spot) always show their profit section regardless of this setting; it exists
+    // to let someone hide the aggregated total that only a multi-outcome foraging map draws.
+    const isMultiOutcomeForaging = gatheringActionType === FORAGING_ACTION_TYPE && profitData.baseOutputs.length > 1;
+    if (isMultiOutcomeForaging && !config.getSetting('actionPanel_foragingTotal', true)) {
+        return;
     }
 
     // Create top-level summary

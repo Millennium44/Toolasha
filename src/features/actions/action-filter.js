@@ -126,6 +126,14 @@ class ActionFilter {
             })
         );
 
+        // Gates the multi-outcome foraging total in profit-display.js — flipping it has to
+        // redraw the gathering profit sections the same as a pricing change would.
+        this.unregisterHandlers.push(
+            config.onSettingChange('actionPanel_foragingTotal', () => {
+                this._scheduleProfitRefresh();
+            })
+        );
+
         // A character switch reloads settings with an empty previous map, so the
         // per-key change callbacks above never fire — the pricing dropdowns, the craft button and
         // the profit sections they drive would keep the previous character's
