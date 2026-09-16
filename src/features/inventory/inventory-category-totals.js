@@ -12,7 +12,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import inventorySort from './inventory-sort.js';
-import { BADGE_MODE_SETTING, stackBadgeValueKey } from './inventory-badge-mode.js';
+import { BADGE_MODE_SETTING, totalValueKey } from './inventory-badge-mode.js';
 import { formatKMB } from '../../utils/formatters.js';
 import * as dom from '../../utils/dom.js';
 
@@ -153,7 +153,7 @@ class InventoryCategoryTotals {
         // Totals are shown whether or not badges are, so a mode that draws no
         // badge still falls back to the sorted side, or to Ask when unsorted
         const mode = inventorySort.currentMode;
-        const valueKey = stackBadgeValueKey(mode) ?? (mode === 'none' ? 'askValue' : `${mode}Value`);
+        const valueKey = totalValueKey(mode);
 
         for (const categoryDiv of inventoryElem.children) {
             const labelEl = categoryDiv.querySelector('[class*="Inventory_label"]');

@@ -17,7 +17,8 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
-const { stackBadgeValueKey, showsItemPriceBadges, badgeMode } = await import('./inventory-badge-mode.js');
+const { stackBadgeValueKey, showsItemPriceBadges, badgeMode, totalValueKey } =
+    await import('./inventory-badge-mode.js');
 
 beforeEach(() => {
     for (const key of Object.keys(settings)) delete settings[key];
@@ -75,5 +76,50 @@ describe('an unset setting', () => {
         expect(badgeMode()).toBe('sorting');
         expect(stackBadgeValueKey('ask')).toBe('askValue');
         expect(showsItemPriceBadges()).toBe(false);
+    });
+});
+
+describe('totalValueKey — the summary totals (category totals, custom-tab section totals)', () => {
+    // Unlike the per-item stack badge, a summary total always shows a number.
+    // Five modes x three sort states: the table below is the whole contract.
+    const table = [
+        // [mode, sortMode, expectedKey]
+        ['off', 'none', 'askValue'],
+        ['off', 'ask', 'askValue'],
+        ['off', 'bid', 'bidValue'],
+        ['sorting', 'none', 'askValue'],
+        ['sorting', 'ask', 'askValue'],
+        ['sorting', 'bid', 'bidValue'],
+        ['alwaysAsk', 'none', 'askValue'],
+        ['alwaysAsk', 'ask', 'askValue'],
+        ['alwaysAsk', 'bid', 'bidValue'],
+        ['alwaysBid', 'none', 'bidValue'],
+        ['alwaysBid', 'ask', 'askValue'],
+        ['alwaysBid', 'bid', 'bidValue'],
+        ['prices', 'none', 'askValue'],
+        ['prices', 'ask', 'askValue'],
+        ['prices', 'bid', 'bidValue'],
+    ];
+
+    test.each(table)('mode=%s, sort=%s -> %s', (mode, sortMode, expected) => {
+        settings.inv_valueBadges = mode;
+        expect(totalValueKey(sortMode)).toBe(expected);
+    });
+
+    test('a live sort still wins over alwaysAsk/alwaysBid, same precedence as the item badge', () => {
+        settings.inv_valueBadges = 'alwaysAsk';
+        expect(totalValueKey('bid')).toBe('bidValue');
+        settings.inv_valueBadges = 'alwaysBid';
+        expect(totalValueKey('ask')).toBe('askValue');
+    });
+
+    test('off and prices never draw a stack badge, but the total still resolves a key (the fix)', () => {
+        for (const mode of ['off', 'prices']) {
+            settings.inv_valueBadges = mode;
+            // The per-item badge is suppressed...
+            expect(stackBadgeValueKey('none')).toBeNull();
+            // ...but the summary total is not: it always gets a usable dataset key.
+            expect(totalValueKey('none')).toBe('askValue');
+        }
     });
 });

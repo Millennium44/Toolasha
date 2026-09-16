@@ -14,7 +14,7 @@ import config from '../../../core/config.js';
 import domObserver from '../../../core/dom-observer.js';
 import dataManager from '../../../core/data-manager.js';
 import inventorySort from '../inventory-sort.js';
-import { stackBadgeValueKey } from '../inventory-badge-mode.js';
+import { totalValueKey } from '../inventory-badge-mode.js';
 import inventoryBadgeManager from '../inventory-badge-manager.js';
 // Lazy accessor: in production multi-bundle builds, the Market bundle can't statically import
 // from Combat (it loads first). Resolve at runtime through the bundle bridge, with a fallback
@@ -1893,19 +1893,19 @@ export default class CustomTabsUI {
                 }
             }
 
-            // Sum badge values across all tiles in this section
-            const valueKey = stackBadgeValueKey(inventorySort.currentMode);
-            if (valueKey) {
-                const total = sectionTiles.reduce((sum, t) => sum + (parseFloat(t.dataset[valueKey]) || 0), 0);
-                if (total > 0) {
-                    const valueBadge = document.createElement('span');
-                    valueBadge.className = 'toolasha-ct-section-value';
-                    valueBadge.textContent = formatKMB(total, 2);
-                    valueBadge.title = tabValueTooltip(valueKey, sectionTiles.length);
-                    const rightEl = header.querySelector('.toolasha-ct-section-right');
-                    if (rightEl) rightEl.appendChild(valueBadge);
-                    else header.appendChild(valueBadge);
-                }
+            // Sum totals across all tiles in this section. This is a summary
+            // total, not a per-item badge — it always shows, following the
+            // sorted side when a sort is live and falling back to ask otherwise.
+            const valueKey = totalValueKey(inventorySort.currentMode);
+            const total = sectionTiles.reduce((sum, t) => sum + (parseFloat(t.dataset[valueKey]) || 0), 0);
+            if (total > 0) {
+                const valueBadge = document.createElement('span');
+                valueBadge.className = 'toolasha-ct-section-value';
+                valueBadge.textContent = formatKMB(total, 2);
+                valueBadge.title = tabValueTooltip(valueKey, sectionTiles.length);
+                const rightEl = header.querySelector('.toolasha-ct-section-right');
+                if (rightEl) rightEl.appendChild(valueBadge);
+                else header.appendChild(valueBadge);
             }
 
             // For sections without line breaks, sort tiles by price and assign orders now
@@ -1932,17 +1932,15 @@ export default class CustomTabsUI {
 
             // Show rolled-up value on the collapsed header (own items + all descendants)
             // Must peek BEFORE claiming tiles so values are still in the map.
-            const valueKey = stackBadgeValueKey(inventorySort.currentMode);
-            if (valueKey) {
-                const total = this._peekTileValue(tab, tileMap, valueKey);
-                if (total > 0) {
-                    const valueBadge = document.createElement('span');
-                    valueBadge.className = 'toolasha-ct-section-value';
-                    valueBadge.textContent = formatKMB(total, 2);
-                    const rightEl = header.querySelector('.toolasha-ct-section-right');
-                    if (rightEl) rightEl.appendChild(valueBadge);
-                    else header.appendChild(valueBadge);
-                }
+            const valueKey = totalValueKey(inventorySort.currentMode);
+            const total = this._peekTileValue(tab, tileMap, valueKey);
+            if (total > 0) {
+                const valueBadge = document.createElement('span');
+                valueBadge.className = 'toolasha-ct-section-value';
+                valueBadge.textContent = formatKMB(total, 2);
+                const rightEl = header.querySelector('.toolasha-ct-section-right');
+                if (rightEl) rightEl.appendChild(valueBadge);
+                else header.appendChild(valueBadge);
             }
 
             // Consume own items so lower tabs cannot claim them (topmost-tab-wins priority)

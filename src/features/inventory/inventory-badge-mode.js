@@ -51,3 +51,19 @@ export function stackBadgeValueKey(sortMode) {
 export function showsItemPriceBadges() {
     return badgeMode() === 'prices';
 }
+
+/**
+ * Which dataset key a *summary total* (category totals, custom-tab section
+ * totals) should read for the current sort. Unlike a per-item stack badge, a
+ * summary always shows a number: the badge-mode setting governs whether an
+ * individual tile carries a value badge, not whether the total appears. When
+ * there is no live sort, this follows `stackBadgeValueKey`'s 'alwaysAsk' /
+ * 'alwaysBid' choice same as before; with the sort off and the badge mode
+ * 'off' or 'prices' — where `stackBadgeValueKey` draws no badge at all — this
+ * still falls back to the ask side so the total keeps showing.
+ * @param {string} sortMode - Inventory sort mode: 'ask', 'bid' or 'none'
+ * @returns {string} 'askValue' or 'bidValue'
+ */
+export function totalValueKey(sortMode) {
+    return stackBadgeValueKey(sortMode) ?? (sortMode === 'none' ? 'askValue' : `${sortMode}Value`);
+}
