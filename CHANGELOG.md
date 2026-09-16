@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit round: three fixes in yesterday's consolidated settings
+
+- Switching Iron Cow mode off left a gated row looking fully live while its parent was still off, because the unlock pass wiped the greying the dependency pass had just applied.
+- The Top Order Age column ignored the listing age format, so picking Date/Time moved every other age column and left that one reading elapsed time.
+- Inventory category totals did not re-sum when the value-badge mode changed, so switching to "always Bid" left them totalling the ask side until something else redrew them.
+- The value-badge setting's help no longer claims category totals disappear with it; they do not, and never did.
+
 ### The "Last: Buy / Sell" chip comes back after a tab switch
 
 - The chip was only ever redrawn when a fresh price arrived, so switching marketplace tabs and back made it vanish until the item next traded — which on a quiet book could be a very long time. It now redraws from the last figures it had, the way the neighbouring market widgets already did.
