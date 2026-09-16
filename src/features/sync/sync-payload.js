@@ -92,9 +92,10 @@ const LOCAL_ONLY_SETTING_IDS = [...REDACTED_SETTING_IDS, ...DEVICE_LOCAL_SETTING
  * way in (`applyPayload`), so a payload written by an older build that did not
  * strip them cannot plant one either.
  *
- * The remaining two entries are single keys, not prefixes in the naming-scheme
- * sense — the mechanism matches by `startsWith`, so a literal key matches
- * itself. Both are the same shape as `toolasha_sync_lastSyncedSeq`: a cached
+ * `updateCheckState` and `sessionBriefingLastAlive_` are single keys rather than
+ * prefixes in the naming-scheme sense — the mechanism matches by `startsWith`,
+ * so a literal key matches itself. Both are the same shape as
+ * `toolasha_sync_lastSyncedSeq`: a cached
  * answer to "what did this device last see/do", stamped with this device's
  * clock. `updateCheckState` is this device's last update-poll (`checkedAt`,
  * `latestVersion` — see `features/ui/update-check.js`); a pull handing it
@@ -105,12 +106,28 @@ const LOCAL_ONLY_SETTING_IDS = [...REDACTED_SETTING_IDS, ...DEVICE_LOCAL_SETTING
  * against this device's clock inside a 60-second window; a foreign timestamp
  * landing in it can misfire that comparison. Neither is a setting a player
  * chose — `updateCheck`/`updateCheckHours` are, and travel normally.
+ *
+ * `Toolasha_marketAPI_` is the market price cache (`api/marketplace.js`) — the
+ * snapshot, its fetch stamp, the order-book patches and the patch migration
+ * version. This one is not kept back because it would be *wrong* elsewhere:
+ * prices are global, so a copy is as true on the next device as on this one.
+ * It is kept back because of what it weighs. The snapshot alone measures around
+ * 114 KB, it rides every push and every pull, and the receiving device throws it
+ * away and refetches within fifteen minutes (`CACHE_DURATION`) anyway — so the
+ * payload pays for a cache that is stale before it lands. The stamp goes with
+ * the snapshot because it is only meaningful beside it, and the patches are the
+ * same trade at smaller size: this device's own order-book sightings, stamped
+ * with this device's clock and purged against this device's last fetch. The
+ * migration version is bookkeeping for the patches, and alone it is worse than
+ * useless — a higher number arriving from another device would tell this one its
+ * patches had already been cleared when they had not.
  */
 export const LOCAL_ONLY_KEY_PREFIXES = [
     'toolasha_sync_',
     'toolasha_local_',
     'updateCheckState',
     'sessionBriefingLastAlive_',
+    'Toolasha_marketAPI_',
 ];
 
 /**

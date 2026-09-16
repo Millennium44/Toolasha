@@ -137,6 +137,27 @@ describe('redaction', () => {
         expect(safe.script_settingsMap_shared.updateCheckHours).toEqual({ value: 24 });
     });
 
+    test('strips the market price cache, which every device refetches for itself', () => {
+        storeState.stores.settings.Toolasha_marketAPI_json = { marketData: { '/items/cheese': {} }, timestamp: 1 };
+        storeState.stores.settings.Toolasha_marketAPI_timestamp = 1700000000000;
+        storeState.stores.settings.Toolasha_marketAPI_patches = { '/items/cheese:0': { a: 5, b: 4, timestamp: 1 } };
+        storeState.stores.settings.Toolasha_marketAPI_migration_version = 1;
+
+        const safe = redactSettingsStore(storeState.stores.settings);
+
+        // Not wrong elsewhere — prices are global — but ~114 KB of snapshot on
+        // every push and pull, for a cache the receiver refetches within the
+        // quarter hour. The stamp, the order-book patches and the patch
+        // migration version are the same cache's bookkeeping and go with it.
+        expect(safe.Toolasha_marketAPI_json).toBeUndefined();
+        expect(safe.Toolasha_marketAPI_timestamp).toBeUndefined();
+        expect(safe.Toolasha_marketAPI_patches).toBeUndefined();
+        expect(safe.Toolasha_marketAPI_migration_version).toBeUndefined();
+        // Ordinary settings alongside it are untouched
+        expect(safe.some_other_key).toBe(42);
+        expect(safe.script_settingsMap_abc.chatCommands).toEqual({ isTrue: true });
+    });
+
     test('does not mutate the caller’s live storage read', () => {
         redactSettingsStore(storeState.stores.settings);
         expect(storeState.stores.settings.script_settingsMap_abc.sync_token).toEqual({ value: 'ghp_secret' });
@@ -355,6 +376,34 @@ describe('applyPayload', () => {
         expect(writtenSettings.sessionBriefingLastAlive_603281).toBeUndefined();
         // The setting that paces the check still lands normally
         expect(writtenSettings.script_settingsMap_shared.updateCheckHours).toEqual({ value: 1 });
+        expect(writtenSettings.keep).toBe(1);
+    });
+
+    test('never plants another device’s market price cache', async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                settings: {
+                    Toolasha_marketAPI_json: { marketData: {}, timestamp: 1 },
+                    Toolasha_marketAPI_timestamp: 1700000000000,
+                    Toolasha_marketAPI_patches: { '/items/cheese:0': { a: 5, b: 4, timestamp: 1 } },
+                    Toolasha_marketAPI_migration_version: 1,
+                    keep: 1,
+                },
+            },
+        });
+
+        await applyPayload(json);
+
+        // A payload written by a build from before the exclusion still carries
+        // the cache; a stale snapshot stamped with a foreign clock must not be
+        // planted here either
+        const writtenSettings = importedPayloads[0].stores.settings;
+        expect(writtenSettings.Toolasha_marketAPI_json).toBeUndefined();
+        expect(writtenSettings.Toolasha_marketAPI_timestamp).toBeUndefined();
+        expect(writtenSettings.Toolasha_marketAPI_patches).toBeUndefined();
+        expect(writtenSettings.Toolasha_marketAPI_migration_version).toBeUndefined();
         expect(writtenSettings.keep).toBe(1);
     });
 });
