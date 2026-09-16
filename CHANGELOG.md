@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One labyrinth simulation budget instead of eleven settings
+
+- The four "Uncapped" switches, two precisions and five ceilings become one budget choice (capped or run to precision), one precision and one hour ceiling. The panels keep their own Uncapped boxes and Max hrs inputs as views onto it, and stored values are carried over, so nothing needs re-picking. What goes: setting one panel uncapped but not another, a separate precision for the Automation tab, and a custom Max fights on Single Sim or Upgrade, which now use the 20,000-fight budget they already defaulted to.
+
 ### Switches that were ignored now work
 
 - Eight settings did nothing when switched off, because a feature with no entry in the internal feature map counted as always on: Goal Planner, Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, Session Briefing, Iron Cow Farm, the overlay tab button, and the labyrinth monster stat check. Presets that switch those off now take effect too.
