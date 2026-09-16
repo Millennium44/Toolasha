@@ -29,12 +29,27 @@
  *
  * ## Where the derivation is unsound, nothing is written
  *
- * `totalSuccesses` is itself capped per message by the tracker and can be an
- * undercount. Where it is, the subtraction above goes negative or produces an
- * answer the rest of the record contradicts, and a repaired session would be a
- * confident wrong number wearing the same clothes as an observed one. Those
- * sessions are marked unreliable instead, and the totals table declines to
- * average them in.
+ * `totalSuccesses` is itself counted by the same per-message batching that
+ * produced this bug, and is not exempt from it. Where the subtraction above
+ * goes negative or produces an answer the rest of the record contradicts, a
+ * repaired session would be a confident wrong number wearing the same clothes
+ * as an observed one. Those sessions are marked unreliable instead, and the
+ * totals table declines to average them in.
+ *
+ * Where the derivation IS applied, it still trusts `totalSuccesses` at face
+ * value, and that trust is not free: measured against the game's reported
+ * success rate, pre-fix sessions' recorded `totalSuccesses` run several
+ * standard deviations high (85.3% and 81.7% recorded against a true 65.32%,
+ * on two sessions checked), while a post-fix session lands on the true rate.
+ * So on a repaired session `derived` is very likely an overcount too, which
+ * makes the derived self-return count too high and `netConsumed` — and
+ * therefore input cost — too LOW. This runs opposite to what was assumed
+ * when this repair was written: the expectation was that an undercounted
+ * `totalSuccesses` would push cost the safe way (overstated). The evidence
+ * says the reverse — a repaired session's input cost is likely understated,
+ * not overstated. No second repair pass corrects for this here; see the `§`
+ * legend and per-session tooltip in `transmute-history-viewer.js`, which say
+ * so instead of guessing at a better number.
  *
  * ## Every touched session says so
  *

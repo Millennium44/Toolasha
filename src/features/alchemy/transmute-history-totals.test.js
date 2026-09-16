@@ -248,6 +248,110 @@ describe('transmute history totals: impossible-session flag', () => {
     });
 });
 
+describe('transmute history totals: inputs per jackpot output', () => {
+    beforeEach(() => {
+        mocks.prices = { [INPUT_A_HRID]: 100 };
+    });
+
+    test('divides netConsumed by non-self-return outputs, not by successes', () => {
+        // 8 successes, but only 2 are the actual jackpot (Philosopher's Stone) —
+        // the other 6 are self-returns and must not inflate the denominator.
+        loadSessions([
+            makeSession({
+                id: 's1',
+                totalAttempts: 10,
+                totalSuccesses: 8,
+                results: {
+                    [INPUT_A_HRID]: { count: 6, isSelfReturn: true, totalValue: 0 },
+                    [OUTPUT_HRID]: { count: 2, isSelfReturn: false, totalValue: 2000, priceEach: 1000 },
+                },
+            }),
+        ]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+
+        // netConsumed = 10 - 6 = 4; jackpot outputs = 2 => 2.00, not 4/8 = 0.50
+        expect(group.netConsumed).toBe(4);
+        expect(group.nonSelfReturnOutputs).toBe(2);
+        expect(group.inputsPerOutput).toBeCloseTo(2, 6);
+    });
+
+    test('a group that produced nothing but self-returns shows a dash, not Infinity or NaN', () => {
+        loadSessions([
+            makeSession({
+                id: 's1',
+                totalAttempts: 10,
+                totalSuccesses: 8,
+                results: {
+                    [INPUT_A_HRID]: { count: 8, isSelfReturn: true, totalValue: 0 },
+                },
+            }),
+        ]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        const row = transmuteHistoryViewer.buildTotalsRow(group, 0);
+        const cells = Array.from(row.querySelectorAll('td')).map((td) => td.textContent);
+
+        expect(group.nonSelfReturnOutputs).toBe(0);
+        expect(group.inputsPerOutput).toBeNull();
+        expect(cells[COL.INPUTS_PER_OUTPUT]).toBe('—');
+    });
+
+    test('the column header says what is counted and that self-returns are excluded', () => {
+        loadSessions([makeSession({ id: 's1' })]);
+
+        transmuteHistoryViewer.modal = document.createElement('div');
+        transmuteHistoryViewer.modal.innerHTML = '<div class="mwi-transmute-history-totals-container"></div>';
+        transmuteHistoryViewer.renderTotals();
+
+        const headerCells = Array.from(transmuteHistoryViewer.modal.querySelectorAll('thead th'));
+        const jackpotHeader = headerCells.find((th) => th.textContent === 'Inputs/Jackpot');
+
+        expect(jackpotHeader).toBeDefined();
+        expect(jackpotHeader.title).toMatch(/self-return/i);
+        expect(jackpotHeader.title).toMatch(/exclude/i);
+    });
+});
+
+describe('transmute history totals: the § repair disclosure says the success count is approximate too', () => {
+    beforeEach(() => {
+        mocks.prices = { [INPUT_A_HRID]: 100 };
+    });
+
+    function repairedSession(overrides) {
+        return makeSession({
+            id: 'repaired',
+            repair: { id: 'transmute-self-return-batching', outcome: 'repaired', from: 103, to: 62 },
+            ...overrides,
+        });
+    }
+
+    test('the bottom legend says the derived success count is itself approximate', () => {
+        loadSessions([repairedSession()]);
+
+        transmuteHistoryViewer.modal = document.createElement('div');
+        transmuteHistoryViewer.modal.innerHTML = '<div class="mwi-transmute-history-totals-container"></div>';
+        transmuteHistoryViewer.renderTotals();
+
+        const legend = transmuteHistoryViewer.modal.textContent;
+        expect(legend).toMatch(/§/);
+        expect(legend).toMatch(/success/i);
+        expect(legend).toMatch(/approximat/i);
+        expect(legend).toMatch(/understated/i);
+    });
+
+    test("a repaired group's item-cell tooltip also says the success count is approximate", () => {
+        loadSessions([repairedSession()]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        const row = transmuteHistoryViewer.buildTotalsRow(group, 0);
+        const itemCell = row.querySelector('td');
+
+        expect(itemCell.title).toMatch(/success/i);
+        expect(itemCell.title).toMatch(/approximat/i);
+    });
+});
+
 describe('transmute history totals: break-even input value', () => {
     beforeEach(() => {
         mocks.prices = { [INPUT_A_HRID]: 100, [CATALYST_HRID]: 50 };

@@ -680,6 +680,7 @@ class TransmuteHistoryViewer {
                     attempts: 0,
                     successes: 0,
                     netConsumed: 0,
+                    nonSelfReturnOutputs: 0,
                     revenue: 0,
                     inputCost: 0,
                     inputUnpriced: false,
@@ -701,6 +702,7 @@ class TransmuteHistoryViewer {
             group.attempts += session.totalAttempts || 0;
             group.successes += session.totalSuccesses || 0;
             group.netConsumed += detail.netConsumed;
+            group.nonSelfReturnOutputs += detail.nonSelfReturnOutputs;
             group.revenue += detail.revenue;
             group.inputCost += detail.inputCost;
             if (detail.inputUnpriced) group.inputUnpriced = true;
@@ -734,7 +736,14 @@ class TransmuteHistoryViewer {
         const totals = Array.from(groups.values()).map((group) => {
             const net = group.revenue - group.inputCost - group.catalystCost - group.coinCost;
             const successRate = group.attempts > 0 ? group.successes / group.attempts : null;
-            const inputsPerOutput = group.successes > 0 ? group.netConsumed / group.successes : null;
+            // Most "successes" are self-returns — the same item handed straight
+            // back, costing nothing and gaining nothing. Dividing by successes
+            // reads as though those free round-trips were purchases, so the
+            // denominator here is only the non-self-return ("jackpot") outputs.
+            // A group that produced nothing but self-returns has no meaningful
+            // ratio at all; null (rendered as a dash) beats a division by zero.
+            const inputsPerOutput =
+                group.nonSelfReturnOutputs > 0 ? group.netConsumed / group.nonSelfReturnOutputs : null;
             // The input value at which recorded revenue exactly covers catalyst
             // and coin cost for what was consumed — answers "was the recorded
             // catalyst worth it" without needing to know what the input is
@@ -790,7 +799,15 @@ class TransmuteHistoryViewer {
             },
             { label: 'Coin Cost' },
             { label: 'Net' },
-            { label: 'Inputs/Output', title: 'Inputs actually consumed per successful (non-self-return) output.' },
+            {
+                label: 'Inputs/Jackpot',
+                title:
+                    'Inputs consumed per non-self-return output. Self-returns are excluded from this count — a ' +
+                    'self-return hands back the same item you put in, so it costs nothing and counts as neither ' +
+                    'an input nor an output here. This is the real price of the outputs that were actually worth ' +
+                    'something, not the inflated figure you get from dividing by every "success" including the ' +
+                    'free round-trips.',
+            },
             {
                 label: 'Break-even Input',
                 title:
@@ -824,7 +841,9 @@ class TransmuteHistoryViewer {
             '† catalyst on some sessions could not be priced — excluded, not zero    ' +
             '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero    ' +
             '◇ catalyst estimated on some sessions, not measured    ' +
-            '§ self-return counts on some sessions were derived from the successes, not observed';
+            '§ self-return counts on some sessions were derived from the recorded successes, not observed — ' +
+            'and that success count is itself approximate on these sessions (recorded through the same batching ' +
+            'bug), so input cost on them is likely understated, not just approximate';
         container.appendChild(legend);
     }
 
@@ -873,7 +892,9 @@ class TransmuteHistoryViewer {
         else if (repairedMark) {
             itemCell.title =
                 `${group.repairedSessions} session(s) in this group had their self-return count derived from ` +
-                'the successes, not observed — they were recorded through the batched-message counting bug.';
+                'the recorded successes, not observed — they were recorded through the batched-message counting ' +
+                'bug. That success count is itself approximate on these sessions, for the same reason, so input ' +
+                'cost on them is likely understated.';
         }
         itemCell.appendChild(nameSpan);
         row.appendChild(itemCell);
@@ -1088,8 +1109,9 @@ class TransmuteHistoryViewer {
             return `⚠ Recorded counts are internally impossible (${repair.reason}) — not repaired, treat as unreliable\n`;
         }
         return (
-            `⚠ Self-return count repaired: recorded ${repair.from}, derived ${repair.to} from the successes ` +
-            '(the batched-message counting bug)\n'
+            `⚠ Self-return count repaired: recorded ${repair.from}, derived ${repair.to} from the recorded ` +
+            'successes (the batched-message counting bug). That success count is itself approximate on this ' +
+            'session, for the same reason — input cost here is likely understated, not just approximate\n'
         );
     }
 
@@ -1175,7 +1197,8 @@ class TransmuteHistoryViewer {
      *
      * @param {Object} session
      * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number,
-     *   inputBasis: string|null, inputUnpriced: boolean, catalystHrid: string|null, catalystCost: number,
+     *   nonSelfReturnOutputs: number, inputBasis: string|null, inputUnpriced: boolean, catalystHrid: string|null,
+     *   catalystCost: number,
      *   catalystUnrecorded: boolean, catalystUnpriced: boolean, catalystEstimated: boolean,
      *   catalystEntries: Array<{hrid: string, count: number, cost: number, unpriced: boolean}>}}
      */
@@ -1188,11 +1211,13 @@ class TransmuteHistoryViewer {
 
         let revenue = 0;
         let selfReturned = 0;
+        let nonSelfReturnOutputs = 0;
         for (const result of Object.values(session.results || {})) {
             if (result.isSelfReturn) {
                 selfReturned += result.count || 0;
             } else {
                 revenue += calculatePriceAfterTax(result.totalValue || 0);
+                nonSelfReturnOutputs += result.count || 0;
             }
         }
 
@@ -1221,6 +1246,7 @@ class TransmuteHistoryViewer {
             inputCost,
             coinCost,
             netConsumed,
+            nonSelfReturnOutputs,
             inputBasis,
             inputUnpriced,
             ...catalyst,
@@ -1323,7 +1349,9 @@ class TransmuteHistoryViewer {
                     text.textContent = `${name} x${result.count} (self-return, derived)`;
                     text.title =
                         `Recorded as ${result.recordedCount} by the batched-message counting bug; ` +
-                        'derived from the successes, not observed.';
+                        'derived from the recorded successes, not observed. That success count is itself ' +
+                        'approximate on this session, for the same reason — input cost here is likely ' +
+                        'understated, not just approximate.';
                 } else {
                     text.textContent = `${name} x${result.count} (self-return)`;
                 }
