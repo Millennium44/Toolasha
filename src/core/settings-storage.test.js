@@ -39,6 +39,11 @@ vi.mock('./storage.js', () => ({
             return Promise.resolve(true);
         }),
         getAll: vi.fn(() => Promise.resolve({})),
+        tryGetAllKeys: vi.fn(() =>
+            Promise.resolve(
+                outage.on ? null : [...stored.keys()].map((key) => (key.startsWith('json:') ? key.slice(5) : key))
+            )
+        ),
     },
 }));
 

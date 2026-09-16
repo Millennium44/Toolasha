@@ -7,11 +7,15 @@
  */
 
 import syncManager from './sync-manager.js';
+import { showSharedSettingsNotice } from './shared-settings-notice.js';
 
 export default {
     name: 'Cross-Device Sync',
     initialize: async () => {
         await syncManager.initialize();
+        // Only ever says anything when the one-time carry-over of the sync
+        // settings to account-wide storage had to choose between characters
+        await showSharedSettingsNotice();
     },
     cleanup: () => {
         syncManager.cleanup();

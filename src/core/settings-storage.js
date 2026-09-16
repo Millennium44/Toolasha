@@ -280,6 +280,69 @@ const TASK_CHARACTER_SCOPED_PREFIXES = ['taskProtectedHrids', 'taskAutoRerollHri
  */
 const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_'];
 
+/**
+ * Where the settings that belong to the account rather than to a character live.
+ *
+ * Deliberately under the same `script_settingsMap` prefix as the per-character
+ * maps: `sync-payload.js` redacts, and preserves on the way back in, every key
+ * that starts with it, so the token in here is stripped from an upload and never
+ * planted by a pull for free. `_shared` is not a character id — ids are numeric —
+ * so nothing that walks the known-characters roster can collide with it.
+ */
+const SHARED_SETTINGS_KEY = 'script_settingsMap_shared';
+
+/**
+ * Set once the one-time carry-over from the per-character maps has run and its
+ * write actually landed. Device-wide, not per character: the carry-over reads
+ * every character's map in one pass.
+ */
+const SHARED_SCOPE_FLAG_KEY = 'settings_shared_scope_v1';
+
+/**
+ * Where a carry-over that could not decide records what it found, for the sync
+ * feature to show the player. See {@link SettingsStorage#migrateSharedSettings}.
+ */
+const SHARED_SCOPE_CONFLICT_KEY = 'settings_shared_scope_conflicts';
+
+/**
+ * Merge one stored entry onto a freshly built schema entry.
+ *
+ * Shared by the per-character merge and the account-wide overlay, so the two
+ * cannot drift on the awkward cases below.
+ *
+ * @param {Object} target - Entry built from the schema, mutated in place
+ * @param {Object} savedValue - The stored entry
+ * @returns {void}
+ */
+function mergeStoredEntry(target, savedValue) {
+    if (!target || !savedValue || typeof savedValue !== 'object') return;
+    if (Object.hasOwn(savedValue, 'isTrue')) {
+        target.isTrue = savedValue.isTrue;
+    }
+    if (Object.hasOwn(savedValue, 'value')) {
+        if (isBooleanType(target.type)) {
+            // A boolean setting keeps its state in `.isTrue`, so a stored
+            // `.value` beside it is not a second opinion — it is either the
+            // old checkboxWithButton shape (which persisted its boolean in
+            // `.value` alone) or the write of a setter that put the new
+            // answer in the wrong field. Both mean `.value` holds the newer
+            // intent, so it wins and the entry rebuilt from the schema keeps
+            // no `.value` at all.
+            //
+            // The one case this gets wrong: a settings-panel change (which
+            // wrote `.isTrue`) made AFTER the stray `.value` write in the
+            // same session leaves `.isTrue` as the newer intent, and this
+            // prefers `.value`. That window is narrow, cannot recur now the
+            // setter deletes the field it did not write, and the alternative
+            // is that every player who ticked a box on the buggy build stays
+            // stuck with the value they tried to change.
+            target.isTrue = !!savedValue.value;
+        } else {
+            target.value = savedValue.value;
+        }
+    }
+}
+
 class SettingsStorage {
     constructor() {
         this.storageKey = 'script_settingsMap'; // Legacy global key (used as template)
@@ -387,6 +450,7 @@ class SettingsStorage {
 
             saved = await this.applyDefaultRewrites(saved, characterKey);
             saved = await this.applyKeyMigrations(saved, characterKey);
+            await this.migrateSharedSettings(characterKey);
         } else {
             console.warn(`[SettingsStorage] ${characterKey} could not be read; answering with schema defaults`);
         }
@@ -428,35 +492,7 @@ class SettingsStorage {
         // Merge saved settings
         if (saved) {
             for (const [settingId, savedValue] of Object.entries(saved)) {
-                if (settings[settingId]) {
-                    // Merge saved boolean values
-                    if (savedValue.hasOwnProperty('isTrue')) {
-                        settings[settingId].isTrue = savedValue.isTrue;
-                    }
-                    // Merge saved non-boolean values
-                    if (savedValue.hasOwnProperty('value')) {
-                        if (isBooleanType(settings[settingId].type)) {
-                            // A boolean setting keeps its state in `.isTrue`, so a stored
-                            // `.value` beside it is not a second opinion — it is either the
-                            // old checkboxWithButton shape (which persisted its boolean in
-                            // `.value` alone) or the write of a setter that put the new
-                            // answer in the wrong field. Both mean `.value` holds the newer
-                            // intent, so it wins and the entry rebuilt from the schema keeps
-                            // no `.value` at all.
-                            //
-                            // The one case this gets wrong: a settings-panel change (which
-                            // wrote `.isTrue`) made AFTER the stray `.value` write in the
-                            // same session leaves `.isTrue` as the newer intent, and this
-                            // prefers `.value`. That window is narrow, cannot recur now the
-                            // setter deletes the field it did not write, and the alternative
-                            // is that every player who ticked a box on the buggy build stays
-                            // stuck with the value they tried to change.
-                            settings[settingId].isTrue = !!savedValue.value;
-                        } else {
-                            settings[settingId].value = savedValue.value;
-                        }
-                    }
-                }
+                if (settings[settingId]) mergeStoredEntry(settings[settingId], savedValue);
             }
 
             // Migrate: formatting_useKMBFormat changed from checkbox to select
@@ -466,7 +502,201 @@ class SettingsStorage {
             }
         }
 
+        // The account-wide settings go on last, over whatever this character's
+        // map happens to hold for them. A stale per-character copy is left
+        // alone rather than cleaned up, so an older build loaded on the same
+        // profile still finds the token it knows about.
+        if (this.lastLoadReadable) {
+            const shared = await this._loadSharedSettings();
+            if (shared) {
+                for (const settingId of this.sharedSettingIds()) {
+                    if (settings[settingId] && shared[settingId]) {
+                        mergeStoredEntry(settings[settingId], shared[settingId]);
+                    }
+                }
+            }
+        }
+
         return settings;
+    }
+
+    /**
+     * The setting ids that belong to the account rather than to one character.
+     *
+     * The whole Cross-Device Sync group, taken from the schema so it cannot
+     * drift. A GitHub token authenticates the *player*, not a character; the
+     * passphrase unlocks a payload that is the account's; and what to sync and
+     * when are decisions about this device's relationship with the gist, which
+     * no character has its own answer to. Every other group stayed per
+     * character — see the survey in the fork changelog.
+     *
+     * @returns {string[]} Setting ids stored device-wide
+     */
+    sharedSettingIds() {
+        return Object.keys(settingsGroups.sync?.settings ?? {});
+    }
+
+    /**
+     * The stored account-wide settings map, or null when there is none.
+     * @returns {Promise<Object|null>}
+     * @private
+     */
+    async _loadSharedSettings() {
+        const map = await storage.getJSON(SHARED_SETTINGS_KEY, this.storageArea, null);
+        return map && typeof map === 'object' ? map : null;
+    }
+
+    /**
+     * Carry the account-wide settings out of the per-character maps, once.
+     *
+     * Before this, every alt needed its own GitHub token pasted in by hand.
+     * The values already stored per character are the ones to keep, so the
+     * first load on a build that has this collects them and writes them to
+     * {@link SHARED_SETTINGS_KEY}.
+     *
+     * **The conflict rule.** Storage carries no per-key write time, so "most
+     * recent" cannot be read back off disk. Instead, for each id:
+     *
+     * - Values equal to the schema default are ignored — an untouched default
+     *   is not a choice, and letting one count would hand a fresh alt's empty
+     *   token to the whole account.
+     * - Every character that does hold a real value agreeing: that value wins.
+     * - They disagree: **the character in session right now wins**, if it has a
+     *   real value of its own. It is the profile being played, the closest
+     *   thing to "most recently written" available here, and the one whose
+     *   settings panel the player is about to look at.
+     * - They disagree and the character in session has no value of its own:
+     *   nothing is decided. The id stays per character exactly as it is today,
+     *   and the player is told rather than guessed at.
+     *
+     * Nothing is ever deleted: the losing values stay in their own character's
+     * map, so switching to that alt and pressing "Copy sync setup to my other
+     * characters" re-shares from there. Every disagreement, resolved or not, is
+     * recorded under {@link SHARED_SCOPE_CONFLICT_KEY} for the sync feature to
+     * surface, so the outcome is never silent.
+     *
+     * Idempotent, and written before it is recorded: an id the shared map
+     * already answers is never reconsidered, a refused write leaves the flag
+     * unset so the next load tries again, and a listing that could not be made
+     * declines rather than deciding off a partial view.
+     *
+     * @param {string} characterKey - Storage key of the character in session
+     * @returns {Promise<void>}
+     */
+    async migrateSharedSettings(characterKey) {
+        try {
+            if (await storage.get(SHARED_SCOPE_FLAG_KEY, this.storageArea, false)) return;
+
+            const keys = await storage.tryGetAllKeys(this.storageArea);
+            if (!Array.isArray(keys)) return; // Could not list; decide nothing, retry next load
+
+            const mapKeys = keys.filter(
+                (key) =>
+                    key !== SHARED_SETTINGS_KEY && (key === this.storageKey || key.startsWith(`${this.storageKey}_`))
+            );
+
+            const existing = (await this._loadSharedSettings()) ?? {};
+            const defaults = this.buildDefaults();
+            const maps = [];
+            for (const key of mapKeys) {
+                const map = await storage.getJSON(key, this.storageArea, null);
+                if (map && typeof map === 'object') maps.push({ key, map });
+            }
+
+            const names = new Map(
+                (await this.getKnownCharacters()).map((character) => [
+                    `${this.storageKey}_${character.id}`,
+                    character.name,
+                ])
+            );
+            const nameFor = (key) => names.get(key) ?? key.slice(this.storageKey.length + 1) ?? key;
+
+            const next = { ...existing };
+            const conflicts = [];
+            let changed = false;
+
+            for (const settingId of this.sharedSettingIds()) {
+                if (settingId in existing) continue; // Already answered — never reconsidered
+                const defaultValue = valueOf(defaults[settingId]);
+                const candidates = maps
+                    .map(({ key, map }) => ({ key, entry: map[settingId] }))
+                    .filter(({ entry }) => entry && typeof entry === 'object')
+                    .map((candidate) => ({ ...candidate, value: valueOf(candidate.entry) }))
+                    .filter(({ value }) => value !== undefined && value !== '' && value !== defaultValue);
+                if (candidates.length === 0) continue;
+
+                const distinct = new Set(candidates.map((candidate) => JSON.stringify(candidate.value ?? null)));
+                let winner = candidates[0];
+                if (distinct.size > 1) {
+                    const mine = candidates.find((candidate) => candidate.key === characterKey);
+                    conflicts.push({
+                        id: settingId,
+                        resolved: Boolean(mine),
+                        winner: mine ? nameFor(mine.key) : null,
+                        characters: candidates.map((candidate) => nameFor(candidate.key)),
+                    });
+                    if (!mine) continue; // Left per character; the player is told instead
+                    winner = mine;
+                }
+                next[settingId] = { ...winner.entry };
+                changed = true;
+            }
+
+            if (changed) {
+                // Storage answers a refused or failed write with false, not a
+                // throw. Recording over an unwritten map would strand every
+                // character on its own token forever.
+                const written = await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true);
+                if (written === false) return;
+            }
+            if (conflicts.length > 0) {
+                await storage.setJSON(SHARED_SCOPE_CONFLICT_KEY, { at: Date.now(), conflicts }, this.storageArea, true);
+            }
+            await storage.set(SHARED_SCOPE_FLAG_KEY, true, this.storageArea, true);
+        } catch (error) {
+            // Same rule as the rewrites and key migrations: a failure must not
+            // cost the user a value, and an unrecorded pass retries next load
+            console.error('[SettingsStorage] Shared-settings carry-over failed:', error);
+        }
+    }
+
+    /**
+     * What the account-wide carry-over could not decide on its own, for the
+     * sync feature to show the player once.
+     * @returns {Promise<{at: number, conflicts: Array<Object>}|null>}
+     */
+    async sharedScopeConflicts() {
+        const record = await storage.getJSON(SHARED_SCOPE_CONFLICT_KEY, this.storageArea, null);
+        return record && Array.isArray(record.conflicts) && record.conflicts.length > 0 ? record : null;
+    }
+
+    /**
+     * Forget the carry-over's conflict record, once it has been shown.
+     * @returns {Promise<void>}
+     */
+    async clearSharedScopeConflicts() {
+        await storage.delete(SHARED_SCOPE_CONFLICT_KEY, this.storageArea);
+    }
+
+    /**
+     * Write the account-wide settings this save touched to the shared map.
+     *
+     * Only the ids named by `settingIds` are written, over whatever is stored,
+     * so a client holding a stale map cannot revert an account-wide setting
+     * another character changed while it was open.
+     *
+     * @param {Object} settings - The caller's settings map
+     * @param {Iterable<string>} settingIds - Shared ids this save is carrying
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _writeSharedEntries(settings, settingIds) {
+        const ids = [...settingIds].filter((id) => settings?.[id]);
+        if (ids.length === 0) return;
+        const stored = (await this._loadSharedSettings()) ?? {};
+        const next = { ...stored };
+        for (const id of ids) next[id] = { ...settings[id] };
+        await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true);
     }
 
     /**
@@ -666,6 +896,9 @@ class SettingsStorage {
         const landedState = new Set();
 
         for (const key of keys) {
+            // The account-wide map holds only ids no key migration has ever
+            // touched, and has no migration record of its own to reconcile
+            if (key === SHARED_SETTINGS_KEY) continue;
             if (key.startsWith(this.storageKey)) landedMaps.add(key);
             for (const prefix of [KEY_MIGRATION_STATE_KEY, ...LEGACY_KEY_MIGRATION_FLAGS.map((f) => f.key)]) {
                 if (key.startsWith(`${prefix}_`)) landedState.add(key.slice(prefix.length + 1));
@@ -792,6 +1025,20 @@ class SettingsStorage {
         }
 
         await storage.setJSON(characterKey, toWrite, this.storageArea, true);
+
+        // The account-wide settings go to their own key as well as staying in
+        // this character's map. Staying keeps a downgrade working and adds no
+        // exposure the token did not already have; the shared key is what every
+        // character reads. A scoped save carries only the ids it changed; the
+        // deliberate reset (SAVE_ALL_KEYS) and a caller with no dirty tracking
+        // carry the lot, so "Reset to defaults" clears the account-wide
+        // settings too rather than leaving a token the panel cannot explain.
+        const sharedIds = this.sharedSettingIds();
+        const scopedSave = dirtyKeys !== null && dirtyKeys !== undefined && dirtyKeys !== SAVE_ALL_KEYS;
+        const sharedToWrite = scopedSave
+            ? sharedIds.filter((id) => (dirtyKeys instanceof Set ? dirtyKeys : new Set(dirtyKeys)).has(id))
+            : sharedIds;
+        await this._writeSharedEntries(settings, sharedToWrite);
     }
 
     /**
@@ -824,18 +1071,27 @@ class SettingsStorage {
                 stored = null;
             }
         }
+        const defaults = this.buildDefaults();
+        // Only a shared id this session actually moved off its default can be a
+        // choice worth writing account-wide; the rest of the map is defaults
+        // standing in for settings that were never read.
+        const touchedShared = this.sharedSettingIds().filter(
+            (id) => settings?.[id] && id in defaults && valueOf(settings[id]) !== valueOf(defaults[id])
+        );
+
         if (!stored || typeof stored !== 'object') {
             await storage.setJSON(characterKey, settings, this.storageArea, true);
+            await this._writeSharedEntries(settings, touchedShared);
             return true;
         }
 
-        const defaults = this.buildDefaults();
         const merged = { ...stored };
         for (const [settingId, entry] of Object.entries(settings || {})) {
             const untouched = settingId in defaults && valueOf(entry) === valueOf(defaults[settingId]);
             if (!(settingId in merged) || !untouched) merged[settingId] = entry;
         }
         await storage.setJSON(characterKey, merged, this.storageArea, true);
+        await this._writeSharedEntries(settings, touchedShared);
         return true;
     }
 
@@ -979,6 +1235,14 @@ class SettingsStorage {
         const copied = [];
         const skipped = [];
         if (ids.length === 0) return { copied, skipped };
+
+        // Account-wide ids among them go to the shared map as well, which is
+        // where every character reads them from — this is how the player
+        // resolves a carry-over that could not decide for itself.
+        await this._writeSharedEntries(
+            entries,
+            this.sharedSettingIds().filter((id) => ids.includes(id))
+        );
 
         // Fixed for the whole walk: the loop awaits a read and a write per
         // character, and a switch part way through would start excluding a

@@ -4227,7 +4227,8 @@ export const settingsGroups = {
                 help:
                     'Carries your Toolasha data between browsers through one private GitHub gist that you own. ' +
                     'Nothing goes to any server of ours, and nothing is sent until you press Push or turn on ' +
-                    'automatic sync below.',
+                    'automatic sync below. Everything in this group is shared by every character on this ' +
+                    'device — set it up once and your alts are set up too.',
             },
             sync_token: {
                 id: 'sync_token',
