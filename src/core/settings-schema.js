@@ -1883,8 +1883,9 @@ export const settingsGroups = {
                 ],
                 help:
                     'Stack value is one number per stack — what the whole pile is worth — priced on the side you are ' +
-                    'sorting by, or on the side chosen here when the sort is None. It is also what the category ' +
-                    'totals and the custom-tab section totals add up, so turning it off empties those. Per-item ask ' +
+                    'sorting by, or on the side chosen here when the sort is None. It is also what the custom-tab ' +
+                    'section totals add up, so turning it off empties those; the inventory category totals have ' +
+                    'their own switch and go on showing Ask value either way. Per-item ask ' +
                     'and bid prices are the other badge: two small unit prices on the icon itself, and no stack ' +
                     'value. The two overlap on the same tile, so this is one choice rather than two switches.',
             },
