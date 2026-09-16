@@ -54,7 +54,7 @@ import {
     clearBulkSnapshot,
     writeCheckboxValues,
 } from './setting-presets.js';
-import { isSettingChanged, refreshRequiredIds } from './settings-inspection.js';
+import { isSettingRowChanged, refreshRequiredIds } from './settings-inspection.js';
 import {
     characterLabel,
     describeIronCowCopy,
@@ -1428,7 +1428,7 @@ class SettingsUI {
 
                 if (visible && changedOnly) {
                     const settingId = setting.dataset.settingId;
-                    visible = isSettingChanged(this.findSettingDef(settingId), this.config.settingsMap[settingId]);
+                    visible = isSettingRowChanged(this.findSettingDef(settingId), this.config.settingsMap);
                 }
 
                 setting.style.display = visible ? 'flex' : 'none';

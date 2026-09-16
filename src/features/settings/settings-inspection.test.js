@@ -8,9 +8,17 @@
  * string, so `'24'` against a default of `24` must not read as a change.
  */
 
-import { describe, test, expect } from 'vitest';
-import { isSettingChanged, changedSettingIds, refreshRequiredIds } from './settings-inspection.js';
-import { settingsGroups, getSettingDefinition } from '../../core/settings-schema.js';
+import { describe, test, expect, vi } from 'vitest';
+
+const overridesMock = vi.hoisted(() => ({ overrides: {} }));
+vi.mock('./custom-price-overrides.js', () => ({
+    getCustomPriceOverrides: () => overridesMock.overrides,
+}));
+
+const { isSettingChanged, isSettingRowChanged, changedSettingIds, refreshRequiredIds } = await import(
+    './settings-inspection.js'
+);
+const { settingsGroups, getSettingDefinition } = await import('../../core/settings-schema.js');
 
 describe('whether one setting differs from its default', () => {
     test('a checkbox at its default is unchanged', () => {
@@ -92,7 +100,13 @@ describe('the changed list across a whole settings map', () => {
         const map = defaults();
         map.actionBar_enabled.isTrue = !getSettingDefinition('actionBar_enabled').default;
         map.profitCalc_pricingMode.value = 'optimistic';
-        expect(changedSettingIds(map).sort()).toEqual(['actionBar_enabled', 'profitCalc_pricingMode']);
+        // optimistic moves the buy side off hybrid's default (ask -> bid); the sell
+        // side stays 'ask' either way, so the derived pricingSide row for it does not
+        expect(changedSettingIds(map).sort()).toEqual([
+            'actionBar_enabled',
+            'profitCalc_pricingMode',
+            'profitCalc_pricingSideBuy',
+        ]);
     });
 
     test('it returns ids in schema order, so the panel filters in place', () => {
@@ -138,5 +152,53 @@ describe('object values compare by structure, not construction detail', () => {
     test('nested objects and arrays are ordered too', () => {
         const definition = { type: 'text', default: { a: [{ x: 1, y: 2 }], b: 'z' } };
         expect(isSettingChanged(definition, { value: { b: 'z', a: [{ y: 2, x: 1 }] } })).toBe(false);
+    });
+});
+
+describe('rows whose value is not settingsMap[id] — "Changed only" must still see them', () => {
+    const buyDef = getSettingDefinition('profitCalc_pricingSideBuy');
+    const sellDef = getSettingDefinition('profitCalc_pricingSideSell');
+    const overridesDef = getSettingDefinition('profitCalc_customPriceOverrides');
+
+    test('the plain per-entry check is blind to a pricing row — nothing is ever stored under its own id', () => {
+        const map = { profitCalc_pricingMode: { value: 'optimistic' } };
+        expect(isSettingChanged(buyDef, map[buyDef.id])).toBe(false);
+    });
+
+    test('a pricing side at the default mode and tick stays hidden', () => {
+        expect(isSettingRowChanged(buyDef, {})).toBe(false);
+        expect(isSettingRowChanged(sellDef, {})).toBe(false);
+        expect(isSettingRowChanged(buyDef, { profitCalc_pricingMode: { value: 'hybrid' } })).toBe(false);
+    });
+
+    test('a pricing side moved by the mode is shown as changed, and one still at its default is not', () => {
+        // optimistic prices buy at the bid (patient) instead of hybrid's ask (instant);
+        // the sell side is 'ask' under both modes, so it is untouched
+        const map = { profitCalc_pricingMode: { value: 'optimistic' } };
+        expect(isSettingRowChanged(buyDef, map)).toBe(true);
+        expect(isSettingRowChanged(sellDef, map)).toBe(false);
+        expect(changedSettingIds(map)).toEqual(expect.arrayContaining(['profitCalc_pricingSideBuy']));
+        expect(changedSettingIds(map)).not.toContain('profitCalc_pricingSideSell');
+    });
+
+    test('a pricing side moved only by its patient tick is shown, and a tick on the instant side is not', () => {
+        // hybrid already prices sell patiently, so the tick alone is a real change
+        expect(isSettingRowChanged(sellDef, { profitCalc_patientTickSell: { isTrue: true } })).toBe(true);
+        // hybrid prices buy instantly, so the buy tick has nothing to move
+        expect(isSettingRowChanged(buyDef, { profitCalc_patientTickBuy: { isTrue: true } })).toBe(false);
+    });
+
+    test('the plain per-entry check is blind to custom price overrides too — they never reach settingsMap', () => {
+        overridesMock.overrides = { '/items/milk:0': { buy: 10 } };
+        expect(isSettingChanged(overridesDef, undefined)).toBe(false);
+        overridesMock.overrides = {};
+    });
+
+    test('custom price overrides show as changed once one exists, and hide again once cleared', () => {
+        overridesMock.overrides = {};
+        expect(isSettingRowChanged(overridesDef, {})).toBe(false);
+        overridesMock.overrides = { '/items/milk:0': { buy: 10 } };
+        expect(isSettingRowChanged(overridesDef, {})).toBe(true);
+        overridesMock.overrides = {};
     });
 });

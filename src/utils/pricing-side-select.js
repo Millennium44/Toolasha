@@ -239,6 +239,31 @@ export function applyPricingSideChoice(side, choice) {
 }
 
 /**
+ * Whether a side's pricing choice, as recorded in a settingsMap, differs from
+ * the schema default (mode 'hybrid', tick off).
+ *
+ * Pure — reads the map handed in rather than the live config singleton — so
+ * a caller with its own map (tests, or the settings panel's "Changed only"
+ * filter walking `config.settingsMap`) gets a real answer without going
+ * through `config`. `profitCalc_pricingSideBuy`/`Sell` never hold a value of
+ * their own — this is what lets the filter answer for them anyway, by
+ * reading the settings the dropdown actually writes.
+ *
+ * @param {'buy'|'sell'} side - Transaction side
+ * @param {Object} [settingsMap] - id -> {value}/{isTrue} entries (`config.settingsMap` shape)
+ * @returns {boolean}
+ */
+export function isPricingSideChanged(side, settingsMap = {}) {
+    const mode = settingsMap?.[PRICING_MODE_SETTING]?.value ?? 'hybrid';
+    const basis = sidesOfPricingMode(mode)[side];
+    const defaultBasis = sidesOfPricingMode('hybrid')[side];
+    if (basis !== defaultBasis) return true;
+    if (basis === INSTANT_BASIS[side]) return false; // instant either way, so no tick to check
+    const tickKey = patientTickSettingFor(side);
+    return Boolean(settingsMap?.[tickKey]?.isTrue);
+}
+
+/**
  * Bring a dropdown built by {@link createPricingSideSelect} up to date: option
  * text for the current naming, the selected choice, and the tooltip with any
  * auto-fill mismatch note. A surface calls this for
