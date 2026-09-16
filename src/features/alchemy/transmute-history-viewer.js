@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
+import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
@@ -586,7 +587,9 @@ class TransmuteHistoryViewer {
                 // Profit
                 const profitCell = document.createElement('td');
                 const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
-                profitCell.textContent = formatKMB(profitDetail.profit, 1);
+                // An unpriced input makes the figure incomplete, not zero-cost —
+                // the asterisk is what tells the two apart at a glance
+                profitCell.textContent = formatKMB(profitDetail.profit, 1) + (profitDetail.inputUnpriced ? '*' : '');
                 profitCell.style.cssText = `
                     padding: 6px 10px;
                     font-weight: bold;
@@ -594,7 +597,7 @@ class TransmuteHistoryViewer {
                 `;
                 profitCell.title =
                     `Output value: ${formatKMB(profitDetail.revenue, 1)}\n` +
-                    `Inputs (${profitDetail.netConsumed} @ current buy): −${formatKMB(profitDetail.inputCost, 1)}\n` +
+                    `${formatInputCostLine(profitDetail)}\n` +
                     `Transmute coins: −${formatKMB(profitDetail.coinCost, 1)}\n` +
                     `Excludes catalysts and teas`;
                 row.appendChild(profitCell);
@@ -642,8 +645,13 @@ class TransmuteHistoryViewer {
      * session. The tax is applied here, at read, so the stored figures stay a
      * record and every session ever saved is restated the same way.
      *
+     * An input the market cannot price falls back to its refinement craft cost
+     * when it is a refined (★) item, and is reported as unpriced when even that
+     * fails — an unknown cost is not a zero one.
+     *
      * @param {Object} session
-     * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number}}
+     * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number,
+     *   inputBasis: string|null, inputUnpriced: boolean}}
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
@@ -664,14 +672,30 @@ class TransmuteHistoryViewer {
 
         const attempts = session.totalAttempts || 0;
         const netConsumed = Math.max(0, attempts * bulkMultiplier - selfReturned);
-        const inputPrice = getItemPrice(session.inputItemHrid, { context: 'profit', side: 'buy' }) || 0;
+        // A refined (★) cape is untradable, so the market prices it at nothing;
+        // charging the transmute 0 for it left the coin fee as the whole loss.
+        // See utils/refined-item-cost.js.
+        const marketPrice = getItemPrice(session.inputItemHrid, { context: 'profit', side: 'buy' });
+        const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
+            session.inputItemHrid,
+            marketPrice
+        );
         const inputCost = netConsumed * inputPrice;
+        const inputUnpriced = inputBasis === null && netConsumed > 0;
 
         // Transmute coin fee — see utils/alchemy-fees.js. The session's recorded bulkMultiplier
         // is the one that was actually billed, so it overrides the item's current one.
         const coinCost = getAlchemyCoinCost(itemDetails, 'transmute', bulkMultiplier) * attempts;
 
-        return { profit: revenue - inputCost - coinCost, revenue, inputCost, coinCost, netConsumed };
+        return {
+            profit: revenue - inputCost - coinCost,
+            revenue,
+            inputCost,
+            coinCost,
+            netConsumed,
+            inputBasis,
+            inputUnpriced,
+        };
     }
 
     /**

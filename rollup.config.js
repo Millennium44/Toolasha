@@ -78,6 +78,10 @@ const utilsExternalGlobals = new Map([
     // prices its key shortfall with it. One copy so the two cannot quote
     // different costs for the same key, and so its craft memo is shared.
     [normalize(join(__dirname, 'src/utils/key-cost.js')), 'Toolasha.Utils.keyCost'],
+    // What a refined (★) item cost to obtain — the philo calculator (market)
+    // and the alchemy history viewers (ui) price the same cape with it, and its
+    // map of which action refines what is built once.
+    [normalize(join(__dirname, 'src/utils/refined-item-cost.js')), 'Toolasha.Utils.refinedItemCost'],
     [normalize(join(__dirname, 'src/utils/damage-board.js')), 'Toolasha.Utils.damageBoard'],
     [normalize(join(__dirname, 'src/utils/efficiency.js')), 'Toolasha.Utils.efficiency'],
     [normalize(join(__dirname, 'src/utils/profit-helpers.js')), 'Toolasha.Utils.profitHelpers'],

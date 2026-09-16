@@ -379,6 +379,30 @@ describe('cost basis', () => {
             calc.pricingMode = 'global';
             expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * nextPriceUp(100), 6);
         });
+
+        // The craft arithmetic lives in utils/refined-item-cost.js now, shared
+        // with the alchemy history viewers. These pin what this table shows.
+        test('the cheaper of the +0 listing and the craft is the cost basis', () => {
+            calc.pricingMode = 'conservative'; // craft = 10 × 200 = 2000
+            mocks.prices[`${REFINED_HRID}+0`] = { ask: 5000, bid: 4500 };
+            expect(calc.resolveItemCost(REFINED_HRID)).toMatchObject({ itemCost: 2000, source: 'craft' });
+
+            mocks.prices[`${REFINED_HRID}+0`] = { ask: 1500, bid: 1400 };
+            expect(calc.resolveItemCost(REFINED_HRID)).toMatchObject({ itemCost: 1500, source: 'market' });
+        });
+
+        test('the tooltip breakdown and base note are recorded even when the market wins', () => {
+            calc.pricingMode = 'conservative';
+            mocks.prices[`${REFINED_HRID}+0`] = { ask: 1500, bid: 1400 };
+            mocks.refineActions['/actions/refine_test'].upgradeItemHrid = WIDGET_HRID;
+
+            calc.resolveItemCost(REFINED_HRID);
+
+            expect(calc._craftBreakdowns[REFINED_HRID]).toHaveLength(1);
+            expect(calc._craftBreakdowns[REFINED_HRID][0]).toContain('10 × test shard @ 200');
+            // The widget is not marked tradable in the item map
+            expect(calc._craftBaseNotes[REFINED_HRID]).toBe('untradable');
+        });
     });
 
     describe('the enhanced self-return follows the table own sell side', () => {

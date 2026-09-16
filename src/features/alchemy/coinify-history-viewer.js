@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import { coinifyHistoryTracker } from './coinify-history-tracker.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
+import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -417,7 +418,13 @@ class CoinifyHistoryViewer {
      * buy price for the session's enhancement level — historical input prices
      * were not recorded), catalysts consumed, and the alchemy coin fee.
      * @param {Object} session
-     * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, netConsumed: number}}
+     *
+     * An input the market cannot price falls back to its refinement craft cost
+     * when it is a refined (★) item, and is reported as unpriced when even that
+     * fails — an unknown cost is not a zero one.
+     *
+     * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, netConsumed: number,
+     *   inputBasis: string|null, inputUnpriced: boolean}}
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
@@ -428,8 +435,17 @@ class CoinifyHistoryViewer {
 
         const netConsumed = attempts * bulkMultiplier;
         const inputPrices = getItemPrices(session.inputItemHrid, session.enhancementLevel || 0);
-        const inputPrice = inputPrices?.ask > 0 ? inputPrices.ask : inputPrices?.bid > 0 ? inputPrices.bid : 0;
+        const marketPrice = inputPrices?.ask > 0 ? inputPrices.ask : inputPrices?.bid > 0 ? inputPrices.bid : 0;
+        // A refined (★) cape is untradable, so the market prices it at nothing;
+        // charging the session 0 for it made a destroyed cape free. See
+        // utils/refined-item-cost.js.
+        const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
+            session.inputItemHrid,
+            marketPrice,
+            { enhancementLevel: session.enhancementLevel || 0 }
+        );
         const inputCost = netConsumed * inputPrice;
+        const inputUnpriced = inputBasis === null && netConsumed > 0;
 
         const catalystPrice = (hrid) => {
             const prices = getItemPrices(hrid, 0);
@@ -448,6 +464,8 @@ class CoinifyHistoryViewer {
             inputCost,
             catalystCost,
             netConsumed,
+            inputBasis,
+            inputUnpriced,
         };
     }
 
@@ -653,7 +671,9 @@ class CoinifyHistoryViewer {
                 // Profit
                 const profitCell = document.createElement('td');
                 const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
-                profitCell.textContent = formatKMB(profitDetail.profit, 1);
+                // An unpriced input makes the figure incomplete, not zero-cost —
+                // the asterisk is what tells the two apart at a glance
+                profitCell.textContent = formatKMB(profitDetail.profit, 1) + (profitDetail.inputUnpriced ? '*' : '');
                 profitCell.style.cssText = `
                     padding: 6px 10px;
                     font-weight: bold;
@@ -661,7 +681,7 @@ class CoinifyHistoryViewer {
                 `;
                 profitCell.title =
                     `Coins earned: ${formatKMB(profitDetail.revenue, 1)}\n` +
-                    `Inputs (${profitDetail.netConsumed} @ current buy): −${formatKMB(profitDetail.inputCost, 1)}\n` +
+                    `${formatInputCostLine(profitDetail)}\n` +
                     `Catalysts: −${formatKMB(profitDetail.catalystCost, 1)}`;
                 row.appendChild(profitCell);
 

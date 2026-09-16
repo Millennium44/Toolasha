@@ -12,7 +12,6 @@ import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { formatLargeNumber, formatPercentage, timeReadable } from '../../utils/formatters.js';
 import { getEnhancementMultiplier } from '../../utils/enhancement-multipliers.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
-import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { SECONDS_PER_HOUR } from '../../utils/profit-constants.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import {
@@ -27,6 +26,7 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -201,8 +201,6 @@ class PhiloCalculator {
 
         // Cached row data
         this.rows = [];
-        // Lazy map of refined-item hrid → producing action (for craft-cost pricing)
-        this._refineActionByOutput = null;
         // Per-pass caches, cleared on every recalculation
         this._actionStatsCache = new Map();
         this._bonusRevenueCache = new Map();
@@ -556,78 +554,40 @@ class PhiloCalculator {
      * @returns {number|null} Craft cost, or null when not resolvable
      */
     getRefinementCraftCost(itemHrid) {
-        if (!this._refineActionByOutput) {
-            this._refineActionByOutput = new Map();
-            const actions = dataManager.getInitClientData()?.actionDetailMap || {};
-            for (const action of Object.values(actions)) {
-                for (const output of action.outputItems || []) {
-                    if (output.itemHrid?.endsWith('_refined') && !this._refineActionByOutput.has(output.itemHrid)) {
-                        this._refineActionByOutput.set(output.itemHrid, action);
-                    }
-                }
-            }
-        }
+        const result = computeRefinementCraftCost(itemHrid, this.craftCostOptions());
+        if (!result) return null;
+        this._craftBaseNotes = this._craftBaseNotes || {};
+        this._craftBaseNotes[itemHrid] = result.baseNote;
+        this._craftBreakdowns = this._craftBreakdowns || {};
+        this._craftBreakdowns[itemHrid] = result.lines;
+        return result.cost;
+    }
 
-        const action = this._refineActionByOutput.get(itemHrid);
-        if (!action) return null;
-
-        // Artisan tea reduces the materials a craft consumes; the game's own
-        // requirement line shows the reduced figure (88.9 shards, not 100),
-        // and a craft estimate priced at the raw recipe overstated the cost
-        // by the whole bonus. Coins are not materials and are not reduced.
-        const artisanBonus = calculateArtisanBonus(action);
+    /**
+     * This table's price injection for the shared refinement-cost utility: its
+     * own pricing mode, its patient tick and its Iron Cow book, so the shared
+     * arithmetic produces the numbers this table has always shown.
+     * @returns {{priceMaterial: Function, priceBase: Function, getItemName: Function}} Injection
+     */
+    craftCostOptions() {
         const buyType = this.getPriceType('buy');
         const otherBuyType = buyType === 'ask' ? 'bid' : 'ask';
-        const lines = [];
-        let cost = 0;
-        for (const input of action.inputItems || []) {
-            const count = input.count || 0;
-            if (input.itemHrid === '/items/coin') {
-                cost += count;
-                if (count > 0) lines.push(`${formatLargeNumber(count)} coins`);
-                continue;
-            }
-            const priceData = ironCowBook(input.itemHrid) ?? marketAPI.getPrice(input.itemHrid, 0);
-            const preferred = priceData?.[buyType];
-            const other = priceData?.[otherBuyType];
-            const [rawPrice, basis] =
-                preferred > 0 ? [preferred, buyType] : other > 0 ? [other, otherBuyType] : [null, null];
-            if (rawPrice === null) return null;
-            const price = this.patientQuote(rawPrice, 'buy', basis, priceData, input.itemHrid);
-            const effective = count * (1 - artisanBonus);
-            cost += price * effective;
-            const countText = artisanBonus > 0 ? `${effective.toFixed(1)} (${count} less artisan)` : `${count}`;
-            lines.push(
-                `${countText} × ${this.getItemName(input.itemHrid)} @ ${formatLargeNumber(price)} = ` +
-                    formatLargeNumber(Math.round(price * effective))
-            );
-        }
-
-        let baseNote = null;
-        if (action.upgradeItemHrid) {
-            const baseDetails = dataManager.getInitClientData()?.itemDetailMap?.[action.upgradeItemHrid];
-            if (baseDetails?.isTradable !== true) {
-                // The capes' bases are vendor items you bring yourself — no
-                // market cost is the honest figure, and worth saying
-                baseNote = 'untradable';
-            } else {
-                const base = resolveItemPrice(action.upgradeItemHrid, { side: 'buy', mode: 'ask', context: 'profit' });
-                if (!base.missing && base.price > 0) {
-                    cost += base.price;
-                } else {
-                    // A tradable base with no listing would silently understate
-                    // the craft cost; disclose rather than pretend
-                    baseNote = 'unpriced';
-                }
-            }
-        }
-
-        if (cost <= 0) return null;
-        this._craftBaseNotes = this._craftBaseNotes || {};
-        this._craftBaseNotes[itemHrid] = baseNote;
-        this._craftBreakdowns = this._craftBreakdowns || {};
-        this._craftBreakdowns[itemHrid] = lines;
-        return cost;
+        return {
+            priceMaterial: (hrid) => {
+                const priceData = ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0);
+                const preferred = priceData?.[buyType];
+                const other = priceData?.[otherBuyType];
+                const [rawPrice, basis] =
+                    preferred > 0 ? [preferred, buyType] : other > 0 ? [other, otherBuyType] : [null, null];
+                if (rawPrice === null) return null;
+                return this.patientQuote(rawPrice, 'buy', basis, priceData, hrid);
+            },
+            priceBase: (hrid) => {
+                const base = resolveItemPrice(hrid, { side: 'buy', mode: 'ask', context: 'profit' });
+                return !base.missing && base.price > 0 ? base.price : null;
+            },
+            getItemName: (hrid) => this.getItemName(hrid),
+        };
     }
 
     /**
@@ -813,44 +773,37 @@ class PhiloCalculator {
             return this.patientQuote(priceData[buyType], 'buy', buyType, priceData, itemHrid, level);
         };
 
-        let itemCost = quoteAt(0);
-        let source = itemCost === null ? null : 'market';
-        let fallbackLevel = 0;
-
-        if (itemHrid.endsWith('_refined')) {
-            const craftCost = this.getRefinementCraftCost(itemHrid);
-            if (craftCost !== null && (itemCost === null || craftCost < itemCost)) {
-                itemCost = craftCost;
-                source = 'craft';
+        if (isRefinedItem(itemHrid)) {
+            const resolved = resolveRefinedItemCost(itemHrid, {
+                quoteAt,
+                craft: this.craftCostOptions(),
+                sellQuote: (hrid) => {
+                    const sellType = this.getPriceType('sell');
+                    const otherSellType = sellType === 'ask' ? 'bid' : 'ask';
+                    const base = ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0);
+                    const preferred = base?.[sellType];
+                    const other = base?.[otherSellType];
+                    const [rawValue, basis] =
+                        preferred > 0 ? [preferred, sellType] : other > 0 ? [other, otherSellType] : [0, null];
+                    return basis ? this.patientQuote(rawValue, 'sell', basis, base, hrid) : 0;
+                },
+            });
+            if (!resolved) return null;
+            // The craft breakdown the tooltip reads is a side effect of pricing
+            // the craft path, and is recorded whether or not that path won
+            if (resolved.craft) {
+                this._craftBaseNotes = this._craftBaseNotes || {};
+                this._craftBaseNotes[itemHrid] = resolved.baseNote;
+                this._craftBreakdowns = this._craftBreakdowns || {};
+                this._craftBreakdowns[itemHrid] = resolved.breakdown;
             }
-            for (let level = 1; level <= 5 && itemCost === null; level++) {
-                const quote = quoteAt(level);
-                if (quote !== null) {
-                    itemCost = quote;
-                    source = 'enhanced';
-                    fallbackLevel = level;
-                }
-            }
+            const { itemCost, selfReturnUnitValue, source, fallbackLevel } = resolved;
+            return { itemCost, selfReturnUnitValue, source, fallbackLevel };
         }
 
+        const itemCost = quoteAt(0);
         if (itemCost === null || itemCost === undefined) return null;
-
-        // A self-return hands back a +0 item, never the enhanced listing the
-        // cost basis had to borrow from, so credit it at the base item's own
-        // quote (0 when the base has no market at all).
-        let selfReturnUnitValue = itemCost;
-        if (source === 'enhanced') {
-            const sellType = this.getPriceType('sell');
-            const otherSellType = sellType === 'ask' ? 'bid' : 'ask';
-            const base = ironCowBook(itemHrid) ?? marketAPI.getPrice(itemHrid, 0);
-            const preferred = base?.[sellType];
-            const other = base?.[otherSellType];
-            const [rawValue, basis] =
-                preferred > 0 ? [preferred, sellType] : other > 0 ? [other, otherSellType] : [0, null];
-            selfReturnUnitValue = basis ? this.patientQuote(rawValue, 'sell', basis, base, itemHrid) : 0;
-        }
-
-        return { itemCost, selfReturnUnitValue, source, fallbackLevel };
+        return { itemCost, selfReturnUnitValue: itemCost, source: 'market', fallbackLevel: 0 };
     }
 
     /**

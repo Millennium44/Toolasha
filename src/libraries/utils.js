@@ -104,6 +104,10 @@ import * as calibrationBadge from '../utils/calibration-badge.js';
 // The buy-versus-craft costing for dungeon keys, shared so the ROI board
 // (combat) and the readiness card (ui) quote one figure for the same key.
 import * as keyCost from '../utils/key-cost.js';
+// What a refined (★) item cost to obtain, shared so the philo calculator
+// (market) and the alchemy history viewers (ui) agree on the figure and on the
+// one cached map of which action refines what.
+import * as refinedItemCost from '../utils/refined-item-cost.js';
 // Everything below was surfaced by scripts/check-bundle-sharing.mjs: reachable
 // from two or more production bundles, so it must be exported here (and mapped
 // in utilsExternalGlobals) or every bundle silently carries its own copy.
@@ -268,6 +272,7 @@ toolashaRoot.Utils = {
     inventoryReservations,
     calibrationBadge,
     keyCost,
+    refinedItemCost,
     actionContext,
     adoptionConsent,
     alchemyFees,
