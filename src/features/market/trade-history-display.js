@@ -5,6 +5,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
 import tradeHistory from './trade-history.js';
 import { formatKMB3Digits } from '../../utils/formatters.js';
 
@@ -16,6 +17,9 @@ class TradeHistoryDisplay {
         this.currentItemHrid = null;
         this.currentEnhancementLevel = 0;
         this.currentOrderBookData = null;
+        // Last history the chip drew, kept so the container watcher can redraw it without
+        // waiting on a fresh order-book push. See setupObserver().
+        this.currentHistory = null;
         this.isInitialized = false;
         this.needsPriceDataRetry = false; // Track if we need to retry due to missing price data
         this.unregisterSettingChange = null;
@@ -35,8 +39,29 @@ class TradeHistoryDisplay {
 
         this.isInitialized = true;
         this.setupWebSocketListener();
+        this.setupObserver();
         this.setupSettingListener();
         this.isActive = true;
+    }
+
+    /**
+     * Redraw the chip when the game replaces the nav row without a new order-book push — e.g.
+     * switching marketplace tabs and back, or any other React re-render that swaps the
+     * container. queue-length-estimator.js and market-depth-cap.js pair their WebSocket cache
+     * with exactly this class watcher for the same reason; without it, this chip only ever came
+     * back on the item's next price update, which can be arbitrarily far off for a quiet book.
+     * @returns {void}
+     */
+    setupObserver() {
+        this.unregisterObserver = domObserver.onClass(
+            'trade-history-display',
+            'MarketplacePanel_marketNavButtonContainer',
+            () => {
+                if (!this.currentItemHrid || !this.currentHistory) return;
+                if (document.querySelector('.mwi-trade-history')) return;
+                this.updateDisplay(null, this.currentHistory);
+            }
+        );
     }
 
     /**
@@ -47,6 +72,7 @@ class TradeHistoryDisplay {
             // Refresh display if currently viewing an item
             if (this.currentItemHrid) {
                 const history = tradeHistory.getHistory(this.currentItemHrid, this.currentEnhancementLevel);
+                this.currentHistory = history;
                 this.updateDisplay(null, history);
             }
         });
@@ -81,6 +107,9 @@ class TradeHistoryDisplay {
 
                 // Get trade history for this item
                 const history = tradeHistory.getHistory(itemHrid, enhancementLevel);
+                // Cached for setupObserver()'s redraw when the container reappears without a
+                // fresh push.
+                this.currentHistory = history;
 
                 // Update display (pass null for panel since we don't use it)
                 this.updateDisplay(null, history);
@@ -323,6 +352,7 @@ class TradeHistoryDisplay {
             this.currentItemHrid = null;
             this.currentEnhancementLevel = 0;
             this.currentOrderBookData = null;
+            this.currentHistory = null;
             this.isInitialized = false;
         } catch (error) {
             console.error('[Trade History Display] Disable failed part-way:', error);
