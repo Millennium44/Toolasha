@@ -8,7 +8,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
-import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
+import { describeKeyCost, resolveKeyPricing } from '../../utils/key-cost.js';
 import { treasureTracker } from '../../utils/bundle-bridge.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
@@ -195,7 +195,12 @@ export function calculateIncomeBreakdown(lootMap) {
 export function calculateKeyCosts(lootMap, durationSeconds) {
     let totalCost = 0;
     const breakdown = [];
-    const keyPricingSetting = getKeyPricingMode();
+    // Resolved once for the whole run: `priceSide` is the market side (ask/bid)
+    // and `basis` says whether a `craft` setting should override the
+    // cheaper-of-the-two comparison. Passing `priceSide` alone as `describeKeyCost`'s
+    // `mode` would force the market basis (see that function's `options.mode ?
+    // 'market' : resolved.basis` fallback) and silently ignore a `craft` setting.
+    const { priceSide: keyPricingSetting, basis: keyPricingBasis } = resolveKeyPricing();
 
     if (!lootMap) {
         return { ask: 0, bid: 0, dailyCost: 0, breakdown: [], pricingMode: keyPricingSetting };
@@ -205,7 +210,8 @@ export function calculateKeyCosts(lootMap, durationSeconds) {
     // materials, and costing them one key at a time re-derives the same tree.
     const memo = new Map();
     const actionStats = new Map();
-    const costOf = (keyHrid) => describeKeyCost(keyHrid, { mode: keyPricingSetting, memo, actionStats });
+    const costOf = (keyHrid) =>
+        describeKeyCost(keyHrid, { mode: keyPricingSetting, basis: keyPricingBasis, memo, actionStats });
 
     const addRow = (keyHrid, count) => {
         const keyCost = costOf(keyHrid);

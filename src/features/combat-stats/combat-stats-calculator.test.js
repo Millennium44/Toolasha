@@ -11,25 +11,29 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const keys = vi.hoisted(() => ({ mode: 'ask', costs: {} }));
+const keys = vi.hoisted(() => ({ mode: 'ask', basis: 'market', costs: {}, calls: [] }));
 const ev = vi.hoisted(() => ({ value: 0 }));
 const luck = vi.hoisted(() => ({ enabled: false, measured: null }));
 
 vi.mock('../../utils/key-cost.js', () => ({
-    getKeyPricingMode: () => keys.mode,
-    describeKeyCost: (keyHrid) =>
-        keys.costs[keyHrid] ?? {
-            itemHrid: keyHrid,
-            itemName: keyHrid,
-            pricingMode: keys.mode,
-            buyPrice: null,
-            craftCost: null,
-            craftSeconds: null,
-            craftActionHrid: null,
-            cheaper: null,
-            unitCost: null,
-            savings: 0,
-        },
+    resolveKeyPricing: () => ({ priceSide: keys.mode, basis: keys.basis }),
+    describeKeyCost: (keyHrid, options) => {
+        keys.calls.push({ keyHrid, options });
+        return (
+            keys.costs[keyHrid] ?? {
+                itemHrid: keyHrid,
+                itemName: keyHrid,
+                pricingMode: keys.mode,
+                buyPrice: null,
+                craftCost: null,
+                craftSeconds: null,
+                craftActionHrid: null,
+                cheaper: null,
+                unitCost: null,
+                savings: 0,
+            }
+        );
+    },
 }));
 
 const market = vi.hoisted(() => ({ prices: {} }));
@@ -101,6 +105,8 @@ function cost(itemHrid, { buyPrice = null, craftCost = null, craftSeconds = null
 
 beforeEach(() => {
     keys.mode = 'ask';
+    keys.basis = 'market';
+    keys.calls = [];
     keys.costs = {
         [ENTRY_KEY]: cost(ENTRY_KEY, { buyPrice: 20000 }),
         [CHEST_KEY]: cost(CHEST_KEY, { buyPrice: 8000, craftCost: 5000, craftSeconds: 60 }),
@@ -187,6 +193,33 @@ describe('calculateKeyCosts', () => {
         const result = calculateKeyCosts({ a: { itemHrid: CHIMERICAL_CHEST, count: 1 } }, 3600);
 
         expect(result.dailyCost).toBe(25000 * 24);
+    });
+
+    test('passes the craft basis through to the key costing when the setting is craft', () => {
+        // Regression: the costing used to be called with only `mode` (the market
+        // side), which forces `describeKeyCost`'s own basis resolution to
+        // 'market' whenever a caller supplies an explicit mode — silently
+        // ignoring a `craft` setting. Combat income must reach the same craft
+        // basis the setting promises.
+        keys.mode = 'ask';
+        keys.basis = 'craft';
+
+        calculateKeyCosts({ a: { itemHrid: CHIMERICAL_CHEST, count: 1 } }, 3600);
+
+        const chestKeyCall = keys.calls.find((call) => call.keyHrid === CHEST_KEY);
+        expect(chestKeyCall.options.mode).toBe('ask');
+        expect(chestKeyCall.options.basis).toBe('craft');
+    });
+
+    test.each(['ask', 'bid', 'synced'])('still costs the market basis when the setting is %s', (mode) => {
+        keys.mode = mode === 'synced' ? 'bid' : mode;
+        keys.basis = 'market';
+
+        calculateKeyCosts({ a: { itemHrid: CHIMERICAL_CHEST, count: 1 } }, 3600);
+
+        const chestKeyCall = keys.calls.find((call) => call.keyHrid === CHEST_KEY);
+        expect(chestKeyCall.options.basis).toBe('market');
+        expect(chestKeyCall.options.mode).toBe(keys.mode);
     });
 });
 
