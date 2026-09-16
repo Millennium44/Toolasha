@@ -6,6 +6,7 @@ const WIDGET_HRID = '/items/test_widget';
 const OTHER_HRID = '/items/test_shard';
 const REFINED_HRID = '/items/test_cape_refined';
 const TEA_HRID = '/items/catalytic_tea';
+const ARTISAN_TEA_HRID = '/items/artisan_tea';
 
 // The market, as a table. Every price the calculator can reach comes from here.
 const mocks = vi.hoisted(() => ({
@@ -28,6 +29,11 @@ const mocks = vi.hoisted(() => ({
     // from `widget()`'s own sellPrice, which is what calculateRow is handed
     // directly rather than what dataManager.getItemDetails would answer.
     vendorPrices: {},
+    // Inventory rows, read by `resolveActionContext` (via `calculateArtisanBonus`)
+    // to decide whether a slotted drink is actually in stock.
+    inventory: [],
+    // Raw drink slots for the refine action type, read the same way.
+    drinkSlots: [],
 }));
 
 const storageMock = vi.hoisted(() => {
@@ -86,6 +92,10 @@ vi.mock('../../core/data-manager.js', () => ({
             itemDetailMap: {
                 [TEA_HRID]: { name: 'Catalytic Tea', consumableDetail: { buffs: [] } },
                 [WIDGET_HRID]: { name: 'Test Widget' },
+                [ARTISAN_TEA_HRID]: {
+                    name: 'Artisan Tea',
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/artisan', flatBoost: 0.1 }] },
+                },
             },
             actionDetailMap: {
                 '/actions/alchemy/transmute': { baseTimeCost: 20e9, type: '/action_types/alchemy' },
@@ -98,7 +108,8 @@ vi.mock('../../core/data-manager.js', () => ({
             itemHrid in mocks.vendorPrices ? { sellPrice: mocks.vendorPrices[itemHrid] } : null,
         getSkills: () => mocks.skills,
         getEquipment: () => new Map(),
-        getActionDrinkSlots: () => [],
+        getActionDrinkSlots: () => mocks.drinkSlots,
+        getInventory: () => mocks.inventory,
     },
 }));
 
@@ -178,6 +189,8 @@ beforeEach(() => {
     mocks.characterGameMode = 'standard';
     mocks.ironCowValuation = 'market';
     mocks.vendorPrices = {};
+    mocks.inventory = [];
+    mocks.drinkSlots = [];
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -349,7 +362,10 @@ describe('cost basis', () => {
     describe('refinement craft cost follows the table own buy side', () => {
         beforeEach(() => {
             // 10 test_shard per craft; the shard's ask/bid come from the
-            // default price table (200/100).
+            // default price table (200/100). No drink is slotted (mocks.drinkSlots
+            // defaults to []), so the artisan bonus is genuinely 0 here and these
+            // tests price the raw recipe — see the dedicated test below for the
+            // reduced-count path.
             mocks.refineActions['/actions/refine_test'] = {
                 outputItems: [{ itemHrid: REFINED_HRID }],
                 inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
@@ -370,6 +386,21 @@ describe('cost basis', () => {
             mocks.prices[`${OTHER_HRID}+0`] = { ask: 200, bid: 0 };
             calc.pricingMode = 'optimistic'; // buy: bid, but bid is unlisted
             expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 200, 6);
+        });
+
+        test('an active artisan tea reduces the priced material count, not just the raw recipe', () => {
+            // Without the tea slotted, the craft prices the full 10-shard recipe.
+            calc.pricingMode = 'conservative';
+            expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(10 * 200, 6);
+
+            // Slot a 10% artisan tea and hold it in stock — resolveActionContext
+            // only counts a drink as active when it is actually held.
+            mocks.drinkSlots = [{ itemHrid: ARTISAN_TEA_HRID }];
+            mocks.inventory = [{ itemHrid: ARTISAN_TEA_HRID, count: 5 }];
+
+            // 10 shards at a 10% reduction is 9, not 10 — this is the arithmetic
+            // that turns a 100-shard recipe into the 88.9 shards the game charges.
+            expect(calc.getRefinementCraftCost(REFINED_HRID)).toBeCloseTo(9 * 200, 6);
         });
 
         test('global mode ticks the materials patiently, like every other buy read', () => {

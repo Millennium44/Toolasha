@@ -54,6 +54,12 @@ vi.mock('../core/data-manager.js', () => ({
             },
             actionDetailMap: mocks.refineAction ? { '/actions/refine_cape': mocks.refineAction } : {},
         }),
+        // Read by resolveActionContext, inside calculateArtisanBonus's craft-cost
+        // call — no drink is ever slotted here, so the artisan bonus is genuinely
+        // 0 in every test below, not merely swallowed by a missing-mock error.
+        getInventory: () => [],
+        getEquipment: () => new Map(),
+        getActionDrinkSlots: () => [],
     },
 }));
 
