@@ -1528,6 +1528,19 @@ class DecomposeHistoryViewer {
     }
 
     /**
+     * The Data Note cell for a session's CSV export row: the same qualification
+     * the on-screen Profit column marks with `*`, spelled out in readable text —
+     * a spreadsheet reader has no legend for the symbol, so a qualified row
+     * exported as a plain number reads more confident than the same row on
+     * screen. Empty when nothing qualifies the row.
+     * @param {Object} detail - A `computeSessionProfit` result
+     * @returns {string} The note, or ''
+     */
+    buildDataNote(detail) {
+        return detail.inputUnpriced ? 'input unpriced — total is incomplete' : '';
+    }
+
+    /**
      * Export all sessions to a CSV file download
      */
     exportHistory() {
@@ -1545,6 +1558,7 @@ class DecomposeHistoryViewer {
             'Catalyst of Decomposition',
             'Prime Catalyst',
             'Profit',
+            'Data Note',
         ];
 
         const rows = this.sessions.map((session) => {
@@ -1565,6 +1579,8 @@ class DecomposeHistoryViewer {
                     return `${name} x${result.count} = ${total} (${each} each)`;
                 });
 
+            const detail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
+
             return [
                 start,
                 inputName,
@@ -1576,7 +1592,8 @@ class DecomposeHistoryViewer {
                 resultParts.join('; '),
                 session.catalystOfDecompositionUsed || 0,
                 session.primeCatalystUsed || 0,
-                Math.round((this.profitCache.get(session.id) || this.computeSessionProfit(session)).profit),
+                Math.round(detail.profit),
+                this.buildDataNote(detail),
             ]
                 .map(escape)
                 .join(',');

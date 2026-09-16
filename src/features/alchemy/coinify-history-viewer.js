@@ -1392,6 +1392,19 @@ class CoinifyHistoryViewer {
     }
 
     /**
+     * The Data Note cell for a session's CSV export row: the same qualification
+     * the on-screen Profit column marks with `*`, spelled out in readable text —
+     * a spreadsheet reader has no legend for the symbol, so a qualified row
+     * exported as a plain number reads more confident than the same row on
+     * screen. Empty when nothing qualifies the row.
+     * @param {Object} detail - A `computeSessionProfit` result
+     * @returns {string} The note, or ''
+     */
+    buildDataNote(detail) {
+        return detail.inputUnpriced ? 'input unpriced — total is incomplete' : '';
+    }
+
+    /**
      * Export all sessions to a CSV file download
      */
     exportHistory() {
@@ -1409,6 +1422,7 @@ class CoinifyHistoryViewer {
             'Catalyst of Coinification Used',
             'Prime Catalyst Used',
             'Profit',
+            'Data Note',
         ];
 
         const rows = this.sessions.map((session) => {
@@ -1419,6 +1433,7 @@ class CoinifyHistoryViewer {
                 session.totalAttempts > 0
                     ? `${((session.totalSuccesses / session.totalAttempts) * 100).toFixed(1)}%`
                     : '—';
+            const detail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
 
             return [
                 start,
@@ -1431,7 +1446,8 @@ class CoinifyHistoryViewer {
                 session.totalCoinsEarned || 0,
                 session.catalystOfCoinificationUsed || 0,
                 session.primeCatalystUsed || 0,
-                Math.round((this.profitCache.get(session.id) || this.computeSessionProfit(session)).profit),
+                Math.round(detail.profit),
+                this.buildDataNote(detail),
             ]
                 .map(escape)
                 .join(',');

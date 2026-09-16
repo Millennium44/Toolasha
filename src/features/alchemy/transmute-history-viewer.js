@@ -2064,6 +2064,27 @@ class TransmuteHistoryViewer {
     }
 
     /**
+     * The Data Note cell for a session's CSV/text export row: every qualification
+     * the on-screen table marks with a symbol (*†‡◇§), spelled out in readable
+     * text — a spreadsheet reader has no legend for the symbols, so a qualified
+     * row exported as plain numbers reads more confident than the same row on
+     * screen. Empty when nothing qualifies the row.
+     * @param {Object} session
+     * @param {Object} detail - A `computeSessionProfit` result
+     * @returns {string} Semicolon-joined notes, or ''
+     */
+    buildDataNote(session, detail) {
+        const notes = [];
+        if (detail.inputUnpriced) notes.push('input unpriced — total is incomplete');
+        if (detail.catalystUnpriced) notes.push('catalyst could not be priced — excluded, not zero');
+        if (detail.catalystUnrecorded) notes.push('catalyst not recorded (predates tracking) — excluded, not zero');
+        if (detail.catalystEstimated) notes.push('catalyst estimated, not measured');
+        const repair = this.formatRepairLine(session).trim().replace(/^⚠\s*/, '');
+        if (repair) notes.push(repair);
+        return notes.join('; ');
+    }
+
+    /**
      * Export all sessions to a CSV file download
      */
     exportHistory() {
@@ -2103,11 +2124,11 @@ class TransmuteHistoryViewer {
                     return `${name} x${result.count} = ${total} (${each} each)`;
                 });
 
-            const profit = (this.profitCache.get(session.id) || this.computeSessionProfit(session)).profit;
+            const detail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
 
-            // A repaired or flagged session must not leave the export looking
-            // like a clean observation of the wire
-            const dataNote = this.formatRepairLine(session).trim();
+            // A repaired, unpriced or estimated session must not leave the
+            // export looking like a clean observation of the wire
+            const dataNote = this.buildDataNote(session, detail);
 
             return [
                 start,
@@ -2116,7 +2137,7 @@ class TransmuteHistoryViewer {
                 session.totalSuccesses,
                 failures,
                 resultParts.join('; '),
-                Math.round(profit),
+                Math.round(detail.profit),
                 dataNote,
             ]
                 .map(escape)
