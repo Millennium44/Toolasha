@@ -2158,6 +2158,11 @@ export const settingsGroups = {
                 label: 'Damage Tracker: Attribute damage per player and per ability',
                 type: 'checkbox',
                 default: true,
+                // Nothing reads this key but the registry gate, and the registry
+                // runs at start-up and on a character switch only: switching it on
+                // mid-session records nothing, and switching it off leaves the
+                // websocket handlers recording until the page is reloaded.
+                requiresRefresh: true,
                 help: 'The game attributes nothing, so the caster is worked out from attack counters, then presence, then whose mana fell — an equal split only in a crowd nothing else can separate. Feeds the Damage panel behind the DPS tile',
             },
             damageTakenTracker: {
@@ -2165,6 +2170,10 @@ export const settingsGroups = {
                 label: 'Damage Taken Tracker: What is hitting you, and for how much',
                 type: 'checkbox',
                 default: true,
+                // Same as the damage tracker above: the registry gate is its only
+                // reader, so neither direction of the switch takes effect until
+                // the page is reloaded.
+                requiresRefresh: true,
                 help: 'Damage taken against health regenerated, broken out per monster and per wave with hit ranges. Feeds the Deaths panel behind the deaths/hr tile',
             },
             combatSessionRestore: {
@@ -2324,6 +2333,11 @@ export const settingsGroups = {
                 label: 'Monster stat check (sim diagnostic)',
                 type: 'checkbox',
                 default: false,
+                // Its own onSettingChange takes the panel down live, but that
+                // listener is registered inside initialize — which the registry
+                // only runs when the switch was already on. Turning it on is the
+                // direction that needs the reload, as the help has always said.
+                requiresRefresh: true,
                 help: 'When you click a monster in combat, opens a panel comparing the game’s live buffed stats (armour, resistances, evasion, accuracy) against what the combat sim computes for the same monster — so a modelling gap or an active buff is visible at a glance. Diagnostic; off by default. Takes effect on refresh.',
             },
             labyrinthRecommendTargetRate: {
@@ -2973,6 +2987,10 @@ export const settingsGroups = {
                 label: 'Enable Task Inventory Highlighter button',
                 type: 'checkbox',
                 default: true,
+                // The module watches for the tasks panel from its initialize and
+                // nothing else reads the key, so the registry gate decides it once
+                // per load: the button neither appears nor goes away until a reload.
+                requiresRefresh: true,
                 help: 'Adds a button to dim inventory items not needed for your current non-combat tasks',
             },
             taskStatistics: {
@@ -3151,6 +3169,10 @@ export const settingsGroups = {
                 label: 'Overlay tab button',
                 type: 'checkbox',
                 default: true,
+                // Read once, in the module's initialize, exactly like the Overlay
+                // Panel above it — and with no listener of its own, so the tab is
+                // neither drawn nor removed until the page is reloaded.
+                requiresRefresh: true,
                 help: 'Adds an Overlay switch to the character tabs, beside Inventory and before Optimizer, so the overlay can be shown and hidden without opening settings. Needs the Overlay Panel above',
             },
             commandPalette: {

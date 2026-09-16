@@ -141,6 +141,36 @@ describe('listing age and value badge defaults', () => {
     });
 });
 
+describe('the switches whose only reader is the feature-registry gate', () => {
+    /**
+     * Keys nothing reads but `config.isFeatureEnabled`, which the feature
+     * registry consults at start-up and on a character switch — and nowhere
+     * else. None of these modules watches its own key from module scope, so
+     * the registry's answer is the only one that is ever taken.
+     */
+    const REGISTRY_GATED_ONLY = [
+        'goalPlanner',
+        'damageTracker',
+        'damageTakenTracker',
+        'taskInventoryHighlighter',
+        'sessionBriefing',
+        'ironCowFarm',
+        'overlayTabButton',
+        'labyrinthMonsterStatCheck',
+    ];
+
+    test('each one says it needs a reload, because switching it on mid-session starts nothing', () => {
+        // Until these keys were honoured at all they did nothing either way, so
+        // the omission cost nothing. Now that the gate reads them, a player who
+        // ticks one and watches for the feature is owed the reload tag: the
+        // registry will not run again until the page does. Five of the eight
+        // shipped without the flag.
+        for (const id of REGISTRY_GATED_ONLY) {
+            expect(getSettingDefinition(id)?.requiresRefresh, id).toBe(true);
+        }
+    });
+});
+
 describe('startup recovery defaults', () => {
     test('automatic recovery ships off, and its help says what turning it on does', () => {
         const setting = getSettingDefinition('startupRecovery_autoReload');
