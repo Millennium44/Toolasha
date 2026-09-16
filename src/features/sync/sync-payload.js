@@ -22,6 +22,7 @@
 
 import storage from '../../core/storage.js';
 import settingsStorage from '../../core/settings-storage.js';
+import { isSyncedStore, partitionOwnedKeys } from './sync-ownership.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
 
@@ -184,12 +185,24 @@ export function redactSettingsStore(entries) {
 /**
  * Build the JSON text to upload.
  *
+ * The stores come from `sync-ownership.js`, not from `listStores()`. The
+ * database is shared with other userscripts: walking it uploaded their object
+ * stores along with ours and wrote them back on every pull. Inside the stores
+ * that are shared key-by-key, the keys are filtered the same way and for the
+ * same reason.
+ *
+ * What was left behind is logged as a count and a byte total, and deliberately
+ * no more than that — it is the number that says whether the foreign share is
+ * growing, and naming another script's keys in a log line would publish what
+ * that script stores.
+ *
  * @param {'settings'|'everything'} scope - How much to carry
  * @returns {Promise<string>} Payload text, in full-backup format
  */
 export async function buildPayloadJSON(scope = 'settings') {
     const allStores = await storage.listStores();
-    const storeNames = scope === 'everything' ? allStores : allStores.filter((name) => name === SETTINGS_STORE);
+    const ours = allStores.filter(isSyncedStore);
+    const storeNames = scope === 'everything' ? ours : ours.filter((name) => name === SETTINGS_STORE);
 
     const parts = [
         `{"formatVersion":${FORMAT_VERSION},`,
@@ -199,11 +212,24 @@ export async function buildPayloadJSON(scope = 'settings') {
     ];
 
     let first = true;
+    let foreignKeys = 0;
+    let foreignBytes = 0;
     for (const storeName of storeNames) {
         const entries = stripExcludedKeys(storeName, await storage.getAll(storeName));
-        const safe = storeName === SETTINGS_STORE ? redactSettingsStore(entries) : entries;
+        const partition = partitionOwnedKeys(storeName, entries);
+        foreignKeys += partition.foreignKeys;
+        foreignBytes += partition.foreignBytes;
+        const safe = storeName === SETTINGS_STORE ? redactSettingsStore(partition.owned) : partition.owned;
         parts.push(`${first ? '' : ','}${JSON.stringify(storeName)}:${JSON.stringify(safe)}`);
         first = false;
+    }
+
+    const skippedStores = scope === 'everything' ? allStores.length - ours.length : 0;
+    if (foreignKeys > 0 || skippedStores > 0) {
+        console.info(
+            `[Sync] Left out of the payload: ${foreignKeys} key(s) in shared stores (~${Math.round(foreignBytes / 1024)} KB)` +
+                `${skippedStores > 0 ? ` and ${skippedStores} store(s) this script does not own` : ''}.`
+        );
     }
 
     parts.push('}}');
@@ -322,6 +348,7 @@ async function mergeLocalHistories(payload) {
  */
 export async function applyPayload(json) {
     const payload = JSON.parse(json);
+    const droppedUnowned = dropUnownedFromPayload(payload);
     const settingsStore = payload?.stores?.[SETTINGS_STORE];
 
     if (settingsStore) {
@@ -369,7 +396,7 @@ export async function applyPayload(json) {
         // every silent pull until an auto-push happened to reset it.
         // Re-serialising only when something was rewritten keeps the common
         // no-op pull free.
-        const rewrote = merged.length > 0 || mergeHeld.length > 0 || Boolean(settingsStore);
+        const rewrote = merged.length > 0 || mergeHeld.length > 0 || droppedUnowned || Boolean(settingsStore);
         const applied = rewrote ? JSON.stringify(payload) : json;
 
         const { restored, expected, failed, complete } = await importEverything(payload);
@@ -391,6 +418,46 @@ export async function applyPayload(json) {
         // unload flush. Ending an already-ended hold is a no-op.
         await storage.endRestore?.();
     }
+}
+
+/**
+ * Remove anything the incoming payload carries that is not Toolasha's.
+ *
+ * Gists written before the ownership registry existed hold another script's
+ * whole object stores and its keys inside `settings`, and older builds will go
+ * on writing such payloads for as long as they are installed — so a pull has to
+ * cope with them, not merely stop producing them.
+ *
+ * Removed from the payload, never deleted from storage. `importEverything`
+ * writes the keys a payload names and touches nothing else, so a key dropped
+ * here keeps whatever value this device already had, which is the only correct
+ * answer for a record this script does not own. Deleting them would be this
+ * script reaching into another's data on the strength of a download.
+ *
+ * @param {{stores?: Record<string, Record<string, *>>}} payload - Parsed payload, mutated in place
+ * @returns {boolean} Whether anything was removed, so the caller knows the text
+ *   it downloaded no longer describes what it is about to apply
+ */
+function dropUnownedFromPayload(payload) {
+    const stores = payload?.stores;
+    if (!stores || typeof stores !== 'object') return false;
+
+    let dropped = false;
+    for (const storeName of Object.keys(stores)) {
+        if (!isSyncedStore(storeName)) {
+            delete stores[storeName];
+            dropped = true;
+            continue;
+        }
+        const entries = stores[storeName];
+        if (!entries || typeof entries !== 'object') continue;
+        const { owned } = partitionOwnedKeys(storeName, entries);
+        if (owned !== entries) {
+            stores[storeName] = owned;
+            dropped = true;
+        }
+    }
+    return dropped;
 }
 
 /**

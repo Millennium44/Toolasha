@@ -346,13 +346,13 @@ describe('applyPayload', () => {
         const json = JSON.stringify({
             formatVersion: 1,
             exportedAt: '2026-01-01T00:00:00.000Z',
-            stores: { settings: { toolasha_sync_gistId: 'someone-elses-gist', keep: 1 } },
+            stores: { settings: { toolasha_sync_gistId: 'someone-elses-gist', panelGeometry: 1 } },
         });
 
         await applyPayload(json);
 
         expect(importedPayloads[0].stores.settings.toolasha_sync_gistId).toBeUndefined();
-        expect(importedPayloads[0].stores.settings.keep).toBe(1);
+        expect(importedPayloads[0].stores.settings.panelGeometry).toBe(1);
     });
 
     test('never plants another device’s update-check cache or presence heartbeat', async () => {
@@ -364,7 +364,7 @@ describe('applyPayload', () => {
                     updateCheckState: { checkedAt: Date.now(), latestVersion: '99.0.0' },
                     sessionBriefingLastAlive_603281: Date.now(),
                     script_settingsMap_shared: { updateCheckHours: { value: 1 } },
-                    keep: 1,
+                    panelGeometry: 1,
                 },
             },
         });
@@ -376,7 +376,7 @@ describe('applyPayload', () => {
         expect(writtenSettings.sessionBriefingLastAlive_603281).toBeUndefined();
         // The setting that paces the check still lands normally
         expect(writtenSettings.script_settingsMap_shared.updateCheckHours).toEqual({ value: 1 });
-        expect(writtenSettings.keep).toBe(1);
+        expect(writtenSettings.panelGeometry).toBe(1);
     });
 
     test('never plants another device’s market price cache', async () => {
@@ -389,7 +389,7 @@ describe('applyPayload', () => {
                     Toolasha_marketAPI_timestamp: 1700000000000,
                     Toolasha_marketAPI_patches: { '/items/cheese:0': { a: 5, b: 4, timestamp: 1 } },
                     Toolasha_marketAPI_migration_version: 1,
-                    keep: 1,
+                    panelGeometry: 1,
                 },
             },
         });
@@ -404,7 +404,7 @@ describe('applyPayload', () => {
         expect(writtenSettings.Toolasha_marketAPI_timestamp).toBeUndefined();
         expect(writtenSettings.Toolasha_marketAPI_patches).toBeUndefined();
         expect(writtenSettings.Toolasha_marketAPI_migration_version).toBeUndefined();
-        expect(writtenSettings.keep).toBe(1);
+        expect(writtenSettings.panelGeometry).toBe(1);
     });
 });
 
@@ -424,7 +424,7 @@ describe('applyPayload and the key-migration carry', () => {
             stores: {
                 settings: {
                     script_settingsMap_abc: { chatCommands: { isTrue: false } },
-                    unrelated_key: 1,
+                    panelSizeMemory: 1,
                 },
             },
         });
@@ -433,7 +433,7 @@ describe('applyPayload and the key-migration carry', () => {
 
         expect(reconcileKeyMigrationState).toHaveBeenCalledTimes(1);
         const keys = reconcileKeyMigrationState.mock.calls[0][0];
-        expect([...keys]).toEqual(['script_settingsMap_abc', 'unrelated_key']);
+        expect([...keys]).toEqual(['script_settingsMap_abc', 'panelSizeMemory']);
     });
 
     test('a payload with no settings store never calls it', async () => {
@@ -759,5 +759,98 @@ describe('what applyPayload reports as applied', () => {
 
         expect(result.complete).toBe(false);
         expect(result.failed).toEqual([{ store: 'dungeonRuns', expected: 1, written: 0 }]);
+    });
+});
+
+describe('what belongs to this script', () => {
+    /**
+     * The database is shared with other userscripts. Before the ownership
+     * registry the payload was built by walking `listStores()` and uploading
+     * whatever was there — another script's whole object store included, and its
+     * keys inside `settings` beside ours. Measured live, two foreign keys came
+     * to about 600 KB of every push and every pull.
+     *
+     * The restore is the half that matters more: a foreign key must not be
+     * written back, and must not be *deleted* either. Leaving it exactly as it
+     * is is the only correct answer for a record this script does not own.
+     */
+    beforeEach(() => {
+        storeState.stores = {
+            settings: {
+                script_settingsMap_abc: { chatCommands: { isTrue: true } },
+                panelGeometry: { left: 10 },
+                'tradeLedgerRec_603281_2026-09-16': [{ id: 1 }],
+                someOtherScriptsRecord: 'x'.repeat(2000),
+            },
+            dungeonRuns: { run1: { kills: 3 } },
+            openableAnalytics: { chest_history: "another script's data" },
+        };
+    });
+
+    test("another script's store never reaches the payload", async () => {
+        const payload = JSON.parse(await buildPayloadJSON('everything'));
+
+        expect(Object.keys(payload.stores)).toContain('dungeonRuns');
+        expect(Object.keys(payload.stores)).not.toContain('openableAnalytics');
+    });
+
+    test("another script's key in the settings store is not uploaded", async () => {
+        const payload = JSON.parse(await buildPayloadJSON('everything'));
+
+        expect(payload.stores.settings.someOtherScriptsRecord).toBeUndefined();
+    });
+
+    test('every kind of key this script owns still travels', async () => {
+        const payload = JSON.parse(await buildPayloadJSON('everything'));
+
+        // A settings map, a scoped history record, a plain global flag and a
+        // store of our own — the shapes a mistake here would break one at a time
+        expect(payload.stores.settings.script_settingsMap_abc).toEqual({ chatCommands: { isTrue: true } });
+        expect(payload.stores.settings['tradeLedgerRec_603281_2026-09-16']).toEqual([{ id: 1 }]);
+        expect(payload.stores.settings.panelGeometry).toEqual({ left: 10 });
+        expect(payload.stores.dungeonRuns).toEqual({ run1: { kills: 3 } });
+    });
+
+    test('a pull neither plants a foreign key nor disturbs the one already here', async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-09-16T00:00:00.000Z',
+            stores: {
+                settings: { panelGeometry: { left: 99 }, someOtherScriptsRecord: 'from another device' },
+                openableAnalytics: { chest_history: 'from another device' },
+            },
+        });
+
+        await applyPayload(json);
+
+        const written = importedPayloads[0].stores;
+        expect(written.settings.panelGeometry).toEqual({ left: 99 });
+        expect(written.settings.someOtherScriptsRecord).toBeUndefined();
+        expect(written.openableAnalytics).toBeUndefined();
+        // Not written back, and not deleted: what this device holds stands
+        expect(storeState.stores.settings.someOtherScriptsRecord).toBe('x'.repeat(2000));
+        expect(storeState.stores.openableAnalytics.chest_history).toBe("another script's data");
+    });
+
+    test('a gist written before any of this imports without complaint', async () => {
+        // Every existing gist is one of these: foreign stores, foreign keys, and
+        // no idea that either was a category
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                settings: { someOtherScriptsRecord: 'old', panelGeometry: { left: 1 } },
+                openableAnalytics: { chest_history: 'old' },
+                aStoreThatNoLongerExists: { whatever: 1 },
+            },
+        });
+
+        const result = await applyPayload(json);
+
+        expect(result.complete).toBe(true);
+        expect(Object.keys(importedPayloads[0].stores)).toEqual(['settings']);
+        // What is remembered as "the state of this device" has to describe what
+        // was applied, not what was downloaded
+        expect(result.applied).not.toBe(json);
     });
 });
