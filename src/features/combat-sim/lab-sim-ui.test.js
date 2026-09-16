@@ -77,6 +77,7 @@ vi.mock('../../core/config.js', () => ({
         getSetting: (key) => (key === 'combatSim_rememberUpgradeResults' ? game.rememberUpgradeResults : false),
         getSettingValue: (_key, fallback) => fallback,
         setSetting: () => {},
+        setSettingValue: () => {},
     },
 }));
 
@@ -3154,9 +3155,9 @@ describe('ranking upgrades by room levels', () => {
         // The search window comes from the character, and a probe is bounded by
         // the same Max fights every other sim on this tab is
         expect(params.referenceLevel).toBeGreaterThan(0);
-        expect(params.maxTrials).toBe(
-            Math.max(1, parseInt(ui.panel.querySelector('#mwi-labsim-upgrade-maxfights').value, 10))
-        );
+        // The standard fight budget every capped labyrinth sim stops at — it
+        // was a per-tab setting whose default was this same number
+        expect(params.maxTrials).toBe(20000);
     });
 
     test('the choice and the target floor are remembered like their neighbours', async () => {

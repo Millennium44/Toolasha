@@ -183,6 +183,20 @@ const TOKEN_BUFF_LEVELS_KEY = 'labSimTokenBuffLevels';
  */
 const LEGACY_UPGRADE_MODE_KEY = 'labSimUpgradeMode';
 
+/**
+ * The fight budget a capped run stops at.
+ *
+ * Was two settings — one for Single Sim, one for Upgrade — both defaulting to
+ * this number, and both describing the same standard budget the floor map and
+ * the Automation tab take from `MAX_SIM_TRIALS` in `labyrinth-sim-cache.js`.
+ * Kept as a local constant rather than imported from there: this panel is in a
+ * different production bundle, and reaching across for one integer would pull
+ * that module's whole sim graph in with it.
+ */
+const LAB_SIM_MAX_FIGHTS = 20000;
+/** Schema default for `labyrinthSimMaxHours` */
+const DEFAULT_LAB_SIM_MAX_HOURS = 24;
+
 /** What a skilling upgrade row is actually paid for with, for the CSV column. */
 const CSV_PAID_IN = {
     token: 'tokens',
@@ -853,16 +867,12 @@ class LabSimUI {
                 <span style="font-size:12px;">%</span>
             </label>
             <span style="width:1px; height:16px; background:#333; margin:0 2px;"></span>
-            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Stop the run after at most this many fights, whatever the precision. Tick Uncapped to ignore this.">
-                Max fights
-                <input id="mwi-labsim-maxfights" type="number" min="1" step="1000" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxTrials', 20000)) || 20000)}" style="width:64px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
-            </label>
-            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for the run, in hours. Precision usually ends it first. Tick Uncapped to ignore this.">
+            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for the run, in hours — the fight clock inside the sim, not how long you wait. Precision usually ends it first. Tick Uncapped to ignore it. Shared with every other labyrinth sim and with Settings.">
                 Max hrs
-                <input id="mwi-labsim-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxHours', 24)) || 24)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <input id="mwi-labsim-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxHours', DEFAULT_LAB_SIM_MAX_HOURS)) || DEFAULT_LAB_SIM_MAX_HOURS)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             </label>
-            <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore both caps above (the numbers stay put) and run until the precision target is met.">
-                <input type="checkbox" id="mwi-labsim-uncapped" style="margin:0; cursor:pointer;"${config.getSettingValue('labyrinthSimUncapped', false) ? ' checked' : ''}>
+            <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore the fight budget and the time ceiling and run until the precision target is met. One stopping rule for every labyrinth sim — the floor map and the Automation tab follow it too.">
+                <input type="checkbox" id="mwi-labsim-uncapped" style="margin:0; cursor:pointer;"${config.getSettingValue('labyrinthSimCaps', 'capped') === 'precision' ? ' checked' : ''}>
                 Uncapped
             </label>
         `;
@@ -930,16 +940,12 @@ class LabSimUI {
                 <input id="mwi-labsim-upgrade-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
                 <span style="font-size:12px;">%</span>
             </label>
-            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Cap the baseline sim's fight count for each comparison, whatever the precision. Tick Uncapped to ignore this.">
-                Max fights
-                <input id="mwi-labsim-upgrade-maxfights" type="number" min="1" step="1000" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthUpgradeMaxTrials', 20000)) || 20000)}" style="width:64px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
-            </label>
-            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for each comparison sim, in hours. Precision usually ends it first. Tick Uncapped to ignore this.">
+            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for each comparison sim, in hours — the fight clock inside the sim, not how long you wait. Precision usually ends it first. Tick Uncapped to ignore it. Shared with every other labyrinth sim and with Settings.">
                 Max hrs
-                <input id="mwi-labsim-upgrade-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthUpgradeMaxHours', 24)) || 24)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <input id="mwi-labsim-upgrade-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxHours', DEFAULT_LAB_SIM_MAX_HOURS)) || DEFAULT_LAB_SIM_MAX_HOURS)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             </label>
-            <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore the max-fights and time-ceiling numbers above (they stay put) and run each comparison's baseline to the precision target.">
-                <input type="checkbox" id="mwi-labsim-upgrade-uncapped" style="margin:0; cursor:pointer;"${config.getSettingValue('labyrinthUpgradeUncapped', false) ? ' checked' : ''}>
+            <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore the fight budget and the time ceiling and run each comparison's baseline to the precision target. One stopping rule for every labyrinth sim — the floor map and the Automation tab follow it too.">
+                <input type="checkbox" id="mwi-labsim-upgrade-uncapped" style="margin:0; cursor:pointer;"${config.getSettingValue('labyrinthSimCaps', 'capped') === 'precision' ? ' checked' : ''}>
                 Uncapped
             </label>
             <button id="mwi-labsim-upgrade-run" style="
@@ -1386,20 +1392,21 @@ class LabSimUI {
             e.target.value = String(n);
             config.setSettingValue('labyrinthSimPrecision', n);
         });
-        // Max fights / Max hours / Uncapped are read live at sim time (see
-        // _onSimulate). Persist so the choice survives a refresh.
-        this.panel.querySelector('#mwi-labsim-maxfights').addEventListener('change', (e) => {
-            const n = Math.max(1, parseInt(e.target.value) || 20000);
-            e.target.value = String(n);
-            config.setSettingValue('labyrinthSimMaxTrials', n);
-        });
+        // Max hours / Uncapped are read live at sim time (see _onSimulate).
+        // Persist so the choice survives a refresh — and both are shared with
+        // every other labyrinth sim, so the twin box on the Upgrade tab is kept
+        // in step the way the precision inputs already are.
         this.panel.querySelector('#mwi-labsim-maxhours').addEventListener('change', (e) => {
-            const n = Math.max(1, parseInt(e.target.value) || 24);
+            const n = Math.max(1, parseInt(e.target.value) || DEFAULT_LAB_SIM_MAX_HOURS);
             e.target.value = String(n);
             config.setSettingValue('labyrinthSimMaxHours', n);
+            const twin = this.panel.querySelector('#mwi-labsim-upgrade-maxhours');
+            if (twin) twin.value = String(n);
         });
         this.panel.querySelector('#mwi-labsim-uncapped').addEventListener('change', (e) => {
-            config.setSettingValue('labyrinthSimUncapped', e.target.checked);
+            config.setSettingValue('labyrinthSimCaps', e.target.checked ? 'precision' : 'capped');
+            const twin = this.panel.querySelector('#mwi-labsim-upgrade-uncapped');
+            if (twin) twin.checked = e.target.checked;
         });
 
         // Upgrade listeners
@@ -1418,18 +1425,17 @@ class LabSimUI {
             const twin = this.panel.querySelector('#mwi-labsim-precision');
             if (twin) twin.value = String(n);
         });
-        this.panel.querySelector('#mwi-labsim-upgrade-maxfights').addEventListener('change', (e) => {
-            const n = Math.max(1, parseInt(e.target.value) || 20000);
-            e.target.value = String(n);
-            config.setSettingValue('labyrinthUpgradeMaxTrials', n);
-        });
         this.panel.querySelector('#mwi-labsim-upgrade-maxhours').addEventListener('change', (e) => {
-            const n = Math.max(1, parseInt(e.target.value) || 24);
+            const n = Math.max(1, parseInt(e.target.value) || DEFAULT_LAB_SIM_MAX_HOURS);
             e.target.value = String(n);
-            config.setSettingValue('labyrinthUpgradeMaxHours', n);
+            config.setSettingValue('labyrinthSimMaxHours', n);
+            const twin = this.panel.querySelector('#mwi-labsim-maxhours');
+            if (twin) twin.value = String(n);
         });
         this.panel.querySelector('#mwi-labsim-upgrade-uncapped').addEventListener('change', (e) => {
-            config.setSettingValue('labyrinthUpgradeUncapped', e.target.checked);
+            config.setSettingValue('labyrinthSimCaps', e.target.checked ? 'precision' : 'capped');
+            const twin = this.panel.querySelector('#mwi-labsim-uncapped');
+            if (twin) twin.checked = e.target.checked;
         });
         this.panel.querySelectorAll('[data-lab-upgrade-dimension]').forEach((box) => {
             box.addEventListener('change', () => {
@@ -2405,9 +2411,11 @@ class LabSimUI {
         // high enough that only precision can end the run — a finite sentinel
         // keeps the engine's stop rule and the progress/ETA math well-defined.
         const uncapped = this.panel.querySelector('#mwi-labsim-uncapped')?.checked;
-        const maxFightsCap = Math.max(1, parseInt(this.panel.querySelector('#mwi-labsim-maxfights')?.value) || 20000);
-        const maxHoursCap = Math.max(1, parseInt(this.panel.querySelector('#mwi-labsim-maxhours')?.value) || 24);
-        const maxTrials = uncapped ? Number.MAX_SAFE_INTEGER : maxFightsCap;
+        const maxHoursCap = Math.max(
+            1,
+            parseInt(this.panel.querySelector('#mwi-labsim-maxhours')?.value) || DEFAULT_LAB_SIM_MAX_HOURS
+        );
+        const maxTrials = uncapped ? Number.MAX_SAFE_INTEGER : LAB_SIM_MAX_FIGHTS;
         const hours = uncapped ? 1e6 : maxHoursCap;
 
         if (!monsterHrid) {
@@ -2833,12 +2841,9 @@ class LabSimUI {
         const upgradeUncapped = this.panel.querySelector('#mwi-labsim-upgrade-uncapped')?.checked;
         const upgradeMaxHours = Math.max(
             1,
-            parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxhours')?.value) || 24
+            parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxhours')?.value) || DEFAULT_LAB_SIM_MAX_HOURS
         );
-        const upgradeMaxFights = Math.max(
-            1,
-            parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxfights')?.value) || 20000
-        );
+        const upgradeMaxFights = LAB_SIM_MAX_FIGHTS;
         const hours = upgradeUncapped ? 1e6 : upgradeMaxHours;
         // Bounds the baseline sim each comparison is paired against: it stops at
         // the precision target, the fight cap, or the time ceiling — whichever

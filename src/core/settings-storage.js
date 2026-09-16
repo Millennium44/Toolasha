@@ -89,7 +89,89 @@ const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
 const KEY_MIGRATIONS = [
     // The patient tick became one switch per side; the old one moved both
     { from: 'profitCalc_patientTick', to: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'] },
+    // Eleven labyrinth sim-budget settings became three
+    { derive: deriveLabyrinthSimBudget },
 ];
+
+/**
+ * The labyrinth sim budget: eleven settings reconciled into three.
+ *
+ * Four "Uncapped" checkboxes (floor map, Automation tab, Single Sim, Upgrade),
+ * two precisions with disagreeing defaults, and five ceilings in two units all
+ * described one thing — how long a labyrinth simulation may run. They are now
+ * `labyrinthSimCaps`, `labyrinthSimPrecision` and `labyrinthSimMaxHours`.
+ *
+ * Unlike the `from`/`to` entries above, this one *reconciles* rather than
+ * seeds: two of the three survivors are ids the user already has stored, so a
+ * stored value is the thing being merged, not a reason to stand back. Each rule
+ * below is chosen so nobody has to re-pick anything and nobody's existing run
+ * gets shorter:
+ *
+ * - **Caps.** Any one of the four uncaps stored on means the user had asked
+ *   some panel to run to precision, so the merged choice is 'precision'. All
+ *   four off — or absent — is 'capped', today's default.
+ * - **Precision.** `labyrinthSimPrecision` survives: it governs four surfaces
+ *   to the Automation tab's one, it has a real default (1) where the
+ *   automation knob's 0 was a "follow the other one" sentinel, and the schema
+ *   test pins its help text. A user who tuned only the automation knob (a real
+ *   value, map precision still at its default) gets that value carried across,
+ *   since it was their one deliberate choice about precision.
+ * - **Hours.** The largest of the three stored ceilings wins. A ceiling is a
+ *   backstop rather than a target, so taking the max cannot turn an answer the
+ *   user gets today into a "(capped)" one. Unattended floor passes do not pay
+ *   for that generosity: they keep their own tighter bound in
+ *   `labyrinth-sim-cache.js`.
+ *
+ * The two per-panel max-*fights* numbers are not carried: the merged capped
+ * rule uses the module's standard fight budget, which is exactly what both of
+ * them defaulted to.
+ *
+ * @param {Object} saved - The stored settings map (never null here)
+ * @returns {Object<string, Object>} New entries by id, for ids that should change
+ */
+function deriveLabyrinthSimBudget(saved) {
+    const next = {};
+    const stored = (id) => (saved[id] ? valueOf(saved[id]) : undefined);
+
+    // Caps: a brand-new id, so it is only ever written here — and only when a
+    // panel was actually uncapped. All four off means 'capped', which is the
+    // schema default the loader already supplies, so writing it would be churn
+    // on every existing player's first load for no change in behaviour.
+    const anyUncapped = [
+        'labyrinthTileUncapped',
+        'labyrinthAutomationUncapped',
+        'labyrinthSimUncapped',
+        'labyrinthUpgradeUncapped',
+    ].some((id) => Boolean(stored(id)));
+    if (anyUncapped && !saved.labyrinthSimCaps) {
+        next.labyrinthSimCaps = { id: 'labyrinthSimCaps', type: 'select', value: 'precision' };
+    }
+
+    // Precision: the automation knob only wins when it was the only one tuned
+    const mapPrecision = Number(stored('labyrinthSimPrecision'));
+    const autoPrecision = Number(stored('labyrinthAutomationSimPrecision'));
+    const mapUntouched = !(mapPrecision > 0) || mapPrecision === 1;
+    if (autoPrecision > 0 && autoPrecision !== mapPrecision && mapUntouched) {
+        next.labyrinthSimPrecision = {
+            id: 'labyrinthSimPrecision',
+            type: 'number',
+            value: Math.min(10, Math.max(0.1, autoPrecision)),
+        };
+    }
+
+    // Hours: the most generous of the ceilings the user actually had
+    const hours = ['labyrinthRecommendSimHours', 'labyrinthSimMaxHours', 'labyrinthUpgradeMaxHours']
+        .map((id) => Number(stored(id)))
+        .filter((value) => value > 0);
+    if (hours.length) {
+        const merged = Math.min(100000, Math.max(1, Math.floor(Math.max(...hours))));
+        if (merged !== Number(stored('labyrinthSimMaxHours'))) {
+            next.labyrinthSimMaxHours = { id: 'labyrinthSimMaxHours', type: 'number', value: merged };
+        }
+    }
+
+    return next;
+}
 
 /** Bump the suffix when a new batch is added to KEY_MIGRATIONS */
 const KEY_MIGRATION_FLAG_KEY = 'settings_key_migrations_v1';
@@ -372,7 +454,21 @@ class SettingsStorage {
             if (await storage.get(flagKey, this.storageArea, false)) return saved;
 
             let next = saved;
-            for (const { from, to } of KEY_MIGRATIONS) {
+            for (const migration of KEY_MIGRATIONS) {
+                // A reconciling migration works out for itself which ids to
+                // write — including ids that already hold a stored value, which
+                // is the whole point when several old settings are being merged
+                // into one of their own number. See deriveLabyrinthSimBudget.
+                if (migration.derive) {
+                    if (!saved) continue;
+                    for (const [id, entry] of Object.entries(migration.derive(saved))) {
+                        next = next === saved ? { ...saved } : next;
+                        next[id] = entry;
+                    }
+                    continue;
+                }
+
+                const { from, to } = migration;
                 // valueOf, and truthiness: a boolean the loader would read as on
                 // (including the old `.value` shape) is on here too
                 if (!saved?.[from] || !valueOf(saved[from])) continue;

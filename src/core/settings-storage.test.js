@@ -290,6 +290,158 @@ describe('one-time migration of the patient tick to one switch per side', () => 
     });
 });
 
+/**
+ * Eleven settings describing how long a labyrinth sim may run became three, and
+ * nobody has to re-pick anything. The four per-panel "Uncapped" checkboxes, the
+ * two precisions with disagreeing defaults and the three hour ceilings are
+ * reconciled on the first load that sees them — see deriveLabyrinthSimBudget
+ * for why each rule is the one it is.
+ */
+describe('one-time merge of the labyrinth sim budget', () => {
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_key_migrations_v1_${KEY}`;
+
+    /** A saved map as an existing user's would be, before the merge */
+    const oldBudget = (overrides = {}) => {
+        const entry = (id, value) =>
+            typeof value === 'boolean' ? { id, type: 'checkbox', isTrue: value } : { id, type: 'number', value };
+        const map = {};
+        const base = {
+            labyrinthTileUncapped: false,
+            labyrinthAutomationUncapped: false,
+            labyrinthSimUncapped: false,
+            labyrinthUpgradeUncapped: false,
+            labyrinthSimPrecision: 1,
+            labyrinthAutomationSimPrecision: 0,
+            labyrinthRecommendSimHours: 3,
+            labyrinthSimMaxHours: 24,
+            labyrinthUpgradeMaxHours: 24,
+            ...overrides,
+        };
+        for (const [id, value] of Object.entries(base)) map[id] = entry(id, value);
+        return map;
+    };
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('all four uncaps off keeps the capped rule, which is today’s behaviour', async () => {
+        stored.set(`json:${KEY}`, oldBudget());
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimCaps.value).toBe('capped');
+        // Nothing was carried, so nothing was written: 'capped' is the schema
+        // default the loader already supplies, and writing it over every
+        // existing player's map on their first load would be churn for no
+        // change in behaviour
+        expect(stored.get(`json:${KEY}`).labyrinthSimCaps).toBeUndefined();
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test.each([
+        'labyrinthTileUncapped',
+        'labyrinthAutomationUncapped',
+        'labyrinthSimUncapped',
+        'labyrinthUpgradeUncapped',
+    ])('%s on its own is enough to mean run-to-precision', async (id) => {
+        stored.set(`json:${KEY}`, oldBudget({ [id]: true }));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimCaps.value).toBe('precision');
+    });
+
+    test('several on, with ceilings that disagree, take the most generous ceiling', async () => {
+        stored.set(
+            `json:${KEY}`,
+            oldBudget({
+                labyrinthTileUncapped: true,
+                labyrinthUpgradeUncapped: true,
+                labyrinthRecommendSimHours: 12,
+                labyrinthSimMaxHours: 24,
+                labyrinthUpgradeMaxHours: 96,
+            })
+        );
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimCaps.value).toBe('precision');
+        // A ceiling is a backstop rather than a target, so taking the largest
+        // cannot turn an answer the user gets today into a "(capped)" one
+        expect(settings.labyrinthSimMaxHours.value).toBe(96);
+        expect(stored.get(`json:${KEY}`).labyrinthSimMaxHours.value).toBe(96);
+    });
+
+    test('a precision tuned only on the Automation tab is carried across', async () => {
+        // Their one deliberate choice about precision, and the floor map's knob
+        // still sitting on its default
+        stored.set(`json:${KEY}`, oldBudget({ labyrinthAutomationSimPrecision: 0.5 }));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimPrecision.value).toBe(0.5);
+    });
+
+    test('a precision tuned on both keeps the floor map’s, which governed more surfaces', async () => {
+        stored.set(`json:${KEY}`, oldBudget({ labyrinthSimPrecision: 2, labyrinthAutomationSimPrecision: 0.5 }));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimPrecision.value).toBe(2);
+    });
+
+    test('a fresh install gets the schema defaults, with nothing migrated', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimCaps.value).toBe('capped');
+        expect(settings.labyrinthSimPrecision.value).toBe(1);
+        expect(settings.labyrinthSimMaxHours.value).toBe(24);
+        // Nothing was written over the (absent) map, and the flag is set so the
+        // merge is never revisited
+        expect(stored.get(`json:${KEY}`)).toBeUndefined();
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('runs once: a later change of mind is not undone by the retired keys', async () => {
+        stored.set(`json:${KEY}`, oldBudget({ labyrinthTileUncapped: true }));
+        await settingsStorage.loadSettings();
+
+        // The user goes back to capped, while the retired uncap still says otherwise
+        const map = stored.get(`json:${KEY}`);
+        map.labyrinthSimCaps = { id: 'labyrinthSimCaps', type: 'select', value: 'capped' };
+        stored.set(`json:${KEY}`, map);
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimCaps.value).toBe('capped');
+    });
+
+    test('a merge that fails to save leaves the flag unset, so the next load retries', async () => {
+        stored.set(`json:${KEY}`, oldBudget({ labyrinthSimUncapped: true, labyrinthUpgradeMaxHours: 96 }));
+        // storage.setJSON answers a refused or failed write with false rather than throwing
+        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+
+        const settings = await settingsStorage.loadSettings();
+
+        // The in-memory settings are merged regardless...
+        expect(settings.labyrinthSimCaps.value).toBe('precision');
+        // ...but the refused write never landed, and the flag was not set
+        expect(stored.get(`json:${KEY}`).labyrinthSimCaps).toBeUndefined();
+        expect(stored.get(FLAG)).toBeUndefined();
+
+        const reloaded = await settingsStorage.loadSettings();
+
+        expect(reloaded.labyrinthSimCaps.value).toBe('precision');
+        expect(stored.get(`json:${KEY}`).labyrinthSimCaps.value).toBe('precision');
+        expect(stored.get(`json:${KEY}`).labyrinthSimMaxHours.value).toBe(96);
+        expect(stored.get(FLAG)).toBe(true);
+    });
+});
+
 describe('the marketplace buy-strategy default change is new-installs-only, by design', () => {
     // market_autoFillBuyStrategy's schema default moved from 'outbid' to
     // 'match', but — unlike the labyrinth defaults above — it has no

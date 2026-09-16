@@ -593,7 +593,7 @@ export const recommendationMethods = {
         precisionInput.addEventListener('change', () => {
             const n = Math.min(10, Math.max(0.1, Number(precisionInput.value) || this.getSimPrecisionPct()));
             precisionInput.value = String(n);
-            config.setSettingValue('labyrinthAutomationSimPrecision', n);
+            config.setSettingValue('labyrinthSimPrecision', n);
         });
 
         const uncappedButton = document.createElement('button');
@@ -612,8 +612,9 @@ export const recommendationMethods = {
             uncappedButton.setAttribute('aria-pressed', on ? 'true' : 'false');
         };
         uncappedButton.addEventListener('click', () => {
-            // Checkbox settings live in `isTrue`, which only setSetting writes
-            config.setSetting('labyrinthAutomationUncapped', !this.getAutomationUncapped());
+            // One stopping rule for every labyrinth sim; this button is a view
+            // onto it rather than a setting of its own
+            config.setSettingValue('labyrinthSimCaps', this.getAutomationUncapped() ? 'capped' : 'precision');
             syncUncapped();
         });
         syncUncapped();

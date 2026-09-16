@@ -2950,7 +2950,7 @@ describe('one calculate button, however often the strip is injected', () => {
         expect(calcButtons()).toHaveLength(1);
     });
 
-    test('the Uncapped toggle sits beside the precision input and writes the checkbox setting', () => {
+    test('the Uncapped toggle sits beside the precision input and moves the one caps setting', () => {
         setAutoCalc(false);
         labyrinthClearRate.injectTileControls();
 
@@ -2961,9 +2961,16 @@ describe('one calculate button, however often the strip is injected', () => {
 
         uncapped.click();
 
-        // `setSettingValue` writes `.value`, which `getSetting` ignores — a
-        // checkbox has to go through `setSetting` or the toggle does nothing
-        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthTileUncapped', true);
+        // One stopping rule for every labyrinth sim, so this button is a view
+        // onto the shared select rather than a checkbox setting of its own —
+        // the Automation tab and the Lab Sim panel follow the same press
+        expect(settings.map.get('labyrinthSimCaps')).toBe('precision');
+        expect(uncapped.getAttribute('aria-pressed')).toBe('true');
+
+        // And back, so the toggle is genuinely two-way and nothing leaks
+        uncapped.click();
+        expect(settings.map.get('labyrinthSimCaps')).toBe('capped');
+        expect(uncapped.getAttribute('aria-pressed')).toBe('false');
     });
 });
 
@@ -3462,10 +3469,10 @@ describe('cached sims do not outlive the simulator that made them', () => {
 });
 
 /**
- * The Automation table sims and files its results under its own precision, and
- * looked them up under the floor map's. Whenever the two settings differ —
- * which is the entire point of the table having its own knob — every lookup
- * missed and every redraw re-simmed every combat row from scratch.
+ * The Automation table sims and files its results under one precision and looks
+ * them up under the same one. It briefly had a knob of its own, and whenever
+ * that differed from the floor map's every lookup missed and every redraw
+ * re-simmed every combat row from scratch. There is one number now.
  */
 describe('the Automation table looks up what it stores', () => {
     beforeEach(() => {
@@ -3480,9 +3487,8 @@ describe('the Automation table looks up what it stores', () => {
         document.body.innerHTML = '';
     });
 
-    test('a result stored at the automation precision is found at it', () => {
-        settings.map.set('labyrinthSimPrecision', 1);
-        settings.map.set('labyrinthAutomationSimPrecision', 3);
+    test('a result is found under the precision it was stored at, by either door', () => {
+        settings.map.set('labyrinthSimPrecision', 3);
 
         const result = { clearChance: 0.62, expectedSeconds: 40 };
         labyrinthClearRate.combatCache.set(
@@ -3490,19 +3496,21 @@ describe('the Automation table looks up what it stores', () => {
             result
         );
 
-        // The map's precision is a different measurement and rightly misses
-        expect(labyrinthClearRate.getCachedCombatResult('/monsters/imp', 200)).toBeNull();
-        const found = labyrinthClearRate.getCachedCombatResult(
-            '/monsters/imp',
-            200,
-            labyrinthClearRate.getAutomationSimPrecisionPct()
-        );
-        expect(found).toBe(result);
+        // The table's precision and the map's are the same number now, so the
+        // implicit lookup and the explicit one reach the same slot
+        expect(labyrinthClearRate.getAutomationSimPrecisionPct()).toBe(3);
+        expect(labyrinthClearRate.getCachedCombatResult('/monsters/imp', 200)).toBe(result);
+        expect(
+            labyrinthClearRate.getCachedCombatResult(
+                '/monsters/imp',
+                200,
+                labyrinthClearRate.getAutomationSimPrecisionPct()
+            )
+        ).toBe(result);
     });
 
     test('the table draws the cached badge instead of queueing another sim', () => {
-        settings.map.set('labyrinthSimPrecision', 1);
-        settings.map.set('labyrinthAutomationSimPrecision', 3);
+        settings.map.set('labyrinthSimPrecision', 3);
 
         document.body.innerHTML =
             '<table><tbody><tr>' +

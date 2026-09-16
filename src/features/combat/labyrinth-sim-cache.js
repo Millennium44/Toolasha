@@ -139,6 +139,8 @@ function nonDamagingPlayerAbilities(gameData, dto) {
 
 /** Clear chances are pinned to this many percentage points either side by default */
 export const DEFAULT_SIM_PRECISION_PCT = 1;
+/** Schema default for `labyrinthSimMaxHours`, kept here so the clamp agrees with it */
+const DEFAULT_SIM_MAX_HOURS = 24;
 /** No room stops before this many trials, however lopsided the early ones look */
 const MIN_SIM_TRIALS = 100;
 /** Backstop for a rate near a coin toss, which never converges cheaply */
@@ -220,8 +222,23 @@ export function getSimPrecisionPct() {
  * @returns {number}
  */
 export function getSimHours() {
-    const raw = Number(config.getSettingValue('labyrinthRecommendSimHours', 3));
-    return Math.min(100, Math.max(1, Math.floor(raw) || 3));
+    const raw = Number(config.getSettingValue('labyrinthSimMaxHours', DEFAULT_SIM_MAX_HOURS));
+    return Math.min(100000, Math.max(1, Math.floor(raw) || DEFAULT_SIM_MAX_HOURS));
+}
+
+/**
+ * Whether every labyrinth sim runs to its precision target rather than stopping
+ * at the fight and time ceilings.
+ *
+ * One choice for every surface — the floor map, the Automation tab, Single Sim
+ * and Upgrade. Each of those used to carry its own "Uncapped" checkbox setting,
+ * so tightening one left the other three alone and a player had no way to tell
+ * which of the four a given badge had obeyed. The checkboxes are still on the
+ * panels; they read and write this.
+ * @returns {boolean}
+ */
+export function getSimCapsUncapped() {
+    return config.getSettingValue('labyrinthSimCaps', 'capped') === 'precision';
 }
 
 /**
@@ -292,16 +309,17 @@ export function resolveSimHours(uncapped = false) {
 /**
  * The precision the Automation tab's own sims run to, in percentage points.
  *
- * Its own knob, because the per-room table and the floor map are asking
- * different questions: the map wants an answer about the room you are standing
- * in front of now, the table wants a plan, and a plan is worth waiting longer
- * for. Unset (0) means "whatever the map is using", which is what every
- * automation sim did before this existed — so an untouched install keeps its
- * cached results, which are keyed on the precision they were run at.
+ * The same number the floor map uses. It was briefly its own knob, on the
+ * theory that a plan is worth waiting longer for than the room you are standing
+ * in front of — but the two defaults disagreed, the automation one carried a
+ * "follow the other setting" sentinel of 0, and results cached under one
+ * precision were invisible to the other. Kept as a named accessor because the
+ * cache keys and the badge lookups read better for saying which question they
+ * are asking.
  * @returns {number}
  */
 export function getAutomationSimPrecisionPct() {
-    return clampPrecisionPct(config.getSettingValue('labyrinthAutomationSimPrecision', 0));
+    return getSimPrecisionPct();
 }
 
 /**
@@ -310,7 +328,7 @@ export function getAutomationSimPrecisionPct() {
  * @returns {boolean}
  */
 export function getAutomationUncapped() {
-    return config.getSetting('labyrinthAutomationUncapped') === true;
+    return getSimCapsUncapped();
 }
 
 /**
@@ -591,6 +609,7 @@ export const simCacheMethods = {
     getSimPrecisionPct,
     getSimHours,
     getSimStopRule,
+    getSimCapsUncapped,
     getAutomationSimPrecisionPct,
     getAutomationUncapped,
     automationSimOptions,

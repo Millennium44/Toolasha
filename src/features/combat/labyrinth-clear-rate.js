@@ -2718,9 +2718,10 @@ class LabyrinthClearRate {
             uncappedButton.setAttribute('aria-pressed', on ? 'true' : 'false');
         };
         uncappedButton.addEventListener('click', () => {
-            // A checkbox setting lives in `isTrue`, which only `setSetting`
-            // writes — see the auto-calc toggle below for the same trap
-            config.setSetting('labyrinthTileUncapped', !this.tileCalcUncapped());
+            // One stopping rule for every labyrinth sim — this button is a view
+            // onto it, not a setting of its own, so the Automation tab and the
+            // Lab Sim panel follow the press immediately
+            config.setSettingValue('labyrinthSimCaps', this.tileCalcUncapped() ? 'capped' : 'precision');
             syncUncapped();
         });
         syncUncapped();
@@ -3012,7 +3013,7 @@ class LabyrinthClearRate {
      * @returns {boolean}
      */
     tileCalcUncapped() {
-        return config.getSetting('labyrinthTileUncapped') === true;
+        return this.getSimCapsUncapped();
     }
 
     /**

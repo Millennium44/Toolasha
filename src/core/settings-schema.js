@@ -2330,6 +2330,27 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Default target clear rate for labyrinth skip threshold recommendations',
             },
+            // How long a labyrinth simulation may run used to be eleven
+            // settings — four "Uncapped" checkboxes (one per panel), two
+            // precisions that disagreed about their own default, and five
+            // ceilings in two different units. Every one of them was answering
+            // the same question, and a player who tightened the Automation tab
+            // found the floor map unchanged. It is three now: whether the caps
+            // apply at all, how tight an answer to hold out for, and the
+            // backstop that ends a run which can never converge. The panels
+            // still show their own "Uncapped" box; it is a view onto
+            // `labyrinthSimCaps` rather than a setting of its own.
+            labyrinthSimCaps: {
+                id: 'labyrinthSimCaps',
+                label: 'Labyrinth: Simulation stopping rule',
+                type: 'select',
+                default: 'capped',
+                options: [
+                    { value: 'capped', label: 'Stop at the fight and time ceilings' },
+                    { value: 'precision', label: 'Run to the precision target' },
+                ],
+                help: 'Capped: a sim stops at the standard fight budget even if its clear chance is still loose, and a wide result is marked "(capped)". Run to precision: it keeps fighting until the precision below is met, bounded by a safety backstop of 100× the normal budget so a room that can never converge still ends. Every labyrinth sim follows this — the floor map, the Automation tab, Single Sim and Upgrade — and each panel’s own "Uncapped" box is a view onto it.',
+            },
             labyrinthSimPrecision: {
                 id: 'labyrinthSimPrecision',
                 label: 'Labyrinth: Combat sim precision (±%)',
@@ -2340,93 +2361,15 @@ export const settingsGroups = {
                 step: 0.5,
                 help: "A room's sim keeps fighting until its clear chance is pinned to within this many percentage points either side — the 95% confidence interval has to fit inside ±this before the run is allowed to stop. A settled room gets there in a few hundred fights and a close one needs thousands, so the work goes where the answer is still in doubt (lower = tighter interval, more fights, slower)",
             },
-            labyrinthTileUncapped: {
-                id: 'labyrinthTileUncapped',
-                label: 'Labyrinth: Floor calc ignores the fight cap (run to precision)',
-                type: 'checkbox',
-                default: false,
-                help: 'When on, a manual "Calc" on the labyrinth map keeps simulating each room until the precision target is met instead of stopping at the standard fight budget and reporting a wide "(capped)" band. A safety backstop of 100× that budget still ends a run that can never converge, and the calculate button becomes Cancel while one is going.',
-            },
-            labyrinthAutomationSimPrecision: {
-                id: 'labyrinthAutomationSimPrecision',
-                label: 'Labyrinth: Automation tab sim precision (±%)',
-                type: 'number',
-                default: 0,
-                min: 0,
-                max: 10,
-                step: 0.5,
-                help: 'Precision the Automation tab’s own per-room sims and Recommend searches run to, in percentage points. 0 follows the floor map’s precision, which is what these sims used before this setting existed.',
-            },
-            labyrinthAutomationUncapped: {
-                id: 'labyrinthAutomationUncapped',
-                label: 'Labyrinth: Automation tab ignores the fight cap',
-                type: 'checkbox',
-                default: false,
-                help: 'When on, the Automation tab’s cached per-room calculations and Recommend searches run to their precision target rather than stopping at the standard fight budget. Bounded by the same 100× backstop, and cancellable from the Recommend button.',
-            },
-            labyrinthRecommendSimHours: {
-                id: 'labyrinthRecommendSimHours',
-                label: 'Labyrinth: Combat sim time ceiling (hours)',
-                type: 'number',
-                default: 3,
-                min: 1,
-                max: 100,
-                step: 1,
-                help: 'Upper bound on a single room simulation, in simulated hours. Precision normally ends a run well before this; the ceiling stops a room near a coin toss from running forever',
-            },
-            labyrinthSimMaxTrials: {
-                id: 'labyrinthSimMaxTrials',
-                label: 'Labyrinth: Single-sim max fights',
-                type: 'number',
-                default: 20000,
-                min: 1,
-                max: 10000000,
-                step: 1000,
-                help: 'Hard cap on the number of fights one Single Sim run may use before it stops, regardless of precision. Tick the Single Sim "Uncapped" box to ignore this (and the time ceiling) and run until the precision target is met.',
-            },
             labyrinthSimMaxHours: {
                 id: 'labyrinthSimMaxHours',
-                label: 'Labyrinth: Single-sim time ceiling (hours)',
+                label: 'Labyrinth: Simulation time ceiling (hours)',
                 type: 'number',
                 default: 24,
                 min: 1,
                 max: 100000,
                 step: 1,
-                help: 'Simulated-time ceiling on one Single Sim run. Precision normally ends the run first. Tick the Single Sim "Uncapped" box to ignore this (and the max-fights cap). Only affects the Single Sim tab; the live labyrinth tile calculator keeps its own ceiling.',
-            },
-            labyrinthSimUncapped: {
-                id: 'labyrinthSimUncapped',
-                label: 'Labyrinth: Single-sim ignore caps (run to precision)',
-                type: 'checkbox',
-                default: false,
-                help: 'When on, the Single Sim tab ignores both the max-fights and time-ceiling numbers (they stay in place) and runs until the precision target is met. Can be slow for a near-coin-toss room.',
-            },
-            labyrinthUpgradeMaxTrials: {
-                id: 'labyrinthUpgradeMaxTrials',
-                label: 'Labyrinth: Upgrade-sim max fights',
-                type: 'number',
-                default: 20000,
-                min: 1,
-                max: 10000000,
-                step: 1000,
-                help: 'Cap on the baseline sim\'s fight count for each Upgrade tab comparison (every candidate is paired to that count). Tick the Upgrade "Uncapped" box to ignore this and the time ceiling.',
-            },
-            labyrinthUpgradeMaxHours: {
-                id: 'labyrinthUpgradeMaxHours',
-                label: 'Labyrinth: Upgrade-sim time ceiling (hours)',
-                type: 'number',
-                default: 24,
-                min: 1,
-                max: 100000,
-                step: 1,
-                help: 'Simulated-time ceiling on each Upgrade tab comparison sim. Tick the Upgrade "Uncapped" box to ignore it and run to precision.',
-            },
-            labyrinthUpgradeUncapped: {
-                id: 'labyrinthUpgradeUncapped',
-                label: 'Labyrinth: Upgrade-sim ignore time ceiling',
-                type: 'checkbox',
-                default: false,
-                help: 'When on, the Upgrade tab ignores its time-ceiling number (it stays in place) and runs each comparison to the precision target.',
+                help: 'Upper bound on one room simulation, in simulated hours — the fight clock inside the sim, not how long you wait. Precision normally ends a run well before this; the ceiling stops a room whose fights run very long from eating its whole fight budget on a handful of them. Ignored when the stopping rule above is "run to the precision target".',
             },
             labyrinthPathClearThreshold: {
                 id: 'labyrinthPathClearThreshold',
