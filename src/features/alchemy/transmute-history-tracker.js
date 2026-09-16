@@ -190,6 +190,12 @@ class TransmuteHistoryTracker {
         // Every row is recorded so the next message has a baseline; only the
         // drop-table rows say anything about what this action produced, since
         // incidental drops (essences, artisan's crates) arrive even on failure.
+        //
+        // `noteEach` folds a message's repeated snapshots of one stack down to
+        // the last of them, so this is one entry — and one delta — per changed
+        // stack. Reading them unfolded applied the arithmetic below once per
+        // snapshot and inflated self-returns well past the successes that
+        // produced them.
         const noted = this.itemCounts.noteEach(data.endCharacterItems || []);
         const outputRows = noted.filter(
             ({ row }) => row.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(row.itemHrid)
@@ -240,15 +246,39 @@ class TransmuteHistoryTracker {
         }
 
         // One action produces one output, so the successes cannot outnumber the
-        // attempts however the deltas came out
+        // attempts however the deltas came out. The excess is taken off the
+        // outputs themselves rather than only off the total: recording more
+        // items than there were successes is what made a session's self-returns
+        // outrun its attempts, and with them its input consumption.
+        //
+        // A self-return is trimmed first — it is the one output inferred
+        // indirectly, from what is left of the input stack rather than from a
+        // gain — then the largest remaining estimate.
         let successCount = 0;
         for (const actions of producedActions.values()) successCount += actions;
+        let excess = successCount - attemptCount;
+        if (excess > 0) {
+            const order = [...producedActions.entries()].sort(([hridA, a], [hridB, b]) => {
+                if (hridA === inputItemHrid) return -1;
+                if (hridB === inputItemHrid) return 1;
+                return b - a;
+            });
+            for (const [outputItemHrid, actions] of order) {
+                if (excess <= 0) break;
+                const taken = Math.min(excess, actions);
+                producedActions.set(outputItemHrid, actions - taken);
+                excess -= taken;
+            }
+        }
         successCount = Math.min(successCount, attemptCount);
 
         if (successCount > 0) {
             this.activeSession.totalSuccesses += successCount;
 
             for (const [outputItemHrid, actions] of producedActions) {
+                // Trimmed away entirely above — nothing to record, and no empty
+                // results row to leave behind
+                if (actions <= 0) continue;
                 const isOutputSelfReturn = outputItemHrid === inputItemHrid;
 
                 if (!this.activeSession.results[outputItemHrid]) {

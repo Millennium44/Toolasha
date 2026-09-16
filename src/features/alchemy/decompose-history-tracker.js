@@ -208,6 +208,10 @@ class DecomposeHistoryTracker {
 
         // Every row is noted so the ledger has a baseline for next time; only
         // the drop-table rows say anything about what this action produced.
+        //
+        // `noteEach` folds a message's repeated snapshots of one stack down to
+        // the last of them, so each entry here is one stack's whole change over
+        // the batch rather than one step of it.
         const noted = this.itemCounts.noteEach(data.endCharacterItems || []);
         const outputRows = noted.filter(
             ({ row }) => row.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(row.itemHrid)

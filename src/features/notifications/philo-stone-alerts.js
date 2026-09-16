@@ -181,9 +181,16 @@ class PhiloStoneAlerts {
         if (!config.getSetting(MASTER_SETTING)) return;
         if (data?.endCharacterAction?.actionHrid !== TRANSMUTE_ACTION_HRID) return;
 
-        const row = (data.endCharacterItems || []).find(
+        // The LAST matching row, not the first. One message can carry several
+        // snapshots of the same stack as a batch of attempts plays out — a
+        // batch that produced two stones arrives as rows [7, 8] — and only the
+        // last of them is the total the stack ended on. Taking the first would
+        // under-report the gain AND leave the baseline low, so the next genuine
+        // stone would read as a gain of two.
+        const rows = (data.endCharacterItems || []).filter(
             (r) => r?.itemHrid === PHILO_HRID && r?.itemLocationHrid === INVENTORY_LOCATION_HRID
         );
+        const row = rows[rows.length - 1];
         if (!row) return;
 
         const count = Number(row.count);

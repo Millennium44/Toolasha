@@ -239,6 +239,31 @@ describe('philosophers stone alerts', () => {
         expect(game.notified[0].message).toBe('Transmuting produced 3 Philosopher’s Stones!');
     });
 
+    test('a batch carrying two snapshots of the stack reads the last, not the first', async () => {
+        philoStoneAlerts.disable();
+        game.inventory = [philoStack(6)];
+        await philoStoneAlerts.initialize();
+
+        // One message, one batch of attempts, two stones: the game sends a row
+        // per step of the stack rather than one row for the batch
+        send({
+            endCharacterAction: { actionHrid: TRANSMUTE_ACTION_HRID },
+            endCharacterItems: [
+                { itemHrid: PHILO_HRID, itemLocationHrid: INVENTORY_LOCATION, count: 7 },
+                { itemHrid: PHILO_HRID, itemLocationHrid: INVENTORY_LOCATION, count: 8 },
+            ],
+        });
+
+        expect(game.notified).toHaveLength(1);
+        expect(game.notified[0].message).toBe('Transmuting produced 2 Philosopher’s Stones!');
+
+        // And the baseline is the stack's real total, so the next genuine
+        // stone is a gain of one rather than of two
+        send(completed({ philoCount: 9 }));
+        expect(game.notified).toHaveLength(2);
+        expect(game.notified[1].message).toBe('Transmuting produced a Philosopher’s Stone!');
+    });
+
     test('a stack that only went down (e.g. sold) is not an announcement', async () => {
         philoStoneAlerts.disable();
         game.inventory = [philoStack(3)];
