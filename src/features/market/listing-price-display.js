@@ -18,7 +18,7 @@ import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profi
 
 /** Rows here are live orders, most of them still working. Markers are told so. */
 const MY_LISTINGS_SURFACE = { surface: 'myListings' };
-import { coinFormatter, formatKMB, formatRelativeTime } from '../../utils/formatters.js';
+import { coinFormatter, formatKMB } from '../../utils/formatters.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { clampToBand } from '../../utils/market-values.js';
@@ -1252,7 +1252,13 @@ class ListingPriceDisplay {
         if (ageMs === null) return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
         if (ageMs === -1) return createStyledCell('None', '#00FF00', { fontSize: '0.9em' });
 
-        return createStyledCell(`~${formatRelativeTime(ageMs)}`, estimatedListingAge.getStalenessColor(lastUpdated), {
+        // Written the way the listing-age format setting asks, like the "Listed"
+        // column beside it and the order book's own age column. This one kept
+        // formatting elapsed time whatever the format said, so choosing
+        // Date/Time changed two of the three age displays and left this one.
+        // The tilde stays either way: the age is an estimate, not a reading.
+        const formatted = formatListingTimestamp(Date.now() - ageMs);
+        return createStyledCell(`~${formatted}`, estimatedListingAge.getStalenessColor(lastUpdated), {
             fontSize: '0.9em',
             title: lastUpdated ? estimatedListingAge.getStalenessTooltip(lastUpdated) : undefined,
         });

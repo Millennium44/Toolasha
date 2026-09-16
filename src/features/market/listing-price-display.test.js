@@ -243,6 +243,36 @@ describe('the My Listings age columns', () => {
         const cell = listingPriceDisplay.createListedAgeCell(new Date(Date.now() - 3 * 3600_000).toISOString());
         expect(cell.textContent).toMatch(/^\d{2}-\d{2} /);
     });
+
+    // The column beside it had the same bug the Listed column was fixed for: it
+    // formatted elapsed time whatever the format said, so Date/Time moved two of
+    // the three age displays and left this one behind
+    describe('the Top Order Age cell', () => {
+        /**
+         * @param {number} ageMs - What the top order's estimated age comes back as
+         * @returns {{cell: HTMLElement, restore: Function}} The rendered cell
+         */
+        function ageCell(ageMs) {
+            ageMock.orderBooksCache[ITEM] = { lastUpdated: 1000, data: { orderBooks: {} } };
+            const spy = vi.spyOn(listingPriceDisplay, '_getTopOrderAgeMs').mockReturnValue(ageMs);
+            const cell = listingPriceDisplay.createTopOrderAgeCell(ITEM, 0, true, new Set(), null);
+            return { cell, restore: () => spy.mockRestore() };
+        }
+
+        test('honours the elapsed format, tilde intact', () => {
+            settings['market_listingAgeFormat'] = 'elapsed';
+            const { cell, restore } = ageCell(3 * 3600_000);
+            expect(cell.textContent).toMatch(/^~\d+h/);
+            restore();
+        });
+
+        test('honours the date/time format, tilde intact', () => {
+            settings['market_listingAgeFormat'] = 'datetime';
+            const { cell, restore } = ageCell(3 * 3600_000);
+            expect(cell.textContent).toMatch(/^~\d{2}-\d{2} /);
+            restore();
+        });
+    });
 });
 
 describe('parseQuantityCell', () => {
