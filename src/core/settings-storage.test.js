@@ -32,6 +32,12 @@ vi.mock('./storage.js', () => ({
             stored.set(key, value);
             return Promise.resolve();
         }),
+        delete: vi.fn((key) => {
+            if (outage.on) return Promise.resolve(false);
+            stored.delete(`json:${key}`);
+            stored.delete(key);
+            return Promise.resolve(true);
+        }),
         getAll: vi.fn(() => Promise.resolve({})),
     },
 }));
@@ -49,6 +55,12 @@ const { default: storage } = await import('./storage.js');
 // below is only a regression end to end, where config decides what it changed
 // and storage decides what it writes.
 const { default: config } = await import('./config.js');
+
+/**
+ * Every key migration's `once` id, in schema order — what the per-character
+ * record holds once a load has evaluated the whole batch.
+ */
+const ALL_MIGRATIONS = ['patientTickSides', 'labyrinthSimBudget', 'marketListingAge', 'inventoryValueBadges'];
 
 describe('SettingsStorage.importSettings known-character matching', () => {
     beforeEach(() => {
@@ -192,7 +204,7 @@ describe('one-time rewrites of superseded schema defaults', () => {
 
 describe('one-time migration of the patient tick to one switch per side', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_key_migrations_v2_${KEY}`;
+    const STATE = `json:settings_key_migrations_applied_${KEY}`;
     const SIDES = ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'];
 
     /** A saved map from before the split, as an existing user's would be */
@@ -216,7 +228,7 @@ describe('one-time migration of the patient tick to one switch per side', () => 
             expect(stored.get(`json:${KEY}`)[key].isTrue).toBe(true);
         }
         expect(stored.get(`json:${KEY}`).profitCalc_patientTick.isTrue).toBe(true);
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('the old checkbox shape that stored its state in .value counts as on', async () => {
@@ -236,14 +248,14 @@ describe('one-time migration of the patient tick to one switch per side', () => 
             expect(settings[key].isTrue).toBe(false);
             expect(stored.get(`json:${KEY}`)[key]).toBeUndefined();
         }
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('no old tick at all (a fresh install) leaves both sides off, flagged', async () => {
         const settings = await settingsStorage.loadSettings();
 
         for (const key of SIDES) expect(settings[key].isTrue).toBe(false);
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('runs once: after the flag is set, the old tick is not carried again', async () => {
@@ -266,7 +278,7 @@ describe('one-time migration of the patient tick to one switch per side', () => 
 
         for (const key of SIDES) expect(settings[key].isTrue).toBe(true);
         expect(stored.get(`json:${KEY}`).profitCalc_patientTickBuy).toBeUndefined();
-        expect(stored.get(FLAG)).toBeUndefined();
+        expect(stored.get(STATE)).toBeUndefined();
 
         const reloaded = await settingsStorage.loadSettings();
 
@@ -274,7 +286,7 @@ describe('one-time migration of the patient tick to one switch per side', () => 
             expect(reloaded[key].isTrue).toBe(true);
             expect(stored.get(`json:${KEY}`)[key].isTrue).toBe(true);
         }
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('a side that already has a stored value keeps it', async () => {
@@ -299,7 +311,7 @@ describe('one-time migration of the patient tick to one switch per side', () => 
  */
 describe('one-time merge of the labyrinth sim budget', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_key_migrations_v2_${KEY}`;
+    const STATE = `json:settings_key_migrations_applied_${KEY}`;
 
     /** A saved map as an existing user's would be, before the merge */
     const oldBudget = (overrides = {}) => {
@@ -339,7 +351,7 @@ describe('one-time merge of the labyrinth sim budget', () => {
         // existing player's map on their first load would be churn for no
         // change in behaviour
         expect(stored.get(`json:${KEY}`).labyrinthSimCaps).toBeUndefined();
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test.each([
@@ -403,7 +415,7 @@ describe('one-time merge of the labyrinth sim budget', () => {
         // Nothing was written over the (absent) map, and the flag is set so the
         // merge is never revisited
         expect(stored.get(`json:${KEY}`)).toBeUndefined();
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('runs once: a later change of mind is not undone by the retired keys', async () => {
@@ -431,20 +443,20 @@ describe('one-time merge of the labyrinth sim budget', () => {
         expect(settings.labyrinthSimCaps.value).toBe('precision');
         // ...but the refused write never landed, and the flag was not set
         expect(stored.get(`json:${KEY}`).labyrinthSimCaps).toBeUndefined();
-        expect(stored.get(FLAG)).toBeUndefined();
+        expect(stored.get(STATE)).toBeUndefined();
 
         const reloaded = await settingsStorage.loadSettings();
 
         expect(reloaded.labyrinthSimCaps.value).toBe('precision');
         expect(stored.get(`json:${KEY}`).labyrinthSimCaps.value).toBe('precision');
         expect(stored.get(`json:${KEY}`).labyrinthSimMaxHours.value).toBe(96);
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 });
 
 describe('one-time migration of the three listing-age switches to one choice', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_key_migrations_v2_${KEY}`;
+    const STATE = `json:settings_key_migrations_applied_${KEY}`;
 
     /**
      * A saved map from before the merge.
@@ -485,7 +497,7 @@ describe('one-time migration of the three listing-age switches to one choice', (
 
         expect(settings.market_listingAge.value).toBe(expected);
         expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe(expected);
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('the old entries are left where they are, for an older build on the same profile', async () => {
@@ -501,7 +513,7 @@ describe('one-time migration of the three listing-age switches to one choice', (
 
         expect(settings.market_listingAge.value).toBe('both');
         expect(stored.get(`json:${KEY}`)?.market_listingAge).toBeUndefined();
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('runs once: a later load does not overwrite a re-picked value', async () => {
@@ -524,19 +536,19 @@ describe('one-time migration of the three listing-age switches to one choice', (
 
         expect(settings.market_listingAge.value).toBe('both');
         expect(stored.get(`json:${KEY}`).market_listingAge).toBeUndefined();
-        expect(stored.get(FLAG)).toBeUndefined();
+        expect(stored.get(STATE)).toBeUndefined();
 
         const reloaded = await settingsStorage.loadSettings();
 
         expect(reloaded.market_listingAge.value).toBe('both');
         expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe('both');
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 });
 
 describe('one-time migration of the inventory badge switches to one choice', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_key_migrations_v2_${KEY}`;
+    const STATE = `json:settings_key_migrations_applied_${KEY}`;
 
     /**
      * A saved map from before the merge.
@@ -575,7 +587,7 @@ describe('one-time migration of the inventory badge switches to one choice', () 
 
         expect(settings.inv_valueBadges.value).toBe(expected);
         expect(stored.get(`json:${KEY}`).inv_valueBadges.value).toBe(expected);
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
     });
 
     test('a fresh install keeps the schema default and stores nothing', async () => {
@@ -592,12 +604,157 @@ describe('one-time migration of the inventory badge switches to one choice', () 
         const settings = await settingsStorage.loadSettings();
 
         expect(settings.inv_valueBadges.value).toBe('sorting');
-        expect(stored.get(FLAG)).toBeUndefined();
+        expect(stored.get(STATE)).toBeUndefined();
 
         const reloaded = await settingsStorage.loadSettings();
 
         expect(reloaded.inv_valueBadges.value).toBe('sorting');
-        expect(stored.get(FLAG)).toBe(true);
+        expect(stored.get(STATE)).toEqual(ALL_MIGRATIONS);
+    });
+});
+
+/**
+ * What has already been carried is recorded per migration, not per batch.
+ *
+ * A single batch flag had to be bumped whenever an entry was added, and the bump
+ * re-ran every older entry too. The seeding entries survive that — they stand
+ * back from an id that already holds a value — but the reconciling one does not:
+ * it overwrites ids that already hold stored values, which is the whole point
+ * when several old settings merge into one of their own number, and replaying it
+ * puts the retired keys back over a choice the user has since made by hand.
+ */
+describe('each key migration runs once, however many are added later', () => {
+    const KEY = 'script_settingsMap_alice';
+    const STATE = `json:settings_key_migrations_applied_${KEY}`;
+
+    const hours = (id, value) => ({ id, type: 'number', value });
+    const check = (id, isTrue) => ({ id, type: 'checkbox', isTrue });
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('an entry already applied is not replayed while the rest of the batch runs', async () => {
+        // The labyrinth budget was reconciled on an earlier load, and the user
+        // has since put the Lab Sim panel's ceiling back to 6 by hand. The
+        // retired per-panel ceiling is still in the map — the save paths keep ids
+        // the schema no longer names — so replaying the reconcile would take the
+        // largest of them and hand back 96.
+        stored.set(STATE, ['labyrinthSimBudget']);
+        stored.set(`json:${KEY}`, {
+            labyrinthSimMaxHours: hours('labyrinthSimMaxHours', 6),
+            labyrinthUpgradeMaxHours: hours('labyrinthUpgradeMaxHours', 96),
+            market_showListingAge: check('market_showListingAge', true),
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimMaxHours.value).toBe(6);
+        expect(stored.get(`json:${KEY}`).labyrinthSimMaxHours.value).toBe(6);
+        // ...and an entry that has not run still does
+        expect(settings.market_listingAge.value).toBe('myListings');
+        // The record is the union of what had run and what has now, in whatever
+        // order the two lists meet
+        expect(stored.get(STATE)).toEqual(expect.arrayContaining(ALL_MIGRATIONS));
+    });
+
+    test('a batch flag from an earlier build counts as that batch having run', async () => {
+        stored.set(`settings_key_migrations_v2_${KEY}`, true);
+        stored.set(`json:${KEY}`, {
+            labyrinthSimMaxHours: hours('labyrinthSimMaxHours', 6),
+            labyrinthUpgradeMaxHours: hours('labyrinthUpgradeMaxHours', 96),
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimMaxHours.value).toBe(6);
+    });
+
+    test('the first batch flag counts only for the entry that batch had', async () => {
+        stored.set(`settings_key_migrations_v1_${KEY}`, true);
+        stored.set(`json:${KEY}`, {
+            profitCalc_patientTick: check('profitCalc_patientTick', true),
+            // Carried under that flag, and switched off by hand afterwards
+            profitCalc_patientTickBuy: check('profitCalc_patientTickBuy', false),
+            market_showEstimatedListingAge: check('market_showEstimatedListingAge', true),
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.profitCalc_patientTickBuy.isTrue).toBe(false);
+        // The entries that batch did not have are carried now
+        expect(settings.market_listingAge.value).toBe('orderBook');
+    });
+});
+
+/**
+ * A settings map that arrives wholesale from somewhere else brings its own
+ * history with it. The record left behind describes a map that is no longer
+ * here, and a map written by a build older than a merge carries the retired ids
+ * and none of the ids that replaced them — so without forgetting the record, the
+ * settings the user chose read as never chosen.
+ */
+describe('a settings map arriving from elsewhere is still reconciled', () => {
+    const KEY = 'script_settingsMap_alice';
+    /**
+     * A character whose settings have already been carried across — recorded
+     * both the way this build records it and the way the builds before it did,
+     * since either is what a real profile is holding.
+     */
+    const migrated = () => {
+        stored.set(`json:settings_key_migrations_applied_${KEY}`, ALL_MIGRATIONS);
+        stored.set(`settings_key_migrations_v2_${KEY}`, true);
+    };
+    const oldMap = () => ({
+        market_showEstimatedListingAge: {
+            id: 'market_showEstimatedListingAge',
+            type: 'checkbox',
+            isTrue: true,
+        },
+    });
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('copying another character’s map forgets this character’s record', async () => {
+        migrated();
+        stored.set('json:script_settingsMap_bob', oldMap());
+
+        expect(await settingsStorage.copySettingsFromCharacter('bob')).toBe(true);
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('orderBook');
+    });
+
+    test('a settings file written before the merge is reconciled on the next load', async () => {
+        migrated();
+
+        await settingsStorage.importSettings(JSON.stringify({ [KEY]: oldMap() }));
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('orderBook');
+    });
+
+    test('a file that brings its own record is left to it', async () => {
+        await settingsStorage.importSettings(
+            JSON.stringify({
+                [KEY]: {
+                    labyrinthSimMaxHours: { id: 'labyrinthSimMaxHours', type: 'number', value: 6 },
+                    labyrinthUpgradeMaxHours: { id: 'labyrinthUpgradeMaxHours', type: 'number', value: 96 },
+                },
+                [`settings_key_migrations_applied_${KEY}`]: ALL_MIGRATIONS,
+            })
+        );
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthSimMaxHours.value).toBe(6);
     });
 });
 

@@ -84,19 +84,30 @@ const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
  * longer names, so it would survive anyway — and keeping it means an older
  * build loaded on the same profile still reads the value it knows.
  *
- * Guarded by its own persisted per-character flag, so it runs once.
+ * Every entry carries a `once` id, and the ids that have run are recorded per
+ * character, so each entry runs exactly once for a save file no matter how many
+ * entries are added later. A single batch flag could not do that: adding an
+ * entry meant bumping the flag, which re-ran every older entry too — harmless
+ * for the seeding entries (they stand back from an id that already holds a
+ * value) and not harmless at all for a reconciling one, which overwrites ids
+ * the user may since have re-picked by hand. See {@link applyKeyMigrations}.
  */
 const KEY_MIGRATIONS = [
     // The patient tick became one switch per side; the old one moved both
-    { from: 'profitCalc_patientTick', to: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'] },
+    {
+        once: 'patientTickSides',
+        from: 'profitCalc_patientTick',
+        to: ['profitCalc_patientTickBuy', 'profitCalc_patientTickSell'],
+    },
     // Eleven labyrinth sim-budget settings became three. A reconciling entry:
     // it decides for itself which ids to write, because two of the survivors
     // are ids the user already has stored
-    { reconcile: deriveLabyrinthSimBudget },
+    { once: 'labyrinthSimBudget', reconcile: deriveLabyrinthSimBudget },
     // Three switches answered one question — where to show listing age — and
     // nothing stopped a player setting them incoherently. The top-order-age
     // column is one of the two My Listings age columns, so it rides that side
     {
+        once: 'marketListingAge',
         from: ['market_showListingAge', 'market_showTopOrderAge', 'market_showEstimatedListingAge'],
         to: 'market_listingAge',
         derive: ([listed, topOrder, orderBook]) => {
@@ -112,6 +123,7 @@ const KEY_MIGRATIONS = [
     // the same tile. Both on is not expressible: the stack value wins, because
     // the category and custom-tab totals add up exactly what it shows
     {
+        once: 'inventoryValueBadges',
         from: ['invSort_showBadges', 'invSort_badgesOnNone', 'invBadgePrices'],
         to: 'inv_valueBadges',
         derive: ([whenSorting, onNone, itemPrices]) => {
@@ -204,8 +216,31 @@ function deriveLabyrinthSimBudget(saved) {
     return next;
 }
 
-/** Bump the suffix when a new batch is added to KEY_MIGRATIONS */
-const KEY_MIGRATION_FLAG_KEY = 'settings_key_migrations_v2';
+/**
+ * Per character, the `once` ids of the key migrations that have already run.
+ *
+ * Add a new entry to KEY_MIGRATIONS with a `once` id nothing has recorded and
+ * it runs on the next load, for everyone, without disturbing the entries that
+ * ran before it. Nothing here ever needs bumping.
+ */
+const KEY_MIGRATION_STATE_KEY = 'settings_key_migrations_applied';
+
+/**
+ * The batch flags earlier builds set, and what each of them means was applied.
+ *
+ * Read only when a save file has no record of its own — the first load on a
+ * build that has this — and newest first, so a profile carrying both is read as
+ * the later one. Without this a profile flagged under a batch would re-run every
+ * entry that batch had already applied, which is the failure the per-entry
+ * record exists to stop.
+ */
+const LEGACY_KEY_MIGRATION_FLAGS = [
+    {
+        key: 'settings_key_migrations_v2',
+        entries: ['patientTickSides', 'labyrinthSimBudget', 'marketListingAge', 'inventoryValueBadges'],
+    },
+    { key: 'settings_key_migrations_v1', entries: ['patientTickSides'] },
+];
 
 // Task data stored per character under a `_<charId>` suffix, outside the
 // settings map (task-reroll-protection.js / task-auto-reroll.js) — copied along
@@ -469,23 +504,32 @@ class SettingsStorage {
     /**
      * Carry replaced settings over to the settings that replaced them, once.
      *
-     * See KEY_MIGRATIONS. Same shape as {@link applyDefaultRewrites}: the flag is
-     * stored per character beside that character's settings and set even when
-     * there is nothing to carry (a fresh install has only the new settings), and
-     * the migrated map is written back straight away so the new ids are stored
-     * rather than living in memory until something else happens to save.
+     * See KEY_MIGRATIONS. Same shape as {@link applyDefaultRewrites}: the record
+     * is stored per character beside that character's settings and written even
+     * when there is nothing to carry (a fresh install has only the new
+     * settings), and the migrated map is written back straight away so the new
+     * ids are stored rather than living in memory until something else happens
+     * to save.
+     *
+     * What is recorded is which entries have run, not that "the batch" has. An
+     * entry that has already run is skipped while the rest of the batch still
+     * goes ahead, so a reconciling entry — which by design overwrites ids that
+     * already hold stored values — can never be replayed over a choice the user
+     * made after it ran.
      *
      * @param {Object|null} saved - The stored settings map, or null when none
      * @param {string} characterKey - Storage key the map was loaded from
      * @returns {Promise<Object|null>} The map to merge, migrations applied
      */
     async applyKeyMigrations(saved, characterKey) {
-        const flagKey = `${KEY_MIGRATION_FLAG_KEY}_${characterKey}`;
+        const stateKey = `${KEY_MIGRATION_STATE_KEY}_${characterKey}`;
         try {
-            if (await storage.get(flagKey, this.storageArea, false)) return saved;
+            const applied = await this._appliedKeyMigrations(stateKey, characterKey);
+            const pending = KEY_MIGRATIONS.filter((migration) => !applied.has(migration.once));
+            if (pending.length === 0) return saved;
 
             let next = saved;
-            for (const { from, to, derive, reconcile } of KEY_MIGRATIONS) {
+            for (const { from, to, derive, reconcile } of pending) {
                 // A reconciling migration works out for itself which ids to
                 // write — including ids that already hold a stored value, which
                 // is the whole point when several old settings are being merged
@@ -524,19 +568,67 @@ class SettingsStorage {
 
             if (next !== saved) {
                 // Storage answers a refused or failed write with false, not a
-                // throw. The flag waits for a load whose write lands: set over an
-                // unsaved map, it would stop the carry for good and a reload
-                // would find the new settings off.
+                // throw. The record waits for a load whose write lands: written
+                // over an unsaved map, it would stop the carry for good and a
+                // reload would find the new settings off.
                 const written = await storage.setJSON(characterKey, next, this.storageArea, true);
                 if (written === false) return next;
             }
-            await storage.set(flagKey, true, this.storageArea, true);
+            // The union, not just this pass: an id recorded by a build that has
+            // an entry this one does not must not be forgotten, or that entry
+            // would run again on the next downgrade-then-upgrade.
+            const recorded = [...new Set([...applied, ...KEY_MIGRATIONS.map((migration) => migration.once)])];
+            await storage.setJSON(stateKey, recorded, this.storageArea, true);
             return next;
         } catch (error) {
             // Same rule as the default rewrites: a failed migration must not
-            // cost the user their settings, and an unset flag retries next load
+            // cost the user their settings, and an unrecorded entry retries next
+            // load
             console.error('[SettingsStorage] Key migration failed:', error);
             return saved;
+        }
+    }
+
+    /**
+     * Which key migrations this character's save file has already had.
+     *
+     * @param {string} stateKey - Where the per-character record lives
+     * @param {string} characterKey - Storage key of the settings map itself
+     * @returns {Promise<Set<string>>} The `once` ids already applied
+     * @private
+     */
+    async _appliedKeyMigrations(stateKey, characterKey) {
+        const state = await storage.getJSON(stateKey, this.storageArea, null);
+        if (Array.isArray(state)) return new Set(state);
+
+        for (const { key, entries } of LEGACY_KEY_MIGRATION_FLAGS) {
+            if (await storage.get(`${key}_${characterKey}`, this.storageArea, false)) return new Set(entries);
+        }
+        return new Set();
+    }
+
+    /**
+     * Forget which key migrations a character's save file has had, so the next
+     * load reconciles the map it now holds.
+     *
+     * For the paths that replace a settings map wholesale with one from
+     * somewhere else — another character, or a settings file. The map is the
+     * other profile's and the record is this one's, so a map written by a build
+     * that predates a merge arrives carrying the retired ids and none of the
+     * ids that replaced them, while this profile's record says there is nothing
+     * left to carry. The settings the user chose then read as never chosen.
+     *
+     * Safe precisely because the record is per entry: re-running is now
+     * re-running against a map that has not had these entries.
+     *
+     * @param {string} characterKey - Storage key of the settings map
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _clearKeyMigrationState(characterKey) {
+        await storage.delete(`${KEY_MIGRATION_STATE_KEY}_${characterKey}`, this.storageArea);
+        for (const { key } of LEGACY_KEY_MIGRATION_FLAGS) {
+            await storage.delete(`${key}_${characterKey}`, this.storageArea);
         }
     }
 
@@ -893,6 +985,12 @@ class SettingsStorage {
             return false;
         }
         await storage.setJSON(destinationKey, sourceMap, this.storageArea, true);
+        // The map is the source character's; the migration record left behind is
+        // this character's, and it describes a map that is no longer here. A
+        // source last written by a build that predates a merge would otherwise
+        // keep its retired ids forever and never gain the ids that replaced
+        // them. See _clearKeyMigrationState.
+        await this._clearKeyMigrationState(destinationKey);
         return true;
     }
 
@@ -1022,6 +1120,13 @@ class SettingsStorage {
      * Import settings from JSON
      * Only imports global keys and keys matching the current character ID.
      * Character-specific keys for other characters are skipped.
+     *
+     * A settings map that arrives without a migration record of its own — a file
+     * written by a build older than a merge — leaves this profile's record
+     * describing a map it no longer holds, and the retired ids in the file would
+     * never be carried to the ids that replaced them. The record is cleared for
+     * exactly those maps, so the next load reconciles what was imported.
+     *
      * @param {string} jsonString - JSON string
      * @returns {Promise<{imported: number, skipped: number}>} Import result
      */
@@ -1031,6 +1136,9 @@ class SettingsStorage {
             const currentCharId = this.currentCharacterId;
             let imported = 0;
             let skipped = 0;
+            /** Settings maps this import landed, and the maps whose record it brought with them */
+            const importedMaps = new Set();
+            const importedState = new Set();
 
             const knownCharacters = new Set((await this.getKnownCharacters()).map((character) => character.id));
             if (data[this.knownCharactersKey]) {
@@ -1061,6 +1169,16 @@ class SettingsStorage {
 
                 await storage.setJSON(key, value, this.storageArea, true);
                 imported++;
+
+                if (key.startsWith(this.storageKey)) importedMaps.add(key);
+                for (const prefix of [KEY_MIGRATION_STATE_KEY, ...LEGACY_KEY_MIGRATION_FLAGS.map((f) => f.key)]) {
+                    if (key.startsWith(`${prefix}_`)) importedState.add(key.slice(prefix.length + 1));
+                }
+            }
+
+            for (const mapKey of importedMaps) {
+                if (importedState.has(mapKey)) continue;
+                await this._clearKeyMigrationState(mapKey);
             }
 
             return { imported, skipped };

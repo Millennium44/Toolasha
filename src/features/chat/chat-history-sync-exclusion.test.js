@@ -37,6 +37,12 @@ vi.mock('../../core/storage.js', () => ({
                 ? { found: true, value: store[key] }
                 : { found: false, value: null };
         },
+        // `importSettings` forgets the key-migration record for a settings map
+        // it lands, so a file older than a merge is reconciled on the next load
+        delete: async (key, name) => {
+            if (state.stores[name]) delete state.stores[name][key];
+            return true;
+        },
         putAll: async (name, entries) => {
             state.written[name] = { ...(state.written[name] || {}), ...entries };
             return Object.keys(entries).length;
