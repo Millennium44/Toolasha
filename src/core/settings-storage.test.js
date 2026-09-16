@@ -119,7 +119,7 @@ describe('SettingsStorage.importSettings known-character matching', () => {
 
 describe('one-time rewrites of superseded schema defaults', () => {
     const KEY = 'script_settingsMap_alice';
-    const FLAG = `settings_default_rewrites_v1_${KEY}`;
+    const FLAG = `settings_default_rewrites_v2_${KEY}`;
 
     /** A saved map holding the old defaults, as an existing user's would */
     const oldDefaults = () => ({
@@ -198,6 +198,77 @@ describe('one-time rewrites of superseded schema defaults', () => {
         expect(reloaded.labyrinthPathUnknownMode.value).toBe('shroud');
         expect(stored.get(`json:${KEY}`).labyrinthLiveCombatSim.isTrue).toBe(false);
         expect(stored.get(`json:${KEY}`).labyrinthPathUnknownMode.value).toBe('shroud');
+        expect(stored.get(FLAG)).toBe(true);
+    });
+});
+
+describe('one-time rewrite of the inert enhanceSim_baseItemCraftingCost default', () => {
+    // Unlike the labyrinth entries above, this key's stored `false` was never
+    // a real choice: its only reader used to ignore storage entirely (see
+    // config.js's isFeatureEnabled and the comment beside this entry in
+    // settings-storage.js), so a stored `false` — however it got there — was
+    // inert. The maintainer explicitly overrode the "changed defaults are
+    // new-installs-only" rule for this one key.
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_default_rewrites_v2_${KEY}`;
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('an existing user sitting on the old inert false is moved to true', async () => {
+        stored.set(`json:${KEY}`, {
+            enhanceSim_baseItemCraftingCost: { id: 'enhanceSim_baseItemCraftingCost', type: 'checkbox', isTrue: false },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
+        // and it is persisted, not just applied in memory
+        expect(stored.get(`json:${KEY}`).enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
+    });
+
+    test('runs once: re-storing false after the rewrite is not touched again', async () => {
+        stored.set(`json:${KEY}`, {
+            enhanceSim_baseItemCraftingCost: { id: 'enhanceSim_baseItemCraftingCost', type: 'checkbox', isTrue: false },
+        });
+        await settingsStorage.loadSettings();
+        expect(stored.get(FLAG)).toBe(true);
+
+        // The user (or something else) sets it back to false after the flag is set
+        stored.set(`json:${KEY}`, {
+            enhanceSim_baseItemCraftingCost: { id: 'enhanceSim_baseItemCraftingCost', type: 'checkbox', isTrue: false },
+        });
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.enhanceSim_baseItemCraftingCost.isTrue).toBe(false);
+    });
+
+    test('a rewrite that fails to save leaves the flag unset, so the next load tries again', async () => {
+        stored.set(`json:${KEY}`, {
+            enhanceSim_baseItemCraftingCost: { id: 'enhanceSim_baseItemCraftingCost', type: 'checkbox', isTrue: false },
+        });
+        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
+        expect(stored.get(`json:${KEY}`).enhanceSim_baseItemCraftingCost.isTrue).toBe(false);
+        expect(stored.get(FLAG)).toBeUndefined();
+
+        const reloaded = await settingsStorage.loadSettings();
+
+        expect(reloaded.enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
+        expect(stored.get(`json:${KEY}`).enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('a fresh install is untouched (already at the new default)', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.enhanceSim_baseItemCraftingCost.isTrue).toBe(true);
         expect(stored.get(FLAG)).toBe(true);
     });
 });

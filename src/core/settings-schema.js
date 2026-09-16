@@ -935,9 +935,11 @@ export const settingsGroups = {
                 // go through `config.isFeatureEnabled`, which answered `true` for
                 // any key outside the legacy features map. Now that the gate
                 // reads the schema, a default of `false` would silently change
-                // every enhancement path's base-item cost. No DEFAULT_REWRITES
-                // entry: a stored `false` is a player who ticked it off, and that
-                // choice is now honoured for the first time.
+                // every enhancement path's base-item cost. This one DOES have a
+                // DEFAULT_REWRITES entry (settings-storage.js): a stored `false`
+                // here was inert under the old gate no matter how it got there,
+                // so it cannot represent a real preference. See that entry for
+                // the reasoning.
                 default: true,
                 help: 'When enabled, uses the lower of crafting cost or market price for the base item in enhancement path calculations, applied independently to both the Ask and Bid columns',
             },

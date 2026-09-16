@@ -51,6 +51,20 @@ const DEFAULT_REWRITES = [
     // Routing unrevealed rooms as clearable sends players through rooms that
     // turn out to need a shroud they did not bring
     { id: 'labyrinthPathUnknownMode', field: 'value', from: 'clearable', to: 'shroud' },
+    // enhanceSim_baseItemCraftingCost's schema default moved false -> true, but
+    // this one is not the "existing user's choice" case the other entries
+    // above are not touching: its only reader used to be config.isFeatureEnabled
+    // via the legacy features map, which answered true for any key outside
+    // that map regardless of what was stored — so the checkbox never actually
+    // gated anything. A stored `false` here, whether from an untouched default
+    // or from a player who ticked it off believing it did something, was
+    // equally inert either way and cannot represent a real preference. Now
+    // that the gate reads the schema (see config.js's isFeatureEnabled), that
+    // stored false would start being honoured for the first time and silently
+    // flip the enhancement path's base-item cost for every existing user.
+    // Nudging it to the new default restores the behaviour everyone already
+    // had.
+    { id: 'enhanceSim_baseItemCraftingCost', field: 'isTrue', from: false, to: true },
 ];
 
 /**
@@ -69,7 +83,7 @@ const DEFAULT_REWRITES = [
 const SAVE_ALL_KEYS = Symbol('settings.saveAllKeys');
 
 /** Bump the suffix when a new batch is added to DEFAULT_REWRITES */
-const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
+const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v2';
 
 /**
  * Settings replaced by other settings, carried across once.
