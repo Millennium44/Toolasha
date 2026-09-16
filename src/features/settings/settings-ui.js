@@ -2739,12 +2739,35 @@ class SettingsUI {
     }
 
     /**
-     * Handle reset to defaults
+     * Handle reset to defaults.
+     *
+     * The reset writes the whole map with SAVE_ALL_KEYS, which by design covers
+     * the device-wide settings too — so pressing this on one character wipes the
+     * GitHub token, the colour palette, the number format and the quiet-hours
+     * clock for *every* character on this browser, not just this one. That is
+     * the intended behaviour (a token the panel shows as blank must actually be
+     * blank), but it is not what "reset my settings" sounds like, so the dialog
+     * has to say what goes rather than ask whether the player is sure.
      */
     async handleReset() {
-        if (!confirm('Reset all settings to defaults? This cannot be undone.')) {
-            return;
-        }
+        // Counted from the schema rather than written into the sentence, so a
+        // swatch added later does not quietly make the warning a lie.
+        const colorCount = settingsStorage.sharedSettingIds().filter((id) => id.startsWith('color_')).length;
+        const answer = await askChoice({
+            title: 'Reset all settings',
+            message:
+                'Every setting on this character goes back to its default.\n\n' +
+                'Some settings are shared by every character on this device, and resetting clears them for all ' +
+                `of them: your cross-device sync setup (GitHub token and passphrase), all ${colorCount} ` +
+                'customised colours, the number format, and your quiet hours. Your other characters keep their ' +
+                'own settings for everything else.\n\n' +
+                'None of this can be undone.',
+            choices: [
+                { value: 'reset', label: 'Reset everything', tone: 'danger' },
+                { value: null, label: 'Cancel' },
+            ],
+        });
+        if (answer !== 'reset') return;
 
         await settingsStorage.resetToDefaults();
         await this.config.resetToDefaults();

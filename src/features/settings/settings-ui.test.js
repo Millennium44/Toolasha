@@ -38,6 +38,10 @@ const mocks = vi.hoisted(() => ({
     loadGate: null,
     /** What `askChoice` answers, for the flows that confirm first */
     choiceAnswer: null,
+    /** Every `askChoice` the panel put up, so the wording can be read back */
+    choiceCalls: [],
+    /** What the reset flow actually cleared, in order */
+    resets: [],
     /** What `importEverything` reports back to the restore flow */
     importResult: { restored: {}, expected: {}, failed: [], complete: true },
     /** How many times the panel emptied config's settings map */
@@ -314,6 +318,10 @@ vi.mock('../../core/config.js', () => ({
         clearSettingsCache: () => {
             mocks.cacheClears += 1;
         },
+        resetToDefaults: async () => {
+            // The real one writes every key, which is what reaches the shared map
+            mocks.resets.push('shared');
+        },
         getKnownCharacters: async () => mocks.knownCharacters,
         syncSettingsToAllCharacters: async (ids) => {
             mocks.synced.push(ids);
@@ -360,7 +368,11 @@ vi.mock('../../core/settings-storage.js', () => ({
         setSetting: async () => {},
         exportSettings: async () => '{}',
         importSettings: async () => null,
-        resetToDefaults: async () => {},
+        resetToDefaults: async () => {
+            mocks.resets.push('character');
+        },
+        // The palette is device-wide now, and the reset dialog counts it
+        sharedSettingIds: () => ['sync_token', 'color_profit', 'color_loss', 'formatting_precision'],
     },
 }));
 
@@ -429,7 +441,12 @@ vi.mock('../../utils/full-backup.js', () => ({
     importEverything: async () => mocks.importResult,
 }));
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
-vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => mocks.choiceAnswer }));
+vi.mock('../../utils/choice-dialog.js', () => ({
+    askChoice: async (options) => {
+        mocks.choiceCalls.push(options);
+        return mocks.choiceAnswer;
+    },
+}));
 
 const { default: settingsUI, SEARCH_DEBOUNCE_MS } = await import('./settings-ui.js');
 const { IRON_COW_SETTINGS } = await import('./iron-cow-mode.js');
@@ -507,6 +524,8 @@ beforeEach(() => {
     mocks.launcherShowCalls = 0;
     mocks.listeners = {};
     mocks.settingsMap = {};
+    mocks.choiceCalls = [];
+    mocks.resets = [];
     censusMock.initialized = true;
     censusMock.rosterSize = 0;
     censusMock.wavesSeen = 0;
@@ -1756,5 +1775,70 @@ describe('the spawn census export button', () => {
         await settle();
 
         expect(censusMock.loadCalls).toBe(2);
+    });
+});
+
+describe('resetting says what goes for every character', () => {
+    /**
+     * The reset ends in `window.location.reload()`, which happy-dom refuses to
+     * run. Stubbed per test so the flow can be driven to the end.
+     * @returns {Function} Restores what was there
+     */
+    function stubReload() {
+        const original = Object.getOwnPropertyDescriptor(window, 'location');
+        Object.defineProperty(window, 'location', {
+            configurable: true,
+            value: { ...window.location, reload: vi.fn() },
+        });
+        return () => (original ? Object.defineProperty(window, 'location', original) : undefined);
+    }
+
+    beforeEach(() => {
+        globalThis.alert = vi.fn();
+    });
+
+    test('the dialog names what is lost across every character, not just "are you sure"', async () => {
+        mocks.choiceAnswer = null;
+
+        await settingsUI.handleReset();
+
+        expect(mocks.choiceCalls).toHaveLength(1);
+        const { message, choices } = mocks.choiceCalls[0];
+        expect(message).toContain('every character on this device');
+        // Each shared group is named, so nobody finds out by losing it
+        expect(message).toMatch(/sync/i);
+        expect(message).toMatch(/GitHub token/i);
+        expect(message).toContain('colours');
+        expect(message).toMatch(/number format/i);
+        expect(message).toMatch(/quiet hours/i);
+        // Counted from the shared set rather than written into the sentence
+        expect(message).toContain('all 2 customised colours');
+        expect(choices.some((choice) => choice.tone === 'danger')).toBe(true);
+    });
+
+    test('declining does nothing at all', async () => {
+        mocks.choiceAnswer = null;
+        const restore = stubReload();
+
+        await settingsUI.handleReset();
+
+        expect(mocks.resets).toEqual([]);
+        expect(globalThis.alert).not.toHaveBeenCalled();
+        expect(window.location.reload).not.toHaveBeenCalled();
+        restore();
+    });
+
+    test('accepting clears this character and the device-wide settings with it', async () => {
+        mocks.choiceAnswer = 'reset';
+        const restore = stubReload();
+
+        await settingsUI.handleReset();
+
+        // The character's own map first, then the whole-map write that reaches
+        // the shared key — both, or the panel would show a token that is still
+        // stored
+        expect(mocks.resets).toEqual(['character', 'shared']);
+        expect(window.location.reload).toHaveBeenCalled();
+        restore();
     });
 });
