@@ -74,6 +74,23 @@ class AutoFillPrice {
     }
 
     /**
+     * Follow the setting for the rest of the session, so toggling it off stops
+     * the fill immediately and toggling it back on resumes it, without a
+     * reload. `initialize()` on its own only ever reads the setting once, at
+     * the `isInitialized`-guarded start-of-session call from the feature
+     * registry, and nothing re-ran it on a later change.
+     */
+    setupSettingListener() {
+        config.onSettingChange('fillMarketOrderPrice', (value) => {
+            if (value) {
+                this.initialize();
+            } else {
+                this.disable();
+            }
+        });
+    }
+
+    /**
      * Initialize auto-fill price feature
      */
     initialize() {
@@ -317,5 +334,6 @@ class AutoFillPrice {
 }
 
 const autoFillPrice = new AutoFillPrice();
+autoFillPrice.setupSettingListener();
 
 export default autoFillPrice;

@@ -15,13 +15,31 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// Captures the callback `setupSettingListener()` registers at module load, so
+// tests can fire it exactly as `config` would on a live setting change.
+const settingListeners = vi.hoisted(() => new Map());
+const domObserverCalls = vi.hoisted(() => ({ registered: 0, unregistered: 0 }));
+
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: vi.fn(() => true),
         getSettingValue: vi.fn((_key, fallback) => fallback),
+        onSettingChange: vi.fn((key, callback) => {
+            settingListeners.set(key, callback);
+            return () => settingListeners.delete(key);
+        }),
     },
 }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => {
+            domObserverCalls.registered += 1;
+            return () => {
+                domObserverCalls.unregistered += 1;
+            };
+        },
+    },
+}));
 
 import config from '../../core/config.js';
 import autoFillPrice, { tradableRangeFrom, clampToRange } from './auto-fill-price.js';
@@ -449,5 +467,55 @@ describe('the auto-fill strategies both default to matching the best price', () 
         const { modal } = orderModalWithPriceRow({ header: 'Sell Listing', price: '1,000' });
         autoFillPrice.adjustPrice(modal, false, true);
         expect(config.getSettingValue).toHaveBeenCalledWith('market_autoFillSellStrategy', 'match');
+    });
+});
+
+describe('toggling fillMarketOrderPrice mid-session', () => {
+    afterEach(() => {
+        // Leave the singleton the way every other describe block in this file
+        // expects to find it: not mid-session-initialized.
+        autoFillPrice.disable();
+    });
+
+    test('a setting change reaches the feature: the listener registered at module load', () => {
+        expect(settingListeners.has('fillMarketOrderPrice')).toBe(true);
+        expect(typeof settingListeners.get('fillMarketOrderPrice')).toBe('function');
+    });
+
+    test('turning the setting on starts the feature without a reload', () => {
+        settingListeners.get('fillMarketOrderPrice')(true);
+
+        expect(autoFillPrice.isInitialized).toBe(true);
+        expect(autoFillPrice.isActive).toBe(true);
+    });
+
+    test('turning the setting off stops the feature immediately, not at the next reload', () => {
+        settingListeners.get('fillMarketOrderPrice')(true);
+
+        settingListeners.get('fillMarketOrderPrice')(false);
+
+        expect(autoFillPrice.isInitialized).toBe(false);
+        expect(autoFillPrice.isActive).toBe(false);
+    });
+
+    test('turning it back on resumes filling', () => {
+        settingListeners.get('fillMarketOrderPrice')(true);
+        settingListeners.get('fillMarketOrderPrice')(false);
+
+        settingListeners.get('fillMarketOrderPrice')(true);
+
+        expect(autoFillPrice.isInitialized).toBe(true);
+        expect(autoFillPrice.isActive).toBe(true);
+    });
+
+    test('the DOM observer registration is torn down when the setting turns off', () => {
+        const registeredBefore = domObserverCalls.registered;
+        const unregisteredBefore = domObserverCalls.unregistered;
+
+        settingListeners.get('fillMarketOrderPrice')(true);
+        expect(domObserverCalls.registered).toBe(registeredBefore + 1);
+
+        settingListeners.get('fillMarketOrderPrice')(false);
+        expect(domObserverCalls.unregistered).toBe(unregisteredBefore + 1);
     });
 });
