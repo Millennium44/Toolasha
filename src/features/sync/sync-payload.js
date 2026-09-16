@@ -91,8 +91,27 @@ const LOCAL_ONLY_SETTING_IDS = [...REDACTED_SETTING_IDS, ...DEVICE_LOCAL_SETTING
  * Both prefixes are honoured on the way out (`redactSettingsStore`) and on the
  * way in (`applyPayload`), so a payload written by an older build that did not
  * strip them cannot plant one either.
+ *
+ * The remaining two entries are single keys, not prefixes in the naming-scheme
+ * sense — the mechanism matches by `startsWith`, so a literal key matches
+ * itself. Both are the same shape as `toolasha_sync_lastSyncedSeq`: a cached
+ * answer to "what did this device last see/do", stamped with this device's
+ * clock. `updateCheckState` is this device's last update-poll (`checkedAt`,
+ * `latestVersion` — see `features/ui/update-check.js`); a pull handing it
+ * another device's `checkedAt` would suppress that device's own next check for
+ * up to the configured interval. `sessionBriefingLastAlive_` is a per-character
+ * prefix for this browser tab's own liveness heartbeat (see
+ * `features/briefing/session-briefing.js`), which only means anything compared
+ * against this device's clock inside a 60-second window; a foreign timestamp
+ * landing in it can misfire that comparison. Neither is a setting a player
+ * chose — `updateCheck`/`updateCheckHours` are, and travel normally.
  */
-export const LOCAL_ONLY_KEY_PREFIXES = ['toolasha_sync_', 'toolasha_local_'];
+export const LOCAL_ONLY_KEY_PREFIXES = [
+    'toolasha_sync_',
+    'toolasha_local_',
+    'updateCheckState',
+    'sessionBriefingLastAlive_',
+];
 
 /**
  * Strip credentials, device-local settings and device-local bookkeeping from a

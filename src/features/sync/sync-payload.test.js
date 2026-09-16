@@ -118,6 +118,25 @@ describe('redaction', () => {
         expect(safe.some_other_key).toBe(42);
     });
 
+    test('strips the cached update-check answer and the presence heartbeat, not the settings that pace them', () => {
+        storeState.stores.settings.updateCheckState = { checkedAt: 1700000000000, latestVersion: '3.17.0' };
+        storeState.stores.settings.sessionBriefingLastAlive_603281 = 1700000000000;
+        storeState.stores.settings.script_settingsMap_shared = {
+            updateCheck: { isTrue: true },
+            updateCheckHours: { value: 24 },
+        };
+
+        const safe = redactSettingsStore(storeState.stores.settings);
+
+        // This device's last poll and this tab's liveness stamp are device
+        // bookkeeping, same as the sync sequence number above
+        expect(safe.updateCheckState).toBeUndefined();
+        expect(safe.sessionBriefingLastAlive_603281).toBeUndefined();
+        // The preferences that control them are the player's choice and still travel
+        expect(safe.script_settingsMap_shared.updateCheck).toEqual({ isTrue: true });
+        expect(safe.script_settingsMap_shared.updateCheckHours).toEqual({ value: 24 });
+    });
+
     test('does not mutate the caller’s live storage read', () => {
         redactSettingsStore(storeState.stores.settings);
         expect(storeState.stores.settings.script_settingsMap_abc.sync_token).toEqual({ value: 'ghp_secret' });
@@ -313,6 +332,30 @@ describe('applyPayload', () => {
 
         expect(importedPayloads[0].stores.settings.toolasha_sync_gistId).toBeUndefined();
         expect(importedPayloads[0].stores.settings.keep).toBe(1);
+    });
+
+    test('never plants another device’s update-check cache or presence heartbeat', async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                settings: {
+                    updateCheckState: { checkedAt: Date.now(), latestVersion: '99.0.0' },
+                    sessionBriefingLastAlive_603281: Date.now(),
+                    script_settingsMap_shared: { updateCheckHours: { value: 1 } },
+                    keep: 1,
+                },
+            },
+        });
+
+        await applyPayload(json);
+
+        const writtenSettings = importedPayloads[0].stores.settings;
+        expect(writtenSettings.updateCheckState).toBeUndefined();
+        expect(writtenSettings.sessionBriefingLastAlive_603281).toBeUndefined();
+        // The setting that paces the check still lands normally
+        expect(writtenSettings.script_settingsMap_shared.updateCheckHours).toEqual({ value: 1 });
+        expect(writtenSettings.keep).toBe(1);
     });
 });
 
