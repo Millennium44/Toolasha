@@ -56,6 +56,8 @@ vi.mock('../../core/config.js', () => ({
             market_showOrderTotals: { type: 'checkbox', isTrue: true },
             market_listingDateFormat: { type: 'select', value: 'MM-DD' },
             market_listingTimeFormat: { type: 'select', value: '24hour' },
+            market_listingAge: { type: 'select', value: 'both' },
+            inv_valueBadges: { type: 'select', value: 'alwaysAsk' },
         },
         getSetting: () => true,
         setSetting: (id, value) => world.restored.push([id, value]),
@@ -88,6 +90,32 @@ describe('iron cow mode — the snapshot key survives a mid-teardown character s
         expect(world.deleted).toEqual(['toolasha_ironCowSnapshot_char1']);
         // ...and the character who just arrived still has theirs
         expect(world.store.has('settings::toolasha_ironCowSnapshot_char2')).toBe(true);
+    });
+});
+
+// A market display that is a dropdown rather than a switch still has to go off.
+// "Disabled" for a select is its schema default, which is right for a row whose
+// default is off and wrong for the merged listing-age row, whose default shows
+// the order book — an Iron Cow character would have kept a marketplace column.
+describe('iron cow mode turns the merged market dropdowns off, not to their defaults', () => {
+    beforeEach(() => {
+        world.characterId = 'char1';
+        world.store = new Map();
+        world.deleted = [];
+        world.restored = [];
+    });
+
+    test('the listing-age and value-badge rows are forced to their off value', async () => {
+        await ironCowMode.enable();
+
+        const written = Object.fromEntries(world.restored);
+        expect(written.market_listingAge).toBe('off');
+        expect(written.inv_valueBadges).toBe('off');
+    });
+
+    test('and both are managed by the mode in the first place', () => {
+        expect(IRON_COW_SETTINGS.has('market_listingAge')).toBe(true);
+        expect(IRON_COW_SETTINGS.has('inv_valueBadges')).toBe(true);
     });
 });
 

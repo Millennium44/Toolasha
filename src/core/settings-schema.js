@@ -1561,6 +1561,8 @@ export const settingsGroups = {
                 label: 'Market: Where to show listing age',
                 type: 'select',
                 default: 'orderBook',
+                // What "disabled" means for this row — see iron-cow-mode.js
+                offValue: 'off',
                 options: [
                     { value: 'off', label: 'Nowhere' },
                     { value: 'myListings', label: 'My Listings only' },

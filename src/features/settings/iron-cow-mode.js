@@ -100,6 +100,10 @@ function getIronCowDisabledValue(settingId) {
         const type = def.type || 'checkbox';
         if (type === 'checkbox') return false;
         if (type === 'slider') return 0;
+        // A select whose default is not its off value has to say which value is
+        // off, or Iron Cow would "disable" it into a display that is still on —
+        // the merged listing-age row defaults to showing the order book
+        if (def.offValue !== undefined) return def.offValue;
         return def.default ?? ''; // select / number / color → schema default
     }
     return false;
