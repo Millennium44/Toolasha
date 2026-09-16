@@ -22,13 +22,27 @@ import dataManager from '../../core/data-manager.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
+import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
+import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
 
 const COINIFY_ACTION_HRID = '/actions/alchemy/coinify';
 const COIN_ITEM_HRID = '/items/coin';
 const CATALYST_OF_COINIFICATION_HRID = '/items/catalyst_of_coinification';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const STORAGE_KEY = 'coinifySessions';
+
+/**
+ * The two catalysts this tracker has always had a dedicated field for, kept
+ * populated so the viewer and the gold attribution keep reading them. Any OTHER
+ * catalyst is still recorded, under its own hrid in `catalystsUsed` — see
+ * `alchemy-catalyst-use.js` for why an allowlist on its own records an unknown
+ * catalyst as free.
+ */
+const LEGACY_CATALYST_FIELDS = {
+    [CATALYST_OF_COINIFICATION_HRID]: 'catalystOfCoinificationUsed',
+    [PRIME_CATALYST_HRID]: 'primeCatalystUsed',
+};
 
 /**
  * The sessions, one record per day rather than one array rewritten per action.
@@ -188,8 +202,18 @@ class CoinifyHistoryTracker {
 
         // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
         const currentCount = action.currentCount || 0;
-        const coinRows = (data.endCharacterItems || []).filter((item) => item.itemHrid === COIN_ITEM_HRID);
-        const coinsGained = this.itemCounts.note(coinRows);
+        // EVERY row is noted, not just the coins: the catalyst's own stack is in
+        // here too, and it can only be read as a spend once the ledger has a
+        // baseline for it. `noteEach` folds a message's repeated snapshots of one
+        // stack down to the last of them, so this is one entry — and one delta —
+        // per changed stack however many actions the message packed.
+        const noted = this.itemCounts.noteEach(data.endCharacterItems || []);
+        const coinEntries = noted.filter(({ row }) => row.itemHrid === COIN_ITEM_HRID);
+        let coinsGained = null;
+        for (const { delta } of coinEntries) {
+            if (delta === null) continue;
+            coinsGained = (coinsGained ?? 0) + delta;
+        }
 
         let attemptCount;
         if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
@@ -216,7 +240,7 @@ class CoinifyHistoryTracker {
         if (coinsGained !== null && coinsPerSuccess > 0) {
             successCount = Math.round(coinsGained / coinsPerSuccess);
         } else {
-            successCount = coinRows.length;
+            successCount = coinEntries.length;
         }
         successCount = Math.min(Math.max(successCount, 0), attemptCount);
 
@@ -227,13 +251,16 @@ class CoinifyHistoryTracker {
             this.activeSession.totalCoinsEarned += this.activeSession.coinsPerSuccess * successCount;
         }
 
-        // Track catalyst usage — catalysts are only consumed on success
-        const secondaryHrid = this.extractItemHrid(action.secondaryItemHash);
-        if (secondaryHrid === CATALYST_OF_COINIFICATION_HRID) {
-            this.activeSession.catalystOfCoinificationUsed += successCount;
-        } else if (secondaryHrid === PRIME_CATALYST_HRID) {
-            this.activeSession.primeCatalystUsed += successCount;
-        }
+        // What the slot actually spent — whatever catalyst is in it, measured
+        // from its own stack where the message gives a baseline to measure
+        // against. The two known catalysts keep their dedicated fields.
+        recordCatalystUse(this.activeSession, {
+            catalystHrid: this.extractItemHrid(action.secondaryItemHash),
+            noted,
+            successCount,
+            attemptCount,
+            legacyFields: LEGACY_CATALYST_FIELDS,
+        });
 
         await this.saveActiveSession();
     }
@@ -302,6 +329,12 @@ class CoinifyHistoryTracker {
             totalCoinsEarned: 0,
             catalystOfCoinificationUsed: 0,
             primeCatalystUsed: 0,
+            // What was actually spent, hrid → count, recorded per message as the
+            // run goes. Kept ALONGSIDE the two fields above rather than
+            // replacing them: they are what stored sessions and the existing
+            // readers have. This record is the one that can hold a catalyst
+            // nobody listed.
+            catalystsUsed: {},
             coinsPerSuccess,
             bulkMultiplier,
             predictedRate: stamp?.predictedRate ?? null,
@@ -334,7 +367,10 @@ class CoinifyHistoryTracker {
         }
 
         try {
-            const sessions = await this.loadSessions();
+            // The UNMERGED history: the reload merge is a reader's view, and
+            // upserting into it would write a merged record back over the parts
+            // it was made from
+            const sessions = await this.loadStoredSessions();
             const index = sessions.findIndex((s) => s.id === this.activeSession.id);
 
             if (index !== -1) {
@@ -352,16 +388,32 @@ class CoinifyHistoryTracker {
     }
 
     /**
-     * Load all sessions from storage
+     * Load the sessions as they are stored, one record per run as recorded
      * @returns {Promise<Array>} Array of session objects
      */
-    async loadSessions() {
+    async loadStoredSessions() {
         try {
             return await sessionStore.load(this.getCharacterScope());
         } catch (error) {
             console.error('[CoinifyHistoryTracker] Failed to load sessions:', error);
             return [];
         }
+    }
+
+    /**
+     * Load all sessions for reading, with reload splits rejoined.
+     *
+     * Every page load ends the open session — `init_character_data` calls
+     * `handleReconnect()` — so one grind interrupted by five reloads was
+     * recorded as five runs. Parts too close together to have hidden a completed
+     * action are shown as the one run they were; see `alchemy-session-merge.js`
+     * for the threshold and why it is measured rather than chosen. Nothing is
+     * rewritten: the stored records stay split.
+     *
+     * @returns {Promise<Array>} Array of session objects
+     */
+    async loadSessions() {
+        return mergeReloadSplitSessions(await this.loadStoredSessions());
     }
 
     /**
@@ -385,12 +437,18 @@ class CoinifyHistoryTracker {
     }
 
     /**
-     * Persist a caller-supplied sessions array (used by viewer for single-row delete)
-     * @param {Array} sessions - Updated sessions array to persist
+     * Persist a caller-supplied sessions array (used by viewer for single-row delete).
+     *
+     * The caller was shown the MERGED view, so what it hands back is mapped onto
+     * the stored records first: deleting a merged row deletes every part behind
+     * it, and keeping one keeps them all.
+     *
+     * @param {Array} sessions - The sessions the caller wants kept
      */
     async deleteSessions(sessions) {
         try {
-            await sessionStore.save(this.getCharacterScope(), sessions);
+            const stored = await this.loadStoredSessions();
+            await sessionStore.save(this.getCharacterScope(), expandKeptSessions(sessions, stored));
         } catch (error) {
             console.error('[CoinifyHistoryTracker] Failed to save sessions after delete:', error);
         }

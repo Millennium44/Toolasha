@@ -28,13 +28,27 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
+import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
+import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
 
 const DECOMPOSE_ACTION_HRID = '/actions/alchemy/decompose';
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const COIN_ITEM_HRID = '/items/coin';
 const STORAGE_KEY = 'decomposeSessions';
+
+/**
+ * The two catalysts this tracker has always had a dedicated field for, kept
+ * populated so the viewer and the gold attribution keep reading them. Any OTHER
+ * catalyst is still recorded, under its own hrid in `catalystsUsed` — see
+ * `alchemy-catalyst-use.js` for why an allowlist on its own records an unknown
+ * catalyst as free.
+ */
+const LEGACY_CATALYST_FIELDS = {
+    [CATALYST_OF_DECOMPOSITION_HRID]: 'catalystOfDecompositionUsed',
+    [PRIME_CATALYST_HRID]: 'primeCatalystUsed',
+};
 
 /**
  * The sessions, one record per day rather than one array rewritten per action.
@@ -277,15 +291,17 @@ class DecomposeHistoryTracker {
             }
         }
 
-        // Track catalyst usage — catalysts are only consumed on success
-        if (successCount > 0) {
-            const secondaryHrid = this.extractItemHrid(action.secondaryItemHash);
-            if (secondaryHrid === CATALYST_OF_DECOMPOSITION_HRID) {
-                this.activeSession.catalystOfDecompositionUsed += successCount;
-            } else if (secondaryHrid === PRIME_CATALYST_HRID) {
-                this.activeSession.primeCatalystUsed += successCount;
-            }
-        }
+        // What the slot actually spent — whatever catalyst is in it, measured
+        // from its own stack where the message gives a baseline to measure
+        // against. No success guard: a failure shows as a zero decrement, and
+        // where there is no baseline the success count is the fallback anyway.
+        recordCatalystUse(this.activeSession, {
+            catalystHrid: this.extractItemHrid(action.secondaryItemHash),
+            noted,
+            successCount,
+            attemptCount,
+            legacyFields: LEGACY_CATALYST_FIELDS,
+        });
 
         await this.saveActiveSession();
     }
@@ -344,6 +360,12 @@ class DecomposeHistoryTracker {
             totalSuccesses: 0,
             catalystOfDecompositionUsed: 0,
             primeCatalystUsed: 0,
+            // What was actually spent, hrid → count, recorded per message as the
+            // run goes. Kept ALONGSIDE the two fields above rather than
+            // replacing them: they are what stored sessions and the existing
+            // readers have. This record is the one that can hold a catalyst
+            // nobody listed.
+            catalystsUsed: {},
             bulkMultiplier: itemDetails?.alchemyDetail?.bulkMultiplier ?? 1,
             predictedRate: stamp?.predictedRate ?? null,
             predictedAt: stamp?.predictedAt ?? null,
@@ -376,7 +398,10 @@ class DecomposeHistoryTracker {
         }
 
         try {
-            const sessions = await this.loadSessions();
+            // The UNMERGED history: the reload merge is a reader's view, and
+            // upserting into it would write a merged record back over the parts
+            // it was made from
+            const sessions = await this.loadStoredSessions();
             const index = sessions.findIndex((s) => s.id === this.activeSession.id);
 
             if (index !== -1) {
@@ -394,16 +419,32 @@ class DecomposeHistoryTracker {
     }
 
     /**
-     * Load all sessions from storage
+     * Load the sessions as they are stored, one record per run as recorded
      * @returns {Promise<Array>} Array of session objects
      */
-    async loadSessions() {
+    async loadStoredSessions() {
         try {
             return await sessionStore.load(this.getCharacterScope());
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to load sessions:', error);
             return [];
         }
+    }
+
+    /**
+     * Load all sessions for reading, with reload splits rejoined.
+     *
+     * Every page load ends the open session — `init_character_data` calls
+     * `handleReconnect()` — so one grind interrupted by five reloads was
+     * recorded as five runs. Parts too close together to have hidden a completed
+     * action are shown as the one run they were; see `alchemy-session-merge.js`
+     * for the threshold and why it is measured rather than chosen. Nothing is
+     * rewritten: the stored records stay split.
+     *
+     * @returns {Promise<Array>} Array of session objects
+     */
+    async loadSessions() {
+        return mergeReloadSplitSessions(await this.loadStoredSessions());
     }
 
     /**
@@ -427,12 +468,18 @@ class DecomposeHistoryTracker {
     }
 
     /**
-     * Persist a caller-supplied sessions array (used by viewer for single-row delete)
-     * @param {Array} sessions - Updated sessions array to persist
+     * Persist a caller-supplied sessions array (used by viewer for single-row delete).
+     *
+     * The caller was shown the MERGED view, so what it hands back is mapped onto
+     * the stored records first: deleting a merged row deletes every part behind
+     * it, and keeping one keeps them all.
+     *
+     * @param {Array} sessions - The sessions the caller wants kept
      */
     async deleteSessions(sessions) {
         try {
-            await sessionStore.save(this.getCharacterScope(), sessions);
+            const stored = await this.loadStoredSessions();
+            await sessionStore.save(this.getCharacterScope(), expandKeptSessions(sessions, stored));
         } catch (error) {
             console.error('[DecomposeHistoryTracker] Failed to save sessions after delete:', error);
         }

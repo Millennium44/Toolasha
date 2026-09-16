@@ -23,7 +23,9 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger } from './alchemy-item-deltas.js';
+import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
+import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
 import { ensureSessionsRepaired } from './transmute-session-repair.js';
 
 const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
@@ -318,19 +320,9 @@ class TransmuteHistoryTracker {
      * session STARTED, multiplied by a count nobody observed. Swap the catalyst
      * mid-run and the whole session is costed against the wrong item.
      *
-     * The message says both things. `secondaryItemHash` is the catalyst this
-     * action was played with, which is how `coinify-history-tracker.js` and
-     * `decompose-history-tracker.js` already track theirs; and the catalyst's
-     * own stack appears in `endCharacterItems`, one lower per success (measured
-     * live: prime_catalyst 962662 → 962661 across consecutive messages). The
-     * observed decrement is preferred, because it is the only figure that is
-     * measured rather than inferred, and the success count is the fallback for
-     * a message with no baseline for that stack yet.
-     *
-     * Read through the FOLDED ledger, never the raw rows: a batched message
-     * carries the catalyst stack once per packed action, and counting those
-     * snapshots would multiply the consumption exactly the way self-returns
-     * were multiplied. `noted` is already folded — see `alchemy-item-deltas.js`.
+     * The mechanism is shared with the other two trackers now; see
+     * `alchemy-catalyst-use.js` for why the observed stack decrement is
+     * preferred and why `noted` has to be the folded ledger.
      *
      * @param {Object} action - `endCharacterAction` from the message
      * @param {Array<{row: Object, delta: number|null}>} noted - The folded ledger entries
@@ -339,29 +331,12 @@ class TransmuteHistoryTracker {
      * @returns {void}
      */
     recordCatalystUse(action, noted, successCount, attemptCount) {
-        const catalystHrid = this.extractItemHrid(action.secondaryItemHash);
-        if (!catalystHrid || !this.activeSession) {
-            return;
-        }
-
-        if (!this.activeSession.catalystsUsed) {
-            this.activeSession.catalystsUsed = {};
-        }
-
-        // A spend outside [0, attempts] is not this action's doing — the player
-        // bought or sold catalysts while the run was going — and the successes
-        // are the honest answer for that message
-        let observed = null;
-        for (const { row, delta } of noted) {
-            if (row.itemHrid !== catalystHrid || delta === null) continue;
-            const spent = -delta;
-            if (spent < 0 || spent > attemptCount) continue;
-            observed = (observed ?? 0) + spent;
-        }
-
-        const consumed = observed ?? successCount;
-        this.activeSession.catalystsUsed[catalystHrid] =
-            (this.activeSession.catalystsUsed[catalystHrid] || 0) + consumed;
+        recordCatalystUse(this.activeSession, {
+            catalystHrid: this.extractItemHrid(action.secondaryItemHash),
+            noted,
+            successCount,
+            attemptCount,
+        });
     }
 
     /**
@@ -451,7 +426,10 @@ class TransmuteHistoryTracker {
         }
 
         try {
-            const sessions = await this.loadSessions();
+            // The UNMERGED history: the reload merge is a reader's view, and
+            // upserting into it would write a merged record back over the parts
+            // it was made from
+            const sessions = await this.loadStoredSessions();
             const index = sessions.findIndex((s) => s.id === this.activeSession.id);
 
             if (index !== -1) {
@@ -469,7 +447,7 @@ class TransmuteHistoryTracker {
     }
 
     /**
-     * Load all sessions from storage.
+     * Load the sessions as they are stored, one record per run as recorded.
      *
      * The one-time self-return repair runs here, on the way out, so every
      * reader — the viewer, the totals table, the gold attribution — sees the
@@ -477,9 +455,9 @@ class TransmuteHistoryTracker {
      * exists. It is a no-op after the first load of a scope whose write landed;
      * see `transmute-session-repair.js`.
      *
-     * @returns {Array} Array of session objects
+     * @returns {Promise<Array>} Array of session objects
      */
-    async loadSessions() {
+    async loadStoredSessions() {
         const scope = this.getCharacterScope();
         try {
             const sessions = await sessionStore.load(scope);
@@ -488,6 +466,22 @@ class TransmuteHistoryTracker {
             console.error('[TransmuteHistoryTracker] Failed to load sessions:', error);
             return [];
         }
+    }
+
+    /**
+     * Load all sessions for reading, with reload splits rejoined.
+     *
+     * Every page load ends the open session — `init_character_data` calls
+     * `handleReconnect()` — so one grind interrupted by five reloads was
+     * recorded as five runs. Parts too close together to have hidden a completed
+     * action are shown as the one run they were; see `alchemy-session-merge.js`
+     * for the threshold and why it is measured rather than chosen. Nothing is
+     * rewritten: the stored records stay split.
+     *
+     * @returns {Promise<Array>} Array of session objects
+     */
+    async loadSessions() {
+        return mergeReloadSplitSessions(await this.loadStoredSessions());
     }
 
     /**
@@ -511,12 +505,20 @@ class TransmuteHistoryTracker {
     }
 
     /**
-     * Persist a caller-supplied sessions array (used by viewer for single-row delete)
-     * @param {Array} sessions - Updated sessions array to persist
+     * Persist a caller-supplied sessions array (used by viewer for single-row delete).
+     *
+     * The caller was shown the MERGED view, so what it hands back is mapped onto
+     * the stored records first: deleting a merged row deletes every part behind
+     * it, and keeping one keeps them all. Writing the merged array straight to
+     * disk would collapse the parts into one record as a side effect of an
+     * unrelated delete.
+     *
+     * @param {Array} sessions - The sessions the caller wants kept
      */
     async deleteSessions(sessions) {
         try {
-            await sessionStore.save(this.getCharacterScope(), sessions);
+            const stored = await this.loadStoredSessions();
+            await sessionStore.save(this.getCharacterScope(), expandKeptSessions(sessions, stored));
         } catch (error) {
             console.error('[TransmuteHistoryTracker] Failed to save sessions after delete:', error);
         }
