@@ -25,7 +25,7 @@ export const LISTING_AGE_SETTING = 'market_listingAge';
  * @returns {string}
  */
 export function listingAgeMode() {
-    return config.getSettingValue(LISTING_AGE_SETTING, 'orderBook');
+    return config.getSettingValue(LISTING_AGE_SETTING, 'both');
 }
 
 /**

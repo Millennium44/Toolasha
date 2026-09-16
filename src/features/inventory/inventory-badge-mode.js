@@ -23,7 +23,7 @@ export const BADGE_MODE_SETTING = 'inv_valueBadges';
  * @returns {string}
  */
 export function badgeMode() {
-    return config.getSettingValue(BADGE_MODE_SETTING, 'off');
+    return config.getSettingValue(BADGE_MODE_SETTING, 'sorting');
 }
 
 /**

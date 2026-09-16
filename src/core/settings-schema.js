@@ -1560,7 +1560,7 @@ export const settingsGroups = {
                 id: 'market_listingAge',
                 label: 'Market: Where to show listing age',
                 type: 'select',
-                default: 'orderBook',
+                default: 'both',
                 // What "disabled" means for this row — see iron-cow-mode.js
                 offValue: 'off',
                 options: [
@@ -1870,7 +1870,10 @@ export const settingsGroups = {
                 id: 'inv_valueBadges',
                 label: 'Value badges on inventory items',
                 type: 'select',
-                default: 'off',
+                default: 'sorting',
+                // What "disabled" means for this row — see iron-cow-mode.js. The
+                // default is no longer the off value, now that it defaults to 'sorting'.
+                offValue: 'off',
                 options: [
                     { value: 'off', label: 'None' },
                     { value: 'sorting', label: 'Stack value, only while sorting by Ask/Bid' },

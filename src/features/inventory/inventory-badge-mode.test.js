@@ -71,9 +71,9 @@ describe('per-item price badges', () => {
 });
 
 describe('an unset setting', () => {
-    test('reads as off, which is the schema default', () => {
-        expect(badgeMode()).toBe('off');
-        expect(stackBadgeValueKey('ask')).toBeNull();
+    test('reads as sorting, which is the schema default', () => {
+        expect(badgeMode()).toBe('sorting');
+        expect(stackBadgeValueKey('ask')).toBe('askValue');
         expect(showsItemPriceBadges()).toBe(false);
     });
 });

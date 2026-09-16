@@ -126,6 +126,21 @@ describe('the Buy and Sell pricing rows', () => {
     });
 });
 
+describe('listing age and value badge defaults', () => {
+    test('listing age defaults to showing on both the order book and My Listings', () => {
+        const setting = getSettingDefinition('market_listingAge');
+        expect(setting.default).toBe('both');
+        // Iron Cow "disabled" still has to mean off, now that off is no longer the default
+        expect(setting.offValue).toBe('off');
+    });
+
+    test('value badges default to stack value while sorting by Ask/Bid', () => {
+        const setting = getSettingDefinition('inv_valueBadges');
+        expect(setting.default).toBe('sorting');
+        expect(setting.offValue).toBe('off');
+    });
+});
+
 describe('startup recovery defaults', () => {
     test('automatic recovery ships off, and its help says what turning it on does', () => {
         const setting = getSettingDefinition('startupRecovery_autoReload');

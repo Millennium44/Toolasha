@@ -499,7 +499,7 @@ describe('one-time migration of the three listing-age switches to one choice', (
     test('a fresh install writes nothing and keeps the schema default', async () => {
         const settings = await settingsStorage.loadSettings();
 
-        expect(settings.market_listingAge.value).toBe('orderBook');
+        expect(settings.market_listingAge.value).toBe('both');
         expect(stored.get(`json:${KEY}`)?.market_listingAge).toBeUndefined();
         expect(stored.get(FLAG)).toBe(true);
     });
@@ -581,7 +581,7 @@ describe('one-time migration of the inventory badge switches to one choice', () 
     test('a fresh install keeps the schema default and stores nothing', async () => {
         const settings = await settingsStorage.loadSettings();
 
-        expect(settings.inv_valueBadges.value).toBe('off');
+        expect(settings.inv_valueBadges.value).toBe('sorting');
         expect(stored.get(`json:${KEY}`)?.inv_valueBadges).toBeUndefined();
     });
 
@@ -656,6 +656,45 @@ describe('the time-format default change to "auto" is new-installs-only, by desi
         const settings = await settingsStorage.loadSettings();
 
         expect(settings.market_listingTimeFormat.value).toBe('auto');
+    });
+});
+
+describe('the listing-age and value-badge default changes are new-installs-only, by design', () => {
+    // market_listingAge's schema default moved from 'orderBook' to 'both', and
+    // inv_valueBadges's moved from 'off' to 'sorting' — both to match what the
+    // maintainer actually runs. Neither has a DEFAULT_REWRITES entry: an
+    // existing user's stored value is a choice they made, not a stale default
+    // to be nudged onto the new one.
+    const KEY = 'script_settingsMap_alice';
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('an existing user with orderBook/off stored keeps them after load', async () => {
+        stored.set(`json:${KEY}`, {
+            market_listingAge: { id: 'market_listingAge', type: 'select', value: 'orderBook' },
+            inv_valueBadges: { id: 'inv_valueBadges', type: 'select', value: 'off' },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('orderBook');
+        expect(settings.inv_valueBadges.value).toBe('off');
+        expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe('orderBook');
+        expect(stored.get(`json:${KEY}`).inv_valueBadges.value).toBe('off');
+    });
+
+    test('a fresh install with nothing stored gets both and sorting', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('both');
+        expect(settings.inv_valueBadges.value).toBe('sorting');
+        // and nothing was written for either — the default is read from the schema, not stored
+        expect(stored.get(`json:${KEY}`)?.market_listingAge).toBeUndefined();
+        expect(stored.get(`json:${KEY}`)?.inv_valueBadges).toBeUndefined();
     });
 });
 
