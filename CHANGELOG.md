@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings shows pricing as the Buy and Sell dropdowns
+
+- Pricing & Profit now carries the same Buy and Sell dropdowns as the skill toolbar, in place of the pricing mode dropdown and the two "+1 tick" checkboxes, which were each a no-op in two of the four modes with nothing to show it. The settings behind them are unchanged, so nothing to re-pick; Iron Cow still locks them and settings search still finds them.
+
 ### Settings that did not do what they said
 
 - Combat income costed dungeon keys at market prices even with key pricing set to "craft", while the note under the figure said they were costed at what it costs you to craft one. The craft basis now reaches the costing, so those figures change for anyone on that setting.
