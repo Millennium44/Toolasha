@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     combinedData: null, // what calculateNetworth sweeps: characterItems, itemDetailMap, ...
     batchPrices: {}, // "hrid:level" -> {ask, bid}, for getPricesBatch
     excluded: new Set(), // "type:value" pairs isExcluded() answers true for
+    characterGuildBuffMap: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -37,7 +38,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getCombinedData: () => mocks.combinedData,
         getItemDetails: (hrid) => mocks.itemDetails[hrid] ?? null,
         getMarketItemValues: () => mocks.marketValues,
-        characterGuildBuffMap: null,
+        get characterGuildBuffMap() {
+            return mocks.characterGuildBuffMap;
+        },
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({
@@ -145,6 +148,7 @@ beforeEach(() => {
     mocks.combinedData = null;
     mocks.batchPrices = {};
     mocks.excluded = new Set();
+    mocks.characterGuildBuffMap = null;
     workerBatch.mockReset();
     _resetMarketValues();
 });
@@ -212,6 +216,33 @@ describe('calculateItemValue', () => {
 
         const value = await calculateItemValue({ itemHrid: '/items/cowbell', enhancementLevel: 0, count: 10 });
         expect(value).toBe(0);
+    });
+
+    // The setting's own help text: "Ignored when the value source above is set to the game's
+    // market value." Cowbells and guild shrines used to always price through the order book
+    // via networth_pricingMode regardless of the value source, which contradicted that text.
+    test("a cowbell prices from the game's market value, ignoring the pricing mode, under officialValue", async () => {
+        mocks.settings.networth_includeCowbells = true;
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.settings.networth_pricingMode = 'bid'; // would matter under orderBook; must not here
+        mocks.itemPrices['/items/bag_of_10_cowbells'] = { ask: 2_000_000, bid: 1_800_000 }; // order book ignored
+        mocks.marketValues = {
+            marketValuesVersion: 1,
+            marketItemValues: { '/items/bag_of_10_cowbells': { 0: 2_500_000 } },
+        };
+
+        const value = await calculateItemValue({ itemHrid: '/items/cowbell', enhancementLevel: 0, count: 10 });
+        expect(value).toBe(250_000 * 10);
+    });
+
+    test('a cowbell still respects the pricing mode under orderBook', async () => {
+        mocks.settings.networth_includeCowbells = true;
+        mocks.settings.networth_valueSource = 'orderBook';
+        mocks.settings.networth_pricingMode = 'bid';
+        mocks.itemPrices['/items/bag_of_10_cowbells'] = { ask: 2_000_000, bid: 1_800_000 };
+
+        const value = await calculateItemValue({ itemHrid: '/items/cowbell', enhancementLevel: 0, count: 10 });
+        expect(value).toBe(180_000 * 10);
     });
 
     test('task tokens use the shop-derived token value when available', async () => {
@@ -440,6 +471,67 @@ describe('calculateGuildShrinesCost', () => {
 
         expect(result.breakdown).toEqual([]);
         expect(result.totalCost).toBe(0);
+    });
+});
+
+// Guild shrines are costed through networth_pricingMode via calculateGuildShrinesCost's
+// pricingMode argument — that argument is chosen in calculateNetworth itself (not in
+// calculateGuildShrinesCost, which just takes whatever mode it is handed), so this drives
+// the full sweep the same as the "price map the worker batch is handed" block above.
+describe('guild shrines and the net worth pricing mode setting', () => {
+    const CREDIT = '/items/guild_credit_1';
+
+    beforeEach(() => {
+        mocks.initData = {
+            houseRoomDetailMap: {},
+            guildBuffDetailMap: {
+                '/guild_buffs/force_combat': {
+                    shrineHrid: '/guild_shrines/force',
+                    isCombat: true,
+                    levelCosts: { 1: { guildTokenCost: 10, creditCosts: [{ itemHrid: CREDIT, count: 10 }] } },
+                },
+            },
+        };
+        mocks.characterGuildBuffMap = {
+            '/guild_buffs/force_combat': { guildBuffHrid: '/guild_buffs/force_combat', level: 1 },
+        };
+        mocks.combinedData = {
+            characterItems: [],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: {},
+        };
+    });
+
+    test('ask vs bid changes the shrine total under orderBook, matching the credit conversion rate', async () => {
+        mocks.settings.networth_valueSource = 'orderBook';
+
+        mocks.settings.networth_pricingMode = 'ask';
+        const askResult = await calculateNetworth();
+
+        mocks.settings.networth_pricingMode = 'bid';
+        const bidResult = await calculateNetworth();
+
+        // buildGoldPerCredit is mocked to 750/credit on ask, 500/credit on bid (see the
+        // module mock above) — 10 credits, so 7500 vs 5000.
+        expect(askResult.fixedAssets.guildShrines.totalCost).toBe(7500);
+        expect(bidResult.fixedAssets.guildShrines.totalCost).toBe(5000);
+        expect(askResult.fixedAssets.guildShrines.totalCost).not.toBe(bidResult.fixedAssets.guildShrines.totalCost);
+    });
+
+    test("ask vs bid no longer changes the shrine total once the value source is the game's market value", async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+
+        mocks.settings.networth_pricingMode = 'ask';
+        const askResult = await calculateNetworth();
+
+        mocks.settings.networth_pricingMode = 'bid';
+        const bidResult = await calculateNetworth();
+
+        expect(askResult.fixedAssets.guildShrines.totalCost).toBe(bidResult.fixedAssets.guildShrines.totalCost);
+        expect(askResult.fixedAssets.guildShrines.totalCost).toBe(7500); // pinned to the 'ask' conversion rate
     });
 });
 

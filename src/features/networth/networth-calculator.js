@@ -277,8 +277,19 @@ function calculateCurrencyValue(itemHrid) {
             return null; // Don't include cowbells in net worth
         }
 
-        const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';
-        const bagPrice = getItemPrice('/items/bag_of_10_cowbells', { mode: pricingMode }) || 0;
+        // networth_pricingMode is documented as ignored once the value source is the game's
+        // own market value (see the setting's help text) — match resolveNetworthPrices'
+        // handling of every other item rather than always pricing through the order book.
+        const valueSource = config.getSettingValue('networth_valueSource') || 'orderBook';
+        let bagPrice = 0;
+        if (valueSource === 'officialValue') {
+            refreshMarketValues();
+            bagPrice = marketValueFor('/items/bag_of_10_cowbells', 0) || 0;
+        }
+        if (bagPrice <= 0) {
+            const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';
+            bagPrice = getItemPrice('/items/bag_of_10_cowbells', { mode: pricingMode }) || 0;
+        }
         if (bagPrice > 0) {
             return bagPrice / 10;
         }
@@ -1222,10 +1233,16 @@ export async function calculateNetworth() {
     // Calculate guild shrines value — apply per-shrine and whole-section exclusions.
     // The levels are not part of getCombinedData(): they arrive on guild traffic
     // rather than with the character, and data-manager holds them separately.
-    let guildShrinesData = calculateGuildShrinesCost(
-        dataManager.characterGuildBuffMap,
-        config.getSettingValue('networth_pricingMode') || 'ask'
-    );
+    // Credits are never priced from the official value map (buildGoldPerCredit refuses
+    // estimated prices), so networth_pricingMode is the only knob that could move this
+    // total — and its help text says it is ignored once the value source is the game's
+    // own market value. Pin the mode rather than reading the setting so ask/bid stop
+    // changing the shrine total for anyone on officialValue, matching that promise.
+    const shrinesPricingMode =
+        (config.getSettingValue('networth_valueSource') || 'orderBook') === 'officialValue'
+            ? 'ask'
+            : config.getSettingValue('networth_pricingMode') || 'ask';
+    let guildShrinesData = calculateGuildShrinesCost(dataManager.characterGuildBuffMap, shrinesPricingMode);
     if (isExcluded('assetType', 'guildShrines') && guildShrinesData.totalCost > 0) {
         trackExcluded('assetType', 'guildShrines', 'All Guild Shrines', guildShrinesData.totalCost);
         guildShrinesData = { totalCost: 0, tokens: 0, breakdown: [], known: guildShrinesData.known };
