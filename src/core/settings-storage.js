@@ -27,6 +27,25 @@ function isBooleanType(type) {
 }
 
 /**
+ * A stored value reduced to the form two of them should be compared in.
+ *
+ * Only colours need it so far: `<input type="color">` always hands back
+ * lowercase hex, while a schema default may be written any way at all
+ * (`color_remaining_xp` says `#FFFFFF`), so a byte comparison reads two
+ * spellings of the same white as a disagreement between characters. Used for
+ * the carry-over's comparisons only — what gets *stored* is always the entry as
+ * the character wrote it.
+ *
+ * @param {Object} entry - A settings-map entry
+ * @param {string} [type] - The schema type of the setting
+ * @returns {*} Its value, normalised for comparison
+ */
+function comparableValue(entry, type) {
+    const value = valueOf(entry);
+    return type === 'color' && typeof value === 'string' ? value.trim().toLowerCase() : value;
+}
+
+/**
  * Schema defaults that changed after release, and the value they changed from.
  *
  * A changed schema default only reaches a fresh install. The saved map is
@@ -292,11 +311,42 @@ const DEVICE_LOCAL_KEY_PREFIXES = ['toolasha_local_'];
 const SHARED_SETTINGS_KEY = 'script_settingsMap_shared';
 
 /**
+ * Whole schema groups that belong to the device rather than to one character.
+ *
+ * `sync` because a GitHub token authenticates the *player*, not a character.
+ * `colors` because a palette is how the script looks on this screen: nobody
+ * wants their profit green on the main and a different green on the alt, and
+ * before this every one of the 28 swatches had to be re-picked per character.
+ */
+const SHARED_SETTING_GROUPS = ['sync', 'colors'];
+
+/**
+ * Individual device-wide ids, for groups that are shared only in part.
+ *
+ * Number formatting is a reading preference — how *this player* likes to read a
+ * number — not a per-character one. Quiet hours are the clock on the wall, and
+ * the wall does not change when the character does. The rest of `notifications`
+ * deliberately stays per character: a combat alt wanting death alerts while a
+ * crafting alt does not is a real preference.
+ */
+const SHARED_SETTING_IDS = [
+    'formatting_useKMBFormat',
+    'formatting_precision',
+    'notifications_quietHoursEnabled',
+    'notifications_quietHoursStart',
+    'notifications_quietHoursEnd',
+];
+
+/**
  * Set once the one-time carry-over from the per-character maps has run and its
  * write actually landed. Device-wide, not per character: the carry-over reads
  * every character's map in one pass.
+ *
+ * Bump the suffix whenever the shared set grows. The carry-over never
+ * reconsiders an id the shared map already answers, so re-running it after a
+ * bump only looks at the ids that just joined.
  */
-const SHARED_SCOPE_FLAG_KEY = 'settings_shared_scope_v1';
+const SHARED_SCOPE_FLAG_KEY = 'settings_shared_scope_v2';
 
 /**
  * Where a carry-over that could not decide records what it found, for the sync
@@ -521,19 +571,21 @@ class SettingsStorage {
     }
 
     /**
-     * The setting ids that belong to the account rather than to one character.
+     * The setting ids that belong to the device rather than to one character.
      *
-     * The whole Cross-Device Sync group, taken from the schema so it cannot
-     * drift. A GitHub token authenticates the *player*, not a character; the
-     * passphrase unlocks a payload that is the account's; and what to sync and
-     * when are decisions about this device's relationship with the gist, which
-     * no character has its own answer to. Every other group stayed per
-     * character — see the survey in the fork changelog.
+     * {@link SHARED_SETTING_GROUPS} in full, taken from the schema so a swatch
+     * added later is shared without anyone remembering to list it, plus the
+     * named {@link SHARED_SETTING_IDS} from groups that are only part shared.
+     * An id the schema does not have is dropped rather than invented, so a
+     * rename shows up as a setting that stopped being shared instead of as a
+     * ghost entry in the shared map.
      *
      * @returns {string[]} Setting ids stored device-wide
      */
     sharedSettingIds() {
-        return Object.keys(settingsGroups.sync?.settings ?? {});
+        const ids = SHARED_SETTING_GROUPS.flatMap((group) => Object.keys(settingsGroups[group]?.settings ?? {}));
+        const known = new Set(Object.values(settingsGroups).flatMap((group) => Object.keys(group.settings ?? {})));
+        return [...ids, ...SHARED_SETTING_IDS.filter((id) => known.has(id))];
     }
 
     /**
@@ -559,7 +611,15 @@ class SettingsStorage {
      *
      * - Values equal to the schema default are ignored — an untouched default
      *   is not a choice, and letting one count would hand a fresh alt's empty
-     *   token to the whole account.
+     *   token to the whole account. This is what keeps the colour group quiet:
+     *   every character has a *stored* value for all 28 swatches, because the
+     *   map is written whole, so without this rule a device with three alts
+     *   would report 28 disagreements that nobody ever made. With it, a
+     *   palette only speaks up where somebody actually picked a colour.
+     * - "Equal to the default" is read the way the setting is read, not
+     *   byte for byte: a colour compares case-insensitively, because a picker
+     *   writes `#ffffff` where the schema happens to say `#FFFFFF` and that is
+     *   the same white, not a disagreement.
      * - Every character that does hold a real value agreeing: that value wins.
      * - They disagree: **the character in session right now wins**, if it has a
      *   real value of its own. It is the profile being played, the closest
@@ -570,10 +630,12 @@ class SettingsStorage {
      *   and the player is told rather than guessed at.
      *
      * Nothing is ever deleted: the losing values stay in their own character's
-     * map, so switching to that alt and pressing "Copy sync setup to my other
+     * map, so switching to that alt and pressing "Copy settings to my other
      * characters" re-shares from there. Every disagreement, resolved or not, is
      * recorded under {@link SHARED_SCOPE_CONFLICT_KEY} for the sync feature to
-     * surface, so the outcome is never silent.
+     * surface, so the outcome is never silent. A record still waiting to be
+     * shown is added to rather than replaced, so a carry-over that runs again
+     * because the shared set grew cannot swallow the previous run's notice.
      *
      * Idempotent, and written before it is recorded: an id the shared map
      * already answers is never reconsidered, a refused write leaves the flag
@@ -617,11 +679,12 @@ class SettingsStorage {
 
             for (const settingId of this.sharedSettingIds()) {
                 if (settingId in existing) continue; // Already answered — never reconsidered
-                const defaultValue = valueOf(defaults[settingId]);
+                const type = defaults[settingId]?.type;
+                const defaultValue = comparableValue(defaults[settingId], type);
                 const candidates = maps
                     .map(({ key, map }) => ({ key, entry: map[settingId] }))
                     .filter(({ entry }) => entry && typeof entry === 'object')
-                    .map((candidate) => ({ ...candidate, value: valueOf(candidate.entry) }))
+                    .map((candidate) => ({ ...candidate, value: comparableValue(candidate.entry, type) }))
                     .filter(({ value }) => value !== undefined && value !== '' && value !== defaultValue);
                 if (candidates.length === 0) continue;
 
@@ -650,7 +713,19 @@ class SettingsStorage {
                 if (written === false) return;
             }
             if (conflicts.length > 0) {
-                await storage.setJSON(SHARED_SCOPE_CONFLICT_KEY, { at: Date.now(), conflicts }, this.storageArea, true);
+                // A previous run's record may still be waiting to be shown —
+                // the carry-over runs again whenever the shared set grows. Keep
+                // what it found, minus anything this pass has just re-decided.
+                const previous = await storage.getJSON(SHARED_SCOPE_CONFLICT_KEY, this.storageArea, null);
+                const kept = Array.isArray(previous?.conflicts)
+                    ? previous.conflicts.filter((old) => !conflicts.some((fresh) => fresh.id === old?.id))
+                    : [];
+                await storage.setJSON(
+                    SHARED_SCOPE_CONFLICT_KEY,
+                    { at: Date.now(), conflicts: [...kept, ...conflicts] },
+                    this.storageArea,
+                    true
+                );
             }
             await storage.set(SHARED_SCOPE_FLAG_KEY, true, this.storageArea, true);
         } catch (error) {
