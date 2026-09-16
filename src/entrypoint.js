@@ -2285,6 +2285,14 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_enhancementTarget'),
         },
         {
+            key: 'philoStoneAlerts',
+            name: 'Philosopher’s Stone Alerts',
+            category: 'Notifications',
+            module: UI.philoStoneAlerts,
+            async: true,
+            customCheck: () => config.getSetting('notifications_philosophersStone'),
+        },
+        {
             key: 'taskSlotAlerts',
             name: 'Task Slot Alerts',
             category: 'Notifications',

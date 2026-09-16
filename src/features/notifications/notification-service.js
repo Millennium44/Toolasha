@@ -133,6 +133,7 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_skillLevelUp',
     'notifications_ttlTargetReached',
     'notifications_enhancementTarget',
+    'notifications_philosophersStone',
     'notifications_trialStarting',
     'notifications_trialResults',
     'notifications_taskSlotsFull',

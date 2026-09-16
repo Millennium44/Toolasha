@@ -3829,6 +3829,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Reads the “enhance until +N” you set in the game’s own enhancing panel, and the level the item is at after each attempt — so it works whether or not the Enhancement Tracker is on. Nothing is announced when no target is set, since there is no ending to announce. Once per item and target, re-arming when that item is seen below the target again.',
             },
+            notifications_philosophersStone: {
+                id: 'notifications_philosophersStone',
+                label: 'Notify when transmuting produces a Philosopher’s Stone',
+                type: 'checkbox',
+                default: false,
+                help: 'Reads the transmute result straight off the wire, so it works whether or not the Transmute History Tracker is on. Fires once per stone (or once per batch, naming how many, if several land in the same message) — not once per session.',
+            },
             notifications_trialStarting: {
                 id: 'notifications_trialStarting',
                 label: 'Notify when a guild trial is about to start',

@@ -125,6 +125,7 @@ import combatDeathAlerts from '../features/notifications/combat-death-alerts.js'
 import skillLevelUpAlerts from '../features/notifications/skill-level-up-alerts.js';
 import ttlTargetAlerts from '../features/notifications/ttl-target-alerts.js';
 import enhancementTargetAlerts from '../features/notifications/enhancement-target-alerts.js';
+import philoStoneAlerts from '../features/notifications/philo-stone-alerts.js';
 import taskSlotAlerts from '../features/notifications/task-slot-alerts.js';
 import marketUndercutAlerts from '../features/notifications/market-undercut-alerts.js';
 import notificationService from '../features/notifications/notification-service.js';
@@ -255,6 +256,7 @@ toolashaRoot.UI = {
     skillLevelUpAlerts,
     ttlTargetAlerts,
     enhancementTargetAlerts,
+    philoStoneAlerts,
     taskSlotAlerts,
     marketUndercutAlerts,
     notificationService,
