@@ -56,10 +56,24 @@ const badgeManagerMock = vi.hoisted(() => ({
     }),
 }));
 
+const configMock = vi.hoisted(() => ({
+    settings: { invCategoryTotals: true },
+    listeners: new Map(),
+    /** @param {string} key - Fire the module's listener for this setting */
+    fire: (key) => {
+        for (const fn of configMock.listeners.get(key) || []) fn();
+    },
+}));
+
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: (key) => key === 'invCategoryTotals',
-        getSettingValue: (_key, fallback) => fallback,
+        getSetting: (key) => configMock.settings[key] ?? false,
+        getSettingValue: (key, fallback) => configMock.settings[key] ?? fallback,
+        onSettingChange: (key, callback) => {
+            if (!configMock.listeners.has(key)) configMock.listeners.set(key, new Set());
+            configMock.listeners.get(key).add(callback);
+            return () => configMock.listeners.get(key)?.delete(callback);
+        },
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({ default: dm }));
@@ -81,6 +95,9 @@ beforeEach(() => {
     badgeManagerMock.providerFn = null;
     badgeManagerMock.prices.clear();
     document.body.innerHTML = '';
+    configMock.settings = { invCategoryTotals: true };
+    configMock.listeners.clear();
+    inventoryCategoryTotals.unwatchBadgeMode = null;
     inventoryCategoryTotals.isInitialized = false;
     inventoryCategoryTotals.pendingUpdate = false;
     inventoryCategoryTotals.itemsUpdatedHandler = null;
@@ -165,5 +182,54 @@ describe('freshness against items_updated', () => {
 
         expect(badgeManagerMock.invalidateCache).not.toHaveBeenCalled();
         expect(dm.listeners.get('items_updated')?.size ?? 0).toBe(0);
+    });
+});
+
+describe('following the badge mode', () => {
+    /**
+     * One category holding one stack, priced on both sides.
+     * @returns {HTMLElement} The category label the total is appended to
+     */
+    function drawInventory() {
+        const inventory = document.createElement('div');
+        const category = document.createElement('div');
+        const label = document.createElement('div');
+        label.className = 'Inventory_label';
+        label.textContent = 'Loots';
+        const item = document.createElement('div');
+        item.className = 'Item_itemContainer';
+        item.dataset.askValue = '1000';
+        item.dataset.bidValue = '900';
+        category.append(label, item);
+        inventory.appendChild(category);
+        document.body.appendChild(inventory);
+        badgeManagerMock.currentInventoryElem = inventory;
+        return label;
+    }
+
+    // With the sort at None every mode but 'alwaysBid' totals the ask side, so
+    // switching to it changes this label — but only Inventory Sort listened for
+    // the setting, and only while that feature is on. With it off the label kept
+    // the side it was first drawn with until something unrelated redrew it.
+    test('switching to "always Bid" re-sums the totals on the bid side', () => {
+        const label = drawInventory();
+        inventoryCategoryTotals.initialize();
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(label.textContent).toContain('1000');
+
+        configMock.settings.inv_valueBadges = 'alwaysBid';
+        configMock.fire('inv_valueBadges');
+        vi.advanceTimersByTime(1);
+
+        expect(label.textContent).toContain('900');
+        expect(label.textContent).not.toContain('1000');
+    });
+
+    test('disable() drops the listener, so a later change does nothing', () => {
+        drawInventory();
+        inventoryCategoryTotals.initialize();
+        inventoryCategoryTotals.disable();
+
+        expect(configMock.listeners.get('inv_valueBadges')?.size ?? 0).toBe(0);
     });
 });

@@ -12,7 +12,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import inventorySort from './inventory-sort.js';
-import { stackBadgeValueKey } from './inventory-badge-mode.js';
+import { BADGE_MODE_SETTING, stackBadgeValueKey } from './inventory-badge-mode.js';
 import { formatKMB } from '../../utils/formatters.js';
 import * as dom from '../../utils/dom.js';
 
@@ -36,6 +36,7 @@ class InventoryCategoryTotals {
         this.pendingUpdate = false;
         this.itemsUpdatedHandler = null;
         this.itemsUpdatedDebounceTimer = null;
+        this.unwatchBadgeMode = null;
     }
 
     initialize() {
@@ -90,6 +91,14 @@ class InventoryCategoryTotals {
             }, ITEMS_UPDATED_DEBOUNCE_MS);
         };
         dataManager.on('items_updated', this.itemsUpdatedHandler);
+
+        // The badge mode decides which side an unsorted total is priced on
+        // ('alwaysBid' sums bids where every other mode sums asks), so changing
+        // it changes this label. Re-summing is enough — both sides' values are
+        // already on every container — but something has to ask for it:
+        // Inventory Sort's own listener only fires while that feature is on,
+        // and with it off the label kept the side it was drawn with.
+        this.unwatchBadgeMode = config.onSettingChange(BADGE_MODE_SETTING, () => this.scheduleUpdate());
     }
 
     disable() {
@@ -103,6 +112,11 @@ class InventoryCategoryTotals {
             if (this.itemsUpdatedHandler) {
                 dataManager.off('items_updated', this.itemsUpdatedHandler);
                 this.itemsUpdatedHandler = null;
+            }
+
+            if (this.unwatchBadgeMode) {
+                this.unwatchBadgeMode();
+                this.unwatchBadgeMode = null;
             }
 
             inventoryBadgeManager.unregisterProvider('inventory-category-totals');
