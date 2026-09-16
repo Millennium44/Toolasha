@@ -313,3 +313,135 @@ describe('transmute history totals: break-even input value', () => {
         expect(cells[cells.length - 1]).toBe('—');
     });
 });
+
+// Cell order from buildTotalsRow/buildOverallTotalsRow: Input Item, Sessions,
+// Attempts, Consumed, Successes, Revenue, Input Cost, Catalyst Cost, Coin
+// Cost, Net, Inputs/Output, Break-even Input.
+const COL = {
+    ITEM: 0,
+    SESSIONS: 1,
+    ATTEMPTS: 2,
+    CONSUMED: 3,
+    SUCCESSES: 4,
+    REVENUE: 5,
+    INPUT_COST: 6,
+    CATALYST_COST: 7,
+    COIN_COST: 8,
+    NET: 9,
+    INPUTS_PER_OUTPUT: 10,
+    BREAK_EVEN: 11,
+};
+
+function corruptSession(overrides) {
+    return makeSession({
+        id: 'corrupt',
+        totalAttempts: 75,
+        totalSuccesses: 64,
+        results: { [INPUT_A_HRID]: { count: 103, isSelfReturn: true, totalValue: 0 } },
+        ...overrides,
+    });
+}
+
+describe('transmute history totals: a flagged group suppresses every netConsumed-derived column', () => {
+    beforeEach(() => {
+        mocks.prices = { [INPUT_A_HRID]: 100 };
+    });
+
+    test('per-item row hides Consumed, Successes, Input Cost, Net, Inputs/Output and Break-even together', () => {
+        loadSessions([corruptSession()]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        const row = transmuteHistoryViewer.buildTotalsRow(group, 0);
+        const cells = Array.from(row.querySelectorAll('td')).map((td) => td.textContent);
+
+        expect(group.impossible).toBe(true);
+        for (const col of [
+            COL.CONSUMED,
+            COL.SUCCESSES,
+            COL.INPUT_COST,
+            COL.NET,
+            COL.INPUTS_PER_OUTPUT,
+            COL.BREAK_EVEN,
+        ]) {
+            expect(cells[col]).toBe('—');
+        }
+    });
+
+    test('per-item row still shows Sessions, Attempts, Revenue and Coin Cost — those do not depend on consumed count', () => {
+        loadSessions([corruptSession()]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        const row = transmuteHistoryViewer.buildTotalsRow(group, 0);
+        const cells = Array.from(row.querySelectorAll('td')).map((td) => td.textContent);
+
+        expect(cells[COL.SESSIONS]).toBe('1');
+        expect(cells[COL.ATTEMPTS]).toBe('75');
+        expect(cells[COL.REVENUE]).not.toBe('—');
+        expect(cells[COL.COIN_COST]).not.toBe('—');
+    });
+
+    test('a clean group is unaffected: every figure is shown', () => {
+        loadSessions([makeSession({ id: 'clean', totalAttempts: 10, totalSuccesses: 8 })]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        const row = transmuteHistoryViewer.buildTotalsRow(group, 0);
+        const cells = Array.from(row.querySelectorAll('td')).map((td) => td.textContent);
+
+        expect(group.impossible).toBe(false);
+        for (const col of [COL.CONSUMED, COL.SUCCESSES, COL.INPUT_COST, COL.NET, COL.INPUTS_PER_OUTPUT]) {
+            expect(cells[col]).not.toBe('—');
+        }
+    });
+});
+
+describe('transmute history totals: a flagged group poisons the overall "All items" row', () => {
+    beforeEach(() => {
+        mocks.prices = { [INPUT_A_HRID]: 100, [INPUT_B_HRID]: 200 };
+    });
+
+    test('one flagged group among clean ones marks and suppresses the overall row', () => {
+        loadSessions([
+            makeSession({ id: 'clean', inputItemHrid: INPUT_A_HRID, totalAttempts: 10, totalSuccesses: 8 }),
+            corruptSession({ inputItemHrid: INPUT_B_HRID }),
+        ]);
+
+        const totals = transmuteHistoryViewer.computeInputItemTotals();
+        const overallRow = transmuteHistoryViewer.buildOverallTotalsRow(totals);
+        const cells = Array.from(overallRow.querySelectorAll('td')).map((td) => td.textContent);
+
+        expect(totals.some((g) => g.impossible)).toBe(true);
+        expect(cells[COL.ITEM]).toContain('⚠');
+        for (const col of [COL.CONSUMED, COL.SUCCESSES, COL.INPUT_COST, COL.NET]) {
+            expect(cells[col]).toBe('—');
+        }
+        // Still true regardless of the flagged group, and must keep showing
+        expect(cells[COL.SESSIONS]).toBe('2');
+        expect(cells[COL.ATTEMPTS]).toBe('85');
+        expect(cells[COL.REVENUE]).not.toBe('—');
+    });
+
+    test('all-clean groups leave the overall row unmarked and every figure shown', () => {
+        loadSessions([
+            makeSession({ id: 's1', inputItemHrid: INPUT_A_HRID, totalAttempts: 10, totalSuccesses: 8 }),
+            makeSession({
+                id: 's2',
+                inputItemHrid: INPUT_B_HRID,
+                totalAttempts: 5,
+                totalSuccesses: 4,
+                results: {
+                    [OUTPUT_HRID]: { count: 4, isSelfReturn: false, totalValue: 4000, priceEach: 1000 },
+                },
+            }),
+        ]);
+
+        const totals = transmuteHistoryViewer.computeInputItemTotals();
+        const overallRow = transmuteHistoryViewer.buildOverallTotalsRow(totals);
+        const cells = Array.from(overallRow.querySelectorAll('td')).map((td) => td.textContent);
+
+        expect(cells[COL.ITEM]).not.toContain('⚠');
+        expect(cells[COL.ITEM]).toBe('All items');
+        for (const col of [COL.CONSUMED, COL.SUCCESSES, COL.INPUT_COST, COL.NET]) {
+            expect(cells[col]).not.toBe('—');
+        }
+    });
+});

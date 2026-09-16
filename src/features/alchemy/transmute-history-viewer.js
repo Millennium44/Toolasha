@@ -653,7 +653,15 @@ class TransmuteHistoryViewer {
      * entries than successes, or a consumed count that clamped to zero despite
      * real attempts — the signature of the self-return batching bug) is
      * flagged rather than totaled: averaging corrupt sessions in with good
-     * ones would present a confident number that is simply wrong.
+     * ones would present a confident number that is simply wrong. The
+     * recorded success count itself is not exempt — it comes from the same
+     * per-message delta counting that inflated the self-returns, so a flagged
+     * group's `successes`/`successRate` are exactly as unreliable as its
+     * `netConsumed` and must be hidden alongside it, not shown as if sound.
+     * The overall "All items" row inherits the flag from any flagged group it
+     * contains, for the same reason: excluding a corrupt group's consumed
+     * count while still summing its revenue and cost into a displayed Net is
+     * the same mistake in a different column.
      *
      * @returns {Array<Object>} One entry per distinct inputItemHrid
      */
@@ -845,7 +853,9 @@ class TransmuteHistoryViewer {
         const impossibleTitle =
             "This group's recorded counts are internally impossible (more results than successes, or a " +
             'consumed count that clamped to zero despite real attempts) — the signature of the self-return ' +
-            "batching bug. Numbers that depend on it aren't shown to avoid presenting corrupt data as fact.";
+            'batching bug. The recorded success count comes from the same batched-delta counting that ' +
+            'inflated the self-returns, so it cannot be trusted either. Every figure derived from consumed ' +
+            'or success count is hidden here to avoid presenting corrupt data as fact.';
         row.style.cssText = `
             border-bottom: 1px solid #333;
             background: ${group.impossible ? 'rgba(251,191,36,0.08)' : index % 2 === 0 ? '#2a2a2a' : '#252525'};
@@ -877,15 +887,24 @@ class TransmuteHistoryViewer {
         );
 
         const successPct = group.successRate !== null ? `${(group.successRate * 100).toFixed(1)}%` : '—';
-        row.appendChild(this.createTotalsCell(`${group.successes} (${successPct})`));
+        row.appendChild(
+            this.createTotalsCell(group.impossible ? '—' : `${group.successes} (${successPct})`, {
+                title: group.impossible ? impossibleTitle : undefined,
+            })
+        );
 
         row.appendChild(this.createTotalsCell(formatKMB(group.revenue, 1)));
         row.appendChild(
-            this.createTotalsCell(formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''), {
-                title: group.inputUnpriced
-                    ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
-                    : undefined,
-            })
+            this.createTotalsCell(
+                group.impossible ? '—' : formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''),
+                {
+                    title: group.impossible
+                        ? impossibleTitle
+                        : group.inputUnpriced
+                          ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
+                          : undefined,
+                }
+            )
         );
 
         const [groupCatalystText, groupCatalystTitle] = this.formatCatalystTotal(group);
@@ -962,28 +981,45 @@ class TransmuteHistoryViewer {
         const row = document.createElement('tr');
         row.style.cssText = 'border-top: 2px solid #555; background: #1f1f1f;';
 
+        // A group flagged above poisons this row the same way it poisons its
+        // own: averaging its corrupt consumed/success counts in with the
+        // clean groups' would present a confident wrong number, and excluding
+        // it while still summing its revenue/cost into "Net" is the same
+        // mistake one column over. Every figure that depends on consumed or
+        // success count is hidden here, together, whenever any group is flagged.
+        const overallImpossibleTitle =
+            'At least one input-item group above is flagged as internally impossible (recorded counts corrupted ' +
+            'by the self-return batching bug). Every figure derived from consumed or success count is hidden ' +
+            'here too, since it would otherwise average or add in corrupt data as if it were good.';
+
         const itemCell = document.createElement('td');
-        itemCell.textContent = 'All items';
+        itemCell.textContent = (overall.hasImpossibleGroup ? '⚠ ' : '') + 'All items';
         itemCell.style.cssText = 'padding: 6px 10px; font-weight: bold;';
+        if (overall.hasImpossibleGroup) itemCell.title = overallImpossibleTitle;
         row.appendChild(itemCell);
 
         row.appendChild(this.createTotalsCell(String(overall.sessionCount), { bold: true }));
         row.appendChild(this.createTotalsCell(String(overall.attempts), { bold: true }));
         row.appendChild(
-            this.createTotalsCell(
-                overall.hasImpossibleGroup ? `${overall.netConsumed}*` : String(overall.netConsumed),
-                {
-                    bold: true,
-                    title: overall.hasImpossibleGroup ? 'Excludes group(s) flagged as corrupt above.' : undefined,
-                }
-            )
+            this.createTotalsCell(overall.hasImpossibleGroup ? '—' : String(overall.netConsumed), {
+                bold: true,
+                title: overall.hasImpossibleGroup ? overallImpossibleTitle : undefined,
+            })
         );
 
         const successPct = overall.attempts > 0 ? `${((overall.successes / overall.attempts) * 100).toFixed(1)}%` : '—';
-        row.appendChild(this.createTotalsCell(`${overall.successes} (${successPct})`, { bold: true }));
+        row.appendChild(
+            this.createTotalsCell(overall.hasImpossibleGroup ? '—' : `${overall.successes} (${successPct})`, {
+                bold: true,
+                title: overall.hasImpossibleGroup ? overallImpossibleTitle : undefined,
+            })
+        );
         row.appendChild(this.createTotalsCell(formatKMB(overall.revenue, 1), { bold: true }));
         row.appendChild(
-            this.createTotalsCell(formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''), { bold: true })
+            this.createTotalsCell(
+                overall.hasImpossibleGroup ? '—' : formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''),
+                { bold: true, title: overall.hasImpossibleGroup ? overallImpossibleTitle : undefined }
+            )
         );
 
         const [catalystText, catalystTitle] = this.formatCatalystTotal(overall);
@@ -993,10 +1029,10 @@ class TransmuteHistoryViewer {
 
         const net = overall.revenue - overall.inputCost - overall.catalystCost - overall.coinCost;
         row.appendChild(
-            this.createTotalsCell(formatKMB(net, 1), {
+            this.createTotalsCell(overall.hasImpossibleGroup ? '—' : formatKMB(net, 1), {
                 bold: true,
-                color: net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
-                title: overall.hasImpossibleGroup ? 'Excludes group(s) flagged as corrupt above.' : undefined,
+                color: overall.hasImpossibleGroup ? '#fbbf24' : net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                title: overall.hasImpossibleGroup ? overallImpossibleTitle : undefined,
             })
         );
 
