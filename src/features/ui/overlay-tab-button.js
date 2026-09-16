@@ -120,6 +120,11 @@ class OverlayTabButton {
 
     initialize() {
         if (this.initialized) return;
+        // Its own switch first — the module used to read only the overlay's,
+        // so `overlayTabButton` was decorative — and then the dependency: the
+        // button is a switch for the overlay, and there is nothing to switch
+        // when the overlay itself is off.
+        if (!config.getSetting('overlayTabButton')) return;
         if (!config.getSetting('overlayPanel')) return;
         this.initialized = true;
 

@@ -1935,6 +1935,12 @@ function handleFetched(data) {
 }
 
 function initialize() {
+    // The startup gate. `SETTING_KEY` used to be read only by the
+    // `onSettingChange` at the end of this function, so the diagnostic attached
+    // its websocket handlers on every load however the switch was set, and only
+    // a live toggle could take it away again.
+    if (!config.getSetting(SETTING_KEY)) return;
+
     if (!fetchHandler) {
         fetchHandler = handleFetched;
         webSocketHook.on('battle_unit_fetched', fetchHandler);

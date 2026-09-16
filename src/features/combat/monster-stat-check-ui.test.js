@@ -37,9 +37,11 @@ const world = vi.hoisted(() => ({
 // Real subscribe/unsubscribe bookkeeping, unlike a no-op `vi.fn()`, so a test
 // can prove a disable+initialize cycle does not accumulate listeners.
 const settingListeners = vi.hoisted(() => ({}));
+/** Settings the mocked config answers with; anything unset is on. */
+const settings = vi.hoisted(() => ({ values: {} }));
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: () => true,
+        getSetting: (key) => settings.values[key] ?? true,
         onSettingChange: (key, callback) => {
             (settingListeners[key] ??= []).push(callback);
             return () => {
@@ -164,6 +166,7 @@ function snap(buffs, hp = 100) {
 }
 
 beforeEach(() => {
+    settings.values = {};
     panel.history = new Map();
     panel.fightStartBuffMap = null;
     panel.displayed = null;
@@ -363,6 +366,33 @@ describe('disable unregisters the setting-change listener it registered', () => 
         }
 
         expect(settingListeners.labyrinthMonsterStatCheck).toHaveLength(1);
+    });
+});
+
+describe('the startup gate', () => {
+    test('a switched-off diagnostic attaches nothing at all', () => {
+        // It used to read its setting only from the `onSettingChange` at the
+        // end of initialize, so it hooked the fight stream on every load and
+        // only a live toggle could take it away again.
+        monsterStatCheck.disable();
+        for (const key of Object.keys(settingListeners)) delete settingListeners[key];
+        settings.values.labyrinthMonsterStatCheck = false;
+
+        monsterStatCheck.initialize();
+
+        expect(wsHandlers['battle_unit_fetched']).toBeUndefined();
+        expect(wsHandlers['new_battle']).toBeUndefined();
+        expect(settingListeners.labyrinthMonsterStatCheck).toBeUndefined();
+    });
+
+    test('a switched-on diagnostic hooks the fight stream', () => {
+        monsterStatCheck.disable();
+        settings.values.labyrinthMonsterStatCheck = true;
+
+        monsterStatCheck.initialize();
+
+        expect(wsHandlers['battle_unit_fetched']).toBeTypeOf('function');
+        expect(wsHandlers['new_battle']).toBeTypeOf('function');
     });
 });
 

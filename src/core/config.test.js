@@ -2,7 +2,7 @@
  * Tests for Config setting accessors
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /** The sync-pull restore latch, which refuses writes to a store until a reload */
 const storageMock = vi.hoisted(() => ({ restorePending: false }));
@@ -48,7 +48,7 @@ vi.mock('./settings-storage.js', () => ({ default: settingsStorageMock }));
 vi.mock('./data-manager.js', () => ({ default: dataManagerMock }));
 
 const { default: config } = await import('./config.js');
-const { settingsGroups } = await import('./settings-schema.js');
+const { settingsGroups, getSettingDefinition } = await import('./settings-schema.js');
 
 // `config` is a module singleton, so every test in this file shares one
 // instance. The reload-window describes below leave `_pendingValues` populated
@@ -133,6 +133,82 @@ describe('Config.getSetting', () => {
     test('a key absent from the schema still returns the caller default', () => {
         config.settingsMap = {};
         expect(config.getSetting('no_such_setting_anywhere', 'sentinel')).toBe('sentinel');
+    });
+});
+
+describe('Config.isFeatureEnabled', () => {
+    /**
+     * The registry keys whose only switch is a schema checkbox: nothing else in
+     * the codebase reads them, so before the gate consulted the schema their
+     * checkboxes did nothing whatsoever.
+     */
+    const SCHEMA_ONLY_FEATURE_KEYS = [
+        'goalPlanner',
+        'damageTracker',
+        'damageTakenTracker',
+        'taskInventoryHighlighter',
+        'sessionBriefing',
+        'ironCowFarm',
+        'overlayTabButton',
+        'labyrinthMonsterStatCheck',
+    ];
+
+    /** The real feature map, restored after each test that swaps it out */
+    let realFeatures;
+
+    beforeEach(() => {
+        realFeatures = config.features;
+        config.settingsMap = {};
+        config._unswitchedFeatureKeys = null;
+    });
+
+    afterEach(() => {
+        config.features = realFeatures;
+    });
+
+    test('a key the features map does not know, but the schema does, answers with the setting', () => {
+        // The bug: this returned `true` for every one of them, whatever the
+        // player had chosen, because the key was simply missing from the map.
+        for (const key of SCHEMA_ONLY_FEATURE_KEYS) {
+            config.settingsMap = { [key]: { id: key, isTrue: false } };
+            expect(config.isFeatureEnabled(key), `${key} switched off`).toBe(false);
+
+            config.settingsMap = { [key]: { id: key, isTrue: true } };
+            expect(config.isFeatureEnabled(key), `${key} switched on`).toBe(true);
+        }
+    });
+
+    test('a schema-backed key with nothing stored yet answers with the schema default', () => {
+        config.settingsMap = {};
+        for (const key of SCHEMA_ONLY_FEATURE_KEYS) {
+            expect(config.isFeatureEnabled(key), key).toBe(getSettingDefinition(key).default);
+        }
+    });
+
+    test('a mapped feature still answers from its legacy setting', () => {
+        config.features = { someFeature: { settingKey: 'featureBacked', enabled: true } };
+        config.settingsMap = { featureBacked: { id: 'featureBacked', isTrue: false } };
+        expect(config.isFeatureEnabled('someFeature')).toBe(false);
+
+        config.settingsMap = { featureBacked: { id: 'featureBacked', isTrue: true } };
+        expect(config.isFeatureEnabled('someFeature')).toBe(true);
+    });
+
+    test('a mapped feature with no legacy setting falls back to feature.enabled', () => {
+        config.features = { someFeature: { settingKey: null, enabled: false } };
+        expect(config.isFeatureEnabled('someFeature')).toBe(false);
+    });
+
+    test('a key in neither the map nor the schema stays enabled, and says so once', () => {
+        const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+        try {
+            expect(config.isFeatureEnabled('canaryNoSuchThing')).toBe(true);
+            expect(config.isFeatureEnabled('canaryNoSuchThing')).toBe(true);
+            expect(debug).toHaveBeenCalledTimes(1);
+            expect(debug.mock.calls[0][0]).toContain('canaryNoSuchThing');
+        } finally {
+            debug.mockRestore();
+        }
     });
 });
 

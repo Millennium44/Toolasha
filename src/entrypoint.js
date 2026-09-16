@@ -1218,6 +1218,11 @@ function registerFeatures() {
             category: 'Actions',
             module: Actions.inventoryCountDisplay,
             async: false,
+            // The module checks its own setting, and registers the listener that
+            // turns it back on live *before* that check — a listener that only
+            // exists once the switch is on can never see it being switched on.
+            // So it has to start whatever the switch says.
+            customCheck: () => true,
         },
         {
             key: 'pinnedActionsPage',
@@ -1369,6 +1374,11 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.dungeonTrackerUI,
             async: false,
+            // The panel checks `dungeonTrackerUI` itself, per update, and hides
+            // when it is off — but the same handler is what kicks the chat
+            // annotations after a completed run, which is deliberately not
+            // gated on the panel's switch. Starting it regardless keeps that.
+            customCheck: () => true,
         },
         {
             key: 'dungeonTrackerChatAnnotations',
@@ -2131,6 +2141,11 @@ function registerFeatures() {
             // Registers every observer and handler before its first await by
             // design; what it then waits on is its own trial record.
             concurrent: true,
+            // It gates on `guildTrialsInfo` itself, after watching that setting
+            // — deliberately, so turning it on takes effect without a refresh
+            // and turning it off takes the drawn blocks down. That watch only
+            // exists if the module starts, so it starts regardless.
+            customCheck: () => true,
         },
         {
             key: 'guildTrialLedger',
@@ -2282,6 +2297,12 @@ function registerFeatures() {
             category: 'General',
             module: UI.queueMonitor,
             async: false,
+            // `queueMonitor` switches the panel only. The module's initialize
+            // also starts the cross-character queue snapshot and the idle
+            // alerts — the latter on its own separate setting — and registers
+            // the listener that opens the panel live. None of that may be
+            // skipped because the panel itself is off.
+            customCheck: () => true,
         },
         {
             key: 'characterActivityStatus',

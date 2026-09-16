@@ -83,7 +83,9 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        isFeatureEnabled: () => false,
+        // Feature keys the registry gate answers for; the enhancement tooltip
+        // reads `enhanceSim_baseItemCraftingCost` through this one
+        isFeatureEnabled: (key) => settings.checkboxes[key] ?? false,
         // getSetting answers checkboxes only; getSettingValue is the accessor for text
         // settings. Keeping them distinct here is what makes a getSetting() read of a text
         // setting visible as a test failure rather than a silent false.
@@ -444,6 +446,63 @@ describe('buildEnhancementTooltipHTML — minimum sell price', () => {
         expect(html1200m).toContain('Your rate: 1.20B/hr');
         expect(html1250m).toContain('Your rate: 1.25B/hr');
         expect(html1290m).toContain('Your rate: 1.29B/hr');
+    });
+});
+
+describe('the base item, when crafting it is cheaper than buying it', () => {
+    const CHEAP = '/items/test_cheap_input';
+
+    /**
+     * Make the test sword craftable from one cheap input, so its crafting cost
+     * undercuts its market ask.
+     * @returns {Function} Undo, for the finally
+     */
+    function makeItemCraftable() {
+        prices[CHEAP] = { ask: 10, bid: 9 };
+        gameData.itemDetailMap[CHEAP] = { name: 'Cheap Input' };
+        gameData.actionDetailMap = {
+            '/actions/crafting/test_sword': {
+                type: '/action_types/crafting',
+                baseTimeCost: 20e9,
+                inputItems: [{ itemHrid: CHEAP, count: 1 }],
+                outputItems: [{ itemHrid: ITEM, count: 1 }],
+            },
+        };
+        for (const listener of priceListeners) listener();
+        return () => {
+            delete prices[CHEAP];
+            delete gameData.itemDetailMap[CHEAP];
+            gameData.actionDetailMap = {};
+            for (const listener of priceListeners) listener();
+        };
+    }
+
+    test('the setting on, the path pays the crafting cost and says so', () => {
+        const undo = makeItemCraftable();
+        settings.checkboxes.enhanceSim_baseItemCraftingCost = true;
+        try {
+            const data = calculateEnhancementPath(ITEM, 1, enhancingConfig);
+
+            expect(data.optimalStrategy.baseAskIsCrafted).toBe(true);
+            expect(data.optimalStrategy.baseAskPrice).toBe(10);
+            expect(buildEnhancementTooltipHTML(data)).toContain('Craft Item');
+        } finally {
+            undo();
+        }
+    });
+
+    test('the setting off, the path pays the market price', () => {
+        const undo = makeItemCraftable();
+        settings.checkboxes.enhanceSim_baseItemCraftingCost = false;
+        try {
+            const data = calculateEnhancementPath(ITEM, 1, enhancingConfig);
+
+            expect(data.optimalStrategy.baseAskIsCrafted).toBe(false);
+            expect(data.optimalStrategy.baseAskPrice).toBe(prices[ITEM].ask);
+            expect(buildEnhancementTooltipHTML(data)).not.toContain('Craft Item');
+        } finally {
+            undo();
+        }
     });
 });
 

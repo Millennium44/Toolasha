@@ -1335,13 +1335,32 @@ class Config {
     /**
      * Check if a feature is enabled
      * Uses legacy settingKey if available, otherwise uses feature.enabled
+     *
+     * A key the legacy `features` map has never heard of used to answer `true`
+     * unconditionally, and the feature registry gates every registered feature
+     * through here. Most registry keys are not in that map — they are schema
+     * settings with a checkbox in the settings panel — so for eight of them
+     * (`goalPlanner`, `damageTracker`, `damageTakenTracker`,
+     * `taskInventoryHighlighter`, `sessionBriefing`, `ironCowFarm`,
+     * `overlayTabButton`, `labyrinthMonsterStatCheck`) the checkbox did nothing
+     * at all: nothing else read the key, so the feature started whatever the
+     * player had chosen. The schema is the honest answer for any key it names,
+     * and `getSetting` already falls back to the schema default for a setting
+     * whose stored value has not loaded yet. A key in neither the map nor the
+     * schema keeps the old permissive answer — it is a registry key with no
+     * switch behind it, like the DOM canaries — but says so once, so a key that
+     * loses its setting is findable rather than silently always-on.
      * @param {string} featureKey - Feature key (e.g., 'tooltipPrices')
      * @returns {boolean} Whether feature is enabled
      */
     isFeatureEnabled(featureKey) {
         const feature = this.features?.[featureKey];
         if (!feature) {
-            return true; // Default to enabled if not found
+            if (Object.hasOwn(SCHEMA_DEFAULTS, featureKey)) {
+                return Boolean(this.getSetting(featureKey, SCHEMA_DEFAULTS[featureKey]));
+            }
+            this._noteUnswitchedFeatureKey(featureKey);
+            return true; // No switch anywhere: enabled, as before
         }
 
         // Check legacy setting first (for backward compatibility)
@@ -1351,6 +1370,27 @@ class Config {
 
         // Otherwise use feature.enabled
         return feature.enabled ?? true;
+    }
+
+    /**
+     * Say — once per key, at debug level — that a feature key answered `true`
+     * only because nothing anywhere can switch it off.
+     *
+     * Most such keys are deliberate (the DOM canaries, and features whose
+     * switch is a sub-setting checked inside the module). The one that matters
+     * is a key that used to have a setting and lost it in a rename: that used
+     * to be invisible, and is now one filtered console line away.
+     * @param {string} featureKey - The key with no switch behind it
+     * @returns {void}
+     * @private
+     */
+    _noteUnswitchedFeatureKey(featureKey) {
+        this._unswitchedFeatureKeys ??= new Set();
+        if (this._unswitchedFeatureKeys.has(featureKey)) return;
+        this._unswitchedFeatureKeys.add(featureKey);
+        console.debug(
+            `[Config] Feature key '${featureKey}' is in neither the features map nor the settings schema — treating it as enabled`
+        );
     }
 
     /**

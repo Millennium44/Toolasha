@@ -42,6 +42,16 @@ describe('labyrinth defaults', () => {
     });
 });
 
+describe('enhancement simulator defaults', () => {
+    test('the base item is priced at the cheaper of crafting and buying, as it always has been', () => {
+        // It shipped `false` but behaved as `true`: its only readers go through
+        // `config.isFeatureEnabled`, which answered `true` for any key outside
+        // the legacy features map. Honouring the schema without moving the
+        // default would have changed every enhancement path's base-item cost.
+        expect(getSettingDefinition('enhanceSim_baseItemCraftingCost').default).toBe(true);
+    });
+});
+
 describe('marketplace autofill strategy defaults', () => {
     test('buy and sell both default to matching the best price, not outbidding or undercutting it', () => {
         // A default of 'outbid'/'undercut' quietly escalates or discounts every

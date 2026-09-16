@@ -12,7 +12,11 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, Z_FLOATING_PANEL: 1100 } }));
+/** Settings the mocked config answers with; anything unset is on. */
+const settings = vi.hoisted(() => ({ values: {} }));
+vi.mock('../../core/config.js', () => ({
+    default: { getSetting: (key) => settings.values[key] ?? true, Z_FLOATING_PANEL: 1100 },
+}));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
         onClass: () => () => {},
@@ -148,6 +152,7 @@ function theDropZone() {
 }
 
 beforeEach(() => {
+    settings.values = {};
     panel.open = false;
     panel.toggles = 0;
     device.mobile = false;
@@ -162,6 +167,29 @@ beforeEach(() => {
 afterEach(() => {
     overlayTabButton.cleanup();
     document.body.replaceChildren();
+});
+
+describe('its own switch', () => {
+    test('switched off, it draws nothing — the checkbox used to be decorative', () => {
+        // The module read only the overlay's setting, and the registry gate
+        // answered `true` for the button's own key, so `overlayTabButton` off
+        // still put the button in the strip.
+        settings.values.overlayTabButton = false;
+        buildTabs();
+
+        overlayTabButton.initialize();
+
+        expect(theButton()).toBeNull();
+    });
+
+    test('an overlay that is off still takes the button with it', () => {
+        settings.values.overlayPanel = false;
+        buildTabs();
+
+        overlayTabButton.initialize();
+
+        expect(theButton()).toBeNull();
+    });
 });
 
 describe('finding its place', () => {

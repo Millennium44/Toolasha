@@ -931,7 +931,14 @@ export const settingsGroups = {
                 id: 'enhanceSim_baseItemCraftingCost',
                 label: 'Enhancement path: Use crafting cost for base item if cheaper',
                 type: 'checkbox',
-                default: false,
+                // Ships on because it has always behaved as on: its only readers
+                // go through `config.isFeatureEnabled`, which answered `true` for
+                // any key outside the legacy features map. Now that the gate
+                // reads the schema, a default of `false` would silently change
+                // every enhancement path's base-item cost. No DEFAULT_REWRITES
+                // entry: a stored `false` is a player who ticked it off, and that
+                // choice is now honoured for the first time.
+                default: true,
                 help: 'When enabled, uses the lower of crafting cost or market price for the base item in enhancement path calculations, applied independently to both the Ask and Bid columns',
             },
             enhanceSim_autoTargetLevel: {
