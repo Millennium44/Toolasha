@@ -827,6 +827,45 @@ describe('a settings map arriving from elsewhere is still reconciled', () => {
 
         expect(settings.labyrinthSimMaxHours.value).toBe(6);
     });
+
+    // reconcileKeyMigrationState is the shared piece importSettings' loop above
+    // uses, and what sync's applyPayload (src/features/sync/sync-payload.js)
+    // calls directly with the settings-store keys a downloaded payload just
+    // wrote — a payload is the same "map landed wholesale from elsewhere" case
+    // as an imported file, just without going through importSettings' own
+    // key-matching loop.
+    test('reconcileKeyMigrationState forgets the record for a map landed without one — a payload written before the merge', async () => {
+        migrated();
+        stored.set(`json:${KEY}`, oldMap());
+
+        // What applyPayload does after importEverything writes the map: hand it
+        // the settings-store keys the payload just landed
+        await settingsStorage.reconcileKeyMigrationState([KEY]);
+        const settings = await settingsStorage.loadSettings();
+
+        // The user's choice (market_showEstimatedListingAge: true, folded into
+        // market_listingAge) survives instead of falling back to the schema
+        // default of 'off'
+        expect(settings.market_listingAge.value).toBe('orderBook');
+    });
+
+    test('reconcileKeyMigrationState leaves the record alone when the same batch of keys brings its own', async () => {
+        migrated();
+        stored.set(`json:${KEY}`, {
+            labyrinthSimMaxHours: { id: 'labyrinthSimMaxHours', type: 'number', value: 6 },
+            labyrinthUpgradeMaxHours: { id: 'labyrinthUpgradeMaxHours', type: 'number', value: 96 },
+        });
+        // A payload that also carried its own migration record for this map,
+        // still saying the merge is done
+        stored.set(`json:settings_key_migrations_applied_${KEY}`, ALL_MIGRATIONS);
+
+        await settingsStorage.reconcileKeyMigrationState([KEY, `settings_key_migrations_applied_${KEY}`]);
+        const settings = await settingsStorage.loadSettings();
+
+        // Not reconciled: the hand-set ceiling of 6 is respected rather than
+        // replaced by the largest of the (nonexistent) retired ids
+        expect(settings.labyrinthSimMaxHours.value).toBe(6);
+    });
 });
 
 describe('the marketplace buy-strategy default change is new-installs-only, by design', () => {

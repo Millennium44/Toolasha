@@ -20,6 +20,7 @@
  */
 
 import storage from '../../core/storage.js';
+import settingsStorage from '../../core/settings-storage.js';
 import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
 
@@ -263,6 +264,16 @@ export async function applyPayload(json) {
         for (const key of Object.keys(settingsStore)) {
             if (LOCAL_ONLY_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) delete settingsStore[key];
         }
+        // A settings map here lands the same way copySettingsFromCharacter and
+        // importSettings do: whole, from somewhere else. A payload written by a
+        // build older than a merge carries the retired ids and none of the ids
+        // that replaced them, while this profile's key-migration record still
+        // says those carries are done — so the settings the merge produced read
+        // as never chosen and fall back to schema defaults. Forget the record
+        // for exactly the maps that did not bring their own (see
+        // reconcileKeyMigrationState), so the next load reconciles what this
+        // pull actually landed.
+        await settingsStorage.reconcileKeyMigrationState(Object.keys(settingsStore));
     }
 
     // Land the debounce queue BEFORE reading merge bases, not on the way into

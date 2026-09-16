@@ -27,6 +27,15 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
+// settings-storage.js's own key-migration bookkeeping is exercised by its own
+// tests; here applyPayload's wiring to it is what matters, so it is mocked
+// down to a spy rather than let through to the (also mocked) storage module,
+// which does not stub the methods that bookkeeping needs.
+const reconcileKeyMigrationState = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../../core/settings-storage.js', () => ({
+    default: { reconcileKeyMigrationState },
+}));
+
 const importedPayloads = vi.hoisted(() => []);
 const importOutcome = vi.hoisted(() => ({ failed: [], complete: true }));
 /** What `beginRestore()` landed, in call order, so a test can see when it ran */
@@ -80,6 +89,7 @@ beforeEach(() => {
     storeState.unreadable = false;
     storeState.pending = {};
     flushLog.length = 0;
+    reconcileKeyMigrationState.mockClear();
     storeState.stores = {
         settings: {
             script_settingsMap_abc: { sync_token: { value: 'ghp_secret' }, chatCommands: { isTrue: true } },
@@ -226,6 +236,47 @@ describe('applyPayload', () => {
 
         expect(importedPayloads[0].stores.settings.toolasha_sync_gistId).toBeUndefined();
         expect(importedPayloads[0].stores.settings.keep).toBe(1);
+    });
+});
+
+describe('applyPayload and the key-migration carry', () => {
+    // Same gap c886834a2 closed for copySettingsFromCharacter and
+    // importSettings: a settings map landed from a payload is not this
+    // profile's own save-in-place, it is a map from somewhere else — an older
+    // build's gist, or a device that has not run the merge yet — arriving
+    // under this profile's key-migration record. That record must be forgotten
+    // for exactly the maps that did not bring their own, so the next load
+    // reconciles what actually landed instead of trusting a record that
+    // describes a map that is no longer there.
+    test('a settings map lands and its key-migration record is handed to settingsStorage to reconcile', async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                settings: {
+                    script_settingsMap_abc: { chatCommands: { isTrue: false } },
+                    unrelated_key: 1,
+                },
+            },
+        });
+
+        await applyPayload(json);
+
+        expect(reconcileKeyMigrationState).toHaveBeenCalledTimes(1);
+        const keys = reconcileKeyMigrationState.mock.calls[0][0];
+        expect([...keys]).toEqual(['script_settingsMap_abc', 'unrelated_key']);
+    });
+
+    test('a payload with no settings store never calls it', async () => {
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: { dungeonRuns: { run1: { kills: 1 } } },
+        });
+
+        await applyPayload(json);
+
+        expect(reconcileKeyMigrationState).not.toHaveBeenCalled();
     });
 });
 

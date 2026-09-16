@@ -647,6 +647,38 @@ class SettingsStorage {
     }
 
     /**
+     * Forget the key-migration record for every settings map among `keys` that
+     * landed without a migration record of its own alongside it.
+     *
+     * The shared half of {@link _clearKeyMigrationState}'s callers:
+     * `importSettings` and sync's `applyPayload` both write a batch of storage
+     * keys from somewhere else in one pass, and both need the same answer to
+     * "which of the maps that just landed brought their own record, and which
+     * are stuck with this profile's stale one". `copySettingsFromCharacter`
+     * does not use this — it always writes exactly one map and never a record
+     * beside it, so it calls {@link _clearKeyMigrationState} directly.
+     *
+     * @param {Iterable<string>} keys - Storage keys written in this batch
+     * @returns {Promise<void>}
+     */
+    async reconcileKeyMigrationState(keys) {
+        const landedMaps = new Set();
+        const landedState = new Set();
+
+        for (const key of keys) {
+            if (key.startsWith(this.storageKey)) landedMaps.add(key);
+            for (const prefix of [KEY_MIGRATION_STATE_KEY, ...LEGACY_KEY_MIGRATION_FLAGS.map((f) => f.key)]) {
+                if (key.startsWith(`${prefix}_`)) landedState.add(key.slice(prefix.length + 1));
+            }
+        }
+
+        for (const mapKey of landedMaps) {
+            if (landedState.has(mapKey)) continue;
+            await this._clearKeyMigrationState(mapKey);
+        }
+    }
+
+    /**
      * Build default settings from schema without touching storage
      * Used during early initialization before character ID is known
      * @returns {Object} Settings map with schema defaults only
@@ -1150,9 +1182,8 @@ class SettingsStorage {
             const currentCharId = this.currentCharacterId;
             let imported = 0;
             let skipped = 0;
-            /** Settings maps this import landed, and the maps whose record it brought with them */
-            const importedMaps = new Set();
-            const importedState = new Set();
+            /** Keys this import actually wrote, handed to reconcileKeyMigrationState below */
+            const importedKeys = [];
 
             const knownCharacters = new Set((await this.getKnownCharacters()).map((character) => character.id));
             if (data[this.knownCharactersKey]) {
@@ -1183,17 +1214,10 @@ class SettingsStorage {
 
                 await storage.setJSON(key, value, this.storageArea, true);
                 imported++;
-
-                if (key.startsWith(this.storageKey)) importedMaps.add(key);
-                for (const prefix of [KEY_MIGRATION_STATE_KEY, ...LEGACY_KEY_MIGRATION_FLAGS.map((f) => f.key)]) {
-                    if (key.startsWith(`${prefix}_`)) importedState.add(key.slice(prefix.length + 1));
-                }
+                importedKeys.push(key);
             }
 
-            for (const mapKey of importedMaps) {
-                if (importedState.has(mapKey)) continue;
-                await this._clearKeyMigrationState(mapKey);
-            }
+            await this.reconcileKeyMigrationState(importedKeys);
 
             return { imported, skipped };
         } catch (error) {
