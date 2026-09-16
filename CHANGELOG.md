@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The "Last: Buy / Sell" chip comes back after a tab switch
+
+- The chip was only ever redrawn when a fresh price arrived, so switching marketplace tabs and back made it vanish until the item next traded — which on a quiet book could be a very long time. It now redraws from the last figures it had, the way the neighbouring market widgets already did.
+
 ### Market nav row additions keep their size
 
 - The item-hop arrows, the Next button and the "Last: Buy / Sell" chip no longer shrink or wrap their labels onto several lines when the game's marketplace nav row is crowded — for instance when another script adds a bar of its own to the same row. Toolasha only protects what it puts there; the row is the game's.
