@@ -33,6 +33,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: () => 0,
     getItemPrices: () => null,
+    getItemPriceInfo: () => ({ price: null, source: null, estimated: false }),
 }));
 // The real helper drags the marketplace API — and with it a live socket — into
 // a suite about arithmetic. The formula is one line and is what is under test.

@@ -7,7 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { coinifyHistoryTracker } from './coinify-history-tracker.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -434,22 +434,28 @@ class CoinifyHistoryViewer {
         const revenue = session.totalCoinsEarned || 0;
 
         const netConsumed = attempts * bulkMultiplier;
-        const inputPrices = getItemPrices(session.inputItemHrid, session.enhancementLevel || 0);
-        const marketPrice = inputPrices?.ask > 0 ? inputPrices.ask : inputPrices?.bid > 0 ? inputPrices.bid : 0;
+        // Honours profitCalc_pricingMode the same way transmute does, rather than
+        // a hardcoded ask-then-bid that ignored the setting.
+        const inputPriceInfo = getItemPriceInfo(session.inputItemHrid, {
+            enhancementLevel: session.enhancementLevel || 0,
+            context: 'profit',
+            side: 'buy',
+        });
+        const marketPrice = inputPriceInfo.price > 0 ? inputPriceInfo.price : 0;
         // A refined (★) cape is untradable, so the market prices it at nothing;
         // charging the session 0 for it made a destroyed cape free. See
         // utils/refined-item-cost.js.
         const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
             session.inputItemHrid,
             marketPrice,
-            { enhancementLevel: session.enhancementLevel || 0 }
+            { enhancementLevel: session.enhancementLevel || 0, marketSource: inputPriceInfo.source }
         );
         const inputCost = netConsumed * inputPrice;
         const inputUnpriced = inputBasis === null && netConsumed > 0;
 
         const catalystPrice = (hrid) => {
-            const prices = getItemPrices(hrid, 0);
-            return prices?.ask > 0 ? prices.ask : prices?.bid > 0 ? prices.bid : 0;
+            const price = getItemPrice(hrid, { context: 'profit', side: 'buy' });
+            return price > 0 ? price : 0;
         };
         const catalystCost =
             (session.catalystOfCoinificationUsed || 0) * catalystPrice(CATALYST_OF_COINIFICATION_HRID) +
@@ -1474,6 +1480,8 @@ class CoinifyHistoryViewer {
 }
 
 const coinifyHistoryViewer = new CoinifyHistoryViewer();
+
+export { coinifyHistoryViewer };
 
 export default {
     name: 'Coinify History Viewer',
