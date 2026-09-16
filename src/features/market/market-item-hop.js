@@ -157,9 +157,18 @@ class MarketItemHop {
     /**
      * Return to the item grid by pressing the game's own back button.
      *
-     * The button is found by text, the way listing-next-navigator.js finds Refresh, with the
-     * first non-Refresh native button in the nav row as a fallback for a build that renames it.
-     * Failing to find one does nothing at all rather than guessing.
+     * Primary anchor is structural, not textual: the nav row always renders exactly two native
+     * buttons — "View All Items" first, "Refresh" second (the module comment above describes the
+     * hop buttons as injected "next to Refresh", i.e. after it). That ordering is a layout
+     * decision, not a translation-table lookup, so unlike the buttons' own text it holds on a
+     * client in any language. `/view all/i` and "the other one" text matching are kept only as a
+     * backstop for a build that changes what's in the row — a third button, or just one — where
+     * position alone can no longer be trusted.
+     *
+     * A wrong guess here is not a navigation mistake: if position and text both come up empty
+     * this clicks nothing, and even a stale position guess in a two-button row can at worst click
+     * Refresh — a harmless re-fetch of the page already on screen, never a jump somewhere else.
+     * Failing to find any button does nothing at all rather than guessing further.
      *
      * @returns {boolean} True when a back button was clicked
      */
@@ -167,10 +176,13 @@ class MarketItemHop {
         const container = document.querySelector(NAV_CONTAINER_SEL);
         if (!container) return false;
 
-        const native = Array.from(container.querySelectorAll('button')).filter(
-            (btn) => btn.id !== PREV_BTN_ID && btn.id !== NEXT_BTN_ID
-        );
+        // Toolasha's own injected controls (this feature's prev/next pair, and
+        // listing-next-navigator's "Next" button when that feature shares the same row) all carry
+        // 'mwi-' ids; only what's left is the game's own.
+        const native = Array.from(container.querySelectorAll('button')).filter((btn) => !btn.id.startsWith('mwi-'));
+
         const back =
+            (native.length === 2 && native[0]) ||
             native.find((btn) => /view all/i.test(btn.textContent)) ||
             native.find((btn) => btn.textContent.trim() !== 'Refresh');
         if (!back) return false;

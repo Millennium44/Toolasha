@@ -148,6 +148,45 @@ describe('Market Item Hop', () => {
             document.body.insertAdjacentHTML('beforeend', '<div class="Modal_modalContainer__z"></div>');
             expect(press('Escape').defaultPrevented).toBe(false);
         });
+
+        test('Escape finds the back button by position when the client is not in English', () => {
+            openFromGrid('sword');
+            const container = document.querySelector('[class*="MarketplacePanel_marketNavButtonContainer"]');
+            // Translated labels: neither "View All Items" nor "Refresh" appears anywhere, so only
+            // the structural (first-of-two) anchor can find the back button.
+            container.innerHTML =
+                '<button id="native-back">Alle Artikel ansehen</button><button id="native-refresh">Aktualisieren</button>';
+            const back = document.getElementById('native-back');
+            const clicked = vi.fn();
+            back.addEventListener('click', clicked);
+            expect(press('Escape').defaultPrevented).toBe(true);
+            expect(clicked).toHaveBeenCalled();
+        });
+
+        test('Escape falls through to the text match when the row is not the expected two buttons', () => {
+            openFromGrid('sword');
+            const container = document.querySelector('[class*="MarketplacePanel_marketNavButtonContainer"]');
+            // A third native button breaks the positional assumption; text matching still finds
+            // "View All Items" among the three.
+            container.innerHTML =
+                '<button id="native-back">View All Items</button>' +
+                '<button id="native-refresh">Refresh</button>' +
+                '<button id="native-star">Favorite</button>';
+            const back = document.getElementById('native-back');
+            const clicked = vi.fn();
+            back.addEventListener('click', clicked);
+            expect(press('Escape').defaultPrevented).toBe(true);
+            expect(clicked).toHaveBeenCalled();
+        });
+
+        test('Escape does nothing, rather than guessing, when no back button can be found', () => {
+            openFromGrid('sword');
+            const container = document.querySelector('[class*="MarketplacePanel_marketNavButtonContainer"]');
+            // Neither position (three buttons) nor text (every one reads "Refresh") resolves.
+            container.innerHTML =
+                '<button id="native-a">Refresh</button><button id="native-b">Refresh</button><button id="native-c">Refresh</button>';
+            expect(press('Escape').defaultPrevented).toBe(false);
+        });
     });
 
     describe('guards', () => {
