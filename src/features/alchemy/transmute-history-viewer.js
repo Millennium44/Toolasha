@@ -761,6 +761,153 @@ class TransmuteHistoryViewer {
     }
 
     /**
+     * A signature two transmute inputs share only when transmuting one is
+     * genuinely the same gamble as transmuting the other.
+     *
+     * Four refined capes are each a handful of attempts against a ~6.5% jackpot,
+     * which is far too small a sample to read anything off: one stone either way
+     * moves a per-cape row by hundreds of millions. Pooled, they are one sample
+     * worth looking at — but only if they really are the same bet, so membership
+     * is derived from the game data rather than written down as a list of names.
+     * A hardcoded list would silently miss a fifth refined cape that already
+     * exists in the item map, and would keep averaging a cape in after the game
+     * changed its rates.
+     *
+     * Equivalent means: the same `transmuteSuccessRate`, the same
+     * `bulkMultiplier`, and the same drop table — same number of entries, same
+     * drop rates and counts, and the same non-self-return outputs. The
+     * self-return entry is keyed as `self` rather than by hrid, since every
+     * input returns *itself*; that is the one difference between these items
+     * that is not a difference in the bet. Requiring the non-self-return hrids
+     * to match as well is stricter than comparing rates alone, and deliberately
+     * so: two items that drop *different* jackpots at the same rate are not
+     * interchangeable, and summing their revenue would be nonsense.
+     *
+     * @param {string} itemHrid
+     * @returns {string|null} The signature, or null when the item has no usable
+     *   transmute data (it then pools with nothing, which is the safe default)
+     */
+    getTransmuteEquivalenceKey(itemHrid) {
+        const alchemy = dataManager.getItemDetails(itemHrid)?.alchemyDetail;
+        const dropTable = alchemy?.transmuteDropTable;
+        if (!Array.isArray(dropTable) || dropTable.length === 0) return null;
+        if (!(alchemy.transmuteSuccessRate > 0)) return null;
+
+        const entries = dropTable
+            .map((drop) => {
+                const target = drop.itemHrid === itemHrid ? 'self' : drop.itemHrid;
+                return `${target}:${drop.dropRate ?? 0}:${drop.minCount ?? 1}:${drop.maxCount ?? 1}`;
+            })
+            .sort();
+
+        return JSON.stringify({
+            rate: alchemy.transmuteSuccessRate,
+            bulk: alchemy.bulkMultiplier ?? 1,
+            entries,
+        });
+    }
+
+    /**
+     * Sum a set of equivalent per-item groups into one pooled group.
+     *
+     * Everything the per-item row does has to keep holding here: `impossible`
+     * poisons the pooled row if any member is flagged (the same reason the
+     * "All items" row inherits it — excluding a corrupt member's consumed count
+     * while still summing its revenue is the same mistake one column over), the
+     * `§` repaired and `◇` estimated-catalyst markers carry through, and
+     * Inputs/Jackpot counts only non-self-return outputs.
+     *
+     * @param {Array<Object>} members - Groups from `computeInputItemTotals`
+     * @returns {Object} A group shaped like a per-item one, plus `pooled`/`memberHrids`
+     */
+    buildPooledGroup(members) {
+        const pooled = {
+            pooled: true,
+            memberHrids: members.map((group) => group.inputItemHrid),
+            inputItemHrid: null,
+            sessionCount: 0,
+            attempts: 0,
+            successes: 0,
+            netConsumed: 0,
+            nonSelfReturnOutputs: 0,
+            revenue: 0,
+            inputCost: 0,
+            inputUnpriced: false,
+            coinCost: 0,
+            catalystCost: 0,
+            catalystRecordedSessions: 0,
+            catalystUnrecordedSessions: 0,
+            catalystUnpricedSessions: 0,
+            catalystEstimatedSessions: 0,
+            catalystHrids: new Set(),
+            repairedSessions: 0,
+            unreliableSessions: 0,
+            impossible: false,
+        };
+
+        for (const group of members) {
+            pooled.sessionCount += group.sessionCount;
+            pooled.attempts += group.attempts;
+            pooled.successes += group.successes;
+            pooled.netConsumed += group.netConsumed;
+            pooled.nonSelfReturnOutputs += group.nonSelfReturnOutputs;
+            pooled.revenue += group.revenue;
+            pooled.inputCost += group.inputCost;
+            pooled.coinCost += group.coinCost;
+            pooled.catalystCost += group.catalystCost;
+            pooled.catalystRecordedSessions += group.catalystRecordedSessions;
+            pooled.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
+            pooled.catalystUnpricedSessions += group.catalystUnpricedSessions;
+            pooled.catalystEstimatedSessions += group.catalystEstimatedSessions;
+            pooled.repairedSessions += group.repairedSessions;
+            pooled.unreliableSessions += group.unreliableSessions;
+            pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
+            pooled.impossible = pooled.impossible || group.impossible;
+            for (const hrid of group.catalystHrids || []) pooled.catalystHrids.add(hrid);
+        }
+
+        pooled.memberHrids.sort((a, b) => this.getItemName(a).localeCompare(this.getItemName(b)));
+        pooled.net = pooled.revenue - pooled.inputCost - pooled.catalystCost - pooled.coinCost;
+        pooled.successRate = pooled.attempts > 0 ? pooled.successes / pooled.attempts : null;
+        pooled.inputsPerOutput =
+            pooled.nonSelfReturnOutputs > 0 ? pooled.netConsumed / pooled.nonSelfReturnOutputs : null;
+        pooled.breakEvenInputValue =
+            pooled.netConsumed > 0
+                ? (pooled.revenue - pooled.catalystCost - pooled.coinCost) / pooled.netConsumed
+                : null;
+        return pooled;
+    }
+
+    /**
+     * Pooled rows for sets of equivalent transmute inputs, in addition to (never
+     * instead of) the per-item rows.
+     *
+     * A set of one produces nothing: that is just the per-item row again wearing
+     * a different label.
+     *
+     * @param {Array<Object>} totals - Per-item groups from `computeInputItemTotals`
+     * @returns {Array<Object>} Zero or more pooled groups
+     */
+    computePooledTotals(totals) {
+        const byKey = new Map();
+        for (const group of totals) {
+            const key = this.getTransmuteEquivalenceKey(group.inputItemHrid);
+            if (!key) continue;
+            const bucket = byKey.get(key);
+            if (bucket) bucket.push(group);
+            else byKey.set(key, [group]);
+        }
+
+        const pooled = [];
+        for (const members of byKey.values()) {
+            if (members.length < 2) continue;
+            pooled.push(this.buildPooledGroup(members));
+        }
+        pooled.sort((a, b) => this.getItemName(a.memberHrids[0]).localeCompare(this.getItemName(b.memberHrids[0])));
+        return pooled;
+    }
+
+    /**
      * Render the "Totals by Input Item" table below the session list.
      */
     renderTotals() {
@@ -829,6 +976,13 @@ class TransmuteHistoryViewer {
 
         const tbody = document.createElement('tbody');
         totals.forEach((group, index) => tbody.appendChild(this.buildTotalsRow(group, index)));
+        // Pooled rows sit below the per-item rows they summarize and above the
+        // overall row. They are additional, never a replacement — and they are
+        // deliberately NOT fed into `buildOverallTotalsRow`, which reduces over
+        // the per-item groups; adding them there would count every session twice.
+        this.computePooledTotals(totals).forEach((group, index) =>
+            tbody.appendChild(this.buildTotalsRow(group, totals.length + index))
+        );
         tbody.appendChild(this.buildOverallTotalsRow(totals));
         table.appendChild(tbody);
 
@@ -841,6 +995,7 @@ class TransmuteHistoryViewer {
             '† catalyst on some sessions could not be priced — excluded, not zero    ' +
             '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero    ' +
             '◇ catalyst estimated on some sessions, not measured    ' +
+            'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members    ' +
             '§ self-return counts on some sessions were derived from the recorded successes, not observed — ' +
             'and that success count is itself approximate on these sessions (recorded through the same batching ' +
             'bug), so input cost on them is likely understated, not just approximate';
@@ -877,19 +1032,38 @@ class TransmuteHistoryViewer {
             'or success count is hidden here to avoid presenting corrupt data as fact.';
         row.style.cssText = `
             border-bottom: 1px solid #333;
-            background: ${group.impossible ? 'rgba(251,191,36,0.08)' : index % 2 === 0 ? '#2a2a2a' : '#252525'};
+            ${group.pooled ? 'border-top: 1px dashed #555;' : ''}
+            background: ${
+                group.impossible
+                    ? 'rgba(251,191,36,0.08)'
+                    : group.pooled
+                      ? 'rgba(74,144,226,0.08)'
+                      : index % 2 === 0
+                        ? '#2a2a2a'
+                        : '#252525'
+            };
         `;
 
         const itemCell = document.createElement('td');
         itemCell.style.cssText = 'padding: 6px 10px; display: flex; align-items: center; gap: 8px;';
-        this.appendItemIcon(itemCell, group.inputItemHrid, 18);
+        if (group.pooled) {
+            for (const hrid of group.memberHrids) this.appendItemIcon(itemCell, hrid, 18);
+        } else {
+            this.appendItemIcon(itemCell, group.inputItemHrid, 18);
+        }
         const nameSpan = document.createElement('span');
         // A repaired group is sound arithmetic over a derived number, not an
         // observed one, and the row has to keep saying which it is
         const repairedMark = group.repairedSessions > 0 ? '§' : '';
-        nameSpan.textContent = (group.impossible ? '⚠ ' : '') + this.getItemName(group.inputItemHrid) + repairedMark;
+        const baseLabel = group.pooled
+            ? `Pooled: ${group.memberHrids.length} equivalent inputs`
+            : this.getItemName(group.inputItemHrid);
+        nameSpan.textContent = (group.impossible ? '⚠ ' : '') + baseLabel + repairedMark;
+        if (group.pooled) nameSpan.style.fontStyle = 'italic';
         if (group.impossible) itemCell.title = impossibleTitle;
-        else if (repairedMark) {
+        else if (group.pooled) {
+            itemCell.title = this.pooledMembershipTitle(group);
+        } else if (repairedMark) {
             itemCell.title =
                 `${group.repairedSessions} session(s) in this group had their self-return count derived from ` +
                 'the recorded successes, not observed — they were recorded through the batched-message counting ' +
@@ -952,6 +1126,30 @@ class TransmuteHistoryViewer {
         );
 
         return row;
+    }
+
+    /**
+     * The tooltip that makes a pooled row's membership discoverable — which
+     * items went in, and on what grounds. A row the reader cannot audit is a
+     * row they have to take on faith.
+     *
+     * @param {Object} group - A pooled group from `buildPooledGroup`
+     * @returns {string}
+     */
+    pooledMembershipTitle(group) {
+        const names = group.memberHrids.map((hrid) => this.getItemName(hrid)).join(', ');
+        let title =
+            `Pooled across ${group.memberHrids.length} inputs: ${names}. ` +
+            'These share the same transmute success rate, the same drop table (same outputs, rates and counts) ' +
+            'and the same bulk size, so transmuting any of them is the same bet and the samples can be added. ' +
+            'Membership is read from the game data, not a fixed list — an item whose rates differ drops out by ' +
+            'itself. The per-item rows above are unchanged.';
+        if (group.repairedSessions > 0) {
+            title +=
+                ` ${group.repairedSessions} session(s) pooled here had their self-return count derived from the ` +
+                'recorded successes, not observed — input cost on them is likely understated.';
+        }
+        return title;
     }
 
     /**
