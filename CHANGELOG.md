@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement path costs stay as they were, and sync pulls keep your settings
+
+- "Enhancement path: use crafting cost for base item if cheaper" is switched on once for existing characters. Its default changed when the switch started being honoured, and without this every existing user's enhancement path would have quietly started costing the base item at the market ask instead of the cheaper crafting cost. A stored "off" could not have been a real choice, because the setting did nothing until now.
+- A sync pull now carries replaced settings across the way importing a file and copying from another character already did, so pulling a payload written by an older build no longer drops your listing-age, badge and labyrinth choices back to defaults.
+
 ### Inventory totals no longer vanish with the badges
 
 - Custom-tab section totals used to disappear when value badges were off or set to per-item prices, while the category totals carried on regardless. Both now always show, summed the same way: the side you are sorting by, or the ask side when there is no sort. The setting governs the per-item badge, which is what its help now says.
