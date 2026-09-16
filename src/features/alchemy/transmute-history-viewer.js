@@ -297,6 +297,11 @@ class TransmuteHistoryViewer {
         tableContainer.className = 'mwi-transmute-history-table-container';
         tableContainer.style.cssText = 'overflow-x: auto;';
 
+        // Totals-by-input-item container
+        const totalsContainer = document.createElement('div');
+        totalsContainer.className = 'mwi-transmute-history-totals-container';
+        totalsContainer.style.cssText = 'overflow-x: auto;';
+
         // Pagination
         const pagination = document.createElement('div');
         pagination.className = 'mwi-transmute-history-pagination';
@@ -311,6 +316,7 @@ class TransmuteHistoryViewer {
         content.appendChild(controls);
         content.appendChild(badges);
         content.appendChild(tableContainer);
+        content.appendChild(totalsContainer);
         content.appendChild(pagination);
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
@@ -595,11 +601,22 @@ class TransmuteHistoryViewer {
                     font-weight: bold;
                     color: ${profitDetail.profit >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS};
                 `;
+                let catalystLine;
+                if (profitDetail.catalystHrid) {
+                    catalystLine =
+                        `Catalyst (${this.getItemName(profitDetail.catalystHrid)}): ` +
+                        `−${formatKMB(profitDetail.catalystCost, 1)}${profitDetail.catalystUnpriced ? ' (unpriced, not counted)' : ''}`;
+                } else if (profitDetail.catalystUnrecorded) {
+                    catalystLine = 'Catalyst: not recorded (predates tracking) — not counted';
+                } else {
+                    catalystLine = 'Catalyst: none';
+                }
                 profitCell.title =
                     `Output value: ${formatKMB(profitDetail.revenue, 1)}\n` +
                     `${formatInputCostLine(profitDetail)}\n` +
                     `Transmute coins: −${formatKMB(profitDetail.coinCost, 1)}\n` +
-                    `Excludes catalysts and teas`;
+                    `${catalystLine} (see totals row below)\n` +
+                    `Excludes teas`;
                 row.appendChild(profitCell);
 
                 // Delete
@@ -629,14 +646,401 @@ class TransmuteHistoryViewer {
 
         table.appendChild(tbody);
         tableContainer.appendChild(table);
+        this.renderTotals();
         this.renderPagination();
+    }
+
+    // ─── Totals by Input Item ───────────────────────────────────────────────
+
+    /**
+     * Group the currently filtered sessions by input item and total them.
+     * Consumed/cost figures use the same per-session `computeSessionProfit`
+     * result already cached by `applyFilters`, so the totals row and the
+     * per-row Profit column can never disagree about a single session's math.
+     *
+     * A group whose recorded counts are internally impossible (more result
+     * entries than successes, or a consumed count that clamped to zero despite
+     * real attempts — the signature of the self-return batching bug) is
+     * flagged rather than totaled: averaging corrupt sessions in with good
+     * ones would present a confident number that is simply wrong.
+     *
+     * @returns {Array<Object>} One entry per distinct inputItemHrid
+     */
+    computeInputItemTotals() {
+        const groups = new Map();
+
+        for (const session of this.filteredSessions) {
+            const detail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
+            const hrid = session.inputItemHrid;
+
+            let group = groups.get(hrid);
+            if (!group) {
+                group = {
+                    inputItemHrid: hrid,
+                    sessionCount: 0,
+                    attempts: 0,
+                    successes: 0,
+                    netConsumed: 0,
+                    revenue: 0,
+                    inputCost: 0,
+                    inputUnpriced: false,
+                    coinCost: 0,
+                    catalystCost: 0,
+                    catalystRecordedSessions: 0,
+                    catalystUnrecordedSessions: 0,
+                    catalystUnpricedSessions: 0,
+                    catalystHrids: new Set(),
+                    impossible: false,
+                };
+                groups.set(hrid, group);
+            }
+
+            group.sessionCount++;
+            group.attempts += session.totalAttempts || 0;
+            group.successes += session.totalSuccesses || 0;
+            group.netConsumed += detail.netConsumed;
+            group.revenue += detail.revenue;
+            group.inputCost += detail.inputCost;
+            if (detail.inputUnpriced) group.inputUnpriced = true;
+            group.coinCost += detail.coinCost;
+
+            if (detail.catalystHrid) {
+                group.catalystRecordedSessions++;
+                group.catalystHrids.add(detail.catalystHrid);
+                if (detail.catalystUnpriced) {
+                    group.catalystUnpricedSessions++;
+                } else {
+                    group.catalystCost += detail.catalystCost;
+                }
+            } else if (detail.catalystUnrecorded) {
+                group.catalystUnrecordedSessions++;
+            }
+
+            const resultCount = Object.values(session.results || {}).reduce((sum, r) => sum + (r.count || 0), 0);
+            const successes = session.totalSuccesses || 0;
+            const attempts = session.totalAttempts || 0;
+            if (resultCount > successes || (detail.netConsumed === 0 && attempts > 0)) {
+                group.impossible = true;
+            }
+        }
+
+        const totals = Array.from(groups.values()).map((group) => {
+            const net = group.revenue - group.inputCost - group.catalystCost - group.coinCost;
+            const successRate = group.attempts > 0 ? group.successes / group.attempts : null;
+            const inputsPerOutput = group.successes > 0 ? group.netConsumed / group.successes : null;
+            // The input value at which recorded revenue exactly covers catalyst
+            // and coin cost for what was consumed — answers "was the recorded
+            // catalyst worth it" without needing to know what the input is
+            // worth. Above this value, it paid for itself; below it, it did not.
+            const breakEvenInputValue =
+                group.netConsumed > 0
+                    ? (group.revenue - group.catalystCost - group.coinCost) / group.netConsumed
+                    : null;
+
+            return { ...group, net, successRate, inputsPerOutput, breakEvenInputValue };
+        });
+
+        totals.sort((a, b) => this.getItemName(a.inputItemHrid).localeCompare(this.getItemName(b.inputItemHrid)));
+        return totals;
+    }
+
+    /**
+     * Render the "Totals by Input Item" table below the session list.
+     */
+    renderTotals() {
+        const container = this.modal.querySelector('.mwi-transmute-history-totals-container');
+        while (container.firstChild) container.removeChild(container.firstChild);
+
+        const totals = this.computeInputItemTotals();
+        if (totals.length === 0) return;
+
+        const heading = document.createElement('div');
+        heading.textContent = 'Totals by Input Item';
+        heading.style.cssText = 'color: #fff; font-weight: bold; margin: 18px 0 8px;';
+        container.appendChild(heading);
+
+        const table = document.createElement('table');
+        table.style.cssText = 'width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap;';
+
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        headerRow.style.background = '#1a1a1a';
+
+        const headers = [
+            { label: 'Input Item' },
+            { label: 'Sessions' },
+            { label: 'Attempts' },
+            { label: 'Consumed' },
+            { label: 'Successes' },
+            { label: 'Revenue' },
+            { label: 'Input Cost' },
+            {
+                label: 'Catalyst Cost',
+                title:
+                    'Recorded catalyst at session start × successes × current buy price. ' +
+                    'A mid-session catalyst swap is not reflected — only the catalyst in the slot when the session began is priced.',
+            },
+            { label: 'Coin Cost' },
+            { label: 'Net' },
+            { label: 'Inputs/Output', title: 'Inputs actually consumed per successful (non-self-return) output.' },
+            {
+                label: 'Break-even Input',
+                title:
+                    'Input value at which revenue exactly covers catalyst + coin cost for what was consumed. ' +
+                    'Above this, the recorded catalyst paid for itself; below it, it did not.',
+            },
+        ];
+
+        headers.forEach((col) => {
+            const th = document.createElement('th');
+            th.textContent = col.label;
+            th.style.cssText =
+                'padding: 8px 10px; text-align: left; border-bottom: 2px solid #555; white-space: nowrap;';
+            if (col.title) th.title = col.title;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        totals.forEach((group, index) => tbody.appendChild(this.buildTotalsRow(group, index)));
+        tbody.appendChild(this.buildOverallTotalsRow(totals));
+        table.appendChild(tbody);
+
+        container.appendChild(table);
+
+        const legend = document.createElement('div');
+        legend.style.cssText = 'color: #888; font-size: 11px; margin-top: 6px;';
+        legend.textContent =
+            '* input unpriced — total is incomplete    ' +
+            '† catalyst on some sessions could not be priced — excluded, not zero    ' +
+            '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero';
+        container.appendChild(legend);
+    }
+
+    /**
+     * Create a plain totals-table `<td>` with shared styling.
+     * @param {string} text
+     * @param {{color?: string, bold?: boolean, title?: string}} [opts]
+     * @returns {HTMLTableCellElement}
+     */
+    createTotalsCell(text, opts = {}) {
+        const td = document.createElement('td');
+        td.textContent = text;
+        td.style.cssText = `padding: 6px 10px;${opts.color ? ` color: ${opts.color};` : ''}${opts.bold ? ' font-weight: bold;' : ''}`;
+        if (opts.title) td.title = opts.title;
+        return td;
+    }
+
+    /**
+     * Build one totals row for a single input-item group.
+     * @param {Object} group
+     * @param {number} index
+     * @returns {HTMLTableRowElement}
+     */
+    buildTotalsRow(group, index) {
+        const row = document.createElement('tr');
+        const impossibleTitle =
+            "This group's recorded counts are internally impossible (more results than successes, or a " +
+            'consumed count that clamped to zero despite real attempts) — the signature of the self-return ' +
+            "batching bug. Numbers that depend on it aren't shown to avoid presenting corrupt data as fact.";
+        row.style.cssText = `
+            border-bottom: 1px solid #333;
+            background: ${group.impossible ? 'rgba(251,191,36,0.08)' : index % 2 === 0 ? '#2a2a2a' : '#252525'};
+        `;
+
+        const itemCell = document.createElement('td');
+        itemCell.style.cssText = 'padding: 6px 10px; display: flex; align-items: center; gap: 8px;';
+        this.appendItemIcon(itemCell, group.inputItemHrid, 18);
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = (group.impossible ? '⚠ ' : '') + this.getItemName(group.inputItemHrid);
+        if (group.impossible) itemCell.title = impossibleTitle;
+        itemCell.appendChild(nameSpan);
+        row.appendChild(itemCell);
+
+        row.appendChild(this.createTotalsCell(String(group.sessionCount)));
+        row.appendChild(this.createTotalsCell(String(group.attempts)));
+        row.appendChild(
+            this.createTotalsCell(group.impossible ? '—' : String(group.netConsumed), {
+                title: group.impossible ? impossibleTitle : undefined,
+            })
+        );
+
+        const successPct = group.successRate !== null ? `${(group.successRate * 100).toFixed(1)}%` : '—';
+        row.appendChild(this.createTotalsCell(`${group.successes} (${successPct})`));
+
+        row.appendChild(this.createTotalsCell(formatKMB(group.revenue, 1)));
+        row.appendChild(
+            this.createTotalsCell(formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''), {
+                title: group.inputUnpriced
+                    ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
+                    : undefined,
+            })
+        );
+
+        const [groupCatalystText, groupCatalystTitle] = this.formatCatalystTotal(group);
+        row.appendChild(this.createTotalsCell(groupCatalystText, { title: groupCatalystTitle }));
+
+        row.appendChild(this.createTotalsCell(formatKMB(group.coinCost, 1)));
+        row.appendChild(
+            this.createTotalsCell(group.impossible ? '—' : formatKMB(group.net, 1), {
+                color: group.impossible ? '#fbbf24' : group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                bold: true,
+                title: group.impossible ? impossibleTitle : undefined,
+            })
+        );
+
+        row.appendChild(
+            this.createTotalsCell(
+                !group.impossible && group.inputsPerOutput !== null ? group.inputsPerOutput.toFixed(2) : '—'
+            )
+        );
+        row.appendChild(
+            this.createTotalsCell(
+                !group.impossible && group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—'
+            )
+        );
+
+        return row;
+    }
+
+    /**
+     * Build the "All items" summary row across every group.
+     * @param {Array<Object>} totals
+     * @returns {HTMLTableRowElement}
+     */
+    buildOverallTotalsRow(totals) {
+        const overall = totals.reduce(
+            (acc, group) => {
+                acc.sessionCount += group.sessionCount;
+                acc.attempts += group.attempts;
+                acc.successes += group.successes;
+                acc.revenue += group.revenue;
+                acc.inputCost += group.inputCost;
+                acc.coinCost += group.coinCost;
+                acc.catalystCost += group.catalystCost;
+                acc.inputUnpriced = acc.inputUnpriced || group.inputUnpriced;
+                acc.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
+                acc.catalystUnpricedSessions += group.catalystUnpricedSessions;
+                if (group.impossible) {
+                    acc.hasImpossibleGroup = true;
+                } else {
+                    acc.netConsumed += group.netConsumed;
+                }
+                return acc;
+            },
+            {
+                sessionCount: 0,
+                attempts: 0,
+                successes: 0,
+                revenue: 0,
+                inputCost: 0,
+                coinCost: 0,
+                catalystCost: 0,
+                netConsumed: 0,
+                inputUnpriced: false,
+                catalystUnrecordedSessions: 0,
+                catalystUnpricedSessions: 0,
+                hasImpossibleGroup: false,
+            }
+        );
+
+        const row = document.createElement('tr');
+        row.style.cssText = 'border-top: 2px solid #555; background: #1f1f1f;';
+
+        const itemCell = document.createElement('td');
+        itemCell.textContent = 'All items';
+        itemCell.style.cssText = 'padding: 6px 10px; font-weight: bold;';
+        row.appendChild(itemCell);
+
+        row.appendChild(this.createTotalsCell(String(overall.sessionCount), { bold: true }));
+        row.appendChild(this.createTotalsCell(String(overall.attempts), { bold: true }));
+        row.appendChild(
+            this.createTotalsCell(
+                overall.hasImpossibleGroup ? `${overall.netConsumed}*` : String(overall.netConsumed),
+                {
+                    bold: true,
+                    title: overall.hasImpossibleGroup ? 'Excludes group(s) flagged as corrupt above.' : undefined,
+                }
+            )
+        );
+
+        const successPct = overall.attempts > 0 ? `${((overall.successes / overall.attempts) * 100).toFixed(1)}%` : '—';
+        row.appendChild(this.createTotalsCell(`${overall.successes} (${successPct})`, { bold: true }));
+        row.appendChild(this.createTotalsCell(formatKMB(overall.revenue, 1), { bold: true }));
+        row.appendChild(
+            this.createTotalsCell(formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''), { bold: true })
+        );
+
+        const [catalystText, catalystTitle] = this.formatCatalystTotal(overall);
+        row.appendChild(this.createTotalsCell(catalystText, { bold: true, title: catalystTitle }));
+
+        row.appendChild(this.createTotalsCell(formatKMB(overall.coinCost, 1), { bold: true }));
+
+        const net = overall.revenue - overall.inputCost - overall.catalystCost - overall.coinCost;
+        row.appendChild(
+            this.createTotalsCell(formatKMB(net, 1), {
+                bold: true,
+                color: net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                title: overall.hasImpossibleGroup ? 'Excludes group(s) flagged as corrupt above.' : undefined,
+            })
+        );
+
+        // Mixed input items — neither figure is meaningful across items
+        row.appendChild(this.createTotalsCell('—'));
+        row.appendChild(this.createTotalsCell('—'));
+
+        return row;
+    }
+
+    /**
+     * Format a group's catalyst-cost cell text + tooltip.
+     * @param {{catalystRecordedSessions: number, catalystUnrecordedSessions: number,
+     *   catalystUnpricedSessions: number, catalystCost: number}} group
+     * @returns {[string, string|undefined]}
+     */
+    formatCatalystTotal(group) {
+        if (group.catalystRecordedSessions === 0 && group.catalystUnpricedSessions === 0) {
+            if (group.catalystUnrecordedSessions > 0) {
+                return [
+                    'unrecorded',
+                    `${group.catalystUnrecordedSessions} session(s) predate catalyst tracking — cost is unknown, not zero.`,
+                ];
+            }
+            return ['—', undefined];
+        }
+
+        let text = formatKMB(group.catalystCost, 1);
+        if (group.catalystUnpricedSessions > 0) text += '†';
+        if (group.catalystUnrecordedSessions > 0) text += '‡';
+
+        const notes = [];
+        if (group.catalystUnpricedSessions > 0) {
+            notes.push(
+                `${group.catalystUnpricedSessions} session(s) used a catalyst the market can't price — excluded.`
+            );
+        }
+        if (group.catalystUnrecordedSessions > 0) {
+            notes.push(
+                `${group.catalystUnrecordedSessions} session(s) have no recorded catalyst — excluded, not zero.`
+            );
+        }
+        if (group.catalystHrids && group.catalystHrids.size > 1) {
+            notes.push('Multiple catalyst types were recorded across these sessions.');
+        }
+        return [text, notes.join(' ') || undefined];
     }
 
     /**
      * Compute session profit: recorded output value minus the cost of consumed
      * inputs (at current buy price — historical input prices were not recorded)
-     * and the transmute coin fee. Catalysts and teas are not tracked, so they
-     * are excluded.
+     * and the transmute coin fee. Teas are not tracked, so they stay excluded
+     * from `profit`. Catalysts ARE now costed — as `catalystCost`, reported
+     * separately rather than folded into `profit` — because a session recorded
+     * before catalyst tracking existed has no way to say whether one was used,
+     * and folding an unknown into the headline profit figure would read as
+     * "free", which is exactly the mistake the input-pricing fallback below
+     * exists to avoid making a second time.
      *
      * The recorded output values are RAW sell prices — a record of what the
      * market said, which is what a record should be — while the forecast in
@@ -649,9 +1053,19 @@ class TransmuteHistoryViewer {
      * when it is a refined (★) item, and is reported as unpriced when even that
      * fails — an unknown cost is not a zero one.
      *
+     * Catalysts are consumed only on success (see `alchemy-profit-calculator.js`:
+     * `catalystCostPerAttempt = catalystPrice * successRate`), so a session's
+     * exact catalyst cost is `totalSuccesses × catalyst price`.
+     * `session.predictedCatalystHrid` is the catalyst recorded at session
+     * *start* — a mid-session catalyst swap is not reflected. `null` means "not
+     * recorded" (sessions saved before this field existed), never "none used";
+     * `catalystUnrecorded` distinguishes the two so callers do not read it as
+     * zero-cost.
+     *
      * @param {Object} session
      * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number,
-     *   inputBasis: string|null, inputUnpriced: boolean}}
+     *   inputBasis: string|null, inputUnpriced: boolean, catalystHrid: string|null, catalystCost: number,
+     *   catalystUnrecorded: boolean, catalystUnpriced: boolean}}
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
@@ -687,6 +1101,22 @@ class TransmuteHistoryViewer {
         // is the one that was actually billed, so it overrides the item's current one.
         const coinCost = getAlchemyCoinCost(itemDetails, 'transmute', bulkMultiplier) * attempts;
 
+        // Catalyst cost — see the docstring above. `null` (unrecorded) is kept
+        // apart from "no catalyst" (`totalSuccesses === 0`): a session with
+        // successes but no recorded hrid is a gap in the data, not a free run.
+        const catalystHrid = session.predictedCatalystHrid ?? null;
+        const catalystUnrecorded = catalystHrid === null && session.totalSuccesses > 0;
+        let catalystCost = 0;
+        let catalystUnpriced = false;
+        if (catalystHrid) {
+            const catalystPrice = getItemPrice(catalystHrid, { context: 'profit', side: 'buy' });
+            if (catalystPrice > 0) {
+                catalystCost = session.totalSuccesses * catalystPrice;
+            } else {
+                catalystUnpriced = true;
+            }
+        }
+
         return {
             profit: revenue - inputCost - coinCost,
             revenue,
@@ -695,6 +1125,10 @@ class TransmuteHistoryViewer {
             netConsumed,
             inputBasis,
             inputUnpriced,
+            catalystHrid,
+            catalystCost,
+            catalystUnrecorded,
+            catalystUnpriced,
         };
     }
 
