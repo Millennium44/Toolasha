@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Inventory totals no longer vanish with the badges
+
+- Custom-tab section totals used to disappear when value badges were off or set to per-item prices, while the category totals carried on regardless. Both now always show, summed the same way: the side you are sorting by, or the ask side when there is no sort. The setting governs the per-item badge, which is what its help now says.
+
 ### Audit round: settings that could be lost, and switches that need a reload
 
 - Copying settings from another character, or importing a settings file written by an older build, could silently lose your listing-age, badge and labyrinth choices: the old settings arrived but the record said there was nothing left to carry across, so they fell back to defaults. Both paths now redo the carry-over for the settings they land.
