@@ -53,6 +53,7 @@ vi.mock('../../utils/key-cost.js', () => ({
     formatKeyCostNote: () => '',
     describeKeyCost: () => ({ unitCost: null }),
     getKeyPricingMode: () => 'ask',
+    resolveKeyPricing: () => ({ priceSide: 'ask', basis: 'market' }),
 }));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: {
