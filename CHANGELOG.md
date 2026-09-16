@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### What's New shows the pricing dropdowns, and two new defaults
+
+- The Buy and Sell pricing rows in the What's New panel now carry the real dropdown instead of only a link to Settings, writing through the same path, with Iron Cow locking respected.
+- New installs start with listing age on "Both" and inventory value badges on "Stack value, only while sorting by Ask/Bid". Anyone with a stored value keeps it.
+- Iron Cow now has an explicit "off" value for the badge setting; without it, disabling badges under that mode would have landed on the new default instead of off.
+
 ### One setting each for listing age and inventory value badges
 
 - Three listing-age switches become one choice of where to show it (off, my listings, the order book, or both), and the Elapsed/Date-Time format is now honoured on My Listings as well as the order book, where it used to be ignored. The top-order-age column rides with the My Listings side.
