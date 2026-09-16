@@ -16,7 +16,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import { getItemPrice } from './market-data.js';
+import { getItemPrice, getItemPriceInfo } from './market-data.js';
 import { calculateArtisanBonus } from './material-calculator.js';
 import { formatKMB, formatLargeNumber } from './formatters.js';
 import { resolveItemPrice } from './profit-helpers.js';
@@ -170,6 +170,28 @@ function defaultQuoteAt(itemHrid, level) {
 }
 
 /**
+ * Buy-side quote for a refined item, blind to an Iron Cow vendor/coinify
+ * valuation.
+ *
+ * `getItemPriceInfo` consults Iron Cow before the market (deliberately — see
+ * that module), so a `'vendor'` character's quote for an untradable-in-practice
+ * refined cape is its vendor `sellPrice`: what it could be dumped for, not what
+ * it cost to make. Feeding that into `resolveRefinedItemCost`'s cheaper-of-two
+ * comparison let a 100K vendor figure beat an ~79M craft cost by 800x. Treating
+ * it as no quote here lets the craft cost run and win instead. A real book quote
+ * (or the game's official value-map estimate) is unaffected — this only ever
+ * nulls out `'vendor'`/`'coinify'`.
+ * @param {string} itemHrid - Refined item HRID
+ * @param {number} level - Enhancement level
+ * @returns {number|null} Price, or null when unpriced or off-market
+ */
+function craftPreferredQuoteAt(itemHrid, level) {
+    const info = getItemPriceInfo(itemHrid, { enhancementLevel: level, context: 'profit', side: 'buy' });
+    if (info.source === 'vendor' || info.source === 'coinify') return null;
+    return info.price > 0 ? info.price : null;
+}
+
+/**
  * Resolve what one refined item costs to acquire, and what a returned copy of it
  * is worth back.
  *
@@ -244,17 +266,26 @@ export function resolveRefinedItemCost(itemHrid, options = {}) {
  * @param {number} [options.enhancementLevel=0] - The session's enhancement level; the craft
  *   fallback is a +0 basis and is not applied above it
  * @param {string} [options.marketBasis='current buy'] - How to describe the market price
+ * @param {string|null} [options.marketSource] - The `source` `getItemPriceInfo`/`getItemPrices`
+ *   reported for `marketPrice` (`'vendor'`/`'coinify'` for an Iron Cow off-market valuation,
+ *   `'book'`/`'value'`/`'custom'` for a real quote). A refined item's `'vendor'`/`'coinify'`
+ *   figure is what it could be dumped for, not a cost basis, so it does not win over the
+ *   refinement craft cost the way a real quote does — see `craftPreferredQuoteAt`.
  * @returns {{price: number, basis: string|null, unpriced: boolean}} Unit price and its basis
  */
 export function priceInputWithRefinementFallback(itemHrid, marketPrice, options = {}) {
-    const { enhancementLevel = 0, marketBasis = 'current buy' } = options;
-    if (marketPrice > 0) {
+    const { enhancementLevel = 0, marketBasis = 'current buy', marketSource = null } = options;
+    const isOffMarketValuation = isRefinedItem(itemHrid) && (marketSource === 'vendor' || marketSource === 'coinify');
+
+    if (marketPrice > 0 && !isOffMarketValuation) {
         return { price: marketPrice, basis: marketBasis, unpriced: false };
     }
 
     if (isRefinedItem(itemHrid) && enhancementLevel === 0) {
         try {
-            const resolved = resolveRefinedItemCost(itemHrid);
+            const resolved = resolveRefinedItemCost(itemHrid, {
+                quoteAt: (level) => craftPreferredQuoteAt(itemHrid, level),
+            });
             if (resolved && resolved.itemCost > 0) {
                 const basis =
                     resolved.source === 'craft'
@@ -267,6 +298,12 @@ export function priceInputWithRefinementFallback(itemHrid, marketPrice, options 
         } catch (error) {
             console.error('[RefinedItemCost] Failed to resolve refinement cost:', error);
         }
+    }
+
+    // Craft did not resolve (no refinement action, an unpriced material); an
+    // off-market valuation held back above is still better than nothing
+    if (isOffMarketValuation && marketPrice > 0) {
+        return { price: marketPrice, basis: marketBasis, unpriced: false };
     }
 
     return { price: 0, basis: null, unpriced: true };
