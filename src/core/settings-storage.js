@@ -328,6 +328,17 @@ const SHARED_SETTING_GROUPS = ['sync', 'colors'];
  * the wall does not change when the character does. The rest of `notifications`
  * deliberately stays per character: a combat alt wanting death alerts while a
  * crafting alt does not is a real preference.
+ *
+ * The two thread settings describe the *machine*: how many cores there are to
+ * spend on a simulation is not a question a character has its own answer to.
+ * They are shared here and, unlike everything else in this map, carved out of
+ * sync — an 8-core desktop's number landing on a laptop would quietly make the
+ * simulator worse there. See `DEVICE_LOCAL_SETTING_IDS` in
+ * `features/sync/sync-payload.js`.
+ *
+ * The two update-check settings describe the *install*: how often this copy of
+ * the script asks whether a newer one exists has nothing to do with which
+ * character is logged in. They do travel with sync, the same way the colors do.
  */
 const SHARED_SETTING_IDS = [
     'formatting_useKMBFormat',
@@ -335,6 +346,10 @@ const SHARED_SETTING_IDS = [
     'notifications_quietHoursEnabled',
     'notifications_quietHoursStart',
     'notifications_quietHoursEnd',
+    'combatSim_maxThreads',
+    'combatSim_uncapThreads',
+    'updateCheck',
+    'updateCheckHours',
 ];
 
 /**
@@ -346,7 +361,7 @@ const SHARED_SETTING_IDS = [
  * reconsiders an id the shared map already answers, so re-running it after a
  * bump only looks at the ids that just joined.
  */
-const SHARED_SCOPE_FLAG_KEY = 'settings_shared_scope_v2';
+const SHARED_SCOPE_FLAG_KEY = 'settings_shared_scope_v3';
 
 /**
  * Where a carry-over that could not decide records what it found, for the sync

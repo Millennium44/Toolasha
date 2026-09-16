@@ -123,6 +123,26 @@ describe('redaction', () => {
         expect(storeState.stores.settings.script_settingsMap_abc.sync_token).toEqual({ value: 'ghp_secret' });
     });
 
+    test('strips the thread settings, which are the machine’s rather than the account’s', () => {
+        storeState.stores.settings.script_settingsMap_abc.combatSim_maxThreads = { value: 12 };
+        storeState.stores.settings.script_settingsMap_abc.combatSim_uncapThreads = { isTrue: true };
+        storeState.stores.settings.script_settingsMap_shared = {
+            combatSim_maxThreads: { value: 12 },
+            color_profit: { value: '#123456' },
+            updateCheckHours: { value: 24 },
+        };
+
+        const safe = redactSettingsStore(storeState.stores.settings);
+
+        expect(safe.script_settingsMap_abc.combatSim_maxThreads).toBeUndefined();
+        expect(safe.script_settingsMap_abc.combatSim_uncapThreads).toBeUndefined();
+        // The account-wide map shares the prefix, so it is cleaned as well
+        expect(safe.script_settingsMap_shared.combatSim_maxThreads).toBeUndefined();
+        // ...while a setting that is shared but not device-local still travels
+        expect(safe.script_settingsMap_shared.color_profit).toEqual({ value: '#123456' });
+        expect(safe.script_settingsMap_shared.updateCheckHours).toEqual({ value: 24 });
+    });
+
     test('handles a settings map stored as a JSON string', () => {
         const safe = redactSettingsStore({
             script_settingsMap_abc: JSON.stringify({ sync_token: { value: 'x' }, a: 1 }),
@@ -223,6 +243,63 @@ describe('applyPayload', () => {
 
         const written = JSON.parse(importedPayloads[0].stores.settings.script_settingsMap_abc);
         expect(written).toEqual({ chatCommands: { isTrue: false }, onlyOnThisBuild: { value: 'kept' } });
+    });
+
+    test('keeps this machine’s thread count when the payload says nothing about it', async () => {
+        storeState.stores.settings.script_settingsMap_abc.combatSim_maxThreads = { value: 2 };
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: { settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } } },
+        });
+
+        await applyPayload(json);
+
+        const written = importedPayloads[0].stores.settings.script_settingsMap_abc;
+        expect(written.combatSim_maxThreads).toEqual({ value: 2 });
+    });
+
+    test('never takes another machine’s thread count, even from a payload that carries one', async () => {
+        // A payload written by a build older than the carve-out, or by a device
+        // that had one stored under a key this build no longer uploads
+        storeState.stores.settings.script_settingsMap_abc.combatSim_maxThreads = { value: 2 };
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                settings: {
+                    script_settingsMap_abc: {
+                        combatSim_maxThreads: { value: 16 },
+                        combatSim_uncapThreads: { isTrue: true },
+                        color_profit: { value: '#123456' },
+                    },
+                },
+            },
+        });
+
+        await applyPayload(json);
+
+        const written = importedPayloads[0].stores.settings.script_settingsMap_abc;
+        expect(written.combatSim_maxThreads).toEqual({ value: 2 });
+        // Nothing stored locally, so the incoming one is dropped rather than planted
+        expect(written.combatSim_uncapThreads).toBeUndefined();
+        // A shared setting that is not carved out still arrives
+        expect(written.color_profit).toEqual({ value: '#123456' });
+    });
+
+    test('never takes another device’s token from a payload that carries one', async () => {
+        storeState.stores.settings.script_settingsMap_abc = { chatCommands: { isTrue: true } };
+        const json = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                settings: { script_settingsMap_abc: { sync_token: { value: 'ghp_someone_else' } } },
+            },
+        });
+
+        await applyPayload(json);
+
+        expect(importedPayloads[0].stores.settings.script_settingsMap_abc.sync_token).toBeUndefined();
     });
 
     test('never restores sync bookkeeping from a payload', async () => {

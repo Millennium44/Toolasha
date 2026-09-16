@@ -12,7 +12,8 @@
  * `settings` store, and both sync scopes include that store — so an unmodified
  * full backup would upload the token to the very service it authenticates
  * against, where a second device would then download and store it. The token,
- * and the device-local sync bookkeeping, are stripped on the way out.
+ * the handful of settings that describe the machine rather than the account, and
+ * the device-local sync bookkeeping are all stripped on the way out.
  *
  * Like the full backup this serializes one store at a time and releases each
  * before reading the next, so peak memory is the finished text plus one store
@@ -43,6 +44,35 @@ const SETTINGS_STORE = 'settings';
 export const REDACTED_SETTING_IDS = ['sync_token', 'sync_passphrase'];
 
 /**
+ * Setting IDs that describe the machine rather than the account.
+ *
+ * Not secrets — nothing here would matter if it were read. They are removed for
+ * the opposite reason to the credentials above: the value is *true here and
+ * wrong elsewhere*. The thread settings are a core count. An eight-core
+ * desktop's number arriving on a two-core laptop does not fail loudly; the
+ * laptop just oversubscribes itself and every simulation it runs gets slower,
+ * with nothing on screen to connect that to a sync that happened days ago. A
+ * number that must be measured per machine cannot be carried between machines.
+ *
+ * These *are* shared across every character on this device — see
+ * `SHARED_SETTING_IDS` in `core/settings-storage.js`, which is where the sharing
+ * is decided. This list only says they stop at the edge of the device.
+ */
+export const DEVICE_LOCAL_SETTING_IDS = ['combatSim_maxThreads', 'combatSim_uncapThreads'];
+
+/**
+ * Every setting ID that stays on the machine that wrote it, for whichever of the
+ * two reasons above.
+ *
+ * One list because the handling is identical in both directions — stripped from
+ * a payload on the way out, and never taken from one on the way in. Deliberately
+ * two lists folded into one rather than one flat list of ids: whoever reads this
+ * next must not come away thinking a thread count is a credential, or that a
+ * credential is merely inconvenient to share.
+ */
+const LOCAL_ONLY_SETTING_IDS = [...REDACTED_SETTING_IDS, ...DEVICE_LOCAL_SETTING_IDS];
+
+/**
  * Storage keys removed from every payload.
  *
  * Which gist and how far this device has got with it are facts about the
@@ -65,7 +95,8 @@ export const REDACTED_SETTING_IDS = ['sync_token', 'sync_passphrase'];
 export const LOCAL_ONLY_KEY_PREFIXES = ['toolasha_sync_', 'toolasha_local_'];
 
 /**
- * Strip credentials and device-local bookkeeping from a settings-store dump.
+ * Strip credentials, device-local settings and device-local bookkeeping from a
+ * settings-store dump.
  *
  * Returns a new object; the input is not mutated, because it is a live read of
  * the user's storage and quietly editing it would delete their token.
@@ -80,7 +111,9 @@ export function redactSettingsStore(entries) {
         if (LOCAL_ONLY_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) continue;
 
         // The settings map is one key whose value is every setting; the token
-        // is an entry inside it, not a key of its own
+        // and the thread count are entries inside it, not keys of their own.
+        // The account-wide map (`script_settingsMap_shared`) shares the prefix
+        // deliberately, so it is cleaned here too.
         if (!key.startsWith('script_settingsMap')) {
             safe[key] = value;
             continue;
@@ -105,7 +138,7 @@ export function redactSettingsStore(entries) {
         }
 
         const cleaned = { ...map };
-        for (const settingId of REDACTED_SETTING_IDS) delete cleaned[settingId];
+        for (const settingId of LOCAL_ONLY_SETTING_IDS) delete cleaned[settingId];
         safe[key] = wasString ? JSON.stringify(cleaned) : cleaned;
     }
 
@@ -231,7 +264,9 @@ async function mergeLocalHistories(payload) {
  * payload cannot carry one, and `importEverything` writes whole keys. The
  * settings map is one such key, so the incoming map is merged over the local one
  * with the local token put back, rather than replacing it wholesale and leaving
- * this device unable to sync again.
+ * this device unable to sync again. The device-local settings
+ * ({@link DEVICE_LOCAL_SETTING_IDS}) are held back the same way, for a different
+ * reason: this machine's core count is the only true one here.
  *
  * Additive histories are combined rather than replaced, always — see
  * {@link mergeLocalHistories}. A record that can only gain entries has no
@@ -257,7 +292,7 @@ export async function applyPayload(json) {
         const local = await storage.getAll(SETTINGS_STORE);
         for (const [key, incoming] of Object.entries(settingsStore)) {
             if (!key.startsWith('script_settingsMap')) continue;
-            settingsStore[key] = preserveLocalSecrets(local[key], incoming);
+            settingsStore[key] = preserveLocalOnlySettings(local[key], incoming);
         }
         // Device-local bookkeeping is never taken from a payload, even one
         // written by an older build that did not redact it
@@ -338,16 +373,19 @@ export async function applyPayload(json) {
  * what the conflict dialog promises about settings. Only the entries the
  * payload says nothing about are kept.
  *
- * The redacted ids are the one exception in the other direction: they were
- * stripped before upload, so an incoming map either lacks them or carries some
- * other device's copy, and this device's own token and passphrase must survive
- * either way.
+ * {@link LOCAL_ONLY_SETTING_IDS} are the one exception in the other direction:
+ * they were stripped before upload, so an incoming map either lacks them or was
+ * written by a build that did not strip them — some other device's token, or
+ * some other machine's core count. This device's own value wins, and where it
+ * has none the id is dropped rather than taken, so a stale payload cannot plant
+ * one. That is not the usual "the payload said nothing, so keep what is here":
+ * here the payload may well have said something, and it is not entitled to.
  *
  * @param {*} localValue - The settings map already on this device
  * @param {*} incomingValue - The settings map from the payload
  * @returns {*} Merged map, in whatever form the incoming value used
  */
-function preserveLocalSecrets(localValue, incomingValue) {
+function preserveLocalOnlySettings(localValue, incomingValue) {
     const wasString = typeof incomingValue === 'string';
     const parse = (value) => {
         if (typeof value !== 'string') return value;
@@ -363,9 +401,11 @@ function preserveLocalSecrets(localValue, incomingValue) {
     if (!incoming || typeof incoming !== 'object') return incomingValue;
 
     const merged = local && typeof local === 'object' ? { ...local, ...incoming } : { ...incoming };
-    for (const settingId of REDACTED_SETTING_IDS) {
+    for (const settingId of LOCAL_ONLY_SETTING_IDS) {
         if (local && typeof local === 'object' && local[settingId] !== undefined) {
             merged[settingId] = local[settingId];
+        } else {
+            delete merged[settingId];
         }
     }
 

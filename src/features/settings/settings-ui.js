@@ -2743,8 +2743,9 @@ class SettingsUI {
      *
      * The reset writes the whole map with SAVE_ALL_KEYS, which by design covers
      * the device-wide settings too — so pressing this on one character wipes the
-     * GitHub token, the color palette, the number format and the quiet-hours
-     * clock for *every* character on this browser, not just this one. That is
+     * GitHub token, the color palette, the number format, the quiet-hours
+     * clock, the simulator thread limit and the update-check schedule for
+     * *every* character on this browser, not just this one. That is
      * the intended behaviour (a token the panel shows as blank must actually be
      * blank), but it is not what "reset my settings" sounds like, so the dialog
      * has to say what goes rather than ask whether the player is sure.
@@ -2773,8 +2774,8 @@ class SettingsUI {
                 'Every setting on this character goes back to its default.\n\n' +
                 'Some settings are shared by every character on this device, and resetting clears them for all ' +
                 `of them: your cross-device sync setup (GitHub token and passphrase), ${colorPhrase}, the ` +
-                'number format, and your quiet hours. Your other characters keep their own settings for ' +
-                'everything else.\n\n' +
+                'number format, your quiet hours, the simulator thread limit, and the update check. Your ' +
+                'other characters keep their own settings for everything else.\n\n' +
                 'None of this can be undone.',
             choices: [
                 { value: 'reset', label: 'Reset everything', tone: 'danger' },

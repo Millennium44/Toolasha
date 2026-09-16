@@ -1,6 +1,7 @@
 /**
- * Cross-device sync, the color palette, number formatting and quiet hours are
- * stored per device, not per character.
+ * Cross-device sync, the color palette, number formatting, quiet hours, the
+ * simulator's thread limit and the update check are stored per device, not per
+ * character.
  *
  * What these pin: nobody loses a value, a disagreement resolves by the
  * documented rule rather than by chance, a palette everyone left on its
@@ -65,7 +66,7 @@ const { default: settingsStorage } = await import('./settings-storage.js');
 const { settingsGroups } = await import('./settings-schema.js');
 
 const SHARED_KEY = 'script_settingsMap_shared';
-const FLAG_KEY = 'settings_shared_scope_v2';
+const FLAG_KEY = 'settings_shared_scope_v3';
 const CONFLICT_KEY = 'settings_shared_scope_conflicts';
 
 /** Write a character's stored settings map */
@@ -95,7 +96,7 @@ beforeEach(() => {
 });
 
 describe('the shared scope is device-wide', () => {
-    test('the shared scope is sync, colors, number formatting and quiet hours — and nothing else', () => {
+    test('the shared scope is sync, colors, formatting, quiet hours, threads and update checks', () => {
         const ids = settingsStorage.sharedSettingIds();
 
         expect(ids).toEqual(
@@ -116,8 +117,18 @@ describe('the shared scope is device-wide', () => {
                 'notifications_quietHoursEnabled',
                 'notifications_quietHoursStart',
                 'notifications_quietHoursEnd',
+                'combatSim_maxThreads',
+                'combatSim_uncapThreads',
+                'updateCheck',
+                'updateCheckHours',
             ])
         );
+
+        // Considered and declined: these describe how one character is played
+        // or how its windows are arranged, not the device
+        for (const id of ['mobileMode', 'combatScalePanelHeight', 'panelSizeMemory', 'tabReorder', 'draggableModals']) {
+            expect(ids).not.toContain(id);
+        }
 
         // The rest of the notifications group stays per character: a combat alt
         // wanting death alerts while a crafting alt does not is a real choice
@@ -287,6 +298,113 @@ describe('colors, number formatting and quiet hours came along too', () => {
         settingsStorage.currentCharacterId = 'bob';
         const bobSettings = await settingsStorage.loadSettings();
         expect(bobSettings.color_gold.value).toBe('#101010');
+    });
+});
+
+describe('thread counts and the update check joined later', () => {
+    /** A stored entry with a `.value` */
+    function entry(id, type, value) {
+        return { id, type, value };
+    }
+
+    test('a thread count and an update-check schedule set on one character reach every character', async () => {
+        putMap('bob', {
+            combatSim_maxThreads: entry('combatSim_maxThreads', 'number', 12),
+            combatSim_uncapThreads: on('combatSim_uncapThreads'),
+            updateCheck: on('updateCheck'),
+            updateCheckHours: entry('updateCheckHours', 'number', 24),
+        });
+        putMap('alice', { networth: on('networth') });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.combatSim_maxThreads.value).toBe(12);
+        expect(settings.combatSim_uncapThreads.isTrue).toBe(true);
+        expect(settings.updateCheck.isTrue).toBe(true);
+        expect(settings.updateCheckHours.value).toBe(24);
+        // Copied, never moved
+        expect(stored.get('json:script_settingsMap_bob').combatSim_maxThreads.value).toBe(12);
+    });
+
+    test('a device that already ran v2 picks the new ids up without redeciding the old ones', async () => {
+        // v2 settled the palette and the token; the v3 flag is what is missing
+        stored.set(`json:${SHARED_KEY}`, {
+            sync_token: token('ghp_settled'),
+            color_profit: { id: 'color_profit', type: 'color', value: '#abcdef' },
+        });
+        stored.set('settings_shared_scope_v2', true);
+        putMap('alice', { sync_token: token('ghp_alice_old') });
+        putMap('bob', {
+            color_profit: { id: 'color_profit', type: 'color', value: '#00ff00' },
+            combatSim_maxThreads: entry('combatSim_maxThreads', 'number', 12),
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        // Already answered — untouched by the re-run
+        expect(settings.sync_token.value).toBe('ghp_settled');
+        expect(stored.get(`json:${SHARED_KEY}`).color_profit.value).not.toBe('#00ff00');
+        // Newly shared — carried across on this pass
+        expect(settings.combatSim_maxThreads.value).toBe(12);
+        expect(stored.get(FLAG_KEY)).toBe(true);
+    });
+
+    test('everyone on the default thread count decides nothing and reports nothing', async () => {
+        const stock = entry('combatSim_maxThreads', 'number', 0);
+        putMap('alice', { combatSim_maxThreads: stock });
+        putMap('bob', { combatSim_maxThreads: stock });
+
+        await settingsStorage.loadSettings();
+
+        expect(stored.get(`json:${SHARED_KEY}`)?.combatSim_maxThreads).toBeUndefined();
+        expect(await settingsStorage.sharedScopeConflicts()).toBeNull();
+    });
+
+    test('two characters disagreeing about the update interval resolve to the one in session', async () => {
+        putMap('alice', { updateCheckHours: entry('updateCheckHours', 'number', 24) });
+        putMap('bob', { updateCheckHours: entry('updateCheckHours', 'number', 1) });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.updateCheckHours.value).toBe(24);
+        const record = await settingsStorage.sharedScopeConflicts();
+        expect(record.conflicts).toEqual([
+            expect.objectContaining({ id: 'updateCheckHours', resolved: true, winner: 'Alice' }),
+        ]);
+        // Bob's value is still his to go back to
+        expect(stored.get('json:script_settingsMap_bob').updateCheckHours.value).toBe(1);
+    });
+
+    test('a refused write while carrying the thread count retries and stays idempotent', async () => {
+        putMap('bob', { combatSim_maxThreads: entry('combatSim_maxThreads', 'number', 12) });
+        refuse.add(SHARED_KEY);
+
+        await settingsStorage.loadSettings();
+
+        expect(stored.get(FLAG_KEY)).toBeUndefined();
+        expect(stored.get(`json:${SHARED_KEY}`)).toBeUndefined();
+
+        refuse.clear();
+        const settings = await settingsStorage.loadSettings();
+        expect(settings.combatSim_maxThreads.value).toBe(12);
+        expect(stored.get(FLAG_KEY)).toBe(true);
+
+        // A third pass leaves the settled value exactly where it is
+        stored.delete(FLAG_KEY);
+        await settingsStorage.migrateSharedSettings('script_settingsMap_alice');
+        expect(stored.get(`json:${SHARED_KEY}`).combatSim_maxThreads.value).toBe(12);
+    });
+
+    test('a thread count saved on one character is what the next one loads', async () => {
+        putMap('alice', { networth: on('networth') });
+        const settings = await settingsStorage.loadSettings();
+        settings.combatSim_maxThreads.value = 6;
+
+        await settingsStorage.saveSettings(settings, ['combatSim_maxThreads']);
+
+        settingsStorage.currentCharacterId = 'bob';
+        const bobSettings = await settingsStorage.loadSettings();
+        expect(bobSettings.combatSim_maxThreads.value).toBe(6);
     });
 });
 
