@@ -257,6 +257,16 @@ const schema = {
                 default: true,
                 help: 'Total value of your stash, counted across every character.',
             },
+            // Both Iron-Cow-locked AND gated by a parent the mode also locks —
+            // the combination `market_listingAgeFormat` and `invSort_netOfTax`
+            // are in, and the one the two painting passes used to fight over
+            networth_historyChart: {
+                id: 'networth_historyChart',
+                label: 'Net worth history chart',
+                type: 'checkbox',
+                default: true,
+                requires: 'networth',
+            },
         },
     },
 };
@@ -1631,6 +1641,47 @@ describe('a sub-setting whose parent feature is off', () => {
         drawPanel();
 
         expect(row('dungeonTrackerUI').style.opacity).toBe('');
+    });
+});
+
+describe('a row Iron Cow locks that a parent also gates', () => {
+    // Two passes paint the same two properties. The Iron Cow pass used to run
+    // second, and its unlock branch clears them outright — so switching the mode
+    // off un-greyed a row whose parent was still off. Real pairs:
+    // `market_listingAgeFormat` under `market_listingAge`, `invSort_netOfTax`
+    // under `inv_valueBadges` — the mode forces both parents to their off value.
+    test('switching Iron Cow off leaves the row greyed while its parent is off', () => {
+        mocks.settingsMap['ironCow_enabled'].isTrue = true;
+        drawPanel();
+        expect(row('networth_historyChart').style.opacity).toBe('0.35');
+
+        // The mode goes off and the snapshot restores a parent that was off
+        mocks.settingsMap['ironCow_enabled'].isTrue = false;
+        mocks.settingsMap['networth'].isTrue = false;
+        settingsUI.applyDisabledByState();
+
+        expect(row('networth_historyChart').style.opacity).toBe('0.4');
+        expect(row('networth_historyChart').style.pointerEvents).toBe('none');
+    });
+
+    test('with the parent on, switching Iron Cow off returns the row to normal', () => {
+        mocks.settingsMap['ironCow_enabled'].isTrue = true;
+        drawPanel();
+
+        mocks.settingsMap['ironCow_enabled'].isTrue = false;
+        mocks.settingsMap['networth'].isTrue = true;
+        settingsUI.applyDisabledByState();
+
+        expect(row('networth_historyChart').style.opacity).toBe('');
+        expect(row('networth_historyChart').style.pointerEvents).toBe('');
+    });
+
+    test('while the mode is on, its lock outranks the parent rather than being overwritten', () => {
+        mocks.settingsMap['ironCow_enabled'].isTrue = true;
+        mocks.settingsMap['networth'].isTrue = false;
+        drawPanel();
+
+        expect(row('networth_historyChart').style.opacity).toBe('0.35');
     });
 });
 

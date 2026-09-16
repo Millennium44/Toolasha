@@ -656,27 +656,14 @@ class SettingsUI {
      * that is not running. Both only paint; neither writes a value.
      */
     applyDisabledByState() {
-        for (const group of Object.values(settingsGroups)) {
-            for (const [settingId, settingDef] of Object.entries(group.settings)) {
-                if (!settingDef.disabledBy && !settingDef.requires) continue;
-
-                const disabled = settingDef.disabledBy
-                    ? this._parentSettingIsOn(settingDef.disabledBy)
-                    : !this._parentSettingIsOn(settingDef.requires);
-                const settingEl = document.querySelector(`.toolasha-setting[data-setting-id="${settingId}"]`);
-                if (!settingEl) continue;
-
-                if (disabled) {
-                    settingEl.style.opacity = '0.4';
-                    settingEl.style.pointerEvents = 'none';
-                } else {
-                    settingEl.style.opacity = '';
-                    settingEl.style.pointerEvents = '';
-                }
-            }
-        }
-
-        // Iron Cow locking pass
+        // Iron Cow locking pass, FIRST. Both passes paint the same two
+        // properties, so whichever runs last wins — and the unlock branch below
+        // clears them outright. Running it after the dependency pass therefore
+        // un-greyed a row that the dependency pass had just greyed, the moment
+        // Iron Cow was switched off: `market_listingAgeFormat` and
+        // `invSort_netOfTax` are both locked by the mode AND `requires` a parent
+        // the mode had forced to its off value, so turning the mode off left
+        // them looking live with nothing behind them.
         const ironCowActive = ironCowMode.isEnabled();
         const lockedIds = [...IRON_COW_SETTINGS];
         // A pricing row stores nothing, so the mode's list of keys cannot name
@@ -693,6 +680,30 @@ class SettingsUI {
                 delete el.dataset.ironCowLocked;
                 el.style.opacity = '';
                 el.style.pointerEvents = '';
+            }
+        }
+
+        for (const group of Object.values(settingsGroups)) {
+            for (const [settingId, settingDef] of Object.entries(group.settings)) {
+                if (!settingDef.disabledBy && !settingDef.requires) continue;
+
+                const disabled = settingDef.disabledBy
+                    ? this._parentSettingIsOn(settingDef.disabledBy)
+                    : !this._parentSettingIsOn(settingDef.requires);
+                const settingEl = document.querySelector(`.toolasha-setting[data-setting-id="${settingId}"]`);
+                if (!settingEl) continue;
+
+                // A locked row is already painted by the mode, which outranks a
+                // parent's say: leave it exactly as the pass above left it
+                if (settingEl.dataset.ironCowLocked) continue;
+
+                if (disabled) {
+                    settingEl.style.opacity = '0.4';
+                    settingEl.style.pointerEvents = 'none';
+                } else {
+                    settingEl.style.opacity = '';
+                    settingEl.style.pointerEvents = '';
+                }
             }
         }
     }
