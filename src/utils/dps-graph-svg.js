@@ -9,7 +9,7 @@
  * — the leak `dungeon-tracker-ui-chart.js` spends its `dispose()` guarding
  * against. A string fits the boards' render model as it stands.
  *
- * Every colour is a hex this codebase produced (`player-colors.js`) and every
+ * Every color is a hex this codebase produced (`player-colors.js`) and every
  * label goes through `escapeText`, so nothing off the wire reaches the markup.
  */
 
@@ -19,7 +19,7 @@ import { formatKMB } from './formatters.js';
 /** The ink boss stretches are shaded in, as KikiMeter draws them */
 export const BOSS_COLOR = '#ff3f34';
 
-/** The party line's ink: light and neutral, so no player's colour is mistaken for it */
+/** The party line's ink: light and neutral, so no player's color is mistaken for it */
 export const PARTY_COLOR = '#e8ecf5';
 
 /**

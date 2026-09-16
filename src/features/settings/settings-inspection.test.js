@@ -50,7 +50,7 @@ describe('whether one setting differs from its default', () => {
         expect(isSettingChanged({ type: 'select', default: 'hybrid' }, { value: 'optimistic' })).toBe(true);
     });
 
-    test('a colour is compared by string', () => {
+    test('a color is compared by string', () => {
         expect(isSettingChanged({ type: 'color', default: '#047857' }, { value: '#047857' })).toBe(false);
         expect(isSettingChanged({ type: 'color', default: '#047857' }, { value: '#ff0000' })).toBe(true);
     });

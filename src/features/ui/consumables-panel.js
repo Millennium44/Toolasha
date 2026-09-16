@@ -1459,7 +1459,7 @@ class ConsumablesPanel {
      * One label/value line of the readiness card.
      * @param {string} label - Left side
      * @param {string} value - Right side
-     * @param {string} color - The value's colour
+     * @param {string} color - The value's color
      * @param {string} [title] - What the figure is measured from
      * @returns {HTMLElement}
      */
@@ -1483,7 +1483,7 @@ class ConsumablesPanel {
     /**
      * One footnote or warning under the readiness card.
      * @param {string} text - What it says
-     * @param {string} color - Its colour
+     * @param {string} color - Its color
      * @returns {HTMLElement}
      */
     _readinessNote(text, color) {
@@ -2963,7 +2963,7 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
      * One consumable, laid out the way MCS's CRack lays it out: the count you
      * hold, the icon, the name, then the rates and the countdown.
      *
-     * The one that runs out first is coloured throughout rather than only in its
+     * The one that runs out first is colored throughout rather than only in its
      * time column — it is the row the whole panel exists to point at, and a
      * single red figure at the far right is easy to miss.
      *

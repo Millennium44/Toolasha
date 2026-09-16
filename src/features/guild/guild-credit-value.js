@@ -192,11 +192,11 @@ function planState() {
 /**
  * The three ways the planner may be told to settle a credit shortfall.
  *
- * `auto` is the recommendation — cheapest path per colour
+ * `auto` is the recommendation — cheapest path per color
  * ({@link chooseCreditPath}). The other two are the player overriding it: one
  * pocket for everything, because "spend tokens" and "spend gold" are real
  * positions to take (a token hoard with nothing else to buy, a gold pile and no
- * patience) that a per-colour cost comparison cannot know about.
+ * patience) that a per-color cost comparison cannot know about.
  */
 export const SPEND_MODES = ['auto', 'tokens', 'gold'];
 
@@ -219,14 +219,14 @@ function spendMode() {
 }
 
 /**
- * The credit colours the player has marked "cover with tokens", as a Set.
+ * The credit colors the player has marked "cover with tokens", as a Set.
  *
- * A per-colour override over the spend mode, not a fourth mode: the player
- * knows they will exchange tokens for a colour — a hoard earmarked for it, or
- * simply a decision already made — and every one of that colour's credits is
+ * A per-color override over the spend mode, not a fourth mode: the player
+ * knows they will exchange tokens for a color — a hoard earmarked for it, or
+ * simply a decision already made — and every one of that color's credits is
  * then an exchange to make rather than materials to shop for, whatever the
- * per-colour price comparison says. Only an explicit `true` counts, so a
- * record touched by an older write (or a merge) cannot cover a colour the
+ * per-color price comparison says. Only an explicit `true` counts, so a
+ * record touched by an older write (or a merge) cannot cover a color the
  * player never ticked.
  *
  * @param {Object|null} plan - The live plan record, from {@link planState}
@@ -239,10 +239,10 @@ export function tokenCoveredCredits(plan) {
 }
 
 /**
- * Split a bill of owed credits by the path each colour is settled down.
+ * Split a bill of owed credits by the path each color is settled down.
  *
  * The token side is what the guild shop exchanges for; the market side is what
- * the shopping list and the conversion steps are drawn from. A colour with no
+ * the shopping list and the conversion steps are drawn from. A color with no
  * usable path at all lands on the market side — the same rule as
  * {@link planNextBuys}: the shopping list skips what nothing converts into,
  * which is the same silence it gave before, and the token side must not claim
@@ -263,19 +263,19 @@ export function splitOwedCredits(owedCredits, pathFor = () => ({ path: 'tokens' 
 }
 
 /**
- * What one token spent on a colour saves against buying its materials.
+ * What one token spent on a color saves against buying its materials.
  *
- * A token buys `1 / tokensPerCredit` credits of the colour, and the alternative
+ * A token buys `1 / tokensPerCredit` credits of the color, and the alternative
  * to having them is paying `marketGold` per credit for the conversion materials,
  * so the gold a token displaces here is the one divided by the other. The token's
  * own worth (`tokenGold`) is deliberately not subtracted: it is the same number
- * for every colour — the best gold-per-token across all of them — so subtracting
+ * for every color — the best gold-per-token across all of them — so subtracting
  * it cannot reorder the list, and leaving it out keeps the figure something the
  * row can state plainly ("1 tok here saves X gold") rather than a margin over an
  * average the player never sees.
  *
  * @param {Object|null} decision - From {@link chooseCreditPath}/{@link applySpendMode}
- * @returns {number|null} Gold saved per token, or null when the colour is unpriceable
+ * @returns {number|null} Gold saved per token, or null when the color is unpriceable
  */
 export function goldSavedPerToken(decision) {
     const perCredit = Number(decision?.tokensPerCredit);
@@ -288,22 +288,22 @@ export function goldSavedPerToken(decision) {
 const TOKEN_VALUE_TIE_TOLERANCE = 1e-9;
 
 /**
- * Rank the colours by how well a token is spent on each.
+ * Rank the colors by how well a token is spent on each.
  *
- * The question the per-colour token toggles raise and never answered: tokens are
- * finite, every colour will take them, and the exchange rates are asymmetric
+ * The question the per-color token toggles raise and never answered: tokens are
+ * finite, every color will take them, and the exchange rates are asymmetric
  * enough that the same token buys ten blue credits or a sixtieth of a gold one.
  * Ranking by {@link goldSavedPerToken} answers it in the only currency both sides
  * share.
  *
- * A colour whose materials have no market price is not ranked last — it is not
+ * A color whose materials have no market price is not ranked last — it is not
  * ranked at all (`unpriced`), because "no price seen" is not "worth nothing" and
  * guessing one would be the same invention the rest of this file refuses.
  *
- * @param {Array<string>} creditHrids - The colours to rank
+ * @param {Array<string>} creditHrids - The colors to rank
  * @param {Function} decisionFor - creditHrid → decision from {@link chooseCreditPath}
  * @returns {Array<{itemHrid: string, goldPerToken: number|null, unpriced: boolean, best: boolean}>}
- *   Best first, unpriced colours last
+ *   Best first, unpriced colors last
  */
 export function rankTokenCoverValue(creditHrids, decisionFor = () => null) {
     const rows = (Array.isArray(creditHrids) ? creditHrids : []).map((itemHrid) => {
@@ -383,10 +383,10 @@ export function shortCreditName(name) {
 /**
  * The Guild Shop's token→credit exchange, as the game states it.
  *
- * Eight colours, four rates, confirmed against the in-game exchange dialog — the
+ * Eight colors, four rates, confirmed against the in-game exchange dialog — the
  * gold credit's is the one it is hardest to believe and easiest to check: the
- * modal says 60 tokens → 1. Keyed by the colour word rather than the whole hrid
- * so the table survives an hrid being spelled differently, and so a colour the
+ * modal says 60 tokens → 1. Keyed by the color word rather than the whole hrid
+ * so the table survives an hrid being spelled differently, and so a color the
  * game adds later falls through to {@link NO_RATE_NOTE} instead of quietly
  * inheriting a neighbour's rate.
  *
@@ -409,28 +409,28 @@ export const DEFAULT_TOKEN_RATES = {
 /**
  * How close the two paths may be and still count as level.
  *
- * `0.1 × 1500` is `150.00000000000003`, and the colour a token is worth the most
+ * `0.1 × 1500` is `150.00000000000003`, and the color a token is worth the most
  * on prices out at exactly that against its own market cost — so without a
  * tolerance the recommendation would turn on the last bit of a double.
  */
 const PATH_TIE_TOLERANCE = 1e-9;
 
-/** The colour word in a credit hrid — `/items/gold_guild_credit` → `gold` */
-const CREDIT_COLOUR = /(?:^|[/_])([a-z]+)_guild_credit(?:$|[/_])/;
+/** The color word in a credit hrid — `/items/gold_guild_credit` → `gold` */
+const CREDIT_COLOR = /(?:^|[/_])([a-z]+)_guild_credit(?:$|[/_])/;
 
 /**
- * The standard exchange for one credit colour, from {@link DEFAULT_TOKEN_RATES}.
+ * The standard exchange for one credit color, from {@link DEFAULT_TOKEN_RATES}.
  *
  * Shaped exactly like a captured reading so the rest of this file cannot tell
  * the two apart except by `source`, which is the one thing the captions care
  * about.
  *
  * @param {string} creditItemHrid - Credit hrid
- * @returns {Object|null} The rate, or null for an hrid no colour in the table names
+ * @returns {Object|null} The rate, or null for an hrid no color in the table names
  */
 export function defaultTokenRate(creditItemHrid) {
-    const colour = CREDIT_COLOUR.exec(String(creditItemHrid || '').toLowerCase())?.[1];
-    const rate = colour ? DEFAULT_TOKEN_RATES[colour] : null;
+    const color = CREDIT_COLOR.exec(String(creditItemHrid || '').toLowerCase())?.[1];
+    const rate = color ? DEFAULT_TOKEN_RATES[color] : null;
     if (!rate) return null;
     return {
         creditItemHrid,
@@ -443,14 +443,14 @@ export function defaultTokenRate(creditItemHrid) {
 }
 
 /**
- * The Guild Shop's token→credit rate for one colour: what was seen, else what is
+ * The Guild Shop's token→credit rate for one color: what was seen, else what is
  * standard.
  *
  * Precedence is observation over constant. A capture is a reading of the shop as
  * it is now; the table is a reading of the shop as it was when the rates were
  * written down, and the game can rebalance. Everything below the capture is
  * still answered, which is why the "rate not seen yet" annotation now only
- * belongs to a colour the table does not name either.
+ * belongs to a color the table does not name either.
  *
  * @param {string} creditHrid - Credit hrid
  * @returns {Object|null} The rate, tagged with its `source`, or null
@@ -468,8 +468,8 @@ export function tokenRateFor(creditHrid) {
 /**
  * Every token→credit exchange this script believes in, captures first.
  *
- * The list the gold-per-token bridge is maximised over. One entry per colour:
- * a captured reading shadows the standard rate for its own colour and nothing
+ * The list the gold-per-token bridge is maximised over. One entry per color:
+ * a captured reading shadows the standard rate for its own color and nothing
  * else, so the defaults fill every gap the shop has not been opened for.
  *
  * @param {Object} [itemDetailMap] - The game's items, for the credit hrids to default
@@ -504,8 +504,8 @@ export function mergedTokenExchanges(itemDetailMap = {}) {
  * What a token is worth in gold, so a token cost and a gold cost can be compared.
  *
  * Not computed here: `guild-token-value.js` already answers exactly this
- * question — the best gold-per-token across colours, `credits per token × that
- * colour's cheapest gold-per-credit`, maximised — and answering it twice is how
+ * question — the best gold-per-token across colors, `credits per token × that
+ * color's cheapest gold-per-credit`, maximised — and answering it twice is how
  * two parts of one modal end up disagreeing. All this adds is the exchange list
  * to maximise over, which is this file's merged captures-over-defaults table
  * rather than the capture module's captures alone.
@@ -549,27 +549,27 @@ export function tokensPerCredit(rate) {
 }
 
 /**
- * The cheaper of the two ways to get one credit of a colour.
+ * The cheaper of the two ways to get one credit of a color.
  *
  * The rates make token costs wildly asymmetric — a blue credit is a tenth of a
  * token and a gold one is sixty — so a flat "convert tokens" assumption is a
  * recommendation to burn sixty tokens on something the market sells for less
  * than one is worth. Both paths are priced in gold: the token path through the
  * token's own opportunity cost, the market path through the cheapest conversion
- * into that colour.
+ * into that color.
  *
  * Ties go to the token, and a tie is not a rare case: the token is valued at its
- * *best* use, so the colour that best use names prices out exactly level with
- * its own market cost. Sending that colour through the shop and every other one
+ * *best* use, so the color that best use names prices out exactly level with
+ * its own market cost. Sending that color through the shop and every other one
  * to the market is the whole recommendation in one sentence — spend tokens where
  * they buy the most, buy the rest with gold — and it falls out of the comparison
  * rather than being asserted over it. Breaking the tie the other way would send
- * every colour to the market and leave the tokens with nothing to do; a token
+ * every color to the market and leave the tokens with nothing to do; a token
  * cannot be sold, so at equal value the one already held beats gold that has to
  * be found. The tolerance is there because the tie is a floating-point one.
  *
  * @param {Object} [options]
- * @param {Object|null} [options.rate] - The colour's token→credit rate
+ * @param {Object|null} [options.rate] - The color's token→credit rate
  * @param {number|null} [options.marketGoldPerCredit] - Cheapest gold per credit on the market
  * @param {number|null} [options.goldPerToken] - What a token is worth, from {@link goldPerTokenFor}
  * @returns {{path: string, tokensPerCredit: number|null, tokenGold: number|null,
@@ -590,7 +590,7 @@ export function chooseCreditPath({ rate = null, marketGoldPerCredit = null, gold
             marketGold: market,
         };
 
-    // No price for this colour's conversions, or no token valuation to compare
+    // No price for this color's conversions, or no token valuation to compare
     // against: fall back to the token path rather than invent a gold figure
     if (market === null || perToken === null)
         return {
@@ -623,10 +623,10 @@ const OVERPAY_TOLERANCE = 0.01;
  * The recommendation, bent to the mode the player picked.
  *
  * `auto` hands the decision straight back. The forced modes take the path they
- * are named after *when that path exists for the colour*, and fall back to the
- * other one when it does not — never to nothing. A colour with no token rate
- * (the ninth colour nobody has opened the exchange for) cannot be converted no
- * matter how firmly Tokens is selected, and a colour nothing on the market
+ * are named after *when that path exists for the color*, and fall back to the
+ * other one when it does not — never to nothing. A color with no token rate
+ * (the ninth color nobody has opened the exchange for) cannot be converted no
+ * matter how firmly Tokens is selected, and a color nothing on the market
  * converts into at a known price cannot be bought; dropping either from the plan
  * would make an unaffordable buy look affordable, which is the one thing this
  * section must never do. The fallback is recorded rather than hidden
@@ -695,7 +695,7 @@ export function tokensForCredits(credits, rate) {
  * and a half exchanges buys three.
  *
  * @param {number} tokens - Tokens available to spend
- * @param {Object|null} rate - The colour's token→credit rate
+ * @param {Object|null} rate - The color's token→credit rate
  * @returns {number} Credits obtainable, 0 when the budget or the rate buys nothing
  */
 export function creditsForTokens(tokens, rate) {
@@ -720,10 +720,10 @@ export function creditsForTokens(tokens, rate) {
  * The budget is therefore what is left *after* the levels take their cut, which
  * is the `spare` the row notes were already measured against.
  *
- * A colour the recommendation chose (`auto`) is advice, and advice that cannot be
+ * A color the recommendation chose (`auto`) is advice, and advice that cannot be
  * taken is worse than none: it is capped to whole exchanges the budget covers and
  * the remainder goes back to the market side, where the shopping list can price
- * it. A colour the *player* chose — a ticked cover, or Tokens mode — is not
+ * it. A color the *player* chose — a ticked cover, or Tokens mode — is not
  * advice and is not overruled: it keeps its whole exchange, takes the budget
  * first, and is flagged so the step can say how far past the spare it reaches.
  *
@@ -743,9 +743,9 @@ export function capTokenPlanToBudget(tokenOwed, budget, { rateFor = tokenRateFor
     let left = Math.max(0, Number(budget) || 0);
 
     const chosenHere = (hrid) => (decisionFor(hrid) || {}).mode === 'tokens';
-    // Chosen colours first — they are not competing for the budget, they are
+    // Chosen colors first — they are not competing for the budget, they are
     // claiming it — then best value per token, then the hrid so the order is
-    // stable when two colours are worth the same
+    // stable when two colors are worth the same
     const entries = Object.entries(tokenOwed || {}).filter(([, owed]) => Number(owed) > 0);
     entries.sort(([aHrid], [bHrid]) => {
         if (chosenHere(aHrid) !== chosenHere(bHrid)) return chosenHere(aHrid) ? -1 : 1;
@@ -791,10 +791,10 @@ export function capTokenPlanToBudget(tokenOwed, budget, { rateFor = tokenRateFor
  * What one single-level buy costs under its cheapest acquisition plan.
  *
  * The level's own `guildTokenCost` is unavoidable. Its credit shortfall — what
- * is left after the inventory is netted off — is not: each colour is settled the
+ * is left after the inventory is netted off — is not: each color is settled the
  * cheaper of the two ways, and `pathFor` is what says which
- * ({@link chooseCreditPath}). A colour the plan sends through the guild shop adds
- * its whole-exchange token cost to `effective`; a colour it sends to the market
+ * ({@link chooseCreditPath}). A color the plan sends through the guild shop adds
+ * its whole-exchange token cost to `effective`; a color it sends to the market
  * adds gold to `marketGold` and nothing to the token bill.
  *
  * `effective` stays a *token* figure on purpose: it is what the token balance is
@@ -802,7 +802,7 @@ export function capTokenPlanToBudget(tokenOwed, budget, { rateFor = tokenRateFor
  * The gold half is carried beside it rather than folded in, because gold and
  * tokens are not the same pocket.
  *
- * A colour with neither a rate nor a market price adds nothing to either total
+ * A color with neither a rate nor a market price adds nothing to either total
  * and is reported in `unknown` instead, to be said out loud on the row — a
  * guessed rate would turn a number this script does not have into one it appears
  * to. Such a buy is then judged on its direct token cost alone; declaring it
@@ -874,9 +874,9 @@ export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null, pat
  * cheaper.
  *
  * What the taken buys are still short of comes back split by which path the
- * recommendation sends it down: `owedCredits` for the colours the market wins —
+ * recommendation sends it down: `owedCredits` for the colors the market wins —
  * the bill the marketplace hand-off under the list is drawn from — and
- * `owedTokenCredits` for the colours the guild shop wins, which the hand-off
+ * `owedTokenCredits` for the colors the guild shop wins, which the hand-off
  * lists as exchanges rather than shopping. The same arithmetic feeds both, so
  * the list and the plan under it cannot disagree.
  *
@@ -933,7 +933,7 @@ export function planNextBuys(
             remaining[itemHrid] = held - used;
             const gap = (Number(needed) || 0) - used;
             if (gap <= 0) continue;
-            // A colour with no path at all lands on the market side: the shopping
+            // A color with no path at all lands on the market side: the shopping
             // list skips what nothing converts into, which is the same silence it
             // gave before, and the token side must not claim a conversion it
             // cannot price
@@ -1148,10 +1148,10 @@ export function tokenConversionPlan(owedTokenCredits, itemDetailMap = {}, rateFo
     return steps;
 }
 
-/** What a colour with no rate at all is annotated with, and why */
+/** What a color with no rate at all is annotated with, and why */
 const NO_RATE_NOTE = 'rate not seen yet';
 const NO_RATE_TITLE =
-    'No token→credit rate is known for this credit: it is not one of the eight colours whose standard rate ' +
+    'No token→credit rate is known for this credit: it is not one of the eight colors whose standard rate ' +
     'is built in, and its exchange has never been opened here. Open it once with Guild Token selected on the ' +
     'give side and the rate is recorded — until then it is left out of the affordability math rather than ' +
     'guessed at.';
@@ -1209,7 +1209,7 @@ function describeRate(rate) {
  * What a forced mode could not honour, for a tooltip.
  *
  * Said because the alternative is a section that quietly disagrees with the
- * button the player pressed: in Tokens mode a colour on the market side looks
+ * button the player pressed: in Tokens mode a color on the market side looks
  * like a bug unless the row explains that there is no rate to convert at.
  *
  * @param {string} label - The credit's short name
@@ -1847,7 +1847,7 @@ class GuildCreditValue {
             const heldTokens = tokenHrid ? heldInInventory(inventory, tokenHrid) : 0;
             const spareTokens = Math.max(0, heldTokens - tokens.total);
 
-            // Which way each colour is cheapest to get, for the annotation below.
+            // Which way each color is cheapest to get, for the annotation below.
             // Built here rather than per row so the button under the box and the
             // notes inside it are drawn from the same prices.
             //
@@ -1858,9 +1858,9 @@ class GuildCreditValue {
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const goldPerToken = goldPerTokenFor(itemDetailMap);
             const mode = spendMode();
-            // A ticked colour is settled with tokens whatever the mode says —
-            // per colour, through the same applySpendMode the mode goes
-            // through, so a covered colour with no rate still falls back to the
+            // A ticked color is settled with tokens whatever the mode says —
+            // per color, through the same applySpendMode the mode goes
+            // through, so a covered color with no rate still falls back to the
             // market rather than dropping off the plan.
             const covered = tokenCoveredCredits(planState());
             const pathFor = (creditHrid) =>
@@ -1874,7 +1874,7 @@ class GuildCreditValue {
                 );
 
             // Credit costs. Netted first, then drawn: the value ranking beside
-            // the toggles compares the colours this plan still owes, so it has
+            // the toggles compares the colors this plan still owes, so it has
             // to see all of them before the first row is written.
             const owedCredits = {};
             for (const [itemHrid, count] of Object.entries(credits))
@@ -1900,12 +1900,12 @@ class GuildCreditValue {
                 row.innerHTML = `<span style="color:#aaa;">${name}</span><span style="color:#e0e0e0; font-weight:600;">${owed.toLocaleString()}<span style="color:#6b7280; font-weight:400;">${goldStr}</span>${ownedNote(owned)}</span>`;
                 totalsEl.appendChild(row);
 
-                // The per-colour token cover. Ticked before buying, so the
-                // shopping list is not padded with materials for a colour the
+                // The per-color token cover. Ticked before buying, so the
+                // shopping list is not padded with materials for a color the
                 // player already means to exchange tokens for. Persisted on the
                 // same per-character plan record as the targets; the cost on
                 // the label is the whole-exchange bill for what is still owed,
-                // so it falls as credits land. A colour with no rate has
+                // so it falls as credits land. A color with no rate has
                 // nothing to exchange at, so its box is disabled rather than
                 // silently ignored when ticked.
                 const cover = document.createElement('label');
@@ -1948,8 +1948,8 @@ class GuildCreditValue {
                 });
                 row.querySelector('span').appendChild(cover);
 
-                // Which colours are worth the tokens. The toggles above made
-                // every colour equally tickable and said nothing about which
+                // Which colors are worth the tokens. The toggles above made
+                // every color equally tickable and said nothing about which
                 // tick is a good idea; this is the comparison, in gold, next to
                 // the switch it applies to. A sibling of the label rather than a
                 // child of it, so reading the number does not toggle the box.
@@ -2008,7 +2008,7 @@ class GuildCreditValue {
                 // chose is not advice — the line stays and says the shortfall,
                 // rather than vanishing and leaving this box disagreeing with
                 // the button that put it here. A ticked token cover is the same
-                // kind of choice, made per colour.
+                // kind of choice, made per color.
                 const beyondSpare = tokensNeeded > spareTokens;
                 if (beyondSpare && mode !== 'tokens' && !covered.has(itemHrid)) continue;
                 const spareNote = beyondSpare ? ' (more than this plan leaves spare)' : '';
@@ -2026,13 +2026,13 @@ class GuildCreditValue {
                 totalsEl.appendChild(none);
             }
 
-            // Only the colours this mode (and the token covers) send to the
-            // market go shopping. A colour settled with tokens has an exchange
+            // Only the colors this mode (and the token covers) send to the
+            // market go shopping. A color settled with tokens has an exchange
             // to make rather than a shopping trip, and the note under its row
             // above already says so — putting its materials on the shopping
             // list too would be the same shortfall billed twice, in two
             // different currencies. The token side still gets its exchange
-            // listed below, so covering a colour does not make its cost vanish.
+            // listed below, so covering a color does not make its cost vanish.
             const { marketOwed, tokenOwed } = splitOwedCredits(owedCredits, pathFor);
             // The tokens the levels themselves need are already spoken for, so
             // the conversions get what is left and no more. What the budget will
@@ -2110,7 +2110,7 @@ class GuildCreditValue {
                     held &&
                         `The other ${cap.remainder.toLocaleString()} are on the shopping list as materials instead.`,
                     cap?.chosen &&
-                        `${cap.over.toLocaleString()} tokens more than this plan leaves spare — you picked this colour's exchange, so it stays.`,
+                        `${cap.over.toLocaleString()} tokens more than this plan leaves spare — you picked this color's exchange, so it stays.`,
                     described?.title,
                 ]
                     .filter(Boolean)
@@ -2263,7 +2263,7 @@ class GuildCreditValue {
          * is not simply unaffordable: the shortfall can be settled two ways, and
          * each row shows the cheaper one. The guild shop sells credits for
          * tokens, and the marketplace sells the materials that convert into them,
-         * so every colour is a small comparison — tokens-per-credit times what a
+         * so every color is a small comparison — tokens-per-credit times what a
          * token is worth in gold, against the cheapest gold-per-credit on the
          * market. The rates make that comparison lopsided and worth making: a
          * blue credit is a tenth of a token and a gold one is sixty, so burning
@@ -2271,7 +2271,7 @@ class GuildCreditValue {
          * buyable. What the row then prices, ranks and ticks is that one
          * recommended plan — the tokens it really needs, with the gold half said
          * beside it. See {@link planNextBuys} and {@link chooseCreditPath}. A
-         * colour with neither a rate nor a market price is left out of the
+         * color with neither a rate nor a market price is left out of the
          * arithmetic entirely and said so on the row, because a guess there makes
          * an unaffordable buy look affordable.
          *
@@ -2306,25 +2306,25 @@ class GuildCreditValue {
                 'display:flex; justify-content:space-between; align-items:center; gap:6px; font-size:11px; color:#9ca3af; margin-bottom:5px;';
             // The ranking is by effective *token* cost in every mode — tokens are
             // the scarce pocket, and the gold figure rides alongside rather than
-            // being blended into it. What changes per mode is which colours
+            // being blended into it. What changes per mode is which colors
             // contribute to which half.
             const RANKING_TITLE =
                 'Cheapest first by effective token cost: the level’s own token price plus the tokens its ' +
-                'plan spends converting credits, with the gold half named beside it. Colours ' +
+                'plan spends converting credits, with the gold half named beside it. Colors ' +
                 'with neither a rate nor a market price are left out of the sum.';
             heading.title =
                 {
                     auto:
-                        `${RANKING_TITLE} Auto: each colour goes whichever way is cheaper — credits the ` +
+                        `${RANKING_TITLE} Auto: each color goes whichever way is cheaper — credits the ` +
                         'marketplace supplies more cheaply than the guild shop are bought there, and cost gold ' +
                         'rather than tokens.',
                     tokens:
-                        `${RANKING_TITLE} Tokens: every colour with a known rate is exchanged for, however ` +
-                        'dear — a colour with no rate is still bought on the market, since there is nothing to ' +
+                        `${RANKING_TITLE} Tokens: every color with a known rate is exchanged for, however ` +
+                        'dear — a color with no rate is still bought on the market, since there is nothing to ' +
                         'exchange at.',
                     gold:
-                        `${RANKING_TITLE} Gold: every colour with a priced conversion is bought, so the token ` +
-                        'figure falls to the levels themselves — a colour nothing converts into is still ' +
+                        `${RANKING_TITLE} Gold: every color with a priced conversion is bought, so the token ` +
+                        'figure falls to the levels themselves — a color nothing converts into is still ' +
                         'exchanged for tokens, since there is nothing to buy.',
                 }[mode] || RANKING_TITLE;
             heading.className = 'mwi-shrine-suggest-heading';
@@ -2376,9 +2376,9 @@ class GuildCreditValue {
                     `background:${active ? 'rgba(196,181,253,0.18)' : 'transparent'}; ` +
                     `color:${active ? '#c4b5fd' : '#9ca3af'};`;
                 button.title = {
-                    auto: 'Cheapest way per colour — the recommendation.',
-                    tokens: 'Exchange guild tokens for every colour that has a known rate, cheaper or not.',
-                    gold: 'Buy every colour that has a priced conversion on the marketplace, cheaper or not.',
+                    auto: 'Cheapest way per color — the recommendation.',
+                    tokens: 'Exchange guild tokens for every color that has a known rate, cheaper or not.',
+                    gold: 'Buy every color that has a priced conversion on the marketplace, cheaper or not.',
                 }[option];
                 button.addEventListener('click', () => {
                     if (spendMode() === option) return;
@@ -2413,7 +2413,7 @@ class GuildCreditValue {
             // recommends and the shopping list it produces are one decision.
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const goldPerToken = goldPerTokenFor(itemDetailMap);
-            // The same per-colour token covers the still-needed box honours —
+            // The same per-color token covers the still-needed box honours —
             // the two settle the same shortfall and must route it the same way
             const covered = tokenCoveredCredits(planState());
             const decisions = {};
@@ -2571,8 +2571,8 @@ class GuildCreditValue {
          * The credits it covers are the ones the ✓ walk found short after the
          * inventory was netted off and the earlier buys had taken their share.
          *
-         * Scoped, too, to the colours the recommendation actually sends to the
-         * marketplace. A colour the guild shop supplies more cheaply has no
+         * Scoped, too, to the colors the recommendation actually sends to the
+         * marketplace. A color the guild shop supplies more cheaply has no
          * materials to go and buy — it has an exchange to make — so it is listed
          * as one instead of turned into a shopping trip that costs more than the
          * tokens it saves.
@@ -2581,7 +2581,7 @@ class GuildCreditValue {
          * marketplace hand-off for the raw materials
          * ({@link creditShortfallMaterials}, inventory netted off), the exchange
          * that follows it ({@link creditConversionPlan}, whole trades), and the
-         * token exchanges for the colours that went the other way
+         * token exchanges for the colors that went the other way
          * ({@link tokenConversionPlan}). The last two are guidance, not navigation
          * — this modal *is* the exchange, so there is nowhere to send the player.
          *
@@ -2703,9 +2703,9 @@ class GuildCreditValue {
         // defaults; when the read finishes, the inputs it belongs in are filled.
         //
         // Both halves, like the spend-mode buttons and the token covers: the
-        // plan carries the spend mode and the per-colour covers, and
+        // plan carries the spend mode and the per-color covers, and
         // `restorePlan` only redraws the still-needed box. Redrawing that alone
-        // left the suggestions still routing a colour the box above them had
+        // left the suggestions still routing a color the box above them had
         // just been told to settle the other way.
         if (!shrinePlanRecord.isLoaded()) {
             (async () => {

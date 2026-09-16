@@ -5,7 +5,7 @@
  * The bucket arithmetic is `dps-series.js`' and tested there. What is worth
  * asserting here is the wiring: that the graph covers the tracker's run and
  * nothing before it, that a boss battle announced on the socket shades the
- * stretch it covers, that each line is drawn in its player's colour, and that
+ * stretch it covers, that each line is drawn in its player's color, and that
  * the sampler lets go of the socket when it stops.
  */
 
@@ -139,7 +139,7 @@ describe('the sampler’s lifecycle', () => {
 });
 
 describe('the graph', () => {
-    test('one line per player in their own colour, and the party on top', () => {
+    test('one line per player in their own color, and the party on top', () => {
         fight(20);
         const lines = parse(dpsGraphHTML({ now: T0 + 21 * BUCKET_MS })).querySelectorAll('polyline');
         expect([...lines].map((line) => line.getAttribute('stroke'))).toEqual([

@@ -122,6 +122,12 @@ const schema = {
         settings: {
             actionBar_enabled: { id: 'actionBar_enabled', label: 'Action bar', type: 'checkbox', default: true },
             combatSim: { id: 'combatSim', label: 'Combat simulator', type: 'checkbox', default: true },
+            // Two of the shared swatches, with real defaults, so the reset
+            // dialog's count can be driven both ways. The uppercase default is
+            // deliberate: a picker hands back lowercase, and an untouched
+            // swatch must not read as customized because of the case alone.
+            color_profit: { id: 'color_profit', label: 'Profit color', type: 'color', default: '#FFFFFF' },
+            color_loss: { id: 'color_loss', label: 'Loss color', type: 'color', default: '#f87171' },
             dungeonTracker: { id: 'dungeonTracker', label: 'Dungeon tracker', type: 'checkbox', default: false },
             dungeonTrackerUI: {
                 id: 'dungeonTrackerUI',
@@ -1808,12 +1814,37 @@ describe('resetting says what goes for every character', () => {
         // Each shared group is named, so nobody finds out by losing it
         expect(message).toMatch(/sync/i);
         expect(message).toMatch(/GitHub token/i);
-        expect(message).toContain('colours');
+        expect(message).toMatch(/colors/);
         expect(message).toMatch(/number format/i);
         expect(message).toMatch(/quiet hours/i);
-        // Counted from the shared set rather than written into the sentence
-        expect(message).toContain('all 2 customised colours');
         expect(choices.some((choice) => choice.tone === 'danger')).toBe(true);
+    });
+
+    test('a stock palette is not described as customized colors', async () => {
+        mocks.choiceAnswer = null;
+        // Both swatches sitting on their defaults — and color_profit's default
+        // is written uppercase while the picker would hand back lowercase
+        mocks.settingsMap.color_profit = { isTrue: '#ffffff' };
+        mocks.settingsMap.color_loss = { isTrue: '#f87171' };
+
+        await settingsUI.handleReset();
+
+        const { message } = mocks.choiceCalls[0];
+        expect(message).toContain('the shared colors');
+        // The bug this replaced: every shareable swatch counted, so a player
+        // who had picked none was warned about losing all of them
+        expect(message).not.toMatch(/\d+ colors? you have customized/);
+    });
+
+    test('only the colors actually picked are counted', async () => {
+        mocks.choiceAnswer = null;
+        mocks.settingsMap.color_profit = { isTrue: '#123456' };
+        mocks.settingsMap.color_loss = { isTrue: '#f87171' };
+
+        await settingsUI.handleReset();
+
+        const { message } = mocks.choiceCalls[0];
+        expect(message).toContain('the 1 color you have customized');
     });
 
     test('declining does nothing at all', async () => {

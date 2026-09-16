@@ -44,7 +44,7 @@
 /** Below this much measured time the ratio is one unlucky wave, not a reading */
 export const MIN_MEASURED_SECONDS = 30 * 60;
 
-/** How far either side may drift before the line is worth colouring */
+/** How far either side may drift before the line is worth coloring */
 export const BURN_BAND = 0.25;
 
 /** The tones a comparison can carry, and what they mean */
@@ -58,7 +58,7 @@ export const BURN_COLORS = {
  * How bad each tone is, so a line carrying two of them takes the worst.
  *
  * Overeating moves the profit figure the wrong way and is the finding worth
- * colouring; undereating is a pleasant surprise; agreement is nothing.
+ * coloring; undereating is a pleasant surprise; agreement is nothing.
  */
 export const BURN_TONE_RANK = { flat: 0, low: 1, high: 2 };
 
@@ -141,7 +141,7 @@ export function simBurnPerHour(perHour, itemDetailFor = null) {
  *
  * @param {number} measured - Items per hour, measured
  * @param {number} sim - Items per hour, simmed
- * @param {number} [band] - Drift tolerated before colouring
+ * @param {number} [band] - Drift tolerated before coloring
  * @returns {{ratio: number|null, measured: number, sim: number, tone: string,
  *   reason: string|null}|null} `ratio` is null when the sim filled nothing to
  *   divide by; null altogether only when both sides are zero
@@ -187,7 +187,7 @@ export function compareCategory(measured, sim, band = BURN_BAND) {
  * @param {number} [input.difficultyTier] - Its tier
  * @param {Function} [input.itemDetailFor] - `(itemHrid) => itemDetail`
  * @param {number} [input.minSeconds] - Override the measurement floor, for tests
- * @param {number} [input.band] - Override the colour band
+ * @param {number} [input.band] - Override the color band
  * @returns {{food: Object|null, drinks: Object|null, measuredSeconds: number,
  *   simmedAt: number|null, reason: string|null}} `reason` names why there is
  *   nothing to show, and is null when there is
@@ -249,7 +249,7 @@ export function formatBurnLine(comparison, formatDuration = null) {
         if (!entry) continue;
         parts.push(entry.ratio === null ? `${label} — ${entry.reason}` : `${label} ${entry.ratio.toFixed(1)}× sim`);
         // The worst of the two, not the last of the two: a run eating half the
-        // simmed drinks and twice the simmed food was being coloured green
+        // simmed drinks and twice the simmed food was being colored green
         // purely because drinks are read second
         if (BURN_TONE_RANK[entry.tone] > BURN_TONE_RANK[tone]) tone = entry.tone;
     }

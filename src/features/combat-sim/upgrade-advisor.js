@@ -3814,7 +3814,7 @@ function computeDeltas(baseline, upgraded) {
  *
  * Baseline and candidate are added in quadrature. Like `attemptsNoise` this
  * overstates: the runs share a seed, so their errors are correlated and partly
- * cancel out of the difference. Overstating costs an honest row its colour;
+ * cancel out of the difference. Overstating costs an honest row its color;
  * understating recommends a purchase that did nothing.
  *
  * @param {Object} baselineResult - Baseline SimResult
@@ -4733,7 +4733,7 @@ const SIGNIFICANCE_Z = 1.96;
  * 1/p turns that into se/p² (the derivative of 1/p). Baseline and candidate are
  * added in quadrature, which is conservative: they share a seed, so their errors
  * are correlated and partly cancel. Overstating the noise costs a few honest
- * rows their colour; understating it recommends purchases that did nothing.
+ * rows their color; understating it recommends purchases that did nothing.
  *
  * @param {Array<Object>} appliedFights - The candidate's fights, applied ones only
  * @param {Array<Object>} baselineFights - The baseline, index-aligned by monster

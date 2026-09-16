@@ -121,7 +121,7 @@ export function parseTrialStatsModal(modal) {
  *
  * The game's own cell is decorated in place rather than replaced: only
  * `cursor`, `title` and a hover underline are added, so the name keeps whatever
- * colour and truncation the game gave it. Names are taken from `data-name`,
+ * color and truncation the game gave it. Names are taken from `data-name`,
  * which is exact where the visible text can be cut off, and a name that is not
  * a single MWI name token is left alone.
  *
@@ -148,7 +148,7 @@ export function linkMemberNames(root) {
         el.style.cursor = 'pointer';
         if (!el.title) el.title = `Open ${name}'s profile`;
         // Hover underline, the same affordance chat's profile links use — but
-        // inline, because the colour here belongs to the game's own cell.
+        // inline, because the color here belongs to the game's own cell.
         el.addEventListener('mouseenter', () => {
             el.style.textDecoration = 'underline';
         });

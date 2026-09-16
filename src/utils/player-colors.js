@@ -1,40 +1,40 @@
 /**
- * One colour per player, the same on every surface that names them.
+ * One color per player, the same on every surface that names them.
  *
  * The Per-player panel, the trial scoreboard, the DPS graph and the portrait
- * badges all show the same people. A colour that follows a player across them
+ * badges all show the same people. A color that follows a player across them
  * is what lets a graph line be read against a row without a legend — the idea,
- * the palette-plus-picker and the colour on the badge are KikiMeter's by
+ * the palette-plus-picker and the color on the badge are KikiMeter's by
  * ZhuLiMoon (MIT, `colorFor` and the swatch row); the assignment rule is this
  * file's own.
  *
- * ## How a colour is chosen
+ * ## How a color is chosen
  *
- * 1. **Picked.** A colour the user chose for that name, stored account-wide
+ * 1. **Picked.** A color the user chose for that name, stored account-wide
  *    (`name-keyed-store.js`).
- * 2. **Already held.** The colour the name was given earlier this page session,
- *    so a row does not change colour because somebody joined.
+ * 2. **Already held.** The color the name was given earlier this page session,
+ *    so a row does not change color because somebody joined.
  * 3. **Hashed.** The name's hash picks a palette slot; when another player in
  *    the same roster already holds that slot, the next free one is taken.
  *
- * KikiMeter hands out colours in order of first appearance, which is collision
+ * KikiMeter hands out colors in order of first appearance, which is collision
  * free and different every session. A bare hash is stable and collides in most
- * five-player parties (twelve colours, five names: a clash about 60% of the
+ * five-player parties (twelve colors, five names: a clash about 60% of the
  * time). Hash-then-probe over the roster keeps the hash's stability and the
  * order-of-appearance's distinctness, up to twelve players; past that some
- * colours repeat, which a forty-player trial cannot avoid with any palette a
+ * colors repeat, which a forty-player trial cannot avoid with any palette a
  * person can tell apart.
  *
  * ## Legible on the game's dark ground
  *
  * Every palette entry clears 4.5:1 contrast against the panels' background
- * (tested), and a picked colour that does not is lifted toward white until it
+ * (tested), and a picked color that does not is lifted toward white until it
  * does — a black swatch chosen by mistake would otherwise make a name vanish.
  */
 
 import { createNameKeyedStore, nameKey } from './name-keyed-store.js';
 
-/** Twelve colours, each at least 4.5:1 against {@link PANEL_GROUND} */
+/** Twelve colors, each at least 4.5:1 against {@link PANEL_GROUND} */
 export const PLAYER_PALETTE = [
     '#ef5350',
     '#42a5f5',
@@ -50,7 +50,7 @@ export const PLAYER_PALETTE = [
     '#9fa8da',
 ];
 
-/** The panels' background, which every colour here has to read against */
+/** The panels' background, which every color here has to read against */
 export const PANEL_GROUND = '#0e1016';
 
 /** WCAG AA for normal text */
@@ -64,7 +64,7 @@ const picked = createNameKeyedStore({
     isValid: (value) => normalizeHex(value) !== null,
 });
 
-/** nameKey → the colour it was last resolved to this page session */
+/** nameKey → the color it was last resolved to this page session */
 const held = new Map();
 
 /**
@@ -95,7 +95,7 @@ function luminance(hex) {
 }
 
 /**
- * WCAG contrast ratio between two colours.
+ * WCAG contrast ratio between two colors.
  * @param {string} a - `#rrggbb`
  * @param {string} b - `#rrggbb`
  * @returns {number} 1 to 21
@@ -106,9 +106,9 @@ export function contrastRatio(a, b) {
 }
 
 /**
- * A colour that reads on the dark ground: the colour itself when it already
+ * A color that reads on the dark ground: the color itself when it already
  * does, otherwise mixed toward white in small steps until it does.
- * @param {string} value - Any hex colour
+ * @param {string} value - Any hex color
  * @param {string} [ground] - The background it sits on
  * @returns {string|null} `#rrggbb`, or null for an unusable value
  */
@@ -146,7 +146,7 @@ export function hashName(name) {
 }
 
 /**
- * The colour the user picked for a player, made legible, or null.
+ * The color the user picked for a player, made legible, or null.
  * @param {string} name - Player name
  * @returns {string|null}
  */
@@ -156,7 +156,7 @@ export function pickedColor(name) {
 }
 
 /**
- * Give every player in a roster a colour, distinct where the palette allows.
+ * Give every player in a roster a color, distinct where the palette allows.
  *
  * Every surface should call this over the whole list it is about to draw, so
  * the probe sees the same party the others do. The result is remembered per
@@ -209,7 +209,7 @@ export function resolveRosterColors(names) {
 }
 
 /**
- * One player's colour: picked, else the one resolved for them this session,
+ * One player's color: picked, else the one resolved for them this session,
  * else their hash slot.
  * @param {string} name - Player name
  * @returns {string} `#rrggbb`
@@ -219,9 +219,9 @@ export function playerColor(name) {
 }
 
 /**
- * Pick a colour for a player, or clear the pick with null.
+ * Pick a color for a player, or clear the pick with null.
  * @param {string} name - Player name
- * @param {string|null} color - Any hex colour, or null
+ * @param {string|null} color - Any hex color, or null
  * @returns {Promise<void>}
  */
 export async function setPlayerColor(name, color) {
@@ -234,7 +234,7 @@ export function loadPlayerColors() {
     return picked.load();
 }
 
-/** Forget picks and held colours in memory — for tests */
+/** Forget picks and held colors in memory — for tests */
 export function _resetPlayerColors() {
     picked.reset();
     held.clear();

@@ -184,7 +184,7 @@ describe('the rows summarise their own inputs', () => {
     });
 
     test('Deaths/hr tells a rounded-away death from no death at all', () => {
-        // 0.04 draws as "0.0" and is still coloured as a death, so the colour is
+        // 0.04 draws as "0.0" and is still colored as a death, so the color is
         // an input of its own — a version keyed on the text alone would freeze it
         collector.data = run({ name: 'Alice', deathsPerHour: 0 });
         const none = versionOf('deathsPerHour');

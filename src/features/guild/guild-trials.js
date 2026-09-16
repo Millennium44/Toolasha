@@ -844,7 +844,7 @@ const LABEL_MAX_CHARS = 12;
  *
  * @param {string} label - Left side
  * @param {string} value - Right side, or the caption
- * @param {string} [color] - Value colour
+ * @param {string} [color] - Value color
  * @param {string} [title] - Tooltip
  * @returns {string} HTML
  */
@@ -1623,7 +1623,7 @@ export function renderTrialPlayers(breakdown) {
  *
  * @param {string} name - The player
  * @param {string} value - Their figures
- * @param {string} color - Value colour
+ * @param {string} color - Value color
  * @param {string} title - Tooltip; the full name is prepended, for when the row cuts it
  * @returns {string} HTML
  */

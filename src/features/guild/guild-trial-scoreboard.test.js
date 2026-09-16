@@ -1178,7 +1178,7 @@ describe('the trace recording warning', () => {
         expect(text()).not.toContain('recording gap');
     });
 
-    test('player rows carry the colour and class marker, and the bar takes the player’s colour', async () => {
+    test('player rows carry the color and class marker, and the bar takes the player’s color', async () => {
         const { playerColor } = await import('../../utils/player-colors.js');
         const html = guildTrialScoreboard._rowHTML({ name: 'Estevao', rank: 1, value: 100, perSecond: 10, share: 50 });
         expect(html).toContain('data-toolasha-player="Estevao"');

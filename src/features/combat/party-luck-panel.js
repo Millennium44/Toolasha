@@ -424,7 +424,7 @@ export function buildPartyLuckSummaryText(party, chest) {
  * A single copy affordance, right-aligned above the sections it summarises.
  *
  * Same shape as Party Loot's — a glyph rather than a word, because the panel
- * is dense enough already, and a tick in its place rather than a colour change,
+ * is dense enough already, and a tick in its place rather than a color change,
  * because the flash has to read at a glance.
  *
  * @param {string} text - What clicking it copies

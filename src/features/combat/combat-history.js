@@ -334,7 +334,7 @@ export function savedCombatGraphHTML(graph) {
     const legend =
         `<div style="color:${BOARD_COLORS.dim}; font-size:9px; line-height:1.4; margin-top:2px;">` +
         'The whole session, from its start. ' +
-        (keys.length > 1 ? 'White is the party; each player is drawn in their own colour. ' : '') +
+        (keys.length > 1 ? 'White is the party; each player is drawn in their own color. ' : '') +
         (bands.length ? 'Red shading is a boss fight. ' : '') +
         'A 16-second average.</div>';
     return `<div data-dps-graph style="margin:4px 0 6px;">${buttons}${svg}${legend}</div>`;

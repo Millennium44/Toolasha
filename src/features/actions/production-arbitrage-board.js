@@ -109,7 +109,7 @@ function cell(text, style = {}) {
 }
 
 /**
- * A gold figure, coloured by its sign.
+ * A gold figure, colored by its sign.
  * @param {number} value - Gold
  * @returns {HTMLTableCellElement}
  */

@@ -82,7 +82,7 @@ describe('the action panel layout', () => {
     });
 
     test('the scrollbar is left as the game draws it', () => {
-        // Recolouring it was chasing the wrong thing: the horizontal bar was a
+        // Recoloring it was chasing the wrong thing: the horizontal bar was a
         // width problem, and it is fixed where the oversized blocks are built
         settings.values.actionPanelLayout = true;
         actionPanelLayout.initialize();
@@ -99,7 +99,7 @@ describe('the action panel layout', () => {
         // space scale is a set of visible tints, not a dark background — and
         // the dark literal that replaced it came out black: a filled band
         // across the foot of every skilling action panel. The strip is
-        // positioned and nothing else; the colour behind the buttons is the
+        // positioned and nothing else; the color behind the buttons is the
         // game's.
         settings.values.actionPanelLayout = true;
         actionPanelLayout.initialize();

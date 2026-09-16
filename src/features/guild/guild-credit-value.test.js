@@ -175,7 +175,7 @@ vi.mock('../../utils/shopping-list.js', () => ({
 }));
 // The Guild Shop's token→credit rates, mocked the way the other guild tests mock
 // a sibling module: `game.rates` is what the shop has been seen saying, one entry
-// per credit colour, and a colour missing from it is one the player has never
+// per credit color, and a color missing from it is one the player has never
 // opened the exchange for.
 vi.mock('./guild-token-exchange-capture.js', () => ({
     captureTokenExchangeFromModal: (...args) => game.captures.push(args),
@@ -885,7 +885,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         };
         game.buffLevels = { [FORCE]: 2, [TEMPO]: 0, [RARITY]: 5 };
         game.inventory = [];
-        // No colour's exchange has been opened yet — the honest default
+        // No color's exchange has been opened yet — the honest default
         game.rates = {};
         game.storage = {};
         game.clientData = planClientData();
@@ -1076,7 +1076,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         ];
         const modal = openModal();
 
-        // The Force level's 50 Trade Credit is bought on the market — that colour
+        // The Force level's 50 Trade Credit is bought on the market — that color
         // has no token rate at all — so the walk says both halves of the bill
         expect(modal.querySelector('.mwi-shrine-spend-all').textContent).toBe(
             'Spending everything now: 2 of 2 next levels for 400 tokens plus ≈7.5K gold of mats'
@@ -1327,7 +1327,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(modal.querySelector('.mwi-shrine-planner').style.maxWidth).toBe('100%');
         });
 
-        test('shortCreditName keeps the colour and drops the boilerplate', () => {
+        test('shortCreditName keeps the color and drops the boilerplate', () => {
             expect(shortCreditName('Blue Guild Credit')).toBe('Blue');
             expect(shortCreditName('Trade Credit')).toBe('Trade');
             expect(shortCreditName('Guild Credit')).toBe('Guild Credit');
@@ -1478,7 +1478,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             });
         });
 
-        test('an unseen colour is excluded from the sum and reported instead', () => {
+        test('an unseen color is excluded from the sum and reported instead', () => {
             const buy = { tokenCost: 300, creditCosts: [{ itemHrid: '/items/guild_credit_2', count: 7 }] };
             const cost = buyTokenCost(buy, {}, () => null);
 
@@ -1569,8 +1569,8 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(plan.owedCredits).toEqual({});
         });
 
-        test('a colour with neither a rate nor a market price is named on the row rather than priced', () => {
-            // Level 4 costs Craft Credit: no colour in the standard table names
+        test('a color with neither a rate nor a market price is named on the row rather than priced', () => {
+            // Level 4 costs Craft Credit: no color in the standard table names
             // it, no exchange has been seen for it, and nothing on the market
             // converts into it
             game.buffLevels[FORCE] = 3;
@@ -1632,7 +1632,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 expect(convertNote(modal, '/items/guild_credit_1')).toBeNull();
             });
 
-            test('an unseen colour says so instead of a converted figure', () => {
+            test('an unseen color says so instead of a converted figure', () => {
                 game.inventory = [
                     { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 1000 },
                 ];
@@ -1647,7 +1647,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
     });
 
     describe('the standard token→credit rates', () => {
-        /** Colour → [tokens handed over, credits received], as the exchange dialog states it */
+        /** Color → [tokens handed over, credits received], as the exchange dialog states it */
         const STATED = {
             green: [1, 10],
             brown: [1, 10],
@@ -1659,11 +1659,11 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             gold: [60, 1],
         };
 
-        test('all eight colours resolve, at the rate the game charges', () => {
+        test('all eight colors resolve, at the rate the game charges', () => {
             expect(Object.keys(DEFAULT_TOKEN_RATES).sort()).toEqual(Object.keys(STATED).sort());
 
-            for (const [colour, [tokens, credits]] of Object.entries(STATED)) {
-                const rate = tokenRateFor(`/items/${colour}_guild_credit`);
+            for (const [color, [tokens, credits]] of Object.entries(STATED)) {
+                const rate = tokenRateFor(`/items/${color}_guild_credit`);
                 expect(rate).toMatchObject({
                     tokensPerExchange: tokens,
                     creditsPerExchange: credits,
@@ -1680,14 +1680,14 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(tokensPerCredit(defaultTokenRate('/items/gold_guild_credit'))).toBe(60);
         });
 
-        test('a colour the table does not name has no rate at all', () => {
+        test('a color the table does not name has no rate at all', () => {
             expect(defaultTokenRate('/items/guild_credit_1')).toBeNull();
             expect(defaultTokenRate('/items/octarine_guild_credit')).toBeNull();
             expect(defaultTokenRate('')).toBeNull();
             expect(tokenRateFor('/items/guild_credit_1')).toBeNull();
         });
 
-        test('a captured reading overrides the standard rate, for its own colour only', () => {
+        test('a captured reading overrides the standard rate, for its own color only', () => {
             game.rates['/items/gold_guild_credit'] = {
                 creditItemHrid: '/items/gold_guild_credit',
                 creditsPerToken: 1,
@@ -1703,7 +1703,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 tokensPerExchange: 1,
                 creditsPerExchange: 1,
             });
-            // And says nothing about any other colour
+            // And says nothing about any other color
             expect(tokenRateFor('/items/green_guild_credit')).toMatchObject({
                 source: 'default',
                 creditsPerExchange: 10,
@@ -1730,7 +1730,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
 
             expect(byHrid['/items/green_guild_credit']).toMatchObject({ source: 'captured', creditsPerToken: 4 });
             expect(byHrid['/items/gold_guild_credit']).toMatchObject({ source: 'default', tokensPerExchange: 60 });
-            // A credit no colour names and no capture covers is simply absent
+            // A credit no color names and no capture covers is simply absent
             expect(byHrid['/items/guild_credit_1']).toBeUndefined();
             expect(merged).toHaveLength(2);
         });
@@ -1751,7 +1751,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             });
         });
 
-        test('a tie goes to the token, which is what makes the best colour the one tokens buy', () => {
+        test('a tie goes to the token, which is what makes the best color the one tokens buy', () => {
             expect(chooseCreditPath({ rate: gold(), marketGoldPerCredit: 6_000, goldPerToken: 100 }).path).toBe(
                 'tokens'
             );
@@ -1778,7 +1778,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(chooseCreditPath().path).toBe('unknown');
         });
 
-        test('the gold-per-token bridge is the best colour on offer, not the first', () => {
+        test('the gold-per-token bridge is the best color on offer, not the first', () => {
             // Silk yields a blue credit one for one at 200 gold; a rune yields a
             // gold credit one for one at 6,000
             Object.assign(game.clientData.itemDetailMap, {
@@ -1916,7 +1916,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(nextBuyRows(modal)[1].dataset.affordable).toBe('no');
         });
 
-        test('the mats button covers only the colours the plan sends to the market', () => {
+        test('the mats button covers only the colors the plan sends to the market', () => {
             const modal = openModal();
             modal.querySelector('.mwi-shrine-next-buy-mats-btn').click();
 
@@ -1941,7 +1941,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(line.title).not.toContain('Approximate');
         });
 
-        test('cheap materials move the token path onto the other colour', () => {
+        test('cheap materials move the token path onto the other color', () => {
             // Silk collapses to 5 gold a credit. Blue credits are then worth 50
             // gold a token against gold credits' 100, so a token is best spent on
             // gold ones after all — and the blue ones are bought instead.
@@ -1966,11 +1966,11 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                     rate: defaultTokenRate(BLUE),
                 },
             ]);
-            // A colour with no rate contributes no step rather than a guess
+            // A color with no rate contributes no step rather than a guess
             expect(tokenConversionPlan({ '/items/guild_credit_1': 10 }, game.clientData.itemDetailMap)).toEqual([]);
         });
 
-        test('a colour the market cannot supply goes back to the tokens', () => {
+        test('a color the market cannot supply goes back to the tokens', () => {
             // No rune on the market: the gold credits have nothing to be bought
             // with, so the plan converts them however dear that is
             delete game.prices['/items/rune'];
@@ -1987,7 +1987,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 return modal.querySelector(`.mwi-shrine-credit-convert[data-credit-hrid="${creditHrid}"]`);
             }
 
-            test('only a token-path colour is offered the exchange', () => {
+            test('only a token-path color is offered the exchange', () => {
                 const modal = openModal();
                 setTarget(modal, FORCE, 3);
                 setTarget(modal, TEMPO, 1);
@@ -2046,8 +2046,8 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         const boxNote = (modal, creditHrid) =>
             modal.querySelector(`.mwi-shrine-credit-convert[data-credit-hrid="${creditHrid}"]`);
 
-        /** Two colours whose cheapest paths point opposite ways */
-        function twoColourFixture() {
+        /** Two colors whose cheapest paths point opposite ways */
+        function twoColorFixture() {
             Object.assign(game.clientData.itemDetailMap, {
                 [BLUE]: { name: 'Blue Guild Credit', guildCreditConversions: [] },
                 [GOLD]: { name: 'Gold Guild Credit', guildCreditConversions: [] },
@@ -2104,14 +2104,14 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 });
             });
 
-            test('a mode that cannot be honoured falls back rather than dropping the colour', () => {
+            test('a mode that cannot be honoured falls back rather than dropping the color', () => {
                 expect(applySpendMode(noRate, 'tokens')).toMatchObject({ path: 'market', fallback: true });
                 expect(applySpendMode(noMarket, 'gold')).toMatchObject({ path: 'tokens', fallback: true });
                 // Falling back to where auto already was is not an override
                 expect(applySpendMode(noRate, 'tokens').forced).toBe(false);
             });
 
-            test('a colour with neither path stays unknown in every mode', () => {
+            test('a color with neither path stays unknown in every mode', () => {
                 const nothing = { path: 'unknown', tokensPerCredit: null, tokenGold: null, marketGold: null };
                 for (const mode of SPEND_MODES) expect(applySpendMode(nothing, mode).path).toBe('unknown');
                 expect(applySpendMode(null, 'gold').path).toBe('unknown');
@@ -2182,14 +2182,14 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
 
                 expect(title).toContain('Cheapest first by effective token cost');
                 expect(title).toContain('gold half named beside it');
-                expect(title).toContain('Gold: every colour with a priced conversion is bought');
+                expect(title).toContain('Gold: every color with a priced conversion is bought');
             });
         });
 
         describe('tokens mode', () => {
-            beforeEach(twoColourFixture);
+            beforeEach(twoColorFixture);
 
-            test('a market-cheaper colour is converted anyway, and the tooltip says what that costs', () => {
+            test('a market-cheaper color is converted anyway, and the tooltip says what that costs', () => {
                 const modal = openInMode('tokens');
 
                 expect(convertNote(modal, 'Force').textContent).toBe('convert 300 tok → 5 Gold');
@@ -2212,7 +2212,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 );
             });
 
-            test('nothing is left for the marketplace, and both colours become exchanges', () => {
+            test('nothing is left for the marketplace, and both colors become exchanges', () => {
                 const modal = openInMode('tokens');
 
                 expect(flowButton(modal)).toBeNull();
@@ -2246,7 +2246,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 );
             });
 
-            test('a colour with no rate at all is still bought, and the row says why', () => {
+            test('a color with no rate at all is still bought, and the row says why', () => {
                 // Back to the plain fixture: Trade Credit has no token rate
                 game.clientData = planClientData();
                 const modal = openInMode('tokens');
@@ -2259,9 +2259,9 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         });
 
         describe('gold mode', () => {
-            beforeEach(twoColourFixture);
+            beforeEach(twoColorFixture);
 
-            test('a token-cheaper colour is bought on the market instead', () => {
+            test('a token-cheaper color is bought on the market instead', () => {
                 const modal = openInMode('gold');
 
                 expect(convertNote(modal, 'Tempo').textContent).toBe('buy ≈4.0K gold of mats → 20 Blue');
@@ -2281,7 +2281,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 );
             });
 
-            test('every colour lands on the shopping list and the market conversion lines', () => {
+            test('every color lands on the shopping list and the market conversion lines', () => {
                 const modal = openInMode('gold');
                 flowButton(modal).click();
 
@@ -2290,7 +2290,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 expect(tokenConvertSteps(modal)).toEqual([]);
             });
 
-            test('the still-needed box stops offering exchanges and its button covers both colours', () => {
+            test('the still-needed box stops offering exchanges and its button covers both colors', () => {
                 const modal = openInMode('gold');
                 setTarget(modal, FORCE, 3);
                 setTarget(modal, TEMPO, 1);
@@ -2301,7 +2301,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 expect(shopping.calls[0].items.map((i) => i.itemHrid).sort()).toEqual(['/items/rune', '/items/silk']);
             });
 
-            test('a colour nothing priced converts into goes back to the tokens, and the row says why', () => {
+            test('a color nothing priced converts into goes back to the tokens, and the row says why', () => {
                 delete game.prices['/items/silk'];
                 const modal = openInMode('gold');
 
@@ -2313,7 +2313,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         });
 
         describe('switching modes redraws the whole section', () => {
-            beforeEach(twoColourFixture);
+            beforeEach(twoColorFixture);
 
             test('one click moves the rows, the walk, the box and the button together', () => {
                 const modal = openModal();
@@ -2476,7 +2476,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         });
     });
 
-    describe('covering a colour with tokens before buying', () => {
+    describe('covering a color with tokens before buying', () => {
         const coverBoxFor = (modal, creditHrid) =>
             modal.querySelector(`.mwi-shrine-token-cover[data-credit-hrid="${creditHrid}"] input`);
         const coverLabelFor = (modal, creditHrid) =>
@@ -2486,7 +2486,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
 
         beforeEach(() => {
             // A seen rate for Trade Credit: 1 token → 1 credit. The base mode is
-            // Gold, which keeps the colour on the market side until the cover
+            // Gold, which keeps the color on the market side until the cover
             // overrides it — the override over the mode is the whole point.
             game.rates['/items/guild_credit_1'] = {
                 creditItemHrid: '/items/guild_credit_1',
@@ -2499,7 +2499,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             shrinePlanRecord.get().spendMode = 'gold';
         });
 
-        test('ticking the box takes the colour off the shopping list and lists the exchange instead', () => {
+        test('ticking the box takes the color off the shopping list and lists the exchange instead', () => {
             const modal = openModal();
             setTarget(modal, FORCE, 3);
             expect(matsButton(modal)).not.toBeNull();
@@ -2509,7 +2509,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
 
             expect(matsButton(modal)).toBeNull();
             expect(planTokenSteps(modal)).toEqual(['convert 50 tok → 50 Trade']);
-            // The suggestions route the same colour the same way
+            // The suggestions route the same color the same way
             const forceRow = nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
             expect(forceRow.querySelector('.mwi-shrine-next-buy-convert').textContent).toContain('convert 50 tok');
 
@@ -2551,16 +2551,16 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(planTokenSteps(reopened)).toEqual(['convert 50 tok → 50 Trade']);
         });
 
-        test('a colour with no known rate cannot be covered', () => {
+        test('a color with no known rate cannot be covered', () => {
             const modal = openModal();
-            // Level 4 costs Craft Credit — no colour word, never captured
+            // Level 4 costs Craft Credit — no color word, never captured
             setTarget(modal, FORCE, 4);
 
             const box = coverBoxFor(modal, '/items/guild_credit_2');
             expect(box.disabled).toBe(true);
         });
 
-        test('splitOwedCredits routes each colour by its decided path', () => {
+        test('splitOwedCredits routes each color by its decided path', () => {
             const pathFor = (hrid) => ({ path: hrid === '/items/a' ? 'tokens' : 'market' });
             expect(splitOwedCredits({ '/items/a': 5, '/items/b': 3 }, pathFor)).toEqual({
                 tokenOwed: { '/items/a': 5 },
@@ -2568,13 +2568,13 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             });
         });
 
-        test('only an explicit true covers a colour', () => {
+        test('only an explicit true covers a color', () => {
             expect(tokenCoveredCredits({ tokenCredits: { a: true, b: false, c: 1 } })).toEqual(new Set(['a']));
             expect(tokenCoveredCredits({})).toEqual(new Set());
             expect(tokenCoveredCredits(null)).toEqual(new Set());
         });
 
-        test('the ranking indicator marks the best colour to spend tokens on, and says so', () => {
+        test('the ranking indicator marks the best color to spend tokens on, and says so', () => {
             const modal = openModal();
             setTarget(modal, FORCE, 3);
 
@@ -2585,7 +2585,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(worth.title).toContain('Best use of your tokens');
         });
 
-        test('a colour whose mats have no price is called unpriced, not ranked last', () => {
+        test('a color whose mats have no price is called unpriced, not ranked last', () => {
             game.rates['/items/guild_credit_2'] = {
                 creditItemHrid: '/items/guild_credit_2',
                 creditsPerToken: 1,
@@ -2608,11 +2608,11 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             // The record's read had not finished when the planner was drawn, so
             // both halves were drawn from an empty plan. When it lands, both
             // have to be redrawn from it — the plan carries the spend mode and
-            // the per-colour covers alike, and redrawing the totals alone left
-            // the suggestions settling a colour the way the box above them no
+            // the per-color covers alike, and redrawing the totals alone left
+            // the suggestions settling a color the way the box above them no
             // longer does. Gold with no cover ticked is the discriminating
             // case: the recommendation on its own would exchange tokens here,
-            // so only the saved plan sends this colour shopping.
+            // so only the saved plan sends this color shopping.
             game.storage['settings:guildShrinePlan_char1'] = { spendMode: 'gold' };
             document.body.innerHTML = '';
             shrinePlanRecord.reset();
@@ -2668,7 +2668,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(totals).toContain('78,495');
             expect(totals).toContain('own 117,605');
             expect(totals).toContain('1,707,200');
-            // The chip still quotes what covering the colour would cost — it is a
+            // The chip still quotes what covering the color would cost — it is a
             // price, not a plan — but nothing is scheduled against it
             expect(
                 modal.querySelector('.mwi-shrine-token-cover[data-credit-hrid="/items/guild_credit_1"]').textContent
@@ -2682,7 +2682,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             ]);
         });
 
-        test('a budget that covers part of a colour converts that part and shops for the rest', () => {
+        test('a budget that covers part of a color converts that part and shops for the rest', () => {
             // 200 tokens for the level, 250 held: 50 spare, which buys 500 of
             // the 800 credits owed. The other 300 go on the shopping list.
             game.clientData.guildBuffDetailMap[FORCE].levelCosts['3'] = {
@@ -2702,7 +2702,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(shopping.calls[0].items).toEqual([{ itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 1500 }]);
         });
 
-        test('a colour the player ticked keeps its exchange, and the step says how far past spare it is', () => {
+        test('a color the player ticked keeps its exchange, and the step says how far past spare it is', () => {
             game.clientData.guildBuffDetailMap[FORCE].levelCosts['3'] = {
                 guildTokenCost: 200,
                 creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 800 }],
@@ -2737,7 +2737,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(creditsForTokens(5, null)).toBe(0);
         });
 
-        test('the budget is spent on the colours it saves the most gold on first', () => {
+        test('the budget is spent on the colors it saves the most gold on first', () => {
             const rates = { '/items/a': RATE, '/items/b': RATE };
             // 1 token → 10 credits either way, but b's credits cost 200 gold of
             // mats against a's 100, so b is where the tokens go
@@ -2767,7 +2767,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(out.marketOwed).toEqual({ '/items/a': 500 });
         });
 
-        test('a colour with no rate is left where it was — there is no token figure to cap', () => {
+        test('a color with no rate is left where it was — there is no token figure to cap', () => {
             const out = capTokenPlanToBudget({ '/items/a': 500 }, 0, { rateFor: () => null });
             expect(out.tokenOwed).toEqual({ '/items/a': 500 });
             expect(out.capped).toEqual({});
@@ -2846,7 +2846,7 @@ describe('guild credit value — shrine plan record on a character switch', () =
         await shrinePlanRecord.load();
 
         expect(shrinePlanRecord.get().targets ?? {}).toEqual({});
-        // The per-colour token covers ride the same record and must not follow
+        // The per-color token covers ride the same record and must not follow
         // the departing character either
         expect(shrinePlanRecord.get().tokenCredits ?? {}).toEqual({});
     });
@@ -2865,7 +2865,7 @@ describe('guild credit value — shrine plan record on a character switch', () =
 });
 
 describe('the shrine cost block keeps up with the modal', () => {
-    // One credit colour, bought through one bar. Ten credits per bar, so the
+    // One credit color, bought through one bar. Ten credits per bar, so the
     // arithmetic in the assertions stays readable.
     const CREDIT = '/items/blue_guild_credit';
     const BAR = '/items/blue_bar';
@@ -3090,7 +3090,7 @@ describe('the shrine cost block keeps up with the modal', () => {
 });
 
 describe('Missing Mats Marketplace click — character switch mid-poll', () => {
-    // Same colour/material shape as the block above; only the poll and the
+    // Same color/material shape as the block above; only the poll and the
     // switch timing matter here.
     const CREDIT = '/items/blue_guild_credit';
     const BAR = '/items/blue_bar';

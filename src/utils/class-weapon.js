@@ -5,7 +5,7 @@
  * it drew a bordered text chip — `Estevao [WATER] 175.8K`. Six letters and a
  * border is a lot of room on a row whose actual content is a name and a figure,
  * and in the Trial damage panel the chips crowded the names hard enough that a
- * long one ellipsed to make space for a word the reader already had a colour
+ * long one ellipsed to make space for a word the reader already had a color
  * for. A weapon icon is one glyph, and it is the glyph the game itself uses to
  * mean that style — nobody has to learn it.
  *

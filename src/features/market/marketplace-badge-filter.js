@@ -23,7 +23,7 @@
  * own element, and a count printed in a pseudo-element is a bare digit sitting
  * where a styled badge should be. So the digits are rewritten in place and put
  * back whenever React writes its own over them, which leaves the badge exactly
- * the badge — same shape, same colour, same position.
+ * the badge — same shape, same color, same position.
  */
 
 import config from '../../core/config.js';

@@ -121,7 +121,7 @@ export const COMPACT_MARK = 'data-toolasha-unit-badge-compact';
 export const REFRESH_MS = 1000;
 
 /**
- * Below this share a badge is drawn dim rather than in the party colour.
+ * Below this share a badge is drawn dim rather than in the party color.
  *
  * Not a judgement about the player — a support build is meant to be down here —
  * but about the figure: a share this small is inside the attribution's own
@@ -456,7 +456,7 @@ class CombatUnitBadges {
             const tiles = tilesForSource(partyTiles(area), source, config.getSetting('portraitDps') === true);
             const pairs = matchTiles(tiles, badgeRows(players));
 
-            // Player colours — utils/player-colors.js. A dim badge stays dim:
+            // Player colors — utils/player-colors.js. A dim badge stays dim:
             // that ink says the share is inside the attribution's own error
             const colorsOn = config.getSetting('combatPlayerColors') === true;
             if (colorsOn) resolveRosterColors(players.map((player) => player?.name));

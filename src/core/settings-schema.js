@@ -2556,17 +2556,17 @@ export const settingsGroups = {
             },
             combatPlayerColors: {
                 id: 'combatPlayerColors',
-                label: 'Player colours: Give each player one colour on the damage boards and unit badges',
+                label: 'Player colors: Give each player one color on the damage boards and unit badges',
                 type: 'checkbox',
                 default: true,
-                help: 'Each player keeps one colour across the Per-player panel, the trial damage board and the unit badges, so a row and a badge can be matched at a glance. Players in the same party get different colours (up to twelve), and a player keeps theirs for the session when someone joins. Click the dot beside a name to pick a colour; it is remembered for that player on every character. With this off, the trial board goes back to colouring bars by damage type',
+                help: 'Each player keeps one color across the Per-player panel, the trial damage board and the unit badges, so a row and a badge can be matched at a glance. Players in the same party get different colors (up to twelve), and a player keeps theirs for the session when someone joins. Click the dot beside a name to pick a color; it is remembered for that player on every character. With this off, the trial board goes back to coloring bars by damage type',
             },
             combatDpsGraph: {
                 id: 'combatDpsGraph',
                 label: 'DPS graph: Chart damage per second over time on the Per-player panel and trial damage board',
                 type: 'checkbox',
                 default: true,
-                help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own colour. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. Needs the Per-player panel on for normal fights',
+                help: 'A small line chart above the rows on the Damage tab: the party, and each player in their own color. On the Per-player panel it covers the same run as the table, with a five-minute and a whole-session view and boss fights shaded red; it reads the damage totals every two seconds and draws a 16-second average. On the trial damage board it draws the trial recorder’s readings, one every fifteen seconds, with the five leading players and a dashed line at each wave or tier change. Either board can hide it. Needs the Per-player panel on for normal fights',
             },
             combatMeterHistory: {
                 id: 'combatMeterHistory',
@@ -3607,12 +3607,12 @@ export const settingsGroups = {
                 help:
                     'Guild tokens are never listed on the market, so they are priced through the Guild Shop ' +
                     'exchange instead: credits per token × the gold value of a credit, taking whichever credit ' +
-                    'colour yields the most gold. This number is now the last resort. Opening a Guild Shop ' +
-                    'exchange dialog with a Guild Token selected reads that colour’s real rate off the screen ' +
+                    'color yields the most gold. This number is now the last resort. Opening a Guild Shop ' +
+                    'exchange dialog with a Guild Token selected reads that color’s real rate off the screen ' +
                     'and remembers it, and client data wins over even that — so in normal play the live rate is ' +
                     'what gets used and this setting is never consulted. It only stands in before any dialog ' +
                     'has been opened, and every figure derived from it is labelled “assumed rate”. Run ' +
-                    'Toolasha.debug.tokenExchange() in the console to see every colour’s rate and which one was ' +
+                    'Toolasha.debug.tokenExchange() in the console to see every color’s rate and which one was ' +
                     'picked. Set to 0 to leave tokens unpriced, as they were before.',
             },
             guildCreditValue: {

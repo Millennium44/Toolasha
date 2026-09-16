@@ -5,7 +5,7 @@
  * keeps a reading of the cumulative per-player totals every fifteen seconds for
  * exactly this — its own note calls the snapshots "what make a rate over time".
  * This draws them: the party's rate between consecutive readings, and the
- * leading players' in their own colours, on the trial's watched clock
+ * leading players' in their own colors, on the trial's watched clock
  * (`seconds`), so a stretch nobody was watching is not drawn as zero damage.
  *
  * ## Tier boundaries
@@ -274,7 +274,7 @@ function ratesGraphHTML(rates, marks) {
     const legend =
         `<div style="color:${BOARD_COLORS.dim}; font-size:9px; line-height:1.4; margin-top:2px;">` +
         `White is the party; the ${Math.min(TOP_PLAYERS, playerCount)} leading players of ${playerCount} ` +
-        'are drawn in their own colours. One point per recorder reading, on the watched clock; dashed lines are ' +
+        'are drawn in their own colors. One point per recorder reading, on the watched clock; dashed lines are ' +
         'wave or tier changes, labelled where the tier was seen.</div>';
     return `${svg}${legend}`;
 }

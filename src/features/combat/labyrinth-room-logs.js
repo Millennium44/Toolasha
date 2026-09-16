@@ -151,7 +151,7 @@ const VERDICT_COLORS = {
     'sim too low': '#8ac6ff',
     consistent: '#8fe3b0',
     // Fights taking longer than simulated is the same kind of news as a clear
-    // rate that is too optimistic, so it reads in the same colour
+    // rate that is too optimistic, so it reads in the same color
     'sim too fast': '#ff8a8a',
     'sim too slow': '#8ac6ff',
 };
@@ -2347,7 +2347,7 @@ class LabyrinthRoomLogs {
             return box;
         }
 
-        const colour = { above: '#ff9a6b', below: '#ff9a6b', consistent: '#8fe6a0', insufficient: '#9ab0d8' };
+        const color = { above: '#ff9a6b', below: '#ff9a6b', consistent: '#8fe6a0', insufficient: '#9ab0d8' };
 
         for (const group of result.groups) {
             const head = document.createElement('div');
@@ -2377,7 +2377,7 @@ class LabyrinthRoomLogs {
                 left.textContent = metric.label;
 
                 const right = document.createElement('span');
-                right.style.cssText = `color:${colour[metric.verdict] || '#e6eefc'}; text-align:right;`;
+                right.style.cssText = `color:${color[metric.verdict] || '#e6eefc'}; text-align:right;`;
                 const you = this.formatReplayValue(metric.key, metric.observed);
                 const sim = this.formatReplayValue(metric.key, metric.predicted);
                 let tag = '';
@@ -2784,8 +2784,8 @@ class LabyrinthRoomLogs {
             numbers.textContent = `Never simmed — you clear ${pct(group.observed)}`;
         }
         line.appendChild(numbers);
-        const colour = VERDICT_COLORS[group.verdict];
-        if (colour) line.appendChild(this.makeChip(group.verdict, 'rgba(255,255,255,0.08)', colour));
+        const color = VERDICT_COLORS[group.verdict];
+        if (color) line.appendChild(this.makeChip(group.verdict, 'rgba(255,255,255,0.08)', color));
         card.appendChild(line);
 
         const spread = document.createElement('div');
@@ -3191,9 +3191,9 @@ class LabyrinthRoomLogs {
                 : `Sim ${pct(row.predicted)} → actual ${pct(row.observed)} (${pct(row.low)}–${pct(row.high)})`;
         line.appendChild(numbers);
 
-        const colour = VERDICT_COLORS[row.verdict];
-        if (colour) {
-            line.appendChild(this.makeChip(row.verdict, 'rgba(255,255,255,0.08)', colour));
+        const color = VERDICT_COLORS[row.verdict];
+        if (color) {
+            line.appendChild(this.makeChip(row.verdict, 'rgba(255,255,255,0.08)', color));
         }
         if (row.likelihood !== null && row.likelihood < 0.05) {
             const odds = document.createElement('span');
@@ -3238,8 +3238,8 @@ class LabyrinthRoomLogs {
                 `Fight — sim ${Math.round(fl.predicted)}s, ran ${Math.round(fl.actual)}s ` +
                 `over ${fl.fights} fight${fl.fights === 1 ? '' : 's'}`;
             fightLine.appendChild(text);
-            const colour = VERDICT_COLORS[fl.verdict];
-            if (colour) fightLine.appendChild(this.makeChip(fl.verdict, 'rgba(255,255,255,0.08)', colour));
+            const color = VERDICT_COLORS[fl.verdict];
+            if (color) fightLine.appendChild(this.makeChip(fl.verdict, 'rgba(255,255,255,0.08)', color));
             card.appendChild(fightLine);
         }
 

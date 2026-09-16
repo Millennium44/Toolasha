@@ -69,7 +69,7 @@ beforeEach(() => {
     opts.settings = {};
 });
 
-/** A line's text, whether it is a bare string or carries its own colour */
+/** A line's text, whether it is a bare string or carries its own color */
 const lineText = (line) => (typeof line === 'string' ? line : line.text);
 
 /** A portrait tile as the game builds it, hashed class names and all */

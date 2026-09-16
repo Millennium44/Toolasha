@@ -258,7 +258,7 @@ export function glyph(name, size = 16) {
  * @property {string} [icon] - An item hrid, or any sprite id, to draw instead of text
  * @property {string} [sheet] - Which sprite sheet `icon` is on; items by default
  * @property {number} [size] - Icon size in pixels
- * @property {string} [color] - From `ROW_COLORS`, or any CSS colour
+ * @property {string} [color] - From `ROW_COLORS`, or any CSS color
  * @property {boolean} [bold] - Emphasis
  * @property {boolean} [ellipsis] - This is the piece that gives way when the tile is too narrow
  * @property {string} [title] - What this piece says in full, on hover. For the
@@ -551,10 +551,10 @@ export function blank(container) {
 }
 
 /**
- * A signed percentage, and what colour it should be.
+ * A signed percentage, and what color it should be.
  *
  * The band matters as much as the sign: everything sits a percent or two off
- * whatever it is being compared with, and colouring that makes a row into a
+ * whatever it is being compared with, and coloring that makes a row into a
  * light that is always on.
  *
  * @param {number} percent - Signed percentage

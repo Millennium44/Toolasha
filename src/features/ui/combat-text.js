@@ -140,12 +140,12 @@ function unitTiles() {
 let attribution = newAttributionState();
 
 /**
- * A colour per attacker, so a party's numbers are separable at a glance.
+ * A color per attacker, so a party's numbers are separable at a glance.
  *
  * Which is the point of attributing them at all: five people hitting the same
  * monster produce five numbers a tick, and undifferentiated they are noise.
  */
-const ATTACKER_COLOURS = ['#ffd166', '#7fd6ff', '#c7a0ff', '#8fe388', '#ff9f6e'];
+const ATTACKER_COLORS = ['#ffd166', '#7fd6ff', '#c7a0ff', '#8fe388', '#ff9f6e'];
 
 /** @returns {Array<Object>} The scrolling log, newest first */
 export function combatLog() {
@@ -246,7 +246,7 @@ function drawFloating(events) {
 }
 
 /**
- * What colour one number should be.
+ * What color one number should be.
  *
  * Incoming damage and heals read by kind; outgoing damage reads by **attacker**,
  * so a party's numbers can be told apart. A miss is grey whoever threw it.
@@ -254,13 +254,13 @@ function drawFloating(events) {
  * @param {Object} event - One event
  * @returns {string}
  */
-function colourFor(event) {
+function colorFor(event) {
     if (event.isMiss) return '#9aa0ac';
     if (event.kind === 'heal') return '#7fd6a3';
     if (event.side === 'ally') return '#f87171';
 
     const attacker = Number(event.attacker);
-    return ATTACKER_COLOURS[Number.isFinite(attacker) ? attacker % ATTACKER_COLOURS.length : 0];
+    return ATTACKER_COLORS[Number.isFinite(attacker) ? attacker % ATTACKER_COLORS.length : 0];
 }
 
 /**
@@ -288,10 +288,10 @@ function floatOver(tile, event) {
         pointerEvents: 'none',
         fontWeight: 'bold',
         // A crit is the thing you want to notice without reading, so it is
-        // bigger rather than merely a different colour
+        // bigger rather than merely a different color
         fontSize: event.isCrit ? '20px' : '15px',
         textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
-        color: colourFor(event),
+        color: colorFor(event),
         zIndex: String(config.Z_HUD),
         transition: `transform ${FLOAT_MS}ms ease-out, opacity ${FLOAT_MS}ms ease-out`,
     });
@@ -400,7 +400,7 @@ export const combatLogPanel = createPanel({
                     event.isMiss
                         ? 'miss'
                         : `${event.kind === 'heal' ? '+' : ''}${formatWithSeparator(Math.round(event.amount))}`,
-                    colourFor(event)
+                    colorFor(event)
                 )
             );
         }

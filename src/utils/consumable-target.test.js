@@ -2,7 +2,7 @@
  * How long the stock is supposed to last.
  *
  * One setting read by two things in two bundles — the panel that measures
- * shortfalls against it and the tile that colours against it. A stored value
+ * shortfalls against it and the tile that colors against it. A stored value
  * that never comes back does not merely lose a preference: the panel shows a
  * day's shortfall when you asked for a week's, and looks right doing it.
  */

@@ -178,7 +178,7 @@ export async function capXPHRowProfit(row) {
 }
 
 /**
- * The Profit/hr cell's inner HTML: the coloured figure with its liquidity marker when the market
+ * The Profit/hr cell's inner HTML: the colored figure with its liquidity marker when the market
  * bounds it, or a label — never a bare dash — when the row could not be priced at all.
  *
  * The marker is a sibling element with its own left margin (`liquidityMarkerHtml`), the same

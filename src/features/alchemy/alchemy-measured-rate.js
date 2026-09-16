@@ -78,7 +78,7 @@ export { MIN_ATTEMPTS, ALCHEMY_KINDS };
 /** How long one read of the sessions is served before a fresh one is started */
 export const CACHE_TTL_MS = 30 * 1000;
 
-/** Colours, matching the calibration panel's own verdict palette */
+/** Colors, matching the calibration panel's own verdict palette */
 export const MEASURED_COLORS = Object.freeze({
     /** Sample and prediction agree */
     consistent: '#9aa0a6',

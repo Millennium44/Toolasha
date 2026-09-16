@@ -754,7 +754,7 @@ describe('the rotation tab’s history scope', () => {
  * climbed for the life of the tab.
  */
 describe('player markers on the board', () => {
-    test('each row carries a marker in the player’s colour that opens the player menu', async () => {
+    test('each row carries a marker in the player’s color that opens the player menu', async () => {
         const { playerColor } = await import('../../utils/player-colors.js');
         opts.dealt = { seconds: 100, players: [{ name: 'Abe', damage: 1000, dps: 10, classTag: null }] };
 

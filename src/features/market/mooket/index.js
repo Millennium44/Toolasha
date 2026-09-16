@@ -136,7 +136,7 @@ export async function splitLegacyWatchlist(savedPrefs) {
     }
 }
 
-/** Series colours, in the order the datasets are built */
+/** Series colors, in the order the datasets are built */
 const SERIES = [
     { key: 'ask', label: 'Ask', color: '#f56c6c', dash: [] },
     { key: 'bid', label: 'Bid', color: '#67c23a', dash: [5, 5] },
@@ -747,7 +747,7 @@ class MarketHistoryPanel {
             if (mode !== 'icon' && mode !== 'iconChange') {
                 const value = document.createElement('span');
                 value.textContent = change.ask === null ? '—' : formatKMB(change.ask);
-                value.style.color = this.changeColour(change.askChange);
+                value.style.color = this.changeColor(change.askChange);
                 chip.appendChild(value);
             }
             if (mode === 'iconChange' || mode === 'iconBoth' || mode === 'full') {
@@ -756,7 +756,7 @@ class MarketHistoryPanel {
                     change.askChange === null
                         ? ''
                         : `${change.askChange >= 0 ? '+' : ''}${change.askChange.toFixed(1)}%`;
-                delta.style.color = this.changeColour(change.askChange);
+                delta.style.color = this.changeColor(change.askChange);
                 chip.appendChild(delta);
 
                 // Beside the since-pinned delta, never instead of it: the two
@@ -766,7 +766,7 @@ class MarketHistoryPanel {
                 if (move) {
                     const step = document.createElement('span');
                     step.textContent = move.text;
-                    step.style.color = this.changeColour(move.percent);
+                    step.style.color = this.changeColor(move.percent);
                     step.style.opacity = '0.75';
                     chip.appendChild(step);
                 }
@@ -1010,7 +1010,7 @@ class MarketHistoryPanel {
     }
 
     /** @param {number|null} change - Percentage move */
-    changeColour(change) {
+    changeColor(change) {
         if (change === null || change === 0) return '#e7e7e7';
         return change > 0 ? '#f56c6c' : '#67c23a';
     }

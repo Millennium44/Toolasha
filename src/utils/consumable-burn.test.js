@@ -75,7 +75,7 @@ describe('simBurnPerHour', () => {
 });
 
 describe('compareCategory', () => {
-    test('is a ratio, coloured past the band', () => {
+    test('is a ratio, colored past the band', () => {
         expect(compareCategory(45, 25)).toMatchObject({ ratio: 1.8, tone: 'high' });
         expect(compareCategory(12, 12)).toMatchObject({ ratio: 1, tone: 'flat' });
         expect(compareCategory(10, 20)).toMatchObject({ ratio: 0.5, tone: 'low' });

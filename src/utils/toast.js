@@ -9,7 +9,7 @@
  *
  * What is taken from each: the tracker's fade-and-remove lifetime and its use of
  * a real z-index constant rather than a guessed number, and the simulator's
- * per-kind colouring. What is added is the part both lack — a stack, so a second
+ * per-kind coloring. What is added is the part both lack — a stack, so a second
  * message does not overwrite the first, a dismiss control, and an optional
  * action, because "N features failed to start" is only useful if you can get
  * from it to which ones.
@@ -110,7 +110,7 @@ function pruneContainer() {
  *
  * @param {string} message - What to say. Plain text; never HTML
  * @param {Object} [options] - Options
- * @param {'info'|'warn'|'error'} [options.kind='info'] - Colouring and urgency
+ * @param {'info'|'warn'|'error'} [options.kind='info'] - Coloring and urgency
  * @param {number} [options.duration] - Lifetime in ms; `0` stays until dismissed
  * @param {{label: string, onClick: Function}} [options.action] - Optional follow-up.
  *   The whole toast becomes clickable when this is given, because a small button

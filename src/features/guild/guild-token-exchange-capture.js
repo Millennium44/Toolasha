@@ -1,7 +1,7 @@
 /**
  * Reading the guild token exchange off the Guild Shop dialog.
  *
- * The exchange rate a token buys credits at is per credit colour — a token buys
+ * The exchange rate a token buys credits at is per credit color — a token buys
  * ten green credits and a sixtieth of a gold one — and no map in the client data
  * has been observed publishing it. `guild-token-value.js` probes for one and
  * prefers it whenever it answers; this module is what stands between that probe

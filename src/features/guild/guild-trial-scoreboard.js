@@ -29,14 +29,14 @@
  * The party-wide rate on the trial card stays where it is and stays measured;
  * this panel never competes with it.
  *
- * ## Colour
+ * ## Color
  *
  * By damage type, from the loadouts already captured off `battle_unit_fetched`
  * (`combatStats.damageType`, or the combat style when the type is absent) —
  * which is a fact about the player rather than a guess from their name. A player
- * whose loadout has never been seen gets the neutral accent, because a colour
- * that means "unknown" and a colour that means "physical" must not be the same
- * colour.
+ * whose loadout has never been seen gets the neutral accent, because a color
+ * that means "unknown" and a color that means "physical" must not be the same
+ * color.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -104,7 +104,7 @@ const GOOD = '#4ade80';
 const WARN = '#f0a830';
 
 /**
- * Bar colour per damage type.
+ * Bar color per damage type.
  *
  * Read from the loadout rather than inferred from a name. The neutral accent is
  * reserved for "no loadout seen", which is a different statement from any of the
@@ -866,7 +866,7 @@ class GuildTrialScoreboard {
         const viewing = this.mode === 'saved' ? this.viewing : null;
         const breakdown = viewing ? viewing.entry.breakdown || null : guildTrialDamage.breakdown?.() || null;
         body.innerHTML = this._bodyHTML(breakdown, viewing);
-        // Player colour and class menu — utils/player-menu.js
+        // Player color and class menu — utils/player-menu.js
         wirePlayerMenu(body, () => this.render());
         wireTrialDpsGraph(body, () => this.render());
 
@@ -1370,7 +1370,7 @@ class GuildTrialScoreboard {
                   )
                 : null;
 
-        // Player colours — utils/player-colors.js
+        // Player colors — utils/player-colors.js
         resolveRosterColors([...rows, ...(estimate?.players || [])].map((row) => row.name));
 
         const list = rows.length
@@ -1543,7 +1543,7 @@ class GuildTrialScoreboard {
      */
     _rowHTML(row, classes = {}, manaByName = null, abilitySplit = null, seconds = 0) {
         // Every part of the drawing is the shared board's; what stays here is
-        // the trial's own facts about a row — the colour comes from the
+        // the trial's own facts about a row — the color comes from the
         // player's captured damage type, the marker beside the name comes
         // from what they were seen casting this trial, and a mana marker says
         // when their bar is empty, under their cheapest cast, or low right now
@@ -1557,7 +1557,7 @@ class GuildTrialScoreboard {
                 ? ''
                 : `<span style="color:${DIM}; font-size:9px; margin-left:4px;">${open ? '▾' : '▸'}</span>`;
         const base = boardRowHTML(row, {
-            // Player colour and class override — utils/player-menu.js
+            // Player color and class override — utils/player-menu.js
             color: playerRowColor(row.name, type ? TYPE_COLORS[type] : ACCENT),
             tagHTML:
                 playerMarkersHTML(row.name, classes?.[key] || null, classTagHTML) +

@@ -314,7 +314,7 @@ export function buildScoreSummaryText(score, owner) {
  * A single copy affordance, right-aligned above the score cards.
  *
  * Same shape as Party Loot's and Party Luck's — a glyph rather than a word,
- * and a tick in its place rather than a colour change on click, so the flash
+ * and a tick in its place rather than a color change on click, so the flash
  * reads at a glance.
  *
  * @param {string} text - What clicking it copies

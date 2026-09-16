@@ -3,7 +3,7 @@
  *
  * Two boards draw players — the Per-player panel and the trial scoreboard — and
  * both rebuild their body from one HTML string every few seconds. So the
- * markers are strings (a colour dot, the class chip with any override applied),
+ * markers are strings (a color dot, the class chip with any override applied),
  * the click is one delegated capture-phase listener on the board's container
  * that survives the rebuilds, and the menu itself lives on `document.body`,
  * outside anything a redraw replaces.
@@ -13,7 +13,7 @@
  * not also toggle the row it sits in.
  *
  * The click-to-change menu with an "automatic" entry, the swatch row and the
- * free colour input are KikiMeter's (ZhuLiMoon, MIT). The code is Toolasha's.
+ * free color input are KikiMeter's (ZhuLiMoon, MIT). The code is Toolasha's.
  */
 
 import config from '../core/config.js';
@@ -42,7 +42,7 @@ export function playerIdentityOptions() {
 }
 
 /**
- * The colour a board row's bar should take: the player's own when colours are on.
+ * The color a board row's bar should take: the player's own when colors are on.
  * @param {string} name - Player name
  * @param {string} fallback - What the board drew before
  * @returns {string}
@@ -71,7 +71,7 @@ function manualTagHTML(verdict) {
 }
 
 /**
- * A row's colour dot and class chip, ready to sit after the name.
+ * A row's color dot and class chip, ready to sit after the name.
  *
  * @param {string} name - Player name, off the wire (escaped here)
  * @param {Object|null} verdict - The inferred verdict
@@ -86,7 +86,7 @@ export function playerMarkersHTML(name, verdict, renderTag) {
 
     const attr = `${PLAYER_ATTR}="${escapeText(name)}"`;
     const dot = colors
-        ? `<span ${attr} title="Click to set this player’s colour or class." style="display:inline-block; ` +
+        ? `<span ${attr} title="Click to set this player’s color or class." style="display:inline-block; ` +
           `width:8px; height:8px; border-radius:50%; flex:0 0 auto; align-self:center; cursor:pointer; ` +
           `background:${playerColor(name)};"></span>`
         : `<span ${attr} title="Click to set this player’s class." style="display:inline-block; width:7px; ` +
@@ -159,7 +159,7 @@ function menuButton(label, on) {
 }
 
 /**
- * Open the class and colour menu for one player, beside the marker clicked.
+ * Open the class and color menu for one player, beside the marker clicked.
  *
  * @param {HTMLElement} anchor - The marker
  * @param {string} name - Player name
@@ -222,7 +222,7 @@ export function openPlayerMenu(anchor, name, onChange = () => {}) {
     if (colors) {
         const set = pickedColor(name);
         const heading = document.createElement('div');
-        heading.textContent = 'Colour';
+        heading.textContent = 'Color';
         heading.style.color = BOARD_COLORS.dim;
         const row = document.createElement('div');
         row.style.cssText = 'display:flex; flex-wrap:wrap; gap:3px; align-items:center;';
@@ -239,7 +239,7 @@ export function openPlayerMenu(anchor, name, onChange = () => {}) {
         const custom = document.createElement('input');
         custom.type = 'color';
         custom.value = set || playerColor(name);
-        custom.title = 'Any colour. One too dark to read is lightened.';
+        custom.title = 'Any color. One too dark to read is lightened.';
         custom.style.cssText = 'width:20px; height:16px; padding:0; border:none; background:none; cursor:pointer;';
         custom.addEventListener('input', () => {
             setPlayerColor(name, custom.value);
@@ -249,7 +249,7 @@ export function openPlayerMenu(anchor, name, onChange = () => {}) {
 
         const auto = menuButton('Automatic', !set);
         auto.dataset.color = '';
-        auto.title = 'Go back to a colour picked from the palette.';
+        auto.title = 'Go back to a color picked from the palette.';
         row.appendChild(auto);
 
         row.addEventListener('click', (event) => {

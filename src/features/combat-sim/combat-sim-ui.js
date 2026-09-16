@@ -247,7 +247,7 @@ export function scoreDepthLabel(depthKey) {
  *
  * Nine, because it is what a reader can hold: green for the ones worth looking
  * at, amber for the middle, red for the tail of what still ranked at all. Past
- * that the colour would be saying "worse than ninth", which the position in the
+ * that the color would be saying "worse than ninth", which the position in the
  * table already says.
  */
 export const SCORE_GRADIENT_PLACES = 9;
@@ -255,15 +255,15 @@ export const SCORE_GRADIENT_PLACES = 9;
 /**
  * Green → amber → red across the top nine scores.
  *
- * The three stops are the table's own colours — the same `#4caf50` that marks a
+ * The three stops are the table's own colors — the same `#4caf50` that marks a
  * best-in-column cell and the same `#f44336` that marks a regression — so the
  * gradient reads as more of the vocabulary already in use rather than a second
  * palette laid over it. Interpolated in plain RGB: over this short a span the
  * difference from a perceptual blend is not visible, and the endpoints are
- * exactly the two colours everything else in the table uses.
+ * exactly the two colors everything else in the table uses.
  *
  * @param {number} place - 1-based rank among the scored rows
- * @returns {string|null} A CSS colour, or null past the ninth place
+ * @returns {string|null} A CSS color, or null past the ninth place
  */
 export function scoreGradientColor(place) {
     if (!Number.isFinite(place) || place < 1 || place > SCORE_GRADIENT_PLACES) return null;
@@ -287,7 +287,7 @@ export function scoreGradientColor(place) {
  * Where each row's Score places among the rows shown, ties sharing a place.
  *
  * Built from the scores rather than from the table order so a sort by Cost does
- * not repaint the gradient — the colour is about the score, and it has to mean
+ * not repaint the gradient — the color is about the score, and it has to mean
  * the same thing whichever column the table is sorted on. Rows that scored
  * nothing never place: a zero is the absence of a ranking, not the bottom of one.
  *
@@ -341,16 +341,16 @@ export function metricPlaces(rows, valueOf, lowerIsBetter) {
 }
 
 /**
- * The gradient ladder for every column the colouring covers, keyed by column.
+ * The gradient ladder for every column the coloring covers, keyed by column.
  *
  * The Score plus every metric the Score is currently built from — which is the
- * point of the change that introduced it. Colouring only the total said which
+ * point of the change that introduced it. Coloring only the total said which
  * rows were good all round and nothing about what any of them was good *at*; a
  * ladder per column says "this one is the cheapest DPS, that one the cheapest
  * EXP" at a glance, and the Score column still says who wins on aggregate.
  *
  * Only the metrics actually counting toward the Score get one. A column excluded
- * in ⚙ Columns is a column the reader has said not to weigh, and colouring it
+ * in ⚙ Columns is a column the reader has said not to weigh, and coloring it
  * would go on recommending it.
  *
  * @param {Array<Object>} rows - The rows about to be drawn
@@ -5556,7 +5556,7 @@ class CombatSimUI {
          * One tile.
          * @param {string} label - Caption
          * @param {string} value - Preformatted value, may carry a delta span
-         * @param {string} [color='#e0e0e0'] - Value colour
+         * @param {string} [color='#e0e0e0'] - Value color
          * @returns {string} HTML
          */
         const tile = (label, value, color = '#e0e0e0') =>
@@ -7836,15 +7836,15 @@ class CombatSimUI {
                         <span>Places</span>
                         <select class="toolasha-select" id="mwi-csim-score-depth" style="${selectStyle}">${depthOptions}</select>
                     </label>
-                    <label style="${box}" title="Colour the nine best values in Score and in every column that
+                    <label style="${box}" title="Color the nine best values in Score and in every column that
                         counts toward it — green through amber to red — so you can see at a glance which row is
                         the cheapest DPS, which the cheapest EXP, and which wins on aggregate. Each column is
                         ranked on its own values and in its own direction: cheapest first for the Gold/0.01%
                         columns and Repay, highest first for ROI. A row with no value in a column never places
-                        there, and rows below ninth stay uncoloured — their position already says so.">
+                        there, and rows below ninth stay uncolored — their position already says so.">
                         <input type="checkbox" id="mwi-csim-score-gradient"
                             ${this._upgradeScoreGradient ? 'checked' : ''}>
-                        Colour the top ${SCORE_GRADIENT_PLACES} in each scored column
+                        Color the top ${SCORE_GRADIENT_PLACES} in each scored column
                     </label>
                 </div>
             </div>
@@ -8080,16 +8080,16 @@ class CombatSimUI {
                     `Points for placing in each scored metric's ${scoreDepthLabel(depthKey).toLowerCase()}, ` +
                     'summed. Finds all-rounders that never top a single column. Ordinal, so winning a metric ' +
                     'narrowly scores the same as winning it outright. Use ⚙ Columns to choose what counts, ' +
-                    'how deep the placings go, and whether to colour them.',
+                    'how deep the placings go, and whether to color them.',
                 value: (r) => r.score ?? 0,
                 render: (r, v) => (v ? String(v) : '—'),
             },
         ];
 
-        // The colour goes on afterwards rather than inside each column's own
+        // The color goes on afterwards rather than inside each column's own
         // renderer: a column should say how to draw its number, not how to draw
         // a ranking of it, and wrapping keeps the special cases the renderers
-        // already carry — a "free", a "pays for itself" — with their own colour
+        // already carry — a "free", a "pays for itself" — with their own color
         // intact, since an inner span wins over the one put round it.
         return defs.map((column) => {
             const ladder = gradientPlaces?.get(column.key);
@@ -8290,7 +8290,7 @@ class CombatSimUI {
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
 
-        // Greyed rather than coloured when the delta is inside the run's own
+        // Greyed rather than colored when the delta is inside the run's own
         // error, so an unpriced row cannot imply a finding it did not make
         const cell = (r, key) => {
             const value = r.deltas?.[key];
@@ -8898,7 +8898,7 @@ class CombatSimUI {
             this._renderUpgradeResults(this._upgradeResultsData);
         });
 
-        // Colour only — the scores are unchanged, so there is nothing to re-rank
+        // Color only — the scores are unchanged, so there is nothing to re-rank
         menu.querySelector('#mwi-csim-score-gradient')?.addEventListener('change', (event) => {
             this._upgradeScoreGradient = Boolean(event.target.checked);
             this._persistUpgradeColumnPrefs();

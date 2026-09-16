@@ -1737,23 +1737,23 @@ function saveProfitView() {
  * problem without opening anything else.
  *
  * @param {HTMLElement} body - Where it goes
- * @param {Object} scenario - `{title, colour, equation, revenue, cost}`
+ * @param {Object} scenario - `{title, color, equation, revenue, cost}`
  * @returns {HTMLElement}
  */
 function profitBox(body, scenario, tax = 0) {
     const value = scenario.revenue - (profitView.costsOn ? scenario.cost : 0) - tax;
-    const colour = value >= 0 ? scenario.colour : ROW_COLORS.bad;
+    const color = value >= 0 ? scenario.color : ROW_COLORS.bad;
 
     const block = card(body);
-    block.style.borderLeft = `3px solid ${colour}`;
+    block.style.borderLeft = `3px solid ${color}`;
 
     const heading = document.createElement('div');
     heading.textContent = scenario.shorthand ? `${scenario.title}  (${scenario.shorthand})` : scenario.title;
-    Object.assign(heading.style, { color: colour, fontWeight: 'bold' });
+    Object.assign(heading.style, { color: color, fontWeight: 'bold' });
 
     const figure = document.createElement('div');
     figure.textContent = `${formatKMB(value)} coin/day`;
-    Object.assign(figure.style, { color: colour, fontSize: '17px', fontWeight: 'bold', lineHeight: '1.3' });
+    Object.assign(figure.style, { color: color, fontSize: '17px', fontWeight: 'bold', lineHeight: '1.3' });
 
     const rule = document.createElement('div');
     rule.textContent =
@@ -1767,7 +1767,7 @@ function profitBox(body, scenario, tax = 0) {
     const sum = document.createElement('div');
     sum.textContent = terms.length > 1 ? `${terms.join(' - ')} = ${formatKMB(value)}` : terms[0];
     Object.assign(sum.style, {
-        color: colour,
+        color: color,
         opacity: '0.75',
         fontSize: '11px',
         fontFamily: 'monospace',
@@ -1835,7 +1835,7 @@ function profitCases(stats) {
             key: 'lazy',
             title: 'Lazy Profit',
             shorthand: 'Bid - Ask',
-            colour: ROW_COLORS.good,
+            color: ROW_COLORS.good,
             equation: 'Revenue (Bid) - Cost (Ask)',
             revenue: revenue.bid,
             cost: cost.ask,
@@ -1844,7 +1844,7 @@ function profitCases(stats) {
             key: 'mid',
             title: 'Mid Profit',
             shorthand: 'Bid - Bid',
-            colour: ROW_COLORS.accent,
+            color: ROW_COLORS.accent,
             equation: 'Revenue (Bid) - Cost (Bid)',
             revenue: revenue.bid,
             cost: cost.bid,
@@ -1853,7 +1853,7 @@ function profitCases(stats) {
             key: 'patient',
             title: 'Patient Profit',
             shorthand: 'Ask - Bid',
-            colour: ROW_COLORS.gold,
+            color: ROW_COLORS.gold,
             equation: 'Revenue (Ask) - Cost (Bid)',
             revenue: revenue.ask,
             cost: cost.bid,
@@ -1862,7 +1862,7 @@ function profitCases(stats) {
             key: 'askask',
             title: 'Ask - Ask',
             shorthand: '',
-            colour: '#c79ae8',
+            color: '#c79ae8',
             equation: 'Revenue (Ask) - Cost (Ask)',
             revenue: revenue.ask,
             cost: cost.ask,
@@ -1957,7 +1957,7 @@ export const profitPanel = new CombatPanel({
         // The header sum HWhat carries: revenue, cost and what is left, in one
         // line, so the panel answers its own question before it is scrolled
         const summary = card(body);
-        summary.style.borderLeft = `3px solid ${headline.colour}`;
+        summary.style.borderLeft = `3px solid ${headline.color}`;
         const total = headline.revenue - (profitView.costsOn ? headline.cost : 0) - tax;
         const equation = document.createElement('div');
         Object.assign(equation.style, { fontSize: '14px', fontWeight: 'bold' });
@@ -2000,7 +2000,7 @@ export const profitPanel = new CombatPanel({
 });
 
 /**
- * One coloured span of the header sum.
+ * One colored span of the header sum.
  * @param {string} text - What it says
  * @param {string} color - Ink
  * @returns {HTMLElement}

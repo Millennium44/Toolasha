@@ -20,7 +20,7 @@ describe('signedPercent', () => {
     });
 
     test('a couple of percent either way is not news', () => {
-        // Everything sits slightly off whatever it is compared with; colouring
+        // Everything sits slightly off whatever it is compared with; coloring
         // that makes a row into a light that is always on
         expect(signedPercent(2).color).toBe(ROW_COLORS.dim);
         expect(signedPercent(-2).color).toBe(ROW_COLORS.dim);

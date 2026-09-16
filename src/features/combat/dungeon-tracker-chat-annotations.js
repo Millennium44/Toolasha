@@ -592,7 +592,7 @@ class DungeonTrackerChatAnnotations {
                 if (windowed) {
                     // covered === 0 is a run in no window at all — the line
                     // prints no average, so there is nothing to judge it by
-                    // either, and it takes the same neutral colour a run with
+                    // either, and it takes the same neutral color a run with
                     // no history behind it has always taken
                     if (windowed.covered > 0) avg = windowed.average;
                 } else if (teamStats && teamStats.runCount > 0) {

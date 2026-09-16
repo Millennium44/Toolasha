@@ -22,7 +22,7 @@
  * - **The buttons stick to the bottom of the panel.** They are the panel's
  *   verbs — queue this, start this — and having to scroll to reach a verb is
  *   the failure everything else here is downstream of. Position only: the strip
- *   is left the colour the game gives it.
+ *   is left the color the game gives it.
  * - **The added sections are tightened.** Eight pixels above and below seven
  *   collapsible sections is over a hundred pixels of nothing, which is most of
  *   a section on its own.
@@ -94,11 +94,11 @@ const CSS = `
         scrollbar-gutter: stable;
     }
 
-    /* The scrollbar is left as the game draws it. Recolouring it was chasing
+    /* The scrollbar is left as the game draws it. Recoloring it was chasing
        the wrong thing anyway: the horizontal bar was never a styling problem
        but a width one, fixed where the oversized blocks are built. */
 
-    /* So is the buttons strip. Pinning it needed no colour of its own, and
+    /* So is the buttons strip. Pinning it needed no color of its own, and
        three rounds of "there is a box round the buttons" were all this script
        painting one: first a themed variable that came out blue, then a dark
        literal that came out black — a filled band across the foot of every

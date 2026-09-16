@@ -1031,7 +1031,7 @@ function abilityRow(capture, abilityDetailMap) {
 }
 
 /**
- * How a class tag is coloured — one hue per role, so a roster reads as a shape
+ * How a class tag is colored — one hue per role, so a roster reads as a shape
  * rather than as a column of identical chips.
  */
 const CLASS_COLORS = {
@@ -1125,7 +1125,7 @@ export function classChecksLine(checks) {
  *
  * @param {Object} row - A `state().participants` row
  * @param {string} value - The status text on the right
- * @param {string} color - Its colour
+ * @param {string} color - Its color
  * @param {string} [title] - Hover text for the line
  * @returns {HTMLElement}
  */

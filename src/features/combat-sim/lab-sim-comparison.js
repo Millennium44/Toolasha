@@ -7,7 +7,7 @@
  * the baseline, and prints every other run as a delta against it. This is the
  * same idea for the lab panel's single-target fights, kept in its own file so
  * the shape (what a recorded run is, how it is labelled, how a delta is
- * coloured, how the table is drawn and wired) lives in one place rather than
+ * colored, how the table is drawn and wired) lives in one place rather than
  * being smeared through a 3500-line panel.
  *
  * Two differences from the combat sim's version, both of them the labyrinth's
@@ -262,7 +262,7 @@ export function sanitizeLabRuns(raw) {
 }
 
 /**
- * A delta cell suffix, coloured by whether the move was in the good direction.
+ * A delta cell suffix, colored by whether the move was in the good direction.
  *
  * Empty string when there is nothing to say — no baseline, an unmeasurable
  * value, or a move small enough to be the random seed rather than the gear.

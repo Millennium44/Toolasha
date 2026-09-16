@@ -541,15 +541,15 @@ describe('yielding the full cards to Portrait DPS', () => {
     });
 });
 
-describe('player colours', () => {
-    /** The browser's own spelling of a colour, whatever form it was set in */
+describe('player colors', () => {
+    /** The browser's own spelling of a color, whatever form it was set in */
     const ink = (color) => {
         const probe = document.createElement('div');
         probe.style.color = color;
         return probe.style.color;
     };
 
-    test('a badge takes its player’s colour, and a share inside the error stays dim', async () => {
+    test('a badge takes its player’s color, and a share inside the error stays dim', async () => {
         const { playerColor } = await import('../../utils/player-colors.js');
         const { ROW_COLORS } = await import('../../utils/overlay-format.js');
         opts.run = {

@@ -1064,7 +1064,7 @@ describe('the badge on a skilling tile', () => {
         expect(badgeIn(grid, 'cow')).toBeFalsy();
     });
 
-    test('the count decides the tier colour', () => {
+    test('the count decides the tier color', () => {
         collectionFilters.collections = { milk: 0, log: 500, birch_log: 12_500 };
         const grid = buildGrid(['cow', 'tree', 'birch_tree']);
 
@@ -1088,7 +1088,7 @@ describe('the badge on a skilling tile', () => {
         expect(badgeIn(grid, 'cow').textContent).toBe('20');
     });
 
-    test('fresh data keeps the tier colour, stale data overrides it', () => {
+    test('fresh data keeps the tier color, stale data overrides it', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-04T12:00:00Z'));
 
@@ -1105,7 +1105,7 @@ describe('the badge on a skilling tile', () => {
         expect(collectionFilters._getBadgeStalenessColor()).toBe('#999999');
     });
 
-    test('the stale colour is written onto the count, not the tier class', () => {
+    test('the stale color is written onto the count, not the tier class', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-04T12:00:00Z'));
         collectionFilters.collections = { milk: 12_500 };

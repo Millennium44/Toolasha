@@ -239,7 +239,7 @@ registerRow({
         // on when the figure moves by millions a minute.
         const segments = [{ text: formatLargeNumber(Math.round(view.revenue), 1), color: ROW_COLORS.good }];
 
-        // The MooPass sits between revenue and consumables, in its own colour,
+        // The MooPass sits between revenue and consumables, in its own color,
         // because it is a standing bill rather than a cost of this run
         if (view.tax) {
             segments.push(
@@ -311,8 +311,8 @@ registerRow({
     name: 'Deaths/hr',
     defaultSize: { width: 130, height: 30 },
     // The figure as drawn, and separately whether it is above zero: a rate of
-    // 0.04 draws as "0.0" but is coloured as a death, so the two are not the
-    // same input and keying on the text alone would freeze the colour.
+    // 0.04 draws as "0.0" but is colored as a death, so the two are not the
+    // same input and keying on the text alone would freeze the color.
     version: () => {
         const stats = currentStats();
         if (!stats) return 'blank';
@@ -322,7 +322,7 @@ registerRow({
         const stats = currentStats();
         if (!stats) return blank(container);
 
-        // Zero deaths is the goal rather than a shortfall, so it is not coloured
+        // Zero deaths is the goal rather than a shortfall, so it is not colored
         // as a problem
         row(container, [
             {
@@ -464,8 +464,8 @@ registerRow({
     name: 'Consumables',
     // Four lines now the cost label has one of its own, as CRack has it
     defaultSize: { width: 240, height: 76 },
-    // Every figure and colour the tile carries, in the precision it carries
-    // them: the two countdowns as they are worded, the colour each is given —
+    // Every figure and color the tile carries, in the precision it carries
+    // them: the two countdowns as they are worded, the color each is given —
     // which is a comparison against the Consumables panel's target, so a change
     // to that target has to move the version and does — the limiting item, and
     // the two cost figures rounded as drawn. The sprite sheet is in there too,
@@ -592,7 +592,7 @@ registerRow({
     name: 'Combat Status',
     defaultSize: { width: 160, height: 30 },
     // The action currently running is the tile's only input, and the hrid is all
-    // of it: the three words and three colours below are a pure function of it.
+    // of it: the three words and three colors below are a pure function of it.
     version: () => currentAction()?.actionHrid || 'idle',
     render: (container) => {
         const current = currentAction();
@@ -722,7 +722,7 @@ function forecastPlayers() {
 /**
  * How urgent a countdown is.
  * @param {Object|null} entry - A forecast, or null when there is no answer
- * @returns {string} A colour
+ * @returns {string} A color
  */
 function runOutColor(entry) {
     if (!entry) return ROW_COLORS.dim;
@@ -769,7 +769,7 @@ function exactDrinkRates(breakdown, player) {
     });
 }
 
-// The tile colours against the target, and this bundle may well be drawn before
+// The tile colors against the target, and this bundle may well be drawn before
 // the one holding the panel that sets it. The module itself is shared, so a
 // second call is a second storage read and nothing more.
 loadTarget();

@@ -184,7 +184,7 @@ describe('describeMove', () => {
         expect(describeMove(-0.043, 25 * 60_000).text).toBe('▼4.3% / 25m');
     });
 
-    test('the percentage is signed for the caller, which colours it', () => {
+    test('the percentage is signed for the caller, which colors it', () => {
         expect(describeMove(-0.043, HOUR).percent).toBeCloseTo(-4.3, 9);
         expect(describeMove(0.043, HOUR).percent).toBeCloseTo(4.3, 9);
     });

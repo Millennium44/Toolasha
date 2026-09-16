@@ -126,9 +126,9 @@ const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
 const MAX_ENHANCEMENT = 20;
 
 /**
- * The colour the house cards are drawn in.
+ * The color the house cards are drawn in.
  *
- * A third colour rather than the abilities' purple: the two sets sit under one
+ * A third color rather than the abilities' purple: the two sets sit under one
  * another and a reader scrolling past should be able to tell which list they are
  * in without reading the heading.
  */
@@ -2039,7 +2039,7 @@ function sourceLabel(source) {
 /**
  * A switch that reads as on or off rather than as a checkbox.
  *
- * EWatch's own shape: the state is the button, in the colour of what it means,
+ * EWatch's own shape: the state is the button, in the color of what it means,
  * because these two change what every figure below them says and a tickbox is
  * easy to leave in the wrong position without noticing.
  *
@@ -2209,7 +2209,7 @@ function progressBar(fraction) {
     Object.assign(fill.style, {
         height: '100%',
         width: `${((fraction ?? 0) * 100).toFixed(2)}%`,
-        // Full means you can go and buy it, which is worth a different colour
+        // Full means you can go and buy it, which is worth a different color
         // from "getting there"
         background: fraction >= 1 ? '#4ade80' : '#6495ed',
         transition: 'width 0.3s',

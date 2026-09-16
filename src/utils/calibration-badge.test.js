@@ -1,7 +1,7 @@
 /**
  * Calibration badge tests
  *
- * The text/colour mapping is the contract the forecast lines rely on, so it is
+ * The text/color mapping is the contract the forecast lines rely on, so it is
  * pinned on plain numbers. The cache is exercised against a mocked storage so
  * the read-once, serve-sync discipline is what is tested, not IndexedDB.
  */

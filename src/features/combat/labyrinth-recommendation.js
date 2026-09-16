@@ -412,7 +412,7 @@ export const recommendationMethods = {
             badge.textContent = `Rec: ${atCeiling ? '≥' : ''}${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
 
             // Four states, not three. Sitting below the recommendation used to
-            // share the colour of sitting exactly on it, which hid the one case
+            // share the color of sitting exactly on it, which hid the one case
             // that is costing you rooms rather than risking them: a threshold
             // under the recommendation skips fights you would have cleared.
             // Above it is the opposite error and is graded by how far.

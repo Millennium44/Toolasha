@@ -432,7 +432,7 @@ export function actionSplit(records, options = {}) {
         const rated = deviations.length;
         const decided = rated >= minSamples;
         // Below the bar the figure is withheld rather than shown greyed out: a
-        // number on screen is read as a finding whatever colour it is drawn in
+        // number on screen is read as a finding whatever color it is drawn in
         const medianDeviation = decided ? median(deviations) : null;
         return {
             actionHrid,
@@ -575,7 +575,7 @@ export function versionSplit(records, options = {}) {
                 rated,
                 decided,
                 // Withheld rather than greyed out below the bar: a number on
-                // screen is read as a finding whatever colour it is drawn in
+                // screen is read as a finding whatever color it is drawn in
                 medianDeviation: decided ? median(deviations) : null,
                 bidRated,
                 bidDeviation: bidRated >= minSamples ? median(bidDeviations) : null,

@@ -1,7 +1,7 @@
 /**
  * Tell the player what the device-wide settings carry-over decided.
  *
- * Cross-device sync, the colour palette, number formatting and the quiet-hours
+ * Cross-device sync, the color palette, number formatting and the quiet-hours
  * clock used to be stored per character, so every alt needed its own token
  * pasted in and its own 28 swatches re-picked. They are now one device-wide map,
  * seeded once from whatever the characters already held
@@ -61,7 +61,7 @@ function charactersIn(conflicts) {
  *
  * "Copy sync setup to this device's other characters" carries the sync section
  * and nothing else, so it is the right advice for a token and the wrong advice
- * for a colour. Re-picking the value on the character that has it works for
+ * for a color. Re-picking the value on the character that has it works for
  * both, because any save of a shared id writes it device-wide.
  *
  * @param {Array<{id: string}>} conflicts - The unresolved ones
@@ -91,7 +91,7 @@ export async function showSharedSettingsNotice() {
         const unresolved = record.conflicts.filter((conflict) => !conflict.resolved);
 
         const parts = [
-            'Colours, number formatting, quiet hours and cross-device sync settings are now shared by every ' +
+            'Colors, number formatting, quiet hours and cross-device sync settings are now shared by every ' +
                 'character on this device.',
         ];
         if (resolved.length > 0) {

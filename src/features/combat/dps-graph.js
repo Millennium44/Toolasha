@@ -4,7 +4,7 @@
  * `damage-tracker.js` keeps per-player totals for the run and no history. This
  * reads those totals every two seconds (`utils/dps-series.js` turns readings
  * into buckets) and draws the party line and one line per player in the
- * player's own colour, with boss fights shaded.
+ * player's own color, with boss fights shaded.
  *
  * ## What resets it
  *
@@ -285,7 +285,7 @@ export function dpsGraphHTML({ now = Date.now() } = {}) {
     const svg = dpsGraphSVG({ xs, lines, bands, xTicks: minutesAgoTicks(xs) });
     const legend =
         `<div style="color:${BOARD_COLORS.dim}; font-size:9px; line-height:1.4; margin-top:2px;">` +
-        (keys.length > 1 ? 'White is the party; each player is drawn in their own colour. ' : '') +
+        (keys.length > 1 ? 'White is the party; each player is drawn in their own color. ' : '') +
         (bands.length ? 'Red shading is a boss fight. ' : '') +
         'A 16-second average, so a burst reads as a rise rather than a spike.</div>';
     return `<div data-dps-graph style="margin:4px 0 6px;">${buttons}${svg}${legend}</div>`;

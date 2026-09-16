@@ -1,5 +1,5 @@
 /**
- * Cross-device sync, the colour palette, number formatting and quiet hours are
+ * Cross-device sync, the color palette, number formatting and quiet hours are
  * stored per device, not per character.
  *
  * What these pin: nobody loses a value, a disagreement resolves by the
@@ -95,7 +95,7 @@ beforeEach(() => {
 });
 
 describe('the shared scope is device-wide', () => {
-    test('the shared scope is sync, colours, number formatting and quiet hours — and nothing else', () => {
+    test('the shared scope is sync, colors, number formatting and quiet hours — and nothing else', () => {
         const ids = settingsStorage.sharedSettingIds();
 
         expect(ids).toEqual(
@@ -162,7 +162,7 @@ describe('the shared scope is device-wide', () => {
     });
 });
 
-describe('colours, number formatting and quiet hours came along too', () => {
+describe('colors, number formatting and quiet hours came along too', () => {
     /** A stored entry with a `.value` */
     function entry(id, type, value) {
         return { id, type, value };
@@ -235,8 +235,8 @@ describe('colours, number formatting and quiet hours came along too', () => {
         expect(stored.get(FLAG_KEY)).toBe(true);
     });
 
-    test('a colour spelt in the other case is the same colour, not a disagreement', async () => {
-        // The schema writes color_remaining_xp's default as #FFFFFF; a colour
+    test('a color spelt in the other case is the same color, not a disagreement', async () => {
+        // The schema writes color_remaining_xp's default as #FFFFFF; a color
         // input hands back #ffffff. Two characters, same white.
         const id = 'color_remaining_xp';
         putMap('alice', { [id]: { id, type: 'color', value: '#FFFFFF' } });
@@ -277,7 +277,7 @@ describe('colours, number formatting and quiet hours came along too', () => {
         expect(await settingsStorage.sharedScopeConflicts()).toBeNull();
     });
 
-    test('a saved colour reaches every character', async () => {
+    test('a saved color reaches every character', async () => {
         putMap('alice', { networth: on('networth') });
         const settings = await settingsStorage.loadSettings();
         settings.color_gold.value = '#101010';

@@ -29,7 +29,7 @@ function isBooleanType(type) {
 /**
  * A stored value reduced to the form two of them should be compared in.
  *
- * Only colours need it so far: `<input type="color">` always hands back
+ * Only colors need it so far: `<input type="color">` always hands back
  * lowercase hex, while a schema default may be written any way at all
  * (`color_remaining_xp` says `#FFFFFF`), so a byte comparison reads two
  * spellings of the same white as a disagreement between characters. Used for
@@ -611,13 +611,13 @@ class SettingsStorage {
      *
      * - Values equal to the schema default are ignored — an untouched default
      *   is not a choice, and letting one count would hand a fresh alt's empty
-     *   token to the whole account. This is what keeps the colour group quiet:
+     *   token to the whole account. This is what keeps the color group quiet:
      *   every character has a *stored* value for all 28 swatches, because the
      *   map is written whole, so without this rule a device with three alts
      *   would report 28 disagreements that nobody ever made. With it, a
-     *   palette only speaks up where somebody actually picked a colour.
+     *   palette only speaks up where somebody actually picked a color.
      * - "Equal to the default" is read the way the setting is read, not
-     *   byte for byte: a colour compares case-insensitively, because a picker
+     *   byte for byte: a color compares case-insensitively, because a picker
      *   writes `#ffffff` where the schema happens to say `#FFFFFF` and that is
      *   the same white, not a disagreement.
      * - Every character that does hold a real value agreeing: that value wins.

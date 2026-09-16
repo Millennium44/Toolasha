@@ -203,7 +203,7 @@ describe('clickable member names', () => {
         expect(profile.opened[0].name).toBe('MillenniumTest');
     });
 
-    test('hovering underlines the name, leaving the game its own colour', () => {
+    test('hovering underlines the name, leaving the game its own color', () => {
         const modal = modalEl();
         linkMemberNames(modal);
         const cell = nameCell(modal, 'Tib');
@@ -213,7 +213,7 @@ describe('clickable member names', () => {
         expect(cell.style.textDecoration).toBe('underline');
         cell.dispatchEvent(new MouseEvent('mouseleave'));
         expect(cell.style.textDecoration).toBe('');
-        // The class list is the game's; nothing recolours the cell
+        // The class list is the game's; nothing recolors the cell
         expect(cell.getAttribute('style')).not.toContain('color');
     });
 

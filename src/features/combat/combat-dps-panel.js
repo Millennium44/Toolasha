@@ -384,7 +384,7 @@ export function breakdownLines(entries, total, seconds) {
  * @returns {string} HTML
  */
 function expandableRowHTML(row, which) {
-    // Player colours and class overrides — utils/player-menu.js
+    // Player colors and class overrides — utils/player-menu.js
     const tagHTML = playerMarkersHTML(row.name, row.classTag, classTagHTML);
     const color = playerRowColor(row.name, BOARD_COLORS.accent);
     if (!row.breakdown?.length) return boardRowHTML(row, { tagHTML, color });
@@ -975,7 +975,7 @@ export function drawBoard(body, sources) {
     const note = NOTES[tab] || NOTES.damage;
     const unit = tab === 'healing' ? 'hps' : 'dps';
 
-    // Player colours and class overrides — utils/player-menu.js
+    // Player colors and class overrides — utils/player-menu.js
     resolveRosterColors(rows.map((row) => row.name));
 
     // The headline is the team's; when the rows fall short of it, say by what
@@ -1134,7 +1134,7 @@ export function drawPanel(body) {
  * @param {Object} [sources] - As {@link panelRows}
  */
 function wireBoard(body, sources) {
-    // Player colour and class menu — utils/player-menu.js
+    // Player color and class menu — utils/player-menu.js
     wirePlayerMenu(body, () => drawBoard(body, sources));
     if (sources?.wire) sources.wire(body, () => drawBoard(body, sources));
     else wireDpsGraph(body, () => drawBoard(body, sources));

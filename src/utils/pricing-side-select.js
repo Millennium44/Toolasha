@@ -305,7 +305,7 @@ export function createPricingSideSelect(side, { cssText = '', onChoose } = {}) {
     for (const choice of PRICING_SIDE_CHOICES) {
         const option = document.createElement('option');
         option.value = choice;
-        // The open list is drawn by the browser; without its own colours it is
+        // The open list is drawn by the browser; without its own colors it is
         // white text on a white menu in some browsers
         option.style.backgroundColor = PRICING_SELECT_BACKGROUND;
         option.style.color = '#fff';

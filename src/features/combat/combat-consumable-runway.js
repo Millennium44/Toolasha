@@ -109,7 +109,7 @@ export function runwayByItem({
 }
 
 /**
- * What one caption says and what colour it says it in.
+ * What one caption says and what color it says it in.
  *
  * A slot that is filled but not being used reads `∞` rather than a duration — "you are not
  * drinking this" is a different statement from "this will last a long time", and the panel draws

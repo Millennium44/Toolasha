@@ -11,7 +11,7 @@
  * everything they cannot. The grey is not an error bar and not a rounding
  * remainder: it is market movement, activity older than a recorder's window,
  * and activity nothing records. Drawing it at the same weight as the rest is
- * the whole point of the panel; a chart whose colours summed to the total would
+ * the whole point of the panel; a chart whose colors summed to the total would
  * be claiming a certainty that does not exist.
  *
  * Sources that cost coins — consumables burned, market tax paid — are negative,
@@ -51,7 +51,7 @@ export const WINDOWS = [
     { key: 'month', label: '30 days', days: 30 },
 ];
 
-/** One colour per source, warm for income and cold for costs */
+/** One color per source, warm for income and cold for costs */
 const SOURCE_COLORS = {
     combat: '#ef4444',
     gathering: '#22c55e',
@@ -358,7 +358,7 @@ export function sourceTooltip(key, coverage, combatBasis = null) {
 }
 
 /**
- * A signed gold figure, coloured.
+ * A signed gold figure, colored.
  * @param {number|null} value - Coins
  * @returns {HTMLElement} A span
  */
@@ -765,7 +765,7 @@ export function buildPanelBody(attribution, { series = null, now = undefined, on
 /** Row labels down the side of the grid, Sunday first */
 const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-/** Colour classing is by sign; the depth of the colour is by magnitude */
+/** Color classing is by sign; the depth of the color is by magnitude */
 const CALENDAR_COLORS = { gain: '#22c55e', loss: '#f87171' };
 
 /**
@@ -854,7 +854,7 @@ export function buildCalendarGrid(calendar, onSelectDay = null) {
             const kind = calendarCellKind(cell);
             box.className = `mwi-nw-calendar-cell mwi-nw-calendar-cell-${kind}`;
             // A floor under the opacity so a small but real day is still
-            // visibly coloured rather than fading into the no-data grey
+            // visibly colored rather than fading into the no-data grey
             const weight = kind === 'gain' || kind === 'loss' ? 0.28 + 0.72 * (Math.abs(cell.delta) / scale) : 1;
             const background =
                 CALENDAR_COLORS[kind] || (kind === 'flat' ? 'rgba(156,163,175,0.45)' : 'rgba(255,255,255,0.05)');

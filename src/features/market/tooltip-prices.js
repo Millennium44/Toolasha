@@ -235,7 +235,7 @@ export function ownUseLine(comparison) {
     }
     // The winning action is the subject of "saves". An unqualified "save" was
     // read as an endorsement of the bench the line sits on, so a line telling
-    // you to buy still read as "crafting is worth it". The colour repeats the
+    // you to buy still read as "crafting is worth it". The color repeats the
     // same answer and never carries it alone: profit green when the bench
     // wins, loss red when it does not. The percent is of the price avoided —
     // the side the cheaper choice spares you.

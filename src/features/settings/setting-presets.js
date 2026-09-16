@@ -10,7 +10,7 @@
  * ## Why only checkboxes
  *
  * A preset says which *features* are on. It deliberately does not touch
- * numbers, dropdowns, colours or the enhancement-simulator gear table: those
+ * numbers, dropdowns, colors or the enhancement-simulator gear table: those
  * are tunings a person arrived at deliberately, and a bundle that reset a
  * carefully entered enhancing level because you clicked "Combat" would be a
  * trap. This is the same set of settings `All Off` writes, and the snapshot the

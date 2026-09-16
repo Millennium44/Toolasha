@@ -139,7 +139,7 @@ function averageOn(node) {
     return node.querySelector('.dungeon-timer-average')?.textContent.trim() ?? null;
 }
 
-/** What a hex colour looks like once a style declaration has had it. */
+/** What a hex color looks like once a style declaration has had it. */
 function asCss(hex) {
     const probe = document.createElement('div');
     probe.style.color = hex;
@@ -1217,8 +1217,8 @@ describe('how far back the average reaches', () => {
         expect(averageOn(nodes[1])).toBe('[Avg last 2: 7m 30s]');
     });
 
-    /** The colour the run timer on this line was given. */
-    function colourOn(node) {
+    /** The color the run timer on this line was given. */
+    function colorOn(node) {
         return node.querySelector('.dungeon-timer-annotation')?.style.color ?? null;
     }
 
@@ -1244,7 +1244,7 @@ describe('how far back the average reaches', () => {
         return laid;
     }
 
-    test('a window colours a run against the window, not the lifetime figure', async () => {
+    test('a window colors a run against the window, not the lifetime figure', async () => {
         game.settings.dungeonTrackerAverageWindow = 10;
         // 200 banked runs at 10m20s, then twenty of today's at 9m0s, then one
         // at 10m0s. Lifetime is 10m13s, so that last run reads faster than
@@ -1255,7 +1255,7 @@ describe('how far back the average reaches', () => {
         await annotations.annotateAllMessages();
 
         expect(averageOn(nodes[20])).toBe('[Avg last 10: 9m 6s]');
-        expect(colourOn(nodes[20])).toBe(asCss('#ff6b6b'));
+        expect(colorOn(nodes[20])).toBe(asCss('#ff6b6b'));
     });
 
     test('and the converse: slower than the lifetime figure, faster than the window', async () => {
@@ -1269,18 +1269,18 @@ describe('how far back the average reaches', () => {
         await annotations.annotateAllMessages();
 
         expect(averageOn(nodes[20])).toBe('[Avg last 10: 10m 59s]');
-        expect(colourOn(nodes[20])).toBe(asCss('#5fda5f'));
+        expect(colorOn(nodes[20])).toBe(asCss('#5fda5f'));
     });
 
-    test('with the setting at its default the colours are exactly what they have always been', async () => {
+    test('with the setting at its default the colors are exactly what they have always been', async () => {
         const { nodes } = maintainersLog();
 
         await annotations.loadRunCountsFromStorage();
         await annotations.annotateAllMessages();
 
         // Every recent run is faster than the 10m17s lifetime average, and with
-        // no window in force that is still what decides the colour
-        for (let i = 0; i < 9; i++) expect(colourOn(nodes[i])).toBe(asCss('#5fda5f'));
+        // no window in force that is still what decides the color
+        for (let i = 0; i < 9; i++) expect(colorOn(nodes[i])).toBe(asCss('#5fda5f'));
     });
 
     test('a line whose window covers nothing is neutral, not judged against zero', async () => {
@@ -1296,10 +1296,10 @@ describe('how far back the average reaches', () => {
         // Runs 1 and 2 are behind the marker: no average line, and so nothing
         // to be fast or slow against either
         expect(averageOn(nodes[0])).toBeNull();
-        expect(colourOn(nodes[0])).toBe(asCss('#90ee90'));
-        expect(colourOn(nodes[1])).toBe(asCss('#90ee90'));
+        expect(colorOn(nodes[0])).toBe(asCss('#90ee90'));
+        expect(colorOn(nodes[1])).toBe(asCss('#90ee90'));
         // The first line the marker lets through is judged again
-        expect(colourOn(nodes[3])).toBe(asCss('#5fda5f'));
+        expect(colorOn(nodes[3])).toBe(asCss('#5fda5f'));
     });
 
     test('a marker on one dungeon leaves another dungeon alone', async () => {
@@ -1609,7 +1609,7 @@ describe('the gap between runs, and the fallbacks that close it', () => {
         expect(labels()).toEqual(['[Run #1: 8m 19s]', '[Average: 8m 19s]']);
     });
 
-    test('with the cache and storage both empty, a run neither can place is unchanged: bare timer, neutral colour, flagged for redo', async () => {
+    test('with the cache and storage both empty, a run neither can place is unchanged: bare timer, neutral color, flagged for redo', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const key = message('[08/04 10:00:00 AM]', 'Key counts: [Alice - 12]');
         message('[08/04 10:04:32 AM]', 'Key counts: [Alice - 11]');

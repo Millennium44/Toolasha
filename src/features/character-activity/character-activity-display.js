@@ -3,7 +3,7 @@
  *
  * Everything the character-select screen decides *about* a persisted projection, with no DOM and
  * no game data behind it: the offline-cap overlay, the staleness rules, and the exact two lines
- * of text and the dot colour that go in a slot.
+ * of text and the dot color that go in a slot.
  *
  * Split out from `character-activity-projection.js` on purpose. That module reaches into Action
  * Time Display, which lives in the actions bundle; this one reaches nothing but the formatters,

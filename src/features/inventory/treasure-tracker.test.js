@@ -164,8 +164,8 @@ describe('formatReturn', () => {
         expect(formatReturn(0.8).text).toBe('-20.0%');
     });
 
-    test('a run near expectation is not coloured as news', () => {
-        // Every chest sits a percent or two off; colouring that would make the
+    test('a run near expectation is not colored as news', () => {
+        // Every chest sits a percent or two off; coloring that would make the
         // panel a wall of red and green saying nothing
         expect(formatReturn(1.02).color).toBe(formatReturn(0.98).color);
         expect(formatReturn(1.2).color).not.toBe(formatReturn(0.8).color);

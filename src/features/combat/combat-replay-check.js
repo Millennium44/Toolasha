@@ -1547,7 +1547,7 @@ export function summaryLine(comparison) {
 /**
  * The ink a verdict is drawn in.
  *
- * Only a deviation the sample can actually see gets a colour. Within-noise used
+ * Only a deviation the sample can actually see gets a color. Within-noise used
  * to be green, which read as "checked, and fine" — but it is not a finding
  * either way: a six-fight sample agreeing with the simulator to within its own
  * twenty percent margin has established nothing at all. Dim is what "the sample

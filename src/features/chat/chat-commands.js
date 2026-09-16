@@ -135,7 +135,7 @@ function tokenLine() {
  *
  * `Toolasha.debug.tokenExchange()` joins it here rather than getting a chat
  * command of its own: the shrine report already carries the one-line answer, and
- * what this prints is a table of every credit colour with the arithmetic beside
+ * what this prints is a table of every credit color with the arithmetic beside
  * it — a console shape, not a chat shape.
  *
  * @returns {boolean} True when the helper was attached
@@ -515,7 +515,7 @@ class ChatCommands {
      * message exists on this screen only.
      *
      * @param {string} message - Text to show; newlines are preserved
-     * @param {'info'|'error'} [tone='info'] - Which colour it reads in
+     * @param {'info'|'error'} [tone='info'] - Which color it reads in
      */
     showLocalMessage(message, tone = 'info') {
         const chatHistory = this._visibleChatHistory();

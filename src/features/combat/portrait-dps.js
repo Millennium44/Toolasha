@@ -668,7 +668,7 @@ class PortraitDps {
             else unit.insertBefore(meter, unit.firstChild);
         }
 
-        // A line is a string, or `{text, color}` when it carries its own colour
+        // A line is a string, or `{text, color}` when it carries its own color
         const text = lines
             .map((line) => (typeof line === 'string' ? line : `${line.text}|${line.color || ''}`))
             .join('\n');

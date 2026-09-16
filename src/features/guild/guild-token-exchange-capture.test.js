@@ -245,7 +245,7 @@ describe('remembering what was read', () => {
         expect(store.writes).toBe(2);
     });
 
-    test('each credit colour is remembered separately', async () => {
+    test('each credit color is remembered separately', async () => {
         await captureTokenExchangeFromModal(modal('<div>1 → 10</div>'), greenContext);
         await captureTokenExchangeFromModal(modal('<div>60 → 1</div>'), {
             creditItemHrid: '/items/gold_guild_credit',

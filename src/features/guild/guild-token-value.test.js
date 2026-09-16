@@ -62,10 +62,10 @@ beforeEach(() => {
 });
 
 /**
- * Two credit colours: green, cheap at 100g each, and gold, dear at 5,000g each.
+ * Two credit colors: green, cheap at 100g each, and gold, dear at 5,000g each.
  * @returns {Object} An itemDetailMap
  */
-function twoCreditColours() {
+function twoCreditColors() {
     return {
         '/items/bronze_bar': {
             name: 'Bronze Bar',
@@ -143,7 +143,7 @@ describe('finding the exchange in client data', () => {
         ]);
     });
 
-    test('a guild-shaped map of exchange rules is read, one row per credit colour', () => {
+    test('a guild-shaped map of exchange rules is read, one row per credit color', () => {
         game.clientData = {
             guildTokenExchangeDetailMap: {
                 green: { creditItemHrid: '/items/green_guild_credit', guildTokenCount: 1, creditCount: 10 },
@@ -320,7 +320,7 @@ describe('goldPerGuildToken', () => {
         game.prices = { '/items/bronze_bar': { ask: 100 }, '/items/gold_bar': { ask: 5000 } };
         game.clientData = {
             itemDetailMap: {
-                ...twoCreditColours(),
+                ...twoCreditColors(),
                 '/items/guild_token': {
                     guildCreditConversions: [
                         // 10 × 100 = 1,000 gold
@@ -339,11 +339,11 @@ describe('goldPerGuildToken', () => {
         expect(tokenExchangeOptions('ask').options.map((o) => o.gold)).toEqual([20_000, 1000]);
     });
 
-    test('gold per credit is taken per colour, not from one colour for all of them', () => {
+    test('gold per credit is taken per color, not from one color for all of them', () => {
         game.prices = { '/items/bronze_bar': { ask: 100 }, '/items/gold_bar': { ask: 5000 } };
         game.clientData = {
             itemDetailMap: {
-                ...twoCreditColours(),
+                ...twoCreditColors(),
                 '/items/guild_token': {
                     guildCreditConversions: [
                         { creditItemHrid: '/items/green_guild_credit', itemCount: 1, creditCount: 1 },
@@ -359,11 +359,11 @@ describe('goldPerGuildToken', () => {
         expect(byCredit).toEqual({ '/items/green_guild_credit': 100, '/items/gold_guild_credit': 5000 });
     });
 
-    test('a colour with no priced conversion is kept on the list, unpriced, not silently dropped', () => {
+    test('a color with no priced conversion is kept on the list, unpriced, not silently dropped', () => {
         game.prices = { '/items/bronze_bar': { ask: 100 } };
         game.clientData = {
             itemDetailMap: {
-                ...twoCreditColours(),
+                ...twoCreditColors(),
                 '/items/guild_token': {
                     guildCreditConversions: [
                         { creditItemHrid: '/items/green_guild_credit', itemCount: 1, creditCount: 2 },
@@ -382,7 +382,7 @@ describe('goldPerGuildToken', () => {
     test('a reading off the dialog prices the token the same way client data would', () => {
         game.settings = { guildTokenCreditRate: 1 };
         game.prices = { '/items/bronze_bar': { ask: 100 } };
-        game.clientData = { itemDetailMap: twoCreditColours() };
+        game.clientData = { itemDetailMap: twoCreditColors() };
         game.captured = [{ creditItemHrid: '/items/green_guild_credit', creditsPerToken: 10 }];
 
         const valuation = explainGuildTokenValue('ask');
@@ -465,7 +465,7 @@ describe('the dump command', () => {
         game.prices = { '/items/bronze_bar': { ask: 100 }, '/items/gold_bar': { ask: 5000 } };
         game.clientData = {
             itemDetailMap: {
-                ...twoCreditColours(),
+                ...twoCreditColors(),
                 '/items/guild_token': {
                     guildCreditConversions: [
                         { creditItemHrid: '/items/green_guild_credit', itemCount: 1, creditCount: 10 },
@@ -476,7 +476,7 @@ describe('the dump command', () => {
         };
     });
 
-    test('every colour is listed, named, with its two halves and their product', () => {
+    test('every color is listed, named, with its two halves and their product', () => {
         const report = collectTokenExchangeDebug('ask');
 
         expect(report.source).toBe('client');
@@ -523,7 +523,7 @@ describe('the dump command', () => {
     });
 
     test('a reading off the dialog is reported as one rather than as client data', () => {
-        game.clientData = { itemDetailMap: twoCreditColours() };
+        game.clientData = { itemDetailMap: twoCreditColors() };
         game.captured = [
             {
                 creditItemHrid: '/items/green_guild_credit',
@@ -539,12 +539,12 @@ describe('the dump command', () => {
         expect(text).toContain('[captured]');
     });
 
-    test('the summary line names the gold, the colour and how many exchanges were compared', () => {
+    test('the summary line names the gold, the color and how many exchanges were compared', () => {
         expect(tokenExchangeSummaryLine()).toBe('Guild token ≈ 1.0Kg via Green Guild Credit — 2 exchanges known');
     });
 
     test('the summary line owns up to an assumed rate', () => {
-        game.clientData = { itemDetailMap: twoCreditColours() };
+        game.clientData = { itemDetailMap: twoCreditColors() };
         game.settings = { guildTokenCreditRate: 2 };
 
         expect(tokenExchangeSummaryLine()).toContain('(assumed rate)');

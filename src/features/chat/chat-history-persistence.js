@@ -235,7 +235,7 @@ function sanitizeRestoredMarkup(el) {
             }
             // An inline `url()` is a request to a third party the moment the
             // node is laid out — a read receipt on restored scrollback, fired
-            // without a click. Colours and spacing are why chat markup carries
+            // without a click. Colors and spacing are why chat markup carries
             // `style` at all, so only the ones with a fetch in them go.
             if (lower === 'style' && /url\s*\(/i.test(attribute.value || '')) node.removeAttribute(name);
         }
@@ -441,7 +441,7 @@ export function rewireRestoredMessage(el) {
  * The sender name goes through `openPlayerProfile` — the same helper the
  * delegated listener in `chat-profile-link.js` calls, so the click behaviour is
  * shared rather than duplicated. What is deliberately *not* reused is that
- * module's `markAsProfileLink`: it recolours the name to this script's link
+ * module's `markAsProfileLink`: it recolors the name to this script's link
  * blue (restored lines would stop matching live ones) and it is gated on
  * `chat_profileLink`, which turns off decorating names the game left plain.
  * Putting back a sender the game itself made clickable is not that feature, so

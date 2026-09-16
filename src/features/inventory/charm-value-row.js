@@ -197,7 +197,7 @@ export function familyRows() {
  * @param {string} definition.id - Stable key the fold is remembered under. Not
  *   the title: the titles carry the equipped bonus, so they change under you
  * @param {string} definition.title - Heading
- * @param {string} definition.accent - Heading colour
+ * @param {string} definition.accent - Heading color
  * @param {boolean} [definition.defaultOpen] - How it starts, the first time only
  * @returns {HTMLElement} The contents, to append rows to
  */

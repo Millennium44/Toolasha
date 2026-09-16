@@ -35,7 +35,7 @@ const DEFAULT_REFRESH_MS = 3000;
  * @param {string} definition.title - Header text
  * @param {{width: number, height: number}} definition.size - Opening size
  * @param {Function} definition.draw - `(body, panel) => void`, called each refresh
- * @param {string} [definition.accent] - Header and title colour
+ * @param {string} [definition.accent] - Header and title color
  * @param {number} [definition.refreshMs] - How often to redraw
  * @param {boolean} [definition.restoreOpen] - Whether a panel left open should
  *   reopen itself on load and on every character switch. Defaults to `true`,
@@ -403,7 +403,7 @@ export function createPanel({
  *
  * @param {HTMLElement} body - Where it goes
  * @param {string} [title] - Heading
- * @param {string} [accent] - Heading colour
+ * @param {string} [accent] - Heading color
  * @returns {HTMLElement}
  */
 export function panelCard(body, title, accent = '#8fb4ff') {

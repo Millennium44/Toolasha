@@ -77,7 +77,7 @@ describe('the carry-over notice', () => {
         expect(message.length).toBeLessThan(500);
     });
 
-    test('an undecided colour is not sent to the sync copy button', async () => {
+    test('an undecided color is not sent to the sync copy button', async () => {
         state.record = {
             at: 1,
             conflicts: [conflict('color_profit', { resolved: false, winner: null, characters: ['Bob', 'Carol'] })],

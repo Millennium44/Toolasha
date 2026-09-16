@@ -21,7 +21,7 @@
  *
  * So the panel runs the formula twice. Whole levels give the number the game
  * shows and the arithmetic spelled out beside it; fractional levels give the
- * bar. The bar is drawn in two colours for the same reason: the part banked from
+ * bar. The bar is drawn in two colors for the same reason: the part banked from
  * completed levels, then the part contributed by the level in progress.
  *
  * ## What is on it
@@ -112,9 +112,9 @@ const COLORS = {
 };
 
 /**
- * A colour per combat skill, so the formula reads as the build it describes.
+ * A color per combat skill, so the formula reads as the build it describes.
  *
- * The terms of a weighted average are anonymous numbers in a row; colouring them
+ * The terms of a weighted average are anonymous numbers in a row; coloring them
  * is what lets you see at a glance which of the five the doubled term repeats.
  */
 const SKILL_COLORS = {
@@ -918,7 +918,7 @@ class CombatLevelPanel {
         top.append(level, heading, spacer, eta);
         card.appendChild(top);
 
-        // The terms coloured by the skill each one is, so the repeated one is
+        // The terms colored by the skill each one is, so the repeated one is
         // visible rather than inferred
         card.appendChild(this._formula(state, whole));
         card.appendChild(this._combatBar(whole.progress, partial.progress, partial.doubled));
@@ -939,7 +939,7 @@ class CombatLevelPanel {
     }
 
     /**
-     * The formula, spelled out and coloured.
+     * The formula, spelled out and colored.
      *
      * The doubled term is its own skill's level rather than the last term of the
      * sum: the sum takes the best of the three offensive skills and the doubled

@@ -1,7 +1,7 @@
 /**
  * A small persisted map keyed by player name.
  *
- * The class override and the per-player colour are both facts about *another*
+ * The class override and the per-player color are both facts about *another*
  * player, chosen by the person watching: "Estevao is the tank", "draw Estevao
  * in orange". Neither belongs to the character logged in — the same party seen
  * from an alt is the same party — so the map is account-wide and keyed by the

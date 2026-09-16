@@ -1,5 +1,5 @@
 /**
- * Player colours: legible, stable, and distinct inside one party.
+ * Player colors: legible, stable, and distinct inside one party.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 
 describe('legible on the dark panels', () => {
-    test('every palette colour clears AA contrast against the panel ground', () => {
+    test('every palette color clears AA contrast against the panel ground', () => {
         for (const color of PLAYER_PALETTE) {
             expect(contrastRatio(color, PANEL_GROUND), color).toBeGreaterThanOrEqual(MIN_CONTRAST);
         }
@@ -66,7 +66,7 @@ describe('assignment', () => {
         expect(hashName(' Estevao ')).toBe(hashName('estevao'));
     });
 
-    test('a party of up to twelve never shares a colour', () => {
+    test('a party of up to twelve never shares a color', () => {
         const names = Array.from({ length: 12 }, (_, i) => `Player${i}`);
         const colors = resolveRosterColors(names);
         expect(new Set(colors.values()).size).toBe(12);
@@ -80,14 +80,14 @@ describe('assignment', () => {
         expect([...a.entries()].sort()).toEqual([...b.entries()].sort());
     });
 
-    test('someone joining does not recolour the players already on screen', () => {
+    test('someone joining does not recolor the players already on screen', () => {
         const before = resolveRosterColors(['Abe', 'Bo', 'Cara']);
         const after = resolveRosterColors(['Abe', 'Bo', 'Cara', 'Dee', 'Eve', 'Fay']);
         for (const [key, color] of before) expect(after.get(key)).toBe(color);
     });
 });
 
-describe('a picked colour', () => {
+describe('a picked color', () => {
     test('wins over the hash and is stored by name', async () => {
         await setPlayerColor('Abe', '#FFA726');
         expect(playerColor('abe')).toBe('#ffa726');

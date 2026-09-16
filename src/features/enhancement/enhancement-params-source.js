@@ -213,7 +213,7 @@ function escapeAttr(value) {
 /**
  * Build the clickable source chip shown on an enhancement section header.
  *
- * Pro rates get a filled, warning-coloured chip: the one mistake worth engineering against is
+ * Pro rates get a filled, warning-colored chip: the one mistake worth engineering against is
  * reading a professional's cost as your own, so that state has to be unmissable rather than
  * merely legible.
  *

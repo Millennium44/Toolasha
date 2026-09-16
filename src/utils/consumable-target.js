@@ -6,13 +6,13 @@
  * One setting, in one place, because two things read it and they are in
  * different bundles. The Consumables panel measures every shortfall against it —
  * "buy for three days" is a different number from "buy for eight hours". The
- * overlay tile colours against it: a consumable lasting two days is fine if you
+ * overlay tile colors against it: a consumable lasting two days is fine if you
  * asked for one and is the thing to go and fix if you asked for three. A tile
  * and a panel disagreeing about that would be worse than either being wrong,
  * because you would have to work out which one to believe.
  *
  * Held in memory and mirrored to storage: the tile redraws every second and an
- * await per draw is not a thing to put behind a colour.
+ * await per draw is not a thing to put behind a color.
  */
 
 import dataManager from '../core/data-manager.js';

@@ -426,8 +426,8 @@ describe('own-use make vs buy', () => {
 
     test('a line where buying wins names buying and takes the loss color', () => {
         // The line sits on a crafting tooltip, so an unsubjected "save" in the
-        // bench's own colour read as an endorsement of crafting even when the
-        // figures said buy. The word and the colour both have to turn over.
+        // bench's own color read as an endorsement of crafting even when the
+        // figures said buy. The word and the color both have to turn over.
         const line = ownUseLine(ownUseCompare(data({ materialCostPerHour: 7_500_000 })));
         expect(line.text).toBe('Own use: make ≈80.0K vs buy 50.0K (ask) — buy saves 30.0K (38%)');
         expect(line.text).not.toContain('make saves');

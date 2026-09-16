@@ -1067,7 +1067,7 @@ class GoalPlannerPanel {
         const description = span(step.description);
         const destination = navigationFor(step);
         if (destination) {
-            // A dotted underline rather than a link colour: the accent is already
+            // A dotted underline rather than a link color: the accent is already
             // the goal title's, and a plan whose every other line is blue stops
             // reading as a plan
             Object.assign(description.style, {
@@ -1252,7 +1252,7 @@ class GoalPlannerPanel {
      * The number in the coin column is a *net*, and a bare "-202.0M" under a
      * heading that says "Remaining" reads as a debt rather than as the cost of
      * finishing. So the row says which two figures it is the difference of, and
-     * the colour follows the sign of the net rather than pretending a plan that
+     * the color follows the sign of the net rather than pretending a plan that
      * costs money is going wrong.
      *
      * @param {Object} plan - A plan

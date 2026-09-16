@@ -372,7 +372,7 @@ export function computeLabyrinthPath(tiles, cols) {
     }
 
     // Rooms the plan enters only to reach a chest — on the route but not on the
-    // way out, and not a treasure tile themselves. The drawing colours these
+    // way out, and not a treasure tile themselves. The drawing colors these
     // apart from the exit-critical rooms so an optional loot detour reads as one.
     const chestBranch = new Set();
     for (const idx of routeSet) {

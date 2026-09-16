@@ -516,7 +516,7 @@ function selectZone() {
 // in-memory storage mock keeps for the rest of the file. So a test that sorts a
 // column or turns the Score gradient on hands the next one a panel that has
 // been used, and tests written against a fresh panel read a table sorted and
-// coloured by something they never asked for. Every test starts from a panel
+// colored by something they never asked for. Every test starts from a panel
 // nobody has opened before.
 beforeEach(() => {
     mocks.store.clear();
@@ -3638,14 +3638,14 @@ describe('how deep the Score pays out', () => {
 
         expect([...ladders.keys()].sort()).toEqual(['dps', 'repay', 'score', 'xp']);
         // Cheapest DPS is the first row, cheapest EXP the second — which is
-        // exactly what colouring the total alone could never show
+        // exactly what coloring the total alone could never show
         expect(ladders.get('dps').get(rows[0])).toBe(1);
         expect(ladders.get('xp').get(rows[1])).toBe(1);
         expect(ladders.get('repay').get(rows[1])).toBe(1);
         expect(ladders.get('score').get(rows[0])).toBe(1);
     });
 
-    test('a column the reader has excluded from the Score is not coloured either', () => {
+    test('a column the reader has excluded from the Score is not colored either', () => {
         const rows = [{ score: 8, goldPer: { dps: 100, xp: 900 } }];
         const ladders = gradientLadders(rows, ['dps']);
 
@@ -3686,7 +3686,7 @@ describe('the Score column in the table', () => {
         expect(html()).toContain('Top 15');
     });
 
-    test('no colour on the Score unless it was asked for', () => {
+    test('no color on the Score unless it was asked for', () => {
         ui._renderUpgradeResults(results());
 
         expect(html()).not.toContain('rgb(76, 175, 80)');
@@ -3699,7 +3699,7 @@ describe('the Score column in the table', () => {
         expect(html()).toContain('rgb(76, 175, 80)');
     });
 
-    test('and every scored column is coloured on its own ranking, not just the total', () => {
+    test('and every scored column is colored on its own ranking, not just the total', () => {
         ui._upgradeScoreGradient = true;
         ui._renderUpgradeResults(results());
 

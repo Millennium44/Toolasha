@@ -351,7 +351,7 @@ function priceEnhancementInputs(itemHrid, itemDetails) {
     let materialCostPerAttempt = 0;
     // A material nobody can price contributes 0 to the bill, and a total that quietly leaves it
     // out is an under-quote, not a price — the same rule `perAttemptMaterialCost` states for the
-    // XP/hr table and the enhancing panel. The tooltip colours its Total green against the
+    // XP/hr table and the enhancing panel. The tooltip colors its Total green against the
     // enhanced item's ask, so an unnoticed under-quote reads as "this is profitable".
     let pricesPartial = false;
     for (const material of itemDetails.enhancementCosts || []) {

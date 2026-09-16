@@ -4005,11 +4005,11 @@ class LabSimUI {
         // rescue the same failing room cannot both be the thing that rescued it
         const lost = promised - actual;
         const share = promised > 0 ? Math.round((lost / promised) * 100) : 0;
-        const colour = lost > check.noise ? '#ff9800' : '#4caf50';
+        const color = lost > check.noise ? '#ff9800' : '#4caf50';
         return `<span style="color:#e0e0e0;">Together: <b>−${actual.toFixed(1)}</b> attempts</span>
             <span style="color:#666;">(each loadout wearing every pick that fits it, up to ${worn} at once)</span>
             <span style="color:#888;">vs −${promised.toFixed(1)} promised by the parts</span>
-            <span style="color:${colour};">${
+            <span style="color:${color};">${
                 lost > check.noise
                     ? `— ${share}% of it was double-counted (they overlap)`
                     : '— they do not overlap, the sum holds'
@@ -4147,7 +4147,7 @@ class LabSimUI {
                       ? 'pays for itself'
                       : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
             // A change smaller than the sampling error of the sims behind it has
-            // not been measured — colouring it green sells an upgrade on noise
+            // not been measured — coloring it green sells an upgrade on noise
             const measured = r.significant !== false;
             const noise =
                 r.attemptsDeltaNoise > 0 ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>` : '';

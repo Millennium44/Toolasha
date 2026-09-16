@@ -29,7 +29,7 @@
  * shop map selling a credit for a token cost; a credit item naming what it costs
  * in tokens; and a guild-shaped map of `{creditItemHrid, guildTokenCount,
  * creditCount}` rules. All four are matched by shape rather than by hrid, so a
- * renamed map or a new credit colour costs nothing. `source: 'client'` says so.
+ * renamed map or a new credit color costs nothing. `source: 'client'` says so.
  *
  * **The Guild Shop dialog**, read off the screen by
  * `guild-token-exchange-capture.js` when the player opens it. This is where the
@@ -46,19 +46,19 @@
  *
  * ## Which credit a token is valued against
  *
- * The rate is per credit colour — a token buys ten green credits or a sixtieth
- * of a gold one — and a credit's gold value is per colour too, since it is the
- * cheapest item that converts into *that* colour. So every colour is priced
+ * The rate is per credit color — a token buys ten green credits or a sixtieth
+ * of a gold one — and a credit's gold value is per color too, since it is the
+ * cheapest item that converts into *that* color. So every color is priced
  * separately and the best one wins:
  *
- *     gold per token = max over colours of (credits per token × gold per credit)
+ *     gold per token = max over colors of (credits per token × gold per credit)
  *
- * A colour with a generous rate and a worthless credit loses to a stingy rate on
+ * A color with a generous rate and a worthless credit loses to a stingy rate on
  * an expensive one, which is the whole reason the maximum is taken over the
  * product rather than over either half. A token is worth the best thing it can
  * be turned into, which makes the figure an upper bound rather than an average
  * of exchanges nobody would take. When the rate comes from the setting it names
- * no colour at all, so it is valued against the most valuable credit on offer.
+ * no color at all, so it is valued against the most valuable credit on offer.
  */
 
 import config from '../../core/config.js';
@@ -195,7 +195,7 @@ function exchangeFromRule(rule, via) {
  * - a guild-shaped map of `{creditItemHrid, guildTokenCount, creditCount}` rules.
  *
  * All are read by shape rather than by a hard-coded hrid, so a renamed map or a
- * new credit colour costs nothing.
+ * new credit color costs nothing.
  *
  * @param {Object} clientData - Init client data
  * @returns {Array<{creditItemHrid: string, creditsPerToken: number, tokensPerExchange: number,
@@ -297,13 +297,13 @@ export function readTokenCreditExchange({ clientData, capturedExchanges, getSett
 }
 
 /**
- * Every credit colour a token could be turned into, priced.
+ * Every credit color a token could be turned into, priced.
  *
  * The list the valuation chooses from, and the list the dump command prints. One
  * row per exchange, each carrying the two halves that make its gold figure —
- * the rate and that colour's gold-per-credit — so a surprising answer can be
+ * the rate and that color's gold-per-credit — so a surprising answer can be
  * read rather than guessed at. Rows the credit half cannot price are kept with
- * `gold: null` rather than dropped, because "this colour has no priced
+ * `gold: null` rather than dropped, because "this color has no priced
  * conversion" is the explanation for half the surprises.
  *
  * Sorted best first, so the head of the list is the pick.
@@ -494,7 +494,7 @@ function creditName(creditItemHrid, itemDetailMap) {
  * marked — the object behind `Toolasha.debug.tokenExchange()`.
  *
  * The point of it is the arithmetic being checkable by hand: each row carries
- * the rate, that colour's gold-per-credit and their product, so "why is a token
+ * the rate, that color's gold-per-credit and their product, so "why is a token
  * worth that" has an answer with two numbers in it rather than a shrug.
  *
  * @param {string} [pricingMode='ask'] - Pricing side for the credit half

@@ -46,7 +46,7 @@ function coins(value) {
 }
 
 /**
- * A change, coloured by direction.
+ * A change, colored by direction.
  * @param {{delta: number, percent: number|null}|null} change - From `windowChange`
  * @returns {{text: string, color: string}}
  */

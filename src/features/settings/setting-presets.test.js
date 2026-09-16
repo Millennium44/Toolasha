@@ -202,7 +202,7 @@ describe('which settings a bulk write owns', () => {
         expect(presetTargetIds()).not.toContain('ironCow_enabled');
     });
 
-    test('numbers, dropdowns and colours are left alone', () => {
+    test('numbers, dropdowns and colors are left alone', () => {
         const targets = new Set(presetTargetIds());
         expect(targets.has('profitCalc_pricingMode')).toBe(false);
         expect(targets.has('color_profit')).toBe(false);

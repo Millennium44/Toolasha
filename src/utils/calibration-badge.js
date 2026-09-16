@@ -51,7 +51,7 @@ export const ON_TARGET_PERCENT = 5;
 /** Past this the gap is painted red rather than amber */
 export const RED_PERCENT = 15;
 
-/** Badge colours by tone */
+/** Badge colors by tone */
 export const BADGE_COLORS = Object.freeze({
     neutral: '#9aa0a6',
     amber: '#ffb74d',
@@ -101,7 +101,7 @@ export function calibrationActionType(hridOrType) {
 }
 
 /**
- * Which colour a deviation earns.
+ * Which color a deviation earns.
  * @param {number} deviationPercent - Signed median deviation
  * @returns {'neutral'|'amber'|'red'}
  */

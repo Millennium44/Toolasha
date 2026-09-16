@@ -285,7 +285,7 @@ class PFormancePanel {
     }
 
     /**
-     * Colour and label the extras toggle for its current state.
+     * Color and label the extras toggle for its current state.
      * @param {HTMLElement} button - The header button
      * @private
      */
@@ -954,7 +954,7 @@ class PFormancePanel {
                 row.appendChild(this._cell(entry.name, 'left'));
                 row.appendChild(this._cell(String(entry.at), 'right'));
                 row.appendChild(this._cell(String(entry.stallMs), 'right'));
-                // Only monotonic growth is coloured; a count that has ever
+                // Only monotonic growth is colored; a count that has ever
                 // fallen is normal and stays quiet
                 if (entry.growing) row.style.color = COLORS.warning;
             } else if (title === 'Main-thread Stalls') {
@@ -1009,7 +1009,7 @@ class PFormancePanel {
     /**
      * A wall-clock share, deliberately not styled like a CPU one.
      *
-     * `_cpuCell` colours by threshold because a high CPU percentage is a
+     * `_cpuCell` colors by threshold because a high CPU percentage is a
      * problem. A high elapsed percentage is not - it can be a feature politely
      * spreading itself over a second - so this stays neutral and says `wall`,
      * leaving the red for the column that earns it.

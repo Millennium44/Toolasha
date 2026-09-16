@@ -36,7 +36,7 @@ import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import { dpsPanel } from '../../utils/bundle-bridge.js';
 
-/** Accuracy in its own colour, so it does not read as part of the damage figure */
+/** Accuracy in its own color, so it does not read as part of the damage figure */
 const ACCURACY_COLOR = '#ff9800';
 
 /**

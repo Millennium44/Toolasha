@@ -62,7 +62,7 @@ const COLORS = {
     textDim: 'rgba(232, 236, 245, 0.5)',
     accent: '#b9a4ff',
     // Its own orange rather than the palette's gold, because books and cost sit
-    // side by side and two figures in one colour read as one figure
+    // side by side and two figures in one color read as one figure
     books: '#ffa657',
 };
 

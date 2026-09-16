@@ -558,7 +558,7 @@ describe('buildEnhancementMilestonesHTML — stats source indicator', () => {
 
 describe('an input nobody can price', () => {
     // A material with no quote contributes 0 to the bill, so the quoted total is an
-    // under-quote — and the tooltip colours that total green against the enhanced item's ask,
+    // under-quote — and the tooltip colors that total green against the enhanced item's ask,
     // which reads as "enhancing this is profitable". The XP/hr table and the enhancing panel
     // both say when a bill is partial; the tooltip's own tally did not.
     test('the analysis flags the quote as partial', () => {

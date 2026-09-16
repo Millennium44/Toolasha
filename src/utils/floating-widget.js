@@ -104,11 +104,11 @@ function makeWidgetDraggable(element, { positionKey, position, onMove }) {
  * @param {string} options.id - The element id, so a rebuild can find the old one
  * @param {string} [options.top] - Initial top offset
  * @param {string} [options.right] - Initial right offset
- * @param {string} [options.accent] - Main-button text colour
+ * @param {string} [options.accent] - Main-button text color
  * @param {string} [options.background] - Panel background
- * @param {string} [options.border] - Panel border colour
- * @param {string} [options.text] - Body text colour
- * @param {string} [options.dim] - Muted text colour
+ * @param {string} [options.border] - Panel border color
+ * @param {string} [options.text] - Body text color
+ * @param {string} [options.dim] - Muted text color
  * @param {number} [options.zIndex] - Stacking order; defaults to the floating-panel layer
  * @param {string|null} [options.positionKey] - Settings key remembering the drag position
  * @param {{left: number, top: number}|null} [options.position] - Position read back from that key

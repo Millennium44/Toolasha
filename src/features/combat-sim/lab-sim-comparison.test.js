@@ -6,7 +6,7 @@
  * decision. These tests are about the record kept of a finished single-target
  * run, the baseline that survives a delete and a reload, and the delta cells —
  * including the two things a delta table gets wrong if nobody checks: printing
- * noise as a finding, and colouring "more deaths" green because the number went
+ * noise as a finding, and coloring "more deaths" green because the number went
  * up.
  */
 

@@ -1477,7 +1477,7 @@ class SettingsUI {
 
         const note = document.createElement('div');
         note.textContent =
-            'A preset turns feature switches on and off in one go. Numbers, dropdowns and colours are left alone, ' +
+            'A preset turns feature switches on and off in one go. Numbers, dropdowns and colors are left alone, ' +
             'and Restore undoes the last one. A mode — the pressed-in chip — is not a one-off: it stays on ' +
             'alongside whichever preset you pick.';
         note.style.cssText = 'font-size: 11px; color: #666; margin-bottom: 8px; line-height: 1.4;';
@@ -1597,7 +1597,7 @@ class SettingsUI {
     async handleApplyPreset(preset) {
         const confirmed = confirm(
             `Apply the "${preset.label}" preset?\n\n${preset.description}\n\n` +
-                'Every other feature switch is turned off. Numbers, dropdowns and colours are left alone, and ' +
+                'Every other feature switch is turned off. Numbers, dropdowns and colors are left alone, and ' +
                 'Restore puts your current switches back.'
         );
         if (!confirmed) return;
@@ -2743,7 +2743,7 @@ class SettingsUI {
      *
      * The reset writes the whole map with SAVE_ALL_KEYS, which by design covers
      * the device-wide settings too — so pressing this on one character wipes the
-     * GitHub token, the colour palette, the number format and the quiet-hours
+     * GitHub token, the color palette, the number format and the quiet-hours
      * clock for *every* character on this browser, not just this one. That is
      * the intended behaviour (a token the panel shows as blank must actually be
      * blank), but it is not what "reset my settings" sounds like, so the dialog
@@ -2751,16 +2751,30 @@ class SettingsUI {
      */
     async handleReset() {
         // Counted from the schema rather than written into the sentence, so a
-        // swatch added later does not quietly make the warning a lie.
-        const colorCount = settingsStorage.sharedSettingIds().filter((id) => id.startsWith('color_')).length;
+        // swatch added later does not quietly make the warning a lie — and
+        // counted against what was actually picked, not what could be. Naming
+        // every shareable swatch told a player with a stock palette they were
+        // about to lose 28 customised colors, none of which existed.
+        const colorIds = settingsStorage.sharedSettingIds().filter((id) => id.startsWith('color_'));
+        const changedColors = colorIds.filter((id) => {
+            const stored = this.config.getSetting(id);
+            const fallback = this.findSettingDef(id)?.default;
+            // A picker always hands back lowercase, so a schema default written
+            // #FFFFFF must not read as a change from the #ffffff on screen
+            return String(stored).toLowerCase() !== String(fallback).toLowerCase();
+        }).length;
+        const colorPhrase =
+            changedColors === 0
+                ? 'the shared colors'
+                : `the ${changedColors} color${changedColors === 1 ? '' : 's'} you have customized`;
         const answer = await askChoice({
             title: 'Reset all settings',
             message:
                 'Every setting on this character goes back to its default.\n\n' +
                 'Some settings are shared by every character on this device, and resetting clears them for all ' +
-                `of them: your cross-device sync setup (GitHub token and passphrase), all ${colorCount} ` +
-                'customised colours, the number format, and your quiet hours. Your other characters keep their ' +
-                'own settings for everything else.\n\n' +
+                `of them: your cross-device sync setup (GitHub token and passphrase), ${colorPhrase}, the ` +
+                'number format, and your quiet hours. Your other characters keep their own settings for ' +
+                'everything else.\n\n' +
                 'None of this can be undone.',
             choices: [
                 { value: 'reset', label: 'Reset everything', tone: 'danger' },

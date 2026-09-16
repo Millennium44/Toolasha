@@ -5,7 +5,7 @@
  * What matters is that a click on a marker opens the menu without also doing
  * whatever the row it sits in does on click, that the listener survives the
  * boards' innerHTML redraws without piling up, and that a choice lands in the
- * override and colour stores and asks the board to redraw.
+ * override and color stores and asks the board to redraw.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -44,7 +44,7 @@ afterEach(() => {
 });
 
 describe('playerMarkersHTML', () => {
-    test('with both on: a dot in the player colour, and the board’s own chip made clickable', () => {
+    test('with both on: a dot in the player color, and the board’s own chip made clickable', () => {
         const html = playerMarkersHTML('Abe', inferred, renderTag);
         const host = document.createElement('div');
         host.innerHTML = html;
@@ -136,7 +136,7 @@ describe('the menu', () => {
         expect(classOverrideFor('Abe')).toBeNull();
     });
 
-    test('a swatch picks the colour; Automatic hands it back to the palette', () => {
+    test('a swatch picks the color; Automatic hands it back to the palette', () => {
         openPlayerMenu(document.body, 'Abe');
         menu().querySelector(`button[data-color="${PLAYER_PALETTE[3]}"]`).click();
         expect(pickedColor('Abe')).toBe(PLAYER_PALETTE[3]);

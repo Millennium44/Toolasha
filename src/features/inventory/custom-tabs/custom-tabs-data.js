@@ -256,7 +256,7 @@ function foldItemList(winner, loser, graves, cleared) {
 /**
  * Merge the item lists of two copies of one top-level subtree.
  *
- * Everything except `items` comes from the winner - a rename, a colour, the
+ * Everything except `items` comes from the winner - a rename, a color, the
  * child list and its order all stay last-write-wins by `updatedAt`, which is
  * what those fields are. Nested tabs are paired by id wherever the loser has
  * the same id, so an item added to a CHILD tab on the other device survives

@@ -2991,7 +2991,7 @@ class LabyrinthClearRate {
 
     /**
      * @param {string} message - Status text
-     * @param {boolean} [warn=false] - Colour it as a shortfall rather than a
+     * @param {boolean} [warn=false] - Color it as a shortfall rather than a
      *   result. A plan you cannot afford is still a plan, so it is shown and
      *   flagged rather than suppressed.
      */
@@ -4126,10 +4126,10 @@ class LabyrinthClearRate {
 
         // On mobile the tiles are small and the browser inflates tiny fonts
         // (text-size-adjust), so "100% 19s" grew wider than the badge and spilled
-        // out of its coloured box past the tile edge. Pin the inflation off,
+        // out of its colored box past the tile edge. Pin the inflation off,
         // shrink the fonts a step on a phone, and let the badge size to its text
         // (max-width capped the box but not the nowrap text inside it) so the
-        // colour always wraps the whole reading and it stays within the tile.
+        // color always wraps the whole reading and it stays within the tile.
         // On mobile the tile is small, so shrink the fonts a couple of steps and
         // pin text inflation off — enough that "100% 19s" fits whole. Nothing is
         // clipped: the earlier ellipsis cut the seconds down to a stray digit, so
