@@ -15,9 +15,8 @@ vi.mock('./custom-price-overrides.js', () => ({
     getCustomPriceOverrides: () => overridesMock.overrides,
 }));
 
-const { isSettingChanged, isSettingRowChanged, changedSettingIds, refreshRequiredIds } = await import(
-    './settings-inspection.js'
-);
+const { isSettingChanged, isSettingRowChanged, changedSettingIds, refreshRequiredIds } =
+    await import('./settings-inspection.js');
 const { settingsGroups, getSettingDefinition } = await import('../../core/settings-schema.js');
 
 describe('whether one setting differs from its default', () => {
