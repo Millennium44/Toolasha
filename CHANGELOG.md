@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Switches that were ignored now work
+
+- Eight settings did nothing when switched off, because a feature with no entry in the internal feature map counted as always on: Goal Planner, Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, Session Briefing, Iron Cow Farm, the overlay tab button, and the labyrinth monster stat check. Presets that switch those off now take effect too.
+- "Enhancement path: use crafting cost for base item if cheaper" had been behaving as on while shipping off, so its default is now on and nobody's figures move; switching it off finally works.
+- The multi-outcome foraging total obeys its own setting, which nothing had ever read.
+- Dismissing the What's New dialog no longer switches on "new settings start turned off" behind your back; only choosing it does.
+- Net worth on the game's market value ignores the pricing mode for cowbells and guild shrines, as its own help says, so those two figures change for anyone on that source.
+
 ### Settings shows pricing as the Buy and Sell dropdowns
 
 - Pricing & Profit now carries the same Buy and Sell dropdowns as the skill toolbar, in place of the pricing mode dropdown and the two "+1 tick" checkboxes, which were each a no-op in two of the four modes with nothing to show it. The settings behind them are unchanged, so nothing to re-pick; Iron Cow still locks them and settings search still finds them.
