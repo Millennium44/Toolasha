@@ -33,11 +33,17 @@ import {
     newSettingIds,
     conservativeOverrides,
 } from './whats-new-core.js';
+import { pricingRowsLocked } from './iron-cow-mode.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { openSettings } from '../ui/command-palette.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { toolashaRoot } from '../../utils/bundle-bridge.js';
 import { filterChangelogSince } from './changelog-markers.js';
+import {
+    createPricingSideSelect,
+    syncPricingSideSelect,
+    applyPricingSideChoice,
+} from '../../utils/pricing-side-select.js';
 import forkChangelog from 'virtual:fork-changelog';
 import forkOverview from 'virtual:fork-overview';
 
@@ -1055,6 +1061,33 @@ class WhatsNew {
             }
             control.value = config.getSettingValue(id, definition.default ?? '');
             control.addEventListener('change', () => config.setSetting(id, control.value));
+        } else if (type === 'pricingSide') {
+            // Same live dropdown the Settings panel, skill toolbar and alchemy
+            // Best Items build — it owns no state of its own, so this row is a
+            // view over the pricing mode and that side's tick, not a fourth copy
+            const side = definition.side === 'sell' ? 'sell' : 'buy';
+            const locked = pricingRowsLocked();
+            control = createPricingSideSelect(side, {
+                onChoose: (choice) => {
+                    // Pointer-events are turned off below while locked, but a
+                    // keyboard or a script can still reach the element
+                    if (pricingRowsLocked()) return;
+                    applyPricingSideChoice(side, choice);
+                    // Every dropdown built from the same helper is a view over
+                    // the same settings — the Settings panel resyncs its own
+                    // through its own change listener, but the other pricingSide
+                    // row in this very popup has no listener of its own
+                    for (const select of document.querySelectorAll('select[data-mwi-pricing-side]')) {
+                        syncPricingSideSelect(select);
+                    }
+                },
+            });
+            if (locked) {
+                control.disabled = true;
+                control.style.opacity = '0.5';
+                control.style.cursor = 'not-allowed';
+                control.title = 'Locked by Iron Cow Mode — no marketplace, no pricing to choose';
+            }
         } else {
             control = document.createElement('button');
             control.type = 'button';

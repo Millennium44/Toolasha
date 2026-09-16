@@ -28,7 +28,7 @@ import { detectedModeLabel, isMobileMode } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import spawnCensus from '../combat/spawn-census.js';
 import whatsNew from './whats-new.js';
-import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
+import ironCowMode, { IRON_COW_SETTINGS, pricingRowsLocked as isPricingRowsLocked } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import pformancePanel from '../dev/pformance-panel.js';
 import treasureTracker from '../inventory/treasure-tracker.js';
@@ -809,13 +809,13 @@ class SettingsUI {
 
     /**
      * Whether Iron Cow mode currently owns the pricing settings, so the Buy and
-     * Sell rows must neither respond nor write. The mode locks the keys behind
-     * the rows, which is where the question has to be asked: the rows have ids
-     * of their own and are not in its list.
+     * Sell rows must neither respond nor write. Delegates to iron-cow-mode.js,
+     * the module that owns both the lock state and the set it is keyed
+     * against, so this panel and What's New ask the same question.
      * @returns {boolean} True while the mode holds the pricing settings
      */
     pricingRowsLocked() {
-        return ironCowMode.isEnabled() && IRON_COW_SETTINGS.has(PRICING_MODE_SETTING);
+        return isPricingRowsLocked();
     }
 
     /**

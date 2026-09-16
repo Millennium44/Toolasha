@@ -8,6 +8,7 @@ import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import { settingsGroups } from '../../core/settings-schema.js';
 import dataManager from '../../core/data-manager.js';
+import { PRICING_MODE_SETTING } from '../../utils/pricing-side-select.js';
 
 /**
  * The complete set of setting IDs that are force-disabled in Iron Cow mode.
@@ -213,3 +214,20 @@ class IronCowMode {
 
 const ironCowMode = new IronCowMode();
 export default ironCowMode;
+
+/**
+ * Whether Iron Cow mode currently owns the pricing settings, so a `pricingSide`
+ * dropdown (Settings, What's New, or anywhere else one is built with
+ * {@link createPricingSideSelect}) must neither respond nor write. The mode
+ * locks the keys behind the rows — `profitCalc_pricingMode` and the per-side
+ * patient ticks — which is where the question has to be asked: a `pricingSide`
+ * row has an id of its own that is never in {@link IRON_COW_SETTINGS}.
+ *
+ * Exposed here, the module that owns both the lock state and the set it is
+ * keyed against, so every surface that builds a pricing dropdown asks the same
+ * question instead of each re-deriving it.
+ * @returns {boolean} True while the mode holds the pricing settings
+ */
+export function pricingRowsLocked() {
+    return ironCowMode.isEnabled() && IRON_COW_SETTINGS.has(PRICING_MODE_SETTING);
+}
