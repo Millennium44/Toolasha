@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings that did not do what they said
+
+- Combat income costed dungeon keys at market prices even with key pricing set to "craft", while the note under the figure said they were costed at what it costs you to craft one. The craft basis now reaches the costing, so those figures change for anyone on that setting.
+- Turning "Auto-fill marketplace orders" off now stops the fill straight away, instead of carrying on until a reload.
+- Three descriptions corrected: the expected-value pricing switch only affects dungeon token values, the two listing-age options need "Show prices on individual listings" rather than the estimated-age feature, and key pricing's "synced" also inherits the patient tick, so it can differ from a plain "bid".
+
 ### A default that fails to save is rewritten next time
 
 - The one-time rewrite of a superseded default marked itself done even when the save was refused, so the character kept the old default for good with nothing on screen to show it. It now retries on the next load, as the settings key migration already did.
