@@ -591,11 +591,14 @@ class DecomposeHistoryViewer {
                     this.renderTable();
                 });
             } else if (isCatalystCol) {
-                // Render icon as header with item name as tooltip
+                // Render icon as header with item name as tooltip and accessible name;
+                // the icon carries no text, so the label lives on title/aria-label instead
                 const hrid =
                     col.key === '_catalystOfDecomposition' ? CATALYST_OF_DECOMPOSITION_HRID : PRIME_CATALYST_HRID;
                 labelSpan.title = col.label;
                 labelSpan.style.cursor = 'default';
+                th.title = col.label;
+                th.setAttribute('aria-label', col.label);
                 this.appendItemIcon(labelSpan, hrid, 20);
             } else {
                 labelSpan.textContent = col.label;
@@ -743,6 +746,7 @@ class DecomposeHistoryViewer {
                 const deleteBtn = document.createElement('button');
                 deleteBtn.textContent = '\u2715';
                 deleteBtn.title = 'Delete this session';
+                deleteBtn.setAttribute('aria-label', 'Delete this session');
                 deleteBtn.style.cssText = `
                     background: none; border: none; color: #dc2626;
                     cursor: pointer; font-size: 14px; padding: 2px 6px;

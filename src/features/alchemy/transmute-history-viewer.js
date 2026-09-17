@@ -616,6 +616,7 @@ class TransmuteHistoryViewer {
                 const deleteBtn = document.createElement('button');
                 deleteBtn.textContent = '✕';
                 deleteBtn.title = 'Delete this session';
+                deleteBtn.setAttribute('aria-label', 'Delete this session');
                 deleteBtn.style.cssText = `
                     background: none; border: none; color: #dc2626;
                     cursor: pointer; font-size: 14px; padding: 2px 6px;
