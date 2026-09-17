@@ -3012,6 +3012,30 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('Deaths/hr0.020');
     });
 
+    test('the Deaths/hr delta is shown to the same decimals as the figure it annotates', () => {
+        // The reported case: 0.020 deaths/hr against a baseline of 1.0 read
+        // "(-1)" — a delta rounded to whole deaths beside a value in thousandths
+        pushHistory('Baseline', oneHourFight({ deaths: { player1: 1 } }));
+        ui._comparisonBaseline = 0;
+        // Draw the passed-in run, not whatever pushHistory left selected
+        ui._activeDetailIndex = null;
+        const shown = showFight(oneHourFight({ deaths: { player1: 0.02 } })).textContent;
+
+        expect(shown).toContain('Deaths/hr0.020');
+        expect(shown).toContain('-0.980');
+        expect(shown).not.toContain('(-1)');
+    });
+
+    test('a Deaths/hr change too small to show in the figure draws no delta', () => {
+        pushHistory('Baseline', oneHourFight({ deaths: { player1: 0.0201 } }));
+        ui._comparisonBaseline = 0;
+        ui._activeDetailIndex = null;
+        const shown = showFight(oneHourFight({ deaths: { player1: 0.02 } })).textContent;
+
+        expect(shown).toContain('Deaths/hr0.020');
+        expect(shown).not.toContain('-0.000');
+    });
+
     test('Overview shows Deaths/hr to three decimals, so safe builds stay comparable', () => {
         // The reported case: two builds a factor of twenty apart in real death
         // rate both used to read as a rounded integer in Overview.

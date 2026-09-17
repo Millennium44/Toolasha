@@ -175,6 +175,9 @@ export function formatReturn(ratio) {
     return { text, color: COLORS.textDim };
 }
 
+/** What the game calls a scroll; see {@link isScrollItem} */
+const SCROLL_CATEGORY = '/item_categories/scroll';
+
 /**
  * An item hrid as a readable name, falling back to the hrid's own last segment
  * so an item the game data does not know about still reads as something.
@@ -185,6 +188,44 @@ export function itemName(itemHrid) {
     const details = dataManager.getItemDetails?.(itemHrid);
     if (details?.name) return details.name;
     return itemHrid.replace('/items/', '').replace(/_/g, ' ');
+}
+
+/**
+ * Whether an opened item is a scroll rather than a chest.
+ *
+ * A scroll arrives as the same `loot_opened` message a chest does, but it pays
+ * out a buff and no items: it has no entry in `openableLootDropMap`, so there is
+ * nothing to weigh what it gave against, and it lands in the ledger as a row
+ * reading "0 · —" forever. Measured on the live client (2026-09-17): every
+ * openable with a drop table is `/item_categories/loot`, and all twelve scrolls
+ * (the `seal_of_*` hrids, named "Scroll Of …") are `/item_categories/scroll`.
+ *
+ * The category, not the name: a name check would read as English-only and break
+ * on a translated client.
+ *
+ * @param {string} itemHrid - What was opened
+ * @returns {boolean} True when the game calls it a scroll
+ */
+export function isScrollItem(itemHrid) {
+    return dataManager.getItemDetails?.(itemHrid)?.categoryHrid === SCROLL_CATEGORY;
+}
+
+/**
+ * A tally without its scroll rows.
+ *
+ * An hrid the game data cannot name is kept: unknown is not the same as a
+ * scroll, and dropping it would lose a real chest.
+ *
+ * @param {Object} tally - The ledger
+ * @returns {Object} The ledger, scroll rows removed
+ */
+export function withoutScrolls(tally) {
+    const scrolls = Object.keys(tally || {}).filter((hrid) => isScrollItem(hrid));
+    if (scrolls.length === 0) return tally || {};
+
+    const next = { ...tally };
+    for (const hrid of scrolls) delete next[hrid];
+    return next;
 }
 
 /**
@@ -532,6 +573,9 @@ class TreasureTracker {
 
         const chestHrid = data?.openedItem?.itemHrid;
         if (!chestHrid) return;
+        // A scroll is not treasure: it pays a buff, has no drop table, and would
+        // sit in the ledger as a row with nothing to measure. No popup either.
+        if (isScrollItem(chestHrid)) return;
 
         this.tally = recordOpening(this.tally, chestHrid, data.openedItem.count || 1, data.gainedItems);
         this._save();
@@ -759,7 +803,11 @@ class TreasureTracker {
      */
     _summary() {
         const dropTables = dataManager.getInitClientData()?.openableLootDropMap || {};
-        const rows = summariseTally(this.tally, dropTables, this._priceOf());
+        // Scrolls a build before this one recorded are dropped here rather than
+        // from the ledger: a save folds what is stored back under memory
+        // (mergeStoredTally), so deleting the keys would only bring them back on
+        // the next opening. Nothing new is recorded for them — see _onLootOpened.
+        const rows = summariseTally(withoutScrolls(this.tally), dropTables, this._priceOf());
         // Totals are taken before sorting, because they are the same figures
         // whichever way the rows are ordered
         const totals = tallyTotals(rows);

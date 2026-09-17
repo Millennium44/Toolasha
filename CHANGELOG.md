@@ -19,6 +19,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Panels say what they mean
+
+- The treasure tracker ignores scrolls: they pay a buff, not loot, and any already recorded no longer show in the panel.
+- The combat simulator's Deaths/hr change is shown to the same three decimals as the figure beside it, instead of rounding to whole deaths.
+- The Combat Level panel's Target Selector says what time the target is reached, next to how long it takes.
+
 <!-- shipped in 3.54.0 -->
 
 ### Alchemy history counts and costs what was really used

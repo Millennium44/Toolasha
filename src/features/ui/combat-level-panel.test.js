@@ -530,6 +530,37 @@ describe('a redraw the user asked for is not the five-second one', () => {
         );
         expect(selector.textContent).not.toContain('—');
     });
+
+    test('the Target Selector says what time the target lands on, not just how long', () => {
+        // "8h 16m" answers how long; whether that is before bed is the question
+        // being asked, and working it out by hand is what this saves
+        vi.setSystemTime(new Date('2026-09-17T12:00:00'));
+        combatLevelPanel.show();
+        train(5, { melee: 200000 });
+
+        select({ skill: 'defense', level: 151, focus: 'defense' });
+        combatLevelPanel._render();
+
+        const selector = [...combatLevelPanel.panel.querySelectorAll('div')].find((div) =>
+            div.textContent.startsWith('Target Selector')
+        );
+        // A clock time, whatever the format setting writes it as
+        expect(selector.textContent).toMatch(/\d{1,2}:\d{2}/);
+    });
+
+    test('a target with no honest time gets no completion clock either', () => {
+        combatLevelPanel.show();
+        // Nothing pointed at it, so the answer is "—" and inventing a time
+        // beside that would be worse than saying nothing
+        select({ skill: 'ranged', level: 200, focus: null, primary: null });
+        combatLevelPanel._render();
+
+        const selector = [...combatLevelPanel.panel.querySelectorAll('div')].find((div) =>
+            div.textContent.startsWith('Target Selector')
+        );
+        expect(selector.textContent).toContain('—');
+        expect(selector.textContent).not.toMatch(/\d{1,2}:\d{2}/);
+    });
 });
 
 describe('selectedTarget, which is what the overlay row reads', () => {

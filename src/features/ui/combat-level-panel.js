@@ -49,7 +49,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
-import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/formatters.js';
+import { formatWithSeparator, formatKMB, timeReadable, formatDateTime } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
@@ -881,6 +881,21 @@ class CombatLevelPanel {
                   : 'Nothing is pointed at this skill, so there is no honest time to give. Assign it a share under Time to Level.';
 
         line.append(picker, level, answer);
+
+        // The clock time that duration lands on. "8h 16m" answers how long;
+        // whether that is before bed is the question actually being asked, and
+        // it is the one figure the player would otherwise work out by hand.
+        if (seconds !== null && Number.isFinite(seconds) && seconds >= 0) {
+            const done = new Date(Date.now() + seconds * 1000);
+            const isToday = done.toDateString() === new Date().toDateString();
+            const when = this._value(
+                formatDateTime(done, { includeDate: !isToday, includeTime: true, includeSeconds: false }),
+                COLORS.textDim
+            );
+            when.title = 'When the target is reached, if the rate above holds.';
+            line.append(when);
+        }
+
         card.appendChild(line);
         return card;
     }

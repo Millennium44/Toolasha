@@ -1740,6 +1740,9 @@ const UPGRADE_MODES = [
  */
 const RESULTS_SUMMARY_SLOT = '<!--mwi-csim-summary-->';
 
+/** Decimals every Deaths/hr figure — and the delta beside it — is shown to */
+const DEATHS_DECIMALS = 3;
+
 /**
  * Format elapsed seconds as "Xs" or "Xm Ys".
  * @param {number} seconds
@@ -4822,7 +4825,7 @@ class CombatSimUI {
         html += '</div>';
         html += `<div style="${rowStyle}">`;
         html += `<span style="${labelStyle}">Deaths/hr</span>`;
-        html += `<span style="${valueStyle}">${this._formatDeathsPerHour(deathsPerHr)}${this._formatDelta(deathsPerHr, prevDeathsPerHr, false)}</span>`;
+        html += `<span style="${valueStyle}">${this._formatDeathsPerHour(deathsPerHr)}${this._formatDelta(deathsPerHr, prevDeathsPerHr, false, false, DEATHS_DECIMALS)}</span>`;
         html += '</div>';
 
         // Mana Run Out
@@ -5683,7 +5686,8 @@ class CombatSimUI {
         tiles.push(
             tile(
                 'Deaths/hr',
-                this._formatDeathsPerHour(deathsPerHr) + this._formatDelta(deathsPerHr, prevDeathsPerHr, false),
+                this._formatDeathsPerHour(deathsPerHr) +
+                    this._formatDelta(deathsPerHr, prevDeathsPerHr, false, false, DEATHS_DECIMALS),
                 deathsPerHr > 0 ? '#ff6b6b' : '#e0e0e0'
             )
         );
@@ -6222,14 +6226,24 @@ class CombatSimUI {
      * @returns {string} HTML span or empty string
      * @private
      */
-    _formatDelta(current, previous, higherIsBetter = true, useKMB = false) {
+    _formatDelta(current, previous, higherIsBetter = true, useKMB = false, decimals = 0) {
         if (previous === null || previous === undefined) return '';
         const delta = current - previous;
-        if (Math.abs(delta) < 0.5) return '';
+        // Half of the last digit shown: a change too small to alter the figure
+        // beside it is not news. At 0 decimals that is the original 0.5.
+        if (Math.abs(delta) < 0.5 * 10 ** -decimals) return '';
         const isPositive = higherIsBetter ? delta > 0 : delta < 0;
         const color = isPositive ? '#7ec87e' : '#ff6b6b';
         const sign = delta > 0 ? '+' : '';
-        const formatted = useKMB ? formatKMB(Math.round(delta)) : formatWithSeparator(Math.round(delta));
+        let formatted;
+        if (decimals > 0) {
+            // Rounding to whole numbers here made a Deaths/hr of 0.020 read
+            // "(-1)" beside a value shown to three decimals — a delta in a unit
+            // the figure it annotates does not use
+            formatted = delta.toFixed(decimals);
+        } else {
+            formatted = useKMB ? formatKMB(Math.round(delta)) : formatWithSeparator(Math.round(delta));
+        }
         return ` <span style="color:${color}; font-size:11px;">(${sign}${formatted})</span>`;
     }
 
@@ -6251,8 +6265,8 @@ class CombatSimUI {
      * @private
      */
     _formatDeathsPerHour(value) {
-        if (!Number.isFinite(value)) return '0.000';
-        return value.toFixed(3);
+        if (!Number.isFinite(value)) return (0).toFixed(DEATHS_DECIMALS);
+        return value.toFixed(DEATHS_DECIMALS);
     }
 
     /**

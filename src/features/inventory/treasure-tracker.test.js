@@ -80,11 +80,23 @@ const socketMock = vi.hoisted(() => {
     };
 });
 vi.mock('../../core/websocket.js', () => ({ default: socketMock }));
-const dm = vi.hoisted(() => ({ dropTables: {}, shop: {}, labyrinthShop: {}, characterId: 'char-1' }));
+const dm = vi.hoisted(() => ({
+    dropTables: {},
+    shop: {},
+    labyrinthShop: {},
+    characterId: 'char-1',
+    // Categories as the live client has them (measured 2026-09-17): every
+    // openable with a drop table is loot, and the scrolls are their own category
+    items: {
+        '/items/known': { name: 'Known Thing' },
+        '/items/chimerical_chest': { name: 'Chimerical Chest', categoryHrid: '/item_categories/loot' },
+        '/items/seal_of_critical_rate': { name: 'Scroll Of Critical Rate', categoryHrid: '/item_categories/scroll' },
+    },
+}));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null),
+        getItemDetails: (hrid) => dm.items[hrid] ?? null,
         getInitClientData: () => ({
             openableLootDropMap: dm.dropTables,
             shopItemDetailMap: dm.shop,
@@ -154,6 +166,8 @@ const {
     buildTreasureDetailRows,
     TREASURE_SUMMARY_COLUMNS,
     TREASURE_DETAIL_COLUMNS,
+    isScrollItem,
+    withoutScrolls,
     default: treasureTracker,
 } = await import('./treasure-tracker.js');
 const { default: config } = await import('../../core/config.js');
@@ -175,6 +189,46 @@ describe('formatReturn', () => {
         // A ratio of null must not render as -100%
         expect(formatReturn(null).text).toBe('—');
         expect(formatReturn(undefined).text).toBe('—');
+    });
+});
+
+describe('scrolls are not treasure', () => {
+    // A scroll arrives as the same loot_opened message a chest does, but it pays
+    // a buff and has no drop table — so it sat in the ledger as a row reading
+    // "0 · —" that nothing could ever score
+    test('the game category is what tells them apart, not the English name', () => {
+        expect(isScrollItem('/items/seal_of_critical_rate')).toBe(true);
+        expect(isScrollItem('/items/chimerical_chest')).toBe(false);
+    });
+
+    test('an item the game data cannot name is not assumed to be one', () => {
+        // Unknown is not the same as a scroll; treating it as one would lose a
+        // real chest the item map has not caught up with
+        expect(isScrollItem('/items/mystery_box')).toBe(false);
+    });
+
+    test('opening one records nothing', () => {
+        treasureTracker.tally = {};
+        treasureTracker._onLootOpened({ openedItem: { itemHrid: '/items/seal_of_critical_rate', count: 1 } }, null);
+
+        expect(treasureTracker.tally['/items/seal_of_critical_rate']).toBeUndefined();
+    });
+
+    test('opening a chest still records', () => {
+        treasureTracker.tally = {};
+        treasureTracker._onLootOpened({ openedItem: { itemHrid: '/items/chimerical_chest', count: 1 } }, null);
+
+        expect(treasureTracker.tally['/items/chimerical_chest']?.opened).toBe(1);
+    });
+
+    test('scroll rows an older build recorded are left out of the drawn ledger', () => {
+        const tally = {
+            '/items/chimerical_chest': { opened: 3, loot: {} },
+            '/items/seal_of_critical_rate': { opened: 1, loot: {} },
+            '/items/mystery_box': { opened: 2, loot: {} },
+        };
+
+        expect(Object.keys(withoutScrolls(tally))).toEqual(['/items/chimerical_chest', '/items/mystery_box']);
     });
 });
 
