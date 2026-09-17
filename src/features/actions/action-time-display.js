@@ -719,16 +719,18 @@ class ActionTimeDisplay {
             const running = run?.ownerKey === ownerKey;
             const failure = this._zoneSimErrors.get(key);
 
-            const line = document.createElement('div');
+            // Sits inline after the row's time, so the button does not add a line to the queue
+            const line = document.createElement('span');
             line.className = ZONE_SIM_CLASS;
             line.style.cssText = `
                 color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
-                font-size: 0.8em;
-                margin-top: 2px;
-                display: flex;
+                font-size: 0.9em;
+                margin-left: 6px;
+                display: inline-flex;
                 gap: 6px;
                 align-items: center;
                 flex-wrap: wrap;
+                vertical-align: middle;
             `;
 
             const button = document.createElement('button');
@@ -789,8 +791,9 @@ class ActionTimeDisplay {
                 line.appendChild(error);
             }
 
+            const times = actionDiv.querySelectorAll('.mwi-queue-action-time');
             const container = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
-            (container || actionDiv).appendChild(line);
+            (times[times.length - 1] || container || actionDiv).appendChild(line);
         } catch (error) {
             console.error('[ActionTimeDisplay] Drawing a zone sim button failed:', error);
         }

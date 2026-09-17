@@ -381,6 +381,8 @@ describe('the "sim 24h" button', () => {
         const rows = [...menu.querySelectorAll('[class*="QueuedActions_action__"]')];
         expect(rows.map((row) => row.querySelectorAll('.mwi-queue-zone-sim-button').length)).toEqual([1, 1, 0, 0]);
         expect(buttons(menu)[0].textContent).toBe('sim 24h');
+        // Inline after the row's time, not a line of its own
+        expect(buttons(menu)[0].closest('.mwi-queue-action-time')).not.toBeNull();
         // The row's own time text is unchanged by the button beside it
         expect(rowTexts(menu)[0]).toMatch(/^\[~1h 00m 00s · sim\]/);
     });
@@ -533,7 +535,13 @@ function queueMenu(labels) {
 }
 
 function rowTexts(root) {
-    return [...root.querySelectorAll('.mwi-queue-action-time')].map((el) => el.textContent);
+    // The time's own text, without the sim controls that sit inline after it
+    return [...root.querySelectorAll('.mwi-queue-action-time')].map((el) =>
+        [...el.childNodes]
+            .filter((node) => !node.classList?.contains('mwi-queue-zone-sim'))
+            .map((node) => node.textContent)
+            .join('')
+    );
 }
 
 function total() {

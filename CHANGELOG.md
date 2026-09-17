@@ -10,7 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - A counted combat row shows an estimated time from your last all-zones simulation, marked as simulated and flagged when the gear or run age differs.
 - Zones with no simulated rate, and dungeons, read "? · no sim rate", and the queue total says it is incomplete.
-- A "sim 24h" button on each non-dungeon combat row simulates that zone in the row's own loadout and shows the result on the row.
+- A "sim 24h" button beside each non-dungeon combat row's time simulates that zone in the row's own loadout and shows the result on the row.
 - Tiered zones such as "Gobo Planet (T3)" no longer read "[Unknown action]".
 - The all-zones simulation now keeps each zone's encounters per hour and the gear it ran in.
 - A test pins why the beacon planner stops at two routes: the entrance and exit are corners, so two is the most any floor allows.
