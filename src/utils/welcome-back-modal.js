@@ -66,6 +66,26 @@ export function findWelcomeBackModal(node) {
 }
 
 /**
+ * The welcome modal already on screen, if there is one.
+ *
+ * A `MutationObserver` reports insertions, so a watcher installed after the
+ * game has drawn this dialog never hears about it. Anything that starts up
+ * while the player is arriving — which is exactly when this dialog is on
+ * screen — has to look once as well as listen.
+ *
+ * @param {Document|HTMLElement} [root] - Where to look; the document by default
+ * @returns {HTMLElement|null} The modal, or null when none is open
+ */
+export function currentWelcomeBackModal(root = document) {
+    const selector = WELCOME_BACK_CLASS_HINTS.map((hint) => `[class*="${hint}"]`).join(', ');
+    for (const candidate of root?.querySelectorAll?.(selector) || []) {
+        const modal = findWelcomeBackModal(candidate);
+        if (modal) return modal;
+    }
+    return null;
+}
+
+/**
  * Call back once per inserted node that turns out to be the welcome modal.
  *
  * Debounced, because the modal's contents arrive in a burst: a handler that ran

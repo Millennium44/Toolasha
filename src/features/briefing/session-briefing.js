@@ -49,7 +49,9 @@
  * The modal's appearance is a game DOM insertion and the facts become readable
  * on Toolasha's own `character_switched`; nothing synchronises them, and either
  * can land first. So both sides meet in the middle: a modal seen before the
- * facts are ready is held (`pendingModal`) and filled in when they arrive, and
+ * facts are ready is held (`pendingModal`) and filled in when they arrive, a
+ * dialog already open when this feature starts is found by looking rather than
+ * listening (`currentWelcomeBackModal`), and
  * facts that were ready first are drawn the moment a modal appears. Nothing is
  * drawn from a half-read store — an unknown figure is left off the line rather
  * than printed as zero, which is `undercutCount()`'s rule and the reason it
@@ -60,7 +62,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { onWelcomeBackModal } from '../../utils/welcome-back-modal.js';
+import { currentWelcomeBackModal, onWelcomeBackModal } from '../../utils/welcome-back-modal.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -821,7 +823,11 @@ function onModalAppeared(modal) {
  * @returns {void}
  */
 function renderIntoPendingModal() {
-    const modal = pendingModal;
+    // Watching only hears about insertions. The game draws this dialog as the
+    // player arrives — before `character_switched` brings this feature up — so
+    // on a real return there is nothing left for the observer to catch, and
+    // the briefing was silently never drawn. Look for one already open.
+    const modal = pendingModal || currentWelcomeBackModal();
     pendingModal = null;
     if (!modal) return;
     // The player may have closed it during the awaits; a detached modal is not

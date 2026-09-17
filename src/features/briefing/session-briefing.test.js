@@ -530,6 +530,32 @@ describe('the modal and the facts, in either order', () => {
         expect(text()).not.toContain('could not be drawn');
     });
 
+    test('a dialog already open before this feature starts is found, not waited for', async () => {
+        // The live failure, 2026-09-17: the game draws its Welcome Back dialog
+        // as the player arrives, which is BEFORE character_switched brings this
+        // feature up. A MutationObserver only reports insertions, so nothing
+        // ever announced that modal and the briefing was silently never drawn.
+        // Opening it without announcing is exactly that situation.
+        game.queue = { queued: 0, seconds: 0 };
+        openWelcomeModal();
+
+        await feature.initialize();
+
+        expect(section()).not.toBeNull();
+        expect(text()).toContain('Action queue');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('an unannounced dialog that is closed again is not written into', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+        const content = openWelcomeModal();
+        content.remove();
+
+        await feature.initialize();
+
+        expect(section()).toBeNull();
+    });
+
     test('facts that were ready first are drawn the moment a modal appears', async () => {
         game.queue = { queued: 0, seconds: 0 };
 
