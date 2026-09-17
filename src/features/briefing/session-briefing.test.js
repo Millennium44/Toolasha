@@ -530,6 +530,29 @@ describe('the modal and the facts, in either order', () => {
         expect(text()).not.toContain('could not be drawn');
     });
 
+    test('the section lands in the box the player can see, not the full-screen container', async () => {
+        // The live shape, 2026-09-17: the game's dialog is a viewport-sized
+        // container holding a backdrop and the visible box. Appending to the
+        // container put the section at y=1099 in a 1091px viewport — rendered,
+        // reachable by a test, and invisible to the player.
+        game.queue = { queued: 0, seconds: 0 };
+        const container = document.createElement('div');
+        container.className = 'OfflineProgressModal_modalContainer__x';
+        container.innerHTML =
+            '<div class="OfflineProgressModal_background__x"></div>' +
+            '<div class="OfflineProgressModal_modal__x">' +
+            '<div class="OfflineProgressModal_modalContent__x"><h2>Welcome Back!</h2></div>' +
+            '</div>';
+        document.body.appendChild(container);
+
+        await feature.initialize();
+
+        const drawn = section();
+        expect(drawn).not.toBeNull();
+        expect(drawn.closest('[class*="modalContent"]')).not.toBeNull();
+        expect(drawn.parentElement.className).toContain('modalContent');
+    });
+
     test('a dialog already open before this feature starts is found, not waited for', async () => {
         // The live failure, 2026-09-17: the game draws its Welcome Back dialog
         // as the player arrives, which is BEFORE character_switched brings this

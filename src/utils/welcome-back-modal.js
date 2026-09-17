@@ -62,7 +62,13 @@ export function isWelcomeBackModal(el) {
 export function findWelcomeBackModal(node) {
     const content = node?.closest?.('[class*="Modal_modalContent"]') || node;
     if (!content?.querySelectorAll) return null;
-    return isWelcomeBackModal(content) ? content : null;
+    if (!isWelcomeBackModal(content)) return null;
+    // The dialog the game actually draws is a full-viewport container holding a
+    // backdrop and the box you can see. Appending to the container puts a
+    // decoration below the fold — measured live on 2026-09-17, at y=1099 in a
+    // 1091px viewport, off screen and full page width. The content element
+    // inside the box is where a decoration belongs.
+    return content.querySelector('[class*="modalContent"]') || content;
 }
 
 /**
