@@ -3637,8 +3637,12 @@ class ActionTimeDisplay {
             // As in the tooltip: a counted fight with no simulated rate ends at a time nobody can
             // say, so the clocks after it are withheld and the total says it is incomplete
             let hasUnknown = false;
-            // Whether the total leans on a simulated combat rate, which the total then marks
+            // Whether the total leans on a simulated combat rate, or on a material limit that
+            // rests on an expected draw rather than a guaranteed count — either way `hasEstimate`
+            // carries the mark; these two are tracked separately only so the total's hover text
+            // can say which reason applies.
             let usesSimRate = false;
+            let hasMaterialLimitEstimate = false;
             const actionsToCalculate = []; // Store actions for async profit calculation (with time in seconds)
 
             // Detect current action from DOM so we can avoid double-counting
@@ -3993,7 +3997,10 @@ class ActionTimeDisplay {
                     });
                 }
 
-                if (materialLimitIsEstimated) hasEstimate = true;
+                if (materialLimitIsEstimated) {
+                    hasEstimate = true;
+                    hasMaterialLimitEstimate = true;
+                }
 
                 // Format completion time
                 let completionText = '';
@@ -4089,9 +4096,10 @@ class ActionTimeDisplay {
             `;
 
             // Build total time text
-            // Marked only when a simulated combat rate is in it, so a queue without one reads
-            // exactly as it always has
-            const simMark = usesSimRate ? '~' : '';
+            // Marked whenever any row it sums was itself an estimate — a simulated combat rate,
+            // a material limit resting on an expected draw, or both — so a queue with neither
+            // reads exactly as it always has
+            const simMark = hasEstimate ? '~' : '';
             let totalText = '';
             if (hasInfinite) {
                 // Show finite time first, then add infinity indicator
@@ -4111,6 +4119,14 @@ class ActionTimeDisplay {
             }
 
             totalDiv.innerHTML = totalText;
+
+            // Say why the total is marked when a material limit is the reason (or part of it) —
+            // the sim-rate case is already explained on the combat row itself
+            if (hasMaterialLimitEstimate) {
+                totalDiv.title = usesSimRate
+                    ? 'Estimated, not measured: includes both a simulated combat rate and a material limit resting on an expected draw.'
+                    : 'Estimated, not measured: a material limit in this total rests on an expected draw, not a guaranteed count.';
+            }
 
             // Insert after queue menu
             queueMenu.insertAdjacentElement('afterend', totalDiv);
