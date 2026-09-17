@@ -23,6 +23,18 @@
  * resolves to the trailing shape, because that is all a prefix registry can be
  * told about it.
  *
+ * ## Wrappers
+ *
+ * The storage helpers that own a key family are listed in {@link SINKS}, and a
+ * list matches direct calls only: a function that takes a key and hands it to
+ * `writeScoped` hides its callers' key constants from the scan completely, and
+ * so would the next one anybody wrote. So the wrappers are not listed either —
+ * {@link discoverWrapperSinks} finds them, by looking for a function that
+ * forwards one of its own parameters into a sink's *key* position, and repeats
+ * until nothing new turns up, because a wrapper around a wrapper is possible.
+ * Merely calling a sink is not enough to count; see that function for why the
+ * narrowness matters.
+ *
  * ## What it cannot see, and why that is survivable
  *
  * A handful of modules write keys they are *handed*: `chunked-history.js` writes
@@ -182,12 +194,36 @@ function loadModule(file) {
     try {
         text = readFileSync(file, 'utf8');
     } catch {
-        const mod = { file, text: '', values: new Map(), fns: new Map(), imports: new Map() };
+        const mod = emptyModule(file);
         modules.set(file, mod);
         return mod;
     }
-    const mod = { file, text: stripComments(text), values: new Map(), fns: new Map(), imports: new Map() };
-    text = mod.text;
+    return makeModule(file, text);
+}
+
+/** Put a module the scan can read at a path that is not on disk (fixtures only). */
+function seedModule(file, source) {
+    modules.delete(file);
+    return makeModule(file, source);
+}
+
+function emptyModule(file) {
+    return { file, text: '', values: new Map(), fns: new Map(), defs: new Map(), imports: new Map() };
+}
+
+/**
+ * Parse one module's source into the symbol tables the resolver reads.
+ *
+ * Separated from {@link loadModule} so that a test can hand the scan a module
+ * that is not on disk — see the wrapper negative control.
+ *
+ * @param {string} file - Absolute path the module answers to (imports resolve against it)
+ * @param {string} source - The module's source text
+ * @returns {Object} The parsed module, also cached under `file`
+ */
+function makeModule(file, source) {
+    const mod = { ...emptyModule(file), text: stripComments(source) };
+    const text = mod.text;
     modules.set(file, mod);
 
     const push = (map, name, v) => {
@@ -215,18 +251,38 @@ function loadModule(file) {
         const after = text.slice(parenClose + 1);
         const arrow = /^\s*=>\s*/.exec(after);
         let returns = [];
+        let body = null;
         if (arrow) {
             const at = parenClose + 1 + arrow[0].length;
-            if (text[at] === '{') returns = returnsIn(text, at);
-            else {
+            if (text[at] === '{') {
+                returns = returnsIn(text, at);
+                const end = matchBracket(text, at);
+                if (end > 0) body = { start: at + 1, end };
+            } else {
                 const e = readExpression(text, at);
-                if (e) returns = [e];
+                if (e) {
+                    returns = [e];
+                    body = { start: at, end: at + e.length };
+                }
             }
         } else {
             const brace = /^\s*\{/.exec(after);
-            if (brace) returns = returnsIn(text, parenClose + brace[0].length);
+            if (brace) {
+                const at = parenClose + brace[0].length;
+                returns = returnsIn(text, at);
+                const end = matchBracket(text, at);
+                if (end > 0) body = { start: at + 1, end };
+            }
         }
         if (returns.length) push(mod.fns, name, { params, returns });
+        if (body) {
+            push(mod.defs, name, {
+                params,
+                bodyStart: body.start,
+                bodyEnd: body.end,
+                nameIndex: text.lastIndexOf(name, parenOpen),
+            });
+        }
     }
 
     const importRe = /import\s+([\s\S]*?)\s+from\s+['"]([^'"]+)['"]/g;
@@ -649,7 +705,12 @@ function unwrapArrow(expr) {
     return returns[0] || expr;
 }
 
-/* sinks: helpers that own a key family on their caller's behalf */
+/*
+ * sinks: helpers that own a key family on their caller's behalf.
+ *
+ * These are the ones written by hand. Wrappers around them are found rather
+ * than listed — see {@link discoverWrapperSinks}.
+ */
 const SINKS = {
     writeScoped: { key: { arg: 0, kind: 'prefix' }, store: { arg: 2, default: 'settings' } },
     readScoped: { key: { arg: 0, kind: 'prefix' }, store: { arg: 1, default: 'settings' } },
@@ -680,6 +741,187 @@ const SINKS = {
     // at the call sites rather than at the write
     rememberLocal: { objectKeys: 0, store: { default: 'settings' } },
 };
+
+/* ------------------------------------------------------------------ *
+ * wrapper discovery
+ * ------------------------------------------------------------------ */
+
+/**
+ * What a function's parameters are called inside it.
+ *
+ * A plain parameter binds its own name to its position. A destructured options
+ * object binds each property (honouring `a: b` aliases) to the property name, so
+ * that `function save({key})` forwarding `key` can be expressed as an
+ * option-keyed sink the same way `createPersistedRecord` is.
+ *
+ * @param {{params: string[]}} def - A parsed function definition
+ * @returns {Map<string, {arg?: number, option?: string, index: number}>} Local name → where it came from
+ */
+function parameterOrigins(def) {
+    const origins = new Map();
+    def.params.forEach((param, i) => {
+        const p = param.trim();
+        if (!p || p.startsWith('...')) return;
+        if (p.startsWith('{')) {
+            const close = matchBracket(p, 0);
+            for (const prop of splitTopLevel(p.slice(1, close < 0 ? p.length : close))) {
+                if (!prop || prop.trim().startsWith('...')) continue;
+                const [namePart] = splitOnFirstEquals(prop);
+                const [key, alias] = namePart.split(':').map((s) => s.trim());
+                const local = alias || key;
+                if (local && /^[A-Za-z_$][\w$]*$/.test(local)) origins.set(local, { option: key, index: i });
+            }
+            return;
+        }
+        const [namePart] = splitOnFirstEquals(p);
+        const name = namePart.trim();
+        if (/^[A-Za-z_$][\w$]*$/.test(name)) origins.set(name, { arg: i, index: i });
+    });
+    return origins;
+}
+
+/** The expression a sink was handed for one of its key (or store) positions. */
+function sinkArgument(part, args) {
+    if (!part) return undefined;
+    if (part.arg !== undefined) return args[part.arg];
+    if (part.option !== undefined) {
+        const first = (args[0] || '').trim();
+        if (!first.startsWith('{')) return undefined;
+        return objectProperties(first).get(part.option);
+    }
+    return undefined;
+}
+
+/** A parameter forwarded verbatim — `f(key)`, and `f(key)` after `key = 'x'`. */
+function forwardedParameter(expr, origins) {
+    if (expr === undefined || expr === null) return null;
+    const e = stripParens(String(expr).trim());
+    if (!/^[A-Za-z_$][\w$]*$/.test(e)) return null;
+    return origins.get(e) || null;
+}
+
+/**
+ * Which store a discovered wrapper writes into, as a sink spec fragment.
+ *
+ * Usually a constant in the wrapper's own module (`writeScoped(key, v, STORE)`),
+ * which resolves once, here. When the wrapper forwards a store parameter of its
+ * own, the fragment points at the caller's argument instead.
+ */
+function wrapperStore(storeSpec, args, origins, mod) {
+    const part = storeSpec || {};
+    // a wrapper around a wrapper inherits the store the inner one already resolved
+    if (part.resolved !== undefined) return { resolved: part.resolved };
+    const expr = sinkArgument(part, args);
+    if (expr === undefined) {
+        return { resolved: part.default ? [{ kind: 'literal', value: part.default }] : [] };
+    }
+    const forwarded = forwardedParameter(expr, origins);
+    if (forwarded && forwarded.arg !== undefined) return { arg: forwarded.arg, default: part.default };
+    return { resolved: resolve(expr, { mod, bindings: new Map(), seen: new Set(), depth: 0 }) };
+}
+
+/**
+ * Sinks that are not written down: functions that forward a parameter of their
+ * own into a sink's *key* position.
+ *
+ * {@link SINKS} lists the helpers that own a key family, and matching it by name
+ * catches only direct calls. A wrapper — `saveUpgradeResults(key, …)` calling
+ * `writeScoped(key, …)` — hides its callers' key constants from the scan
+ * entirely, and the next one anybody writes would hide theirs. So the wrappers
+ * are found rather than listed: a function whose parameter reaches a sink's key
+ * position is itself a sink, its call sites are scanned like any other sink's,
+ * and the pass repeats until nothing new turns up, because a wrapper around a
+ * wrapper is possible.
+ *
+ * The narrowness is the point. It is not enough for a function to *call* a
+ * sink — half of `src/` does that with a constant of its own, and treating those
+ * as sinks would flood the scan with noise, which gets silenced, which is worse
+ * than the gap. The parameter has to be handed to the sink as the key.
+ *
+ * @param {string[]} files - The modules to read
+ * @param {Object} baseSinks - The written-down sinks to start from
+ * @returns {{sinks: Object, discovered: string[], defSites: Set<string>, forwardSites: Set<string>}}
+ *   The full sink table, the names it grew by, the wrapper definitions to skip,
+ *   and the forwarding calls whose keys their callers name instead
+ */
+function discoverWrapperSinks(files, baseSinks) {
+    const sinks = { ...baseSinks };
+    const discovered = [];
+    const defSites = new Set();
+    const forwardSites = new Set();
+
+    for (let pass = 0; pass < 6; pass += 1) {
+        const found = new Map();
+
+        for (const file of files) {
+            const mod = loadModule(file);
+            if (!mod.defs.size) continue;
+            const defs = [];
+            for (const [name, list] of mod.defs) for (const def of list) defs.push({ name, def });
+
+            for (const [sinkName, sinkSpec] of Object.entries(sinks)) {
+                const re = new RegExp(`\\b${sinkName}\\s*\\(`, 'g');
+                let m;
+                while ((m = re.exec(mod.text))) {
+                    const at = m.index;
+                    const before = mod.text.slice(Math.max(0, at - 30), at);
+                    if (/(function|class)\s+$/.test(before)) continue;
+                    const open = at + m[0].length - 1;
+                    const args = callArgs(mod.text, open);
+                    const parts = sinkSpec.keys || (sinkSpec.key ? [sinkSpec.key] : []);
+
+                    // innermost first: the parameter belongs to the closest
+                    // enclosing function, not to whatever encloses that
+                    const enclosing = defs
+                        .filter(({ def }) => at >= def.bodyStart && at < def.bodyEnd)
+                        .sort((a, b) => a.def.bodyEnd - a.def.bodyStart - (b.def.bodyEnd - b.def.bodyStart));
+
+                    for (const part of parts) {
+                        if (part.kind === 'ignore') continue;
+                        const expr = sinkArgument(part, args);
+                        if (expr === undefined) continue;
+                        const host = enclosing.find(({ def }) => forwardedParameter(expr, parameterOrigins(def)));
+                        if (!host || host.name === sinkName) continue;
+                        const origins = parameterOrigins(host.def);
+                        const origin = forwardedParameter(expr, origins);
+                        const keyPart =
+                            origin.arg !== undefined
+                                ? { arg: origin.arg, kind: part.kind }
+                                : origin.index === 0
+                                  ? { option: origin.option, kind: part.kind }
+                                  : null;
+                        // a destructured options object in any position but the
+                        // first cannot be addressed at the call site, so it is
+                        // left undiscovered — the write then shows up as a blind
+                        // spot, which is the alarm, not a silence
+                        if (!keyPart) continue;
+                        // covered from this wrapper's own call sites instead
+                        forwardSites.add(`${file}|${at}`);
+                        if (sinks[host.name]) continue;
+                        keyPart.store = wrapperStore(part.store || sinkSpec.store, args, origins, mod);
+                        if (!found.has(host.name)) found.set(host.name, { keys: [], sites: [] });
+                        const entry = found.get(host.name);
+                        const same = (k) => k.arg === keyPart.arg && k.option === keyPart.option;
+                        if (!entry.keys.some(same)) entry.keys.push(keyPart);
+                        entry.sites.push(`${file}|${host.def.nameIndex}`);
+                    }
+                }
+            }
+        }
+
+        let added = false;
+        for (const [name, spec] of found) {
+            if (sinks[name]) continue;
+            sinks[name] = { keys: spec.keys, store: { resolved: [] } };
+            for (const site of spec.sites) defSites.add(site);
+            discovered.push(name);
+            added = true;
+        }
+        if (!added) break;
+    }
+
+    return { sinks, discovered, defSites, forwardSites };
+}
 
 /**
  * The keys an object literal names, resolved.
@@ -720,10 +962,12 @@ function objectKeyNames(expr, mod) {
  *   stores: Array<{kind: string, value: string}>, keys: Array<{kind: string, value: string}>,
  *   bulk: boolean}>} One row per write site (per key family, for a helper that owns several)
  */
-function scanWrites() {
+function scanWrites(files, sinks = SINKS, meta = {}) {
     const rows = [];
+    const defSites = meta.defSites || new Set();
+    const forwardSites = meta.forwardSites || new Set();
 
-    for (const file of sources()) {
+    for (const file of files) {
         const mod = loadModule(file);
         const rel = file.slice(srcRoot.length + 1).replace(/\\/g, '/');
         const callRe = /storage\s*\.\s*(set|setJSON|putAll)\s*\(/g;
@@ -757,9 +1001,9 @@ function scanWrites() {
         }
     }
 
-    for (const file of sources()) {
+    for (const file of files) {
         const mod = loadModule(file);
-        for (const [name, spec] of Object.entries(SINKS)) {
+        for (const [name, spec] of Object.entries(sinks)) {
             const re = new RegExp(`\\b${name}\\s*\\(`, 'g');
             let m;
             while ((m = re.exec(mod.text))) {
@@ -769,6 +1013,8 @@ function scanWrites() {
                 const rel = file.slice(srcRoot.length + 1).replace(/\\/g, '/');
                 const before = mod.text.slice(Math.max(0, m.index - 30), m.index);
                 if (/(function|class)\s+$/.test(before)) continue; // the definition, not a call
+                if (defSites.has(`${file}|${m.index}`)) continue; // a discovered wrapper's own definition
+                const forwarded = forwardSites.has(`${file}|${m.index}`);
                 const ctx = () => ({ mod, bindings: new Map(), seen: new Set(), depth: 0 });
                 const optionExprs = (option) => {
                     const first = (args[0] || '').trim();
@@ -797,6 +1043,10 @@ function scanWrites() {
                     return out;
                 };
                 const pick = (part) => {
+                    if (!part) return [];
+                    // a discovered wrapper's store was resolved once, where the
+                    // wrapper was found, because it is a constant there
+                    if (part.resolved !== undefined) return part.resolved;
                     if (part.option !== undefined) {
                         const exprs = optionExprs(part.option);
                         if (!exprs.length) return part.default ? [{ kind: 'literal', value: part.default }] : [];
@@ -836,7 +1086,15 @@ function scanWrites() {
                         kind: part.kind === 'prefix' && r.kind !== 'suffix' ? 'prefix' : r.kind,
                         value: r.value,
                     }));
-                    rows.push({ file: rel, line, via: name, stores: storeRes, keys: keyRes, bulk: false });
+                    rows.push({
+                        file: rel,
+                        line,
+                        via: name,
+                        stores: part.store ? pick(part.store) : storeRes,
+                        keys: keyRes,
+                        bulk: false,
+                        forwarded,
+                    });
                 }
             }
         }
@@ -917,7 +1175,28 @@ function identifying(key) {
     return !/^[_:-]*(default)?[_:-]*$/.test(key.value);
 }
 
-const writes = scanWrites().map((row) => ({ ...row, keys: row.keys.filter(identifying) }));
+/**
+ * Read a set of modules: find the wrappers, then every write site.
+ *
+ * @param {string[]} files - Modules to read
+ * @param {{followWrappers?: boolean}} [options] - `followWrappers: false` runs
+ *   the written-down sinks only, which is how the negative control shows what
+ *   the fixed-point pass is worth
+ * @returns {{writes: Array, discovered: string[]}} The write sites and the sinks found
+ */
+function analyze(files, { followWrappers = true } = {}) {
+    const found = followWrappers
+        ? discoverWrapperSinks(files, SINKS)
+        : { sinks: SINKS, discovered: [], defSites: new Set(), forwardSites: new Set() };
+    const rows = scanWrites(files, found.sinks, found).map((row) => ({
+        ...row,
+        keys: row.keys.filter(identifying),
+    }));
+    return { writes: rows, discovered: found.discovered };
+}
+
+const analysis = analyze(sources());
+const writes = analysis.writes;
 
 describe('what the scan can read', () => {
     test('it finds the write sites at all', () => {
@@ -930,6 +1209,7 @@ describe('what the scan can read', () => {
     test('only the declared storage helpers write keys it cannot resolve', () => {
         const blind = rowsNeedingCoverage(writes)
             .filter((row) => !row.bulk && row.keys.length === 0)
+            .filter((row) => !row.forwarded) // a wrapper's own write: its callers name the key
             .filter((row) => !CALLER_KEYED_MODULES.has(row.file))
             .map((row) => `${row.file}:${row.line}${row.via ? ` (via ${row.via})` : ''}`);
 
@@ -937,6 +1217,23 @@ describe('what the scan can read', () => {
         // noticing. Resolve it, or route it through one of the helpers above —
         // adding it to CALLER_KEYED_MODULES only silences the alarm.
         expect(blind).toEqual([]);
+    });
+
+    test('the wrappers it follows are the ones that exist', () => {
+        // Pinned, like the unused-prefix list: a new wrapper around a storage
+        // helper is a new family of keys arriving by a route nobody looked at,
+        // and it should be looked at once. Adding a name here is the whole
+        // maintenance cost of the fixed-point pass.
+        // `collectionRecord` forwards a base into `createCuratedRecord`;
+        // `saveUpgradeResults` / `loadUpgradeResults` forward a key into
+        // `writeScoped` / `readScoped`. Both families land in an object store of
+        // their own rather than in `settings`, so neither is filtered by key
+        // today — they are found so that the next one, which might be, is too.
+        expect([...analysis.discovered].sort()).toEqual([
+            'collectionRecord',
+            'loadUpgradeResults',
+            'saveUpgradeResults',
+        ]);
     });
 
     test('every bulk write into a filtered store says which keys it writes', () => {
@@ -985,6 +1282,71 @@ describe('registry coverage', () => {
             .map((key) => key.value);
 
         expect(uncovered).toContain(victim);
+    });
+
+    test('it notices a key that only reaches storage through a wrapper', () => {
+        // The other control thins the registry; this one thins nothing and
+        // instead hands the scan a wrapper of the exact shape the fixed-point
+        // pass exists for — a function forwarding its own parameter into
+        // `writeScoped`, and another wrapping that one. Without it the new
+        // machinery has nothing proving it still works.
+        const dir = join(srcRoot, '__wrapper_control__');
+        const inner = join(dir, 'inner.js');
+        const outer = join(dir, 'outer.js');
+        const caller = join(dir, 'caller.js');
+
+        seedModule(
+            inner,
+            [
+                "import { writeScoped } from '../utils/character-key.js';",
+                "const CONTROL_STORE = 'settings';",
+                'export async function saveControlRecord(key, value) {',
+                '    await writeScoped(key, value, CONTROL_STORE, true);',
+                '}',
+            ].join('\n')
+        );
+        seedModule(
+            outer,
+            [
+                "import { saveControlRecord } from './inner.js';",
+                'export async function saveControlRecordLabeled(key, value, label) {',
+                '    await saveControlRecord(key, { value, label });',
+                '}',
+            ].join('\n')
+        );
+        seedModule(
+            caller,
+            [
+                "import { saveControlRecordLabeled } from './outer.js';",
+                "const CONTROL_KEY = 'zzControlKeyNobodyRegistered';",
+                'export async function recordControlThing(value) {',
+                "    await saveControlRecordLabeled(CONTROL_KEY, value, 'label');",
+                '}',
+            ].join('\n')
+        );
+
+        const files = [inner, outer, caller];
+        const followed = analyze(files);
+
+        // both levels found, which is what iterating to a fixed point buys
+        expect([...followed.discovered].sort()).toEqual(['saveControlRecord', 'saveControlRecordLabeled']);
+
+        const keys = rowsNeedingCoverage(followed.writes).flatMap((row) => row.keys.map((key) => key.value));
+        expect(keys).toContain('zzControlKeyNobodyRegistered');
+        expect(keys.filter((value) => !ownsKey('settings', value))).toContain('zzControlKeyNobodyRegistered');
+
+        // and the wrapper's own write is not reported as a new blind spot,
+        // because its callers are what name the key
+        const blind = rowsNeedingCoverage(followed.writes)
+            .filter((row) => !row.bulk && row.keys.length === 0 && !row.forwarded)
+            .map((row) => `${row.file}:${row.line}`);
+        expect(blind).toEqual([]);
+
+        // with the wrapper pass off, the key is invisible — that is the gap
+        const direct = analyze(files, { followWrappers: false });
+        expect(direct.writes.flatMap((row) => row.keys.map((key) => key.value))).not.toContain(
+            'zzControlKeyNobodyRegistered'
+        );
     });
 
     test('the prefixes nothing writes are the ones deliberately kept', () => {
