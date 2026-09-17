@@ -10,8 +10,33 @@ import { formatWithSeparator } from './formatters.js';
 import { GAME } from './selectors.js';
 
 /**
+ * What this module's API supports, for an outside caller to check before it
+ * relies on a feature — rather than the only alternative, reading this file's
+ * own source text for a keyword, which breaks the moment a build minifies or
+ * renames anything.
+ *
+ * `tabOwner` is true as of the `owner` option on `createMaterialTab` /
+ * `createClearAllTabsControl` and the matching `removeMaterialTabs({ owner })`
+ * — an installed build older than that silently ignores an `owner` an outside
+ * caller passes (unknown options are just extra object keys), so a caller that
+ * wants scoped removal should check this rather than assume it. A fact about
+ * the API's shape, not a version number: it never goes back to `false` once
+ * shipped, and nothing here increments for changes that aren't "can I now pass
+ * an owner and expect it to be honored."
+ *
+ * Frozen so a caller cannot accidentally (or a hostile one, deliberately)
+ * mutate the flag a different caller reads next.
+ */
+export const CAPABILITIES = Object.freeze({
+    tabOwner: true,
+});
+
+/**
  * Tabs currently watching their item for acquisition, keyed by the tab element,
- * value is the unsubscribe function returned by `webSocketHook.on('*', …)`.
+ * value is `{ unsubscribe, onRetire }` — `unsubscribe` drops the
+ * `webSocketHook.on('*', …)` subscription, `onRetire` is the caller's callback,
+ * kept alongside it so a teardown path that never reaches the normal "item
+ * acquired" flow (character switch) can still invoke it.
  * A tab in here is a tab `watchTabForAcquisition` is still tracking; removing it
  * from the map is how every retirement path — auto, manual dismiss, "× All",
  * marketplace close, character switch — agrees the watch is over.
@@ -20,9 +45,11 @@ const acquisitionWatchers = new Map();
 
 /**
  * The "show a ✓ for a moment, then remove the tab" timeout for a tab that just
- * got retired, keyed by tab. Tracked separately from `acquisitionWatchers` so a
- * dismiss that lands during the brief ✓ window can cancel the pending removal
- * and `onRetire` call instead of racing them.
+ * got retired, keyed by tab, value is `{ timeoutId, onRetire }`. Tracked
+ * separately from `acquisitionWatchers` so a dismiss that lands during the
+ * brief ✓ window can cancel the pending removal and `onRetire` call instead of
+ * racing them. `onRetire` is kept here too so a character switch that lands
+ * inside this window can still hand it to the caller.
  */
 const pendingRetireTimeouts = new Map();
 
@@ -46,15 +73,23 @@ let characterSwitchHookRegistered = false;
  * `on`.
  *
  * Pending ✓-window removals are cancelled too rather than left to fire into
- * the new character's session; the tabs are removed immediately without their
- * `onRetire`/`onDismiss` callbacks — callers' bookkeeping is reconciled by
- * their own cleanup observers, the same as on marketplace close.
+ * the new character's session, but `onRetire` still fires for every tab torn
+ * down here (immediately, with the tab, same as a normal retirement) — unlike
+ * `onDismiss`, it carries no inventory state of its own, only "this tab is
+ * gone now," which is exactly what a character switch makes true. A caller
+ * that uses `onRetire` to prune its own bookkeeping array (as
+ * `lab-sim-ui.js`'s `openPlanInMarketplace` does) would otherwise go stale
+ * silently across a switch, same as the marketplace-tabs owner bug this fixes
+ * alongside. `onDismiss` is a different, unrelated callback — it belongs to
+ * `createMaterialTab`'s own dismiss (×) button and is not reachable from here.
  */
 function retireAllWatchesForCharacterSwitch() {
     const tabs = new Set([...acquisitionWatchers.keys(), ...pendingRetireTimeouts.keys()]);
     for (const tab of tabs) {
+        const onRetire = acquisitionWatchers.get(tab)?.onRetire ?? pendingRetireTimeouts.get(tab)?.onRetire;
         unwatchTabAcquisition(tab);
         tab.remove();
+        if (onRetire) onRetire(tab);
     }
 }
 
@@ -82,6 +117,10 @@ const POLL_MS = 3000;
  * @param {Function} [options.onDismiss] - Called with `material` when the tab's own
  *   dismiss (×) button is used, right before the tab is removed from the DOM. Lets a
  *   caller prune whatever list of its own it is keeping alongside the tab.
+ * @param {string} [options.owner] - Which feature this tab belongs to. Stamped as
+ *   `data-mwi-tab-owner` so `removeMaterialTabs({ owner })` can clear this caller's
+ *   tabs without also clearing every other feature's — see that function's doc for
+ *   why an owner-less tab is still swept by an owner-less (global) clear.
  * @returns {HTMLElement} Created tab element
  */
 /**
@@ -132,6 +171,7 @@ export function createMaterialTab(material, referenceTab, onClickCallback, optio
     tab.setAttribute('data-mwi-custom-tab', 'true');
     tab.setAttribute('data-item-hrid', material.itemHrid);
     tab.setAttribute('data-missing-quantity', material.missing.toString());
+    if (options.owner) tab.setAttribute('data-mwi-tab-owner', options.owner);
 
     // Color coding:
     // - Red: Missing materials (missing > 0)
@@ -269,13 +309,21 @@ function attachDismissButton(tab, material, onDismiss) {
  * @param {HTMLElement} referenceTab - Tab element to clone structure from
  * @param {Function} [onClearAll] - Called after the tabs are removed, so a caller
  *   can prune whatever list of its own it was keeping alongside them
+ * @param {Object} [options] - Optional extras
+ * @param {string} [options.owner] - Same meaning as `createMaterialTab`'s `owner`:
+ *   stamped on this control so an owner-scoped `removeMaterialTabs({ owner })`
+ *   sweeps up a caller's *previous* "× All" control on rebuild, not just its
+ *   material tabs. The control's own click always clears every owner's tabs —
+ *   see `removeMaterialTabs` for why "× All" stays a global gesture regardless
+ *   of who drew the button.
  * @returns {HTMLElement} The control element, not yet attached anywhere
  */
-export function createClearAllTabsControl(referenceTab, onClearAll) {
+export function createClearAllTabsControl(referenceTab, onClearAll, options = {}) {
     const control = referenceTab.cloneNode(true);
 
     control.setAttribute('data-mwi-custom-tab', 'true');
     control.setAttribute('data-mwi-clear-all-tab', 'true');
+    if (options.owner) control.setAttribute('data-mwi-tab-owner', options.owner);
     control.classList.remove('Mui-selected');
     control.setAttribute('aria-selected', 'false');
     control.setAttribute('tabindex', '-1');
@@ -310,10 +358,11 @@ export function createClearAllTabsControl(referenceTab, onClearAll) {
  * @param {HTMLElement} container - The visible tab bar
  * @param {HTMLElement} referenceTab - Tab element to clone structure from
  * @param {Function} [onClearAll] - Forwarded to `createClearAllTabsControl`
+ * @param {Object} [options] - Forwarded to `createClearAllTabsControl` (e.g. `owner`)
  */
-export function ensureClearAllTabsControl(container, referenceTab, onClearAll) {
+export function ensureClearAllTabsControl(container, referenceTab, onClearAll, options = {}) {
     if (!container || container.querySelector('[data-mwi-clear-all-tab="true"]')) return;
-    container.appendChild(createClearAllTabsControl(referenceTab, onClearAll));
+    container.appendChild(createClearAllTabsControl(referenceTab, onClearAll, options));
 }
 
 /**
@@ -381,10 +430,32 @@ export function attachRegularTabClearListener(tabsContainer, onOtherTabClick) {
 }
 
 /**
- * Remove all custom material tabs from the marketplace
+ * Remove custom material tabs from the marketplace.
+ *
+ * With no `owner`, this removes every custom tab regardless of who drew it —
+ * the deliberately global "clear everything" gesture the "× All" control
+ * (`createClearAllTabsControl`) is built for, and the shape every caller of
+ * this function used before owners existed. Passing an `owner` narrows the
+ * sweep to tabs stamped with that same owner by `createMaterialTab` or
+ * `createClearAllTabsControl`, so one feature rebuilding or tearing down its
+ * own strip does not take another feature's pinned tabs with it — the bug
+ * this option exists to fix (missing-materials and the shopping list both
+ * called the unscoped version, so closing one cleared the other's tabs too).
+ *
+ * A tab created without an `owner` carries no `data-mwi-tab-owner` attribute
+ * and so only ever matches the unscoped (global) call, never an owner-scoped
+ * one — the same as before this option existed.
+ *
+ * @param {Object} [options]
+ * @param {string} [options.owner] - Only remove tabs stamped with this owner.
+ *   Omit for the previous "remove everything" behavior.
  */
-export function removeMaterialTabs() {
-    const customTabs = document.querySelectorAll('[data-mwi-custom-tab="true"]');
+export function removeMaterialTabs(options = {}) {
+    const { owner } = options;
+    const selector = owner
+        ? `[data-mwi-custom-tab="true"][data-mwi-tab-owner="${owner}"]`
+        : '[data-mwi-custom-tab="true"]';
+    const customTabs = document.querySelectorAll(selector);
     customTabs.forEach((tab) => {
         unwatchTabAcquisition(tab);
         tab.remove();
@@ -594,15 +665,15 @@ function showAcquiredBadge(tab, itemName) {
  * @param {HTMLElement} tab - Tab element
  */
 function unwatchTabAcquisition(tab) {
-    const pendingTimeout = pendingRetireTimeouts.get(tab);
-    if (pendingTimeout) {
-        clearTimeout(pendingTimeout);
+    const pending = pendingRetireTimeouts.get(tab);
+    if (pending) {
+        clearTimeout(pending.timeoutId);
         pendingRetireTimeouts.delete(tab);
     }
 
-    const unsubscribe = acquisitionWatchers.get(tab);
-    if (unsubscribe) {
-        unsubscribe();
+    const watcher = acquisitionWatchers.get(tab);
+    if (watcher) {
+        watcher.unsubscribe();
         acquisitionWatchers.delete(tab);
     }
 }
@@ -627,8 +698,10 @@ function unwatchTabAcquisition(tab) {
  * @param {string} [options.itemName] - Display name for badge updates; falls back to
  *   the game's item name lookup, then to the HRID's last path segment
  * @param {Function} [options.onRetire] - Called with `tab` right after it is removed
- *   from the DOM because the item was acquired. Not called on manual dismiss,
- *   "× All", or marketplace close — those retire the watch without this callback.
+ *   from the DOM because the item was acquired, or because the character switched
+ *   (see `retireAllWatchesForCharacterSwitch`). Not called on manual dismiss or
+ *   "× All"/marketplace close (`removeMaterialTabs`) — those retire the watch
+ *   without this callback, since a caller's own action already knows the tab is gone.
  * @returns {Function} Unwatch function. Also invoked automatically by the tab's own
  *   dismiss button, `removeMaterialTabs`, and therefore marketplace-close cleanup
  *   (both of which route through `removeMaterialTabs`).
@@ -653,18 +726,18 @@ export function watchTabForAcquisition(tab, options) {
         showAcquiredBadge(tab, itemName);
         // Stop listening immediately — only the DOM removal + onRetire are delayed,
         // so a second inventory event during the ✓ window can't retire it twice.
-        const unsubscribe = acquisitionWatchers.get(tab);
-        if (unsubscribe) {
-            unsubscribe();
+        const watcher = acquisitionWatchers.get(tab);
+        if (watcher) {
+            watcher.unsubscribe();
             acquisitionWatchers.delete(tab);
         }
 
-        const retireTimeout = setTimeout(() => {
+        const timeoutId = setTimeout(() => {
             pendingRetireTimeouts.delete(tab);
             tab.remove();
             if (onRetire) onRetire(tab);
         }, ACQUIRED_BADGE_DELAY_MS);
-        pendingRetireTimeouts.set(tab, retireTimeout);
+        pendingRetireTimeouts.set(tab, { timeoutId, onRetire });
     };
 
     const check = () => {
@@ -695,7 +768,7 @@ export function watchTabForAcquisition(tab, options) {
     };
 
     webSocketHook.on('*', handler);
-    acquisitionWatchers.set(tab, () => webSocketHook.off('*', handler));
+    acquisitionWatchers.set(tab, { unsubscribe: () => webSocketHook.off('*', handler), onRetire });
 
     // Cover the case where the item was already sitting in inventory before
     // this tab started watching (e.g. a stale plan reopened after buying).

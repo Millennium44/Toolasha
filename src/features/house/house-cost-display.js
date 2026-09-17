@@ -176,6 +176,14 @@ function supportsHasSelector() {
     }
 }
 
+/**
+ * This feature's owner id for the marketplace tabs it pins, passed to
+ * `createMaterialTab` / `createClearAllTabsControl` and to
+ * `removeMaterialTabs({ owner })`, so this feature's own tab-strip rebuilds
+ * and teardowns never sweep up another feature's pinned tabs.
+ */
+const TAB_OWNER = 'house-cost';
+
 class HouseCostDisplay {
     constructor() {
         this.isActive = false;
@@ -1130,7 +1138,7 @@ class HouseCostDisplay {
         }
 
         // Remove existing custom tabs
-        removeMaterialTabs();
+        removeMaterialTabs({ owner: TAB_OWNER });
 
         // Get reference tab
         const referenceTab = Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'));
@@ -1152,18 +1160,23 @@ class HouseCostDisplay {
         this.currentMaterialsTabs.length = 0; // Clear without reassigning (preserves observer reference)
         for (const material of missingMaterials) {
             let tabEl = null;
-            const tab = createMaterialTab(material, referenceTab, (_e, mat) => {
-                // Read the current missing quantity from the tab's data attribute,
-                // which is kept up-to-date by the inventory listener.
-                // Armed for this tab's item, so a buy box for anything else is
-                // left alone — the calculation persists between modals
-                this.autofillManager.setPendingCalculation(
-                    () => parseInt(tabEl?.getAttribute('data-missing-quantity') || '0', 10),
-                    { itemHrid: mat.itemHrid }
-                );
-                // Navigate to marketplace
-                navigateToMarketplace(mat.itemHrid, 0);
-            });
+            const tab = createMaterialTab(
+                material,
+                referenceTab,
+                (_e, mat) => {
+                    // Read the current missing quantity from the tab's data attribute,
+                    // which is kept up-to-date by the inventory listener.
+                    // Armed for this tab's item, so a buy box for anything else is
+                    // left alone — the calculation persists between modals
+                    this.autofillManager.setPendingCalculation(
+                        () => parseInt(tabEl?.getAttribute('data-missing-quantity') || '0', 10),
+                        { itemHrid: mat.itemHrid }
+                    );
+                    // Navigate to marketplace
+                    navigateToMarketplace(mat.itemHrid, 0);
+                },
+                { owner: TAB_OWNER }
+            );
             tabEl = tab;
             tab.setAttribute('data-item-name', material.itemName);
             tabsContainer.appendChild(tab);
@@ -1172,7 +1185,9 @@ class HouseCostDisplay {
 
         // One click, every pinned tab gone, landing back on the plain Market
         // Listings view — same control the action-panel button uses
-        const clearAllControl = createClearAllTabsControl(referenceTab, () => this.handleClearAllClick());
+        const clearAllControl = createClearAllTabsControl(referenceTab, () => this.handleClearAllClick(), {
+            owner: TAB_OWNER,
+        });
         tabsContainer.appendChild(clearAllControl);
         this.currentMaterialsTabs.push(clearAllControl);
     }
@@ -1192,7 +1207,7 @@ class HouseCostDisplay {
      * Called by the marketplace cleanup observer
      */
     handleMarketplaceCleanup() {
-        removeMaterialTabs();
+        removeMaterialTabs({ owner: TAB_OWNER });
         this.currentMaterialsTabs.length = 0; // Clear without reassigning (preserves observer reference)
         this.autofillManager.clearQuantity();
     }

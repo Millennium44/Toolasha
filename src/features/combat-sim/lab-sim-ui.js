@@ -450,6 +450,14 @@ function planPurchases(picks) {
  */
 const marketPlanTabs = [];
 
+/**
+ * This panel's owner id for the marketplace tabs it pins, passed to
+ * `createMaterialTab` / `ensureClearAllTabsControl` and to
+ * `removeMaterialTabs({ owner })`, so clearing a budget plan's tabs never
+ * sweeps up another feature's pinned tabs.
+ */
+const TAB_OWNER = 'lab-sim';
+
 /** Whether `setupMarketplaceCleanupObserver` has been started for `marketPlanTabs`. */
 let marketPlanCleanupStarted = false;
 
@@ -460,7 +468,7 @@ let marketPlanCleanupStarted = false;
  * still live.
  */
 function clearMarketPlanTabs() {
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     marketPlanTabs.length = 0;
 }
 
@@ -525,6 +533,7 @@ async function openPlanInMarketplace(picks) {
             reference,
             () => navigateToMarketplace(item.itemHrid, item.enhancementLevel),
             {
+                owner: TAB_OWNER,
                 onDismiss: () => {
                     const idx = marketPlanTabs.indexOf(tab);
                     if (idx !== -1) marketPlanTabs.splice(idx, 1);
@@ -549,9 +558,14 @@ async function openPlanInMarketplace(picks) {
         });
     }
 
-    ensureClearAllTabsControl(container, reference, () => {
-        marketPlanTabs.length = 0;
-    });
+    ensureClearAllTabsControl(
+        container,
+        reference,
+        () => {
+            marketPlanTabs.length = 0;
+        },
+        { owner: TAB_OWNER }
+    );
 
     // Started once, lazily — it only acts once `marketPlanTabs` is non-empty, so
     // there is nothing to watch before the first plan is ever opened.

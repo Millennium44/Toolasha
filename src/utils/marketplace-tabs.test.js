@@ -349,6 +349,137 @@ describe('removeMaterialTabs / removeShrineMarketTabs', () => {
     });
 });
 
+describe('tab ownership', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test("one owner clearing its own tabs leaves another owner's tabs alone", () => {
+        // The bug: missing-materials and the shopping list both called
+        // `removeMaterialTabs()` unscoped, so one feature's own cleanup wiped
+        // the other's pinned tabs too. Each caller now passes its own `owner`.
+        const ref = buildReferenceTab();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        const missingMatsTab = createMaterialTab(
+            { itemHrid: '/items/a', itemName: 'a', missing: 1, isTradeable: true },
+            ref,
+            () => {},
+            { owner: 'missing-materials' }
+        );
+        const shoppingListTab = createMaterialTab(
+            { itemHrid: '/items/b', itemName: 'b', missing: 1, isTradeable: true },
+            ref,
+            () => {},
+            { owner: 'shopping-list' }
+        );
+        container.append(missingMatsTab, shoppingListTab);
+
+        removeMaterialTabs({ owner: 'shopping-list' });
+
+        expect(document.body.contains(missingMatsTab)).toBe(true);
+        expect(document.body.contains(shoppingListTab)).toBe(false);
+    });
+
+    test('a tab created with no owner survives an owner-scoped clear — only the unscoped (global) call sweeps it', () => {
+        // An owner-scoped clear only ever touches tabs stamped with that same
+        // owner; a tab nobody claimed is an orphan only "× All" (the unscoped
+        // call) reaches — same as every tab behaved before owners existed.
+        const ref = buildReferenceTab();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        const ownerless = createMaterialTab(
+            { itemHrid: '/items/a', itemName: 'a', missing: 1, isTradeable: true },
+            ref,
+            () => {}
+        );
+        container.appendChild(ownerless);
+
+        removeMaterialTabs({ owner: 'shopping-list' });
+        expect(document.body.contains(ownerless)).toBe(true);
+
+        removeMaterialTabs();
+        expect(document.body.contains(ownerless)).toBe(false);
+    });
+
+    test("the unscoped call (× All) still clears every owner's tabs, including unowned ones", () => {
+        const ref = buildReferenceTab();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        const a = createMaterialTab(
+            { itemHrid: '/items/a', itemName: 'a', missing: 1, isTradeable: true },
+            ref,
+            () => {},
+            {
+                owner: 'missing-materials',
+            }
+        );
+        const b = createMaterialTab(
+            { itemHrid: '/items/b', itemName: 'b', missing: 1, isTradeable: true },
+            ref,
+            () => {},
+            {
+                owner: 'shopping-list',
+            }
+        );
+        const c = createMaterialTab(
+            { itemHrid: '/items/c', itemName: 'c', missing: 1, isTradeable: true },
+            ref,
+            () => {}
+        );
+        container.append(a, b, c);
+
+        removeMaterialTabs();
+
+        expect(container.children.length).toBe(0);
+    });
+
+    test('the "× All" control clears every owner\'s tabs even though the control itself carries an owner', () => {
+        const ref = buildReferenceTab();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        const a = createMaterialTab(
+            { itemHrid: '/items/a', itemName: 'a', missing: 1, isTradeable: true },
+            ref,
+            () => {},
+            {
+                owner: 'missing-materials',
+            }
+        );
+        const b = createMaterialTab(
+            { itemHrid: '/items/b', itemName: 'b', missing: 1, isTradeable: true },
+            ref,
+            () => {},
+            {
+                owner: 'shopping-list',
+            }
+        );
+        const control = createClearAllTabsControl(ref, () => {}, { owner: 'missing-materials' });
+        container.append(a, b, control);
+
+        control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(container.children.length).toBe(0);
+    });
+
+    test('an owner-scoped clear also removes that owner\'s own previous "× All" control', () => {
+        const ref = buildReferenceTab();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+
+        const control = createClearAllTabsControl(ref, () => {}, { owner: 'missing-materials' });
+        container.appendChild(control);
+
+        removeMaterialTabs({ owner: 'missing-materials' });
+
+        expect(document.body.contains(control)).toBe(false);
+    });
+});
+
 describe('attachRegularTabClearListener', () => {
     beforeEach(() => {
         document.body.innerHTML = '';
@@ -762,7 +893,7 @@ describe('watchTabForAcquisition', () => {
         expect(onRetire).toHaveBeenCalledWith(tab);
     });
 
-    test("a character switch retires the watch before the new character's inventory can be read", () => {
+    test("a character switch retires the watch before the new character's inventory can be read, and fires onRetire", () => {
         // Character A pins a tab for an item A does not have…
         inventory.items = [];
         const tab = buildTab();
@@ -773,20 +904,25 @@ describe('watchTabForAcquisition', () => {
 
         // …then switches character. character_switching fires before dataManager
         // exposes the new inventory, and must tear the watch (and its tab) down.
+        // onRetire fires immediately (unlike the normal "item acquired" path,
+        // there is no ✓ window here) so a caller's own bookkeeping array does
+        // not go stale across the switch.
         emitCharacterSwitching();
         expect(document.body.contains(tab)).toBe(false);
+        expect(onRetire).toHaveBeenCalledTimes(1);
+        expect(onRetire).toHaveBeenCalledWith(tab);
 
         // Character B's inventory arrives — B already holds enough of the item.
         // Without the switch teardown, the stale watcher would read B's stock and
-        // fire "Acquired" for A's tab.
+        // fire "Acquired" for A's tab a second time.
         inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 5 }];
         sendInventoryUpdate();
         vi.runAllTimers();
 
-        expect(onRetire).not.toHaveBeenCalled();
+        expect(onRetire).toHaveBeenCalledTimes(1);
     });
 
-    test('a character switch during the ✓ window cancels the pending removal without firing onRetire', () => {
+    test('a character switch during the ✓ window cancels the pending removal but still fires onRetire once, immediately', () => {
         inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 0 }];
         const tab = buildTab();
         const onRetire = vi.fn();
@@ -797,13 +933,16 @@ describe('watchTabForAcquisition', () => {
         inventory.items = [{ itemHrid: '/items/plank', enhancementLevel: 0, count: 1 }];
         sendInventoryUpdate();
         expect(document.body.contains(tab)).toBe(true);
+        expect(onRetire).not.toHaveBeenCalled();
 
-        // The switch lands inside the ✓ window: the tab goes now, and the pending
-        // onRetire must not fire into the new character's session
+        // The switch lands inside the ✓ window: the tab goes now, and onRetire
+        // fires right away rather than waiting out the (now moot) ✓ delay
         emitCharacterSwitching();
         expect(document.body.contains(tab)).toBe(false);
+        expect(onRetire).toHaveBeenCalledTimes(1);
 
+        // The pending timeout was cancelled, so runAllTimers must not fire it again
         vi.runAllTimers();
-        expect(onRetire).not.toHaveBeenCalled();
+        expect(onRetire).toHaveBeenCalledTimes(1);
     });
 });

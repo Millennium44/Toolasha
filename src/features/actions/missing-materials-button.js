@@ -67,6 +67,16 @@ import {
 const RESERVATION_OWNER = 'missingMats';
 
 /**
+ * This feature's owner id for the marketplace tabs it pins — distinct from
+ * `RESERVATION_OWNER`, which names the inventory-reservation ledger claim
+ * rather than a DOM tab. Passed to `createMaterialTab` / `createClearAllTabsControl`
+ * and to `removeMaterialTabs({ owner })`, so this feature's own tab-strip
+ * rebuilds and teardowns never sweep up another feature's pinned tabs (the
+ * shopping list's, in particular) the way the unscoped calls used to.
+ */
+const TAB_OWNER = 'missing-materials';
+
+/**
  * Module-level state
  */
 let cleanupObserver = null;
@@ -921,7 +931,7 @@ function createTesterShopTabs(missingMaterials, testerTab) {
         console.error('[MissingMats] Tester tab strip not found');
         return;
     }
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     currentMaterialsTabs.length = 0;
     tabsContainer.style.flexWrap = 'wrap';
 
@@ -948,7 +958,7 @@ function createTesterShopTabs(missingMaterials, testerTab) {
                   );
               }
             : makeMaterialClickHandler(tabRef);
-        const tab = createMaterialTab(material, testerTab, handler);
+        const tab = createMaterialTab(material, testerTab, handler, { owner: TAB_OWNER });
         tabRef.tab = tab;
         tab.setAttribute('data-tester-sold', sold ? 'true' : 'false');
         tab.setAttribute('data-item-name', material.itemName || '');
@@ -965,7 +975,9 @@ function createTesterShopTabs(missingMaterials, testerTab) {
 
     // One click, every pinned line gone — already on the Tester tab, which is
     // its own "normal view", so nothing to navigate back to
-    const clearAllControl = createClearAllTabsControl(testerTab, () => handleClearAllClick(false));
+    const clearAllControl = createClearAllTabsControl(testerTab, () => handleClearAllClick(false), {
+        owner: TAB_OWNER,
+    });
     tabsContainer.appendChild(clearAllControl);
     currentMaterialsTabs.push(clearAllControl);
 }
@@ -987,6 +999,7 @@ function createBuyNextControl() {
     const button = document.createElement('button');
     button.type = 'button';
     button.setAttribute('data-mwi-custom-tab', 'true');
+    button.setAttribute('data-mwi-tab-owner', TAB_OWNER);
     button.setAttribute('data-mwi-buy-next', 'true');
     button.style.cssText =
         'display:inline-flex; align-items:center; gap:6px; margin:4px 8px; padding:4px 10px; font-size:12px; ' +
@@ -1205,6 +1218,7 @@ async function openWhereBought(materials, strategyInfo = null) {
 function createStrategyIndicator(strategyInfo) {
     const indicator = document.createElement('div');
     indicator.setAttribute('data-mwi-custom-tab', 'true');
+    indicator.setAttribute('data-mwi-tab-owner', TAB_OWNER);
     indicator.style.cssText = `
         display: flex;
         align-items: center;
@@ -1281,6 +1295,7 @@ function createReturnTab(referenceTab) {
 
     const tab = referenceTab.cloneNode(true);
     tab.setAttribute('data-mwi-custom-tab', 'true');
+    tab.setAttribute('data-mwi-tab-owner', TAB_OWNER);
     tab.classList.remove('Mui-selected');
     tab.setAttribute('aria-selected', 'false');
     tab.setAttribute('tabindex', '-1');
@@ -1353,7 +1368,7 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     }
 
     // Remove any existing custom tabs first (preserve stored context — we're recreating, not leaving)
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     currentMaterialsTabs.length = 0;
 
     // Get reference tab for cloning (use "My Listings" as template)
@@ -1388,7 +1403,7 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     for (const material of missingMaterials) {
         const tabRef = { tab: null };
         const handler = makeMaterialClickHandler(tabRef);
-        const tab = createMaterialTab(material, referenceTab, handler);
+        const tab = createMaterialTab(material, referenceTab, handler, { owner: TAB_OWNER });
         tabRef.tab = tab;
         tabsContainer.appendChild(tab);
         currentMaterialsTabs.push(tab);
@@ -1403,7 +1418,9 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
 
     // One click, every pinned tab (material tabs, the strategy indicator, and
     // Return) gone, landing back on the plain Market Listings view
-    const clearAllControl = createClearAllTabsControl(referenceTab, () => handleClearAllClick(true));
+    const clearAllControl = createClearAllTabsControl(referenceTab, () => handleClearAllClick(true), {
+        owner: TAB_OWNER,
+    });
     tabsContainer.appendChild(clearAllControl);
     currentMaterialsTabs.push(clearAllControl);
 }
@@ -1522,7 +1539,7 @@ function handleClearAllClick(returnToMarketListings) {
  * Called by the marketplace cleanup observer
  */
 function handleMarketplaceCleanup() {
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     currentMaterialsTabs.length = 0; // Clear without reassigning (preserves observer reference)
 
     // Clean up inventory listener

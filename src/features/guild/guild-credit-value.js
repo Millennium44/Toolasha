@@ -28,6 +28,16 @@ import {
     visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+
+/**
+ * This feature's owner id for the marketplace tabs it pins, passed to
+ * `removeMaterialTabs({ owner })` so its brief pre-shrine-tab sweep never
+ * clears another feature's pinned tabs. The shrine tabs it draws afterward
+ * opt out of `data-mwi-custom-tab` entirely (see the `removeAttribute` call
+ * below), so they never need an owner of their own — `removeMaterialTabs`
+ * cannot see them either way.
+ */
+const TAB_OWNER = 'guild-credit';
 import { openShoppingList } from '../../utils/shopping-list.js';
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { heldInInventory } from '../../utils/dungeon-key-forecast.js';
@@ -3641,7 +3651,7 @@ class GuildCreditValue {
                 if (muiRoot) muiRoot.style.height = 'auto';
 
                 // Remove any existing action tabs and shrine tabs before inserting new ones
-                removeMaterialTabs();
+                removeMaterialTabs({ owner: TAB_OWNER });
                 removeShrineMarketTabs();
 
                 for (const mat of missingMats) {
@@ -3669,15 +3679,19 @@ class GuildCreditValue {
                 // One click, every shrine tab gone (they opt out of the shared
                 // `removeMaterialTabs()` above, so this control's own internal
                 // call to it only removes itself — the shrine sweep is explicit)
-                const clearAllControl = createClearAllTabsControl(referenceTab, () => {
-                    removeShrineMarketTabs();
-                    if (this._shrineTabCleanup) {
-                        this._shrineTabCleanup();
-                        this._shrineTabCleanup = null;
-                    }
-                    this.autofillManager.clearQuantity();
-                    navigateToMarketListingsTab();
-                });
+                const clearAllControl = createClearAllTabsControl(
+                    referenceTab,
+                    () => {
+                        removeShrineMarketTabs();
+                        if (this._shrineTabCleanup) {
+                            this._shrineTabCleanup();
+                            this._shrineTabCleanup = null;
+                        }
+                        this.autofillManager.clearQuantity();
+                        navigateToMarketListingsTab();
+                    },
+                    { owner: TAB_OWNER }
+                );
                 tabsContainer.appendChild(clearAllControl);
 
                 // Watch for inventory/market changes and update shrine tabs accordingly

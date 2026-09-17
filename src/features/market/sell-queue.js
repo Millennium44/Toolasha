@@ -32,6 +32,14 @@ const timerRegistry = createTimerRegistry();
 const RESERVATION_OWNER = 'sellQueue';
 
 /**
+ * This module's owner id for the marketplace tabs it pins, passed to
+ * `createMaterialTab` and `removeMaterialTabs({ owner })` so the queue's own
+ * tab-strip rebuilds and teardowns never sweep up another feature's pinned
+ * tabs.
+ */
+const TAB_OWNER = 'sell-queue';
+
+/**
  * The only enhancement level the queue can sell.
  *
  * A queue entry is `{itemHrid, itemName}` and nothing else, and every
@@ -232,7 +240,7 @@ function injectTabs() {
     const tabsContainer = visibleTabsContainer();
     if (!tabsContainer) return;
 
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     currentTabs.length = 0;
 
     const referenceTab = Array.from(tabsContainer.children).find((btn) => btn.textContent.includes('My Listings'));
@@ -250,9 +258,14 @@ function injectTabs() {
             isTradeable: true,
         };
 
-        const tab = createMaterialTab(material, referenceTab, (_e, mat) => {
-            navigateToMarketplace(mat.itemHrid, 0);
-        });
+        const tab = createMaterialTab(
+            material,
+            referenceTab,
+            (_e, mat) => {
+                navigateToMarketplace(mat.itemHrid, 0);
+            },
+            { owner: TAB_OWNER }
+        );
 
         const badgeSpan = tab.querySelector('[class*="TabsComponent_badge"]');
         if (badgeSpan) {
@@ -361,7 +374,7 @@ function handleMarketplaceCleanup() {
     // Anything mid-await belongs to the session being torn down, not the next one
     generation += 1;
     clearPendingNavigation();
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     currentTabs.length = 0;
     queue.length = 0;
     // Nothing is queued any more, so nothing is on its way out of the bag

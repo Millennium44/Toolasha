@@ -69,6 +69,14 @@ import { unclaimedBoughtCount } from './material-calculator.js';
 const WATCH_MS = 6000;
 const WATCH_INTERVAL_MS = 150;
 
+/**
+ * This module's owner id for the marketplace tabs it pins, passed to
+ * `createMaterialTab` and `removeMaterialTabs({ owner })` so a shopping list
+ * closing clears only its own tabs — not the missing-materials button's, or
+ * any other feature's pinned alongside it.
+ */
+const TAB_OWNER = 'shopping-list';
+
 const autofill = createAutofillManager('Shopping-List');
 let tabs = [];
 let cleanupObserver = null;
@@ -185,7 +193,7 @@ export function clearShoppingList() {
     watchTimer = null;
     stopInventoryWatch();
     watchedItems = [];
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     tabs = [];
     cleanupObserver?.();
     cleanupObserver = null;
@@ -231,7 +239,7 @@ function watchForTabBar(items) {
  * @param {Array<Object>} items - What to buy
  */
 function addTabs(container, reference, items) {
-    removeMaterialTabs();
+    removeMaterialTabs({ owner: TAB_OWNER });
     tabs = [];
 
     // Several tabs will not fit on one line, and the game's bar does not wrap
@@ -239,9 +247,10 @@ function addTabs(container, reference, items) {
     container.style.flexWrap = 'wrap';
 
     const title = document.createElement('div');
-    // Marked as one of ours, or `removeMaterialTabs` leaves it behind and every
-    // re-add stacks another heading beside the last
+    // Marked as one of ours, or the owner-scoped `removeMaterialTabs` above
+    // leaves it behind and every re-add stacks another heading beside the last
     title.setAttribute('data-mwi-custom-tab', 'true');
+    title.setAttribute('data-mwi-tab-owner', TAB_OWNER);
     title.textContent = heading || `Restock: ${items.length} item${items.length === 1 ? '' : 's'}`;
     Object.assign(title.style, {
         alignSelf: 'center',
@@ -267,7 +276,8 @@ function addTabs(container, reference, items) {
                     isTradeable: true,
                 },
                 reference,
-                handlerFor(item)
+                handlerFor(item),
+                { owner: TAB_OWNER }
             );
             container.appendChild(tab);
             tabs.push(tab);
