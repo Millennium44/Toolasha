@@ -658,3 +658,84 @@ describe('computeBeaconPlan placement objective', () => {
         expect(computeBeaconPlan(after, cols, 0).minNeeded).toBe(1);
     });
 });
+
+/**
+ * How close the beacon planner gets to the best placement there is.
+ *
+ * A labyrinth floor is at most 8x8, so for the counts people actually place
+ * the optimum can simply be enumerated — C(64, 3) is 41,664 placements — and
+ * the planner measured against it rather than argued about. Doing that turned
+ * up a real gap: relocating one beacon at a time settles at a placement where
+ * every single beacon is right given the others, which is not the same as the
+ * best placement. The move that pays is usually "shift this beacon and slide
+ * its neighbour over to keep the way out covered", and neither half of it is
+ * an improvement on its own.
+ *
+ * The boards below are floors where that gap was measured. Each figure is the
+ * exhaustive optimum under the planner's own objective, not a high-water mark.
+ */
+describe('computeBeaconPlan optimality', () => {
+    const COLS = 8;
+    const board = (indices) => {
+        const revealed = new Array(64).fill(false);
+        for (const i of indices) revealed[i] = true;
+        return revealed;
+    };
+
+    test('a pair move finds the room a one-at-a-time sweep settles short of', () => {
+        const revealed = board([0, 1, 2, 3, 8]);
+        const plan = computeBeaconPlan(revealed, COLS, 3);
+
+        // 36 is the exhaustive optimum over all 41,664 three-beacon
+        // placements; relocating one beacon at a time stops at 35
+        expect(plan.revealedNew).toBe(36);
+        expect(plan.corridorOpen).toBe(true);
+        expect(plan.routes).toBe(2);
+    });
+
+    test('and the same on a four-beacon floor', () => {
+        const revealed = board([0, 8, 9, 16, 17]);
+        const plan = computeBeaconPlan(revealed, COLS, 4);
+
+        expect(plan.revealedNew).toBe(46); // exhaustive optimum; was 45
+        expect(plan.corridorOpen).toBe(true);
+    });
+
+    test('and on a floor already lit by an earlier beacon', () => {
+        const revealed = board([0, 1, 5, 6, 7, 8, 14, 15, 23, 38, 45, 46, 47, 52, 53, 54, 55, 61, 62, 63]);
+        const plan = computeBeaconPlan(revealed, COLS, 4);
+
+        expect(plan.revealedNew).toBe(40); // exhaustive optimum; was 39
+        expect(plan.corridorOpen).toBe(true);
+    });
+
+    test('floors that were already planned optimally are planned the same way', () => {
+        // The wider search only ever accepts a placement the objective calls
+        // better, so a floor it had right keeps the answer it had
+        expect(computeBeaconPlan(board([0, 1, 4, 5, 8, 9, 13, 16, 17, 18, 19, 20, 21]), COLS, 4).revealedNew).toBe(41);
+        expect(computeBeaconPlan(board([0, 1, 2, 3, 8]), COLS, 4).revealedNew).toBe(46);
+    });
+
+    test('the same floor gives the same plan every time', () => {
+        const revealed = board([0, 1, 2, 3, 8]);
+        for (const count of [1, 2, 3, 4, 5, 6]) {
+            const first = computeBeaconPlan(revealed, COLS, count);
+            for (let again = 0; again < 3; again++) {
+                const repeat = computeBeaconPlan(revealed, COLS, count);
+                expect(repeat.beacons).toEqual(first.beacons);
+                expect(repeat.revealedNew).toBe(first.revealedNew);
+            }
+        }
+    });
+
+    test('planning stays fast enough to recompute as the count changes', () => {
+        const revealed = board([0, 1, 2, 3, 8]);
+        const started = Date.now();
+        for (let i = 0; i < 4; i++) {
+            for (const count of [2, 3, 4, 5, 6]) computeBeaconPlan(revealed, COLS, count);
+        }
+        // Twenty plans: the panel recomputes one per click with auto-calc on,
+        // and they measure in tens of milliseconds each
+        expect(Date.now() - started).toBeLessThan(3000);
+    });
+});
