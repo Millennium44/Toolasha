@@ -121,6 +121,7 @@ export const OWNED_KEY_PREFIXES = [
     'toolasha_allOffSnapshot_',
     'toolasha_characterGameModes',
     'toolasha_forkBackupPrompted',
+    'toolasha_persistStorageAttemptedAt',
     'toolasha_ironCowSnapshot',
     'ironCowFarmOverrides',
     'ironCowFarmPlanCollapsed',

@@ -40,6 +40,12 @@ const coreExternalGlobals = new Map([
     // Diagnostics section reads what they caught
     [normalize(join(__dirname, 'src/core/error-log.js')), 'Toolasha.Core.errorLog'],
     [normalize(join(__dirname, 'src/core/settings-storage.js')), 'Toolasha.Core.settingsStorage'],
+    // One mirror, one cadence throttle, one pair of timers: the core bundle
+    // starts the periodic write, and the ui bundle's restore offer
+    // (settings-mirror-restore.js) reads it back. A second copy would be a
+    // second (never-started) throttle and, on the ui side, a mirror that
+    // never gets written to at all.
+    [normalize(join(__dirname, 'src/core/settings-mirror.js')), 'Toolasha.Core.settingsMirror'],
     [normalize(join(__dirname, 'src/core/settings-schema.js')), 'Toolasha.Core'],
     [normalize(join(__dirname, 'src/core/profile-manager.js')), 'Toolasha.Core.profileManager'],
     [normalize(join(__dirname, 'src/api/marketplace.js')), 'Toolasha.Core.marketAPI'],

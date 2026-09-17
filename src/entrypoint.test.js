@@ -195,6 +195,8 @@ beforeAll(async () => {
                     dataManagerHandlers.get(event).push(handler);
                 },
                 getIsCharacterSwitching: () => false,
+                getCurrentCharacterId: () => 'char-1',
+                getCurrentCharacterName: () => 'TestChar',
             },
             featureRegistry: {
                 replaceFeatures: (features) => {
@@ -210,6 +212,8 @@ beforeAll(async () => {
             },
             performanceMonitor: { mark: () => {} },
             marketAPI: { fetch: async () => null },
+            settingsMirror: { startMirroring: () => {} },
+            storagePersistence: { requestPersistence: async () => {} },
             errorLog: { install: () => true, getEntries: () => [], clear: () => {} },
             dualInstallGuard: {
                 claimPage: () => false,

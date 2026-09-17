@@ -17,6 +17,8 @@ import featureRegistry from '../core/feature-registry.js';
 // its functions arrive as one object other bundles reach through Core.
 import * as errorLog from '../core/error-log.js';
 import settingsStorage from '../core/settings-storage.js';
+import settingsMirror from '../core/settings-mirror.js';
+import storagePersistence from '../core/storage-persistence.js';
 import { settingsGroups, getAllSettingIds, getSettingDefinition } from '../core/settings-schema.js';
 import {
     setCurrentProfile,
@@ -54,6 +56,8 @@ toolashaRoot.Core = {
     featureRegistry,
     errorLog,
     settingsStorage,
+    settingsMirror,
+    storagePersistence,
     settingsGroups,
     getAllSettingIds,
     getSettingDefinition,

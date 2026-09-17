@@ -84,6 +84,7 @@ import housePanelObserver from '../features/house/house-panel-observer.js';
 import settingsUI from '../features/settings/settings-ui.js';
 import whatsNew from '../features/settings/whats-new.js';
 import forkBackupPrompt from '../features/settings/fork-backup-prompt.js';
+import settingsMirrorRestore from '../features/settings/settings-mirror-restore.js';
 
 // Dictionary
 import transmuteRates from '../features/dictionary/transmute-rates.js';
@@ -231,6 +232,7 @@ toolashaRoot.UI = {
     settingsUI,
     whatsNew,
     forkBackupPrompt,
+    settingsMirrorRestore,
     transmuteRates,
     viewActionButton,
     transmuteHistoryTracker,

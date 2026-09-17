@@ -457,8 +457,14 @@ async function disableAllFeatures() {
  *   threw during a switch stayed dead — silently — until the page reloaded.
  *   The entrypoint passes the same recovery routine boot uses so both paths
  *   get the same treatment.
+ * @param {Function} [onBeforeSettingsLoad] - Awaited with `(characterId, characterName)`
+ *   right before this switch's `config.loadSettings()`. The entrypoint's own
+ *   boot path offers a settings-mirror restore at the same point for the
+ *   first character of the session (see entrypoint.js); a switch to a second
+ *   character on the same wiped browser needs the same offer, since nothing
+ *   else in the switch pipeline ever calls it again.
  */
-function setupCharacterSwitchHandler(onInitFailures) {
+function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
     // One chain that every switch step is appended to, so no two ever overlap.
     let lifecycleChain = Promise.resolve();
     const enqueue = (step) => {
@@ -529,6 +535,21 @@ function setupCharacterSwitchHandler(onInitFailures) {
             // looking at. Leave `tornDown` set, so the switch that settles is
             // the one that brings the layer back up.
             if (dataManager.getIsCharacterSwitching()) return;
+
+            // Offer a settings-mirror restore for the arriving character
+            // before its own load, the same point the boot path offers one —
+            // see the parameter doc above.
+            if (typeof onBeforeSettingsLoad === 'function') {
+                try {
+                    await onBeforeSettingsLoad(
+                        dataManager.getCurrentCharacterId(),
+                        dataManager.getCurrentCharacterName()
+                    );
+                } catch (error) {
+                    console.error('[FeatureRegistry] onBeforeSettingsLoad failed:', error);
+                }
+            }
+            if (isStale()) return;
 
             // Load settings BEFORE any feature initialization so every feature
             // sees the new character's values (loadSettings reads the current id).

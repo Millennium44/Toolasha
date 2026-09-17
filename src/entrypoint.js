@@ -147,6 +147,8 @@ const {
     marketAPI,
     errorLog,
     dualInstallGuard,
+    settingsMirror,
+    storagePersistence,
 } = Core;
 
 // Claim the page before anything else can. Two Toolasha userscripts share one
@@ -2486,6 +2488,16 @@ if (isCombatSimulatorPage()) {
             await config.initialize();
             performanceMonitor.mark('config:loaded');
 
+            // Best-effort and fire-and-forget: neither is on the critical
+            // path for anything below, and both are guarded to never throw
+            // or surface an error to the player. See their own docs for why
+            // each exists — both are about the 2026-09-17 whole-origin
+            // IndexedDB wipe.
+            storagePersistence.requestPersistence().catch((error) => {
+                console.debug('[Toolasha] Storage persistence request failed:', error);
+            });
+            settingsMirror.startMirroring();
+
             // Flush pending writes on every way a page can go away.
             //
             // `beforeunload` alone is not enough: a mobile tab that is
@@ -2544,7 +2556,9 @@ if (isCombatSimulatorPage()) {
     // Setup character switch handler once (NOT inside character_initialized listener).
     // scheduleFailedFeatureRecovery gives a switch's initializeFeatures() the same
     // health-check/retry/report treatment boot gives its own initializeFeatures().
-    featureRegistry.setupCharacterSwitchHandler(scheduleFailedFeatureRecovery);
+    featureRegistry.setupCharacterSwitchHandler(scheduleFailedFeatureRecovery, (characterId, characterName) =>
+        UI.settingsMirrorRestore.maybeOffer(characterId, characterName)
+    );
 
     // Whether the one-time startup block below has already run this page load.
     //
@@ -2604,6 +2618,18 @@ if (isCombatSimulatorPage()) {
                 marketAPI.fetch().catch((error) => {
                     console.error('[Toolasha] Startup market fetch failed:', error);
                 });
+
+                // Offer to restore this character's settings from the
+                // GM-side mirror before the character's own load, when the
+                // live map turns out to be missing — see
+                // settings-mirror-restore.js. Runs first so an accepted
+                // restore lands through the very next loadSettings() call
+                // below, the normal load path, rather than needing a second
+                // reload here.
+                await UI.settingsMirrorRestore.maybeOffer(
+                    dataManager.getCurrentCharacterId(),
+                    dataManager.getCurrentCharacterName()
+                );
 
                 // Reload config settings with character-specific data
                 await config.loadSettings();
