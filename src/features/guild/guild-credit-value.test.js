@@ -114,7 +114,16 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (itemHrid, { mode }) => game.prices[itemHrid]?.[mode] ?? 0,
+    // `game.prices` holds the level-0 price under the bare hrid, the way every
+    // pre-existing test already sets it up. A level > 0 looks under
+    // `${itemHrid}:${enhancementLevel}` instead of falling back to the base
+    // price — a level with nothing stored there is a level the market has no
+    // data for, and must read as unpriced rather than quietly inherit the
+    // +0 figure the picker-level-pricing tests exist to prove it does not.
+    getItemPrice: (itemHrid, { mode, enhancementLevel = 0 } = {}) => {
+        if (enhancementLevel > 0) return game.prices[`${itemHrid}:${enhancementLevel}`]?.[mode] ?? 0;
+        return game.prices[itemHrid]?.[mode] ?? 0;
+    },
     // The planner's token→gold aside prices credits through this
     getItemPriceInfo: (itemHrid, { mode }) => ({
         price: game.prices[itemHrid]?.[mode] ?? 0,
@@ -417,9 +426,9 @@ describe('orderPickerTiles', () => {
     }
 
     const rows = [
-        { hrid: '/items/steel_bar', sellGPC: 50, buyGPC: null },
-        { hrid: '/items/bronze_bar', sellGPC: 1000, buyGPC: 900 },
-        { hrid: '/items/iron_bar', sellGPC: 1500, buyGPC: 1400 },
+        { hrid: '/items/steel_bar', itemCount: 1, creditCount: 1, sellGPC: 50, buyGPC: null },
+        { hrid: '/items/bronze_bar', itemCount: 1, creditCount: 1, sellGPC: 1000, buyGPC: 900 },
+        { hrid: '/items/iron_bar', itemCount: 1, creditCount: 1, sellGPC: 1500, buyGPC: 1400 },
     ];
 
     test('matches the table order for the same rows and sortKey', () => {
@@ -453,9 +462,9 @@ describe('orderPickerTiles', () => {
         const steel = itemTile('/items/steel_bar'); // buyGPC null
         const secondUnpriced = itemTile('/items/bronze_bar');
         const rowsWithTwoUnpriced = [
-            { hrid: '/items/steel_bar', sellGPC: 50, buyGPC: null },
-            { hrid: '/items/bronze_bar', sellGPC: 1000, buyGPC: null },
-            { hrid: '/items/iron_bar', sellGPC: 1500, buyGPC: 1400 },
+            { hrid: '/items/steel_bar', itemCount: 1, creditCount: 1, sellGPC: 50, buyGPC: null },
+            { hrid: '/items/bronze_bar', itemCount: 1, creditCount: 1, sellGPC: 1000, buyGPC: null },
+            { hrid: '/items/iron_bar', itemCount: 1, creditCount: 1, sellGPC: 1500, buyGPC: 1400 },
         ];
         const iron = itemTile('/items/iron_bar');
         // steel appears before bronze in the DOM order handed in
@@ -463,14 +472,54 @@ describe('orderPickerTiles', () => {
         expect(ordered).toEqual([iron, steel, secondUnpriced]);
     });
 
-    test('an enhanced tile (+N) is treated as unpriced rather than ranked by its +0 row', () => {
-        // Without the enhancement guard this would sort first on the ask side —
-        // the row says 50 gold/credit, but that price is for the unenhanced item
-        const enhancedSteel = itemTile('/items/steel_bar', 10);
+    test("an enhanced tile is ranked by its own level's price, not the table's level-0 figure", () => {
+        // The table's row says 50 gold/credit — the +0 price. A +10 costs far
+        // more to replace, and the picker has to reflect that rather than the
+        // stale level-0 figure the table itself is correct to use.
+        game.prices = {
+            '/items/steel_bar': { ask: 50, bid: 0 },
+            '/items/steel_bar:10': { ask: 100000, bid: 90000 },
+            '/items/bronze_bar': { ask: 1000, bid: 900 },
+            '/items/iron_bar': { ask: 300, bid: 280 },
+        };
+        const levelAwareRows = [
+            { hrid: '/items/steel_bar', itemCount: 1, creditCount: 1, sellGPC: 50, buyGPC: null },
+            { hrid: '/items/bronze_bar', itemCount: 10, creditCount: 1, sellGPC: 10000, buyGPC: 9000 },
+            { hrid: '/items/iron_bar', itemCount: 5, creditCount: 1, sellGPC: 1500, buyGPC: 1400 },
+        ];
+        const enhancedSteel = itemTile('/items/steel_bar', 10); // 100,000 gold/credit at +10, not 50
         const bronze = itemTile('/items/bronze_bar');
         const iron = itemTile('/items/iron_bar');
-        const ordered = orderPickerTiles([enhancedSteel, bronze, iron], rows, 'ask');
-        expect(ordered).toEqual([bronze, iron, enhancedSteel]);
+        const ordered = orderPickerTiles([enhancedSteel, bronze, iron], levelAwareRows, 'ask');
+        expect(ordered).toEqual([iron, bronze, enhancedSteel]);
+    });
+
+    test('two enhanced tiles of the same item order by level — the cheaper level first', () => {
+        game.prices = {
+            '/items/steel_bar': { ask: 50, bid: 0 },
+            '/items/steel_bar:3': { ask: 500, bid: 400 },
+            '/items/steel_bar:10': { ask: 100000, bid: 90000 },
+        };
+        const levelRows = [{ hrid: '/items/steel_bar', itemCount: 1, creditCount: 1, sellGPC: 50, buyGPC: null }];
+        const plus10 = itemTile('/items/steel_bar', 10);
+        const plus3 = itemTile('/items/steel_bar', 3);
+        const ordered = orderPickerTiles([plus10, plus3], levelRows, 'ask');
+        expect(ordered).toEqual([plus3, plus10]);
+    });
+
+    test('an enhanced tile with no market data at its own level still sorts last, as genuinely unpriced', () => {
+        game.prices = {
+            '/items/steel_bar': { ask: 50, bid: 0 }, // level 0 only — nothing recorded at +7
+            '/items/bronze_bar': { ask: 1000, bid: 900 },
+        };
+        const levelRows = [
+            { hrid: '/items/steel_bar', itemCount: 1, creditCount: 1, sellGPC: 50, buyGPC: null },
+            { hrid: '/items/bronze_bar', itemCount: 10, creditCount: 1, sellGPC: 10000, buyGPC: 9000 },
+        ];
+        const enhancedSteel = itemTile('/items/steel_bar', 7);
+        const bronze = itemTile('/items/bronze_bar');
+        const ordered = orderPickerTiles([enhancedSteel, bronze], levelRows, 'ask');
+        expect(ordered).toEqual([bronze, enhancedSteel]);
     });
 
     test('the "Remove" tile (no item sprite) keeps its place at the front, out of the ranking', () => {

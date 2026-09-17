@@ -1303,6 +1303,30 @@ function pickerTileEnhancementLevel(tile) {
 }
 
 /**
+ * A row's gold-per-credit as it applies to one particular tile's enhancement
+ * level.
+ *
+ * `item.guildCreditConversions` carries no enhancement dimension at all — a
+ * refined variant is a separate item hrid with its own conversion entry, but
+ * a level is the same hrid priced differently. The exchange still hands over
+ * the same `itemCount`/`creditCount` regardless of level (that part of the
+ * row is unchanged), only the price side needs re-reading — at the tile's
+ * own level, through the same `getItemPrice` the table itself is built from.
+ *
+ * @param {{hrid: string, itemCount: number, creditCount: number}} row - The base row
+ * @param {number} level - The tile's enhancement level (> 0)
+ * @returns {{sellGPC: number|null, buyGPC: number|null}}
+ */
+function pricedAtLevel(row, level) {
+    const askPrice = getItemPrice(row.hrid, { mode: 'ask', enhancementLevel: level });
+    const bidPrice = getItemPrice(row.hrid, { mode: 'bid', enhancementLevel: level });
+    return {
+        sellGPC: askPrice > 0 ? (askPrice * row.itemCount) / row.creditCount : null,
+        buyGPC: bidPrice > 0 ? (bidPrice * row.itemCount) / row.creditCount : null,
+    };
+}
+
+/**
  * Reorder the guild credit item picker's tiles to match the table's current
  * sort — the maintainer's decision is that the picker follows the table,
  * never a sort rule of its own, so the two surfaces cannot disagree.
@@ -1310,23 +1334,25 @@ function pickerTileEnhancementLevel(tile) {
  * Shares {@link compareGoldPerCredit} with the table rather than a second
  * copy of the comparator.
  *
- * `rows` prices every conversion at enhancement level 0 only — `_render`
- * calls `getItemPrice` with no `enhancementLevel`, and nothing upstream of it
- * breaks a conversion's gold-per-credit out by level — so a tile showing
- * `+N` cannot be ranked by its row's `sellGPC`/`buyGPC` without silently
- * pricing it as if it were unenhanced. Rather than guess, an enhanced tile is
- * treated as unpriced: it lands at the end, after everything the table could
- * actually price, alongside every other unpriced tile and every tile this
- * credit's table has no row for at all — all three land there in their
- * original relative order, exactly as the table's own null handling does,
- * and none of them are ever hidden.
+ * Enhancement levels are real and rankable here, unlike the table: the
+ * credits an exchange pays are level-independent (see {@link pricedAtLevel}),
+ * so a +10's gold-per-credit is worse than the same item's +0 by exactly how
+ * much the +10 costs to replace, and that is a figure this can compute, not
+ * a guess. An unenhanced tile keeps the table's own `sellGPC`/`buyGPC`
+ * unchanged; an enhanced one is re-priced at its own level. Only a tile with
+ * no market data *at that level* — or with no row at all, for a credit this
+ * item does not convert into — is genuinely unpriced, and lands at the end,
+ * after everything that could actually be priced, in original relative
+ * order, exactly as the table's own null handling does. Nothing is ever
+ * hidden.
  *
  * A tile with no item at all (the picker's own "Remove" option) is left in
  * place at the front rather than swept into the ranking — the same rule
  * {@link orderTiles} in `item-picker-pins.js` uses for it.
  *
  * @param {HTMLElement[]} tiles - Tiles in their current DOM order
- * @param {Array<{hrid: string, sellGPC: number|null, buyGPC: number|null}>} rows - The table's rows
+ * @param {Array<{hrid: string, itemCount: number, creditCount: number, sellGPC: number|null,
+ *   buyGPC: number|null}>} rows - The table's rows
  * @param {string} sortKey - `'ask'` or `'bid'`, mirroring the table's sortKey
  * @returns {HTMLElement[]} The tiles, reordered
  */
@@ -1344,7 +1370,9 @@ export function orderPickerTiles(tiles, rows, sortKey) {
 
     const rowFor = (tile) => {
         const row = byHrid.get(tileItemHrid(tile));
-        return row && pickerTileEnhancementLevel(tile) === 0 ? row : UNPRICED;
+        if (!row) return UNPRICED;
+        const level = pickerTileEnhancementLevel(tile);
+        return level > 0 ? pricedAtLevel(row, level) : row;
     };
 
     ranked.sort((a, b) => compareGoldPerCredit(rowFor(a), rowFor(b), sortKey));
