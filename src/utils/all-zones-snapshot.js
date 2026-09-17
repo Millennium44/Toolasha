@@ -69,12 +69,20 @@ export async function loadAllZonesSnapshot() {
  * against a run in the other would be a comparison of nothing. A row without a
  * finite `profitPerHour` is no answer, not an answer of zero.
  *
+ * `encountersPerHour` and `loadout` are the same kind of answer. Snapshots are
+ * persisted per character and runs written by earlier builds carry neither, so
+ * both read as `null` when absent — never as a rate of zero, which would tell a
+ * caller a fight takes forever, and never as a loadout that matches nothing.
+ * A caller wanting a duration must check for `null` and say it has no reading.
+ *
  * @param {Object|null} snapshot - From {@link loadAllZonesSnapshot}
  * @param {string} zoneHrid - The zone being measured, e.g. `/actions/combat/fly`
  * @param {number} [difficultyTier] - Its difficulty tier
  * @returns {{zoneName: string, zoneHrid: string, difficultyTier: number,
- *   profitPerHour: number, xpPerHour: number|null, savedAt: number|null,
- *   fingerprint: string|null}|null} The row, or null when the snapshot has none
+ *   profitPerHour: number, xpPerHour: number|null, encountersPerHour: number|null,
+ *   savedAt: number|null, fingerprint: string|null,
+ *   loadout: {source: string, name: string|null}|null}|null}
+ *   The row, or null when the snapshot has none
  */
 export function zoneFromSnapshot(snapshot, zoneHrid, difficultyTier = 0) {
     if (!zoneHrid) return null;
@@ -91,9 +99,45 @@ export function zoneFromSnapshot(snapshot, zoneHrid, difficultyTier = 0) {
         difficultyTier: zone.difficultyTier ?? 0,
         profitPerHour: zone.profitPerHour,
         xpPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
+        // A rate of zero would read as "this fight never ends"; a run that
+        // predates the field has no reading at all, and says so
+        encountersPerHour:
+            Number.isFinite(zone.encountersPerHour) && zone.encountersPerHour > 0 ? zone.encountersPerHour : null,
         savedAt: snapshot.savedAt ?? null,
         fingerprint: snapshot.fingerprint ?? null,
+        loadout: snapshotLoadout(snapshot),
     };
+}
+
+/**
+ * The gear a stored run was configured from, or nothing if it did not say.
+ *
+ * The provenance half of a stored rate, following the precedent in
+ * `features/planner/combat-rates.js`: a figure taken in the past is quoted with
+ * its age (`savedAt`) and with enough about the gear for a reader to decide
+ * whether it still applies. An all-zones run has no `characterLoadoutID` to
+ * record — the simulator is configured from the editor's DTOs or from what the
+ * character is wearing, and the loadout store the editor reads is keyed by name
+ * and drops the server's id — so what is stored is `{source, name}`: whether
+ * the run came from a named loadout, from a hand-edited editor, or from worn
+ * gear, and which loadout it started from when there was one.
+ *
+ * The consequence for a reader is worth stating plainly: with `source:
+ * 'loadout'` a name can be compared against the loadout a queued action names,
+ * and a mismatch means the rate is for other gear. With `'editor'`, `'worn'` or
+ * a missing field there is no name to compare, and the only gear evidence is
+ * `fingerprint` — which is opaque and produced inside the simulator bundle, so
+ * a reader outside it can tell that two runs differ but not whether a run
+ * matches any particular loadout.
+ *
+ * @param {Object|null} snapshot - From {@link loadAllZonesSnapshot}
+ * @returns {{source: string, name: string|null}|null} Provenance, or null when
+ *   the snapshot predates the field
+ */
+export function snapshotLoadout(snapshot) {
+    const loadout = snapshot?.loadout;
+    if (!loadout || typeof loadout !== 'object') return null;
+    return { source: loadout.source || 'unknown', name: loadout.name || null };
 }
 
 /**

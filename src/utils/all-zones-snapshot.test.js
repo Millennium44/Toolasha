@@ -6,20 +6,33 @@ vi.mock('./character-key.js', () => ({
     readScoped: async () => null,
 }));
 
-import { bestSoloZone, zoneFromSnapshot } from './all-zones-snapshot.js';
+import { bestSoloZone, zoneFromSnapshot, snapshotLoadout } from './all-zones-snapshot.js';
 
 const snapshot = {
     savedAt: 1_754_000_000_000,
     fingerprint: 'abc',
+    loadout: { source: 'loadout', name: 'Fighting' },
     zones: [
-        { zoneHrid: '/actions/combat/fly', zoneName: 'Fly', difficultyTier: 0, profitPerHour: 100_000 },
+        {
+            zoneHrid: '/actions/combat/fly',
+            zoneName: 'Fly',
+            difficultyTier: 0,
+            profitPerHour: 100_000,
+            encountersPerHour: 240,
+        },
         {
             zoneHrid: '/actions/combat/chimerical_den',
             zoneName: 'Chimerical Den',
             difficultyTier: 0,
             profitPerHour: 900_000,
         },
-        { zoneHrid: '/actions/combat/rat', zoneName: 'Rat', difficultyTier: 1, profitPerHour: 400_000 },
+        {
+            zoneHrid: '/actions/combat/rat',
+            zoneName: 'Rat',
+            difficultyTier: 1,
+            profitPerHour: 400_000,
+            encountersPerHour: 180,
+        },
         { zoneHrid: '/actions/combat/gnome', zoneName: 'Gnome', difficultyTier: 0, profitPerHour: null },
     ],
 };
@@ -61,9 +74,51 @@ describe('zoneFromSnapshot', () => {
             difficultyTier: 1,
             profitPerHour: 400_000,
             xpPerHour: null,
+            encountersPerHour: 180,
             savedAt: snapshot.savedAt,
             fingerprint: snapshot.fingerprint,
+            loadout: { source: 'loadout', name: 'Fighting' },
         });
+    });
+
+    /**
+     * Snapshots are persisted per character, so runs written before the rate and
+     * its provenance existed are still on disk. Neither may read as a figure: a
+     * zero encounters-per-hour is a fight that never ends, and an invented
+     * loadout is a match nobody can refute.
+     */
+    test('a run written before the encounter rate existed has no reading, not a zero', () => {
+        const old = {
+            savedAt: 1,
+            fingerprint: 'abc',
+            zones: [{ zoneHrid: '/a', zoneName: 'A', difficultyTier: 0, profitPerHour: 5 }],
+        };
+        const row = zoneFromSnapshot(old, '/a', 0);
+
+        // Everything the old readers asked for is still answered
+        expect(row.profitPerHour).toBe(5);
+        expect(row.encountersPerHour).toBeNull();
+        expect(row.loadout).toBeNull();
+    });
+
+    test('an encounter rate of zero is no reading either', () => {
+        const zeroed = { zones: [{ zoneHrid: '/a', profitPerHour: 5, encountersPerHour: 0 }] };
+        expect(zoneFromSnapshot(zeroed, '/a', 0).encountersPerHour).toBeNull();
+    });
+});
+
+describe('snapshotLoadout', () => {
+    test('says which gear a run was configured from', () => {
+        expect(snapshotLoadout(snapshot)).toEqual({ source: 'loadout', name: 'Fighting' });
+    });
+
+    test('a run from worn gear names no loadout, and says so rather than guessing one', () => {
+        expect(snapshotLoadout({ loadout: { source: 'worn', name: null } })).toEqual({ source: 'worn', name: null });
+    });
+
+    test('a run that never said is null, not a loadout that matches nothing', () => {
+        expect(snapshotLoadout(null)).toBeNull();
+        expect(snapshotLoadout({ savedAt: 1 })).toBeNull();
     });
 
     test('the tier must match — tier 1 of a zone is not tier 0 of it', () => {

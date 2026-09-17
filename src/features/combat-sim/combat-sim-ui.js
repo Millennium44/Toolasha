@@ -731,12 +731,13 @@ export async function currentGearFingerprint() {
  * @param {string|null} [options.fingerprint] - Gear signature of the run
  * @param {number} [options.savedAt] - When it finished
  * @param {boolean} [options.maxTierFood] - Whether the run substituted max-tier food
+ * @param {Object|null} [options.loadout] - `{source, name}`, the gear the run was configured from
  * Dungeon rows additionally carry `dungeon` — completions, party size,
  * consumable cost and deaths per simulated hour — which is what the dungeon
  * ROI board needs to quote a simulated clear time for a tier nobody has run.
  * Additive, so a reader that predates it sees the same row it always did.
  *
- * @returns {Object} `{version, savedAt, hours, fingerprint, maxTierFood, zones}`
+ * @returns {Object} `{version, savedAt, hours, fingerprint, maxTierFood, loadout, zones}`
  */
 export function buildAllZonesSnapshot(zoneResults, options = {}) {
     const {
@@ -745,6 +746,7 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
         fingerprint = null,
         savedAt = Date.now(),
         maxTierFood = false,
+        loadout = null,
     } = options;
 
     const zones = (Array.isArray(zoneResults) ? zoneResults : [])
@@ -788,6 +790,15 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
                 // the snapshot apply the cap at rank time.
                 profitPerHour: Number.isFinite(result.revenue?.netPerHour) ? result.revenue.netPerHour : null,
                 xpPerHour: totalXp / simHours,
+                // The one figure that turns a zone into a *duration*: the results
+                // table computes it, shows it and throws it away, so anything
+                // wanting to say how long a fight count takes had nothing to read.
+                // Raw sim encounters, dungeons included — a dungeon's clears are
+                // `dungeon.completions / dungeon.simHours`, and conflating the two
+                // here would hide which one a row is quoting.
+                encountersPerHour: Number.isFinite(result.simResult.encounters)
+                    ? result.simResult.encounters / simHours
+                    : null,
                 sells: (result.revenue?.dropEntries || [])
                     .filter((entry) => entry?.itemHrid && Number(entry.countPerHour) > 0)
                     .map((entry) => ({
@@ -804,7 +815,27 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
     // unchanged, and a reader that has can tell "this run was on substituted
     // food" apart from "this run predates the flag" only if the flag is written
     // every time rather than only when it is true.
-    return { version: 1, savedAt, hours, fingerprint, maxTierFood: Boolean(maxTierFood), zones };
+    // Same reason as `maxTierFood`, and the same always-written shape: a stored
+    // rate is only true of the gear it was simulated in, so a reader deciding
+    // whether the rate applies to the fight in front of it needs to know which
+    // gear that was. `source` is the honest part — an all-zones run is
+    // configured from the editor's DTOs or from what the character is wearing,
+    // and only the first of those can name a loadout at all. The name is a
+    // label, not an identity: the editor lets gear be hand-edited after a
+    // loadout is applied, so `fingerprint` remains the authoritative signature
+    // and the name only says which loadout the run started from.
+    return {
+        version: 1,
+        savedAt,
+        hours,
+        fingerprint,
+        maxTierFood: Boolean(maxTierFood),
+        loadout: {
+            source: loadout?.source || 'unknown',
+            name: loadout?.name || null,
+        },
+        zones,
+    };
 }
 
 /**
@@ -4532,6 +4563,19 @@ class CombatSimUI {
                         playerHrid,
                         fingerprint: gearFingerprint(playerDTOs),
                         maxTierFood: useMaxTierFood,
+                        // Which gear this run was configured from, recorded as
+                        // it actually is rather than as an id the run does not
+                        // have: the editor's DTOs (optionally started from a
+                        // named loadout) or, with no editor, what the character
+                        // was wearing when the run began. There is no
+                        // `characterLoadoutID` to record — the loadout store is
+                        // keyed by name and drops the server's id.
+                        loadout: editedDTOs
+                            ? {
+                                  source: this._editor?.getSelectedLoadoutName() ? 'loadout' : 'editor',
+                                  name: this._editor?.getSelectedLoadoutName() || null,
+                              }
+                            : { source: 'worn', name: null },
                     })
                 );
             }

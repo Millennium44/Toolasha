@@ -1320,11 +1320,12 @@ describe('the remembered upgrade analysis across a character switch', () => {
 describe('all-zones snapshot', () => {
     const HOUR_NS = 3600 * 1e9;
 
-    const zoneResult = (name, { tier = 0, profit = 100, xp = 50, hours = 2 } = {}) => ({
+    const zoneResult = (name, { tier = 0, profit = 100, xp = 50, hours = 2, encounters = 400 } = {}) => ({
         zone: { zoneHrid: `/actions/combat/${name}`, name, difficultyTier: tier },
         simResult: {
             simulatedTime: hours * HOUR_NS,
             experienceGained: { player1: { attack: xp * hours, stamina: xp * hours } },
+            encounters,
         },
         revenue: { netPerHour: profit },
     });
@@ -1383,6 +1384,49 @@ describe('all-zones snapshot', () => {
         // Additive: everything a reader written before the flag looks for is untouched
         expect(snapshot.zones).toHaveLength(1);
         expect(snapshot).toMatchObject({ version: 1, hours: 4, fingerprint: null });
+    });
+
+    /**
+     * The one figure that turns a zone into a duration. It is computed for the
+     * results table and was thrown away with it, so nothing outside the panel
+     * could say how long a given number of fights takes.
+     */
+    test('stores encounters per hour, on the simulator’s own clock', () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly', { hours: 2, encounters: 400 })], { hours: 10 });
+
+        expect(snapshot.zones[0].encountersPerHour).toBeCloseTo(200);
+    });
+
+    test('a run the simulator gave no encounter count for stores null, not a zero', () => {
+        const fly = zoneResult('Fly');
+        delete fly.simResult.encounters;
+
+        expect(buildAllZonesSnapshot([fly], { hours: 2 }).zones[0].encountersPerHour).toBeNull();
+    });
+
+    test('records which gear the run was simulated in, and round-trips it', async () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly')], {
+            hours: 4,
+            loadout: { source: 'loadout', name: 'Fighting' },
+        });
+
+        expect(snapshot.loadout).toEqual({ source: 'loadout', name: 'Fighting' });
+        expect(await saveAllZonesSnapshot(snapshot)).toBe(true);
+        const loaded = await loadAllZonesSnapshot();
+        expect(loaded.loadout).toEqual({ source: 'loadout', name: 'Fighting' });
+        expect(loaded.zones[0].encountersPerHour).toBeCloseTo(200);
+    });
+
+    /**
+     * A run configured from worn gear has no loadout to name, and inventing an
+     * id for it would let a reader "confirm" a match that was never checked.
+     */
+    test('a run with no loadout behind it says so rather than inventing one', () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly')], { hours: 4 });
+        expect(snapshot.loadout).toEqual({ source: 'unknown', name: null });
+
+        const worn = buildAllZonesSnapshot([zoneResult('Fly')], { loadout: { source: 'worn' } });
+        expect(worn.loadout).toEqual({ source: 'worn', name: null });
     });
 
     /**
