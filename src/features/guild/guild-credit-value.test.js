@@ -211,6 +211,8 @@ const {
     capTokenPlanToBudget,
     goldSavedPerToken,
     rankTokenCoverValue,
+    compareGoldPerCredit,
+    orderPickerTiles,
 } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
@@ -367,6 +369,277 @@ describe('guild credit value — exchange ranking table', () => {
         game.observers['GuildPanel_exchangeModalContent'](modal);
 
         expect(modal.querySelectorAll('.mwi-guild-credit-value')).toHaveLength(1);
+    });
+});
+
+describe('compareGoldPerCredit', () => {
+    test('ask side (default) compares sellGPC ascending', () => {
+        const cheap = { sellGPC: 50, buyGPC: 999 };
+        const dear = { sellGPC: 1000, buyGPC: 1 };
+        expect(compareGoldPerCredit(cheap, dear, 'ask')).toBeLessThan(0);
+        expect(compareGoldPerCredit(dear, cheap, 'ask')).toBeGreaterThan(0);
+    });
+
+    test('bid side compares buyGPC ascending', () => {
+        const cheap = { sellGPC: 999, buyGPC: 50 };
+        const dear = { sellGPC: 1, buyGPC: 1000 };
+        expect(compareGoldPerCredit(cheap, dear, 'bid')).toBeLessThan(0);
+    });
+
+    test('a null figure sorts last regardless of which side is active', () => {
+        const priced = { sellGPC: 500, buyGPC: 500 };
+        const unpriced = { sellGPC: null, buyGPC: null };
+        expect(compareGoldPerCredit(unpriced, priced, 'ask')).toBeGreaterThan(0);
+        expect(compareGoldPerCredit(priced, unpriced, 'ask')).toBeLessThan(0);
+        expect(compareGoldPerCredit(unpriced, priced, 'bid')).toBeGreaterThan(0);
+    });
+
+    test('two unpriced rows are equal', () => {
+        const unpriced = { sellGPC: null, buyGPC: null };
+        expect(compareGoldPerCredit(unpriced, { sellGPC: null, buyGPC: null }, 'ask')).toBe(0);
+    });
+});
+
+describe('orderPickerTiles', () => {
+    /** A tile carrying a real item sprite, optionally enhanced */
+    function itemTile(hrid, level = 0) {
+        const el = document.createElement('div');
+        const spriteId = hrid.replace('/items/', '');
+        el.innerHTML =
+            `<svg><use href="#${spriteId}"></use></svg>` +
+            (level > 0 ? `<div class="Item_enhancementLevel_x">+${level}</div>` : '');
+        return el;
+    }
+
+    /** The picker's own "Remove" option — no item sprite at all */
+    function fixedTile() {
+        return document.createElement('div');
+    }
+
+    const rows = [
+        { hrid: '/items/steel_bar', sellGPC: 50, buyGPC: null },
+        { hrid: '/items/bronze_bar', sellGPC: 1000, buyGPC: 900 },
+        { hrid: '/items/iron_bar', sellGPC: 1500, buyGPC: 1400 },
+    ];
+
+    test('matches the table order for the same rows and sortKey', () => {
+        const steel = itemTile('/items/steel_bar');
+        const bronze = itemTile('/items/bronze_bar');
+        const iron = itemTile('/items/iron_bar');
+        // Start deliberately out of order
+        const ordered = orderPickerTiles([iron, bronze, steel], rows, 'ask');
+        expect(ordered).toEqual([steel, bronze, iron]);
+    });
+
+    test('flipping sortKey reorders the picker the same way it reorders the table', () => {
+        const steel = itemTile('/items/steel_bar'); // no bid — sorts last on bid
+        const bronze = itemTile('/items/bronze_bar');
+        const iron = itemTile('/items/iron_bar');
+        const ordered = orderPickerTiles([iron, bronze, steel], rows, 'bid');
+        expect(ordered).toEqual([bronze, iron, steel]);
+    });
+
+    test('a tile with no matching row lands at the end, not hidden', () => {
+        const steel = itemTile('/items/steel_bar');
+        const mystery = itemTile('/items/mystery_item'); // not in `rows` at all
+        const bronze = itemTile('/items/bronze_bar');
+        const ordered = orderPickerTiles([mystery, bronze, steel], rows, 'ask');
+        expect(ordered).toHaveLength(3);
+        expect(ordered).toContain(mystery);
+        expect(ordered[ordered.length - 1]).toBe(mystery);
+    });
+
+    test('unpriced tiles (a row with a null figure for this side) land last, in original relative order', () => {
+        const steel = itemTile('/items/steel_bar'); // buyGPC null
+        const secondUnpriced = itemTile('/items/bronze_bar');
+        const rowsWithTwoUnpriced = [
+            { hrid: '/items/steel_bar', sellGPC: 50, buyGPC: null },
+            { hrid: '/items/bronze_bar', sellGPC: 1000, buyGPC: null },
+            { hrid: '/items/iron_bar', sellGPC: 1500, buyGPC: 1400 },
+        ];
+        const iron = itemTile('/items/iron_bar');
+        // steel appears before bronze in the DOM order handed in
+        const ordered = orderPickerTiles([steel, iron, secondUnpriced], rowsWithTwoUnpriced, 'bid');
+        expect(ordered).toEqual([iron, steel, secondUnpriced]);
+    });
+
+    test('an enhanced tile (+N) is treated as unpriced rather than ranked by its +0 row', () => {
+        // Without the enhancement guard this would sort first on the ask side —
+        // the row says 50 gold/credit, but that price is for the unenhanced item
+        const enhancedSteel = itemTile('/items/steel_bar', 10);
+        const bronze = itemTile('/items/bronze_bar');
+        const iron = itemTile('/items/iron_bar');
+        const ordered = orderPickerTiles([enhancedSteel, bronze, iron], rows, 'ask');
+        expect(ordered).toEqual([bronze, iron, enhancedSteel]);
+    });
+
+    test('the "Remove" tile (no item sprite) keeps its place at the front, out of the ranking', () => {
+        const remove = fixedTile();
+        const iron = itemTile('/items/iron_bar');
+        const steel = itemTile('/items/steel_bar');
+        const ordered = orderPickerTiles([remove, iron, steel], rows, 'ask');
+        expect(ordered[0]).toBe(remove);
+        expect(ordered.slice(1)).toEqual([steel, iron]);
+    });
+
+    test('an empty tile list returns empty, and a missing rows array is tolerated', () => {
+        expect(orderPickerTiles([], rows, 'ask')).toEqual([]);
+        const iron = itemTile('/items/iron_bar');
+        expect(orderPickerTiles([iron], null, 'ask')).toEqual([iron]);
+    });
+});
+
+describe('guild credit value — item picker follows the table sort', () => {
+    beforeEach(() => {
+        game.settings = { guildCreditValue: true, guildCreditExchangeAdvisor: false, guildShrineUpgradePlanner: false };
+        game.observers = {};
+        game.prices = {
+            '/items/bronze_bar': { ask: 100, bid: 90 },
+            '/items/iron_bar': { ask: 300, bid: 280 },
+            '/items/steel_bar': { ask: 50, bid: 0 },
+        };
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_credit_1': { name: 'Trade Credit', guildCreditConversions: [] },
+                '/items/bronze_bar': {
+                    name: 'Bronze Bar',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+                '/items/iron_bar': {
+                    name: 'Iron Bar',
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 5, creditCount: 1 }],
+                },
+                '/items/steel_bar': {
+                    name: 'Steel Bar',
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 1, creditCount: 1 }],
+                },
+            },
+        };
+        guildCreditValue.cleanup();
+        guildCreditValue.initialize();
+    });
+
+    /**
+     * The exchange modal, with the guild credit picker's own item selector
+     * inside it (identified by class, the way `findGuildCreditPickerMenu`
+     * matches it) and a real class name on the modal itself — the picker's
+     * menu finder does an actual `document.querySelector`, so this is not
+     * the shared `buildExchangeModal` helper's bare-class stand-in.
+     */
+    function buildModalWithPicker(creditName) {
+        const modal = buildExchangeModal(creditName);
+        modal.className = 'GuildPanel_exchangeModalContent_x';
+        const selector = document.createElement('div');
+        selector.className = 'ItemSelector_itemContainer_x';
+        modal.appendChild(selector);
+        return { modal, selector };
+    }
+
+    /** A picker menu, portalled to the document body like the game's own */
+    function buildPickerMenu(hrids) {
+        const menu = document.createElement('div');
+        menu.className = 'ItemSelector_menu_x';
+        for (const hrid of hrids) {
+            const wrap = document.createElement('div');
+            const tile = document.createElement('div');
+            tile.className = 'Item_itemContainer_x';
+            tile.innerHTML = `<svg><use href="#${hrid.replace('/items/', '')}"></use></svg>`;
+            wrap.appendChild(tile);
+            menu.appendChild(wrap);
+        }
+        document.body.appendChild(menu);
+        return menu;
+    }
+
+    function tileHrids(menu) {
+        return Array.from(menu.querySelectorAll('.Item_itemContainer_x')).map(
+            (tile) => `/items/${tile.querySelector('use').getAttribute('href').slice(1)}`
+        );
+    }
+
+    test('opening the picker orders its tiles by the table’s current (ask) sort', () => {
+        const { modal, selector } = buildModalWithPicker('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const menu = buildPickerMenu(['/items/iron_bar', '/items/bronze_bar', '/items/steel_bar']);
+        selector.click(); // records the guild picker as the one just opened
+        game.observers['ItemSelector_menu'](menu);
+
+        expect(tileHrids(menu)).toEqual(['/items/steel_bar', '/items/bronze_bar', '/items/iron_bar']);
+    });
+
+    test('re-sorting the table to Bid re-sorts the already-open picker to match', () => {
+        const { modal, selector } = buildModalWithPicker('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const menu = buildPickerMenu(['/items/iron_bar', '/items/bronze_bar', '/items/steel_bar']);
+        selector.click();
+        game.observers['ItemSelector_menu'](menu);
+        expect(tileHrids(menu)).toEqual(['/items/steel_bar', '/items/bronze_bar', '/items/iron_bar']);
+
+        const bidTh = Array.from(modal.querySelectorAll('th')).find((th) => th.textContent === 'Bid/credit');
+        bidTh.click();
+
+        // buyGPC: steel has no bid (null, sorts last), bronze 900, iron 1400
+        expect(tileHrids(menu)).toEqual(['/items/bronze_bar', '/items/iron_bar', '/items/steel_bar']);
+    });
+
+    test('typing in the game’s own filter (tiles replaced, menu kept) still filters, and the order re-applies', () => {
+        const { modal, selector } = buildModalWithPicker('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const menu = buildPickerMenu(['/items/iron_bar', '/items/bronze_bar', '/items/steel_bar']);
+        selector.click();
+        game.observers['ItemSelector_menu'](menu);
+        expect(tileHrids(menu)).toEqual(['/items/steel_bar', '/items/bronze_bar', '/items/iron_bar']);
+
+        // The game's filter narrows the tiles in place (menu itself untouched) —
+        // simulate it filtering down to just Iron Bar and Bronze Bar, out of order
+        menu.innerHTML = '';
+        for (const hrid of ['/items/bronze_bar', '/items/iron_bar']) {
+            const wrap = document.createElement('div');
+            const tile = document.createElement('div');
+            tile.className = 'Item_itemContainer_x';
+            tile.innerHTML = `<svg><use href="#${hrid.replace('/items/', '')}"></use></svg>`;
+            wrap.appendChild(tile);
+            menu.appendChild(wrap);
+        }
+
+        // The game's own filtering did its job — both remaining items are the
+        // ones the filter kept, nothing was hidden by this feature
+        return new Promise((resolve) => {
+            queueMicrotask(() => {
+                expect(tileHrids(menu)).toEqual(['/items/bronze_bar', '/items/iron_bar']);
+                resolve();
+            });
+        });
+    });
+
+    test('a color the current character cannot price yet still keeps the picker’s "Remove" tile at the front', () => {
+        const { modal, selector } = buildModalWithPicker('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        const menu = buildPickerMenu([]);
+        // The "Remove" option carries the same tile class as every item tile —
+        // `menuTiles` only tells them apart by whether a sprite is inside —
+        // just with no `use` icon, so `tileItemHrid` reads it as ''
+        const remove = document.createElement('div');
+        remove.className = 'Item_itemContainer_x';
+        remove.textContent = 'Remove';
+        menu.appendChild(remove);
+        const bronzeWrap = document.createElement('div');
+        const bronzeTile = document.createElement('div');
+        bronzeTile.className = 'Item_itemContainer_x';
+        bronzeTile.innerHTML = '<svg><use href="#bronze_bar"></use></svg>';
+        bronzeWrap.appendChild(bronzeTile);
+        menu.appendChild(bronzeWrap);
+
+        selector.click();
+        game.observers['ItemSelector_menu'](menu);
+
+        expect(menu.firstElementChild).toBe(remove);
     });
 });
 

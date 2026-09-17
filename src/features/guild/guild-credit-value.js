@@ -14,6 +14,8 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { itemHridFromIcon } from '../../utils/item-icon.js';
+import { MENU_SELECTOR, tileItemHrid, menuTiles } from '../../utils/item-selector-dom.js';
+import { sameOrder } from '../../utils/item-picker-pins.js';
 import webSocketHook from '../../core/websocket.js';
 import {
     navigateToMarketplace,
@@ -1265,6 +1267,143 @@ function describeDecision(label, decision) {
     return parts.join(' ');
 }
 
+/**
+ * The comparator the credit table sorts by — shared with the item picker
+ * below so the two can never rank a color's conversions differently.
+ *
+ * `sortKey` mirrors the table's own local variable: `'bid'` compares
+ * `buyGPC`, anything else (the table's default, `'ask'`) compares `sellGPC`.
+ * Unpriced rows (`null`) sort last rather than first — a missing price must
+ * never look like the cheapest option.
+ *
+ * @param {{sellGPC: number|null, buyGPC: number|null}} a
+ * @param {{sellGPC: number|null, buyGPC: number|null}} b
+ * @param {string} sortKey - `'ask'` or `'bid'`
+ * @returns {number}
+ */
+export function compareGoldPerCredit(a, b, sortKey) {
+    const aVal = sortKey === 'bid' ? a.buyGPC : a.sellGPC;
+    const bVal = sortKey === 'bid' ? b.buyGPC : b.sellGPC;
+    if (aVal === null && bVal === null) return 0;
+    if (aVal === null) return 1;
+    if (bVal === null) return -1;
+    return aVal - bVal;
+}
+
+/**
+ * An item tile's `+N` enhancement badge, read the same class the rest of the
+ * script already reads it from elsewhere (`Item_enhancementLevel`).
+ * @param {HTMLElement} tile - An item tile
+ * @returns {number} The level, or 0 for an unenhanced tile or one with none
+ */
+function pickerTileEnhancementLevel(tile) {
+    const text = tile?.querySelector?.('[class*="Item_enhancementLevel"]')?.textContent || '';
+    const level = parseInt(text.replace(/\D/g, ''), 10);
+    return Number.isFinite(level) ? level : 0;
+}
+
+/**
+ * Reorder the guild credit item picker's tiles to match the table's current
+ * sort — the maintainer's decision is that the picker follows the table,
+ * never a sort rule of its own, so the two surfaces cannot disagree.
+ *
+ * Shares {@link compareGoldPerCredit} with the table rather than a second
+ * copy of the comparator.
+ *
+ * `rows` prices every conversion at enhancement level 0 only — `_render`
+ * calls `getItemPrice` with no `enhancementLevel`, and nothing upstream of it
+ * breaks a conversion's gold-per-credit out by level — so a tile showing
+ * `+N` cannot be ranked by its row's `sellGPC`/`buyGPC` without silently
+ * pricing it as if it were unenhanced. Rather than guess, an enhanced tile is
+ * treated as unpriced: it lands at the end, after everything the table could
+ * actually price, alongside every other unpriced tile and every tile this
+ * credit's table has no row for at all — all three land there in their
+ * original relative order, exactly as the table's own null handling does,
+ * and none of them are ever hidden.
+ *
+ * A tile with no item at all (the picker's own "Remove" option) is left in
+ * place at the front rather than swept into the ranking — the same rule
+ * {@link orderTiles} in `item-picker-pins.js` uses for it.
+ *
+ * @param {HTMLElement[]} tiles - Tiles in their current DOM order
+ * @param {Array<{hrid: string, sellGPC: number|null, buyGPC: number|null}>} rows - The table's rows
+ * @param {string} sortKey - `'ask'` or `'bid'`, mirroring the table's sortKey
+ * @returns {HTMLElement[]} The tiles, reordered
+ */
+export function orderPickerTiles(tiles, rows, sortKey) {
+    const list = Array.isArray(tiles) ? tiles : [];
+    const byHrid = new Map((rows || []).map((row) => [row.hrid, row]));
+    const UNPRICED = { sellGPC: null, buyGPC: null };
+
+    const fixed = [];
+    const ranked = [];
+    for (const tile of list) {
+        if (!tileItemHrid(tile)) fixed.push(tile);
+        else ranked.push(tile);
+    }
+
+    const rowFor = (tile) => {
+        const row = byHrid.get(tileItemHrid(tile));
+        return row && pickerTileEnhancementLevel(tile) === 0 ? row : UNPRICED;
+    };
+
+    ranked.sort((a, b) => compareGoldPerCredit(rowFor(a), rowFor(b), sortKey));
+
+    return [...fixed, ...ranked];
+}
+
+/** The guild exchange modal's item-to-convert selector — the only ItemSelector in this modal */
+const GUILD_PICKER_SELECTOR = '[class*="GuildPanel_exchangeModalContent"] [class*="ItemSelector_itemContainer"]';
+
+/**
+ * Whether the guild credit picker (rather than some other item selector on
+ * the page) was the one just clicked open. Needed because the menu it opens
+ * is portalled away from the selector that owns it — see
+ * `enhancement-item-selector.js`'s docstring for the fuller explanation of
+ * why the DOM position alone cannot answer this.
+ */
+let lastGuildPickerOpened = { guildCredit: false, at: 0 };
+let trackingGuildPickerClicks = false;
+
+function trackGuildPickerClicks() {
+    if (trackingGuildPickerClicks || typeof document === 'undefined') return;
+    trackingGuildPickerClicks = true;
+
+    document.addEventListener(
+        'click',
+        (event) => {
+            const target = event.target;
+            if (!(target instanceof Element)) return;
+            // A click inside an open menu is picking an item, not opening a
+            // selector, and must not overwrite which selector we are in
+            if (target.closest(MENU_SELECTOR)) return;
+
+            const guildCredit = !!target.closest(GUILD_PICKER_SELECTOR);
+            if (guildCredit || target.closest('[class*="ItemSelector"]')) {
+                lastGuildPickerOpened = { guildCredit, at: Date.now() };
+            }
+        },
+        true
+    );
+}
+
+/**
+ * The open guild credit item picker, if one is open.
+ * @returns {HTMLElement|null}
+ */
+function findGuildCreditPickerMenu() {
+    trackGuildPickerClicks();
+    if (!document.querySelector(GUILD_PICKER_SELECTOR)) return null;
+
+    for (const menu of document.querySelectorAll(MENU_SELECTOR)) {
+        // Kept in case a future layout nests the menu after all; today it is
+        // portalled and never matches
+        if (menu.closest(GUILD_PICKER_SELECTOR)) return menu;
+        if (lastGuildPickerOpened.guildCredit) return menu;
+    }
+    return null;
+}
+
 class GuildCreditValue {
     constructor() {
         this.initialized = false;
@@ -1302,6 +1441,14 @@ class GuildCreditValue {
          * against its own in-flight async work.
          */
         this._switchGeneration = 0;
+        /** Re-applies the current render's picker order — set fresh by every `_render()` */
+        this._pickerApply = null;
+        /** Watches the open picker menu's tiles for the game's own Item Filter re-rendering them */
+        this._pickerTileObserver = null;
+        /** The menu `_pickerTileObserver` is currently attached to */
+        this._pickerWatchedMenu = null;
+        /** Guards the picker reorder against reacting to its own DOM writes */
+        this._pickerApplying = false;
     }
 
     initialize() {
@@ -1343,6 +1490,16 @@ class GuildCreditValue {
             (el) => this._renderTrialTier(el)
         );
         this.unregisterObservers.push(unregisterTileSummary);
+
+        // Fires whenever any item picker opens (the menu is portalled, so this
+        // is the only reliable "something opened" signal — see
+        // `findGuildCreditPickerMenu`). `_pickerApply` itself checks whether it
+        // was the guild credit picker's own selector that opened it, so this
+        // is a harmless no-op for every other picker on the page.
+        const unregisterPicker = domObserver.onClass('GuildCreditValue-Picker', 'ItemSelector_menu', () => {
+            this._pickerApply?.();
+        });
+        this.unregisterObservers.push(unregisterPicker);
 
         this.initialized = true;
     }
@@ -1445,14 +1602,7 @@ class GuildCreditValue {
         const inventoryForCounts = dataManager.getInventory?.() || [];
 
         const buildTbody = () => {
-            const sorted = [...rows].sort((a, b) => {
-                const aVal = sortKey === 'bid' ? a.buyGPC : a.sellGPC;
-                const bVal = sortKey === 'bid' ? b.buyGPC : b.sellGPC;
-                if (aVal === null && bVal === null) return 0;
-                if (aVal === null) return 1;
-                if (bVal === null) return -1;
-                return aVal - bVal;
-            });
+            const sorted = [...rows].sort((a, b) => compareGoldPerCredit(a, b, sortKey));
             const tbody = document.createElement('tbody');
             sorted.forEach((row, i) => {
                 const isTop = i === 0;
@@ -1530,6 +1680,7 @@ class GuildCreditValue {
             const newTbody = buildTbody();
             table.replaceChild(newTbody, currentTbody);
             currentTbody = newTbody;
+            this._pickerApply?.();
         };
 
         askTh.addEventListener('click', () => setSort('ask'));
@@ -1537,6 +1688,15 @@ class GuildCreditValue {
 
         wrapper.appendChild(table);
         exchangeBtn.insertAdjacentElement('afterend', wrapper);
+
+        // Item picker ordering — always matches whatever sort the table above
+        // is on. `sortKey` is read through this closure rather than copied, so
+        // a later sort click (which reassigns the outer `let`) is picked up by
+        // every future call, including the ones the picker's own tile-change
+        // observer makes.
+        this._disconnectPickerObserver();
+        this._pickerApply = () => this._applyPickerOrder(rows, sortKey);
+        this._pickerApply();
 
         // Exchange advisor — initial render + re-render on item selection change
         if (config.getSetting('guildCreditExchangeAdvisor', true)) {
@@ -1656,6 +1816,70 @@ class GuildCreditValue {
             dataManager.off('items_updated', this._plannerItemsHandler);
             this._plannerItemsHandler = null;
         }
+    }
+
+    /**
+     * Reorder the open guild credit picker to match the table's current sort,
+     * and keep watching it for as long as it stays open.
+     *
+     * The game's Item Filter box redraws the picker's tiles without replacing
+     * the menu itself, so a one-shot reorder on open would survive exactly one
+     * keystroke. The `MutationObserver` below is what keeps the order
+     * re-applied after that — the same shape `alchemy-item-pins.js`'s
+     * `watchMenu` uses for its own picker.
+     *
+     * @param {Array<Object>} rows - The credit table's rows, for this render
+     * @param {string} sortKey - The table's current sortKey ('ask' or 'bid')
+     * @private
+     */
+    _applyPickerOrder(rows, sortKey) {
+        if (this._pickerApplying) return;
+
+        const menu = findGuildCreditPickerMenu();
+        if (!menu) {
+            this._pickerTileObserver?.disconnect();
+            this._pickerTileObserver = null;
+            this._pickerWatchedMenu = null;
+            return;
+        }
+
+        if (this._pickerWatchedMenu !== menu || !this._pickerTileObserver) {
+            this._pickerTileObserver?.disconnect();
+            this._pickerWatchedMenu = menu;
+            // Children only, like the advisor's own selector observer — this
+            // reorder writes to the same subtree, and reacting to its own
+            // writes would never stop.
+            this._pickerTileObserver = new MutationObserver(() => this._applyPickerOrder(rows, sortKey));
+            this._pickerTileObserver.observe(menu, { childList: true, subtree: true });
+        }
+
+        const { grid, tiles } = menuTiles(menu);
+        if (!grid || !tiles.length) return;
+
+        const desired = orderPickerTiles(tiles, rows, sortKey);
+        if (sameOrder(tiles, desired)) return;
+
+        this._pickerApplying = true;
+        try {
+            // Anchored on the first tile so the "Remove" option — which
+            // `orderPickerTiles` keeps ahead of every item tile — stays put
+            const marker = document.createComment('mwi-guild-credit-picker-sort');
+            grid.insertBefore(marker, tiles[0]);
+            const fragment = document.createDocumentFragment();
+            for (const tile of desired) fragment.appendChild(tile);
+            grid.insertBefore(fragment, marker);
+            marker.remove();
+        } finally {
+            this._pickerApplying = false;
+        }
+    }
+
+    /** Release the picker's tile-change observer and forget which render it belongs to */
+    _disconnectPickerObserver() {
+        this._pickerTileObserver?.disconnect();
+        this._pickerTileObserver = null;
+        this._pickerWatchedMenu = null;
+        this._pickerApply = null;
     }
 
     /** Release the exchange advisor's selection observer and any pending re-render */
@@ -3557,6 +3781,7 @@ class GuildCreditValue {
         this._disconnectAdvisorObserver();
         this._disconnectShrineObservers();
         this._disconnectPlannerObservers();
+        this._disconnectPickerObserver();
         this._shrineWatchedHrids = null;
         this._shrineSignature = null;
         // A plan edited in the last few hundred milliseconds is written now
