@@ -159,6 +159,34 @@ export function readGuildShrineLevels() {
 }
 
 /**
+ * The guild's own built level in every shrine — the ceiling a member may buy to.
+ *
+ * Not the same number as `readGuildShrineLevels`: that is what *this character*
+ * has purchased, this is what the *guild* has built, and a member can only buy
+ * up to the latter. Shown side by side so "Force 3 / 9" reads as "you own 3 of
+ * the 9 the guild has paid for".
+ *
+ * A shrine the guild has not built caps at 0, which is real information. A
+ * shrine map that never arrived is not: every entry reads `null` so callers
+ * show the purchased level alone rather than inventing a ceiling of zero for a
+ * guild nobody has heard from. That all-zero test is the same one
+ * `generateGuildShrineCandidates` makes before it caps anything.
+ *
+ * @returns {Object} buffHrid → guild building level, or null when unknown
+ */
+export function readGuildShrineCaps() {
+    const detailMap = getGuildBuffDetailMap();
+    const buildingLevel = (shrineHrid) =>
+        Math.max(0, Math.floor(Number(dataManager.getGuildBuildingLevel?.(shrineHrid)) || 0));
+    const known = Object.values(detailMap).some((detail) => buildingLevel(detail?.shrineHrid) > 0);
+    const caps = {};
+    for (const [buffHrid, detail] of Object.entries(detailMap)) {
+        caps[buffHrid] = known ? buildingLevel(detail?.shrineHrid) : null;
+    }
+    return caps;
+}
+
+/**
  * The same levels, with how old the reading is.
  *
  * Shrine levels ride on guild traffic that may never arrive in a session, so

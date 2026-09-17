@@ -13,6 +13,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
     clientData: null,
     guildBuffLevels: {},
+    guildBuildingLevels: {},
     characterData: null,
     equippedAbilities: [],
     equipment: new Map(),
@@ -25,6 +26,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => mocks.clientData,
         getCharacterGuildBuffLevel: (hrid) => mocks.guildBuffLevels[hrid] || 0,
+        getGuildBuildingLevel: (hrid) => mocks.guildBuildingLevels[hrid] || 0,
         getGuildShrineCapturedAt: () => mocks.shrineCapturedAt,
         isGuildShrineHydrated: () => mocks.shrineHydrated,
         getEquippedAbilities: () => mocks.equippedAbilities.map((entry) => ({ ...entry })),
@@ -58,6 +60,7 @@ const {
     synthesizeGuildBuffs,
     applyGuildBuffLevel,
     readGuildShrineLevels,
+    readGuildShrineCaps,
     readGuildShrineSnapshot,
     buildGuildBuffsFromLevels,
     buildPlayerDTO,
@@ -116,6 +119,7 @@ beforeEach(() => {
         itemDetailMap: {},
     };
     mocks.guildBuffLevels = {};
+    mocks.guildBuildingLevels = {};
     mocks.characterData = null;
     mocks.equippedAbilities = [];
     mocks.equipment = new Map();
@@ -223,6 +227,26 @@ describe('guild shrine buff synthesis', () => {
         expect(snapshot.levels).toEqual(readGuildShrineLevels());
         expect(snapshot.capturedAt).toBe(1_700_000_000_000);
         expect(snapshot.hydrated).toBe(true);
+    });
+
+    test('the caps are the guild’s built levels, not the character’s purchased ones', () => {
+        mocks.guildBuffLevels = { '/guild_buffs/force_combat': 3 };
+        mocks.guildBuildingLevels = { '/guild_shrines/force': 9 };
+
+        expect(readGuildShrineCaps()).toEqual({
+            '/guild_buffs/force_combat': 9,
+            // Built nothing: a real ceiling of zero, because the map did arrive
+            '/guild_buffs/scholar_skilling': 0,
+        });
+    });
+
+    test('a shrine map that never arrived caps nothing rather than capping at zero', () => {
+        mocks.guildBuffLevels = { '/guild_buffs/force_combat': 3 };
+
+        expect(readGuildShrineCaps()).toEqual({
+            '/guild_buffs/force_combat': null,
+            '/guild_buffs/scholar_skilling': null,
+        });
     });
 });
 

@@ -14,6 +14,9 @@ import {
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
     applyGuildBuffLevel,
+    readGuildShrineLevels,
+    readGuildShrineCaps,
+    readGuildShrineSnapshot,
 } from './combat-sim-adapter.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
@@ -84,6 +87,7 @@ export class SimEditor {
 
     getEditedDTOs() {
         this._syncHouseRoomsFromGame();
+        this._syncGuildShrinesFromGame();
         return this._editedDTOs;
     }
 
@@ -119,6 +123,84 @@ export class SimEditor {
             original.houseRooms[hrid] = level;
         });
     }
+
+    /**
+     * Bring the self player's guild shrine levels up to what the game says now.
+     *
+     * The DTO is built once, when the editor opens, and a shrine bought after
+     * that was invisible until the panel was reset — which is exactly what the
+     * maintainer hit: upgrade the shrines, open the sim, see the old numbers,
+     * click "Reset to Me", see the new ones. That button rebuilds the DTO
+     * through `buildPlayerDTO`, which reads the live levels; nothing else did.
+     *
+     * The fix is deliberately the same one the House rooms got, and not a blunt
+     * refresh on open. The editor is a what-if tool: a level typed in by hand —
+     * "what would Force 9 buy me?" — is the user's work, has no undo, and
+     * rewriting it on the next open would make "Reset to Me" redundant. So only
+     * shrines still sitting at the value they were built with follow the game;
+     * anything edited away from that is theirs and is left alone.
+     *
+     * A combat shrine's resolved buff array is rebuilt with the level, because
+     * the engine reads the buffs and never looks at the level itself.
+     * @private
+     */
+    _syncGuildShrinesFromGame() {
+        const self = this._selfHrid;
+        const edited = this._editedDTOs?.[self];
+        const original = this._originalDTOs?.[self];
+        if (!edited || !original) return;
+        let live;
+        try {
+            live = readGuildShrineLevels();
+        } catch (error) {
+            console.error('[SimEditor] Failed to read the guild shrine levels:', error);
+            return;
+        }
+        if (!live || typeof live !== 'object') return;
+        // Nothing read at all (no guild, or guild traffic that never arrived)
+        // is not the same as every shrine sitting at zero, and must not
+        // overwrite levels the DTO was built with
+        if (Object.keys(live).length === 0) return;
+        edited.guildShrineLevels = edited.guildShrineLevels || {};
+        original.guildShrineLevels = original.guildShrineLevels || {};
+        const detailMap = getGuildBuffDetailMap();
+        for (const [buffHrid, rawLevel] of Object.entries(live)) {
+            const level = Math.max(0, Math.floor(Number(rawLevel) || 0));
+            const was = original.guildShrineLevels[buffHrid] || 0;
+            if ((edited.guildShrineLevels[buffHrid] || 0) !== was) continue; // hand-edited: theirs
+            if (level === was) continue;
+            edited.guildShrineLevels[buffHrid] = level;
+            original.guildShrineLevels[buffHrid] = level;
+            const detail = detailMap[buffHrid];
+            if (detail?.isCombat) {
+                edited.guildCombatBuffs = applyGuildBuffLevel(edited.guildCombatBuffs, detail, level);
+                original.guildCombatBuffs = applyGuildBuffLevel(original.guildCombatBuffs, detail, level);
+            }
+        }
+    }
+    /**
+     * Adopt whatever the game has changed since the editor was built, and
+     * redraw if anything moved.
+     *
+     * Reopening the panel does not rebuild an editor that is already
+     * initialized — that is the point, the loadout on screen is the user's
+     * scenario — so this is the hook that lets an *unedited* reading follow the
+     * game without anything else being touched. Nothing changed means no
+     * redraw, so a user who is mid-edit never has the section rebuilt under
+     * them.
+     *
+     * @returns {boolean} True when something moved and the editor was redrawn
+     */
+    refreshFromGame() {
+        if (!this._editorInitialized) return false;
+        const shrines = () => JSON.stringify(this._editedDTOs?.[this._selfHrid]?.guildShrineLevels || {});
+        const before = shrines();
+        this._syncGuildShrinesFromGame();
+        if (shrines() === before) return false;
+        this.renderEditor();
+        return true;
+    }
+
     getPlayerInfo() {
         return this._editedPlayerInfo;
     }
@@ -517,6 +599,12 @@ export class SimEditor {
     renderEditor() {
         const editorArea = this._editorEl;
         if (!editorArea || !this._editedDTOs) return;
+
+        // Before the HTML is built, not just before a run: the reported bug was
+        // about *reading* stale shrine levels in the Configure tab, so syncing
+        // only in getEditedDTOs would fix the numbers the sim used and leave the
+        // ones on screen wrong.
+        this._syncGuildShrinesFromGame();
 
         const playerInfo = this._editedPlayerInfo || [];
         const activePlayer = this._activeEditPlayer;
@@ -1756,9 +1844,15 @@ export class SimEditor {
      * Only the side of the game being simulated is listed: a combat sim cannot
      * show a change in Force Skilling, and a skilling run cannot show one in
      * Force Combat, so offering the other half would only invite edits that go
-     * nowhere. The shrine's own level is shown beside the input as a cap you can
-     * still type past — the guild can raise it, and the point of the editor is
-     * asking what would happen if it did.
+     * nowhere.
+     *
+     * Each level reads "3 / 9": the number in the box is what *this character*
+     * has bought, the one after it is the level the *guild* has built the shrine
+     * to and therefore the highest they could buy to today. The guild's number
+     * is text, not an input — it is not the player's to set here — and the box
+     * can still be typed past it, because the guild can build higher and asking
+     * what that would be worth is the whole point of the editor. A guild level
+     * nobody has heard from shows nothing rather than a made-up ceiling of 0.
      * @param {Object} dto - Player DTO
      * @returns {string} HTML, empty when the client has no guild buff data
      * @private
@@ -1773,6 +1867,11 @@ export class SimEditor {
 
         const levels = dto.guildShrineLevels || {};
         const activeCount = entries.filter(([hrid]) => (levels[hrid] || 0) > 0).length;
+        // Only this character's own row may be measured against the guild's
+        // buildings — an imported player or a party member belongs to a guild
+        // this client knows nothing about
+        const isSelf = Boolean(this._selfHrid) && dto.hrid === this._selfHrid;
+        const caps = isSelf ? readGuildShrineCaps() : {};
 
         let html = `<div style="margin-bottom:10px;">`;
         html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="guild-section">`;
@@ -1797,11 +1896,55 @@ export class SimEditor {
                 data-guild-buff="${buffHrid}"
                 style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            const cap = caps[buffHrid];
+            if (Number.isFinite(cap)) {
+                const capTitle =
+                    cap > 0
+                        ? `Your guild has built ${label} to Lv${cap}, so Lv${cap} is the highest you can buy ` +
+                          'right now. Typing higher sims a level the guild would have to build first.'
+                        : `Your guild has not built ${label} yet, so there is no level to buy. Typing one sims ` +
+                          'a shrine the guild would have to build first.';
+                html += `<span style="color:#666;" title="${escapeHtml(capTitle)}">/ ${cap}</span>`;
+            }
             html += '</div>';
         }
 
-        html += '</div></div></div>';
+        html += '</div>';
+        html += this._renderGuildShrineFreshnessNote(isSelf);
+        html += '</div></div>';
         return html;
+    }
+
+    /**
+     * A line saying the shrine levels came out of storage, not off the wire.
+     *
+     * Shrine levels ride on guild traffic that may never arrive in a session, so
+     * data-manager falls back to the last reading it persisted. Those numbers
+     * are worth having and worth labelling: the editor now follows the game for
+     * anything unedited, but it can only follow as far as the reading goes, and
+     * silently presenting a saved reading as current is how the levels looked
+     * trustworthy while being wrong. Says how to get a live one.
+     *
+     * @param {boolean} isSelf - False for a DTO whose guild this client cannot see
+     * @returns {string} HTML, empty when the reading is live
+     * @private
+     */
+    _renderGuildShrineFreshnessNote(isSelf) {
+        if (!isSelf) return '';
+        let snapshot;
+        try {
+            snapshot = readGuildShrineSnapshot();
+        } catch (error) {
+            console.error('[SimEditor] Failed to read the guild shrine snapshot:', error);
+            return '';
+        }
+        if (!snapshot?.hydrated) return '';
+        const when = Number(snapshot.capturedAt);
+        const asOf = Number.isFinite(when) && when > 0 ? ` from ${new Date(when).toLocaleDateString()}` : '';
+        return (
+            `<div style="color:#c90; font-size:10px; margin-top:4px;">These are a saved reading${asOf} — ` +
+            'the guild has not sent its levels this session. Open the Guild tab once, then Reset to Me.</div>'
+        );
     }
 
     /**

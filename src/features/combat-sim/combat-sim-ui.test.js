@@ -38,6 +38,9 @@ const mocks = vi.hoisted(() => ({
     /** Whether the page was left with the panel up, and what it recorded since */
     wasOpen: false,
     openCalls: [],
+    // What show() asked the editor to do: build one, or bring an existing one
+    // up to date with the game
+    editorCalls: [],
     /** itemHrid → count, what a run is said to have dropped */
     drops: new Map(),
     /** itemHrid → { bid, ask }; anything absent is unlisted, as most things are */
@@ -382,7 +385,13 @@ vi.mock('./sim-editor.js', () => ({
         isInitialized() {
             return true;
         }
-        initEditor() {}
+        initEditor() {
+            mocks.editorCalls.push('init');
+        }
+        refreshFromGame() {
+            mocks.editorCalls.push('refresh');
+            return false;
+        }
         generateSimLabel() {
             return 'Current Gear';
         }
@@ -678,7 +687,20 @@ describe('the panel', () => {
         mocks.onRun = null;
         mocks.wasOpen = false;
         mocks.openCalls = [];
+        mocks.editorCalls = [];
         ui.buildPanel();
+    });
+
+    test('opening the panel brings an already-built editor up to date with the game', () => {
+        // The reported bug: shrines upgraded while the panel was closed still
+        // read their old levels on the next opening, because an initialized
+        // editor is never rebuilt. It is not rebuilt now either — the loadout on
+        // screen is the user's scenario — but it is asked to adopt whatever the
+        // game moved and nobody has edited.
+        mocks.editorCalls = [];
+        ui.show();
+
+        expect(mocks.editorCalls).toEqual(['refresh']);
     });
 
     afterEach(() => {

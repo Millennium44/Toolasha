@@ -37,6 +37,15 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+// The guild side of the game: what the shrines' buff details are, what this
+// character has bought, what the guild has built, and how fresh that reading is
+const guild = vi.hoisted(() => ({
+    detailMap: {},
+    levels: {},
+    caps: {},
+    snapshot: { capturedAt: null, hydrated: false },
+}));
+
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({ itemDetailMap: {}, abilityDetailMap: {}, houseRoomDetailMap: {} }),
     buildAllPlayerDTOs: async () => {
@@ -52,9 +61,15 @@ vi.mock('./combat-sim-adapter.js', () => ({
         bridge.applied.push(name);
         return bridge.snapshots.some((snap) => snap.name === name);
     },
-    getGuildBuffDetailMap: () => ({}),
-    guildBuffMaxLevel: () => 0,
-    applyGuildBuffLevel: (buffs) => buffs,
+    getGuildBuffDetailMap: () => guild.detailMap,
+    guildBuffMaxLevel: () => 20,
+    applyGuildBuffLevel: (buffs, detail, level) => [
+        ...(Array.isArray(buffs) ? buffs : []).filter((buff) => buff?.from !== detail?.hrid),
+        { from: detail?.hrid, level },
+    ],
+    readGuildShrineLevels: () => ({ ...guild.levels }),
+    readGuildShrineCaps: () => ({ ...guild.caps }),
+    readGuildShrineSnapshot: () => ({ levels: { ...guild.levels }, ...guild.snapshot }),
 }));
 
 // This bundle's own (direct-import) copy of the store. In the packaged build it
@@ -115,6 +130,10 @@ beforeEach(() => {
     bridge.applied = [];
     settings.values.clear();
     settings.hold = null;
+    guild.detailMap = {};
+    guild.levels = {};
+    guild.caps = {};
+    guild.snapshot = { capturedAt: null, hydrated: false };
     game.charId = 'me';
     game.buildHold = null;
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
@@ -693,5 +712,182 @@ describe('scrolls section', () => {
         wisdom.dispatchEvent(new Event('change'));
 
         expect(dto.scrollBuffs).toEqual(['/buff_types/rare_find']);
+    });
+});
+
+/**
+ * Guild shrines in the Configure tab.
+ *
+ * Two separate numbers live on one row and are easy to confuse: the level
+ * *this character* has purchased (the input) and the level the *guild* has
+ * built the shrine to (the cap beside it, which is not theirs to set).
+ *
+ * The freshness half is the reported bug: upgrade the shrines, open the sim,
+ * see the old levels, click "Reset to Me", see the new ones. Opening the panel
+ * does not rebuild an editor that already exists, so nothing re-read the live
+ * levels. It does now — but only for values nobody has edited, because a level
+ * typed in by hand is a what-if the user built and has no undo.
+ */
+describe('guild shrines', () => {
+    const FORCE = '/guild_buffs/force_combat';
+    const RARITY = '/guild_buffs/rarity_combat';
+
+    const withShrines = () => {
+        guild.detailMap = {
+            [FORCE]: { hrid: FORCE, shrineHrid: '/guild_shrines/force', isCombat: true, sortIndex: 1 },
+            [RARITY]: { hrid: RARITY, shrineHrid: '/guild_shrines/rarity', isCombat: true, sortIndex: 2 },
+        };
+        guild.levels = { [FORCE]: 3, [RARITY]: 0 };
+        guild.caps = { [FORCE]: 9, [RARITY]: 1 };
+        game.selfDTO = { ...emptyDTO('player1'), guildShrineLevels: { ...guild.levels }, guildCombatBuffs: [] };
+        game.allPlayers.players[0] = { ...game.selfDTO };
+    };
+
+    const openEditor = async () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor({ restoreLoadout: false });
+        return { el, editor };
+    };
+
+    /** The "3 / 9" text of one shrine row */
+    const row = (el, buffHrid) => el.querySelector(`[data-guild-buff="${buffHrid}"]`)?.parentElement?.textContent;
+
+    describe('the guild’s built level is shown as a cap', () => {
+        test('the purchased level reads against what the guild has built', async () => {
+            withShrines();
+            const { el } = await openEditor();
+
+            expect(el.querySelector(`[data-guild-buff="${FORCE}"]`).value).toBe('3');
+            expect(row(el, FORCE)).toContain('/ 9');
+            // A shrine the guild built but nobody bought still shows the ceiling
+            expect(row(el, RARITY)).toContain('/ 1');
+        });
+
+        test('the cap is text, not a second input — it is not the player’s to set', async () => {
+            withShrines();
+            const { el } = await openEditor();
+
+            expect(el.querySelectorAll('[data-guild-buff]').length).toBe(2);
+            const rowEl = el.querySelector(`[data-guild-buff="${FORCE}"]`).parentElement;
+            expect(rowEl.querySelectorAll('input').length).toBe(1);
+        });
+
+        test('the box can still be typed past the cap — that is the what-if', async () => {
+            withShrines();
+            const { el } = await openEditor();
+
+            // max is the buff's own ceiling, never the guild's
+            expect(el.querySelector(`[data-guild-buff="${FORCE}"]`).getAttribute('max')).toBe('20');
+        });
+
+        test('a guild level nobody has heard from shows the purchased level alone', async () => {
+            withShrines();
+            guild.caps = { [FORCE]: null, [RARITY]: null };
+            const { el } = await openEditor();
+
+            expect(el.querySelector(`[data-guild-buff="${FORCE}"]`).value).toBe('3');
+            expect(row(el, FORCE)).not.toContain('/');
+        });
+
+        test('an imported stranger gets no cap — this client cannot see their guild', async () => {
+            withShrines();
+            const { el, editor } = await openEditor();
+            editor.importPlayers([{ ...emptyDTO('them'), guildShrineLevels: { [FORCE]: 7 } }], ['Stranger']);
+
+            expect(el.querySelector(`[data-guild-buff="${FORCE}"]`).value).toBe('7');
+            expect(row(el, FORCE)).not.toContain('/');
+        });
+    });
+
+    describe('levels follow the game, edits do not', () => {
+        test('a shrine bought after the panel opened is read on the next opening', async () => {
+            withShrines();
+            const { el, editor } = await openEditor();
+            expect(el.querySelector(`[data-guild-buff="${FORCE}"]`).value).toBe('3');
+
+            guild.levels = { [FORCE]: 6, [RARITY]: 0 };
+            expect(editor.refreshFromGame()).toBe(true);
+
+            expect(el.querySelector(`[data-guild-buff="${FORCE}"]`).value).toBe('6');
+            expect(editor.getEditedDTOs().player1.guildShrineLevels[FORCE]).toBe(6);
+        });
+
+        test('a deliberately edited level survives — the scenario is the user’s work', async () => {
+            withShrines();
+            const { el, editor } = await openEditor();
+
+            // "What would Force 9 buy me?"
+            const input = el.querySelector(`[data-guild-buff="${FORCE}"]`);
+            input.value = '9';
+            input.dispatchEvent(new Event('change'));
+
+            // The guild sells them Force 6 in the meantime
+            guild.levels = { [FORCE]: 6, [RARITY]: 0 };
+            editor.refreshFromGame();
+
+            expect(editor.getEditedDTOs().player1.guildShrineLevels[FORCE]).toBe(9);
+            expect(el.querySelector(`[data-guild-buff="${FORCE}"]`).value).toBe('9');
+        });
+
+        test('an untouched shrine still follows the game while another is edited', async () => {
+            withShrines();
+            const { el, editor } = await openEditor();
+            const force = el.querySelector(`[data-guild-buff="${FORCE}"]`);
+            force.value = '9';
+            force.dispatchEvent(new Event('change'));
+
+            guild.levels = { [FORCE]: 6, [RARITY]: 1 };
+            editor.refreshFromGame();
+
+            const levels = editor.getEditedDTOs().player1.guildShrineLevels;
+            expect(levels[FORCE]).toBe(9);
+            expect(levels[RARITY]).toBe(1);
+        });
+
+        test('nothing moved means no redraw, so a half-typed edit is not rebuilt', async () => {
+            withShrines();
+            const { editor } = await openEditor();
+
+            expect(editor.refreshFromGame()).toBe(false);
+        });
+
+        test('the engine’s resolved buffs are rebuilt with the level, not just the number', async () => {
+            withShrines();
+            const { editor } = await openEditor();
+
+            guild.levels = { [FORCE]: 6, [RARITY]: 0 };
+            editor.refreshFromGame();
+
+            expect(editor.getEditedDTOs().player1.guildCombatBuffs).toContainEqual({ from: FORCE, level: 6 });
+        });
+
+        test('a reading that never arrived does not zero the levels the DTO was built with', async () => {
+            withShrines();
+            const { editor } = await openEditor();
+
+            guild.levels = {};
+            editor.refreshFromGame();
+
+            expect(editor.getEditedDTOs().player1.guildShrineLevels[FORCE]).toBe(3);
+        });
+    });
+
+    describe('a saved reading says so', () => {
+        test('a hydrated reading is labelled, and points at Reset to Me', async () => {
+            withShrines();
+            guild.snapshot = { capturedAt: Date.parse('2026-09-01T12:00:00Z'), hydrated: true };
+            const { el } = await openEditor();
+
+            expect(el.textContent).toContain('saved reading');
+            expect(el.textContent).toContain('Reset to Me');
+        });
+
+        test('a live reading is not labelled at all', async () => {
+            withShrines();
+            const { el } = await openEditor();
+
+            expect(el.textContent).not.toContain('saved reading');
+        });
     });
 });

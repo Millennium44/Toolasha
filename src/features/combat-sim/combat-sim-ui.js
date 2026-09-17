@@ -6390,6 +6390,12 @@ class CombatSimUI {
         this.populateZones();
         if (!this._editor.isInitialized()) {
             this._editor.initEditor();
+        } else {
+            // An editor already built keeps the user's scenario, but the
+            // readings inside it that nobody has edited should follow the game
+            // — guild shrines bought since the panel was last open were showing
+            // their old levels until "Reset to Me" rebuilt the whole DTO.
+            this._editor.refreshFromGame?.();
         }
     }
 
