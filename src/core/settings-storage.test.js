@@ -67,6 +67,29 @@ const { default: config } = await import('./config.js');
  */
 const ALL_MIGRATIONS = ['patientTickSides', 'labyrinthSimBudget', 'marketListingAge', 'inventoryValueBadges'];
 
+/**
+ * Refuse the next write of a character's settings map, and only that.
+ *
+ * A load writes several things — the migration record, the rewrite flags — so
+ * "refuse the first setJSON" no longer lands on the write a test means.
+ *
+ * @param {string} key - The character's settings key
+ */
+function refuseNextMapWrite(key) {
+    const pass = storage.setJSON.getMockImplementation();
+    let refused = false;
+    storage.setJSON.mockImplementation((writeKey, ...rest) => {
+        if (!refused && writeKey === key) {
+            refused = true;
+            return Promise.resolve(false);
+        }
+        return pass(writeKey, ...rest);
+    });
+}
+
+/** The listing-age forcing (batch v3) already done, so a test can isolate the migration */
+const listingAgeForced = (key) => stored.set(`settings_default_rewrites_v3_${key}`, true);
+
 describe('SettingsStorage.importSettings known-character matching', () => {
     beforeEach(() => {
         stored.clear();
@@ -185,7 +208,7 @@ describe('one-time rewrites of superseded schema defaults', () => {
     test('a rewrite that fails to save leaves the flag unset, so the next load tries again', async () => {
         stored.set(`json:${KEY}`, oldDefaults());
         // storage.setJSON answers a refused or failed write with false rather than throwing
-        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+        refuseNextMapWrite(KEY);
 
         const settings = await settingsStorage.loadSettings();
 
@@ -255,7 +278,7 @@ describe('one-time rewrite of the inert enhanceSim_baseItemCraftingCost default'
         stored.set(`json:${KEY}`, {
             enhanceSim_baseItemCraftingCost: { id: 'enhanceSim_baseItemCraftingCost', type: 'checkbox', isTrue: false },
         });
-        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+        refuseNextMapWrite(KEY);
 
         const settings = await settingsStorage.loadSettings();
 
@@ -557,6 +580,10 @@ describe('one-time migration of the three listing-age switches to one choice', (
         settingsStorage.currentCharacterName = 'Alice';
     });
 
+    // The migration alone: the v3 rewrite that moves every existing character
+    // to 'both' is recorded as done, so these measure what the switches derive
+    beforeEach(() => listingAgeForced(KEY));
+
     test.each([
         [false, false, false, 'off'],
         [true, false, false, 'myListings'],
@@ -606,7 +633,7 @@ describe('one-time migration of the three listing-age switches to one choice', (
 
     test('a refused write leaves the flag unset, so the next load migrates again', async () => {
         stored.set(`json:${KEY}`, oldAge(true, false, true));
-        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+        refuseNextMapWrite(KEY);
 
         const settings = await settingsStorage.loadSettings();
 
@@ -720,6 +747,7 @@ describe('each key migration runs once, however many are added later', () => {
         // the schema no longer names — so replaying the reconcile would take the
         // largest of them and hand back 96.
         stored.set(STATE, ['labyrinthSimBudget']);
+        listingAgeForced(KEY); // Measuring the migration, not the v3 forcing over it
         stored.set(`json:${KEY}`, {
             labyrinthSimMaxHours: hours('labyrinthSimMaxHours', 6),
             labyrinthUpgradeMaxHours: hours('labyrinthUpgradeMaxHours', 96),
@@ -751,6 +779,7 @@ describe('each key migration runs once, however many are added later', () => {
 
     test('the first batch flag counts only for the entry that batch had', async () => {
         stored.set(`settings_key_migrations_v1_${KEY}`, true);
+        listingAgeForced(KEY); // Measuring the migration, not the v3 forcing over it
         stored.set(`json:${KEY}`, {
             profitCalc_patientTick: check('profitCalc_patientTick', true),
             // Carried under that flag, and switched off by hand afterwards
@@ -797,6 +826,9 @@ describe('a settings map arriving from elsewhere is still reconciled', () => {
         outage.on = false;
         settingsStorage.currentCharacterId = 'alice';
         settingsStorage.currentCharacterName = 'Alice';
+        // These measure the merge carrying a choice across, not the v3 rewrite
+        // that afterwards moves every existing character to 'both'
+        listingAgeForced(KEY);
     });
 
     test('copying another character’s map forgets this character’s record', async () => {
@@ -931,12 +963,13 @@ describe('the time-format default change to "auto" is new-installs-only, by desi
     });
 });
 
-describe('the listing-age and value-badge default changes are new-installs-only, by design', () => {
-    // market_listingAge's schema default moved from 'orderBook' to 'both', and
-    // inv_valueBadges's moved from 'off' to 'sorting' — both to match what the
-    // maintainer actually runs. Neither has a DEFAULT_REWRITES entry: an
+describe('the value-badge default change is new-installs-only, by design', () => {
+    // inv_valueBadges's schema default moved from 'off' to 'sorting', to match
+    // what the maintainer actually runs. It has no DEFAULT_REWRITES entry: an
     // existing user's stored value is a choice they made, not a stale default
-    // to be nudged onto the new one.
+    // to be nudged onto the new one. market_listingAge started the same way and
+    // is now the exception — see the forcing below, which the maintainer asked
+    // for because its stored value is derived rather than chosen.
     const KEY = 'script_settingsMap_alice';
 
     beforeEach(() => {
@@ -945,17 +978,14 @@ describe('the listing-age and value-badge default changes are new-installs-only,
         settingsStorage.currentCharacterName = 'Alice';
     });
 
-    test('an existing user with orderBook/off stored keeps them after load', async () => {
+    test('an existing user with off stored keeps it after load', async () => {
         stored.set(`json:${KEY}`, {
-            market_listingAge: { id: 'market_listingAge', type: 'select', value: 'orderBook' },
             inv_valueBadges: { id: 'inv_valueBadges', type: 'select', value: 'off' },
         });
 
         const settings = await settingsStorage.loadSettings();
 
-        expect(settings.market_listingAge.value).toBe('orderBook');
         expect(settings.inv_valueBadges.value).toBe('off');
-        expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe('orderBook');
         expect(stored.get(`json:${KEY}`).inv_valueBadges.value).toBe('off');
     });
 
@@ -967,6 +997,78 @@ describe('the listing-age and value-badge default changes are new-installs-only,
         // and nothing was written for either — the default is read from the schema, not stored
         expect(stored.get(`json:${KEY}`)?.market_listingAge).toBeUndefined();
         expect(stored.get(`json:${KEY}`)?.inv_valueBadges).toBeUndefined();
+    });
+});
+
+describe('every existing character is moved to listing age "both", once', () => {
+    // The dropdown's default is 'both', but an existing character's stored
+    // value came from KEY_MIGRATIONS deriving the three switches it replaced,
+    // so a character whose old switches were off or partly on never saw the new
+    // default. The maintainer asked for all of them to be moved across once.
+    const KEY = 'script_settingsMap_alice';
+    const FLAG = `settings_default_rewrites_v3_${KEY}`;
+
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test.each(['off', 'myListings', 'orderBook'])('a stored %s becomes both, and is saved', async (value) => {
+        stored.set(`json:${KEY}`, { market_listingAge: { id: 'market_listingAge', type: 'select', value } });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('both');
+        expect(stored.get(`json:${KEY}`).market_listingAge.value).toBe('both');
+        expect(stored.get(FLAG)).toBe(true);
+    });
+
+    test('a character still on the three old switches is migrated and then moved across', async () => {
+        stored.set(`json:${KEY}`, {
+            market_showEstimatedListingAge: { id: 'market_showEstimatedListingAge', type: 'checkbox', isTrue: true },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        // The migration alone would have derived 'orderBook'
+        expect(settings.market_listingAge.value).toBe('both');
+    });
+
+    test('runs once: a narrower value re-picked afterwards is left alone', async () => {
+        stored.set(`json:${KEY}`, { market_listingAge: { id: 'market_listingAge', type: 'select', value: 'off' } });
+        await settingsStorage.loadSettings();
+
+        const map = stored.get(`json:${KEY}`);
+        map.market_listingAge = { id: 'market_listingAge', type: 'select', value: 'myListings' };
+        stored.set(`json:${KEY}`, map);
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('myListings');
+    });
+
+    test('the older rewrite batch is not replayed by this one', async () => {
+        // v2 is recorded as done and the user has since turned the live combat
+        // sim back on by hand; adding a batch must not undo that
+        stored.set(`settings_default_rewrites_v2_${KEY}`, true);
+        stored.set(`json:${KEY}`, {
+            labyrinthLiveCombatSim: { id: 'labyrinthLiveCombatSim', type: 'checkbox', isTrue: true },
+            market_listingAge: { id: 'market_listingAge', type: 'select', value: 'off' },
+        });
+
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.labyrinthLiveCombatSim.isTrue).toBe(true);
+        expect(settings.market_listingAge.value).toBe('both');
+    });
+
+    test('a fresh install writes nothing and keeps the schema default', async () => {
+        const settings = await settingsStorage.loadSettings();
+
+        expect(settings.market_listingAge.value).toBe('both');
+        expect(stored.get(`json:${KEY}`)?.market_listingAge).toBeUndefined();
+        expect(stored.get(FLAG)).toBe(true);
     });
 });
 

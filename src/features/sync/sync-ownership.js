@@ -110,7 +110,8 @@ export const OWNED_KEY_PREFIXES = [
     'script_settingsMap',
     'settings_shared_scope_v3',
     'settings_shared_scope_conflicts',
-    'settings_default_rewrites_v2_',
+    // Covers every rewrite batch's flag: v2, v3, and whatever comes next
+    'settings_default_rewrites_',
     'settings_key_migrations_applied_',
     'known_character_ids',
     'accountCharacterNames',

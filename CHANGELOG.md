@@ -15,6 +15,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The all-zones simulation now keeps each zone's encounters per hour and the gear it ran in.
 - A test pins why the beacon planner stops at two routes: the entrance and exit are corners, so two is the most any floor allows.
 
+### Listing age shows in both places
+
+- Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
+
 <!-- shipped in 3.54.0 -->
 
 ### Alchemy history counts and costs what was really used

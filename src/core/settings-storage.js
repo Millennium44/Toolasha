@@ -84,7 +84,19 @@ const DEFAULT_REWRITES = [
     // Nudging it to the new default restores the behaviour everyone already
     // had.
     { id: 'enhanceSim_baseItemCraftingCost', field: 'isTrue', from: false, to: true },
+    // Batch v3. The listing-age dropdown's default is 'both', but an existing
+    // character never sees it: KEY_MIGRATIONS derives the dropdown from the
+    // three switches it replaced, so anyone whose old switches were off or
+    // partly on landed short of the new default. The maintainer asked for every
+    // existing character to be moved to 'both' once (2026-09-17); a character
+    // that re-picks a narrower option afterwards keeps it, as the flag is set.
+    { batch: 'v3', id: 'market_listingAge', field: 'value', from: 'off', to: 'both' },
+    { batch: 'v3', id: 'market_listingAge', field: 'value', from: 'myListings', to: 'both' },
+    { batch: 'v3', id: 'market_listingAge', field: 'value', from: 'orderBook', to: 'both' },
 ];
+
+/** The batch an entry belongs to when it does not name one */
+const DEFAULT_REWRITE_BATCH = 'v2';
 
 /**
  * Pass as `saveSettings`' second argument to write the whole map, every id of
@@ -101,8 +113,14 @@ const DEFAULT_REWRITES = [
  */
 const SAVE_ALL_KEYS = Symbol('settings.saveAllKeys');
 
-/** Bump the suffix when a new batch is added to DEFAULT_REWRITES */
-const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v2';
+/**
+ * Flag prefix; the batch name and character key complete it.
+ *
+ * A new batch gets a new name rather than bumping one shared suffix, so adding
+ * one cannot re-run the older entries over a value the user has since re-picked
+ * by hand — the older batch's flag stays set and its entries stay done.
+ */
+const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites';
 
 /**
  * Settings replaced by other settings, carried across once.
@@ -513,8 +531,9 @@ class SettingsStorage {
                 await this.addToKnownCharacters(characterId, characterName);
             }
 
-            saved = await this.applyDefaultRewrites(saved, characterKey);
+            // Migrations first: a rewrite entry may name an id a migration derives
             saved = await this.applyKeyMigrations(saved, characterKey);
+            saved = await this.applyDefaultRewrites(saved, characterKey);
             await this.migrateSharedSettings(characterKey);
         } else {
             console.warn(`[SettingsStorage] ${characterKey} could not be read; answering with schema defaults`);
@@ -792,29 +811,50 @@ class SettingsStorage {
     /**
      * Rewrite stored values still sitting on a superseded schema default, once.
      *
-     * See DEFAULT_REWRITES for why this is needed at all. The flag is stored
-     * per character, beside that character's settings, so each save file is
-     * nudged exactly once — and is set even when there is nothing to rewrite
-     * (a fresh install, which already has the new defaults), so a later change
-     * of mind is never second-guessed.
+     * See DEFAULT_REWRITES for why this is needed at all. A flag per batch is
+     * stored per character, beside that character's settings, so each save file
+     * is nudged exactly once per batch — and the flag is set even when there is
+     * nothing to rewrite (a fresh install, which already has the new defaults),
+     * so a later change of mind is never second-guessed.
+     *
+     * Runs after {@link applyKeyMigrations}, because an entry may name an id
+     * that only exists once a migration has derived it.
      *
      * @param {Object|null} saved - The stored settings map, or null when none
      * @param {string} characterKey - Storage key the map was loaded from
      * @returns {Promise<Object|null>} The map to merge, rewrites applied
      */
     async applyDefaultRewrites(saved, characterKey) {
-        const flagKey = `${DEFAULT_REWRITE_FLAG_KEY}_${characterKey}`;
+        let current = saved;
+        for (const batch of new Set(DEFAULT_REWRITES.map((entry) => entry.batch || DEFAULT_REWRITE_BATCH))) {
+            current = await this._applyRewriteBatch(current, characterKey, batch);
+        }
+        return current;
+    }
+
+    /**
+     * One batch of {@link DEFAULT_REWRITES}, under its own persisted flag.
+     *
+     * @param {Object|null} saved - The stored settings map, or null when none
+     * @param {string} characterKey - Storage key the map was loaded from
+     * @param {string} batch - Which batch to apply
+     * @returns {Promise<Object|null>} The map to merge, that batch applied
+     */
+    async _applyRewriteBatch(saved, characterKey, batch) {
+        const flagKey = `${DEFAULT_REWRITE_FLAG_KEY}_${batch}_${characterKey}`;
         try {
             if (await storage.get(flagKey, this.storageArea, false)) return saved;
 
             let next = saved;
-            for (const { id, field, from, to } of DEFAULT_REWRITES) {
-                const entry = saved?.[id];
-                if (!entry || entry[field] !== from) continue;
+            for (const entry of DEFAULT_REWRITES) {
+                if ((entry.batch || DEFAULT_REWRITE_BATCH) !== batch) continue;
+                const { id, field, from, to } = entry;
+                const stored = saved?.[id];
+                if (!stored || stored[field] !== from) continue;
                 // Copy rather than mutate the loaded map, so a caller holding
                 // the same object does not see it change underneath them
                 next = next === saved ? { ...saved } : next;
-                next[id] = { ...entry, [field]: to };
+                next[id] = { ...stored, [field]: to };
             }
 
             if (next !== saved) {
