@@ -109,7 +109,7 @@ function buildSnapshot(loadout) {
 
 class LoadoutSnapshot {
     constructor() {
-        this.snapshots = {}; // In-memory cache: { [loadoutName]: snapshot }
+        this.snapshots = {}; // In-memory cache: { [characterLoadoutID]: snapshot }, name inside
         this.characterInitializedHandler = null;
         this.updateListeners = [];
         this.isInitialized = false;

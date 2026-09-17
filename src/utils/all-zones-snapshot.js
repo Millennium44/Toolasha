@@ -117,8 +117,8 @@ export function zoneFromSnapshot(snapshot, zoneHrid, difficultyTier = 0) {
  * its age (`savedAt`) and with enough about the gear for a reader to decide
  * whether it still applies. An all-zones run has no `characterLoadoutID` to
  * record — the simulator is configured from the editor's DTOs or from what the
- * character is wearing, and the loadout store the editor reads is keyed by name
- * and drops the server's id — so what is stored is `{source, name}`: whether
+ * character is wearing, and the editor only remembers the loadout it applied by
+ * name — so what is stored is `{source, name}`: whether
  * the run came from a named loadout, from a hand-edited editor, or from worn
  * gear, and which loadout it started from when there was one.
  *
