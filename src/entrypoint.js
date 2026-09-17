@@ -2329,8 +2329,8 @@ function registerFeatures() {
             category: 'General',
             module: UI.sessionBriefing,
             async: true,
-            // Awaits only its own stored listing snapshot before showing its own
-            // panel; nothing else reads or writes either.
+            // Awaits only its own stored listing snapshot before drawing into
+            // the game's Welcome Back modal; nothing else reads or writes either.
             concurrent: true,
         },
         {

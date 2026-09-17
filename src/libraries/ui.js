@@ -141,7 +141,7 @@ import '../features/queue-monitor/queue-time-row.js';
 
 // Session Briefing. Reads the queue, task, consumable, listing, enhancement and
 // labyrinth sources this bundle already carries, so it costs the bundle only
-// its own panel.
+// the section it appends to the game's Welcome Back modal.
 import sessionBriefing from '../features/briefing/session-briefing.js';
 
 // Account

@@ -1,14 +1,18 @@
 /**
  * @vitest-environment happy-dom
  *
- * The card itself: what it draws, what its lines do when clicked, and whether
- * closing it makes it stay closed.
+ * The briefing section: what it says, where it goes, and when it goes there.
  *
  * The arithmetic is `briefing-lines.test.js`'s problem. What only a DOM can
  * catch is the thing this feature is most exposed to: it reads eleven other
- * features' stores, so a renamed accessor anywhere would blank a section
- * silently. The dullest assertion here — the panel drew and reported no
- * failure — is the one that catches that.
+ * features' stores and writes into a dialog it does not own, so a renamed
+ * accessor anywhere would blank a block silently. The dullest assertion here —
+ * the section drew and reported no failure — is the one that catches that.
+ *
+ * The other half is timing. The modal is a game DOM insertion and the facts
+ * become readable on Toolasha's own arrival event; nothing orders those two, so
+ * both orders are pinned here, along with the two silences (no modal at all, and
+ * the setting switched off) that used to be a panel appearing anyway.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -37,7 +41,25 @@ const game = vi.hoisted(() => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => game.settingOn,
+        getSettingValue: () => game.settingOn,
         Z_FLOATING_PANEL: 100,
+    },
+}));
+
+// The shared modal watcher (utils/welcome-back-modal.js) goes through this, and
+// the tests drive it by hand: a real MutationObserver would make the order of
+// the two signals a race rather than something a test can state.
+const observer = vi.hoisted(() => ({ handlers: [], unregistered: 0 }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (name, classes, callback) => {
+            const entry = { name, classes, callback };
+            observer.handlers.push(entry);
+            return () => {
+                observer.unregistered += 1;
+                observer.handlers = observer.handlers.filter((held) => held !== entry);
+            };
+        },
     },
 }));
 
@@ -68,11 +90,9 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-// Geometry lives in IndexedDB and is not what this file is about. `reopenIfLeftOpen`
-// is a spy rather than a plain stub because one test below asserts it is never
-// called — the briefing panel must not restore itself through this path; its
-// own arrival rule (the quick-refresh gate above) is the only thing that opens it.
-const geometry = vi.hoisted(() => ({ reopenIfLeftOpen: vi.fn(async () => {}) }));
+// Geometry lives in IndexedDB and is not what this file is about. The briefing
+// itself has no panel any more, but the notice-log panel it imports for one
+// line's opener does, and that panel is built at module scope.
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,
@@ -81,11 +101,16 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
-    reopenIfLeftOpen: geometry.reopenIfLeftOpen,
+    reopenIfLeftOpen: async () => {},
     markPanelInteracted: () => {},
 }));
 
-vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
+const rows = vi.hoisted(() => ({ registered: [] }));
+vi.mock('../../utils/overlay-rows.js', () => ({
+    registerRow: (row) => {
+        rows.registered.push(row);
+    },
+}));
 
 vi.mock('../queue-monitor/queue-time-row.js', () => ({ queueTimeLeft: () => game.queue }));
 
@@ -129,25 +154,74 @@ vi.mock('../../utils/item-navigation.js', () => ({
     },
 }));
 
+// The other tenant of the same modal. Its own row must keep working beside the
+// briefing, which is the whole reason the detection lives in one shared place.
+vi.mock('../../utils/market-data.js', () => ({
+    getItemPrice: () => 100,
+}));
+
 const {
-    briefingPanel,
     collectFacts,
-    maybeShowBriefing,
+    renderBriefingSection,
     labyrinthFact,
     _resetBriefingState,
     OPENERS,
-    PANEL_ID,
+    SECTION_CLASS,
     default: feature,
 } = await import('./session-briefing.js');
 
-/** The panel's rendered text */
+const { default: welcomeBackValue, ROW_CLASS } = await import('../ui/welcome-back-value.js');
+
+/** The modal the tests write into, once one has been opened */
+let modal = null;
+
+/**
+ * Put a welcome modal on the page, exactly as the game's markup identifies it.
+ * @returns {HTMLElement} The modal content element
+ */
+function openWelcomeModal() {
+    const content = document.createElement('div');
+    content.className = 'Modal_modalContent__1jDpH WelcomeBack_welcomeBack__2f8Yq';
+    content.innerHTML = '<h2>Welcome Back!</h2><div>02:30:00</div>';
+    document.body.appendChild(content);
+    modal = content;
+    return content;
+}
+
+/**
+ * Tell every registered watcher that a node appeared.
+ * @param {HTMLElement} [node] - What appeared; the open modal by default
+ * @returns {void}
+ */
+function announce(node = modal) {
+    for (const handler of [...observer.handlers]) handler.callback(node);
+}
+
+/** Open a modal and announce it in one gesture. */
+function showWelcomeModal() {
+    const content = openWelcomeModal();
+    announce(content);
+    return content;
+}
+
+/** The briefing section, if one was written */
+function section() {
+    return document.querySelector(`.${SECTION_CLASS}`);
+}
+
+/** The briefing section's rendered text */
 function text() {
-    return briefingPanel.panel?.textContent || '';
+    return section()?.textContent || '';
 }
 
 /** The rendered line rows */
 function lineRows() {
-    return [...(briefingPanel.panel?.querySelectorAll('.toolasha-briefing-line') || [])];
+    return [...(section()?.querySelectorAll('.toolasha-briefing-line') || [])];
+}
+
+/** The keys of the rendered line rows */
+function lineKeys() {
+    return lineRows().map((row) => row.dataset.briefingKey);
 }
 
 /**
@@ -184,12 +258,15 @@ beforeEach(() => {
         opened: [],
     });
     game.stored.clear();
+    observer.handlers = [];
+    observer.unregistered = 0;
+    modal = null;
     _resetBriefingState();
 });
 
 afterEach(() => {
-    briefingPanel.hide({ remember: false });
     _resetBriefingState();
+    welcomeBackValue.cleanup();
     document.body.replaceChildren();
 });
 
@@ -265,24 +342,35 @@ describe('labyrinthFact', () => {
     });
 });
 
-describe('the card', () => {
+describe('the section', () => {
     test('draws only the lines with something to say, and reports no failure', () => {
         game.queue = { queued: 0, seconds: 0 };
         game.labyrinth = { ok: true, entries: 3, isFull: false };
 
-        briefingPanel.show({ remember: false });
+        renderBriefingSection(openWelcomeModal());
 
         expect(text()).not.toContain('could not be drawn');
-        expect(lineRows().map((row) => row.dataset.briefingKey)).toEqual(['queue', 'labyrinth']);
+        expect(lineKeys()).toEqual(['queue', 'labyrinth']);
         expect(text()).toContain('Action queue');
         expect(text()).toContain('Labyrinth entries');
         expect(text()).not.toContain('Task board');
     });
 
-    test('says so when nothing needs the player', () => {
-        briefingPanel.show({ remember: false });
-        expect(text()).toContain('Nothing needs you right now.');
-        expect(lineRows()).toHaveLength(0);
+    test('the section goes inside the modal, at the bottom of it', () => {
+        game.queue = { queued: 0, seconds: 0 };
+        const content = openWelcomeModal();
+
+        renderBriefingSection(content);
+
+        expect(section().parentElement).toBe(content);
+        expect(content.lastElementChild).toBe(section());
+    });
+
+    test('nothing to say is said by saying nothing — no section, no "all clear"', () => {
+        renderBriefingSection(openWelcomeModal());
+
+        expect(section()).toBeNull();
+        expect(document.body.textContent).not.toContain('Nothing needs you');
     });
 
     test('every subject at once still draws', () => {
@@ -314,10 +402,10 @@ describe('the card', () => {
             { characterId: 'alt', characterName: 'Alt', timestamp: 1, totalQueueSeconds: 0, actions: [] },
         ];
 
-        briefingPanel.show({ remember: false });
+        renderBriefingSection(openWelcomeModal());
 
         expect(text()).not.toContain('could not be drawn');
-        const keys = lineRows().map((row) => row.dataset.briefingKey);
+        const keys = lineKeys();
         expect(keys).toContain('rerolls');
         expect(keys).toContain('buffs');
         expect(keys).toContain('consumable');
@@ -326,6 +414,19 @@ describe('the card', () => {
         expect(keys).toContain('guild');
         expect(keys).toContain('idle');
     });
+
+    test('a dialog that is not the welcome modal is left completely alone', () => {
+        game.queue = { queued: 0, seconds: 0 };
+        const other = document.createElement('div');
+        other.className = 'Modal_modalContent__1jDpH';
+        other.innerHTML = '<h2>Settings</h2>';
+        document.body.appendChild(other);
+
+        announce(other);
+
+        expect(section()).toBeNull();
+        expect(other.textContent).toBe('Settings');
+    });
 });
 
 describe('the links', () => {
@@ -333,7 +434,7 @@ describe('the links', () => {
         addNav('navigationBar.labyrinth');
         game.labyrinth = { ok: true, entries: 3, isFull: false };
 
-        briefingPanel.show({ remember: false });
+        renderBriefingSection(openWelcomeModal());
         const row = lineRows().find((entry) => entry.dataset.briefingKey === 'labyrinth');
         expect(row.style.cursor).toBe('pointer');
         row.click();
@@ -341,7 +442,7 @@ describe('the links', () => {
         expect(game.opened).toContain('navigationBar.labyrinth');
     });
 
-    test('a stopped enhancement run is not news — stale or non-tracking sessions stay off the card', () => {
+    test('a stopped enhancement run is not news — stale or non-tracking sessions stay off the section', () => {
         game.enhancementSession = {
             itemName: 'Sword',
             currentLevel: 3,
@@ -350,10 +451,10 @@ describe('the links', () => {
             state: 'tracking',
             lastUpdateTime: Date.now() - 2 * 60 * 60 * 1000,
         };
-        briefingPanel.show({ remember: false });
-        expect(lineRows().map((row) => row.dataset.briefingKey)).not.toContain('enhancement');
-        briefingPanel.hide();
+        renderBriefingSection(openWelcomeModal());
+        expect(lineKeys()).not.toContain('enhancement');
 
+        document.body.replaceChildren();
         game.enhancementSession = {
             itemName: 'Sword',
             currentLevel: 7,
@@ -362,8 +463,8 @@ describe('the links', () => {
             state: 'completed',
             lastUpdateTime: Date.now(),
         };
-        briefingPanel.show({ remember: false });
-        expect(lineRows().map((row) => row.dataset.briefingKey)).not.toContain('enhancement');
+        renderBriefingSection(openWelcomeModal());
+        expect(lineKeys()).not.toContain('enhancement');
     });
 
     test('the enhancement line opens the enhancing action', () => {
@@ -375,7 +476,7 @@ describe('the links', () => {
             state: 'tracking',
             lastUpdateTime: Date.now(),
         };
-        briefingPanel.show({ remember: false });
+        renderBriefingSection(openWelcomeModal());
         lineRows()
             .find((entry) => entry.dataset.briefingKey === 'enhancement')
             .click();
@@ -391,99 +492,140 @@ describe('the links', () => {
         game.snapshots = [
             { characterId: 'alt', characterName: 'Alt', timestamp: 1, totalQueueSeconds: 0, actions: [] },
         ];
-        briefingPanel.show({ remember: false });
+        renderBriefingSection(openWelcomeModal());
         const row = lineRows().find((entry) => entry.dataset.briefingKey === 'idle');
         expect(row.style.cursor).toBe('');
     });
 
     test('a missing nav button is survived rather than thrown over', () => {
         game.labyrinth = { ok: true, entries: 3, isFull: false };
-        briefingPanel.show({ remember: false });
+        renderBriefingSection(openWelcomeModal());
         expect(() => lineRows()[0].click()).not.toThrow();
     });
 });
 
-describe('showing and dismissing', () => {
-    test('shows on arrival when there is something to say', () => {
+/**
+ * Two unrelated signals, either order.
+ *
+ * The modal is inserted by the game and the facts are gathered by
+ * `initialize()`, which feature-registry runs on `character_switched`. Nothing
+ * orders those two, so the feature has to be right in both orders — and in the
+ * two cases where one of them never comes at all.
+ */
+describe('the modal and the facts, in either order', () => {
+    test('a modal that appears first is filled in when the facts arrive', async () => {
         game.queue = { queued: 0, seconds: 0 };
-        expect(maybeShowBriefing()).toBe(true);
-        expect(briefingPanel.panel).toBeTruthy();
+
+        const init = feature.initialize();
+        // The game draws its dialog while the stored listing baseline is still
+        // being read: nothing may be written yet, because the facts behind it
+        // are not all readable
+        showWelcomeModal();
+        expect(section()).toBeNull();
+
+        await init;
+
+        expect(section()).not.toBeNull();
+        expect(text()).toContain('Action queue');
+        expect(text()).not.toContain('could not be drawn');
     });
 
-    test('does not show when there is nothing to say', () => {
-        expect(maybeShowBriefing()).toBe(false);
-        expect(briefingPanel.panel).toBeNull();
-    });
-
-    test('does not show when the setting is off', () => {
+    test('facts that were ready first are drawn the moment a modal appears', async () => {
         game.queue = { queued: 0, seconds: 0 };
-        game.settingOn = false;
-        expect(maybeShowBriefing()).toBe(false);
-    });
 
-    test('a dismissal is remembered for the rest of the session', () => {
-        game.queue = { queued: 0, seconds: 0 };
-        expect(maybeShowBriefing()).toBe(true);
-
-        briefingPanel.hide();
-        expect(briefingPanel.panel).toBeNull();
-
-        expect(maybeShowBriefing()).toBe(false);
-        expect(briefingPanel.panel).toBeNull();
-    });
-
-    test('the dismissal belongs to the character who made it', () => {
-        game.queue = { queued: 0, seconds: 0 };
-        maybeShowBriefing();
-        briefingPanel.hide();
-
-        game.characterId = 'char-2';
-        expect(maybeShowBriefing()).toBe(true);
-    });
-
-    test('never restores itself through the shared reopen-on-load path', () => {
-        // The bug: `simple-panel.js` reopens any panel left open at module scope
-        // and on every character switch, regardless of this feature's own
-        // quick-refresh gate — a card left open reappeared on a plain reload no
-        // matter what `initialize()` decided. The fix opts the briefing panel out
-        // of that path entirely (`restoreOpen: false`), so this feature's own
-        // panel id must never be asked about — the notice log panel this same
-        // module imports is a different panel, and keeps the default behaviour.
-        expect(geometry.reopenIfLeftOpen).not.toHaveBeenCalledWith(PANEL_ID, expect.any(Function));
-    });
-
-    test('a character switch closes the card without counting as a dismissal', () => {
-        game.queue = { queued: 0, seconds: 0 };
-        maybeShowBriefing();
-
-        feature.cleanup();
-        expect(briefingPanel.panel).toBeNull();
-        expect(maybeShowBriefing()).toBe(true);
-    });
-
-    test('a character switch clears the stale market-fill count before the new character has loaded its own', async () => {
-        // char-1 filled a listing this session
-        game.listings = [{ id: 1, status: '/market_listing_status/filled' }];
         await feature.initialize();
-        expect(collectFacts().listings.filled).toBe(1);
+        expect(section()).toBeNull();
 
-        // character_switching fires: the overlay panel re-initializes and can
-        // redraw the tile well before this feature's own initialize() (and
-        // its loadListingDelta) runs again for the new character — cleanup()
-        // is the only thing that runs synchronously at that moment
+        showWelcomeModal();
+
+        expect(section()).not.toBeNull();
+        expect(text()).toContain('Action queue');
+    });
+
+    test('no modal means nothing is rendered anywhere', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+
+        expect(section()).toBeNull();
+        expect(document.body.textContent).toBe('');
+    });
+
+    test('a modal closed before the facts land is not written into', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+
+        const init = feature.initialize();
+        const content = showWelcomeModal();
+        content.remove();
+
+        await init;
+
+        expect(section()).toBeNull();
+    });
+
+    test('the section is appended once however often the watcher fires', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+        await feature.initialize();
+
+        showWelcomeModal();
+        announce();
+        announce();
+        // And a node from inside the modal, which is what the game's own bursts
+        // actually deliver
+        announce(modal.querySelector('h2'));
+
+        expect(document.querySelectorAll(`.${SECTION_CLASS}`)).toHaveLength(1);
+    });
+
+    test('the setting off means nothing is watched for and nothing is written', async () => {
+        game.settingOn = false;
+        game.queue = { queued: 0, seconds: 0 };
+
+        await feature.initialize();
+        showWelcomeModal();
+
+        expect(observer.handlers).toHaveLength(0);
+        expect(section()).toBeNull();
+    });
+
+    test('a character switch unhooks the watcher and takes the section with it', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+        await feature.initialize();
+        showWelcomeModal();
+        expect(section()).not.toBeNull();
+
         feature.cleanup();
 
-        expect(collectFacts().listings.filled).toBe(0);
+        expect(observer.handlers).toHaveLength(0);
+        expect(observer.unregistered).toBe(1);
+        expect(section()).toBeNull();
+    });
+
+    test('the offline value line still works in the same modal', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+        welcomeBackValue.initialize();
+        await feature.initialize();
+
+        const content = openWelcomeModal();
+        const tile = document.createElement('div');
+        tile.className = 'Item_itemContainer__x';
+        tile.innerHTML = '<svg><use href="#milk"></use></svg><div class="Item_count__y">12</div>';
+        content.appendChild(tile);
+        announce(content);
+
+        expect(content.querySelector(`.${ROW_CLASS}`)).not.toBeNull();
+        expect(section()).not.toBeNull();
     });
 });
 
 /**
  * Telling a refresh from a return.
  *
- * `maybeShowBriefing()` itself is untouched by this — the gate lives in
- * `initialize()`, which is the arrival hook feature-registry calls on both boot
- * and a character switch, and the only place that can tell "the page for this
- * character was alive a moment ago" from "it was not".
+ * The gate lives in `initialize()`, which is the arrival hook feature-registry
+ * calls on both boot and a character switch, and the only place that can tell
+ * "the page for this character was alive a moment ago" from "it was not". The
+ * game's own reason for opening its dialog is a different question — what the
+ * account produced while the socket was shut — so it does not answer this one.
  */
 describe('quick refresh vs a return', () => {
     beforeEach(() => {
@@ -495,30 +637,33 @@ describe('quick refresh vs a return', () => {
         vi.useRealTimers();
     });
 
-    test('a quick refresh does not auto-show, even with something to say', async () => {
+    test('a quick refresh writes nothing, even with something to say', async () => {
         game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 20_000);
         game.queue = { queued: 0, seconds: 0 };
 
         await feature.initialize();
+        showWelcomeModal();
 
-        expect(briefingPanel.panel).toBeNull();
+        expect(section()).toBeNull();
     });
 
-    test('a real absence still shows the briefing, exactly as before', async () => {
+    test('a real absence still draws the briefing, exactly as before', async () => {
         game.stored.set('sessionBriefingLastAlive_char-1', Date.now() - 10 * 60_000);
         game.queue = { queued: 0, seconds: 0 };
 
         await feature.initialize();
+        showWelcomeModal();
 
-        expect(briefingPanel.panel).toBeTruthy();
+        expect(section()).not.toBeNull();
     });
 
-    test('a first-ever load has no stamp to compare against, and shows as before', async () => {
+    test('a first-ever load has no stamp to compare against, and draws as before', async () => {
         game.queue = { queued: 0, seconds: 0 };
 
         await feature.initialize();
+        showWelcomeModal();
 
-        expect(briefingPanel.panel).toBeTruthy();
+        expect(section()).not.toBeNull();
     });
 
     test('a character switch is not a refresh of the character switched to', async () => {
@@ -528,8 +673,9 @@ describe('quick refresh vs a return', () => {
         game.queue = { queued: 0, seconds: 0 };
 
         await feature.initialize();
+        showWelcomeModal();
 
-        expect(briefingPanel.panel).toBeTruthy();
+        expect(section()).not.toBeNull();
     });
 
     test('an arrival stamps this character as alive, for the next arrival to compare against', async () => {
@@ -599,15 +745,15 @@ describe('what the market did while away', () => {
 });
 
 /**
- * The "since you were away" card.
+ * The "since you were away" block.
  *
  * A DOM test rather than another arithmetic one, because what `away-diff.js`
  * cannot check for itself is the wiring: that the diff is computed at the one
- * moment the arriving character's facts are readable, that the card opens the
- * panel even when the live briefing has nothing to say, and that closing it
- * closes only it.
+ * moment the arriving character's facts are readable, that it is reason enough
+ * to write a section even when the live briefing has nothing to say, and that
+ * showing it is what marks it read.
  */
-describe('the away card', () => {
+describe('the away block', () => {
     const HOUR = 3_600_000;
 
     /** Store a snapshot for the current character, taken `hoursAgo` hours ago. */
@@ -620,13 +766,6 @@ describe('the away card', () => {
         });
     }
 
-    /** The card's own dismiss button, if the card is drawn. */
-    function awayClose() {
-        return [...(briefingPanel.panel?.querySelectorAll('button') || [])].find(
-            (button) => button.title === 'I have read this'
-        );
-    }
-
     test('a deadline that lapsed while you were away is stated against the instant it named', async () => {
         // An hour of ale three hours ago, and the live game agrees there is a
         // keg to talk about
@@ -634,63 +773,67 @@ describe('the away card', () => {
         game.consumable = { name: 'Ale', secondsLeft: 0 };
 
         await feature.initialize();
+        showWelcomeModal();
 
         expect(text()).toContain('Since you were away');
         expect(text()).toMatch(/Ale ran dry at /);
         expect(text()).not.toContain('could not be drawn');
     });
 
-    test('the card is reason enough to open the panel on its own', async () => {
+    test('the away block is reason enough to write a section on its own', async () => {
         // Nothing live needs this character at all — the only news is the past
         storeSnapshot({ tasksReady: 1 });
         game.characterInfo = { unreadTaskCount: 0 };
 
         await feature.initialize();
+        showWelcomeModal();
 
-        expect(briefingPanel.panel).toBeTruthy();
+        expect(section()).not.toBeNull();
         expect(text()).toContain('1 task claimed');
-        // And the "all clear" note must not sit under a list of changes
-        expect(text()).not.toContain('Nothing needs you right now');
     });
 
     test('no snapshot is silence — it never says nothing happened', async () => {
         game.characterInfo = { unreadTaskCount: 2 };
         await feature.initialize();
+        showWelcomeModal();
 
         expect(text()).toContain('2 waiting');
         expect(text()).not.toContain('Since you were away');
     });
 
-    test('closing the card closes only the card, and it stays closed', async () => {
+    test('showing the block is reading it — the same snapshot never produces it twice', async () => {
         storeSnapshot({ tasksReady: 1 });
         game.characterInfo = { unreadTaskCount: 4 };
 
         await feature.initialize();
+        showWelcomeModal();
         expect(text()).toContain('Since you were away');
 
-        awayClose().click();
-
-        // The briefing under it is untouched
-        expect(text()).not.toContain('Since you were away');
-        expect(text()).toContain('4 waiting');
-        // And the read-mark is the snapshot's own instant, so the same snapshot
-        // never produces the card again
+        // The mark is the snapshot's own instant, so a later arrival comparing
+        // against the same snapshot is silent about the past
         expect(game.stored.get(`briefingAwayDiffSeen_${game.characterId}`)).toBe(
             game.stored.get(`briefingSnapshot_${game.characterId}`).at
         );
 
+        feature.cleanup();
+        document.body.replaceChildren();
+        // A genuine later return rather than a refresh seconds after this one,
+        // which the quick-refresh gate would (rightly) suppress
+        game.stored.delete('sessionBriefingLastAlive_char-1');
         await feature.initialize();
+        showWelcomeModal();
+
         expect(text()).not.toContain('Since you were away');
+        expect(text()).toContain('4 waiting');
     });
 
-    test('closing the whole panel counts as having read the card', async () => {
+    test('a modal that never opens leaves the diff unread for the next arrival', async () => {
         storeSnapshot({ tasksReady: 1 });
         game.characterInfo = { unreadTaskCount: 4 };
 
         await feature.initialize();
-        briefingPanel.hide({ remember: false });
 
-        expect(game.stored.has(`briefingAwayDiffSeen_${game.characterId}`)).toBe(true);
+        expect(game.stored.has(`briefingAwayDiffSeen_${game.characterId}`)).toBe(false);
     });
 
     test('a skipped quick refresh does not disturb the baseline the next real absence reports from', async () => {
@@ -698,7 +841,7 @@ describe('the away card', () => {
         vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
 
         // A real switch three hours ago left this snapshot, and nobody has read
-        // the resulting "since you were away" card yet
+        // the resulting "since you were away" block yet
         storeSnapshot({ tasksReady: 1 }, 3);
         game.characterInfo = { unreadTaskCount: 4 };
         // This arrival is only a page refresh, seconds after the last one
@@ -707,14 +850,30 @@ describe('the away card', () => {
         const snapshotAt = game.stored.get(`briefingSnapshot_${game.characterId}`).at;
 
         await feature.initialize();
+        showWelcomeModal();
 
-        // Not shown automatically...
-        expect(briefingPanel.panel).toBeNull();
-        // ...but nothing was marked read, and the snapshot itself is untouched —
+        // Nothing drawn...
+        expect(section()).toBeNull();
+        // ...and nothing was marked read, and the snapshot itself is untouched —
         // a genuine absence right after this still measures from the same instant
         expect(game.stored.has(`briefingAwayDiffSeen_${game.characterId}`)).toBe(false);
         expect(game.stored.get(`briefingSnapshot_${game.characterId}`).at).toBe(snapshotAt);
 
         vi.useRealTimers();
+    });
+});
+
+describe('the overlay tile', () => {
+    test('counts the same lines, and has no panel to offer', () => {
+        const row = rows.registered.find((entry) => entry.key === 'sessionBriefing');
+        expect(row).toBeTruthy();
+        // No `onOpen`: there is no briefing panel any more, and the command
+        // palette lists a row only when it has somewhere to send you
+        expect(row.onOpen).toBeUndefined();
+
+        game.queue = { queued: 0, seconds: 0 };
+        const container = document.createElement('div');
+        row.render(container);
+        expect(container.textContent).toBe('1 needs you');
     });
 });

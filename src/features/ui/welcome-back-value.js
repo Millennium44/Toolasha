@@ -24,16 +24,16 @@
  * than quietly under-reporting. If nothing at all could be priced, no line is
  * drawn: an enrichment that says "0" is worse than one that is absent.
  *
- * It does not depend on the modal's own class name any more than it has to. The
- * modal is found through `Modal_modalContent` — the class the draggable-modals
- * feature already relies on for every dialog in the game — and identified by the
- * offline-progress markers or its own heading. If the game renames its welcome
+ * It does not depend on the modal's own class name any more than it has to, and
+ * it does not own that judgement either: `utils/welcome-back-modal.js` is the
+ * one copy of "is this the offline-progress dialog", shared with the session
+ * briefing, which draws into the same modal. If the game renames its welcome
  * modal, this stops appearing; it does not start decorating the wrong dialog.
  */
 
 import config from '../../core/config.js';
-import domObserver from '../../core/dom-observer.js';
 import { coinFormatter, formatKMB } from '../../utils/formatters.js';
+import { isWelcomeBackModal, findWelcomeBackModal, onWelcomeBackModal } from '../../utils/welcome-back-modal.js';
 import { parseItemCount, gameDigitsSource } from '../../utils/number-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
 
@@ -42,16 +42,6 @@ export const ROW_CLASS = 'toolasha-welcome-back-value';
 
 /** Coins are their own price, and are never in the market data */
 const COIN_HRID = '/items/coin';
-
-/**
- * How the welcome modal announces itself.
- *
- * The class is checked before the text because a class survives translation and
- * a heading does not; the heading is the fallback for the day the CSS module is
- * renamed, which is the more likely of the two.
- */
-const MODAL_MARKER = /WelcomeBack|OfflineProgress/i;
-const MODAL_HEADING = /welcome back/i;
 
 /** Section labels that mean the items under them left rather than arrived */
 const SPENT_HEADING = /consumed|used|spent|eaten|drank/i;
@@ -239,34 +229,10 @@ export function formatSummary(summary) {
     return parts.join(' · ');
 }
 
-/**
- * Is this element the welcome modal?
- * @param {HTMLElement} el - Candidate
- * @returns {boolean} True when it is
- */
-export function isWelcomeBackModal(el) {
-    if (!el?.className && !el?.querySelector) return false;
-
-    const own = typeof el.className === 'string' ? el.className : '';
-    if (MODAL_MARKER.test(own)) return true;
-    if (el.querySelector?.(`[class*="WelcomeBack"], [class*="OfflineProgress"]`)) return true;
-
-    for (const heading of el.querySelectorAll?.('h1, h2, h3, [class*="title"], [class*="header"]') || []) {
-        if (MODAL_HEADING.test(heading.textContent || '')) return true;
-    }
-    return false;
-}
-
-/**
- * The welcome modal this inserted node belongs to, if any.
- * @param {HTMLElement} node - A node the observer saw appear
- * @returns {HTMLElement|null} The modal content element, or null
- */
-export function findWelcomeBackModal(node) {
-    const content = node?.closest?.('[class*="Modal_modalContent"]') || node;
-    if (!content?.querySelectorAll) return null;
-    return isWelcomeBackModal(content) ? content : null;
-}
+// Re-exported rather than redefined: the detection moved to a shared util when
+// the session briefing started drawing into the same dialog, and callers (and
+// this file's own tests) still ask this module about the modal it decorates.
+export { isWelcomeBackModal, findWelcomeBackModal };
 
 /**
  * Price a single item at whatever the pricing mode says it is worth on one side.
@@ -347,17 +313,10 @@ const welcomeBackValue = {
         if (!config.getSetting('welcomeBackValue')) return;
         if (unregister) return;
 
-        // Debounced: the modal's items arrive in a burst, and the row has to be
-        // written after the last of them or it would price half a night
-        unregister = domObserver.onClass(
-            'WelcomeBackValue',
-            ['Modal_modalContent', 'WelcomeBack', 'OfflineProgress'],
-            (node) => {
-                const modal = findWelcomeBackModal(node);
-                if (modal) enrichModal(modal);
-            },
-            { debounce: true, debounceDelay: 150 }
-        );
+        // Debounced by the shared helper: the modal's items arrive in a burst,
+        // and the row has to be written after the last of them or it would
+        // price half a night
+        unregister = onWelcomeBackModal('WelcomeBackValue', (modal) => enrichModal(modal));
     },
 
     cleanup() {

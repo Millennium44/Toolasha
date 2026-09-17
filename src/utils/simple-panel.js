@@ -40,9 +40,12 @@ const DEFAULT_REFRESH_MS = 3000;
  * @param {boolean} [definition.restoreOpen] - Whether a panel left open should
  *   reopen itself on load and on every character switch. Defaults to `true`,
  *   which is what every ordinary panel wants. `false` is for a panel that has
- *   its own arrival rule and must appear only through that rule or by hand —
- *   the Session Briefing card left open otherwise reopened on a plain page
- *   refresh no matter what its own quick-refresh gate decided.
+ *   its own arrival rule and must appear only through that rule or by hand.
+ *   The Session Briefing card was what asked for it: left open, it reopened on
+ *   a plain page refresh no matter what its own quick-refresh gate decided.
+ *   That card has since moved into the game's Welcome Back modal and is not a
+ *   panel at all, so nothing takes this today — the option stays because the
+ *   next panel with its own arrival rule needs exactly this.
  * @returns {Object} A panel with `show`, `hide`, `toggle` and `setTitle`
  */
 export function createPanel({

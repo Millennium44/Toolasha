@@ -522,11 +522,14 @@ describe('switching character', () => {
 /**
  * A panel that must not bring itself back.
  *
- * The Session Briefing card has its own arrival rule — a quick-refresh window —
+ * The Session Briefing card had its own arrival rule — a quick-refresh window —
  * and `reopenIfLeftOpen` running underneath it regardless of that rule was the
  * bug: the maintainer had left the card open, so every reload reopened it
  * through this path no matter what the quick-refresh gate decided. `restoreOpen:
- * false` is the opt-out; every other panel keeps the default.
+ * false` is the opt-out; every other panel keeps the default. (That briefing is
+ * now a section inside the game's own Welcome Back modal rather than a panel,
+ * so the opt-out has no caller at the moment — it is still the answer for the
+ * next panel with an arrival rule of its own, and this pins it.)
  */
 describe('a panel that opts out of restoring itself on load', () => {
     beforeEach(() => {

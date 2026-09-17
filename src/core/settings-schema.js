@@ -3126,22 +3126,24 @@ export const settingsGroups = {
             },
             sessionBriefing: {
                 id: 'sessionBriefing',
-                label: 'Session briefing: One card on login saying what needs you',
+                label: 'Session briefing: What needs you, inside the Welcome Back window',
                 type: 'checkbox',
                 default: true,
-                // The briefing is drawn once, at login. Turning it on mid-session
-                // has nothing left to draw and turning it off leaves the card
-                // that is already up — so say so rather than look broken.
+                // The briefing is drawn once, when the game opens its Welcome
+                // Back window. Turning it on mid-session has nothing left to
+                // draw — so say so rather than look broken.
                 requiresRefresh: true,
                 help:
                     'Every other warning in the script fires while you are here, so the one thing none of them can ' +
-                    'cover is the time you were away. This meets you at the door with only the lines that have ' +
-                    'something to say — an empty queue and since when, tasks waiting or slots about to overflow, a ' +
-                    'community buff about to lapse, the consumable that runs dry first, listings filled or ' +
-                    'undercut, an unfinished enhancement run, your guild trial signup, labyrinth entries banked, ' +
-                    'and any other character that has gone idle. Each line opens the panel that fixes it. Close it ' +
-                    'to dismiss it until you switch character or reload; reopen it from the Briefing overlay row or ' +
-                    'the command palette.',
+                    'cover is the time you were away. This adds a section to the bottom of the game’s own ' +
+                    '“Welcome Back!” window, with only the lines that have something to say — an empty queue and ' +
+                    'since when, tasks waiting or slots about to overflow, a community buff about to lapse, the ' +
+                    'consumable that runs dry first, listings filled or undercut, an unfinished enhancement run, ' +
+                    'your guild trial signup, labyrinth entries banked, and any other character that has gone ' +
+                    'idle. Each line opens the panel that fixes it, and closing the game’s window closes the whole ' +
+                    'thing — there is no second card to dismiss. It appears only when the game shows that window, ' +
+                    'so a character switch or a very short absence gets none; the Briefing overlay row counts the ' +
+                    'same lines for the rest of the session.',
             },
             equipmentMismatchWarning: {
                 id: 'equipmentMismatchWarning',

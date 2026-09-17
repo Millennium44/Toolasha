@@ -23,22 +23,44 @@
  * The notification service is edge-triggered by design — it says what *changed*
  * — and eight hours away is not an edge, it is a gap. Replaying eight hours of
  * missed edges as eight toasts would be worse than the silence it replaces.
- * A card you dismiss once is the right shape for a digest.
+ * A digest read once, on arrival, is the right shape.
  *
- * ## Dismissal
+ * ## Where it appears, and why it has no panel
  *
- * Per session, in memory, keyed by character. Closing it means "I have read
- * this", and that is true until the facts change — which for this purpose means
- * until you switch character or reload the page. Persisting it would mean a
- * briefing you dismissed on Monday never appearing again, which is the one
- * failure mode a briefing cannot survive.
+ * Inside the game's own "Welcome Back!" offline-progress modal, as a section
+ * appended to the bottom of it — not in a floating card of its own.
+ *
+ * It used to be its own draggable panel, and the complaint about that was not
+ * about the content: it was that arriving after a night away meant dismissing
+ * two things, the game's modal and then ours, every single time. The modal is
+ * already the game's way of saying "here is what happened while you were gone",
+ * which is the same sentence this feature exists to finish. Putting the briefing
+ * in it means the arrival has exactly one thing to close, and closing it closes
+ * everything.
+ *
+ * The price is deliberate and accepted: **no modal, no briefing.** A character
+ * switch does not produce one, and neither does an absence too short for the
+ * game to count. There is no fallback panel and no setting to bring one back —
+ * a second surface is the thing being removed, and half-removing it would leave
+ * the double dismissal in exactly the cases that provoked this.
+ *
+ * ## Two signals, either order
+ *
+ * The modal's appearance is a game DOM insertion and the facts become readable
+ * on Toolasha's own `character_switched`; nothing synchronises them, and either
+ * can land first. So both sides meet in the middle: a modal seen before the
+ * facts are ready is held (`pendingModal`) and filled in when they arrive, and
+ * facts that were ready first are drawn the moment a modal appears. Nothing is
+ * drawn from a half-read store — an unknown figure is left off the line rather
+ * than printed as zero, which is `undercutCount()`'s rule and the reason it
+ * returns null instead of 0.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
+import { onWelcomeBackModal } from '../../utils/welcome-back-modal.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -63,33 +85,27 @@ import { guildXpTracker, consumablesPanel } from '../../utils/bundle-bridge.js';
 /** The setting that turns the whole thing on */
 export const MASTER_SETTING = 'sessionBriefing';
 
-/** Panel id, which is also its geometry key */
-export const PANEL_ID = 'sessionBriefing';
+/** The mark the section leaves, so a redraw does not stack a second one */
+export const SECTION_CLASS = 'toolasha-session-briefing';
 
 /** Where the previous session's listing snapshot lives */
 const LISTING_BASELINE_PREFIX = 'sessionBriefingListings_';
 
-/** Nothing here moves fast; a slow redraw is the point */
-const REFRESH_MS = 15_000;
-
 /** A current enhancement session whose last attempt is older than this is a stopped run, not news */
 const ENHANCEMENT_STALE_MS = 60 * 60 * 1000;
-
-/** Character ids whose briefing has been read and closed this page session */
-const dismissed = new Set();
 
 /**
  * Telling a refresh from a return
  *
- * `dismissed` answers "has this character's card been read this page session",
- * and a page session is exactly one browser tab's lifetime — reloading starts a
- * new one, with an empty `dismissed`. That is right for "I closed this, stop
- * showing it" and wrong for "I was gone": reloading to pick up a build, or just
- * recovering from a disconnect, goes through the same empty `dismissed` and used
- * to pop the card back up over facts the player had finished reading seconds
- * earlier. A refresh's userscript-load-and-reconnect stretch runs 10-25 s, so the
- * gap between "this character's page was alive" and "it is alive again" is the
- * only signal that survives the reload to tell the two apart.
+ * A briefing is a digest of a gap, and sixty seconds is not a gap. Reloading to
+ * pick up a build, or recovering from a disconnect, used to pop the card back up
+ * over facts the player had finished reading seconds earlier, and moving into
+ * the game's modal does not settle that question: the game decides whether to
+ * show an offline-progress dialog on its own terms — how much it produced while
+ * the socket was shut — which is not the same question as whether the player has
+ * already read this. A refresh's userscript-load-and-reconnect stretch runs
+ * 10-25 s, so the gap between "this character's page was alive" and "it is alive
+ * again" is the only signal that survives the reload to tell the two apart.
  *
  * The stamp lives in its own key, per character, in the same `settings` store as
  * everything else here — deliberately not the snapshot `briefing-snapshot.js`
@@ -230,6 +246,28 @@ let listingDelta = null;
  * @type {{at: number, lines: Array<Object>}|null}
  */
 let awayDiff = null;
+
+/**
+ * A welcome modal that turned up before the facts did.
+ *
+ * Held rather than drawn into, and drawn into the moment `initialize()` finishes
+ * gathering. Released as soon as it is used, so a dismissed modal is not kept
+ * alive by this reference.
+ * @type {HTMLElement|null}
+ */
+let pendingModal = null;
+
+/** Whether `initialize()` has finished gathering this arrival's facts */
+let factsReady = false;
+
+/** Whether this arrival is a quick refresh, and so gets no section */
+let suppressed = false;
+
+/** Unregisters the modal watcher, or null when it is not installed */
+let unwatchModal = null;
+
+/** Whether this arrival's away diff has been marked read */
+let awayDiffMarked = false;
 
 /**
  * The current character, or null before the game has said.
@@ -613,122 +651,209 @@ function drawLine(card, line) {
 }
 
 /**
- * Stop showing the away diff, and remember that it was read.
+ * Remember that this arrival's away diff has been seen.
  *
- * Dismissal is per snapshot rather than per session: the mark records the
- * instant the diff was computed from, so this card stays gone until the next
- * switch away writes a newer one. `away-diff.js` says why that is a mark rather
- * than a delete.
+ * Shown is read, here. The modal is one-shot — the game opens it once per
+ * arrival and the player closes it — so there is no second viewing to preserve
+ * the card for, and no close button of its own to press. The mark records the
+ * instant the diff was computed from, which `away-diff.js` explains is a mark
+ * rather than a delete: the next switch away writes a newer snapshot and earns
+ * its own card.
  *
  * @returns {void}
  */
-function dismissAwayDiff() {
+function markAwayDiffShown() {
     const diff = awayDiff;
-    awayDiff = null;
-    if (!diff) return;
-    // Fire and forget: the card is already gone from this page's state, and the
-    // mark only has to have landed before the next arrival
+    if (!diff || awayDiffMarked) return;
+    awayDiffMarked = true;
+    // Fire and forget: the mark only has to have landed before the next arrival
     markAwayDiffSeen(currentCharacterId(), diff.at);
 }
 
 /**
- * The "since you were away" card, above the briefing it gives context to.
+ * A heading inside the modal section.
+ * @param {string} label - What it says
+ * @param {string} color - Its color
+ * @returns {HTMLElement} The heading
+ */
+function sectionHeading(label, color) {
+    const heading = document.createElement('div');
+    heading.textContent = label;
+    Object.assign(heading.style, { color, fontWeight: 'bold', marginBottom: '3px' });
+    return heading;
+}
+
+/**
+ * A block of lines under one heading.
  *
- * Above rather than beside: it is read once and closed, and the briefing under
- * it is the thing that stays. Its own ✕ dismisses it without taking the briefing
- * with it.
+ * Each line is drawn in its own try/catch: this is an addition to somebody
+ * else's dialog, and one line that cannot be built must cost its own row rather
+ * than the modal's layout.
  *
- * @param {HTMLElement} body - The panel's body
+ * @param {HTMLElement} section - Where it goes
+ * @param {string} heading - Its title
+ * @param {string} color - The title color
+ * @param {Array<Object>} lines - From {@link buildBriefingLines}
+ * @param {string} [rowTitle] - A tooltip to put on every row
  * @returns {void}
  */
-function drawAwayDiff(body) {
-    const diff = awayDiff;
-    if (!diff || diff.lines.length === 0) return;
+function drawBlock(section, heading, color, lines, rowTitle) {
+    const block = document.createElement('div');
+    block.style.marginTop = '6px';
+    block.appendChild(sectionHeading(heading, color));
 
-    const card = panelCard(body, '', ROW_COLORS.gold);
+    for (const line of lines) {
+        try {
+            const row = drawLine(block, line);
+            if (rowTitle) row.title = rowTitle;
+        } catch (error) {
+            console.error('[SessionBriefing] A line could not be drawn:', error);
+            const failed = document.createElement('div');
+            failed.textContent = `This line could not be drawn: ${error.message}`;
+            failed.style.color = ROW_COLORS.bad;
+            block.appendChild(failed);
+        }
+    }
 
-    const header = document.createElement('div');
-    Object.assign(header.style, { display: 'flex', gap: '8px', alignItems: 'baseline', marginBottom: '3px' });
+    section.appendChild(block);
+}
 
-    const heading = document.createElement('span');
-    const age = formatRelativeTime(Math.max(0, Date.now() - diff.at));
-    heading.textContent = `Since you were away (${age})`;
-    Object.assign(heading.style, { color: ROW_COLORS.gold, fontWeight: 'bold', flex: '1' });
-
-    const close = document.createElement('button');
-    close.textContent = '✕';
-    close.title = 'I have read this';
-    Object.assign(close.style, {
-        background: 'none',
-        border: 'none',
-        color: 'rgba(232, 236, 245, 0.6)',
-        cursor: 'pointer',
-        fontSize: '12px',
-        padding: '0 2px',
+/**
+ * The whole section, as it goes into the modal.
+ *
+ * The away diff sits above the live briefing for the same reason it used to sit
+ * above it on the card: it is about the gap the modal is already describing, and
+ * the briefing under it is about now.
+ *
+ * @param {Array<Object>} lines - The live briefing lines
+ * @param {{at: number, lines: Array<Object>}|null} diff - The away diff, if any
+ * @returns {HTMLElement} The section
+ */
+function buildSection(lines, diff) {
+    const section = document.createElement('div');
+    section.className = SECTION_CLASS;
+    Object.assign(section.style, {
+        marginTop: '8px',
+        paddingTop: '6px',
+        borderTop: '1px solid rgba(255, 255, 255, 0.15)',
+        fontSize: '13px',
+        lineHeight: '1.35',
+        textAlign: 'left',
     });
-    close.addEventListener('click', (event) => {
-        event.stopPropagation();
-        dismissAwayDiff();
-        briefingPanel.render();
-    });
 
-    header.append(heading, close);
-    card.appendChild(header);
+    const hasDiff = Boolean(diff?.lines?.length);
 
-    for (const line of diff.lines) {
-        const row = drawLine(card, line);
-        // Two instants cannot see a round trip, and the card must not be read as
-        // if they could
-        row.title = `Net change since ${new Date(diff.at).toLocaleString()}. Anything that happened and reversed in between is not shown.`;
+    if (hasDiff) {
+        const age = formatRelativeTime(Math.max(0, Date.now() - diff.at));
+        drawBlock(
+            section,
+            `Toolasha · Since you were away (${age})`,
+            ROW_COLORS.gold,
+            diff.lines,
+            // Two instants cannot see a round trip, and the section must not be
+            // read as if they could
+            `Net change since ${new Date(diff.at).toLocaleString()}. Anything that happened and reversed in between is not shown.`
+        );
+    }
+
+    if (lines.length) {
+        drawBlock(section, hasDiff ? 'Needs you now' : 'Toolasha · Needs you now', ROW_COLORS.accent, lines);
+    }
+
+    return section;
+}
+
+/**
+ * Put the briefing at the bottom of the welcome modal.
+ *
+ * Every way of failing here ends in the modal being left exactly as the game
+ * drew it — the same contract the offline value line is under, and for the same
+ * reason: an addition that can break somebody else's dialog is not worth having.
+ *
+ * Idempotent, because the observer that calls it is not: the game inserts into
+ * the dialog in bursts, and a second pass must find the section already there
+ * and leave.
+ *
+ * @param {HTMLElement} modal - The welcome modal content element
+ * @returns {HTMLElement|null} The section that was added, or null
+ */
+export function renderBriefingSection(modal) {
+    try {
+        if (!modal?.appendChild || !config.getSetting(MASTER_SETTING, true)) return null;
+        // A refresh is not a return, and the game's own reason for opening this
+        // dialog is not an answer to whether this player has already read this
+        if (suppressed) return null;
+        if (modal.querySelector?.(`.${SECTION_CLASS}`)) return null;
+
+        const lines = attempt('the briefing lines', () => buildBriefingLines(collectFacts())) || [];
+        const diff = awayDiff;
+        // Nothing to say is said by saying nothing: "all clear" appended to a
+        // modal the player is about to close is noise, and the old card's own
+        // note only existed because a panel that opened empty looked broken
+        if (lines.length === 0 && !diff?.lines?.length) return null;
+
+        const section = buildSection(lines, diff);
+        modal.appendChild(section);
+        markAwayDiffShown();
+        return section;
+    } catch (error) {
+        console.error('[SessionBriefing] Could not put the briefing in the welcome modal:', error);
+        return null;
     }
 }
 
 /**
- * Fill the panel body.
- * @param {HTMLElement} body - The panel's body
+ * The modal turned up. Fill it now, or remember it until the facts arrive.
+ * @param {HTMLElement} modal - The welcome modal content element
+ * @returns {void}
  */
-function draw(body) {
-    drawAwayDiff(body);
-
-    const lines = buildBriefingLines(collectFacts());
-    if (lines.length === 0) {
-        // Only when there is nothing above it either: "nothing needs you" under
-        // a list of things that changed reads as a contradiction
-        if (!awayDiff) body.appendChild(panelNote('Nothing needs you right now.'));
+function onModalAppeared(modal) {
+    if (factsReady) {
+        pendingModal = null;
+        renderBriefingSection(modal);
         return;
     }
-
-    const card = panelCard(body, '', ROW_COLORS.accent);
-    for (const line of lines) drawLine(card, line);
+    pendingModal = modal;
 }
 
-export const briefingPanel = createPanel({
-    id: PANEL_ID,
-    title: 'Session Briefing',
-    size: { width: 340, height: 260 },
-    accent: '#9ec4ff',
-    refreshMs: REFRESH_MS,
-    draw,
-    // This card has its own arrival rule below (`maybeShowBriefing`, gated by
-    // the quick-refresh window in `initialize()`) and must appear only through
-    // it or by hand. `simple-panel.js`'s ordinary reopen-on-load would otherwise
-    // bring a left-open card back on every plain page refresh, whatever that
-    // gate decided.
-    restoreOpen: false,
-});
+/**
+ * The facts arrived. Fill the modal if one is waiting and still open.
+ * @returns {void}
+ */
+function renderIntoPendingModal() {
+    const modal = pendingModal;
+    pendingModal = null;
+    if (!modal) return;
+    // The player may have closed it during the awaits; a detached modal is not
+    // somewhere to write, and dropping the reference is what releases it
+    if (modal.isConnected === false) return;
+    renderBriefingSection(modal);
+}
 
-// Closing the card is the player saying they have read it, and the close button
-// belongs to the shell rather than to us — so the meaning is attached by
-// wrapping the returned hide, which is the same function the ✕ calls.
-const shellHide = briefingPanel.hide;
-briefingPanel.hide = (options) => {
-    const characterId = currentCharacterId();
-    if (characterId) dismissed.add(characterId);
-    // Closing the whole card is also having read the away diff on top of it —
-    // otherwise it would come back on the next thing that opens this panel
-    dismissAwayDiff();
-    return shellHide(options);
-};
+/**
+ * Watch for the welcome modal — once per arrival.
+ *
+ * Installed before `initialize()`'s first await, so a modal the game draws
+ * during those awaits is caught rather than missed.
+ *
+ * @returns {void}
+ */
+function watchForModal() {
+    if (unwatchModal) return;
+    unwatchModal = onWelcomeBackModal('SessionBriefing', onModalAppeared);
+}
+
+/**
+ * Stop watching, and forget what was being watched for.
+ * @returns {void}
+ */
+function stopWatchingForModal() {
+    if (unwatchModal) {
+        unwatchModal();
+        unwatchModal = null;
+    }
+    pendingModal = null;
+}
 
 /**
  * How many things want attention, for the overlay tile.
@@ -743,6 +868,11 @@ function briefingCount() {
     }
 }
 
+// The tile survives the panel it used to open. It answers a different question —
+// "is anything waiting for me right now" — which is true at any moment, not only
+// on arrival, and is the only place the briefing's subjects are readable once
+// the welcome modal has been closed. It has no `onOpen`: there is no panel to
+// open any more, and a click target that does nothing is worse than none.
 registerRow({
     key: 'sessionBriefing',
     name: 'Briefing',
@@ -756,43 +886,22 @@ registerRow({
         line.style.color = count === 0 ? ROW_COLORS.good : ROW_COLORS.gold;
         container.appendChild(line);
     },
-    onOpen: () => briefingPanel.toggle(),
 });
 
 /**
- * Show the card if this arrival warrants one.
- *
- * Not shown when the setting is off, when this character's card has already
- * been read this session, or when there is nothing to say — the last being the
- * case that decides whether the feature is welcome, since a card that appears
- * on every login to say "all fine" is a card that gets switched off.
- *
- * @returns {boolean} Whether it was shown
- */
-export function maybeShowBriefing() {
-    if (!config.getSetting(MASTER_SETTING, true)) return false;
-
-    const characterId = currentCharacterId();
-    if (characterId && dismissed.has(characterId)) return false;
-    // A diff worth showing is reason enough on its own: "nothing needs you now,
-    // but the ale ran dry at 14:20" is exactly the arrival this feature exists
-    // for, and the live briefing has no line for it
-    if (briefingCount() === 0 && !awayDiff) return false;
-
-    briefingPanel.show({ remember: false });
-    return true;
-}
-
-/**
- * Forget every dismissal and the cached listing comparison.
+ * Forget this arrival's state.
  *
  * For tests; the live script has no reason to, since a page load is already a
  * fresh session.
+ * @returns {void}
  */
 export function _resetBriefingState() {
-    dismissed.clear();
+    stopWatchingForModal();
     listingDelta = null;
     awayDiff = null;
+    awayDiffMarked = false;
+    factsReady = false;
+    suppressed = false;
 }
 
 export default {
@@ -802,13 +911,17 @@ export default {
         const characterId = currentCharacterId();
         startPresenceHeartbeat();
 
+        // Before the awaits below, so a welcome modal that arrives while the
+        // facts are still being gathered is held rather than missed. Nothing is
+        // drawn until `factsReady`
+        watchForModal();
+
         // Asked first, before anything else below moves the clock forward with
         // its own awaits: a page that was alive for this very character inside
         // QUICK_REFRESH_WINDOW_MS did not go anywhere, and only a genuine return
-        // earns the automatic card. This gates showing only — the facts below
-        // are still collected and the away diff still computed, exactly as they
-        // would be on a real arrival, so a manual open (or the overlay tile)
-        // during a skipped refresh still reads the truth.
+        // earns a briefing. This gates drawing only — the facts below are still
+        // collected and the away diff still computed, exactly as they would be
+        // on a real arrival, so the overlay tile still reads the truth.
         const isQuickRefresh = await wasAliveRecently(characterId);
 
         await loadListingDelta(characterId);
@@ -820,6 +933,7 @@ export default {
             characterId,
             attempt('the live facts', () => collectFacts())
         );
+        awayDiffMarked = false;
 
         // This arrival's own stamp, so a switch back within the window (or the
         // next reload) finds this instant rather than whatever the last tick
@@ -829,21 +943,30 @@ export default {
         // Re-checked rather than trusted from the read above: a second switch
         // landing during the awaits between them would make a quick-refresh
         // verdict for the character that arrived first meaningless for whoever
-        // is current now, and the safe default is to show rather than guess
-        if (isQuickRefresh && characterId === currentCharacterId()) return;
-        maybeShowBriefing();
+        // is current now, and the safe default is to draw rather than guess
+        suppressed = isQuickRefresh && characterId === currentCharacterId();
+
+        factsReady = true;
+        renderIntoPendingModal();
     },
     cleanup: () => {
-        // Hidden through the shell rather than through the wrapper above: a
-        // character switch is not somebody dismissing anything, and the next
-        // character is owed its own briefing
-        shellHide({ remember: false });
-        // Dropped rather than dismissed: the departing character's diff belongs
-        // to the departing character, and marking it read here would silence a
-        // card nobody saw. The mark it would have written is not needed either —
-        // the snapshot this switch is about to write supersedes the one the diff
-        // was computed from
+        // The watcher belongs to one arrival. A character switch ends it, and
+        // the next initialize() installs a fresh one — otherwise the departing
+        // character's handler would still be live to write the departing
+        // character's facts into a modal that belongs to whoever arrives
+        stopWatchingForModal();
+        // Anything already in a modal on screen goes with it: a section about
+        // the character you just left is worse than none
+        document.querySelectorAll(`.${SECTION_CLASS}`).forEach((section) => section.remove());
+        factsReady = false;
+        suppressed = false;
+        // Dropped rather than marked read: the departing character's diff
+        // belongs to the departing character, and marking it read here would
+        // silence a card nobody saw. The mark it would have written is not
+        // needed either — the snapshot this switch is about to write supersedes
+        // the one the diff was computed from
         awayDiff = null;
+        awayDiffMarked = false;
         // The overlay panel re-initializes and redraws well before this
         // feature's own initialize() reaches loadListingDelta() — it is far
         // earlier in the registry and not `concurrent`, so it is fully
