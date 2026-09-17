@@ -19,6 +19,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Settings survive a browser throwing your data away
+
+- Settings are mirrored outside the page, so a browser that discards the site's whole database no longer costs you every character's setup.
+- If a character's settings are missing and a mirrored copy exists, Toolasha offers to restore it instead of starting blank.
+- Toolasha asks the browser to keep its data rather than treat it as disposable.
+
 ### Marketplace tabs stay out of each other's way
 
 - A feature clearing its own marketplace tabs no longer clears every other feature's, and "× All" still clears everything.
