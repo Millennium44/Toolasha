@@ -2729,6 +2729,33 @@ class ActionTimeDisplay {
     }
 
     /**
+     * Whether a queue row's label names this particular queued action.
+     *
+     * A tiered combat zone's row reads "Gobo Planet (T3)" while the action is named
+     * "Gobo Planet" — the tier is `difficultyTier` on the *queued action*, never part of
+     * `actionDetailMap[...].name`. Comparing the row text to the name verbatim therefore
+     * failed for every tiered zone, and the caller's fallback (build an item hrid out of
+     * the row text and look for it in the outputs) found nothing for "/items/gobo_planet_(t3)"
+     * — so the row rendered "[Unknown action]" while untiered zones matched fine.
+     *
+     * The annotation is *rebuilt* from the candidate action rather than stripped off the
+     * text with a pattern. Stripping would be a guess about the rendering (the tier could
+     * be a sibling element the row's `textContent` merely concatenates) and, worse, a
+     * trailing-parenthesis strip can eat a genuine part of a name. Rebuilding cannot: a
+     * row only matches when it reads exactly as this action at exactly this tier.
+     *
+     * @param {string} labelFromDiv - The row's action-name text, `#N` already removed
+     * @param {Object} actionDetails - The candidate's `actionDetailMap` entry
+     * @param {Object} actionObj - The candidate queued action, for its `difficultyTier`
+     * @returns {boolean}
+     */
+    queueRowNamesAction(labelFromDiv, actionDetails, actionObj) {
+        if (actionDetails?.name === labelFromDiv) return true;
+        const tier = Number(actionObj?.difficultyTier) || 0;
+        return tier > 0 && labelFromDiv === `${actionDetails?.name} (T${tier})`;
+    }
+
+    /**
      * Match an action from cache by reading its name from a queue div
      * @param {HTMLElement} actionDiv - The queue action div element
      * @param {Array} cachedActions - Array of actions from dataManager
@@ -2802,7 +2829,7 @@ class ActionTimeDisplay {
                 return false;
             }
 
-            if (actionDetails.name !== actionNameFromDiv) {
+            if (!this.queueRowNamesAction(actionNameFromDiv, actionDetails, a)) {
                 const itemHridFromDiv = itemNameFromDiv
                     ? `/items/${itemNameFromDiv.toLowerCase().replace(/\s+/g, '_')}`
                     : `/items/${actionNameFromDiv.toLowerCase().replace(/\s+/g, '_')}`;
