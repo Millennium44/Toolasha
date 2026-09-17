@@ -95,6 +95,7 @@ import {
     shrineName,
 } from './upgrade-advisor.js';
 import { applyMaxTierFood } from './food-optimizer.js';
+import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import storage from '../../core/storage.js';
 
@@ -4146,6 +4147,21 @@ class CombatSimUI {
                 this._setStatus('No results yet. Run a simulation first.');
             }
         }
+    }
+
+    /**
+     * Simulate one zone in one loadout, headlessly, and store its rate.
+     *
+     * The published entry point for the Queued Actions panel's per-row button,
+     * which lives in another bundle. The panel is not opened and its state is
+     * not touched; see `zone-rate-sim.js`.
+     *
+     * @param {Object} request - `{zoneHrid, difficultyTier, loadoutId, hours}`
+     * @param {Object} [options] - `{onProgress}`
+     * @returns {Promise<{ok: boolean, entry?: Object, error?: string}>} Never throws
+     */
+    simulateZoneRate(request, options = {}) {
+        return simulateZoneRate(request, { onProgress: options.onProgress });
     }
 
     /**

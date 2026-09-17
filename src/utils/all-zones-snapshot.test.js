@@ -1,12 +1,32 @@
 import { describe, test, expect, vi } from 'vitest';
 
-vi.mock('../core/storage.js', () => ({ default: { setJSON: async () => true, getJSON: async () => null } }));
+const memory = vi.hoisted(() => new Map());
+
+vi.mock('../core/storage.js', () => ({
+    default: {
+        setJSON: async (key, value) => {
+            memory.set(key, structuredClone(value));
+            return true;
+        },
+        getJSON: async (key, _store, fallback) => (memory.has(key) ? structuredClone(memory.get(key)) : fallback),
+    },
+}));
 vi.mock('./character-key.js', () => ({
     characterKey: (key) => `${key}_char1`,
     readScoped: async () => null,
 }));
 
-import { bestSoloZone, zoneFromSnapshot, snapshotLoadout } from './all-zones-snapshot.js';
+import {
+    bestSoloZone,
+    zoneFromSnapshot,
+    snapshotLoadout,
+    zoneSimRateKey,
+    zoneSimRateFor,
+    loadoutSignature,
+    saveZoneSimRate,
+    loadZoneSimRates,
+    ZONE_SIM_RATES_LIMIT,
+} from './all-zones-snapshot.js';
 
 const snapshot = {
     savedAt: 1_754_000_000_000,
@@ -140,5 +160,98 @@ describe('snapshotLoadout', () => {
         expect(zoneFromSnapshot({ zones: [] }, '/actions/combat/rat', 1)).toBeNull();
         expect(zoneFromSnapshot(snapshot, '/actions/combat/nowhere', 0)).toBeNull();
         expect(zoneFromSnapshot(snapshot, null, 0)).toBeNull();
+    });
+});
+
+describe('single-zone rates', () => {
+    const entry = (overrides = {}) => ({
+        zoneHrid: '/actions/combat/fly',
+        difficultyTier: 2,
+        loadoutId: '41704',
+        loadoutName: 'Combat',
+        signature: 'sig',
+        encountersPerHour: 300,
+        profitPerHour: 5,
+        xpPerHour: 7,
+        hours: 24,
+        savedAt: 100,
+        ...overrides,
+    });
+    const FLY = '/actions/combat/fly';
+
+    test('are filed by zone, tier and loadout id', () => {
+        expect(zoneSimRateKey(FLY, 2, 41704)).toBe('/actions/combat/fly|2|41704');
+        expect(zoneSimRateKey(FLY)).toBe('/actions/combat/fly|0|0');
+    });
+
+    test('are found only for the same zone, tier and loadout', () => {
+        const rates = { [zoneSimRateKey(FLY, 2, 41704)]: entry() };
+        expect(zoneSimRateFor(rates, FLY, 2, 41704)).toMatchObject({
+            encountersPerHour: 300,
+            loadoutId: '41704',
+            loadoutName: 'Combat',
+            hours: 24,
+            savedAt: 100,
+        });
+        expect(zoneSimRateFor(rates, FLY, 2, 41705)).toBeNull();
+        expect(zoneSimRateFor(rates, FLY, 1, 41704)).toBeNull();
+        expect(zoneSimRateFor(null, FLY, 2, 41704)).toBeNull();
+    });
+
+    test('a rate of zero or none is no answer', () => {
+        const key = zoneSimRateKey(FLY, 2, 41704);
+        expect(zoneSimRateFor({ [key]: entry({ encountersPerHour: 0 }) }, FLY, 2, 41704)).toBeNull();
+        expect(zoneSimRateFor({ [key]: entry({ encountersPerHour: null }) }, FLY, 2, 41704)).toBeNull();
+    });
+
+    test('a loadout signature changes with the gear, not with order or levels', () => {
+        const base = {
+            equipment: [
+                { itemHrid: '/items/a', enhancementLevel: 1 },
+                { itemHrid: '/items/b', enhancementLevel: 2 },
+            ],
+            abilities: [{ abilityHrid: '/abilities/x' }],
+            food: [{ itemHrid: '/items/f' }, { itemHrid: '' }],
+            drinks: [],
+        };
+        const reordered = {
+            ...base,
+            equipment: [...base.equipment].reverse().map((e) => ({ ...e, enhancementLevel: 9 })),
+        };
+        const swapped = { ...base, equipment: [{ itemHrid: '/items/a' }, { itemHrid: '/items/c' }] };
+        expect(loadoutSignature(reordered)).toBe(loadoutSignature(base));
+        expect(loadoutSignature(swapped)).not.toBe(loadoutSignature(base));
+        expect(loadoutSignature(null)).toBeNull();
+    });
+
+    test('saving one writes its own key and leaves the all-zones snapshot untouched', async () => {
+        memory.clear();
+        const allZones = structuredClone(snapshot);
+        memory.set('allZonesSnapshot_char1', allZones);
+
+        const saved = await saveZoneSimRate('zoneSimRates_char1', entry({ loadoutName: 'Tank', loadoutId: '41705' }));
+
+        expect(saved).toBe(true);
+        expect(memory.get('allZonesSnapshot_char1')).toBe(allZones);
+        expect(allZones).toEqual(snapshot);
+        expect(Object.keys(await loadZoneSimRates())).toEqual(['/actions/combat/fly|2|41705']);
+    });
+
+    test('saving replaces the same key, and drops the oldest past the limit', async () => {
+        memory.clear();
+        for (let i = 0; i < ZONE_SIM_RATES_LIMIT + 5; i++) {
+            await saveZoneSimRate('zoneSimRates_char1', entry({ loadoutId: String(i), savedAt: i }));
+        }
+        await saveZoneSimRate('zoneSimRates_char1', entry({ loadoutId: '104', savedAt: 999, encountersPerHour: 1 }));
+        const rates = await loadZoneSimRates();
+        expect(Object.keys(rates)).toHaveLength(ZONE_SIM_RATES_LIMIT);
+        expect(rates['/actions/combat/fly|2|0']).toBeUndefined();
+        expect(rates['/actions/combat/fly|2|104'].encountersPerHour).toBe(1);
+    });
+
+    test('saving without a key stores nothing', async () => {
+        memory.clear();
+        expect(await saveZoneSimRate(null, entry())).toBe(false);
+        expect(memory.size).toBe(0);
     });
 });

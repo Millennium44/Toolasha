@@ -174,3 +174,144 @@ export function bestSoloZone(snapshot, { isDungeonZone } = {}) {
         fingerprint: snapshot.fingerprint ?? null,
     };
 }
+
+// ---------------------------------------------------------------------------
+// Single-zone rates
+//
+// A zone simulated on its own, in one particular loadout, from a queued fight's
+// "sim 24h" button. Kept apart from the all-zones snapshot on purpose: that
+// snapshot is one run in one set of gear, and its `loadout` and `fingerprint`
+// describe every row in it. Writing a zone simulated in other gear into it
+// would put two runs under one label, and every reader of the snapshot — the
+// ranked list, the planner, the dungeon board — would quote the mixed figure
+// as the run it says it is. Merging only when the gear matched was rejected
+// too: the snapshot's gear evidence is a loadout *name* and an opaque
+// fingerprint made inside the simulator, so "matches" cannot be decided
+// honestly from here, and a merged row would still carry the other run's age.
+//
+// So: one small map per character, keyed by zone, tier and the server's
+// loadout id (the id every queued action carries, so a row finds its own rate
+// without comparing names). Each entry states its own age, hours and gear.
+// ---------------------------------------------------------------------------
+
+/** Where single-zone rates are kept, per character, in the same store as the snapshot */
+export const ZONE_SIM_RATES_KEY = 'zoneSimRates';
+
+/** How many single-zone rates are kept; the oldest go first */
+export const ZONE_SIM_RATES_LIMIT = 100;
+
+/**
+ * The key one zone, tier and loadout is filed under.
+ * @param {string} zoneHrid - e.g. `/actions/combat/fly`
+ * @param {number} [difficultyTier=0] - Its tier
+ * @param {number|string} [loadoutId=0] - The server's loadout id; 0 for "no loadout" (worn gear)
+ * @returns {string} The key
+ */
+export function zoneSimRateKey(zoneHrid, difficultyTier = 0, loadoutId = 0) {
+    return `${zoneHrid}|${Number(difficultyTier) || 0}|${String(loadoutId || 0)}`;
+}
+
+/**
+ * A comparable signature of what a stored loadout puts on and uses.
+ *
+ * Taken when a single-zone run starts and again when its rate is read, so a
+ * loadout edited in between is caught: same id, different gear, and the rate
+ * says so. Item and ability hrids only, sorted — enhancement levels are left
+ * out because a "highest owned" loadout's stored level is a stale reading, not
+ * what it wears.
+ *
+ * @param {Object|null} snapshot - A loadout snapshot (`equipment`, `abilities`, `food`, `drinks`)
+ * @returns {string|null} The signature, or null with no snapshot
+ */
+export function loadoutSignature(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return null;
+    const hrids = (list, field) =>
+        (Array.isArray(list) ? list : [])
+            .map((entry) => entry?.[field] || '')
+            .filter(Boolean)
+            .sort()
+            .join(',');
+    return [
+        hrids(snapshot.equipment, 'itemHrid'),
+        hrids(snapshot.abilities, 'abilityHrid'),
+        hrids(snapshot.food, 'itemHrid'),
+        hrids(snapshot.drinks, 'itemHrid'),
+    ].join('|');
+}
+
+/**
+ * Every single-zone rate stored for the character now logged in.
+ * @returns {Promise<Object>} `{[key]: entry}`, empty when there are none
+ */
+export async function loadZoneSimRates() {
+    try {
+        const saved = await storage.getJSON(characterKey(ZONE_SIM_RATES_KEY), ALL_ZONES_SNAPSHOT_STORE, null);
+        return saved && typeof saved.rates === 'object' && saved.rates !== null ? saved.rates : {};
+    } catch (error) {
+        console.error('[AllZonesSnapshot] Reading single-zone rates failed:', error);
+        return {};
+    }
+}
+
+/**
+ * Store one single-zone rate, replacing any for the same zone, tier and loadout.
+ *
+ * The storage key is passed in, resolved when the run *started*: a run takes
+ * a while, and a character switch inside it must not file one character's rate
+ * under another's key.
+ *
+ * @param {string} storageKey - `characterKey(ZONE_SIM_RATES_KEY)` captured before the run
+ * @param {Object} entry - `{zoneHrid, difficultyTier, loadoutId, encountersPerHour, savedAt, ...}`
+ * @returns {Promise<boolean>} Whether it was stored
+ */
+export async function saveZoneSimRate(storageKey, entry) {
+    try {
+        if (!storageKey || !entry?.zoneHrid) return false;
+        const saved = await storage.getJSON(storageKey, ALL_ZONES_SNAPSHOT_STORE, null);
+        const rates = { ...(saved && typeof saved.rates === 'object' && saved.rates !== null ? saved.rates : {}) };
+        rates[zoneSimRateKey(entry.zoneHrid, entry.difficultyTier, entry.loadoutId)] = entry;
+
+        const keys = Object.keys(rates);
+        if (keys.length > ZONE_SIM_RATES_LIMIT) {
+            keys.sort((a, b) => (rates[a]?.savedAt || 0) - (rates[b]?.savedAt || 0));
+            for (const key of keys.slice(0, keys.length - ZONE_SIM_RATES_LIMIT)) delete rates[key];
+        }
+        return await storage.setJSON(storageKey, { version: 1, rates }, ALL_ZONES_SNAPSHOT_STORE, true);
+    } catch (error) {
+        console.error('[AllZonesSnapshot] Saving a single-zone rate failed:', error);
+        return false;
+    }
+}
+
+/**
+ * The stored single-zone rate for one zone, tier and loadout, if it is usable.
+ *
+ * Same rule as {@link zoneFromSnapshot}: a missing or non-positive rate is no
+ * answer, never a rate of zero.
+ *
+ * @param {Object|null} rates - From {@link loadZoneSimRates}
+ * @param {string} zoneHrid - The zone
+ * @param {number} [difficultyTier=0] - Its tier
+ * @param {number|string} [loadoutId=0] - The loadout the fight uses
+ * @returns {{zoneHrid: string, difficultyTier: number, loadoutId: string, loadoutName: string|null,
+ *   signature: string|null, encountersPerHour: number, profitPerHour: number|null,
+ *   xpPerHour: number|null, hours: number|null, savedAt: number|null}|null}
+ */
+export function zoneSimRateFor(rates, zoneHrid, difficultyTier = 0, loadoutId = 0) {
+    if (!rates || !zoneHrid) return null;
+    const entry = rates[zoneSimRateKey(zoneHrid, difficultyTier, loadoutId)];
+    if (!entry || !(Number.isFinite(entry.encountersPerHour) && entry.encountersPerHour > 0)) return null;
+    const finite = (value) => (Number.isFinite(value) ? value : null);
+    return {
+        zoneHrid: entry.zoneHrid,
+        difficultyTier: Number(entry.difficultyTier) || 0,
+        loadoutId: String(entry.loadoutId || 0),
+        loadoutName: entry.loadoutName || null,
+        signature: entry.signature ?? null,
+        encountersPerHour: entry.encountersPerHour,
+        profitPerHour: finite(entry.profitPerHour),
+        xpPerHour: finite(entry.xpPerHour),
+        hours: finite(entry.hours),
+        savedAt: finite(entry.savedAt),
+    };
+}

@@ -55,9 +55,17 @@ import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js'
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
-import { ALL_ZONES_SNAPSHOT_KEY, loadAllZonesSnapshot, zoneFromSnapshot } from '../../utils/all-zones-snapshot.js';
+import {
+    ALL_ZONES_SNAPSHOT_KEY,
+    loadAllZonesSnapshot,
+    loadZoneSimRates,
+    loadoutSignature,
+    zoneFromSnapshot,
+    zoneSimRateFor,
+    zoneSimRateKey,
+} from '../../utils/all-zones-snapshot.js';
 import { characterKey } from '../../utils/character-key.js';
-import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { loadoutSnapshot, combatSimUI } from '../../utils/bundle-bridge.js';
 
 /**
  * Format a completion Date as a clock string, respecting user's time/date format settings.
@@ -190,6 +198,25 @@ const COMBAT_SNAPSHOT_REFRESH_MS = 30 * 1000;
 /** What a counted combat row reads when there is no rate to time it with */
 const COMBAT_UNKNOWN_TEXT = '[? · no sim rate]';
 
+/** How long a row's "sim 24h" button simulates its zone for */
+const ZONE_SIM_HOURS = 24;
+
+/** The class of the button line under an eligible combat row, cleared with the rest on redraw */
+const ZONE_SIM_CLASS = 'mwi-queue-zone-sim';
+
+/**
+ * A cheap signature of a set of single-zone rates, so a re-read can tell whether anything changed.
+ * @param {Object|null|undefined} rates - `{[key]: entry}`
+ * @returns {string} The signature
+ */
+function zoneSimRatesStamp(rates) {
+    if (!rates) return '';
+    return Object.keys(rates)
+        .sort()
+        .map((key) => `${key}@${rates[key]?.savedAt ?? ''}`)
+        .join(';');
+}
+
 /**
  * How long ago, said the way a sentence says it.
  *
@@ -276,12 +303,22 @@ function compareCombatGear(runLoadout, rowLoadout) {
  * @param {Object} input.actionObj - The queued action
  * @param {Object} input.actionDetails - Its action details
  * @param {Object|null} input.snapshot - From `loadAllZonesSnapshot`
- * @param {{known: boolean, name: string|null}} input.rowLoadout - The loadout the row fights in
+ * @param {{known: boolean, name: string|null, signature?: string|null}} input.rowLoadout - The
+ *   loadout the row fights in
+ * @param {Object|null} [input.zoneRate] - From `zoneSimRateFor`, for this row's zone, tier and
+ *   loadout id: a single-zone run from the row's "sim 24h" button, preferred when present
  * @param {number} [input.now=Date.now()] - The clock
  * @returns {{kind: 'estimate'|'unknown'|'infinite', seconds: number|null, flags: Array<string>,
- *   text: string, title: string}|null} Null for a row that is not combat
+ *   text: string, title: string, source?: string}|null} Null for a row that is not combat
  */
-export function estimateCombatQueueRow({ actionObj, actionDetails, snapshot, rowLoadout, now = Date.now() }) {
+export function estimateCombatQueueRow({
+    actionObj,
+    actionDetails,
+    snapshot,
+    rowLoadout,
+    zoneRate = null,
+    now = Date.now(),
+}) {
     const isCombat =
         actionDetails?.type === '/action_types/combat' || Boolean(actionObj?.actionHrid?.includes('/combat/'));
     if (!isCombat) return null;
@@ -301,50 +338,135 @@ export function estimateCombatQueueRow({ actionObj, actionDetails, snapshot, row
     if (actionDetails?.combatZoneInfo?.isDungeon) {
         return unknown("a dungeon's count is runs, and the all-zones sim rates dungeons in waves.");
     }
-    if (!snapshot) {
-        return unknown('run an all-zones sim in the Combat Simulator to time counted fights.');
-    }
 
     const tier = Number(actionObj.difficultyTier) || 0;
-    const zone = zoneFromSnapshot(snapshot, actionObj.actionHrid, tier);
     const where = `${actionDetails?.name || actionObj.actionHrid}${tier > 0 ? ` T${tier}` : ''}`;
-    if (!zone) {
-        return unknown(`your all-zones run has no result for ${where}.`);
-    }
-    if (zone.encountersPerHour === null) {
+    const safeRowLoadout = rowLoadout || { known: false, name: null };
+    const zone = snapshot ? zoneFromSnapshot(snapshot, actionObj.actionHrid, tier) : null;
+    const allZonesUsable = Boolean(zone && zone.encountersPerHour !== null);
+    const allZonesGear = allZonesUsable ? compareCombatGear(zone.loadout, safeRowLoadout) : null;
+
+    // Which reading times the row. A single-zone rate was simulated in this row's own loadout (it
+    // is looked up by the loadout id the row carries), so it wins — unless the all-zones run was
+    // in the same gear *and* is newer, in which case the fresher reading of the same gear stands.
+    const useZoneRate =
+        Boolean(zoneRate) &&
+        !(allZonesUsable && allZonesGear.flag === null && (zone.savedAt ?? 0) > (zoneRate.savedAt ?? 0));
+
+    if (!useZoneRate && !allZonesUsable) {
+        const button = ', or use this row’s “sim 24h” button.';
+        if (!snapshot) {
+            return unknown(`run an all-zones sim in the Combat Simulator to time counted fights${button}`);
+        }
+        if (!zone) {
+            return unknown(`your all-zones run has no result for ${where}${button}`);
+        }
         return unknown(
-            `your all-zones run for ${where} has no wave rate (it predates one, or cleared no waves) — re-run it.`
+            `your all-zones run for ${where} has no wave rate (it predates one, or cleared no waves) — re-run it${button}`
         );
     }
 
+    const reading = useZoneRate
+        ? describeZoneSimRate(zoneRate, safeRowLoadout, where, now)
+        : describeAllZonesRate(zone, allZonesGear, where, now);
+
     const remaining = Math.max(0, (Number(actionObj.maxCount) || 0) - (Number(actionObj.currentCount) || 0));
-    const seconds = (remaining / zone.encountersPerHour) * 3600;
+    const seconds = (remaining / reading.rate) * 3600;
 
-    const ageMs = Number.isFinite(zone.savedAt) ? Math.max(0, now - zone.savedAt) : null;
-    const age = ageMs === null ? 'at an unknown time' : simAgeLabel(ageMs);
-    const stale = ageMs === null || ageMs > COMBAT_SIM_STALE_AFTER_MS;
-    const gear = compareCombatGear(zone.loadout, rowLoadout || { known: false, name: null });
-
-    const flags = [];
-    if (stale) flags.push('stale');
-    if (gear.flag) flags.push(gear.flag);
-
-    const rate = formatWithSeparator(Math.round(zone.encountersPerHour));
     const title = [
-        `Estimated, not measured: ${formatWithSeparator(remaining)} waves left at ${rate} waves/h, ` +
-            `the rate simulated for ${where} in your all-zones run ${age}.`,
-        stale ? 'That run is over a week old.' : null,
-        gear.sentence,
-    ]
-        .filter(Boolean)
-        .join(' ');
+        `Estimated, not measured: ${formatWithSeparator(remaining)} waves left at ` +
+            `${formatWithSeparator(Math.round(reading.rate))} waves/h, ${reading.source}.`,
+        ...reading.sentences,
+    ].join(' ');
 
     return {
         kind: 'estimate',
         seconds,
-        flags,
-        text: `[~${timeReadable(seconds)} · ${['sim', ...flags].join(', ')}]`,
+        flags: reading.flags,
+        text: `[~${timeReadable(seconds)} · ${['sim', ...reading.flags].join(', ')}]`,
         title,
+        source: useZoneRate ? 'zone' : 'allZones',
+    };
+}
+
+/**
+ * Age wording and the stale flag for a stored reading.
+ * @param {number|null} savedAt - When the run finished
+ * @param {number} now - The clock
+ * @returns {{age: string, stale: boolean}}
+ */
+function simReadingAge(savedAt, now) {
+    const ageMs = Number.isFinite(savedAt) ? Math.max(0, now - savedAt) : null;
+    return {
+        age: ageMs === null ? 'at an unknown time' : simAgeLabel(ageMs),
+        stale: ageMs === null || ageMs > COMBAT_SIM_STALE_AFTER_MS,
+    };
+}
+
+/**
+ * What an all-zones row says about itself.
+ * @param {Object} zone - From `zoneFromSnapshot`, with a rate
+ * @param {{flag: string|null, sentence: string}} gear - From `compareCombatGear`
+ * @param {string} where - The zone and tier, as a reader says them
+ * @param {number} now - The clock
+ * @returns {{rate: number, source: string, flags: Array<string>, sentences: Array<string>}}
+ */
+function describeAllZonesRate(zone, gear, where, now) {
+    const { age, stale } = simReadingAge(zone.savedAt, now);
+    const flags = [];
+    if (stale) flags.push('stale');
+    if (gear.flag) flags.push(gear.flag);
+    return {
+        rate: zone.encountersPerHour,
+        source: `the rate simulated for ${where} in your all-zones run ${age}`,
+        flags,
+        sentences: [stale ? 'That run is over a week old.' : null, gear.sentence].filter(Boolean),
+    };
+}
+
+/**
+ * What a single-zone rate (from a row's "sim 24h" button) says about itself.
+ *
+ * It was simulated in the loadout with this row's id, so there is no name to compare; what can
+ * still be wrong is that the loadout was edited after the run, which the signature catches.
+ *
+ * @param {Object} zoneRate - From `zoneSimRateFor`
+ * @param {{known: boolean, name: string|null, signature?: string|null}} rowLoadout - The row's loadout now
+ * @param {string} where - The zone and tier, as a reader says them
+ * @param {number} now - The clock
+ * @returns {{rate: number, source: string, flags: Array<string>, sentences: Array<string>}}
+ */
+export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now()) {
+    const { age, stale } = simReadingAge(zoneRate.savedAt, now);
+    const hours = Number.isFinite(zoneRate.hours) ? `${formatWithSeparator(Math.round(zoneRate.hours))}h` : 'a';
+    const flags = [];
+    if (stale) flags.push('stale');
+
+    let gearSentence;
+    if (zoneRate.loadoutId === '0') {
+        gearSentence =
+            'Simulated in the gear worn when the run started, since this action uses no loadout — ' +
+            'if you have changed gear since, run it again.';
+    } else {
+        const label = `your ${zoneRate.loadoutName || rowLoadout?.name || 'saved'} loadout`;
+        const changed =
+            zoneRate.signature !== null &&
+            rowLoadout?.signature !== null &&
+            rowLoadout?.signature !== undefined &&
+            zoneRate.signature !== rowLoadout.signature;
+        if (changed) {
+            flags.push('gear changed');
+            gearSentence = `Simulated in ${label}, which has been edited since — run it again before trusting it.`;
+        } else {
+            gearSentence = `Simulated in ${label}, the loadout this action uses (matched by loadout id).`;
+        }
+    }
+
+    return {
+        rate: zoneRate.encountersPerHour,
+        source: `from a ${hours} solo simulation of ${where} ${age}`,
+        flags,
+        sentences: [stale ? 'That run is over a week old.' : null, gearSentence].filter(Boolean),
     };
 }
 
@@ -373,11 +495,49 @@ class ActionTimeDisplay {
         this._runSoFarRedrawTimer = null;
         this._runSoFarRedrawPending = false;
         this._unsubscribeItemFlowChange = null;
-        // The last all-zones snapshot read for combat row times: {key, snapshot, fetchedAt}
+        // The last all-zones snapshot and single-zone rates read for combat row times:
+        // {key, snapshot, rates, fetchedAt}
         this._combatSnapshotCache = null;
         this._combatSnapshotLoading = null;
         // The edit menu last drawn, so a snapshot arriving after it can redraw it
         this._lastQueueMenu = null;
+        // Single-zone runs started from a row's button, by zoneSimRateKey: {percent, ownerKey}
+        this._zoneSimRuns = new Map();
+        // The last failed outcome of a row's button, by zoneSimRateKey: {message, ownerKey}
+        this._zoneSimErrors = new Map();
+    }
+
+    /**
+     * The single-zone rates for the character now logged in, as last read.
+     *
+     * Read alongside the snapshot, into the same cache and under the same rule: nothing is
+     * answered for a character until a read for that character has landed.
+     *
+     * @returns {Object|null} `{[key]: entry}`, or null when none has been read for this character
+     */
+    getZoneSimRates() {
+        // Starts or refreshes the shared read, exactly as a snapshot lookup does
+        this.getCombatSnapshot();
+        const cache = this._combatSnapshotCache;
+        try {
+            return cache?.key === characterKey(ALL_ZONES_SNAPSHOT_KEY) ? cache.rates || null : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * The single-zone rate stored for a queued fight's zone, tier and loadout id.
+     * @param {Object} actionObj - The queued action
+     * @returns {Object|null} From `zoneSimRateFor`
+     */
+    rowZoneSimRate(actionObj) {
+        return zoneSimRateFor(
+            this.getZoneSimRates(),
+            actionObj?.actionHrid,
+            Number(actionObj?.difficultyTier) || 0,
+            actionObj?.characterLoadoutID || 0
+        );
     }
 
     /**
@@ -422,13 +582,15 @@ class ActionTimeDisplay {
         const run = async () => {
             try {
                 const key = characterKey(ALL_ZONES_SNAPSHOT_KEY);
-                const snapshot = await loadAllZonesSnapshot();
+                const [snapshot, rates] = await Promise.all([loadAllZonesSnapshot(), loadZoneSimRates()]);
                 // A character switch inside the read: this answer is for someone else
                 if (characterKey(ALL_ZONES_SNAPSHOT_KEY) !== key) return;
                 const previous = this._combatSnapshotCache;
                 const changed =
-                    previous?.key !== key || (previous.snapshot?.savedAt ?? null) !== (snapshot?.savedAt ?? null);
-                this._combatSnapshotCache = { key, snapshot, fetchedAt: Date.now() };
+                    previous?.key !== key ||
+                    (previous.snapshot?.savedAt ?? null) !== (snapshot?.savedAt ?? null) ||
+                    zoneSimRatesStamp(previous.rates) !== zoneSimRatesStamp(rates);
+                this._combatSnapshotCache = { key, snapshot, rates, fetchedAt: Date.now() };
                 if (redraw && changed) this.redrawQueueMenu();
             } catch (error) {
                 console.error('[ActionTimeDisplay] Reading the all-zones snapshot failed:', error);
@@ -464,21 +626,22 @@ class ActionTimeDisplay {
      * map is the fallback for a store that has not loaded. A zero or missing id is "no loadout".
      *
      * @param {Object} actionObj - The queued action
-     * @returns {{known: boolean, name: string|null}} The name, and whether the lookup succeeded
+     * @returns {{known: boolean, name: string|null, signature: string|null}} The name, whether the
+     *   lookup succeeded, and what the stored loadout wears now (null when the store has none)
      */
     resolveRowLoadout(actionObj) {
         const id = actionObj?.characterLoadoutID;
-        if (!id) return { known: true, name: null };
+        if (!id) return { known: true, name: null, signature: null };
         try {
             const store = loadoutSnapshot() || bundledLoadoutSnapshot;
-            const name =
-                store?.snapshots?.[String(id)]?.name ||
-                dataManager.characterData?.characterLoadoutMap?.[String(id)]?.name ||
-                null;
-            return name ? { known: true, name } : { known: false, name: null };
+            const stored = store?.snapshots?.[String(id)] || null;
+            const name = stored?.name || dataManager.characterData?.characterLoadoutMap?.[String(id)]?.name || null;
+            return name
+                ? { known: true, name, signature: loadoutSignature(stored) }
+                : { known: false, name: null, signature: null };
         } catch (error) {
             console.error('[ActionTimeDisplay] Resolving a queued action loadout failed:', error);
-            return { known: false, name: null };
+            return { known: false, name: null, signature: null };
         }
     }
 
@@ -503,6 +666,7 @@ class ActionTimeDisplay {
                 actionDetails,
                 snapshot: this.getCombatSnapshot(),
                 rowLoadout: this.resolveRowLoadout(actionObj),
+                zoneRate: this.rowZoneSimRate(actionObj),
             });
         } catch (error) {
             console.error('[ActionTimeDisplay] Estimating a combat row failed:', error);
@@ -514,6 +678,212 @@ class ActionTimeDisplay {
                 title: 'No time estimate: it could not be worked out.',
             };
         }
+    }
+
+    /**
+     * Whether a queued fight can be given a rate by its "sim 24h" button.
+     *
+     * Any non-dungeon combat row, counted or `Fight ∞`: a counted row uses the rate for its time,
+     * an endless one shows the rate itself. Dungeons are left out for the reason their time is
+     * unknown — the game counts runs, the simulator waves. Nothing is offered with the Combat
+     * Simulator switched off.
+     *
+     * @param {Object} actionObj - The queued action
+     * @param {Object} actionDetails - Its action details
+     * @returns {boolean}
+     */
+    zoneSimEligible(actionObj, actionDetails) {
+        if (!actionObj?.actionHrid) return false;
+        if (actionDetails?.type !== '/action_types/combat' && !actionObj.actionHrid.includes('/combat/')) {
+            return false;
+        }
+        if (actionDetails?.combatZoneInfo?.isDungeon) return false;
+        return Boolean(config.getSetting('combatSim'));
+    }
+
+    /**
+     * Draw the "sim 24h" line under an eligible combat row: the button, a running run's
+     * progress, the last failure if there was one, and — on a `Fight ∞` row — the rate itself.
+     *
+     * @param {HTMLElement} actionDiv - The row
+     * @param {Object} actionObj - The queued action
+     * @param {Object} actionDetails - Its action details
+     */
+    appendZoneSimLine(actionDiv, actionObj, actionDetails) {
+        try {
+            if (!this.zoneSimEligible(actionObj, actionDetails)) return;
+            const ownerKey = characterKey(ALL_ZONES_SNAPSHOT_KEY);
+            const tier = Number(actionObj.difficultyTier) || 0;
+            const key = zoneSimRateKey(actionObj.actionHrid, tier, actionObj.characterLoadoutID || 0);
+            const run = this._zoneSimRuns.get(key);
+            const running = run?.ownerKey === ownerKey;
+            const failure = this._zoneSimErrors.get(key);
+
+            const line = document.createElement('div');
+            line.className = ZONE_SIM_CLASS;
+            line.style.cssText = `
+                color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                font-size: 0.8em;
+                margin-top: 2px;
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                flex-wrap: wrap;
+            `;
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'mwi-queue-zone-sim-button';
+            button.dataset.zoneSimKey = key;
+            button.disabled = running;
+            button.textContent = running ? `simulating… ${run.percent}%` : 'sim 24h';
+            button.title =
+                'Simulate this zone and tier solo for 24 hours in the loadout this action uses, ' +
+                'and time the row from that. Runs locally; nothing is sent to the game.';
+            button.style.cssText = `
+                font-size: inherit;
+                padding: 0 6px;
+                border-radius: 3px;
+                border: 1px solid var(--border-color, ${config.COLOR_BORDER});
+                background: transparent;
+                color: inherit;
+                cursor: ${running ? 'progress' : 'pointer'};
+            `;
+            // The row itself is draggable and clickable in the game's menu; the click is ours
+            const swallow = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+            };
+            button.addEventListener('mousedown', (event) => event.stopPropagation());
+            button.addEventListener('pointerdown', (event) => event.stopPropagation());
+            button.addEventListener('click', (event) => {
+                swallow(event);
+                this.startZoneSim(actionObj);
+            });
+            line.appendChild(button);
+
+            if (!actionObj.hasMaxCount) {
+                const rate = this.rowZoneSimRate(actionObj);
+                if (rate) {
+                    const reading = describeZoneSimRate(
+                        rate,
+                        this.resolveRowLoadout(actionObj),
+                        `${actionDetails?.name || actionObj.actionHrid}${tier > 0 ? ` T${tier}` : ''}`
+                    );
+                    const note = document.createElement('span');
+                    note.className = 'mwi-queue-zone-sim-rate';
+                    note.textContent = `~${formatWithSeparator(Math.round(rate.encountersPerHour))} waves/h · ${[
+                        'sim',
+                        ...reading.flags,
+                    ].join(', ')}`;
+                    note.title = [`Estimated, not measured: ${reading.source}.`, ...reading.sentences].join(' ');
+                    line.appendChild(note);
+                }
+            }
+
+            if (!running && failure?.ownerKey === ownerKey) {
+                const error = document.createElement('span');
+                error.className = 'mwi-queue-zone-sim-error';
+                error.style.color = config.COLOR_WARNING || '#ffa500';
+                error.textContent = failure.message;
+                line.appendChild(error);
+            }
+
+            const container = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
+            (container || actionDiv).appendChild(line);
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Drawing a zone sim button failed:', error);
+        }
+    }
+
+    /**
+     * Run a row's single-zone simulation.
+     *
+     * One run per zone, tier and loadout at a time: a click while one is running does nothing.
+     * The run itself lives in the simulator bundle and is reached through the bundle bridge; it
+     * never opens the simulator panel. A failure, an unresolvable loadout included, is kept and
+     * drawn on the row.
+     *
+     * @param {Object} actionObj - The queued action
+     * @returns {Promise<Object|null>} The run's outcome, or null when no run was started
+     */
+    async startZoneSim(actionObj) {
+        const tier = Number(actionObj?.difficultyTier) || 0;
+        const loadoutId = actionObj?.characterLoadoutID || 0;
+        const key = zoneSimRateKey(actionObj?.actionHrid, tier, loadoutId);
+        if (this._zoneSimRuns.has(key)) return null;
+
+        let ownerKey;
+        try {
+            ownerKey = characterKey(ALL_ZONES_SNAPSHOT_KEY);
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Resolving the character for a zone sim failed:', error);
+            return null;
+        }
+
+        const sim = combatSimUI();
+        if (typeof sim?.simulateZoneRate !== 'function') {
+            const outcome = { ok: false, error: 'The Combat Simulator is not loaded, so nothing was simulated.' };
+            this._zoneSimErrors.set(key, { message: outcome.error, ownerKey });
+            this.redrawQueueMenu();
+            return outcome;
+        }
+
+        this._zoneSimRuns.set(key, { percent: 0, ownerKey });
+        this._zoneSimErrors.delete(key);
+        this.redrawQueueMenu();
+
+        let outcome;
+        try {
+            outcome = await sim.simulateZoneRate(
+                { zoneHrid: actionObj.actionHrid, difficultyTier: tier, loadoutId, hours: ZONE_SIM_HOURS },
+                { onProgress: (percent) => this.updateZoneSimProgress(key, percent) }
+            );
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Zone sim failed:', error);
+            outcome = { ok: false, error: `Simulation failed: ${error?.message || 'unknown error'}` };
+        } finally {
+            this._zoneSimRuns.delete(key);
+        }
+
+        if (!outcome?.ok) {
+            this._zoneSimErrors.set(key, { message: outcome?.error || 'Simulation failed.', ownerKey });
+        } else {
+            // Straight into the cache for the character it was run for, so the row does not wait
+            // for the next read of storage to show it
+            const cache = this._combatSnapshotCache;
+            if (cache?.key === ownerKey) {
+                cache.rates = { ...(cache.rates || {}), [key]: outcome.entry };
+            }
+        }
+        this.redrawQueueMenu();
+        return outcome;
+    }
+
+    /**
+     * Show a running row's progress on its button, without redrawing the whole menu.
+     * @param {string} key - The run's zoneSimRateKey
+     * @param {number} percent - 0–100
+     */
+    updateZoneSimProgress(key, percent) {
+        const run = this._zoneSimRuns.get(key);
+        const rounded = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+        if (!run || run.percent === rounded) return;
+        run.percent = rounded;
+
+        const queueMenu = this._lastQueueMenu;
+        if (!queueMenu?.isConnected) return;
+        // A text change is a childList mutation to the menu's own watcher; detach it around the
+        // write, and reattach only if it was attached (an async profit pass may own it)
+        const wasWatching = Boolean(this.queueMenuObserver);
+        if (wasWatching) {
+            this.queueMenuObserver();
+            this.queueMenuObserver = null;
+        }
+        for (const button of queueMenu.querySelectorAll('.mwi-queue-zone-sim-button')) {
+            if (button.dataset.zoneSimKey === key) button.textContent = `simulating… ${rounded}%`;
+        }
+        if (wasWatching) this.setupQueueMenuObserver(queueMenu);
     }
 
     /**
@@ -3247,6 +3617,7 @@ class ActionTimeDisplay {
             // Clear all existing time and profit displays to prevent duplicates
             queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
             queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
+            queueMenu.querySelectorAll(`.${ZONE_SIM_CLASS}`).forEach((el) => el.remove());
             const existingTotal = document.querySelector('#mwi-queue-total-time');
             if (existingTotal) {
                 existingTotal.remove();
@@ -3486,6 +3857,7 @@ class ActionTimeDisplay {
                     combatDiv.title = combat.title;
                     const combatTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
                     (combatTextContainer || actionDiv).appendChild(combatDiv);
+                    this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
                     continue;
                 }
 
@@ -3670,6 +4042,9 @@ class ActionTimeDisplay {
                     // Fallback: append to action div
                     actionDiv.appendChild(timeDiv);
                 }
+
+                // A Fight ∞ row: no time to give, but its button can still fetch it a rate
+                if (isTrulyInfinite) this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
 
                 // Create empty profit div for this action (will be populated asynchronously)
                 // Skip enhancing actions — no profit applies

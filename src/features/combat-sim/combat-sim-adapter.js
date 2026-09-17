@@ -1116,7 +1116,7 @@ export function getCommunityBuffs() {
  * Apply a named loadout snapshot to a player DTO (mutates dto in place).
  * Extracted from CombatSimUI._applyLoadoutToDTO so both the sim UI and task display can use it.
  * @param {Object} dto - Player DTO to mutate
- * @param {string} snapshotName - Loadout snapshot name
+ * @param {string|Object} snapshotName - Loadout snapshot name, or the snapshot itself
  * @param {Object} gameData - Game data payload from buildGameDataPayload()
  * @returns {boolean} True if snapshot was found and applied, false otherwise
  */
@@ -1128,8 +1128,13 @@ export function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
     // copy here left every loadout unresolved — a naked DTO, and every combat
     // room simmed at 0%.
     const store = loadoutSnapshot() || bundledLoadoutSnapshot;
-    const snapshots = store.getAllSnapshots();
-    const snapshot = snapshots.find((s) => s.name === snapshotName);
+    // A snapshot object is taken as given: a caller holding a loadout by the
+    // server's id must not be sent back through a name lookup, which picks the
+    // first of two loadouts that share a name
+    const snapshot =
+        snapshotName && typeof snapshotName === 'object'
+            ? snapshotName
+            : store.getAllSnapshots().find((s) => s.name === snapshotName);
     if (!snapshot) return false;
 
     const itemDetailMap = gameData.itemDetailMap || {};

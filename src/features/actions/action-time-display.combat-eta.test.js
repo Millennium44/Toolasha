@@ -22,6 +22,9 @@ const game = vi.hoisted(() => ({
     actionDetails: {},
     snapshot: null,
     loadoutMap: {},
+    rates: {},
+    combatSim: false,
+    simUI: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -49,7 +52,7 @@ vi.mock('../../utils/action-calculator.js', () => ({
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: (key) => key === 'actionQueue',
+        getSetting: (key) => key === 'actionQueue' || (key === 'combatSim' && game.combatSim),
         getSettingValue: (_key, fallback) => fallback,
         COLOR_TOOLTIP_INFO: '#abc',
     },
@@ -68,6 +71,12 @@ vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredict
 vi.mock('../../utils/all-zones-snapshot.js', async (importOriginal) => ({
     ...(await importOriginal()),
     loadAllZonesSnapshot: async () => game.snapshot,
+    loadZoneSimRates: async () => game.rates,
+}));
+
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    combatSimUI: () => game.simUI,
 }));
 
 const { default: actionTimeDisplay, estimateCombatQueueRow } = await import('./action-time-display.js');
@@ -226,6 +235,280 @@ describe('estimateCombatQueueRow', () => {
 
     test('a non-combat row is not its business', () => {
         expect(estimate({ actionObj: coinifyAction(1), actionDetails: { hrid: COINIFY } })).toBeNull();
+    });
+});
+
+/** A single-zone rate from a row's button: 250 waves an hour at Gobo Planet T3 in the Combat loadout. */
+function zoneRate(overrides = {}) {
+    return {
+        zoneHrid: GOBO,
+        difficultyTier: 3,
+        loadoutId: String(COMBAT_ID),
+        loadoutName: 'Combat',
+        signature: 'sig-now',
+        encountersPerHour: 250,
+        profitPerHour: null,
+        xpPerHour: null,
+        hours: 24,
+        savedAt: NOW - HOUR,
+        ...overrides,
+    };
+}
+
+describe('estimateCombatQueueRow with a single-zone rate', () => {
+    test("is preferred over an all-zones run in other gear, and names the row's own loadout", () => {
+        const result = estimate({
+            snapshot: snapshot({ loadout: { source: 'loadout', name: 'Tank' } }),
+            rowLoadout: { known: true, name: 'Combat', signature: 'sig-now' },
+            zoneRate: zoneRate(),
+        });
+        expect(result.source).toBe('zone');
+        // 500 waves left at 250 an hour
+        expect(result.seconds).toBe(7200);
+        expect(result.flags).toEqual([]);
+        expect(result.text).toBe('[~2h 00m 00s · sim]');
+        expect(result.title).toContain('Estimated, not measured');
+        expect(result.title).toContain('250 waves/h, from a 24h solo simulation of Gobo Planet T3 1h ago');
+        expect(result.title).toContain('your Combat loadout, the loadout this action uses');
+    });
+
+    test('times a row with no all-zones run at all', () => {
+        const result = estimate({ snapshot: null, zoneRate: zoneRate() });
+        expect(result.kind).toBe('estimate');
+        expect(result.seconds).toBe(7200);
+    });
+
+    test('a newer all-zones run in the same gear still wins', () => {
+        const result = estimate({ snapshot: snapshot({ ageMs: 60_000 }), zoneRate: zoneRate() });
+        expect(result.source).toBe('allZones');
+        expect(result.seconds).toBe(3600);
+    });
+
+    test('an older all-zones run in the same gear gives way', () => {
+        const result = estimate({ snapshot: snapshot({ ageMs: 2 * HOUR }), zoneRate: zoneRate() });
+        expect(result.source).toBe('zone');
+    });
+
+    test('a loadout edited since the run is flagged', () => {
+        const result = estimate({
+            rowLoadout: { known: true, name: 'Combat', signature: 'sig-edited' },
+            zoneRate: zoneRate(),
+            snapshot: null,
+        });
+        expect(result.flags).toEqual(['gear changed']);
+        expect(result.text).toBe('[~2h 00m 00s · sim, gear changed]');
+        expect(result.title).toContain('edited since');
+    });
+
+    test('a stale single-zone rate is flagged like any other', () => {
+        const result = estimate({ snapshot: null, zoneRate: zoneRate({ savedAt: NOW - 9 * 24 * HOUR }) });
+        expect(result.flags).toEqual(['stale']);
+    });
+
+    test('a run for a row with no loadout says it was worn gear', () => {
+        const result = estimate({
+            actionObj: combatAction(1, { loadoutId: 0 }),
+            rowLoadout: { known: true, name: null, signature: null },
+            snapshot: null,
+            zoneRate: zoneRate({ loadoutId: '0', loadoutName: null, signature: null }),
+        });
+        expect(result.flags).toEqual([]);
+        expect(result.title).toContain('gear worn when the run started');
+    });
+
+    test('with neither reading, the unknown points at the button', () => {
+        const result = estimate({ snapshot: null });
+        expect(result.text).toBe('[? · no sim rate]');
+        expect(result.title).toContain('sim 24h');
+    });
+});
+
+describe('the "sim 24h" button', () => {
+    /** A simulator whose run finishes when the test says so */
+    function deferredSim() {
+        const calls = [];
+        const sim = {
+            calls,
+            simulateZoneRate: vi.fn(
+                (request, options) =>
+                    new Promise((resolve) => {
+                        calls.push({ request, options, resolve });
+                    })
+            ),
+        };
+        return sim;
+    }
+
+    const flush = async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+
+    const buttons = (root) => [...root.querySelectorAll('.mwi-queue-zone-sim-button')];
+
+    beforeEach(async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        document.body.innerHTML = '';
+        game.actionDetails = { [GOBO]: gobo, [DEN]: den };
+        game.loadoutMap = { [COMBAT_ID]: { name: 'Combat' }, [TANK_ID]: { name: 'Tank' } };
+        game.snapshot = snapshot({ loadout: { source: 'loadout', name: 'Combat' } });
+        game.rates = {};
+        game.combatSim = true;
+        game.simUI = deferredSim();
+        await actionTimeDisplay.refreshCombatSnapshot();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        actionTimeDisplay._combatSnapshotCache = null;
+        actionTimeDisplay._zoneSimRuns.clear();
+        actionTimeDisplay._zoneSimErrors.clear();
+        game.combatSim = false;
+        game.simUI = null;
+        game.rates = {};
+    });
+
+    test('appears on counted and Fight ∞ zone rows, not on dungeon rows', () => {
+        game.currentActions = [
+            combatAction(1),
+            combatAction(2, { maxCount: 0 }),
+            combatAction(3, { hrid: DEN, tier: 0 }),
+            coinifyAction(4),
+        ];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Gobo Planet (T3)', 'Chimerical Den', 'Coinify']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        const rows = [...menu.querySelectorAll('[class*="QueuedActions_action__"]')];
+        expect(rows.map((row) => row.querySelectorAll('.mwi-queue-zone-sim-button').length)).toEqual([1, 1, 0, 0]);
+        expect(buttons(menu)[0].textContent).toBe('sim 24h');
+        // The row's own time text is unchanged by the button beside it
+        expect(rowTexts(menu)[0]).toMatch(/^\[~1h 00m 00s · sim\]/);
+    });
+
+    test('is not offered with the Combat Simulator switched off', () => {
+        game.combatSim = false;
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        expect(buttons(menu)).toHaveLength(0);
+    });
+
+    test("runs the row's zone, tier and loadout for 24 hours, shows it running, then shows the rate", async () => {
+        game.currentActions = [combatAction(1, { loadoutId: TANK_ID })];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        expect(rowTexts(menu)[0]).toMatch(/^\[~1h 00m 00s · sim, other gear\]/);
+
+        buttons(menu)[0].click();
+        await flush();
+
+        const sim = game.simUI;
+        expect(sim.simulateZoneRate).toHaveBeenCalledTimes(1);
+        expect(sim.calls[0].request).toEqual({
+            zoneHrid: GOBO,
+            difficultyTier: 3,
+            loadoutId: TANK_ID,
+            hours: 24,
+        });
+        expect(buttons(menu)[0].disabled).toBe(true);
+        expect(buttons(menu)[0].textContent).toBe('simulating… 0%');
+
+        sim.calls[0].options.onProgress(42.4);
+        expect(buttons(menu)[0].textContent).toBe('simulating… 42%');
+
+        // A second click while it runs starts nothing
+        buttons(menu)[0].disabled = false;
+        buttons(menu)[0].click();
+        expect(await actionTimeDisplay.startZoneSim(game.currentActions[0])).toBeNull();
+        expect(sim.simulateZoneRate).toHaveBeenCalledTimes(1);
+
+        sim.calls[0].resolve({
+            ok: true,
+            entry: zoneRate({ loadoutId: String(TANK_ID), loadoutName: 'Tank', signature: null, savedAt: NOW }),
+        });
+        await flush();
+
+        const [text] = rowTexts(menu);
+        expect(text).toMatch(/^\[~2h 00m 00s · sim\] Complete at ~/);
+        const title = menu.querySelector('.mwi-queue-action-time').title;
+        expect(title).toContain('24h solo simulation of Gobo Planet T3 just now');
+        expect(title).toContain('your Tank loadout, the loadout this action uses');
+        expect(buttons(menu)[0].disabled).toBe(false);
+        expect(buttons(menu)[0].textContent).toBe('sim 24h');
+    });
+
+    test('a Tank run does not change what a Combat row reads from the all-zones run', async () => {
+        const allZonesBefore = structuredClone(game.snapshot);
+        game.currentActions = [combatAction(1, { loadoutId: TANK_ID }), combatAction(2)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        await Promise.all([
+            actionTimeDisplay.startZoneSim(game.currentActions[0]),
+            (async () => {
+                await flush();
+                game.simUI.calls[0].resolve({
+                    ok: true,
+                    entry: zoneRate({ loadoutId: String(TANK_ID), loadoutName: 'Tank', savedAt: NOW }),
+                });
+            })(),
+        ]);
+
+        const [tank, combat] = [...menu.querySelectorAll('.mwi-queue-action-time')];
+        expect(tank.textContent).toMatch(/^\[~2h 00m 00s · sim\]/);
+        expect(combat.textContent).toMatch(/^\[~1h 00m 00s · sim\]/);
+        expect(combat.title).toContain('all-zones run');
+        expect(game.snapshot).toEqual(allZonesBefore);
+        expect(actionTimeDisplay.getCombatSnapshot()).toEqual(allZonesBefore);
+    });
+
+    test('an unresolvable loadout is reported on the row', async () => {
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        const started = actionTimeDisplay.startZoneSim(game.currentActions[0]);
+        await flush();
+        game.simUI.calls[0].resolve({ ok: false, error: 'Could not read the loadout this fight uses.' });
+        await started;
+
+        expect(menu.querySelector('.mwi-queue-zone-sim-error').textContent).toBe(
+            'Could not read the loadout this fight uses.'
+        );
+        expect(buttons(menu)[0].disabled).toBe(false);
+    });
+
+    test('a simulator that is not loaded says so instead of doing nothing', async () => {
+        game.simUI = null;
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        const outcome = await actionTimeDisplay.startZoneSim(game.currentActions[0]);
+        expect(outcome.ok).toBe(false);
+        expect(menu.querySelector('.mwi-queue-zone-sim-error').textContent).toMatch(/not loaded/);
+    });
+
+    test('a Fight ∞ row shows the rate its button fetched, marked as simulated', async () => {
+        game.rates = { [`${GOBO}|3|${COMBAT_ID}`]: zoneRate() };
+        await actionTimeDisplay.refreshCombatSnapshot();
+        game.currentActions = [combatAction(1, { maxCount: 0 })];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        expect(rowTexts(menu)).toEqual(['[∞]']);
+        const note = menu.querySelector('.mwi-queue-zone-sim-rate');
+        expect(note.textContent).toBe('~250 waves/h · sim');
+        expect(note.title).toContain('your Combat loadout');
+        expect(total()).toBe('Total time: [∞]');
+    });
+
+    test('a redraw leaves one button per row', () => {
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        actionTimeDisplay.injectQueueTimes(menu);
+        expect(buttons(menu)).toHaveLength(1);
     });
 });
 
