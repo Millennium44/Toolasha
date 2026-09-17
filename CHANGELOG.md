@@ -6,103 +6,103 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat zones in the action queue
+
+- A counted combat row shows an estimated time from your last all-zones simulation, marked as simulated and flagged when the gear or run age differs.
+- Zones with no simulated rate, and dungeons, read "? · no sim rate", and the queue total says it is incomplete.
+- Tiered zones such as "Gobo Planet (T3)" no longer read "[Unknown action]".
+- The all-zones simulation now keeps each zone's encounters per hour and the gear it ran in.
+- A test pins why the beacon planner stops at two routes: the entrance and exit are corners, so two is the most any floor allows.
+
 <!-- shipped in 3.54.0 -->
 
-### Alchemy history counts and costs what the action really used
+### Alchemy history counts and costs what was really used
 
-- Transmuting, coinifying or decomposing an item with no market price — a refined cape, say — costed the item consumed at zero, so a session that destroyed one read as a loss of only the coin fee. Refined inputs are now costed the way the Philosopher's Stone calculator already costs them: their refinement materials, artisan bonus included, or the market price when there is one and it is cheaper. An input that still cannot be priced says so and marks the profit incomplete rather than quietly counting it as free.
-- Alchemy history miscounted what an action produced whenever efficiency packed several actions into one message: the game reports a stack once per action, and each report was read as another item gained. A transmute session recorded 103 returned capes against 75 attempts and 64 successes, which made the items consumed come out as zero — so the input cost above was zero too, however well it was priced. Counts now read a batch as the one change it is, and outputs can no longer outnumber the successes that produced them.
-- Transmute sessions recorded through that miscount are repaired once, on load. The count is derived rather than guessed — every success yields one output, so the returns are the successes less everything else the session produced — and a session whose arithmetic does not close is marked unreliable instead of being given a number. Every repaired session carries a note saying what it originally held, so a derived figure can never pass for an observed one.
-- An Iron Cow character valuing items off the market costed a refined cape at the hundred thousand a vendor pays for it, rather than the shards it takes to make one. The refinement cost now wins for refined items, since a vendor's counter price is what you could dump it for and not what it cost you. Only affects Iron Cow characters moved off the default "Market" valuation.
-- Coinify and decompose history costed the item consumed at the ask, or the bid when there was no ask, ignoring the pricing mode — while transmute history next to them obeyed it. All three now follow the setting, for the input and for the catalyst.
-- Transmute history records the catalysts actually consumed, read off the stack as it drains, rather than assuming the one in the slot when the session started was used for every success. Sessions recorded before this fall back to that assumption and are labelled estimated.
-- Alchemy history recorded a catalyst only if it was one of two it knew by name, so any other counted as nothing at all. It now records whatever was in the slot, and reads how many were spent off the stack rather than assuming one per success.
-- A page reload no longer splits one run into two in the alchemy history. Sessions on the same item are rejoined only when the gap between them is shorter than the run's own measured pace, which cannot hide a completed action.
+- Untradable inputs such as refined capes are costed at their refinement materials instead of zero.
+- Efficiency batches no longer inflate item counts, and past transmute sessions affected by that are repaired once, marked as derived.
+- Iron Cow characters on vendor valuation cost refined inputs at their materials, not the vendor price.
+- Coinify and decompose history follow the pricing mode, like transmute history.
+- Catalysts are recorded as actually consumed, whatever catalyst was in the slot.
+- A page reload no longer splits one run into two sessions.
 
 ### What the alchemy history shows you
 
-- Transmute history gains a "Totals by Input Item" table: attempts, items actually consumed, success rate, revenue, input cost, catalyst cost and net, per input item and overall. Catalysts are costed from the one recorded at the session's start, charged on successes only; a session that never recorded one says so rather than counting it as free. Each item also shows the input value at which its catalyst paid for itself, which needs no market price for the item. A group holding a session whose counts could not be trusted shows a dash in every figure derived from those counts, and poisons the overall row rather than disappearing into it. The inputs-per-jackpot figure counts only outputs worth having: a returned copy of what you put in is not one, and counting it made six capes per stone read as under half a cape.
-- Transmute totals add a pooled row for inputs that are the same bet — same success rate, same bulk size, same drop table — so four refined capes read as one figure instead of four samples too small to say anything. Which inputs pool is read from the game's own numbers rather than a list: Sinister Cape ★ drops its stone at 8% where the other four drop 10%, and it correctly stays out. The per-item rows are unchanged.
-- Alchemy history exports carry the same qualifications the table shows — an unpriced input, a catalyst that was estimated or never recorded, a repaired count — spelled out in words rather than symbols, so an exported figure cannot read as more certain than the one on screen.
-- The alchemy history tables name their icon-only columns and their delete buttons, so hovering says what a column is and a screen reader has something to read. The labels were already written down; the headers were dropping them.
-- New, off by default: notify when transmuting produces a Philosopher's Stone.
+- Transmute history has a "Totals by Input Item" table with items consumed, catalyst cost, net and a break-even input value.
+- A pooled row groups inputs with identical odds, such as the four refined skilling capes.
+- Exports spell out the same caveats the table marks.
+- Icon-only columns and delete buttons have hover names.
+- New, off by default: a notification when transmuting produces a Philosopher's Stone.
 
 ### Sync carries only what is yours
 
-- Sync now carries only what Toolasha owns. It shared its database with other scripts, and "sync everything" meant exactly that: another script's stored data was uploaded to your gist and written back over on every pull, without Toolasha being able to read it, judge whether it should travel, or merge it — on one real install that was around 600 KB, nearly a fifth of the payload, including a whole store nothing in Toolasha touches. Toolasha now declares the stores and keys that are its own and leaves the rest alone in both directions, so a value another script is holding is neither copied away nor overwritten. A test checks every key the code writes is declared, because the way this fix could go wrong is by quietly not syncing something.
-- Sync no longer carries the cached market prices — 114 KB of a payload, for figures the receiving device refetches from the game within minutes and which are stale by the time they land. The sightings and version markers that belong to that cache go with it; one of them, arriving alone from another device, could tell a device its own records had been cleared when they had not.
-- The update check's cached answer, and the presence heartbeat that tells a page refresh from a genuine return, no longer travel between devices. Both are notes about one machine, and arriving from another one made them wrong.
+- Sync uploads only Toolasha's own data, leaving other scripts' storage untouched in both directions.
+- Cached market prices, the update-check cache and the presence heartbeat stay on the device.
 
 ### Settings belong to you, not to each character
 
-- Cross-device sync, the colors, the number format and quiet hours are now set once for every character rather than per character, so an alt no longer needs its own GitHub token or its own quiet hours. Existing values are carried across: a setting only one character had moved is adopted by all, and where characters genuinely disagreed the one you are playing wins and the rest keep their own value, with a note saying so. Nothing is deleted. The rest of the notification switches stay per character, since a combat alt and a crafting alt want different alerts.
-- The combat simulator's thread limit and the update-check settings are now set once for every character too. The thread limit additionally never leaves this machine: a core count is true where it was set and wrong anywhere else, so a laptop can no longer inherit a desktop's. Sync drops it on the way out and refuses it on the way in.
-- "Reset to defaults" now says what it is about to clear for every other character on the device before it does it, naming the sync setup, the colors, the number format and quiet hours, and counting only the colors you have actually picked rather than every one it could clear.
-- The "Changed only" settings filter could not see the Buy and Sell pricing dropdowns, nor custom price overrides, so a player who had changed them and filtered to what they had changed was told they had changed nothing. Both were invisible for the same reason: their real value is not stored under the row's own name.
+- Sync setup, colors, number format, quiet hours, the simulator thread limit and update checks are set once for all characters.
+- The thread limit never leaves the device it was set on.
+- "Reset to defaults" warns what it clears for every character first.
+- The "Changed only" filter now sees the Buy/Sell pricing dropdowns and custom price overrides.
 
-### Sharper planning, and panels that answer the question asked
+### Sharper planning
 
-- The labyrinth beacon planner settles on the best placement it can rather than a nearly-best one. It was already right with two beacons but gave up a room on about a third of four-beacon floors, because moving one beacon at a time cannot make the move that helps — sliding one off the way out only pays once a neighbour shifts to cover it. It now considers those pairs, and is faster than before at every count from three beacons up, because the search it needed was paid for by not recomputing routes it could already rule out.
-- The guild credit exchange's item picker is ordered by cost efficiency, cheapest gold per credit first, following whichever side the table beside it is sorted on so the two can never disagree. An enhanced piece is priced at the level it actually is: the exchange pays the same credits for a +10 as for a +0, so your enhanced gear is the worst thing you can feed it, and it now sorts that way. Nothing is hidden, and an item with no price at its level sorts last rather than looking cheap.
-- The combat simulator shows what your guild has built beside each shrine — "Force 3 / 9" — so a level you cannot buy yet is distinguishable from one you have not bought. Reopening the simulator now picks up shrine levels bought since it was last opened, while leaving any level you typed yourself alone; and when the reading came from storage because guild data never arrived this session, it says so and says when it was true.
-- The marketplace hop buttons found the game's back button by looking for the English words "Refresh" and "view all", so they stopped working on a client in any other language. They now find it by its place in the row, with the text as a backstop.
-- When Toolasha misses the login payload it can close the socket to ask for it again, and failing that reload once. Both were marked as spent the first time and never given back, so a tab got one recovery for its whole life and every later miss went straight to the message telling you to reload by hand — including the reconnect, which had never been tried on those loads. A login that works now restores both.
-- A counted combat row in the action queue shows an estimated time — "~1h 00m · sim" — worked out from waves left and the rate your last all-zones simulation ran that zone at, instead of "[∞]". Hovering says how old that run is and what gear it used, and flags when the row will run in different gear or the run is more than a week old. A zone with no simulated rate, and any dungeon, reads "? · no sim rate" rather than a guessed clock, and the queue total says it is incomplete rather than counting that row as nothing.
-- The all-zones simulation now keeps how many encounters an hour each zone ran at, and what gear the run used. The figure was computed and shown and then thrown away, so nothing could say later how fast a zone actually goes. A snapshot from an older build has neither, and reads as unknown rather than as a rate of zero.
-- A queued combat zone with a difficulty tier read "[Unknown action]", because the row says "Gobo Planet (T3)" where the game names the action "Gobo Planet" and nothing reconciled the two. Such a row is now recognised, and reads "[∞]" like any other combat row — the game gives no per-battle time, so a clock would be a guess dressed as a figure.
-- The reason the beacon planner stops looking for a third independent route is now measured rather than argued: the entrance and the exit are opposite corners, a corner has two neighbours, and no two routes may share a room, so two is the ceiling on every floor size the game deals. A floor whose exit stops being a corner would show up immediately.
-- A coverage test that reads real commits out of git history to prove its own matcher works no longer races its timeout when the whole suite is running, so a pre-commit run stops failing for a reason that has nothing to do with what it checks.
+- The beacon planner finds the best placement on more floors, and runs faster.
+- The guild credit item picker is sorted by cost efficiency, pricing enhanced gear at its own level.
+- The combat simulator shows each shrine against the level your guild has built, and picks up newly bought levels on reopen without touching ones you typed.
+- The marketplace hop buttons work on non-English clients.
+- Recovery from a missed login payload is available again after a successful load.
+- A coverage test no longer times out when the whole suite runs.
 
 ### Settings that did nothing, or did not do what they said
 
-- Eight switches were ignored when turned off, even after a reload, because a feature missing from an internal map counted as always on: Goal Planner, Damage Tracker, Damage Taken Tracker, Task Inventory Highlighter, Session Briefing, Iron Cow Farm, the overlay tab button and the labyrinth monster stat check. Presets that switch those off now take effect too.
-- "Enhancement path: use crafting cost for base item if cheaper" had been behaving as on while shipping off. It is switched on once for existing characters so nobody's figures move: a stored "off" could not have been a real choice, because the setting did nothing until now.
-- Combat income costed dungeon keys at market prices even with key pricing set to "craft", while the note under the figure said they were costed at what it costs you to craft one. Those figures change for anyone on that setting.
-- Net worth on the game's market value now ignores the pricing mode for cowbells and guild shrines, as its own help says, so those two figures change for anyone on that source.
-- Turning "Auto-fill marketplace orders" off stops the fill straight away rather than at the next reload; the multi-outcome foraging total obeys its own setting, which nothing had ever read; and dismissing the What's New dialog no longer switches on "new settings start turned off" behind your back.
-- Five switches that only take effect at startup now say they need a page refresh, which they always did. Three descriptions were corrected: the expected-value pricing switch only affects dungeon token values, the two listing-age options need "Show prices on individual listings" rather than the estimated-age feature, and key pricing's "synced" also inherits the patient tick, so it can differ from a plain "bid".
-- A one-time rewrite of a superseded default used to mark itself done even when the save was refused, leaving that character on the old default for good. It now retries on the next load.
+- Eight switches that were ignored when turned off now work, including Goal Planner and the damage trackers.
+- "Use crafting cost for base item if cheaper" had been acting as on; it is switched on once for existing characters so nothing moves.
+- Combat income costs dungeon keys at craft cost when key pricing says "craft".
+- Net worth on market value ignores the pricing mode for cowbells and guild shrines, as its help says.
+- Turning off marketplace auto-fill takes effect immediately, and dismissing What's New no longer changes a setting.
+- Settings that need a refresh now say so, and three descriptions were corrected.
+- A one-time default rewrite retries if its save was refused.
 
 ### Fewer settings, and pricing moves to Buy and Sell dropdowns
 
-- Pricing is now a Buy dropdown (Instant / Patient / Patient +1) and a Sell dropdown (Instant / Patient / Patient −1), on the skill toolbar, in alchemy's Best Items, in Pricing & Profit and in the What's New panel — in place of the Mode button and two "+1 tick" checkboxes that were each a no-op in two of the four modes with nothing to show it. Each option names both halves, so either wording tells you whether it is an instant trade or a waiting order, and a tooltip says when your listing auto-fill outbids or undercuts differently from what profit assumes.
-- The +1 tick is set per side, so you can outbid on buys without undercutting your own sales. Anyone who had the old single setting on gets both sides on, once.
-- Three listing-age switches become one choice of where to show it, and the Elapsed/Date-Time format is now honoured on My Listings as well as the order book. Two badge switches and a select whose "None" doubled as off become one choice; custom-tab and category totals now both always show, summed the same way, since the setting governs the per-item badge.
-- Eleven labyrinth simulation settings become three: one budget choice, one precision and one hour ceiling. The panels keep their own Uncapped boxes and Max hrs inputs as views onto it. What goes: uncapping one panel but not another, a separate precision for the Automation tab, and a custom Max fights on Single Sim or Upgrade.
-- Child settings grey out while their parent feature is off instead of looking live. Stored values are carried across everywhere, so nothing needs re-picking; new installs start with listing age on "Both" and value badges on "Stack value, only while sorting by Ask/Bid".
+- Pricing is a Buy dropdown and a Sell dropdown, replacing the Mode button and "+1 tick" checkboxes.
+- The +1 tick is set per side.
+- Listing-age and value-badge switches are merged into single choices.
+- Eleven labyrinth simulation settings become three.
+- Settings under a disabled feature are greyed out.
 
 ### Pricing changes reach every figure that shows them
 
-- Changing the pricing mode, naming or a +1 tick now refreshes the skill page's profit sections, open crafting plan panels and an open dungeon ROI board, clears the task "best alternative" figures, recomputes chest and crate expected values, and re-prices the combat sim's comparison against earlier runs — instead of leaving old numbers until you navigated away. A burst of changes redraws once.
-- The +1 tick reaches the combat sim, the welcome-back value, and the philo calculator, key cost (including a crafted key's materials) and dungeon token value when those follow the global mode. Alchemy essence and non-openable crates follow the pricing mode instead of always the bid, and the philo table's own columns follow its own mode and tick.
-- The welcome-back value priced consumed items at the sell side, so a night's tea and food read too cheap; they now use the buy side.
-- A protection consumed on a failed enhance with no market price was recorded as costing 0 coins, because the vendor-price fallback read a field the game data does not have.
-- Iron Cow characters get an "Iron Cow item valuation" setting: Market (default, unchanged), Vendor, or Best (the higher of vendor price and what coinifying yields at your alchemy level). It drives profit, loot, net worth, badges, tooltips, combat stats, enhancing costs, the dungeon ROI board and the philo table, and net worth re-prices as soon as it changes. Custom price overrides still win, and enhanced items keep market prices.
+- Changing pricing refreshes every open panel that shows a price.
+- The +1 tick reaches the combat sim, welcome-back value, philo calculator, key cost and token value.
+- The welcome-back value prices consumed items at the buy side.
+- A protection with no market price no longer costs 0 in enhancement history.
+- Iron Cow characters can value items at market, vendor, or the better of vendor and coinify.
 
 ### Share your combat stats in chat
 
-- The Combat Statistics popup has a "💬 Chat" button (Ctrl+click on a player card still works) with a "▾" field picker: checkboxes, a live preview and a byte count, remembered per character. Each loot-log entry gets a 💬 button for a one-line summary, and the command palette gains "Share combat stats to chat". Nothing is ever sent — the chat box is filled, or the text is copied when chat is hidden.
-- Messages fit the game's 400-byte chat limit, counting anything you have already typed such as "/w Name ": optional fields drop first, loot-log lines list fewer drops, emoji are kept whole, and a trimmed line no longer ends on the separator of the field it just dropped.
-- Luck is reported with how far off expectation it was, e.g. "chest luck 89th pct (+2% vs expected)", because a zone whose value rides on a rare pushes an ordinary session below the 50th percentile. In a dungeon it now shows chest luck, which used to be left out entirely, and only for the zone and tier it was measured in.
-- Dungeon chest luck counted only the runs saved while a page was open, so a session with runs played unwatched read as the 100th percentile for everyone. It now takes the run count from the server's own battle number.
+- Combat Statistics and loot-log entries can fill the chat box with a summary; nothing is ever sent for you.
+- Messages fit the game's 400-byte limit.
+- Luck shows how far off expectation it was, and dungeon chest luck is reported correctly.
 
 ### What Toolasha thinks you are running
 
-- During a party fight, dragging a queued action into the first queued slot made Toolasha treat it as running — a queued cooking action showed "Red Culinary Hat not equipped". The queue now follows the game's own order, party actions first and then by ordinal, everywhere Toolasha asks which action is running.
-- Queuing, removing or dragging an action behind a running fight no longer resets the battle counter or wipes the boss ETA's timing, removing a queued zone no longer resets the combat XP session, and queuing a second enhance behind the running one no longer ends the enhancing session.
-- Coinify, decompose and transmute history decided from each queue update alone, so queuing any other action ended a running session and queuing a second alchemy item switched the session to it. They now follow the action actually running.
+- Toolasha follows the game's queue order, so a queued action no longer looks like the running one.
+- Editing the queue no longer resets combat counters, the boss ETA or the enhancing session.
+- Alchemy history follows the action actually running.
 
 ### Your settings survive copying, importing and syncing
 
-- Copying settings from another character, importing a settings file written by an older build, or pulling a sync payload could silently lose your listing-age, badge and labyrinth choices: the settings arrived but the record said there was nothing left to carry across, so they fell back to defaults. All three paths now redo the carry-over for what they land.
-- Replaced settings are recorded one at a time rather than as a batch, so a later addition can never redo an earlier one and quietly overwrite a value you have since changed by hand.
-- Switching Iron Cow mode off left a gated row looking fully live while its parent was still off, and the mode now has an explicit "off" value for the badge setting rather than disabling it to whatever the default happens to be.
+- Copying, importing or syncing settings no longer loses listing-age, badge and labyrinth choices.
+- A setting you changed by hand can no longer be overwritten by a later migration.
+- Switching Iron Cow mode off no longer leaves settings looking active.
 
 ### The marketplace nav row
 
-- The item-hop arrows, the Next button and the "Last: Buy / Sell" chip no longer shrink or wrap their labels onto several lines when the game's nav row is crowded — for instance when another script adds a bar of its own to the same row. Toolasha only protects what it puts there; the row is the game's.
-- The "Last: Buy / Sell" chip was only redrawn when a fresh price arrived, so switching marketplace tabs and back made it vanish until the item next traded. It now redraws from the last figures it had.
-- The Top Order Age column ignored the listing age format, and inventory category totals did not re-sum when the value-badge mode changed.
+- Toolasha's nav-row buttons no longer shrink when the row is crowded.
+- The "Last: Buy / Sell" chip survives switching tabs.
+- The Top Order Age column follows the listing-age format, and category totals update when the badge mode changes.
 
 <!-- shipped in 3.53.0 -->
 
