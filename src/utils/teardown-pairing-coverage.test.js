@@ -78,7 +78,7 @@
  * reason", not "no leaks".
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeAll } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, relative, resolve } from 'node:path';
@@ -628,7 +628,13 @@ describe('the matcher against the pairs that really were leaking', () => {
      * @returns {string|null} The commit hash, or null when it cannot be found
      */
     function commitFor(spec) {
-        if (/^[0-9a-f]{7,40}$/.test(spec)) return git(['rev-parse', '--verify', `${spec}^{commit}`])?.trim() || null;
+        // A hash spec is used as-is: `git show <spec>~1:<path>` resolves it
+        // directly, so a separate `rev-parse --verify` round trip only to
+        // confirm what `git show` would tell us anyway is a subprocess this
+        // scan does not need. An invalid hash still fails safely — `unpairedAt`
+        // returns null and the case reports itself skipped, exactly as it does
+        // today for a spec `rev-list` cannot find.
+        if (/^[0-9a-f]{7,40}$/.test(spec)) return spec;
         return git(['rev-list', '-1', '--fixed-strings', `--grep=${spec}`, 'HEAD'])?.trim() || null;
     }
 
@@ -645,10 +651,35 @@ describe('the matcher against the pairs that really were leaking', () => {
             .map((finding) => finding.module);
     }
 
+    /**
+     * One `commitFor` plus two `git show`s per `PRE_FIX` entry, fetched once
+     * here rather than inside each `test.each` body.
+     *
+     * The subprocesses are the point of this describe block — it exists to run
+     * the matcher against source `git` actually shipped, not a pasted fixture —
+     * so they cannot be removed. What can move is *where* their latency is
+     * allowed to land. A `test()`'s timeout is a promise that a slow assertion
+     * is a real problem; process-spawn latency under a loaded pre-commit run
+     * (the full suite, many files at once) is not that, and this file already
+     * hit its 5-second test timeout twice in a row that way even though it
+     * runs in about 1.4s standalone. `beforeAll` gets its own generous,
+     * explicit timeout for exactly this wait, and every `test.each` body below
+     * does nothing but read the result and assert — so it keeps a tight
+     * timeout and a genuine hang in the matcher itself still fails fast.
+     */
+    const fetched = new Map();
+    beforeAll(() => {
+        for (const [spec, path] of PRE_FIX) {
+            const commit = commitFor(spec);
+            fetched.set(spec, {
+                before: commit && unpairedAt(`${commit}~1`, path),
+                after: commit && unpairedAt(commit, path),
+            });
+        }
+    }, 30000);
+
     test.each(PRE_FIX)('%s: %s not stopping %s is flagged, and stopping it is not', (spec, path, subModule) => {
-        const commit = commitFor(spec);
-        const before = commit && unpairedAt(`${commit}~1`, path);
-        const after = commit && unpairedAt(commit, path);
+        const { before, after } = fetched.get(spec);
         if (!before || !after) {
             // Not a silent pass: a tree without history (a tarball, a shallow
             // clone, a rewritten subject) cannot answer, and pretending it did
