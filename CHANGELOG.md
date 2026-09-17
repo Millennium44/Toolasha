@@ -29,7 +29,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The combat simulator's dungeon Success delta is shown to one decimal, matching the rate beside it.
 - A dungeon run with no max-wave figure says so instead of printing "undefined".
 
-- The treasure tracker ignores scrolls: they pay a buff, not loot, and any already recorded no longer show in the panel.
+- The treasure tracker and the gold-sources chest row both ignore scrolls: they pay a buff, not loot, and any already recorded no longer show in the panel.
+- The queue's total marks itself as an estimate when a row's material limit is one, not only when a simulated combat rate is in it.
 - The combat simulator's Deaths/hr change is shown to the same three decimals as the figure beside it, instead of rounding to whole deaths.
 - The Combat Level panel's Target Selector says what time the target is reached, next to how long it takes.
 
