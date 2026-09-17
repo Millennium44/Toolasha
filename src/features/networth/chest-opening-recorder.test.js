@@ -173,3 +173,98 @@ describe('an opening from the old character’s socket', () => {
         });
     });
 });
+
+/**
+ * A scroll (`seal_of_*`) pays a timed buff through the same `loot_opened`
+ * message a chest uses, but has no drop table and no items in it — folding one
+ * in here would record "nothing came out, minus the scroll's own price" as a
+ * chest-opening loss, which is real but not what this row is meant to measure.
+ * See `isScrollItem` in `treasure-tracker.js`, which this recorder reuses
+ * rather than a second category check.
+ */
+describe('scrolls are not chests', () => {
+    const socket = { url: 'wss://api.milkywayidle.com/ws', id: 'main' };
+
+    /** One opening, as the server sends it. */
+    const lootMessage = (itemHrid) =>
+        JSON.stringify({
+            type: 'loot_opened',
+            openedItem: { itemHrid, count: 1 },
+            gainedItems: [{ itemHrid: '/items/coin', count: 500 }],
+        });
+
+    beforeEach(async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        const { default: recorder } = await import('./chest-opening-recorder.js');
+
+        hoisted.saved = [];
+        recorder.cleanup();
+        recorder._rows = [];
+        recorder._charId = null;
+        recorder._loading = null;
+
+        dataManager.currentCharacterId = 'char-1';
+        dataManager.activeSocket = socket;
+        // Categories as the live client has them: every openable with a drop
+        // table is loot, and a scroll is its own category — the mystery item
+        // is deliberately left out of the map, to stand in for one the game
+        // data does not yet name
+        dataManager.initClientData = {
+            itemDetailMap: {
+                '/items/purple_chest': { categoryHrid: '/item_categories/loot' },
+                '/items/seal_of_critical_rate': { categoryHrid: '/item_categories/scroll' },
+            },
+        };
+    });
+
+    afterEach(async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        const { default: recorder } = await import('./chest-opening-recorder.js');
+        recorder.cleanup();
+        dataManager.activeSocket = null;
+        dataManager.currentCharacterId = null;
+        dataManager.initClientData = null;
+    });
+
+    test('opening a scroll records no row', async () => {
+        const { default: webSocketHook } = await import('../../core/websocket.js');
+        const { default: recorder } = await import('./chest-opening-recorder.js');
+        await recorder.initialize();
+
+        webSocketHook.processMessage(lootMessage('/items/seal_of_critical_rate'), socket);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(recorder._rows).toEqual([]);
+        expect(hoisted.saved).toEqual([]);
+    });
+
+    test('opening a real chest still records', async () => {
+        const { default: webSocketHook } = await import('../../core/websocket.js');
+        const { default: recorder } = await import('./chest-opening-recorder.js');
+        await recorder.initialize();
+
+        webSocketHook.processMessage(lootMessage('/items/purple_chest'), socket);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(recorder._rows).toHaveLength(1);
+        expect(recorder._rows[0].openings['/items/purple_chest']).toEqual({
+            count: 1,
+            gained: { '/items/coin': 500 },
+        });
+    });
+
+    test('an item the game data cannot name is recorded, not assumed to be a scroll', async () => {
+        const { default: webSocketHook } = await import('../../core/websocket.js');
+        const { default: recorder } = await import('./chest-opening-recorder.js');
+        await recorder.initialize();
+
+        webSocketHook.processMessage(lootMessage('/items/mystery_box'), socket);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(recorder._rows).toHaveLength(1);
+        expect(recorder._rows[0].openings['/items/mystery_box']).toEqual({
+            count: 1,
+            gained: { '/items/coin': 500 },
+        });
+    });
+});

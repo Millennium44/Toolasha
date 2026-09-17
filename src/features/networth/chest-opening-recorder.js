@@ -30,6 +30,15 @@
  * when they do not, and either way it is a slice of the residual that opening
  * chests creates and nothing else was recording.
  *
+ * ## Scrolls are not chests
+ *
+ * A scroll (the `seal_of_*` items) arrives as the same `loot_opened` message a
+ * chest does, but pays a timed buff and no items — see `isScrollItem` in
+ * `treasure-tracker.js`. Folding one in here would record "nothing came out,
+ * minus the scroll's own price" as a chest-opening loss, which is a real cost
+ * but not this row's. It is left out, and lands in the unattributed residual
+ * instead of misnaming it.
+ *
  * ## Recorded even when the tracker's UI is off
  *
  * The listener is this module's own rather than a hook into
@@ -49,6 +58,7 @@ import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
+import { isScrollItem } from '../inventory/treasure-tracker.js';
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 import { localDayId, dayStart } from './gold-sources.js';
 
@@ -266,6 +276,12 @@ class ChestOpeningRecorder {
 
             const chestHrid = data?.openedItem?.itemHrid;
             if (!chestHrid) return;
+            // A scroll (`seal_of_*`) arrives as the same `loot_opened` message a chest
+            // does, but pays a buff and no items — see `isScrollItem` for how the two
+            // are told apart. Folding it in here would file a scroll's cost as a chest
+            // loss; it is real, but not a chest, so it is left for the residual rather
+            // than misnamed.
+            if (isScrollItem(chestHrid)) return;
             const count = Number(data.openedItem.count) || 1;
             if (!(count > 0)) return;
             if (!this._currentCharId()) return;
