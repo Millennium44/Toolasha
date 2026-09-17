@@ -473,6 +473,21 @@ describe('countDisjointRoutes', () => {
         const passable = new Array(25).fill(false);
         expect(countDisjointRoutes(passable, 5)).toBe(0);
     });
+
+    /**
+     * Why the beacon objective stops chasing routes at two, measured rather
+     * than asserted: the entrance and the exit are opposite corners, and a
+     * corner has two neighbours. Every route out has to leave through one of
+     * them, and no two routes may share a room, so two is the ceiling on every
+     * floor the game deals — even one revealed end to end, which is the most
+     * passable a grid can ever be. Route count only rises as cells open up, so
+     * no beacon placement at any count can beat this.
+     */
+    test('two routes is the ceiling on every floor size, fully revealed', () => {
+        for (const cols of [4, 5, 6, 7, 8]) {
+            expect(countDisjointRoutes(new Array(cols * cols).fill(true), cols)).toBe(2);
+        }
+    });
 });
 
 describe('computeBeaconPlan route redundancy', () => {
