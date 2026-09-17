@@ -3300,6 +3300,65 @@ describe('linting a loaded party', () => {
     });
 });
 
+describe('a dungeon run with no wave figure', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    test('says so rather than printing the word undefined', () => {
+        const shown = showFight(oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2 })).textContent;
+
+        expect(shown).toContain('Max wave reached');
+        expect(shown).not.toContain('undefined');
+    });
+
+    test('a real wave figure is still shown', () => {
+        const shown = showFight(
+            oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2, maxWaveReached: 9 })
+        ).textContent;
+
+        expect(shown).toContain('Max wave reached9');
+    });
+});
+
+describe('the comparison table Success column', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    test('its delta carries the same decimal the rate beside it is shown to', () => {
+        // Rounded to whole points, a clear rate moving 75.0% -> 75.4% showed
+        // nothing at all, and the same size of move the other side of a
+        // boundary showed a full point. Same fault as the Deaths/hr delta.
+        pushHistory('Baseline', oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2 }));
+        pushHistory('Sharper', oneHourFight({ isDungeon: true, dungeonsCompleted: 98, dungeonsFailed: 32 }));
+        ui._comparisonBaseline = 0;
+        ui._comparisonSlots = [1];
+        ui._activeDetailIndex = null;
+
+        const shown = showFight(oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2 })).textContent;
+
+        expect(shown).toContain('75.4%');
+        expect(shown).toContain('+0.4');
+    });
+});
+
 describe('clearing the comparison history', () => {
     beforeEach(() => {
         mocks.drops = new Map();

@@ -4963,7 +4963,13 @@ class CombatSimUI {
             }
             html += `<div style="${rowStyle}">`;
             html += `<span style="${labelStyle}">Max wave reached</span>`;
-            html += `<span style="${valueStyle}">${simResult.maxWaveReached}</span>`;
+            // A run that carries no wave figure says so: the string "undefined"
+            // on screen is worse than an em dash, and reading it as 0 would be
+            // worse than either
+            const maxWave = Number.isFinite(simResult.maxWaveReached)
+                ? formatWithSeparator(simResult.maxWaveReached)
+                : '—';
+            html += `<span style="${valueStyle}">${maxWave}</span>`;
             html += '</div>';
         }
         html += '</div>';
@@ -6174,7 +6180,10 @@ class CombatSimUI {
             if (hasDungeon) {
                 const successDelta =
                     baseM?.successRate != null && m?.successRate != null
-                        ? this._formatDelta(m.successRate * 100, baseM.successRate * 100, true)
+                        ? // One decimal, matching the "75.0%" beside it: rounded to whole
+                          // points, a clear rate moving 75.0 -> 75.4 showed nothing and
+                          // 75.4 -> 76.0 showed a full point
+                          this._formatDelta(m.successRate * 100, baseM.successRate * 100, true, false, 1)
                         : '';
                 html +=
                     '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
