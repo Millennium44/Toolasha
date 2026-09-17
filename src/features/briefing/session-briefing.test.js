@@ -530,6 +530,40 @@ describe('the modal and the facts, in either order', () => {
         expect(text()).not.toContain('could not be drawn');
     });
 
+    test('the section goes above the dialog’s Close button, not under it', async () => {
+        // Under Close is under the button the player is already reaching for
+        game.queue = { queued: 0, seconds: 0 };
+        const container = document.createElement('div');
+        container.className = 'OfflineProgressModal_modalContainer__x';
+        container.innerHTML =
+            '<div class="OfflineProgressModal_modalContent__x">' +
+            '<h2>Welcome Back!</h2><div class="body">stuff</div>' +
+            '<div class="closeRow"><button>Close</button></div>' +
+            '</div>';
+        document.body.appendChild(container);
+
+        await feature.initialize();
+
+        const drawn = section();
+        const closeRow = container.querySelector('.closeRow');
+        expect(drawn).not.toBeNull();
+        // Document order: the section comes first
+        expect(drawn.compareDocumentPosition(closeRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    test('a dialog with no Close button still gets the section, at the end', async () => {
+        game.queue = { queued: 0, seconds: 0 };
+        const container = document.createElement('div');
+        container.className = 'OfflineProgressModal_modalContent__x';
+        container.innerHTML = '<h2>Welcome Back!</h2>';
+        document.body.appendChild(container);
+
+        await feature.initialize();
+
+        expect(section()).not.toBeNull();
+        expect(container.lastElementChild.className).toContain(SECTION_CLASS);
+    });
+
     test('the section lands in the box the player can see, not the full-screen container', async () => {
         // The live shape, 2026-09-17: the game's dialog is a viewport-sized
         // container holding a backdrop and the visible box. Appending to the

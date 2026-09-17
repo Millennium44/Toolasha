@@ -34,7 +34,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - The briefing now appears inside the game's Welcome Back window instead of as its own panel, so closing that window clears it.
 - It finds a Welcome Back window that is already open when it starts, which is the usual case on a real return.
-- The briefing is drawn inside the window itself rather than the invisible frame around it.
+- The briefing is drawn inside the window itself rather than the invisible frame around it, above its Close button.
 - A character switch or a short absence gets no briefing; the Time to Level overlay row still answers at any moment.
 
 ### Panels say what they mean

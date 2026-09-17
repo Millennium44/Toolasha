@@ -795,13 +795,37 @@ export function renderBriefingSection(modal) {
         if (lines.length === 0 && !diff?.lines?.length) return null;
 
         const section = buildSection(lines, diff);
-        modal.appendChild(section);
+        placeSection(modal, section);
         markAwayDiffShown();
         return section;
     } catch (error) {
         console.error('[SessionBriefing] Could not put the briefing in the welcome modal:', error);
         return null;
     }
+}
+
+/**
+ * Put the section where it will be read, not merely where it fits.
+ *
+ * Appending lands it under the dialog's own Close button, which is the button
+ * the player is on their way to press — a digest below it is a digest most
+ * returns never see. It goes above that button instead, and falls back to the
+ * end for a dialog that has no such button.
+ *
+ * @param {HTMLElement} modal - The dialog's content element
+ * @param {HTMLElement} section - The briefing section
+ * @returns {void}
+ */
+function placeSection(modal, section) {
+    const closer = [...(modal.querySelectorAll?.('button, [class*="closeButton"], [class*="Button_button"]') || [])]
+        .reverse()
+        .find((el) => /close/i.test(el.textContent || '') || /close/i.test(el.className?.toString() || ''));
+    // The button may sit in a row of its own, so climb to whichever child of
+    // the modal contains it — that is what the section has to go in front of
+    let anchor = closer;
+    while (anchor && anchor.parentElement && anchor.parentElement !== modal) anchor = anchor.parentElement;
+    if (anchor?.parentElement === modal) modal.insertBefore(section, anchor);
+    else modal.appendChild(section);
 }
 
 /**
