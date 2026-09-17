@@ -19,6 +19,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Marketplace tabs stay out of each other's way
+
+- A feature clearing its own marketplace tabs no longer clears every other feature's, and "× All" still clears everything.
+- A character switch now tells a feature its pinned tabs went away, instead of removing them silently.
+
 ### The session briefing moves into Welcome Back
 
 - The briefing now appears inside the game's Welcome Back window instead of as its own panel, so closing that window clears it.
