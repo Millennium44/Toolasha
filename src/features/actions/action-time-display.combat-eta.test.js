@@ -1,0 +1,387 @@
+/**
+ * A counted combat row in the queue, timed from the last all-zones simulation.
+ *
+ * Every combat row used to read `[∞]`, a "Fight 580 times" included: the queue had no rate
+ * to divide the count by. The all-zones snapshot now keeps encounters per hour per zone, and
+ * the game's count and the simulator's encounter are the same unit — one wave. So a counted
+ * row can be timed, but only as what it is: a simulated figure, in whatever gear the run was
+ * set up with, from however long ago. These tests hold the row to saying so, and hold an
+ * unknown to reading as one rather than as a time.
+ *
+ * @vitest-environment happy-dom
+ */
+
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../core/dom-observer.js', () => ({
+    default: { onClass: () => () => {} },
+}));
+
+const game = vi.hoisted(() => ({
+    currentActions: [],
+    actionDetails: {},
+    snapshot: null,
+    loadoutMap: {},
+}));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentActions: () => game.currentActions,
+        getActionDetails: (hrid) => game.actionDetails[hrid] ?? null,
+        getItemDetails: () => null,
+        getInventory: () => [],
+        getInitClientData: () => ({ itemDetailMap: {} }),
+        getActionDrinkSlots: () => [],
+        getElapsedSecondsInCurrentUnit: () => 0,
+        getSkills: () => [],
+        getEquipment: () => [],
+        getCurrentCharacterId: () => 'char1',
+        get characterData() {
+            return { characterLoadoutMap: game.loadoutMap };
+        },
+        on: () => () => {},
+    },
+}));
+
+vi.mock('../../utils/action-calculator.js', () => ({
+    calculateActionStats: () => ({ actionTime: 10, totalEfficiency: 0 }),
+}));
+
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: (key) => key === 'actionQueue',
+        getSettingValue: (_key, fallback) => fallback,
+        COLOR_TOOLTIP_INFO: '#abc',
+    },
+}));
+
+vi.mock('../../api/marketplace.js', () => ({
+    // Not loaded, so the panel's async profit pass never runs and the total is what it drew
+    default: { isLoaded: () => false, getPrice: () => null, on: () => () => {} },
+}));
+
+vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => null }));
+vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
+vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
+vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
+
+vi.mock('../../utils/all-zones-snapshot.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    loadAllZonesSnapshot: async () => game.snapshot,
+}));
+
+const { default: actionTimeDisplay, estimateCombatQueueRow } = await import('./action-time-display.js');
+
+// Local time, so the completion clocks read the same in every timezone
+const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();
+const HOUR = 60 * 60 * 1000;
+const GOBO = '/actions/combat/gobo_planet';
+const DEN = '/actions/combat/chimerical_den';
+const COINIFY = '/actions/alchemy/coinify';
+const COMBAT_ID = 41704;
+const TANK_ID = 41705;
+
+function combatAction(id, { maxCount = 580, currentCount = 80, tier = 3, loadoutId = COMBAT_ID, hrid = GOBO } = {}) {
+    return {
+        id,
+        ordinal: id,
+        actionHrid: hrid,
+        difficultyTier: tier,
+        characterLoadoutID: loadoutId,
+        primaryItemHash: '',
+        hasMaxCount: maxCount > 0,
+        maxCount,
+        currentCount,
+    };
+}
+
+function coinifyAction(id, remaining = 3) {
+    return {
+        id,
+        ordinal: id,
+        actionHrid: COINIFY,
+        difficultyTier: 0,
+        characterLoadoutID: 0,
+        primaryItemHash: '',
+        hasMaxCount: true,
+        maxCount: remaining,
+        currentCount: 0,
+    };
+}
+
+/** An all-zones run: 500 waves an hour at Gobo Planet T3, in the named loadout. */
+function snapshot({ rate = 500, tier = 3, loadout = { source: 'loadout', name: 'Combat' }, ageMs = 3 * HOUR } = {}) {
+    return {
+        savedAt: NOW - ageMs,
+        fingerprint: 'abc',
+        ...(loadout === null ? {} : { loadout }),
+        zones: [
+            {
+                zoneHrid: GOBO,
+                zoneName: 'Gobo Planet',
+                difficultyTier: tier,
+                profitPerHour: 1_000_000,
+                xpPerHour: 50_000,
+                ...(rate === null ? {} : { encountersPerHour: rate }),
+            },
+        ],
+    };
+}
+
+const gobo = { hrid: GOBO, name: 'Gobo Planet', type: '/action_types/combat', combatZoneInfo: { isDungeon: false } };
+const den = { hrid: DEN, name: 'Chimerical Den', type: '/action_types/combat', combatZoneInfo: { isDungeon: true } };
+
+function estimate(overrides = {}) {
+    return estimateCombatQueueRow({
+        actionObj: combatAction(1),
+        actionDetails: gobo,
+        snapshot: snapshot(),
+        rowLoadout: { known: true, name: 'Combat' },
+        now: NOW,
+        ...overrides,
+    });
+}
+
+describe('estimateCombatQueueRow', () => {
+    test('times the remaining waves at the simulated rate, marked as an estimate', () => {
+        const result = estimate();
+        expect(result.kind).toBe('estimate');
+        // 500 waves left at 500 an hour
+        expect(result.seconds).toBe(3600);
+        expect(result.flags).toEqual([]);
+        expect(result.text).toBe('[~1h 00m 00s · sim]');
+        expect(result.title).toContain('500 waves/h');
+        expect(result.title).toContain('3h ago');
+        expect(result.title).toContain('Combat loadout, which this action also uses');
+    });
+
+    test('a run in another named loadout still estimates, and says so', () => {
+        const result = estimate({ rowLoadout: { known: true, name: 'Tank' } });
+        expect(result.text).toContain('~');
+        expect(result.kind).toBe('estimate');
+        expect(result.seconds).toBe(3600);
+        expect(result.flags).toEqual(['other gear']);
+        expect(result.text).toBe('[~1h 00m 00s · sim, other gear]');
+        expect(result.title).toContain('but this action uses your Tank loadout');
+    });
+
+    test('a row fought in no loadout does not match a run in a named one', () => {
+        const result = estimate({ rowLoadout: { known: true, name: null } });
+        expect(result.flags).toEqual(['other gear']);
+        expect(result.title).toContain('uses no loadout');
+    });
+
+    test.each([
+        ['a hand-edited simulator setup', { source: 'editor', name: 'Combat' }],
+        ['worn gear', { source: 'worn', name: null }],
+        ['an unrecorded source', { source: 'unknown', name: null }],
+        ['a run that predates the field', null],
+    ])('%s is unknown gear, never a match', (_label, loadout) => {
+        const result = estimate({ snapshot: snapshot({ loadout }) });
+        expect(result.kind).toBe('estimate');
+        expect(result.flags).toEqual(['unknown gear']);
+        expect(result.text).toBe('[~1h 00m 00s · sim, unknown gear]');
+    });
+
+    test('a row whose loadout cannot be resolved is unknown gear', () => {
+        const result = estimate({ rowLoadout: { known: false, name: null } });
+        expect(result.flags).toEqual(['unknown gear']);
+    });
+
+    test('a run over a week old is flagged stale', () => {
+        const result = estimate({ snapshot: snapshot({ ageMs: 8 * 24 * HOUR }) });
+        expect(result.flags).toEqual(['stale']);
+        expect(result.text).toBe('[~1h 00m 00s · sim, stale]');
+        expect(result.title).toContain('8d ago');
+    });
+
+    test.each([
+        ['no snapshot', { snapshot: null }],
+        ['no row for this tier', { snapshot: snapshot({ tier: 2 }) }],
+        ['a run that predates the rate', { snapshot: snapshot({ rate: null }) }],
+        ['a run with no encounters', { snapshot: snapshot({ rate: 0 }) }],
+    ])('%s reads as unknown, not as a time', (_label, overrides) => {
+        const result = estimate(overrides);
+        expect(result.kind).toBe('unknown');
+        expect(result.seconds).toBeNull();
+        expect(result.text).toBe('[? · no sim rate]');
+        expect(result.text).not.toMatch(/\d/);
+        expect(result.title).toMatch(/^No time estimate/);
+    });
+
+    test('a dungeon reads as unknown: its count is runs and the sim rates waves', () => {
+        const result = estimate({
+            actionObj: combatAction(1, { hrid: DEN, tier: 0 }),
+            actionDetails: den,
+            snapshot: { ...snapshot(), zones: [{ ...snapshot().zones[0], zoneHrid: DEN, difficultyTier: 0 }] },
+        });
+        expect(result.kind).toBe('unknown');
+        expect(result.title).toContain('dungeon');
+    });
+
+    test('Fight ∞ stays infinite', () => {
+        const result = estimate({ actionObj: combatAction(1, { maxCount: 0 }) });
+        expect(result.kind).toBe('infinite');
+    });
+
+    test('a non-combat row is not its business', () => {
+        expect(estimate({ actionObj: coinifyAction(1), actionDetails: { hrid: COINIFY } })).toBeNull();
+    });
+});
+
+/** The edit menu as the game draws it, one row per label. */
+function queueMenu(labels) {
+    const parent = document.createElement('div');
+    const menu = document.createElement('div');
+    menu.className = 'QueuedActions_queuedActionsEditMenu__x';
+    menu.innerHTML = labels
+        .map(
+            (label, index) => `
+        <div class="QueuedActions_action__item">
+            <div class="QueuedActions_actionText__y">
+                <div class="QueuedActions_text__z">#${index + 1}${label}</div>
+            </div>
+        </div>`
+        )
+        .join('');
+    parent.appendChild(menu);
+    document.body.appendChild(parent);
+    return menu;
+}
+
+function rowTexts(root) {
+    return [...root.querySelectorAll('.mwi-queue-action-time')].map((el) => el.textContent);
+}
+
+function total() {
+    return document.querySelector('#mwi-queue-total-time')?.textContent;
+}
+
+describe('the Queued Actions panel', () => {
+    beforeEach(async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        document.body.innerHTML = '';
+        game.actionDetails = {
+            [GOBO]: gobo,
+            [COINIFY]: {
+                hrid: COINIFY,
+                name: 'Coinify',
+                type: '/action_types/alchemy',
+                inputItems: [],
+                outputItems: [],
+            },
+        };
+        game.loadoutMap = { [COMBAT_ID]: { name: 'Combat' }, [TANK_ID]: { name: 'Tank' } };
+        game.snapshot = snapshot();
+        await actionTimeDisplay.refreshCombatSnapshot();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        actionTimeDisplay._combatSnapshotCache = null;
+    });
+
+    test('a counted combat row shows a marked estimate, and the total is marked too', () => {
+        game.currentActions = [coinifyAction(1), combatAction(2)];
+        const menu = queueMenu(['Coinify', 'Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        const [coinify, fight] = rowTexts(menu);
+        expect(coinify).toMatch(/^\[30s\] Complete at /);
+        expect(fight).toMatch(/^\[~1h 00m 00s · sim\] Complete at ~/);
+        expect(menu.querySelectorAll('.mwi-queue-action-time')[1].title).toContain('500 waves/h');
+        expect(total()).toBe('Total time: ~1h 00m 30s');
+    });
+
+    test('a mismatched loadout is said on the row', () => {
+        game.currentActions = [combatAction(1, { loadoutId: TANK_ID })];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        expect(rowTexts(menu)[0]).toMatch(/^\[~1h 00m 00s · sim, other gear\]/);
+    });
+
+    test('an unknown row stays unknown, and the total says it is incomplete', async () => {
+        game.snapshot = snapshot({ rate: null });
+        await actionTimeDisplay.refreshCombatSnapshot();
+        game.currentActions = [combatAction(1), coinifyAction(2)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Coinify']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        const [fight, coinify] = rowTexts(menu);
+        expect(fight).toBe('[? · no sim rate]');
+        // Nothing after an unknown can be given a clock
+        expect(coinify).toBe('[30s]');
+        expect(total()).toBe('Total time: 30s + [?]');
+    });
+
+    test('before the snapshot has been read, a counted combat row is unknown', () => {
+        actionTimeDisplay._combatSnapshotCache = null;
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        expect(rowTexts(menu)).toEqual(['[? · no sim rate]']);
+        expect(total()).toBe('Total time: [?]');
+    });
+
+    test('Fight ∞ stays [∞] and the total stays infinite', () => {
+        game.currentActions = [combatAction(1, { maxCount: 0 })];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        expect(rowTexts(menu)).toEqual(['[∞]']);
+        expect(total()).toBe('Total time: [∞]');
+    });
+
+    test('a non-combat queue is drawn exactly as before', () => {
+        game.currentActions = [coinifyAction(1), coinifyAction(2, 6)];
+        const menu = queueMenu(['Coinify', 'Coinify']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        // Recorded from the build before combat rows were timed
+        expect(menu.parentElement.innerHTML).toMatchInlineSnapshot(`
+          "<div class="QueuedActions_queuedActionsEditMenu__x">
+                  <div class="QueuedActions_action__item">
+                      <div class="QueuedActions_actionText__y">
+                          <div class="QueuedActions_text__z">#1Coinify</div>
+                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[30s] Complete at 12:00:30</div><div class="mwi-queue-action-profit" data-div-index="0" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
+                  </div>
+                  <div class="QueuedActions_action__item">
+                      <div class="QueuedActions_actionText__y">
+                          <div class="QueuedActions_text__z">#2Coinify</div>
+                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[0h 01m 00s] Complete at 12:01:30</div><div class="mwi-queue-action-profit" data-div-index="1" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
+                  </div></div><div id="mwi-queue-total-time" style="color: var(--text-color-primary, undefined); font-weight: bold; margin-top: 12px; padding: 8px; text-align: center; border-top-width: var(--border-color, undefined); border-top-style: var(--border-color, undefined); border-top-color: var(--border-color, undefined);">Total time: 0h 01m 30s</div>"
+        `);
+    });
+});
+
+describe('the queue hover tooltip', () => {
+    beforeEach(async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(NOW);
+        document.body.innerHTML = '';
+        game.actionDetails = { [GOBO]: gobo };
+        game.loadoutMap = { [COMBAT_ID]: { name: 'Combat' } };
+        game.snapshot = snapshot();
+        await actionTimeDisplay.refreshCombatSnapshot();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        actionTimeDisplay._combatSnapshotCache = null;
+    });
+
+    test('a counted combat row shows the same marked estimate', () => {
+        game.currentActions = [combatAction(1)];
+        const tooltip = document.createElement('div');
+        tooltip.innerHTML = `
+            <div class="QueuedActions_actions__c">
+                <div class="QueuedActions_action__item">
+                    <div class="QueuedActions_actionText__y"><div class="QueuedActions_text__z">#1Gobo Planet (T3)</div></div>
+                </div>
+            </div>`;
+        document.body.appendChild(tooltip);
+        actionTimeDisplay.injectQueueTimesTooltip(tooltip);
+
+        expect(rowTexts(tooltip)[0]).toMatch(/^\[~1h 00m 00s · sim\] Complete at ~/);
+        expect(tooltip.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: ~1h 00m 00s');
+    });
+});

@@ -21,6 +21,7 @@ import profitCalculator from '../market/profit-calculator.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import itemFlowRecorder from '../networth/item-flow-recorder.js';
 import { GATHERING_ACTION_TYPES, lootEntryValue } from '../networth/gold-sources.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
@@ -54,6 +55,9 @@ import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js'
 import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { ALL_ZONES_SNAPSHOT_KEY, loadAllZonesSnapshot, zoneFromSnapshot } from '../../utils/all-zones-snapshot.js';
+import { characterKey } from '../../utils/character-key.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 
 /**
  * Format a completion Date as a clock string, respecting user's time/date format settings.
@@ -177,6 +181,173 @@ export function parseInventoryCountFromActionName(actionNameText) {
     return Number.isFinite(count) ? count : null;
 }
 
+/** Older than this and a simulated combat rate is still used, but flagged (as the planner does) */
+const COMBAT_SIM_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** How long a read of the all-zones snapshot is reused before the queue reads it again */
+const COMBAT_SNAPSHOT_REFRESH_MS = 30 * 1000;
+
+/** What a counted combat row reads when there is no rate to time it with */
+const COMBAT_UNKNOWN_TEXT = '[? · no sim rate]';
+
+/**
+ * How long ago, said the way a sentence says it.
+ *
+ * The same wording as `ageLabel` in `features/planner/combat-rates.js`, repeated rather than
+ * imported: that module imports the simulator UI, which is its own bundle.
+ *
+ * @param {number} ageMs - Milliseconds since the run
+ * @returns {string} e.g. "3d ago"
+ */
+function simAgeLabel(ageMs) {
+    const hour = 60 * 60 * 1000;
+    if (!Number.isFinite(ageMs) || ageMs < 0) return 'at an unknown time';
+    if (ageMs < 60_000) return 'just now';
+    if (ageMs < hour) return `${Math.floor(ageMs / 60_000)}m ago`;
+    if (ageMs < 24 * hour) return `${Math.floor(ageMs / hour)}h ago`;
+    return `${Math.floor(ageMs / (24 * hour))}d ago`;
+}
+
+/**
+ * Whose gear a stored all-zones run was measured in, against the loadout a queued fight uses.
+ *
+ * Only a run started from a named loadout can match, and only by name — which is a label, not a
+ * guarantee, since the simulator's editor can be changed after a loadout is applied. Every other
+ * source is gear this row cannot be compared with, and says so.
+ *
+ * @param {{source: string, name: string|null}|null} runLoadout - From `snapshotLoadout`
+ * @param {{known: boolean, name: string|null}} rowLoadout - The row's loadout; `known` false
+ *   when the row names a loadout that could not be looked up, `name` null for no loadout
+ * @returns {{flag: string|null, sentence: string}} A flag for the row, and the tooltip's wording
+ */
+function compareCombatGear(runLoadout, rowLoadout) {
+    const rowLabel = rowLoadout.name ? `your ${rowLoadout.name} loadout` : 'no loadout';
+    const caveat = 're-run the all-zones sim in the gear this fight uses before trusting it.';
+
+    if (runLoadout?.source !== 'loadout' || !runLoadout.name) {
+        const how =
+            runLoadout?.source === 'editor'
+                ? 'gear set up by hand in the simulator'
+                : runLoadout?.source === 'worn'
+                  ? 'the gear worn at the time'
+                  : 'gear the run did not record';
+        return {
+            flag: 'unknown gear',
+            sentence: `Simulated in ${how}, which may not be what this fight uses — ${caveat}`,
+        };
+    }
+
+    const runLabel = `your ${runLoadout.name} loadout`;
+    if (!rowLoadout.known) {
+        return {
+            flag: 'unknown gear',
+            sentence: `Simulated in ${runLabel}; which loadout this action uses could not be read — ${caveat}`,
+        };
+    }
+    if (rowLoadout.name !== runLoadout.name) {
+        return {
+            flag: 'other gear',
+            sentence: `Simulated in ${runLabel}, but this action uses ${rowLabel} — ${caveat}`,
+        };
+    }
+    return {
+        flag: null,
+        sentence:
+            `Simulated in ${runLabel}, which this action also uses ` +
+            '(matched by name — edits made in the simulator after applying it are not seen).',
+    };
+}
+
+/**
+ * A counted combat row's time, out of the last all-zones simulation.
+ *
+ * The game counts a fight in waves ("Fight 580 times" is 580 waves), and the simulator's
+ * `encounters` counter moves once per cleared wave, so remaining ÷ encounters per hour is the
+ * time left. That figure is a simulation: it is always marked `~` and labelled `sim`, and its
+ * tooltip says how old the run is and what gear it ran in. A row with nothing to divide by is
+ * `unknown`, never a time.
+ *
+ * A dungeon is always unknown: its count is runs, and a snapshot's `encountersPerHour` counts
+ * the waves inside them.
+ *
+ * Pure, so the arithmetic and the wording can be tested without a queue.
+ *
+ * @param {Object} input
+ * @param {Object} input.actionObj - The queued action
+ * @param {Object} input.actionDetails - Its action details
+ * @param {Object|null} input.snapshot - From `loadAllZonesSnapshot`
+ * @param {{known: boolean, name: string|null}} input.rowLoadout - The loadout the row fights in
+ * @param {number} [input.now=Date.now()] - The clock
+ * @returns {{kind: 'estimate'|'unknown'|'infinite', seconds: number|null, flags: Array<string>,
+ *   text: string, title: string}|null} Null for a row that is not combat
+ */
+export function estimateCombatQueueRow({ actionObj, actionDetails, snapshot, rowLoadout, now = Date.now() }) {
+    const isCombat =
+        actionDetails?.type === '/action_types/combat' || Boolean(actionObj?.actionHrid?.includes('/combat/'));
+    if (!isCombat) return null;
+
+    if (!actionObj.hasMaxCount) {
+        return { kind: 'infinite', seconds: null, flags: [], text: '[∞]', title: '' };
+    }
+
+    const unknown = (why) => ({
+        kind: 'unknown',
+        seconds: null,
+        flags: [],
+        text: COMBAT_UNKNOWN_TEXT,
+        title: `No time estimate: ${why}`,
+    });
+
+    if (actionDetails?.combatZoneInfo?.isDungeon) {
+        return unknown("a dungeon's count is runs, and the all-zones sim rates dungeons in waves.");
+    }
+    if (!snapshot) {
+        return unknown('run an all-zones sim in the Combat Simulator to time counted fights.');
+    }
+
+    const tier = Number(actionObj.difficultyTier) || 0;
+    const zone = zoneFromSnapshot(snapshot, actionObj.actionHrid, tier);
+    const where = `${actionDetails?.name || actionObj.actionHrid}${tier > 0 ? ` T${tier}` : ''}`;
+    if (!zone) {
+        return unknown(`your all-zones run has no result for ${where}.`);
+    }
+    if (zone.encountersPerHour === null) {
+        return unknown(
+            `your all-zones run for ${where} has no wave rate (it predates one, or cleared no waves) — re-run it.`
+        );
+    }
+
+    const remaining = Math.max(0, (Number(actionObj.maxCount) || 0) - (Number(actionObj.currentCount) || 0));
+    const seconds = (remaining / zone.encountersPerHour) * 3600;
+
+    const ageMs = Number.isFinite(zone.savedAt) ? Math.max(0, now - zone.savedAt) : null;
+    const age = ageMs === null ? 'at an unknown time' : simAgeLabel(ageMs);
+    const stale = ageMs === null || ageMs > COMBAT_SIM_STALE_AFTER_MS;
+    const gear = compareCombatGear(zone.loadout, rowLoadout || { known: false, name: null });
+
+    const flags = [];
+    if (stale) flags.push('stale');
+    if (gear.flag) flags.push(gear.flag);
+
+    const rate = formatWithSeparator(Math.round(zone.encountersPerHour));
+    const title = [
+        `Estimated, not measured: ${formatWithSeparator(remaining)} waves left at ${rate} waves/h, ` +
+            `the rate simulated for ${where} in your all-zones run ${age}.`,
+        stale ? 'That run is over a week old.' : null,
+        gear.sentence,
+    ]
+        .filter(Boolean)
+        .join(' ');
+
+    return {
+        kind: 'estimate',
+        seconds,
+        flags,
+        text: `[~${timeReadable(seconds)} · ${['sim', ...flags].join(', ')}]`,
+        title,
+    };
+}
+
 class ActionTimeDisplay {
     constructor() {
         this.displayElement = null;
@@ -202,6 +373,147 @@ class ActionTimeDisplay {
         this._runSoFarRedrawTimer = null;
         this._runSoFarRedrawPending = false;
         this._unsubscribeItemFlowChange = null;
+        // The last all-zones snapshot read for combat row times: {key, snapshot, fetchedAt}
+        this._combatSnapshotCache = null;
+        this._combatSnapshotLoading = null;
+        // The edit menu last drawn, so a snapshot arriving after it can redraw it
+        this._lastQueueMenu = null;
+    }
+
+    /**
+     * The all-zones snapshot for the character now logged in, as last read.
+     *
+     * The queue is drawn synchronously and the snapshot lives in IndexedDB, so this answers
+     * from a cache and starts a read when the cache is missing, belongs to another character, or
+     * is older than {@link COMBAT_SNAPSHOT_REFRESH_MS}. Until a read lands for this character the
+     * answer is null, which draws combat rows as unknown — never another character's rate.
+     *
+     * @returns {Object|null} The snapshot, or null when none has been read for this character
+     */
+    getCombatSnapshot() {
+        let key = null;
+        try {
+            key = characterKey(ALL_ZONES_SNAPSHOT_KEY);
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Resolving the all-zones snapshot key failed:', error);
+            return null;
+        }
+        const cache = this._combatSnapshotCache;
+        const current = cache?.key === key;
+        if (!current || Date.now() - cache.fetchedAt > COMBAT_SNAPSHOT_REFRESH_MS) {
+            this.refreshCombatSnapshot({ redraw: true });
+        }
+        return current ? cache.snapshot : null;
+    }
+
+    /**
+     * Read the all-zones snapshot into the cache.
+     *
+     * With `redraw`, an open edit menu is drawn again when the read changes what combat rows can
+     * say — the first read for a character, or a newer run — so a row drawn as unknown while the
+     * read was in flight does not stay that way.
+     *
+     * @param {Object} [options]
+     * @param {boolean} [options.redraw=false] - Redraw the open edit menu if the answer changed
+     * @returns {Promise<void>}
+     */
+    async refreshCombatSnapshot({ redraw = false } = {}) {
+        if (this._combatSnapshotLoading) return this._combatSnapshotLoading;
+        const run = async () => {
+            try {
+                const key = characterKey(ALL_ZONES_SNAPSHOT_KEY);
+                const snapshot = await loadAllZonesSnapshot();
+                // A character switch inside the read: this answer is for someone else
+                if (characterKey(ALL_ZONES_SNAPSHOT_KEY) !== key) return;
+                const previous = this._combatSnapshotCache;
+                const changed =
+                    previous?.key !== key || (previous.snapshot?.savedAt ?? null) !== (snapshot?.savedAt ?? null);
+                this._combatSnapshotCache = { key, snapshot, fetchedAt: Date.now() };
+                if (redraw && changed) this.redrawQueueMenu();
+            } catch (error) {
+                console.error('[ActionTimeDisplay] Reading the all-zones snapshot failed:', error);
+            }
+        };
+        this._combatSnapshotLoading = run();
+        try {
+            await this._combatSnapshotLoading;
+        } finally {
+            this._combatSnapshotLoading = null;
+        }
+    }
+
+    /**
+     * Draw the edit menu again, the way its own mutation watcher does.
+     */
+    redrawQueueMenu() {
+        const queueMenu = this._lastQueueMenu;
+        if (!queueMenu?.isConnected) return;
+        // Our own injection mutates the menu; the watcher is detached first and reattached by
+        // injectQueueTimes, exactly as the watcher's callback does
+        if (this.queueMenuObserver) {
+            this.queueMenuObserver();
+            this.queueMenuObserver = null;
+        }
+        this.injectQueueTimes(queueMenu);
+    }
+
+    /**
+     * The loadout a queued action fights in, by the id the action carries.
+     *
+     * The loadout store is keyed by the server's loadout id; the character data's own loadout
+     * map is the fallback for a store that has not loaded. A zero or missing id is "no loadout".
+     *
+     * @param {Object} actionObj - The queued action
+     * @returns {{known: boolean, name: string|null}} The name, and whether the lookup succeeded
+     */
+    resolveRowLoadout(actionObj) {
+        const id = actionObj?.characterLoadoutID;
+        if (!id) return { known: true, name: null };
+        try {
+            const store = loadoutSnapshot() || bundledLoadoutSnapshot;
+            const name =
+                store?.snapshots?.[String(id)]?.name ||
+                dataManager.characterData?.characterLoadoutMap?.[String(id)]?.name ||
+                null;
+            return name ? { known: true, name } : { known: false, name: null };
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Resolving a queued action loadout failed:', error);
+            return { known: false, name: null };
+        }
+    }
+
+    /**
+     * A counted combat row's estimate, or null for any other row.
+     *
+     * `Fight ∞` rows return null too: they keep going through the existing path, which is what
+     * draws them `[∞]`.
+     *
+     * @param {Object} actionObj - The queued action
+     * @param {Object} actionDetails - Its action details
+     * @returns {Object|null} From {@link estimateCombatQueueRow}
+     */
+    combatRowEstimate(actionObj, actionDetails) {
+        if (!actionObj?.hasMaxCount) return null;
+        if (actionDetails?.type !== '/action_types/combat' && !actionObj.actionHrid?.includes('/combat/')) {
+            return null;
+        }
+        try {
+            return estimateCombatQueueRow({
+                actionObj,
+                actionDetails,
+                snapshot: this.getCombatSnapshot(),
+                rowLoadout: this.resolveRowLoadout(actionObj),
+            });
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Estimating a combat row failed:', error);
+            return {
+                kind: 'unknown',
+                seconds: null,
+                flags: [],
+                text: COMBAT_UNKNOWN_TEXT,
+                title: 'No time estimate: it could not be worked out.',
+            };
+        }
     }
 
     /**
@@ -468,12 +780,17 @@ class ActionTimeDisplay {
             // Sticky: once a row's figure rests on credited expected yield, every clock built
             // on the running total after it does too.
             let hasEstimate = false;
+            // A counted fight with no simulated rate: the queue does end, but not at a time
+            // anyone can say, so every clock after it is withheld and the total is incomplete
+            let hasUnknown = false;
 
             // Include current action time in total (same as edit menu)
             const currentActionTime = this.calculateCurrentActionTime(currentActions, inventoryLookup);
             if (currentActionTime) {
                 accumulatedTime += currentActionTime.totalTime;
                 if (currentActionTime.hasInfinite) hasInfinite = true;
+                if (currentActionTime.hasUnknown) hasUnknown = true;
+                if (currentActionTime.isEstimated) hasEstimate = true;
             }
 
             // Track used action IDs to prevent duplicate matching
@@ -494,6 +811,27 @@ class ActionTimeDisplay {
 
                 const actionDetails = dataManager.getActionDetails(actionObj.actionHrid);
                 if (!actionDetails) continue;
+
+                // A counted fight is timed from the last all-zones sim, or read as unknown. It
+                // spends nothing from the ledger: the walk has never costed combat consumables.
+                const combat = this.combatRowEstimate(actionObj, actionDetails);
+                if (combat) {
+                    let combatText = combat.text;
+                    if (combat.kind === 'estimate') {
+                        accumulatedTime += combat.seconds;
+                        hasEstimate = true;
+                        if (!hasInfinite && !hasUnknown) {
+                            const completionDate = new Date();
+                            completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
+                            const isToday = completionDate.toDateString() === new Date().toDateString();
+                            combatText += ` Complete at ~${formatCompletionTime(completionDate, !isToday)}`;
+                        }
+                    } else {
+                        hasUnknown = true;
+                    }
+                    this.appendTimeToActionDiv(actionDiv, combatText, combat.title);
+                    continue;
+                }
 
                 // The walk costs each row against what its predecessors left, so a counted
                 // row is shown for what it can actually run, not for what it asked.
@@ -526,7 +864,7 @@ class ActionTimeDisplay {
                 }
 
                 // Add completion time
-                if (!hasInfinite && !result.isTrulyInfinite) {
+                if (!hasInfinite && !hasUnknown && !result.isTrulyInfinite) {
                     const completionDate = new Date();
                     completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
                     const isToday = completionDate.toDateString() === new Date().toDateString();
@@ -559,6 +897,11 @@ class ActionTimeDisplay {
                         accumulatedTime > 0
                             ? `Total: ${totalMark}${timeReadable(accumulatedTime)} + [∞]`
                             : 'Total: [∞]';
+                } else if (hasUnknown) {
+                    totalText =
+                        accumulatedTime > 0
+                            ? `Total: ${totalMark}${timeReadable(accumulatedTime)} + [?]`
+                            : 'Total: [?]';
                 } else {
                     totalText = `Total: ${totalMark}${timeReadable(accumulatedTime)}`;
                 }
@@ -574,8 +917,9 @@ class ActionTimeDisplay {
      * Append a time display div to an action div in the queue tooltip
      * @param {HTMLElement} actionDiv - The action container div
      * @param {string} text - Time text to display
+     * @param {string} [title] - Hover text saying what the figure rests on
      */
-    appendTimeToActionDiv(actionDiv, text) {
+    appendTimeToActionDiv(actionDiv, text, title = '') {
         const timeDiv = document.createElement('div');
         timeDiv.className = 'mwi-queue-action-time';
         timeDiv.style.cssText = `
@@ -584,6 +928,7 @@ class ActionTimeDisplay {
             margin-top: 2px;
         `;
         timeDiv.textContent = text;
+        if (title) timeDiv.title = title;
 
         const actionTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
         if (actionTextContainer) {
@@ -600,7 +945,8 @@ class ActionTimeDisplay {
      * queued row, so the rows after it must be costed against what it leaves.
      * @param {Array} currentActions - All current actions from dataManager
      * @param {Object} inventoryLookup - Inventory lookup map, mutated by the deduction
-     * @returns {Object|null} { totalTime, hasInfinite, actionId } or null
+     * @returns {Object|null} { totalTime, hasInfinite, hasUnknown, isEstimated, actionId } or null —
+     *      `hasUnknown` for a counted fight with no simulated rate, `isEstimated` for one with
      */
     calculateCurrentActionTime(currentActions, inventoryLookup) {
         const actionNameElement = document.querySelector('div[class*="Header_actionName"]');
@@ -614,6 +960,18 @@ class ActionTimeDisplay {
 
         const actionDetails = dataManager.getActionDetails(currentAction.actionHrid);
         if (!actionDetails) return null;
+
+        const combat = this.combatRowEstimate(currentAction, actionDetails);
+        if (combat) {
+            const estimated = combat.kind === 'estimate';
+            return {
+                totalTime: estimated ? combat.seconds : 0,
+                hasInfinite: false,
+                hasUnknown: !estimated,
+                isEstimated: estimated,
+                actionId: currentAction.id,
+            };
+        }
 
         const result = this.calculateSingleQueueActionTime(currentAction, actionDetails, inventoryLookup, {
             limitCountedByMaterials: true,
@@ -2884,6 +3242,7 @@ class ActionTimeDisplay {
             }
 
             const inventoryLookup = this.buildInventoryLookup(dataManager.getInventory());
+            this._lastQueueMenu = queueMenu;
 
             // Clear all existing time and profit displays to prevent duplicates
             queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
@@ -2901,6 +3260,11 @@ class ActionTimeDisplay {
             // Sticky, as in the tooltip: a clock built on a running total that includes an
             // estimated row is itself an estimate.
             let hasEstimate = false;
+            // As in the tooltip: a counted fight with no simulated rate ends at a time nobody can
+            // say, so the clocks after it are withheld and the total says it is incomplete
+            let hasUnknown = false;
+            // Whether the total leans on a simulated combat rate, which the total then marks
+            let usesSimRate = false;
             const actionsToCalculate = []; // Store actions for async profit calculation (with time in seconds)
 
             // Detect current action from DOM so we can avoid double-counting
@@ -2916,7 +3280,17 @@ class ActionTimeDisplay {
             // Always include current action time, even if it appears in queue
             if (currentAction) {
                 const actionDetails = dataManager.getActionDetails(currentAction.actionHrid);
-                if (actionDetails) {
+                const currentCombat = actionDetails ? this.combatRowEstimate(currentAction, actionDetails) : null;
+                if (currentCombat) {
+                    // A counted fight spends nothing from the ledger and has no profit pass here
+                    if (currentCombat.kind === 'estimate') {
+                        accumulatedTime += currentCombat.seconds;
+                        hasEstimate = true;
+                        usesSimRate = true;
+                    } else {
+                        hasUnknown = true;
+                    }
+                } else if (actionDetails) {
                     const isEnhancing = actionDetails.type === '/action_types/enhancing';
 
                     // Check if infinite BEFORE calculating count
@@ -3083,6 +3457,38 @@ class ActionTimeDisplay {
                     continue;
                 }
 
+                // A counted fight: timed from the last all-zones sim, or read as unknown
+                const combat = this.combatRowEstimate(actionObj, actionDetails);
+                if (combat) {
+                    let combatText = combat.text;
+                    if (combat.kind === 'estimate') {
+                        accumulatedTime += combat.seconds;
+                        hasEstimate = true;
+                        usesSimRate = true;
+                        if (!hasInfinite && !hasUnknown) {
+                            const completionDate = new Date();
+                            completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
+                            const isToday = completionDate.toDateString() === new Date().toDateString();
+                            combatText += ` Complete at ~${formatCompletionTime(completionDate, !isToday)}`;
+                        }
+                    } else {
+                        hasUnknown = true;
+                    }
+
+                    const combatDiv = document.createElement('div');
+                    combatDiv.className = 'mwi-queue-action-time';
+                    combatDiv.style.cssText = `
+                    color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                    font-size: 0.85em;
+                    margin-top: 2px;
+                `;
+                    combatDiv.textContent = combatText;
+                    combatDiv.title = combat.title;
+                    const combatTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
+                    (combatTextContainer || actionDiv).appendChild(combatDiv);
+                    continue;
+                }
+
                 const isEnhancing = actionDetails.type === '/action_types/enhancing';
 
                 // Check if infinite BEFORE calculating count
@@ -3216,7 +3622,7 @@ class ActionTimeDisplay {
 
                 // Format completion time
                 let completionText = '';
-                if (!hasInfinite && !isTrulyInfinite) {
+                if (!hasInfinite && !hasUnknown && !isTrulyInfinite) {
                     const completionDate = new Date();
                     completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
                     const isToday = completionDate.toDateString() === new Date().toDateString();
@@ -3305,16 +3711,25 @@ class ActionTimeDisplay {
             `;
 
             // Build total time text
+            // Marked only when a simulated combat rate is in it, so a queue without one reads
+            // exactly as it always has
+            const simMark = usesSimRate ? '~' : '';
             let totalText = '';
             if (hasInfinite) {
                 // Show finite time first, then add infinity indicator
                 if (accumulatedTime > 0) {
-                    totalText = `Total time: ${timeReadable(accumulatedTime)} + [∞]`;
+                    totalText = `Total time: ${simMark}${timeReadable(accumulatedTime)} + [∞]`;
                 } else {
                     totalText = 'Total time: [∞]';
                 }
+            } else if (hasUnknown) {
+                // Not [∞]: a counted fight does end, the queue just cannot say when
+                totalText =
+                    accumulatedTime > 0
+                        ? `Total time: ${simMark}${timeReadable(accumulatedTime)} + [?]`
+                        : 'Total time: [?]';
             } else {
-                totalText = `Total time: ${timeReadable(accumulatedTime)}`;
+                totalText = `Total time: ${simMark}${timeReadable(accumulatedTime)}`;
             }
 
             totalDiv.innerHTML = totalText;
