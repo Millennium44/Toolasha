@@ -19,6 +19,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### The session briefing moves into Welcome Back
+
+- The briefing now appears inside the game's Welcome Back window instead of as its own panel, so closing that window clears it.
+- A character switch or a short absence gets no briefing; the Time to Level overlay row still answers at any moment.
+
 ### Panels say what they mean
 
 - The treasure tracker ignores scrolls: they pay a buff, not loot, and any already recorded no longer show in the panel.
