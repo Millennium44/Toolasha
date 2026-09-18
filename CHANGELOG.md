@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Persistent storage is asked for, not sprung on you
+
+- Toolasha no longer asks the browser to keep its data on its own at start-up; it explains why in the settings panel and asks only when you press the button.
+- On a browser that shows a permission prompt, that prompt no longer returns day after day.
+
 ### Panels stay where you put them
 
 - Buying consumables or opening a shopping list no longer leaves the consumables panel recorded as open, so it stops reappearing by itself on later refreshes.
