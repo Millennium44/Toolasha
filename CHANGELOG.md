@@ -19,6 +19,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Iron Bell farming
+
+- The plan counts the star fruit and essence you already hold and shrinks the forage and decompose steps to match, saying what it credited.
+- A step your holdings already cover is skipped rather than opened with nothing to type.
+- The walk says how many presses it will ask for before you start, and splits a leg too large for one queued action.
+
 ### Combat tasks and the bestiary plan
 
 - A combat task's Zone estimate no longer describes an arbitrary zone when it is your only task from that zone.
