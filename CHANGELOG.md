@@ -19,6 +19,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Faster all-zones results
+
+- The results table stops waiting on one zone's market-volume lookups before starting the next, so it appears much sooner when price history is on.
+
 ### Leftovers: the settings backup, and the tier a task estimate assumed
 
 - The goal planner opens a combat earning step at its own zone and tier, instead of dropping you on the zone list.
