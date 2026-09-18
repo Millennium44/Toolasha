@@ -6,7 +6,7 @@
  * `calculateSingleQueueActionTime` computed a material limit for uncounted ("Repeat ∞")
  * rows only, so a counted row — "produce 500" — showed the time for all 500 while the
  * ledger it fed spent the 40 it could really run. The row contradicted itself, and every
- * "Complete at" clock built on the running total after it was wrong.
+ * completion clock built on the running total after it was wrong.
  *
  * The rule chosen matches the one already used for limits: show the real remainder, zero
  * included. A row that can perform nothing reads `[0s]` rather than promising minutes of
@@ -152,14 +152,14 @@ function rowLimits(el) {
     );
 }
 
-/** The "Complete at HH:MM:SS" clock each row renders, marker included. */
+/** The completion clock each row renders after its time, marker included. */
 function rowClocks(el) {
     return [...el.querySelectorAll('.mwi-queue-action-time')].map(
-        (row) => row.textContent.match(/Complete at (.*)$/)?.[1] ?? null
+        (row) => row.textContent.match(/.*\]\s(.+)$/)?.[1] ?? null
     );
 }
 
-/** Seconds-of-day for a rendered "Complete at" clock, which carries seconds. */
+/** Seconds-of-day for a rendered completion clock, which carries seconds. */
 function clockSeconds(clock) {
     const [, h, m, s] = clock.match(/(\d+):(\d+):(\d+)/);
     return Number(h) * 3600 + Number(m) * 60 + Number(s);
@@ -253,7 +253,7 @@ describe('a counted queue row shows the time it can actually run', () => {
         expect(rowLimits(el)).toEqual(['[0s]']);
     });
 
-    test('the "Complete at" chain after a starved counted row follows the shortened time', () => {
+    test('the completion-clock chain after a starved counted row follows the shortened time', () => {
         vi.useFakeTimers({ toFake: ['Date'] });
         vi.setSystemTime(new Date('2026-01-01T10:00:00'));
 

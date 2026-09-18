@@ -100,7 +100,7 @@ const RUN_COVERAGE_TOLERANCE_MS = 2 * 60 * 1000;
 
 // The native popup declares no width, so it sizes to its intrinsic content and Toolasha's own
 // injected timing/profit rows drive it: measured 164px with short rows and 338px once a row
-// carries a "Complete at ..." suffix. 414px is the preferred desktop inner width; on constrained
+// carries a completion clock and a profit figure. 414px is the preferred desktop inner width; on constrained
 // viewports it shrinks continuously (min() formula) rather than switching at a fixed breakpoint,
 // staying fully on-screen. dvw is preferred where supported, falling back to vw.
 const QUEUE_EDIT_MENU_CSS = `
@@ -1197,7 +1197,7 @@ class ActionTimeDisplay {
                             const completionDate = new Date();
                             completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
                             const isToday = completionDate.toDateString() === new Date().toDateString();
-                            combatText += ` Complete at ~${formatCompletionTime(completionDate, !isToday)}`;
+                            combatText += ` ~${formatCompletionTime(completionDate, !isToday)}`;
                         }
                     } else {
                         hasUnknown = true;
@@ -1242,7 +1242,7 @@ class ActionTimeDisplay {
                     completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
                     const isToday = completionDate.toDateString() === new Date().toDateString();
                     const mark = hasEstimate ? '~' : '';
-                    timeText += ` Complete at ${mark}${formatCompletionTime(completionDate, !isToday)}`;
+                    timeText += ` ${mark}${formatCompletionTime(completionDate, !isToday)}`;
                 }
 
                 this.appendTimeToActionDiv(actionDiv, timeText);
@@ -3874,7 +3874,7 @@ class ActionTimeDisplay {
                             const completionDate = new Date();
                             completionDate.setSeconds(completionDate.getSeconds() + accumulatedTime);
                             const isToday = completionDate.toDateString() === new Date().toDateString();
-                            combatText += ` Complete at ~${formatCompletionTime(completionDate, !isToday)}`;
+                            combatText += ` ~${formatCompletionTime(completionDate, !isToday)}`;
                         }
                     } else {
                         hasUnknown = true;
@@ -4037,7 +4037,7 @@ class ActionTimeDisplay {
                     const isToday = completionDate.toDateString() === new Date().toDateString();
                     const mark = hasEstimate ? '~' : '';
 
-                    completionText = ` Complete at ${mark}${formatCompletionTime(completionDate, !isToday)}`;
+                    completionText = ` ${mark}${formatCompletionTime(completionDate, !isToday)}`;
                 }
 
                 // Create time display element

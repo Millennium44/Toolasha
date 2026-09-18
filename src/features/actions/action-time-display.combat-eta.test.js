@@ -431,7 +431,7 @@ describe('the "sim 24h" button', () => {
         await flush();
 
         const [text] = rowTexts(menu);
-        expect(text).toMatch(/^\[~2h 00m 00s · sim\] Complete at ~/);
+        expect(text).toMatch(/^\[~2h 00m 00s · sim\] ~/);
         const title = menu.querySelector('.mwi-queue-action-time').title;
         expect(title).toContain('24h solo simulation of Gobo Planet T3 just now');
         expect(title).toContain('your Tank loadout, the loadout this action uses');
@@ -579,8 +579,8 @@ describe('the Queued Actions panel', () => {
         actionTimeDisplay.injectQueueTimes(menu);
 
         const [coinify, fight] = rowTexts(menu);
-        expect(coinify).toMatch(/^\[30s\] Complete at /);
-        expect(fight).toMatch(/^\[~1h 00m 00s · sim\] Complete at ~/);
+        expect(coinify).toMatch(/^\[30s\] \d/);
+        expect(fight).toMatch(/^\[~1h 00m 00s · sim\] ~/);
         expect(menu.querySelectorAll('.mwi-queue-action-time')[1].title).toContain('500 waves/h');
         expect(total()).toBe('Total time: ~1h 00m 30s');
     });
@@ -633,12 +633,12 @@ describe('the Queued Actions panel', () => {
                   <div class="QueuedActions_action__item">
                       <div class="QueuedActions_actionText__y">
                           <div class="QueuedActions_text__z">#1Coinify</div>
-                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[30s] Complete at 12:00:30</div><div class="mwi-queue-action-profit" data-div-index="0" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
+                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[30s] 12:00:30</div><div class="mwi-queue-action-profit" data-div-index="0" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
                   </div>
                   <div class="QueuedActions_action__item">
                       <div class="QueuedActions_actionText__y">
                           <div class="QueuedActions_text__z">#2Coinify</div>
-                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[0h 01m 00s] Complete at 12:01:30</div><div class="mwi-queue-action-profit" data-div-index="1" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
+                      <div class="mwi-queue-action-time" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;">[0h 01m 00s] 12:01:30</div><div class="mwi-queue-action-profit" data-div-index="1" style="color: var(--text-color-secondary, undefined); font-size: 0.85em; margin-top: 2px;"></div></div>
                   </div></div><div id="mwi-queue-total-time" style="color: var(--text-color-primary, undefined); font-weight: bold; margin-top: 12px; padding: 8px; text-align: center; border-top-width: var(--border-color, undefined); border-top-style: var(--border-color, undefined); border-top-color: var(--border-color, undefined);">Total time: 0h 01m 30s</div>"
         `);
     });
@@ -672,7 +672,7 @@ describe('the queue hover tooltip', () => {
         document.body.appendChild(tooltip);
         actionTimeDisplay.injectQueueTimesTooltip(tooltip);
 
-        expect(rowTexts(tooltip)[0]).toMatch(/^\[~1h 00m 00s · sim\] Complete at ~/);
+        expect(rowTexts(tooltip)[0]).toMatch(/^\[~1h 00m 00s · sim\] ~/);
         expect(tooltip.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: ~1h 00m 00s');
     });
 });

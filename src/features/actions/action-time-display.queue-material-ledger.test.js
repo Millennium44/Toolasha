@@ -5,7 +5,7 @@
  * left behind. Both queue walks built the inventory lookup once and handed that same
  * unchanged object to every row, so every row was costed against the full starting bag:
  * three Coinify rows over one stack of cheese each claimed the whole stack, and the
- * cumulative "Complete at" clock inherited the inflated counts.
+ * cumulative completion clock inherited the inflated counts.
  *
  * A starved row is shown honestly — `[0s · mat: 0]` — rather than hidden or softened.
  *
@@ -135,14 +135,14 @@ function rowLimits(el) {
     );
 }
 
-/** The "Complete at HH:MM" clock each row renders. */
+/** The completion clock each row renders after its time. */
 function rowClocks(el) {
     return [...el.querySelectorAll('.mwi-queue-action-time')].map(
-        (row) => row.textContent.match(/Complete at (.*)$/)?.[1] ?? null
+        (row) => row.textContent.match(/.*\]\s(.+)$/)?.[1] ?? null
     );
 }
 
-/** Seconds-of-day for a rendered "Complete at" clock, which carries seconds. */
+/** Seconds-of-day for a rendered completion clock, which carries seconds. */
 function clockSeconds(clock) {
     const [, h, m, s] = clock.match(/(\d+):(\d+):(\d+)/);
     return Number(h) * 3600 + Number(m) * 60 + Number(s);
