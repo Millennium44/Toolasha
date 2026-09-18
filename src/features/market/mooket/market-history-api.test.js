@@ -483,6 +483,22 @@ describe('cooldownRemainingMs', () => {
             vi.useRealTimers();
         }
     });
+
+    test('called with no source key, defaults to the current source instead of reading as healthy', async () => {
+        // The two existing callers always pass a key explicitly. A future
+        // caller that forgets it must not silently compare `undefined` against
+        // `backoffSourceKey` and answer 0 — "not backed off" — while the
+        // current source is actively cooling down. That is exactly the
+        // "surface silently drawing blank" failure this method exists to catch.
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+
+        await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it on mooket2 (the current source)
+
+        expect(marketHistoryAPI.currentSource().key).toBe('mooket2');
+        expect(marketHistoryAPI.cooldownRemainingMs()).toBeGreaterThan(0);
+    });
 });
 
 describe('the fetch cache is bounded', () => {

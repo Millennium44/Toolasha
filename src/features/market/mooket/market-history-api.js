@@ -364,11 +364,14 @@ class MarketHistoryAPI {
      * the rest: a positive number means the pool is being waited out and roughly
      * how long is left; zero means whatever the `null` was, it was not that.
      *
-     * @param {string} sourceKey - Which source's back-off to ask about, e.g.
-     *   `marketHistoryAPI.currentSource().key`
+     * @param {string} [sourceKey] - Which source's back-off to ask about, e.g.
+     *   `marketHistoryAPI.currentSource().key`. Defaults to the current source,
+     *   so a caller that forgets the argument asks about the pool actually in
+     *   use instead of silently comparing against nothing and reading as
+     *   healthy during an active cool-down.
      * @returns {number} Milliseconds remaining, or 0 when that source is not cooling down
      */
-    cooldownRemainingMs(sourceKey) {
+    cooldownRemainingMs(sourceKey = this.currentSource().key) {
         if (this.backoffSourceKey !== sourceKey) return 0;
         return Math.max(0, this.cooldownUntil - Date.now());
     }
