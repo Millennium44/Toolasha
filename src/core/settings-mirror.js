@@ -49,6 +49,25 @@
  * Either way {@link collectMirrorable} returns `null` and {@link maybeMirror}
  * skips the write outright — whatever GM storage already holds is left
  * exactly as it was.
+ *
+ * ## Why the write merges rather than replaces
+ *
+ * "The live store has at least one real settings map" is not the same as "the
+ * live store has every settings map it used to have", and a whole-payload
+ * replacement treated them as the same thing. The case that matters is the one
+ * this module exists for: after a wipe the player logs in as one character and
+ * accepts the restore, so the live store now holds exactly one real map — and
+ * the very next mirror pass would have written that single map over the
+ * mirror, taking every *other* character's backup with it, before those
+ * characters were ever logged in to be offered their own restore. A partial
+ * live store has the same shape whenever one key's read fails mid-pass, or the
+ * mirror arrives on a second browser profile through the extension's own
+ * storage sync. So a pass adds to and updates the mirror, never subtracts from
+ * it: keys the live store no longer has keep whatever was last mirrored for
+ * them. Nothing is lost by keeping a stale entry — a deliberate reset writes a
+ * fresh defaults map straight back to the same key (`settings-ui.js` follows
+ * `settingsStorage.resetToDefaults()` with `config.resetToDefaults()`), so the
+ * next pass mirrors the reset rather than the map it replaced.
  */
 
 import storage from './storage.js';
@@ -140,6 +159,24 @@ async function collectMirrorable() {
 }
 
 /**
+ * The mirror's current `data` map, or `null` when there is none (or it cannot
+ * be read/parsed). Callers must already have checked {@link gmAvailable}.
+ * @returns {Object|null}
+ */
+function readMirrorData() {
+    try {
+        const raw = GM_getValue(MIRROR_KEY, null);
+        if (!raw) return null;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const data = parsed?.data;
+        return data && typeof data === 'object' ? data : null;
+    } catch (error) {
+        console.error('[SettingsMirror] Could not read mirror:', error);
+        return null;
+    }
+}
+
+/**
  * Mirror the live settings to GM storage, if the cadence allows it and the
  * live store looks trustworthy. Safe to call often — it self-throttles.
  *
@@ -155,7 +192,10 @@ async function maybeMirror(force = false) {
         const payload = await collectMirrorable();
         if (!payload) return false;
 
-        GM_setValue(MIRROR_KEY, JSON.stringify({ writtenAt: Date.now(), data: payload }));
+        // Union, live wins — see "Why the write merges rather than replaces".
+        const data = { ...(readMirrorData() || {}), ...payload };
+
+        GM_setValue(MIRROR_KEY, JSON.stringify({ writtenAt: Date.now(), data }));
         return true;
     } catch (error) {
         console.error('[SettingsMirror] Mirror write failed:', error);
@@ -202,16 +242,8 @@ function stopMirroring() {
  */
 function getMirroredEntry(characterKey) {
     if (!gmAvailable()) return null;
-    try {
-        const raw = GM_getValue(MIRROR_KEY, null);
-        if (!raw) return null;
-        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        const entry = parsed?.data?.[characterKey];
-        return entry && typeof entry === 'object' ? entry : null;
-    } catch (error) {
-        console.error('[SettingsMirror] Could not read mirror:', error);
-        return null;
-    }
+    const entry = readMirrorData()?.[characterKey];
+    return entry && typeof entry === 'object' ? entry : null;
 }
 
 /**

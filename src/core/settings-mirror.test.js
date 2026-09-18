@@ -143,6 +143,37 @@ describe('with GM storage available', () => {
         expect(wrote).toBe(false);
     });
 
+    test('a live store holding only one character keeps the other characters mirrored', async () => {
+        // Two characters mirrored before the wipe.
+        setStore({
+            script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } },
+            script_settingsMap_char2: { theme: { id: 'theme', value: 'light' } },
+        });
+        await settingsMirror.maybeMirror(true);
+
+        // Chrome wipes the origin; the player logs in as char1 and accepts the
+        // restore, so the live store now holds exactly one real map. char2 has
+        // not been logged in yet and still needs its own offer.
+        setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+        expect(await settingsMirror.maybeMirror(true)).toBe(true);
+
+        expect(settingsMirror.getMirroredEntry('script_settingsMap_char2')).toEqual({
+            theme: { id: 'theme', value: 'light' },
+        });
+    });
+
+    test('a key the live store still has is updated, not merely kept', async () => {
+        setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+        await settingsMirror.maybeMirror(true);
+
+        setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'light' } } });
+        expect(await settingsMirror.maybeMirror(true)).toBe(true);
+
+        expect(settingsMirror.getMirroredEntry('script_settingsMap_char1')).toEqual({
+            theme: { id: 'theme', value: 'light' },
+        });
+    });
+
     test('respects the cadence: a second unforced call within the interval does not write', async () => {
         setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
         expect(await settingsMirror.maybeMirror()).toBe(true);
