@@ -2622,10 +2622,12 @@ if (isCombatSimulatorPage()) {
                 // Offer to restore this character's settings from the
                 // GM-side mirror before the character's own load, when the
                 // live map turns out to be missing — see
-                // settings-mirror-restore.js. Runs first so an accepted
-                // restore lands through the very next loadSettings() call
-                // below, the normal load path, rather than needing a second
-                // reload here.
+                // settings-mirror-restore.js. Awaited only for the offer to
+                // start; maybeOffer() does not itself wait on the player's
+                // answer, so an unanswered dialog never holds up the feature
+                // layer below. An acceptance answered later reaches the
+                // settings map through its own loadSettings() call, made from
+                // inside settings-mirror-restore.js once the player answers.
                 await UI.settingsMirrorRestore.maybeOffer(
                     dataManager.getCurrentCharacterId(),
                     dataManager.getCurrentCharacterName()

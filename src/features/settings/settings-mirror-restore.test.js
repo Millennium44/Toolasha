@@ -45,6 +45,14 @@ vi.mock('../../core/settings-mirror.js', () => ({ default: settingsMirrorMock })
 const { askChoiceMock } = vi.hoisted(() => ({ askChoiceMock: vi.fn(async () => null) }));
 vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: askChoiceMock }));
 
+const { configMock } = vi.hoisted(() => ({
+    configMock: {
+        loadSettings: vi.fn(async () => {}),
+        applyColorSettings: vi.fn(),
+    },
+}));
+vi.mock('../../core/config.js', () => ({ default: configMock }));
+
 const { default: settingsMirrorRestore } = await import('./settings-mirror-restore.js');
 
 beforeEach(() => {
@@ -56,6 +64,8 @@ beforeEach(() => {
     settingsStorageMock.importSettings.mockClear();
     settingsMirrorMock.getMirroredEntry.mockReset().mockReturnValue(null);
     askChoiceMock.mockReset().mockResolvedValue(null);
+    configMock.loadSettings.mockClear();
+    configMock.applyColorSettings.mockClear();
 });
 
 describe('maybeOffer', () => {
@@ -99,8 +109,9 @@ describe('maybeOffer', () => {
 
         await settingsMirrorRestore.maybeOffer('char1', 'Hero');
 
-        expect(askChoiceMock).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(askChoiceMock).toHaveBeenCalledTimes(1));
         expect(settingsStorageMock.importSettings).not.toHaveBeenCalled();
+        expect(configMock.loadSettings).not.toHaveBeenCalled();
     });
 
     test('restores through importSettings on acceptance, with only the settings-map key', async () => {
@@ -110,10 +121,16 @@ describe('maybeOffer', () => {
 
         await settingsMirrorRestore.maybeOffer('char1', 'Hero');
 
-        expect(settingsStorageMock.importSettings).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(settingsStorageMock.importSettings).toHaveBeenCalledTimes(1));
         const [payloadJson] = settingsStorageMock.importSettings.mock.calls[0];
         const payload = JSON.parse(payloadJson);
         expect(payload).toEqual({ script_settingsMap_char1: mirroredMap });
+
+        // The restored map lands through the normal load path: a second
+        // loadSettings() call, the same one a character switch or the initial
+        // boot uses, so every onSettingsLoaded listener resyncs.
+        await vi.waitFor(() => expect(configMock.loadSettings).toHaveBeenCalledTimes(1));
+        expect(configMock.applyColorSettings).toHaveBeenCalledTimes(1);
     });
 
     test('sets the character id before probing, so importSettings matches the right character', async () => {
@@ -137,8 +154,9 @@ describe('maybeOffer', () => {
 
         // importSettings would have filtered char1's key out as "another
         // character's" and reported a successful import of nothing.
+        await vi.waitFor(() => expect(warn).toHaveBeenCalled());
         expect(settingsStorageMock.importSettings).not.toHaveBeenCalled();
-        expect(warn).toHaveBeenCalled();
+        expect(configMock.loadSettings).not.toHaveBeenCalled();
         warn.mockRestore();
     });
 
@@ -147,5 +165,51 @@ describe('maybeOffer', () => {
             throw new Error('boom');
         });
         await expect(settingsMirrorRestore.maybeOffer('char1', 'Hero')).resolves.toBeUndefined();
+    });
+
+    test('does not wait on the player: resolves while the dialog is still unanswered', async () => {
+        settingsMirrorMock.getMirroredEntry.mockReturnValue({ theme: { id: 'theme', value: 'light' } });
+        let resolveChoice;
+        askChoiceMock.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    resolveChoice = resolve;
+                })
+        );
+
+        // The whole point: maybeOffer() must settle even though the dialog it
+        // opened is still sitting there unanswered — this is what lets
+        // startup (or a character switch) go on to initialize every feature
+        // instead of stalling behind a player who walked away.
+        await settingsMirrorRestore.maybeOffer('char1', 'Hero');
+        expect(settingsStorageMock.importSettings).not.toHaveBeenCalled();
+        expect(configMock.loadSettings).not.toHaveBeenCalled();
+
+        // Only once the player actually answers does the restore happen, and
+        // it still lands through the normal loadSettings() path even though
+        // it is arriving long after maybeOffer() itself returned.
+        resolveChoice('restore');
+        await vi.waitFor(() => expect(settingsStorageMock.importSettings).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(configMock.loadSettings).toHaveBeenCalledTimes(1));
+        expect(configMock.applyColorSettings).toHaveBeenCalledTimes(1);
+    });
+
+    test('an import that arrives after a later character switch is not reloaded', async () => {
+        settingsMirrorMock.getMirroredEntry.mockReturnValue({ theme: { id: 'theme', value: 'light' } });
+        askChoiceMock.mockResolvedValue('restore');
+        // importSettings itself awaits; the switch lands during that gap,
+        // after the pre-import character check already passed.
+        settingsStorageMock.importSettings.mockImplementation(async () => {
+            settingsStorageMock.setCharacterId('char2', 'Other');
+            return { imported: 1, skipped: 0 };
+        });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await settingsMirrorRestore.maybeOffer('char1', 'Hero');
+
+        await vi.waitFor(() => expect(settingsStorageMock.importSettings).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+        expect(configMock.loadSettings).not.toHaveBeenCalled();
+        warn.mockRestore();
     });
 });
