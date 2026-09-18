@@ -25,10 +25,35 @@ import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
+import { estimateUnlimitedAction, formatMaterialNote, isBoundedEstimate } from './unlimited-action-estimate.js';
 
 // The only gathering action type whose drop table is a set of mutually exclusive outcomes
 // rather than a guaranteed haul — see the actionPanel_foragingTotal gate in renderGatheringProfit.
 const FORAGING_ACTION_TYPE = '/action_types/foraging';
+
+/**
+ * The "Total profit" text for an action whose Repeat is set to unlimited (∞).
+ *
+ * An unlimited run is not actually unlimited: it stops when the materials do, and the queue row
+ * for the same action already says exactly when. This asks that same calculator how many actions
+ * the bag pays for, then prices that many through the panel's own totals helper, so the panel
+ * figure and the queue figure can never be two different numbers for one action. The material
+ * note (`mat: 85.4K`, with `~` when the limit rests on credited expected yield) is carried over
+ * verbatim so the player recognises it.
+ *
+ * An action with no material cost at all — or one whose limit cannot be determined — really is
+ * unbounded, and gets `∞` back rather than an invented figure.
+ *
+ * @param {string} actionHrid - The action the panel is showing
+ * @param {(count: number) => {totalProfit: number}} totalsForCount - Panel's own totals helper
+ * @returns {string} Formatted profit text, or '∞'
+ */
+export function buildUnlimitedProfitText(actionHrid, totalsForCount) {
+    const timing = estimateUnlimitedAction({ actionHrid });
+    if (!isBoundedEstimate(timing)) return '∞';
+    const totalProfit = Math.round(totalsForCount(timing.count).totalProfit);
+    return `${formatLargeNumber(totalProfit)} · ${formatMaterialNote(timing)}`;
+}
 
 const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
 export const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : value);
@@ -619,6 +644,18 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
             `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
         );
 
+        const gatheringTotalsForCount = (actionsCount) =>
+            calculateGatheringActionTotalsFromBase({
+                actionsCount,
+                actionsPerHour: profitData.actionsPerHour,
+                baseOutputs: profitData.baseOutputs,
+                bonusDrops: profitData.bonusRevenue?.bonusDrops || [],
+                processingRevenueBonusPerAction: profitData.processingRevenueBonusPerAction,
+                gourmetRevenueBonusPerAction: profitData.gourmetRevenueBonusPerAction,
+                drinkCostPerHour: profitData.drinkCostPerHour,
+                efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
+            });
+
         const updateSummary = (newValue) => {
             if (netMissing) {
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
@@ -627,18 +664,10 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
             const inputValue = inputField.value;
 
             if (inputValue === '∞') {
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ∞`;
+                const text = buildUnlimitedProfitText(actionHrid, gatheringTotalsForCount);
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${text}`;
             } else if (newValue > 0) {
-                const totals = calculateGatheringActionTotalsFromBase({
-                    actionsCount: newValue,
-                    actionsPerHour: profitData.actionsPerHour,
-                    baseOutputs: profitData.baseOutputs,
-                    bonusDrops: profitData.bonusRevenue?.bonusDrops || [],
-                    processingRevenueBonusPerAction: profitData.processingRevenueBonusPerAction,
-                    gourmetRevenueBonusPerAction: profitData.gourmetRevenueBonusPerAction,
-                    drinkCostPerHour: profitData.drinkCostPerHour,
-                    efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
-                });
+                const totals = gatheringTotalsForCount(newValue);
                 const totalProfit = Math.round(totals.totalProfit);
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
             } else {
@@ -1267,6 +1296,19 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
             `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
         );
 
+        const productionTotalsForCount = (actionsCount) =>
+            calculateProductionActionTotalsFromBase({
+                actionsCount,
+                actionsPerHour: profitData.actionsPerHour,
+                outputAmount: profitData.outputAmount || 1,
+                outputPrice: profitData.outputPrice,
+                gourmetBonus: profitData.gourmetBonus || 0,
+                bonusDrops: profitData.bonusRevenue?.bonusDrops || [],
+                materialCosts: profitData.materialCosts,
+                totalTeaCostPerHour: profitData.totalTeaCostPerHour,
+                efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
+            });
+
         const updateSummary = (newValue) => {
             if (netMissing) {
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
@@ -1275,19 +1317,10 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
             const inputValue = inputField.value;
 
             if (inputValue === '∞') {
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ∞`;
+                const text = buildUnlimitedProfitText(actionHrid, productionTotalsForCount);
+                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${text}`;
             } else if (newValue > 0) {
-                const totals = calculateProductionActionTotalsFromBase({
-                    actionsCount: newValue,
-                    actionsPerHour: profitData.actionsPerHour,
-                    outputAmount: profitData.outputAmount || 1,
-                    outputPrice: profitData.outputPrice,
-                    gourmetBonus: profitData.gourmetBonus || 0,
-                    bonusDrops: profitData.bonusRevenue?.bonusDrops || [],
-                    materialCosts: profitData.materialCosts,
-                    totalTeaCostPerHour: profitData.totalTeaCostPerHour,
-                    efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
-                });
+                const totals = productionTotalsForCount(newValue);
                 const totalProfit = Math.round(totals.totalProfit);
                 profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
             } else {

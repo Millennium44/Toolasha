@@ -18,6 +18,11 @@ import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
+import {
+    estimateUnlimitedAction,
+    formatUnlimitedTimeText,
+    clearUnlimitedEstimateCache,
+} from '../actions/unlimited-action-estimate.js';
 
 class AlchemyProfitDisplay {
     constructor() {
@@ -482,6 +487,11 @@ class AlchemyProfitDisplay {
     createDisplay(container, profitData, actionType, itemHrid, enhancementLevel = 0) {
         // Remove any existing display
         this.removeDisplay();
+
+        // A rebuild is the signal that something the panel depends on moved — often the bag
+        // itself — so the memoized unlimited estimate is dropped here rather than aged out.
+        // Typing in the Repeat box does not rebuild, which is what keeps keystrokes free.
+        clearUnlimitedEstimateCache();
 
         // Check global hide setting
         if (!config.getSetting('actionPanel_showProfitDetail')) {
@@ -1034,7 +1044,17 @@ class AlchemyProfitDisplay {
 
         // Create Action Speed & Time section (after profitability)
         if (effectiveInputField && profitData.actionTime && profitData.efficiencyBreakdown) {
-            const speedTimeSection = this.createActionSpeedTimeSection(profitData, effectiveInputField);
+            // What the panel knows about the action being looked at, so an unlimited Repeat
+            // can be costed against the bag by the same calculator the queue row uses.
+            const estimateSpec = actionType
+                ? {
+                      actionHrid: `/actions/alchemy/${actionType}`,
+                      itemHrid,
+                      enhancementLevel,
+                      catalystHrid: profitData?.catalystCost?.itemHrid || null,
+                  }
+                : null;
+            const speedTimeSection = this.createActionSpeedTimeSection(profitData, effectiveInputField, estimateSpec);
             if (speedTimeSection) {
                 speedTimeSection.id = 'mwi-alchemy-speed-time';
                 speedTimeSection.classList.add('mwi-alchemy-speed-time');
@@ -1109,9 +1129,12 @@ class AlchemyProfitDisplay {
      * Create Action Speed & Time section
      * @param {Object} profitData - Profit data with action time and efficiency
      * @param {HTMLInputElement} inputField - Repeat input field
+     * @param {Object|null} [estimateSpec] - { actionHrid, itemHrid, enhancementLevel, catalystHrid }
+     *      describing the action on screen, so a Repeat of ∞ can be costed against the bag by
+     *      the same calculator the queue row uses. Omit it and ∞ stays ∞.
      * @returns {HTMLElement|null} Action Speed & Time section element
      */
-    createActionSpeedTimeSection(profitData, inputField) {
+    createActionSpeedTimeSection(profitData, inputField, estimateSpec = null) {
         try {
             const actionTime = profitData.actionTime;
             const actionsPerHourBase = calculateActionsPerHour(actionTime); // Base without efficiency
@@ -1196,11 +1219,20 @@ class AlchemyProfitDisplay {
                 margin-top: 4px;
             `;
 
+            // An unlimited Repeat is bounded by what the player is holding, and the queue row
+            // for this very action already says so. Ask the same calculator rather than
+            // printing ∞ at someone who can see the finite answer one click later.
+            const unlimitedTimeText = () => {
+                if (!estimateSpec) return null;
+                return formatUnlimitedTimeText(estimateUnlimitedAction(estimateSpec));
+            };
+
             const updateTotalTime = () => {
                 const inputValue = inputField.value;
 
                 if (inputValue === '∞') {
-                    totalTimeLine.textContent = 'Total time: ∞';
+                    const bounded = unlimitedTimeText();
+                    totalTimeLine.textContent = bounded ? `Total time: ${bounded}` : 'Total time: ∞';
                     return;
                 }
 
@@ -1234,7 +1266,8 @@ class AlchemyProfitDisplay {
             const getSummary = () => {
                 const inputValue = inputField.value;
                 if (inputValue === '∞') {
-                    return `${effectiveActionsPerHour}/hr | Total time: ∞`;
+                    const bounded = unlimitedTimeText();
+                    return `${effectiveActionsPerHour}/hr | Total time: ${bounded || '∞'}`;
                 }
                 const repeatCount = parseInt(inputValue) || 0;
                 if (repeatCount > 0) {
