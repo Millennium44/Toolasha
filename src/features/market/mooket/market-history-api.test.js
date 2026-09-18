@@ -419,6 +419,72 @@ describe('the shared cool-down', () => {
     });
 });
 
+describe('cooldownRemainingMs', () => {
+    // fetchHistory answers null for reasons a caller cannot otherwise tell
+    // apart: the setting is off, no item was given, a lone refusal that did not
+    // trip the cool-down, or the cool-down itself. This is what a caller — the
+    // history chart, the My Listings refresh button — asks afterwards to find
+    // out whether it was the cool-down, so it can say so instead of drawing an
+    // empty result.
+    function refusal() {
+        return vi.fn(async () => {
+            throw new TypeError('NetworkError when attempting to fetch resource.');
+        });
+    }
+
+    beforeEach(() => {
+        on('www.milkywayidle.com');
+    });
+
+    test('is 0 for a source that has never been asked about', () => {
+        expect(marketHistoryAPI.cooldownRemainingMs('mooket2')).toBe(0);
+    });
+
+    test('is 0 after an ordinary null — a single refusal that did not trip the cool-down', async () => {
+        globalThis.fetch = refusal();
+        expect(await marketHistoryAPI.fetchHistory('/items/a', 0, 7)).toBeNull();
+        expect(marketHistoryAPI.cooldownRemainingMs('mooket2')).toBe(0);
+    });
+
+    test('is positive, and roughly the cool-down length, once the cool-down trips', async () => {
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+
+        await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it
+
+        const remaining = marketHistoryAPI.cooldownRemainingMs('mooket2');
+        expect(remaining).toBeGreaterThan(0);
+        expect(remaining).toBeLessThanOrEqual(marketHistoryAPI.cooldownUntil - Date.now() + 1);
+    });
+
+    test('is 0 for a source other than the one that is cooling down', async () => {
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+
+        await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it on mooket2
+        expect(marketHistoryAPI.cooldownRemainingMs('mooket2')).toBeGreaterThan(0);
+        expect(marketHistoryAPI.cooldownRemainingMs('mooket1')).toBe(0);
+    });
+
+    test('falls back to 0 once the cool-down expires', async () => {
+        vi.useFakeTimers();
+        try {
+            const fetchMock = refusal();
+            globalThis.fetch = fetchMock;
+
+            await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+            await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it
+
+            vi.advanceTimersByTime(marketHistoryAPI.cooldownUntil - Date.now() + 1);
+            expect(marketHistoryAPI.cooldownRemainingMs('mooket2')).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
 describe('the fetch cache is bounded', () => {
     beforeEach(() => {
         on('www.milkywayidle.com');

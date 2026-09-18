@@ -354,6 +354,26 @@ class MarketHistoryAPI {
     }
 
     /**
+     * How long the shared cool-down has left for one source, for a caller that
+     * got `null` back from {@link fetchHistory} and needs to say why rather than
+     * draw an empty result and leave it unexplained.
+     *
+     * `fetchHistory` answers `null` for several reasons — the setting is off, no
+     * item was given, a lone request failed without tripping the cool-down, or
+     * the cool-down is active — and this is what tells the last one apart from
+     * the rest: a positive number means the pool is being waited out and roughly
+     * how long is left; zero means whatever the `null` was, it was not that.
+     *
+     * @param {string} sourceKey - Which source's back-off to ask about, e.g.
+     *   `marketHistoryAPI.currentSource().key`
+     * @returns {number} Milliseconds remaining, or 0 when that source is not cooling down
+     */
+    cooldownRemainingMs(sourceKey) {
+        if (this.backoffSourceKey !== sourceKey) return 0;
+        return Math.max(0, this.cooldownUntil - Date.now());
+    }
+
+    /**
      * Forget everything known about one pool's health, and start tracking the
      * named one instead. Called when the read source changes under us.
      *

@@ -30,7 +30,7 @@ import marketAPI from '../../../api/marketplace.js';
 import domObserver from '../../../core/dom-observer.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import marketHistoryAPI from './market-history-api.js';
-import { freshestSighting } from './market-history-data.js';
+import { freshestSighting, describeCooldown } from './market-history-data.js';
 
 /** The header row that carries "N / M Listings", Upgrade Capacity and the listing-cycle Refresh */
 const LISTING_COUNT_SEL = '[class*="MarketplacePanel_listingCount"]';
@@ -255,7 +255,17 @@ class MyListingsPriceRefresh {
                     console.error('[MooketListingsRefresh] Refreshing an item failed:', item.itemHrid, error);
                 }
             });
-            this.setStatus(`Updated ${applied} of ${items.length} from Mooket.`);
+            // The pool can go into its shared cool-down partway through this
+            // run; every item asked after that came back null not because it
+            // has no history, but because nothing was asked. Worth saying —
+            // "Updated 0 of 40" reads as "checked them all, nothing was fresher"
+            // when the honest story is "gave up partway through."
+            const cooldownMs = marketHistoryAPI.cooldownRemainingMs(marketHistoryAPI.currentSource().key);
+            const backoffNote =
+                cooldownMs > 0
+                    ? ` The shared price-history server is busy; retrying in ${describeCooldown(cooldownMs)}.`
+                    : '';
+            this.setStatus(`Updated ${applied} of ${items.length} from Mooket.${backoffNote}`);
         } catch (error) {
             console.error('[MooketListingsRefresh] Refresh failed:', error);
             this.setStatus('Refresh failed.');

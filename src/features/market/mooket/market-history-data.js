@@ -28,6 +28,19 @@
 /** Ranges the chart offers, in days */
 export const HISTORY_RANGES = [1, 3, 7, 14, 30, 90, 180];
 
+/**
+ * A shared-pool cool-down's remaining time, rounded to the minute a player
+ * would actually read off a "retrying in" line. The cool-down itself runs
+ * 30s–10min (see `market-history-api.js`), so anything under a minute still
+ * reads as "~1m" rather than "~0m".
+ *
+ * @param {number} ms - Milliseconds remaining
+ * @returns {string} e.g. "~1m", "~4m"
+ */
+export function describeCooldown(ms) {
+    return `~${Math.max(1, Math.round(ms / 60000))}m`;
+}
+
 /** Past this many days the rows are grouped into one point per day */
 export const DAILY_GROUPING_THRESHOLD = 7;
 

@@ -5,6 +5,7 @@ const api = vi.hoisted(() => ({
     updatePrice: vi.fn(),
     dataAge: 60 * 60 * 1000,
     rows: [],
+    cooldownMs: 0,
 }));
 
 vi.mock('../../../core/config.js', () => ({ default: { getSetting: () => true, onSettingChange: () => {} } }));
@@ -17,7 +18,13 @@ vi.mock('../../../api/marketplace.js', () => ({
         getDataAge: () => api.dataAge,
     },
 }));
-vi.mock('./market-history-api.js', () => ({ default: { fetchHistory: async () => api.rows } }));
+vi.mock('./market-history-api.js', () => ({
+    default: {
+        fetchHistory: async () => api.rows,
+        currentSource: () => ({ key: 'mooket2' }),
+        cooldownRemainingMs: () => api.cooldownMs,
+    },
+}));
 
 import myListingsPriceRefresh, { shouldApplySighting, distinctListedItems } from './my-listings-price-refresh.js';
 
@@ -92,5 +99,32 @@ describe('a Mooket sighting is patched in at the time it was seen', () => {
         expect(ask).toBe(120);
         expect(bid).toBe(100);
         expect(observedAt).toBe(Math.floor(seenAt / 1000) * 1000);
+    });
+});
+
+describe('the status line says when the pool was backed off', () => {
+    // "Updated 0 of 40 from Mooket." during a cool-down reads as "checked them
+    // all, nothing was fresher" — the honest story is "gave up partway
+    // through, ask again shortly." The two must not read the same.
+    beforeEach(() => {
+        api.updatePrice.mockClear();
+        api.rows = [];
+        api.cooldownMs = 0;
+        myListingsPriceRefresh.status = { textContent: '' };
+        myListingsPriceRefresh.gatherListedItems = () => [{ itemHrid: '/items/cheese', enhancementLevel: 0 }];
+    });
+
+    it('says nothing extra when the pool is not backed off', async () => {
+        await myListingsPriceRefresh.runRefresh();
+        expect(myListingsPriceRefresh.status.textContent).toBe('Updated 0 of 1 from Mooket.');
+    });
+
+    it('names the back-off, with roughly how long is left, when it is active', async () => {
+        api.cooldownMs = 4 * 60 * 1000 + 10_000; // ~4m
+        await myListingsPriceRefresh.runRefresh();
+
+        expect(myListingsPriceRefresh.status.textContent).toBe(
+            'Updated 0 of 1 from Mooket. The shared price-history server is busy; retrying in ~4m.'
+        );
     });
 });

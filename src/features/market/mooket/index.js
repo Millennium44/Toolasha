@@ -34,7 +34,7 @@ import { navigateToMarketplace } from '../../../utils/marketplace-tabs.js';
 import { hasCoarsePointer } from '../../../utils/mobile.js';
 import marketPriceStore from './market-price-store.js';
 import marketHistoryAPI from './market-history-api.js';
-import { buildHistorySeries, historyLabels, HISTORY_RANGES } from './market-history-data.js';
+import { buildHistorySeries, historyLabels, HISTORY_RANGES, describeCooldown } from './market-history-data.js';
 import { priceKey } from './market-prices.js';
 import {
     addWatched,
@@ -442,6 +442,16 @@ class MarketHistoryPanel {
         this.canvas.style.cssText = 'flex:1; min-height:0; display:block; padding:2px;';
         panel.appendChild(this.canvas);
 
+        // Stands in for the chart when the pool could not be asked at all — a
+        // shared cool-down reads to fetchHistory exactly like "no history", and
+        // drawing an empty chart for that would tell the player this item has
+        // never traded, which is not what happened.
+        this.historyStatusEl = document.createElement('div');
+        this.historyStatusEl.style.cssText =
+            'flex:1; min-height:0; display:none; align-items:center; justify-content:center; ' +
+            'padding:12px; text-align:center; color:#9aa4c0; font-size:12px;';
+        panel.appendChild(this.historyStatusEl);
+
         // What happened after this item's target fired, when it has fired. Its
         // own strip under the chart rather than a chip tooltip: the reading is
         // computed from the same history rows the chart was just drawn from, so
@@ -458,7 +468,7 @@ class MarketHistoryPanel {
         this.minimizeCtl = attachMinimize({
             panel,
             header: toolbar,
-            body: [this.chipRow, this.canvas, this.aftermathEl],
+            body: [this.chipRow, this.canvas, this.historyStatusEl, this.aftermathEl],
             panelKey: PANEL_ID,
             beforeEl: this.closeButton,
             accent: '#e7e7e7',
@@ -1040,11 +1050,42 @@ class MarketHistoryPanel {
         const level = Number(enhancementLevel) || 0;
         this.title.textContent = `${this.itemName(itemHrid)}${level > 0 ? ` +${level}` : ''}`;
 
+        const source = marketHistoryAPI.currentSource();
         const rows = await marketHistoryAPI.fetchHistory(itemHrid, level, this.prefs.days);
         // The item may have changed while the request was in flight
         if (this.shown !== key) return;
+
+        const cooldownMs = rows === null ? marketHistoryAPI.cooldownRemainingMs(source.key) : 0;
+        if (cooldownMs > 0) {
+            this.showHistoryStatus(
+                `the shared price-history server is busy; retrying in ${describeCooldown(cooldownMs)}`
+            );
+            return;
+        }
+        this.showHistoryStatus(null);
+
         this.drawChart(buildHistorySeries(rows, this.prefs.days));
         this.drawAftermath(priceKey(itemHrid, level), rows);
+    }
+
+    /**
+     * Swap the chart out for a short status line, or back in when there is
+     * nothing to say. Used when the shared pool is being waited out — a
+     * distinct state from "this item has no history", which still draws the
+     * (empty) chart rather than a message, exactly as it did before.
+     *
+     * @param {string|null} text - The message to show, or null to show the chart
+     */
+    showHistoryStatus(text) {
+        if (!this.canvas || !this.historyStatusEl) return;
+        const showingStatus = Boolean(text);
+        this.historyStatusEl.textContent = text || '';
+        this.historyStatusEl.style.display = showingStatus ? 'flex' : 'none';
+        this.canvas.style.display = showingStatus ? 'none' : 'block';
+        // Hidden rather than left showing a stale reading from whatever item was
+        // charted before this one backed off; drawAftermath sets it fresh once
+        // the status clears.
+        if (showingStatus && this.aftermathEl) this.aftermathEl.style.display = 'none';
     }
 
     /**
