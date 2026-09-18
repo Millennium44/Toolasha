@@ -235,10 +235,11 @@ class BulkSellAssistant {
          * the reason has to live in here.
          */
         this.holdProviders = new Map();
+        /** Item quantity held back, not stack count — a stack of 900 held back is 900, not 1 */
         this.heldCount = 0;
         /** Whether the last queue build could read the loadout store at all */
         this.loadoutsChecked = true;
-        /** Enhanced gear the watchlist source declined to sweep up */
+        /** Enhanced gear quantity the watchlist source declined to sweep up (item count, not stack count) */
         this.enhancedSkipped = 0;
         this._hasTabs = false;
         this._tabPrefLoaded = false;
@@ -1233,9 +1234,11 @@ class BulkSellAssistant {
             const key = holdKey(item.itemHrid, item.enhancementLevel);
             // Held items are counted, not silently dropped: an item vanishing
             // from the sell queue with no explanation is indistinguishable from
-            // a bug
+            // a bug. Counted by quantity, not by stack — `characterItems`
+            // entries are inventory stacks, and a player holding one stack of
+            // 900 and one of 100 needs to read "1,000 held back", not "2".
             if (heldKeys.has(key)) {
-                held++;
+                held += item.count || 0;
                 return false;
             }
             if (tabItems) {
@@ -1250,9 +1253,10 @@ class BulkSellAssistant {
                 // …which is exactly why enhanced gear is left out of it. The
                 // list tracks "Gobo Defender"; matching every level of that
                 // swept a +10 into the queue at six million coins. A tab names
-                // the level it means, so it is trusted to mean it.
+                // the level it means, so it is trusted to mean it. Counted by
+                // quantity for the same reason as `held` above.
                 if ((item.enhancementLevel || 0) > 0) {
-                    enhanced++;
+                    enhanced += item.count || 0;
                     return false;
                 }
             }

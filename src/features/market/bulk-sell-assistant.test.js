@@ -188,7 +188,9 @@ describe('selling what the watchlist is tracking', () => {
         await bulkSell._start();
 
         expect(queued()).not.toContain('/items/cheese');
-        expect(bulkSell.heldCount).toBe(1);
+        // The held stack carries the default 5, and heldCount reports the
+        // quantity held, not the number of stacks
+        expect(bulkSell.heldCount).toBe(5);
     });
 
     test('and All items still means all of them', async () => {
@@ -247,7 +249,7 @@ describe('gear saved into a loadout', () => {
         game.loadouts = [{ equipment: [{ itemHrid: '/items/cheese', enhancementLevel: 0 }] }];
         await bulkSell._start();
 
-        expect(bulkSell.heldCount).toBe(1);
+        expect(bulkSell.heldCount).toBe(5);
         expect(bulkSell._skipNote()).toContain('loadout');
     });
 
@@ -300,6 +302,27 @@ describe('gear saved into a loadout', () => {
         await bulkSell._start();
 
         expect(queued().length).toBeGreaterThan(0);
+    });
+
+    test('reports item quantity held back, not the number of stacks', async () => {
+        // `characterItems` entries are inventory stacks. A player holding one
+        // stack of 900 and one of 100 should see 1,000 held back, not 2 — the
+        // "N held back" note is a quantity a player weighs against their
+        // inventory, and a stack count reads as ten times too small.
+        game.items = [
+            {
+                itemHrid: '/items/cheese',
+                count: 900,
+                enhancementLevel: 0,
+                itemLocationHrid: '/item_locations/inventory',
+            },
+            { itemHrid: '/items/milk', count: 100, enhancementLevel: 0, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        bulkSell.holdProviders.set('reselling', () => ['/items/cheese', '/items/milk']);
+        game.loadouts = [];
+        await bulkSell._start();
+
+        expect(bulkSell.heldCount).toBe(1000);
     });
 });
 
