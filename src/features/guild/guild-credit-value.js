@@ -21,7 +21,6 @@ import {
     navigateToMarketplace,
     createMaterialTab,
     createClearAllTabsControl,
-    removeMaterialTabs,
     removeShrineMarketTabs,
     navigateToMarketListingsTab,
     updateTabBadge,
@@ -30,12 +29,12 @@ import {
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 
 /**
- * This feature's owner id for the marketplace tabs it pins, passed to
- * `removeMaterialTabs({ owner })` so its brief pre-shrine-tab sweep never
- * clears another feature's pinned tabs. The shrine tabs it draws afterward
- * opt out of `data-mwi-custom-tab` entirely (see the `removeAttribute` call
- * below), so they never need an owner of their own — `removeMaterialTabs`
- * cannot see them either way.
+ * This feature's owner id, stamped on the clear-all control it draws beside
+ * its shrine tabs. The shrine tabs themselves opt out of the owner system
+ * entirely (see the `removeAttribute` call below) — they are swept by
+ * `removeShrineMarketTabs()`, not by an owner-scoped `removeMaterialTabs()` —
+ * so this id has nothing to do with material-tab cleanup; it only tags the
+ * control.
  */
 const TAB_OWNER = 'guild-credit';
 import { openShoppingList } from '../../utils/shopping-list.js';
@@ -3650,8 +3649,11 @@ class GuildCreditValue {
                 if (scroller) scroller.style.overflow = 'visible';
                 if (muiRoot) muiRoot.style.height = 'auto';
 
-                // Remove any existing action tabs and shrine tabs before inserting new ones
-                removeMaterialTabs({ owner: TAB_OWNER });
+                // Remove any existing shrine tabs before inserting new ones. Shrine
+                // tabs opt out of the shared `data-mwi-custom-tab` cleanup (below)
+                // precisely so they survive tab-to-tab navigation, so
+                // `removeMaterialTabs({ owner: TAB_OWNER })` never matches any of
+                // them — `removeShrineMarketTabs()` is the only sweep that does.
                 removeShrineMarketTabs();
 
                 for (const mat of missingMats) {
@@ -3676,9 +3678,11 @@ class GuildCreditValue {
                     tabsContainer.appendChild(tab);
                 }
 
-                // One click, every shrine tab gone (they opt out of the shared
-                // `removeMaterialTabs()` above, so this control's own internal
-                // call to it only removes itself — the shrine sweep is explicit)
+                // One click, every shrine tab gone. Shrine tabs opt out of the
+                // shared `data-mwi-custom-tab` cleanup entirely (see the
+                // `removeAttribute` call above), so `removeMaterialTabs()` could
+                // never reach them either way — this control calls
+                // `removeShrineMarketTabs()` itself, explicitly.
                 const clearAllControl = createClearAllTabsControl(
                     referenceTab,
                     () => {

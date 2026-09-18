@@ -137,6 +137,7 @@ const marketplaceTabs = vi.hoisted(() => ({
     tabsContainer: null,
     createdTabs: [],
     removeShrineCalls: 0,
+    removeMaterialCalls: 0,
     navigateToMarketListingsCalls: 0,
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
@@ -155,7 +156,12 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
         control.addEventListener('click', () => onClearAll());
         return control;
     },
-    removeMaterialTabs: () => {},
+    // Tracked, not just stubbed: the point of the test below is that this is
+    // never called from the shrine block — shrine tabs opt out of the owner
+    // system entirely, so an owner-scoped sweep can never match any of them.
+    removeMaterialTabs: () => {
+        marketplaceTabs.removeMaterialCalls += 1;
+    },
     removeShrineMarketTabs: () => {
         marketplaceTabs.removeShrineCalls += 1;
     },
@@ -3453,6 +3459,7 @@ describe('Missing Mats Marketplace click — character switch mid-poll', () => {
         marketplaceTabs.tabsContainer = null;
         marketplaceTabs.createdTabs = [];
         marketplaceTabs.removeShrineCalls = 0;
+        marketplaceTabs.removeMaterialCalls = 0;
         marketplaceTabs.navigateToMarketListingsCalls = 0;
         guildCreditValue.initialize();
         vi.useFakeTimers();
@@ -3522,6 +3529,27 @@ describe('Missing Mats Marketplace click — character switch mid-poll', () => {
         await vi.advanceTimersByTimeAsync(2000);
 
         expect(marketplaceTabs.createdTabs.length).toBeGreaterThan(0);
+    });
+
+    test('shrine tabs are swept by their own path before new ones are inserted, not by the owner-scoped sweep', async () => {
+        const modal = buildShrineModal(156_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        const button = missingButton(modal);
+
+        button.click();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(300);
+
+        marketplaceTabs.tabsContainer = marketplaceTabsContainer();
+        await vi.advanceTimersByTimeAsync(2000);
+
+        // The pre-insertion sweep runs `removeShrineMarketTabs()` — shrine tabs
+        // opt out of the owner-tagged `data-mwi-custom-tab` cleanup entirely
+        // (see `tab.removeAttribute('data-mwi-custom-tab')` in the source), so
+        // an owner-scoped `removeMaterialTabs({ owner })` would always match
+        // zero of them and has no reason to be called here.
+        expect(marketplaceTabs.removeShrineCalls).toBeGreaterThan(0);
+        expect(marketplaceTabs.removeMaterialCalls).toBe(0);
     });
 
     test('the shrine tabs get a clear-all control that sweeps the shrine tabs (opted out of removeMaterialTabs) and lands back on Market Listings', async () => {
