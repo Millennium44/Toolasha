@@ -304,5 +304,50 @@ describe('with GM storage available', () => {
             const wrote = await settingsMirror.maybeMirror(true);
             expect(wrote).toBe(false);
         });
+
+        test('a string that parses to an array is refused, not read as a populated map', async () => {
+            // `Object.keys` on a non-empty array reports a length, which is the
+            // one way something that is not a settings map could still vouch
+            // for a store that has nothing real left in it.
+            setStore({ script_settingsMap_char1: JSON.stringify(['dark', 'light']) });
+            const wrote = await settingsMirror.maybeMirror(true);
+            expect(wrote).toBe(false);
+        });
+    });
+
+    describe('a cadence that must not wedge shut', () => {
+        test('a meta stamp from the future does not defer this tab indefinitely', async () => {
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+
+            // GM storage is extension-scoped and can arrive from another
+            // profile or device; that machine's clock runs an hour ahead.
+            GM_setValue(
+                settingsMirror.MIRROR_META_KEY,
+                JSON.stringify({ writtenAt: Date.now() + 60 * 60 * 1000, fingerprint: 'from-another-machine' })
+            );
+
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+            expect(settingsMirror.getMirroredEntry('script_settingsMap_char1')).toEqual({
+                theme: { id: 'theme', value: 'dark' },
+            });
+        });
+
+        test('an unchanged fingerprint does not skip the write when no mirror is actually there', async () => {
+            vi.useFakeTimers();
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+            settingsMirror._resetCadenceForTests();
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+
+            // The meta record survived but the payload did not — a manager that
+            // reported a successful GM_setValue and stored nothing, or a synced
+            // meta record whose ~1 MB companion never came with it.
+            gmData.delete(settingsMirror.MIRROR_KEY);
+
+            vi.advanceTimersByTime(settingsMirror.MIRROR_INTERVAL_MS + 1000);
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+            expect(settingsMirror.getMirroredEntry('script_settingsMap_char1')).toEqual({
+                theme: { id: 'theme', value: 'dark' },
+            });
+        });
     });
 });

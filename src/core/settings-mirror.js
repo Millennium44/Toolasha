@@ -207,7 +207,11 @@ async function collectMirrorable() {
     // and does not need to: both refuse the write the same way.
     const hasRealCharacterMap = Object.keys(payload).some((key) => {
         const value = payload[key];
-        return isCharacterMapKey(key) && value && typeof value === 'object' && Object.keys(value).length > 0;
+        // Not an array: a settings map is id → record, and `Object.keys` on a
+        // non-empty array is happy to report length for something that is not
+        // a settings map at all — the one thing this check exists to refuse.
+        if (!isCharacterMapKey(key) || !value || typeof value !== 'object' || Array.isArray(value)) return false;
+        return Object.keys(value).length > 0;
     });
     if (!hasRealCharacterMap) return null;
 
@@ -268,6 +272,30 @@ function writeMirrorMeta(writtenAt, fingerprint) {
 }
 
 /**
+ * Whether GM storage holds a mirror payload at all.
+ *
+ * The fingerprint skip says "the payload has not changed since the last
+ * write", which is only a reason to skip if that write actually produced a
+ * mirror in *this* GM store. Two ways it did not: a manager whose
+ * `GM_setValue` reports success and stores nothing (the meta record, a few
+ * dozen bytes, lands where the ~1 MB payload does not), and a meta record
+ * that arrived here through the extension's own storage sync while the
+ * payload — far too large for a synced value — did not. Both leave a
+ * fingerprint that matches forever and no mirror to show for it, so the
+ * safety net silently never exists. A truthiness check on the raw value is
+ * the cheap half of {@link readMirrorData}: the read, without the parse.
+ * @returns {boolean}
+ */
+function mirrorExists() {
+    try {
+        return Boolean(GM_getValue(MIRROR_KEY, null));
+    } catch (error) {
+        console.error('[SettingsMirror] Could not check for an existing mirror:', error);
+        return false;
+    }
+}
+
+/**
  * A cheap fingerprint of a mirrorable payload — cheap in that comparing two
  * of these is a string equality check rather than a deep object diff, not
  * that computing one avoids looking at the payload: there is no way to know
@@ -310,8 +338,17 @@ async function maybeMirror(force = false) {
         // Next cheapest: a few dozen bytes of meta rather than the mirror's
         // full payload. Another tab may have mirrored inside the interval —
         // if so, adopt its cadence instead of also reading the live store.
+        // A stamp in the future is never this tab's own — GM storage is
+        // extension-scoped and travels between profiles and devices through
+        // the extension's own sync, so the record can carry another machine's
+        // clock. Deferring to it would hold every pass off until real time
+        // caught up with that clock: minutes for a little skew, days for a
+        // badly set one, with no mirror written the whole while. Treat it the
+        // same as no record — the write below restamps it with this machine's
+        // clock, which also unwedges every other tab here.
         const meta = readMirrorMeta();
-        if (meta && Date.now() - meta.writtenAt < MIRROR_INTERVAL_MS) {
+        const sinceMetaWrite = meta ? Date.now() - meta.writtenAt : Infinity;
+        if (sinceMetaWrite >= 0 && sinceMetaWrite < MIRROR_INTERVAL_MS) {
             lastWriteAttempt = meta.writtenAt;
             return false;
         }
@@ -325,7 +362,7 @@ async function maybeMirror(force = false) {
         if (!force) {
             const fingerprint = fingerprintPayload(payload);
             const meta = readMirrorMeta();
-            if (meta && meta.fingerprint === fingerprint) {
+            if (meta && meta.fingerprint === fingerprint && mirrorExists()) {
                 // Nothing has changed since the last real write. Refresh the
                 // cadence stamp so other tabs still see this pass happened,
                 // without paying for the full stringify + GM_setValue below.
