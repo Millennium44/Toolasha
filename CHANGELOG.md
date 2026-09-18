@@ -6,6 +6,23 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Totals by input item for coinify and decompose
+
+- Both history panels now carry the per-item summary the transmutation panel has: sessions, attempts, consumed, success rate, costs, net and a measured break-even input price.
+- Decompose pools scrolls and anything else the game data says is the same bet into one row, alongside the per-item rows rather than replacing them.
+- A catalyst nobody could price used to be costed at zero, reading as free; it is excluded and marked instead.
+- The three alchemy panels share one type scale, so a footnote is no longer five pixels adrift of the table above it.
+
+### Audit round: a zone opened for the wrong character, and stale figures under the Sell button
+
+- Opening a zone now checks who pressed the button rather than who the queue landed on, so a second press that settles after a character switch can no longer fill the arriving character's panel — or leave their difficulty set to the departing character's tier.
+- Starting a bulk sell across a character switch could build a sell queue out of the arriving character's bag and prefill a sell modal for a run nobody started.
+- A sell-queue claim made just before a switch could land in the arriving character's ledger and hold their stock back from every crafting plan for a week.
+- The queue length and sell depth figures under the Sell button now clear when the item on screen has nothing to say, instead of leaving the last item's numbers to be read as this one's.
+- Turning off auto-click Max takes effect straight away rather than at the next reload.
+- Switching price-history source no longer inherits the previous pool's back-off, and two failures an hour apart are no longer treated as a burst.
+- Coins can no longer bound an all-zones row.
+
 ### Kinder to the market-history server, and the zone buttons work mid-fight
 
 - The ▶ buttons and a combat task's Go now open the zone even while you are fighting, instead of silently doing nothing, and put you back on the tab you were on if they cannot.
