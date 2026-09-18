@@ -684,6 +684,32 @@ describe('the modal and the facts, in either order', () => {
         expect(section()).toBeNull();
     });
 
+    test('a modal left open across a character switch is not reused for the arriving character', async () => {
+        // The switch pipeline is in-page — character_switching/character_switched,
+        // never a reload — and cleanup() only strips this feature's own section,
+        // not the game's dialog. A player who switches while the dialog is still
+        // open leaves that exact node sitting there, still matching every marker
+        // isWelcomeBackModal checks.
+        game.queue = { queued: 0, seconds: 0 };
+        await feature.initialize();
+        const leftover = showWelcomeModal();
+        expect(section()).not.toBeNull();
+
+        feature.cleanup();
+        expect(document.body.contains(leftover)).toBe(true);
+        expect(leftover.querySelector(`.${SECTION_CLASS}`)).toBeNull();
+
+        // A different character arrives. Nothing re-inserts the dialog — the
+        // game never redrew it — so there is no fresh mutation for the watcher
+        // to catch; only the "already open" look-back could find it.
+        game.characterId = 'char-2';
+        game.queue = { queued: 5, seconds: 500 };
+        await feature.initialize();
+
+        expect(section()).toBeNull();
+        expect(leftover.querySelector(`.${SECTION_CLASS}`)).toBeNull();
+    });
+
     test('the offline value line still works in the same modal', async () => {
         game.queue = { queued: 0, seconds: 0 };
         welcomeBackValue.initialize();

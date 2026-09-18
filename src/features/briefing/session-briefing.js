@@ -62,7 +62,11 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { currentWelcomeBackModal, onWelcomeBackModal } from '../../utils/welcome-back-modal.js';
+import {
+    currentWelcomeBackModal,
+    onWelcomeBackModal,
+    placeInWelcomeBackModal,
+} from '../../utils/welcome-back-modal.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -270,6 +274,29 @@ let unwatchModal = null;
 
 /** Whether this arrival's away diff has been marked read */
 let awayDiffMarked = false;
+
+/**
+ * Modals this feature has already drawn into, across every arrival this page
+ * load has had.
+ *
+ * `currentWelcomeBackModal()` exists to catch a dialog the game drew before
+ * this feature's watcher was installed — the boot race `702960c27` fixed. But
+ * `cleanup()` only removes *this feature's own* section from the DOM; nothing
+ * closes the game's own dialog on a character switch, and the switch pipeline
+ * is in-page (`character_switching`/`character_switched`, no reload). A player
+ * who switches characters while a Welcome Back dialog is still open leaves that
+ * exact DOM node sitting there, still matching every marker
+ * `isWelcomeBackModal` checks — and the arriving character's `initialize()`
+ * would otherwise find it through the very same "already open" look-back and
+ * fill a dialog that belongs to whoever just left. The idempotence guard in
+ * `renderBriefingSection` cannot catch this: it tests for *this arrival's own*
+ * section, which `cleanup()` already stripped from the leftover node,
+ * re-opening it to a second decoration. A `WeakSet` remembers the node past
+ * that strip, so a modal already spent — by this arrival or an earlier one —
+ * is never handed a second briefing.
+ * @type {WeakSet<HTMLElement>}
+ */
+let handledModals = new WeakSet();
 
 /**
  * The current character, or null before the game has said.
@@ -795,37 +822,15 @@ export function renderBriefingSection(modal) {
         if (lines.length === 0 && !diff?.lines?.length) return null;
 
         const section = buildSection(lines, diff);
-        placeSection(modal, section);
+        placeInWelcomeBackModal(modal, section);
         markAwayDiffShown();
+        // Spent, past this section's own removal — see `handledModals`
+        handledModals.add(modal);
         return section;
     } catch (error) {
         console.error('[SessionBriefing] Could not put the briefing in the welcome modal:', error);
         return null;
     }
-}
-
-/**
- * Put the section where it will be read, not merely where it fits.
- *
- * Appending lands it under the dialog's own Close button, which is the button
- * the player is on their way to press — a digest below it is a digest most
- * returns never see. It goes above that button instead, and falls back to the
- * end for a dialog that has no such button.
- *
- * @param {HTMLElement} modal - The dialog's content element
- * @param {HTMLElement} section - The briefing section
- * @returns {void}
- */
-function placeSection(modal, section) {
-    const closer = [...(modal.querySelectorAll?.('button, [class*="closeButton"], [class*="Button_button"]') || [])]
-        .reverse()
-        .find((el) => /close/i.test(el.textContent || '') || /close/i.test(el.className?.toString() || ''));
-    // The button may sit in a row of its own, so climb to whichever child of
-    // the modal contains it — that is what the section has to go in front of
-    let anchor = closer;
-    while (anchor && anchor.parentElement && anchor.parentElement !== modal) anchor = anchor.parentElement;
-    if (anchor?.parentElement === modal) modal.insertBefore(section, anchor);
-    else modal.appendChild(section);
 }
 
 /**
@@ -851,7 +856,18 @@ function renderIntoPendingModal() {
     // player arrives — before `character_switched` brings this feature up — so
     // on a real return there is nothing left for the observer to catch, and
     // the briefing was silently never drawn. Look for one already open.
-    const modal = pendingModal || currentWelcomeBackModal();
+    //
+    // The look-back is the only path that can find a modal this feature did not
+    // just watch appear, so it is the only path that can find a *stale* one — a
+    // dialog left over from a character switch, still sitting in the DOM with
+    // nothing to close it. `handledModals` is what tells the two apart: a
+    // pending modal came through a fresh insertion moments ago and is never in
+    // it, so the check only ever turns away a leftover.
+    let modal = pendingModal;
+    if (!modal) {
+        const found = currentWelcomeBackModal();
+        modal = found && !handledModals.has(found) ? found : null;
+    }
     pendingModal = null;
     if (!modal) return;
     // The player may have closed it during the awaits; a detached modal is not
@@ -932,6 +948,7 @@ export function _resetBriefingState() {
     awayDiffMarked = false;
     factsReady = false;
     suppressed = false;
+    handledModals = new WeakSet();
 }
 
 export default {
