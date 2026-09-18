@@ -21,6 +21,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Leftovers: the settings backup, and the tier a task estimate assumed
 
+- The goal planner opens a combat earning step at its own zone and tier, instead of dropping you on the zone list.
+
 - A combat task estimate now uses the difficulty you last fought that zone at, and says so when it has no record of one.
 - Settings can be restored after a wipe without the offer holding up the rest of the script while it waits for you.
 - The settings backup costs far less: tabs share one write, and an unchanged copy is not rewritten.
