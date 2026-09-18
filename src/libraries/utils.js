@@ -98,6 +98,10 @@ import * as toast from '../utils/toast.js';
 // apply the same bound (see utils/liquidity-cap.js). Needs a matching
 // utilsExternalGlobals entry in rollup.config.js to be deduplicated.
 import * as liquidityCap from '../utils/liquidity-cap.js';
+// The fight-count confidence maths, shared so the bestiary plan (sim) and a
+// combat task's Go (ui) size a pre-fill the same way. Needs a matching
+// utilsExternalGlobals entry in rollup.config.js to be deduplicated.
+import * as fightConfidence from '../utils/fight-confidence.js';
 // One reservation ledger for the whole script: two copies would be two
 // ledgers, and every plan invisible to the plans in the other bundle
 import * as inventoryReservations from '../utils/inventory-reservations.js';
@@ -273,6 +277,7 @@ toolashaRoot.Utils = {
     scrollBuffValues,
     toast,
     liquidityCap,
+    fightConfidence,
     inventoryReservations,
     calibrationBadge,
     keyCost,

@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The queued actions panel, and fight counts you can trust
+
+- Every queued fight now shows its expected profit, as a total and a rate, and the panel totals them.
+- The completion clock lost the words "Complete at" in front of it, and one "sim 24h" button at the top of the panel now covers the whole queue instead of one per row. It skips any fight that already has a fresh rate.
+- A queued action that loses money shows its minus sign, not just a red number.
+- Fight counts are now padded by how much randomness there actually is, rather than a flat percentage: a row needing six more kills is padded far harder than one needing thousands. Set the confidence in settings, starting at 90%.
+- A boss is not random — it comes every tenth wave — so boss counts are no longer padded at all. Pressing Go on a boss task used to queue 5% more fights than it could ever need.
+- An action set to repeat unlimited now shows the time and profit its materials will actually buy, before you queue it, instead of only saying it will run forever.
+- The marketplace tabs keep a fixed order instead of rearranging themselves between renders.
+
 ### Leftovers: prices that were never offered, and a chart that explained itself
 
 - A market price of zero is now read as "no price" instead of being pulled up to the bottom of the tradable range, which made a figure nobody had offered look like a real quote.

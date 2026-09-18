@@ -70,6 +70,9 @@ const coreExternalGlobals = new Map([
 const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/formatters.js')), 'Toolasha.Utils.formatters'],
     [normalize(join(__dirname, 'src/utils/liquidity-cap.js')), 'Toolasha.Utils.liquidityCap'],
+    // The fight-count confidence maths, reached from the sim bundle (the
+    // bestiary plan) and the ui bundle (a combat task's Go)
+    [normalize(join(__dirname, 'src/utils/fight-confidence.js')), 'Toolasha.Utils.fightConfidence'],
     // The calibration badges' ledger cache: one read of the ledger and one set
     // of memoised summaries, reached from the actions and sim bundles
     [normalize(join(__dirname, 'src/utils/calibration-badge.js')), 'Toolasha.Utils.calibrationBadge'],
