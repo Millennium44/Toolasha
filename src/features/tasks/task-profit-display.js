@@ -11,7 +11,7 @@ import webSocketHook from '../../core/websocket.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
-import { ensureZoneAndTier } from '../../utils/combat-zone-open.js';
+import { ensureZoneAndTier, characterIdentityChanged, runZoneOpenExclusive } from '../../utils/combat-zone-open.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
 import {
     isCardInConfirmState,
@@ -930,9 +930,13 @@ class TaskProfitDisplay {
                     if (!estimate) return;
 
                     // Wait for the game to navigate, same delay as the merge
-                    // fill above
+                    // fill above. Queued through the same lock a ▶ button's
+                    // openCombatZoneAtTier uses (combat-zone-open.js) — Go and
+                    // a ▶ sequence both read-then-write the one zone panel the
+                    // game gives us, and firing while the other is mid-flight
+                    // is exactly the interleave that corrupts it.
                     setTimeout(() => {
-                        this._applyGoEstimate(estimate).catch((error) => {
+                        runZoneOpenExclusive(() => this._applyGoEstimate(estimate)).catch((error) => {
                             console.error('[TaskProfitDisplay] Go estimate fill failed:', error);
                         });
                     }, 300);
@@ -1010,10 +1014,17 @@ class TaskProfitDisplay {
         const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.name;
         if (!zoneName) return;
 
+        // Captured before the only await below — a character switch landing
+        // mid-confirm leaves this panel now belonging to someone else, and
+        // this estimate's tier/count were never meant for them. See
+        // `characterIdentityChanged`'s doc-comment (combat-zone-open.js).
+        const characterId = dataManager.getCurrentCharacterId();
+
         const panel = document.querySelector(PANEL_SELECTOR);
         const tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
         const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, tier);
         if (!tierConfirmed) return;
+        if (characterIdentityChanged(characterId)) return;
 
         const inputEl = findActionInput(panel);
         if (!inputEl) return;

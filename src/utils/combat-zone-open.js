@@ -84,6 +84,58 @@ function wait(ms) {
 }
 
 /**
+ * True once the character has moved on from `capturedCharacterId` — a switch
+ * is in progress, or has already landed on someone else. Every await in this
+ * module's sequence (list → tile → panel → tier → fill) crosses real time,
+ * and a character switch during that wait leaves the game's own panel now
+ * showing the NEW character's zone while a sequence started for the OLD one
+ * is still mid-flight, holding a tier and count that were never meant for
+ * whoever the panel now belongs to. `task-profit-display.js`'s `_applyGoEstimate`
+ * (the Go path's own copy of this same "confirm zone, confirm tier, then fill"
+ * sequence) checks this too, for the same reason.
+ *
+ * This is the standard guard this codebase's character-swap race sweep
+ * established elsewhere (capture identity before the first await, verify
+ * after) — this module had none of it until now, being newer than that sweep.
+ * @param {string|null} capturedCharacterId - `dataManager.getCurrentCharacterId()`, read before the first await
+ * @returns {boolean}
+ */
+export function characterIdentityChanged(capturedCharacterId) {
+    return dataManager.getIsCharacterSwitching() || dataManager.getCurrentCharacterId() !== capturedCharacterId;
+}
+
+/**
+ * Serializes the sequences that manipulate the zone detail panel's shared
+ * Difficulty combobox and count input — `openCombatZoneAtTier`'s own
+ * sequence below, and the combat-task Go path's `_applyGoEstimate`
+ * (`task-profit-display.js`), which reads and writes the same panel through
+ * `ensureZoneAndTier` but never goes through `openCombatZoneAtTier` itself
+ * (Go's navigation already happened through the game's own button).
+ *
+ * Without this, a second ▶ click before the first settles, or Go firing
+ * while a ▶ sequence is still mid-flight, run two "confirm zone, confirm
+ * tier, fill count" sequences concurrently against the one panel the game
+ * gives us — each reading state the other is in the middle of changing.
+ * Queued rather than rejected: a second click during a still-settling first
+ * one is an ordinary thing for a player to do, not a mistake to bounce.
+ * @template T
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export function runZoneOpenExclusive(fn) {
+    const run = () => fn();
+    const result = zoneOpenLock.then(run, run);
+    zoneOpenLock = result.then(
+        () => undefined,
+        () => undefined
+    );
+    return result;
+}
+
+/** The tail of the queue {@link runZoneOpenExclusive} serializes onto. */
+let zoneOpenLock = Promise.resolve();
+
+/**
  * The Difficulty combobox within an open zone detail panel — found by its own
  * rendered value (`T0`, `T1`, …), not by a guessed class name. Refuses (returns
  * null) rather than picking some other combobox in the panel (e.g. Loadout) if
@@ -211,16 +263,33 @@ function findZoneTile(zoneList, zoneHrid) {
  * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean}>}
  */
 export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
+    return runZoneOpenExclusive(() => openCombatZoneAtTierSequence(zoneHrid, tier, options));
+}
+
+/**
+ * The actual navigate → tile → panel → tier → fill sequence, queued through
+ * {@link runZoneOpenExclusive} by {@link openCombatZoneAtTier} so it never
+ * runs concurrently with another one on the same shared panel.
+ * @param {string} zoneHrid
+ * @param {number} tier
+ * @param {Object} options
+ * @param {number|string} [options.count]
+ * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean}>}
+ */
+async function openCombatZoneAtTierSequence(zoneHrid, tier, options) {
     const { count } = options;
     const result = { opened: false, tierConfirmed: false, filled: false };
 
     const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.name;
     if (!zoneName) return result;
 
+    const characterId = dataManager.getCurrentCharacterId();
+
     if (!navigateToAction(zoneHrid)) return result;
 
     const zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_TIMEOUT_MS);
     if (!zoneList) return result;
+    if (characterIdentityChanged(characterId)) return result;
 
     const tile = findZoneTile(zoneList, zoneHrid);
     if (!tile) return result;
@@ -229,9 +298,11 @@ export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
     result.opened = true;
 
     const panel = await waitForElement(PANEL_SELECTOR, PANEL_TIMEOUT_MS);
+    if (characterIdentityChanged(characterId)) return result;
     const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier);
     result.tierConfirmed = tierConfirmed;
     if (!tierConfirmed) return result;
+    if (characterIdentityChanged(characterId)) return result;
 
     if (count === undefined || count === null) return result;
 

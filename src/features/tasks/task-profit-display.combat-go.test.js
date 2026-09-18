@@ -87,6 +87,8 @@ afterEach(() => {
     dataManager.initClientData = null;
     dataManager.characterQuests = [];
     dataManager.characterActions = [];
+    dataManager.currentCharacterId = null;
+    dataManager.isCharacterSwitching = false;
     document.body.innerHTML = '';
     vi.restoreAllMocks();
 });
@@ -392,6 +394,37 @@ describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', ()
         const { input } = buildDetailPanel('Bear With It', 0);
 
         await taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/gone', predictedFights: 40 });
+
+        expect(input.value).toBe('');
+    });
+
+    test('refuses to fill when the character switches away while the tier is being confirmed', async () => {
+        // Go's own copy of the "confirm zone, confirm tier, then fill"
+        // sequence (`ensureZoneAndTier` is awaited the same as in
+        // `openCombatZoneAtTier`) — a character switch landing during that
+        // await must not let a stale estimate fill the new character's panel.
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/bear_with_it',
+                name: 'Bear With It',
+                category: '/categories/bear',
+                sortIndex: 1,
+                monsters: ['/monsters/panda'],
+            },
+        ]);
+        dataManager.currentCharacterId = 'char-a';
+        const { input } = buildDetailPanel('Bear With It', 0);
+
+        const applyPromise = taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/bear_with_it',
+            predictedFights: 100,
+        });
+        // The switch lands in the window between capturing identity and the
+        // tier readback resolving — no real timer needed since the fast path
+        // (tier already matches) only crosses a microtask, not a setTimeout.
+        dataManager.currentCharacterId = 'char-b';
+
+        await applyPromise;
 
         expect(input.value).toBe('');
     });

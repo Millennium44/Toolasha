@@ -19,6 +19,16 @@ import { describe, test, expect, afterEach, vi } from 'vitest';
 import dataManager from '../core/data-manager.js';
 import * as itemNavigation from './item-navigation.js';
 import { openCombatZoneAtTier, ensureZoneAndTier, selectDifficultyTier } from './combat-zone-open.js';
+import { PANEL_SELECTOR } from './action-panel-helper.js';
+
+/**
+ * The character-tracking fields `characterIdentityChanged` reads, reset the
+ * same way a fresh session starts — no character, no switch in progress.
+ */
+function resetCharacterTracking() {
+    dataManager.currentCharacterId = null;
+    dataManager.isCharacterSwitching = false;
+}
 
 let comboboxIdSeq = 0;
 
@@ -119,6 +129,7 @@ async function pickTierOption(tier) {
 
 afterEach(() => {
     dataManager.initClientData = null;
+    resetCharacterTracking();
     document.body.innerHTML = '';
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -396,5 +407,114 @@ describe('openCombatZoneAtTier', () => {
         const result = await resultPromise;
         expect(result).toEqual({ opened: true, tierConfirmed: false, filled: false });
         expect(input.value).toBe('');
+    });
+
+    test('refuses to fill when the character switches away mid-sequence', async () => {
+        // A switch landing between the tile click (which opens the panel)
+        // and the tier/count being confirmed — the exact window this
+        // sequence spends several awaits inside. Without a check, the count
+        // meant for the old character lands in the new character's panel,
+        // since both characters' zone hrids and DOM shape are identical.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        dataManager.currentCharacterId = 'char-a';
+        let input;
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => {
+                ({ input } = buildPanel('Aqua Planet', 3));
+                // Simulate the switch landing here, the way a real
+                // `character_switched` event would mid-await.
+                dataManager.currentCharacterId = 'char-b';
+            });
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3, { count: 999 });
+        await vi.advanceTimersByTimeAsync(0);
+
+        const result = await resultPromise;
+        expect(result.filled).toBe(false);
+        expect(input.value).toBe('');
+    });
+
+    test('refuses to fill when a character switch is already in progress at the start', async () => {
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        dataManager.isCharacterSwitching = true;
+        const navSpy = vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 3));
+            return true;
+        });
+
+        const result = await openCombatZoneAtTier('/actions/combat/aqua', 3, { count: 999 });
+        // navigateToAction still fires (harmless — it just reopens the same
+        // list) but the sequence must not confirm a tier or fill a count
+        // while mid-switch.
+        expect(navSpy).toHaveBeenCalled();
+        expect(result.filled).toBe(false);
+    });
+});
+
+describe('openCombatZoneAtTier re-entrancy — runZoneOpenExclusive', () => {
+    test('a second call never touches the shared panel until the first has fully settled', async () => {
+        // Two ▶ clicks on different rows, back to back. Aqua's own panel
+        // mounts on a delay (standing in for the game's own render taking a
+        // moment) — without serialization, Fly's sequence would run
+        // concurrently during that window and could click Fly's tile, or
+        // read/fill Fly's panel, while Aqua's is still being confirmed.
+        // Asserted by recording *when* each side effect happens, since a
+        // fake-timer `advanceTimersByTimeAsync` call can drain more than one
+        // queued microtask chain in a single await, making a mid-flight
+        // snapshot an unreliable way to prove ordering.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([
+            { hrid: '/actions/combat/aqua', name: 'Aqua Planet' },
+            { hrid: '/actions/combat/fly', name: 'Fly Plains' },
+        ]);
+        const order = [];
+        // One shared Combat Zones list, the way the real one persists across
+        // re-navigating to it — both calls' `waitForElement(ZONE_LIST_SELECTOR)`
+        // must find both tiles, not each find a separate stale list holding
+        // only the other zone.
+        const { tiles } = buildZoneList([
+            { hrid: '/actions/combat/aqua', name: 'Aqua Planet' },
+            { hrid: '/actions/combat/fly', name: 'Fly Plains' },
+        ]);
+        tiles['/actions/combat/aqua'].addEventListener('click', () => {
+            order.push('aqua-tile-clicked');
+            setTimeout(() => {
+                order.push('aqua-panel-mounted');
+                buildPanel('Aqua Planet', 0);
+            }, 50);
+        });
+        tiles['/actions/combat/fly'].addEventListener('click', () => {
+            order.push('fly-tile-clicked');
+            // The game swaps the mounted panel rather than stacking a second
+            // one — clear aqua's out first the way its own re-render would.
+            document.querySelectorAll(PANEL_SELECTOR).forEach((el) => el.remove());
+            buildPanel('Fly Plains', 0);
+        });
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation((hrid) => {
+            order.push(`navigate:${hrid}`);
+            return true;
+        });
+
+        const p1 = openCombatZoneAtTier('/actions/combat/aqua', 0);
+        const p2 = openCombatZoneAtTier('/actions/combat/fly', 0);
+
+        const [result1, result2] = await Promise.all([vi.advanceTimersByTimeAsync(1000).then(() => p1), p2]);
+
+        expect(result1).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(result2).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        // Every one of fly's own steps comes after every one of aqua's — the
+        // two sequences never interleaved on the shared panel.
+        expect(order).toEqual([
+            'navigate:/actions/combat/aqua',
+            'aqua-tile-clicked',
+            'aqua-panel-mounted',
+            'navigate:/actions/combat/fly',
+            'fly-tile-clicked',
+        ]);
     });
 });
