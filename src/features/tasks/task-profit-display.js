@@ -11,6 +11,7 @@ import webSocketHook from '../../core/websocket.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
+import { padFightCount } from '../../utils/fight-confidence.js';
 import { ensureZoneAndTier, characterIdentityChanged, runZoneOpenExclusive } from '../../utils/combat-zone-open.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
 import {
@@ -966,7 +967,8 @@ class TaskProfitDisplay {
      * count — that total does not come from simulated RNG and should not
      * race this card's own estimate to overwrite the same input.
      * @param {HTMLElement} taskNode
-     * @returns {{zoneHrid: string, predictedFights: number, monsterHrid: (string|undefined), tier: (number|undefined)}|null}
+     * @returns {{zoneHrid: string, predictedFights: number, monsterHrid: (string|undefined),
+     *   tier: (number|undefined), killsNeeded: (number|undefined), killsPerFight: (number|null|undefined)}|null}
      * @private
      */
     _resolveGoEstimate(taskNode) {
@@ -989,8 +991,15 @@ class TaskProfitDisplay {
 
     /**
      * Navigate to the zone a combat task estimate used and pre-fill the
-     * predicted fight count (plus the configured buffer). Called after Go has
-     * had time to navigate.
+     * predicted fight count, padded so it is actually enough. Called after Go
+     * has had time to navigate.
+     *
+     * The prediction is a median: fill it verbatim and you come up short about
+     * half the time, which is the trip the pre-fill existed to save. The
+     * padding is a confidence quantile on the binomial kill count rather than
+     * a flat percent, because the spread that strands you shrinks as 1/sqrt(n)
+     * — six more kills needs half again as many fights as the median, three
+     * thousand needs two percent more. See `fight-confidence.js`.
      *
      * Never presses anything — only reads the currently open action detail
      * panel and its Difficulty combobox, exactly like a player checking the
@@ -1013,7 +1022,9 @@ class TaskProfitDisplay {
      * estimate's `zoneHrid`, no detail panel open, the panel not resolving to
      * the estimate's own `zoneHrid`, or the Difficulty combobox not
      * confirming the estimate's tier all leave the input untouched.
-     * @param {{zoneHrid: string, predictedFights: number, tier: (number|undefined)}} estimate
+     * @param {{zoneHrid: string, predictedFights: number, tier: (number|undefined),
+     *   monsterHrid: (string|undefined), killsNeeded: (number|undefined),
+     *   killsPerFight: (number|null|undefined)}} estimate
      * @param {string|null} [capturedCharacterId] - Who pressed Go, read by the
      *   click handler before the settle timer and the queue wait. Defaults to
      *   the current character for a direct call with nothing to straddle.
@@ -1042,11 +1053,29 @@ class TaskProfitDisplay {
 
         const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
         const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
-        // A small epsilon before rounding up: 100 * 1.10 is 110.00000000000001
-        // in floating point, and without it that pads a round number by one
-        // extra fight every time the buffer happens to land exactly.
-        const count = Math.ceil(estimate.predictedFights * (1 + bufferPercent / 100) - 1e-9);
-        setReactInputValue(inputEl, String(count), { focus: false });
+        const confidenceDefault = getSettingDefinition('combatFightConfidence')?.default ?? 90;
+        const confidencePercent = config.getSettingValue('combatFightConfidence', confidenceDefault);
+
+        // A boss does not spawn out of the spawn table — it arrives on a fixed
+        // wave — so its kill count is arithmetic, not luck, and padding it
+        // pads for variance that does not exist. The multi-task merge above
+        // has always known this (`isBoss ? total * 10 : total`); this path
+        // used to apply the flat RNG buffer to bosses regardless, so the same
+        // plugin treated boss spawns as deterministic in one place and random
+        // in the other.
+        const deterministic = Boolean(estimate.monsterHrid && dataManager.isBossMonster(estimate.monsterHrid));
+        const { fights } = padFightCount({
+            unpaddedFights: estimate.predictedFights,
+            thresholds: Number.isFinite(estimate.killsPerFight)
+                ? [{ killsNeeded: estimate.killsNeeded, killsPerFight: estimate.killsPerFight, deterministic }]
+                : [],
+            confidencePercent,
+            // A boss stay gets no flat floor either — zero padding is the
+            // whole point. Anything else keeps the flat buffer as a minimum,
+            // so nobody's existing padding shrinks.
+            floorPercent: deterministic ? 0 : bufferPercent,
+        });
+        setReactInputValue(inputEl, String(fights), { focus: false });
     }
 
     /**
@@ -1752,12 +1781,29 @@ class TaskProfitDisplay {
                 killsPerHour > 0 && Number.isFinite(totalFightsPerHour)
                     ? Math.ceil(remaining * (totalFightsPerHour / killsPerHour))
                     : null;
+            // The prediction is a ratio, and Go needs the two halves of it
+            // separately to size a confidence interval: how many kills are
+            // still wanted, and how often a fight produces one. Carried with
+            // the estimate for the same reason the tier is — the padding must
+            // be computed from the numbers this run simulated, not from
+            // whatever the panel looks like when Go is finally pressed.
+            const killsPerFight =
+                killsPerHour > 0 && Number.isFinite(totalFightsPerHour) && totalFightsPerHour > 0
+                    ? killsPerHour / totalFightsPerHour
+                    : null;
             if (cardTaskNode) {
                 // `tier` travels with the estimate so Go (`_applyGoEstimate`)
                 // acts on the tier this exact estimate simulated, never one
                 // recomputed at click time — the same reason the zone itself
                 // is carried here rather than re-derived.
-                this._cardEstimates.set(cardTaskNode, { zoneHrid, predictedFights, monsterHrid, tier: estimateTier });
+                this._cardEstimates.set(cardTaskNode, {
+                    zoneHrid,
+                    predictedFights,
+                    monsterHrid,
+                    tier: estimateTier,
+                    killsNeeded: remaining,
+                    killsPerFight,
+                });
             }
 
             const playerHrid = players[0]?.hrid || 'player1';

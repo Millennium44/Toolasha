@@ -735,3 +735,145 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
         expect(container.innerHTML).toContain('no recorded tier');
     });
 });
+
+/**
+ * Ask 5 (the pre-filled count is sized by confidence, and a boss is not
+ * padded at all): the prediction Go fills is a median — fill it verbatim and
+ * you fall short about half the time, which is the second trip the pre-fill
+ * exists to save. The padding is now a binomial quantile on the kill count
+ * (`utils/fight-confidence.js`) rather than a flat percentage, because the
+ * spread that strands you shrinks as 1/sqrt(n): six more kills wants half
+ * again as many fights, three thousand wants two percent more.
+ *
+ * The boss case is a bug fix, not a tuning. `dataManager.isBossMonster` was
+ * already consulted by the multi-task merge above (`isBoss ? total * 10 :
+ * total`) and never by this path, so the same plugin treated a boss spawn as
+ * deterministic in one place and as RNG in the other — and pre-fix a boss
+ * estimate of 100 fights filled 105, padding against variance a fixed spawn
+ * wave does not have.
+ */
+describe('_applyGoEstimate (confidence padding and the boss exception)', () => {
+    const FLY_ZONE = [
+        {
+            hrid: '/actions/combat/fly',
+            name: 'Fly Zone',
+            category: '/categories/fly',
+            sortIndex: 1,
+            monsters: ['/monsters/fly'],
+        },
+    ];
+
+    /** Settings, without touching anything else `getSettingValue` answers. */
+    function settings({ buffer = 5, confidence = 90 } = {}) {
+        vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) => {
+            if (key === 'taskCombatGoBuffer') return buffer;
+            if (key === 'combatFightConfidence') return confidence;
+            return fallback;
+        });
+    }
+
+    test('a boss estimate fills the bare prediction — no quantile, no flat buffer', async () => {
+        dataManager.initClientData = buildGameData(FLY_ZONE);
+        const { input } = buildDetailPanel('Fly Zone', 0);
+        settings();
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(true);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 100,
+            killsNeeded: 10,
+            killsPerFight: 0.1,
+        });
+
+        // Pre-fix this filled ceil(100 * 1.05) = 105.
+        expect(input.value).toBe('100');
+    });
+
+    test('the same estimate from the spawn table pads to the confidence quantile', async () => {
+        dataManager.initClientData = buildGameData(FLY_ZONE);
+        const { input } = buildDetailPanel('Fly Zone', 0);
+        settings();
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 60,
+            killsNeeded: 6,
+            killsPerFight: 0.1,
+        });
+
+        // Six kills at one in ten: 91 fights clear it nine times in ten, where
+        // the old flat 5% quoted 63 and cleared it barely half the time.
+        expect(input.value).toBe('91');
+    });
+
+    test('a large target pads by a couple of percent, not by half again', async () => {
+        dataManager.initClientData = buildGameData(FLY_ZONE);
+        const { input } = buildDetailPanel('Fly Zone', 0);
+        settings({ buffer: 0 });
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 13_832,
+            killsNeeded: 3833,
+            killsPerFight: 3833 / 13_832,
+        });
+
+        expect(input.value).toBe('14076');
+    });
+
+    test('the flat buffer still binds where the quantile asks for less', async () => {
+        dataManager.initClientData = buildGameData(FLY_ZONE);
+        const { input } = buildDetailPanel('Fly Zone', 0);
+        settings({ buffer: 10 });
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 100_000,
+            killsNeeded: 50_000,
+            killsPerFight: 0.5,
+        });
+
+        expect(input.value).toBe('110000');
+    });
+
+    test('confidence at 0 leaves exactly the old flat-buffer behavior', async () => {
+        dataManager.initClientData = buildGameData(FLY_ZONE);
+        const { input } = buildDetailPanel('Fly Zone', 0);
+        settings({ confidence: 0 });
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 60,
+            killsNeeded: 6,
+            killsPerFight: 0.1,
+        });
+
+        expect(input.value).toBe('63');
+    });
+
+    test('an estimate with no kill rate falls back to the flat buffer, never a guess', async () => {
+        dataManager.initClientData = buildGameData(FLY_ZONE);
+        const { input } = buildDetailPanel('Fly Zone', 0);
+        settings();
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 200,
+            killsNeeded: 20,
+            killsPerFight: null,
+        });
+
+        expect(input.value).toBe('210');
+    });
+});
