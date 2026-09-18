@@ -14,6 +14,14 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import {
+    HISTORY_TYPE_SCALE,
+    createTotalsCell,
+    groupSessionsByInputItem,
+    poolEquivalentGroups,
+    renderTotalsSection,
+    totalsRowStyle,
+} from './history-totals-table.js';
 
 /**
  * Check whether any mutation added nodes that are, contain, or sit under a tablist.
@@ -32,6 +40,57 @@ function mutationsTouchTablist(mutations) {
     }
     return false;
 }
+
+/**
+ * Columns of the "Totals by Input Item" table, with the tooltips that keep
+ * each figure honest about what it is and is not counting.
+ * @type {Array<{label: string, title?: string}>}
+ */
+const TRANSMUTE_TOTALS_COLUMNS = [
+    { label: 'Input Item' },
+    { label: 'Sessions' },
+    { label: 'Attempts' },
+    { label: 'Consumed' },
+    { label: 'Successes' },
+    { label: 'Revenue' },
+    { label: 'Input Cost' },
+    {
+        label: 'Catalyst Cost',
+        title:
+            'Catalysts actually seen being consumed, at current buy price — a mid-session swap is costed ' +
+            'against both. Sessions recorded before that tracking existed are estimated as the catalyst in ' +
+            'the slot at session start × successes, and are marked ◇.',
+    },
+    { label: 'Coin Cost' },
+    { label: 'Net' },
+    {
+        label: 'Inputs/Jackpot',
+        title:
+            'Inputs consumed per non-self-return output. Self-returns are excluded from this count — a ' +
+            'self-return hands back the same item you put in, so it costs nothing and counts as neither ' +
+            'an input nor an output here. This is the real price of the outputs that were actually worth ' +
+            'something, not the inflated figure you get from dividing by every "success" including the ' +
+            'free round-trips.',
+    },
+    {
+        label: 'Break-even Input',
+        title:
+            'Input value at which revenue exactly covers catalyst + coin cost for what was consumed. ' +
+            'Above this, the recorded catalyst paid for itself; below it, it did not.',
+    },
+];
+
+/** Footnote markers under the totals table. @type {Array<string>} */
+const TRANSMUTE_TOTALS_LEGEND = [
+    '* input unpriced — total is incomplete',
+    '† catalyst on some sessions could not be priced — excluded, not zero',
+    '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
+    '◇ catalyst estimated on some sessions, not measured',
+    'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
+    '§ self-return counts on some sessions were derived from the recorded successes, not observed — ' +
+        'and that success count is itself approximate on these sessions (recorded through the same batching ' +
+        'bug), so input cost on them is likely understated, not just approximate',
+];
 
 class TransmuteHistoryViewer {
     constructor() {
@@ -450,7 +509,7 @@ class TransmuteHistoryViewer {
         while (tableContainer.firstChild) tableContainer.removeChild(tableContainer.firstChild);
 
         const table = document.createElement('table');
-        table.style.cssText = 'width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap;';
+        table.style.cssText = `width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap; font-size: ${HISTORY_TYPE_SCALE.body};`;
 
         // Header
         const thead = document.createElement('thead');
@@ -513,7 +572,7 @@ class TransmuteHistoryViewer {
                 filterBtn.style.cssText = `
                     background: none; border: none;
                     color: ${this.hasActiveFilter(col.key) ? '#4a90e2' : '#aaa'};
-                    cursor: pointer; font-size: 16px;
+                    cursor: pointer; font-size: ${HISTORY_TYPE_SCALE.glyph};
                     padding: 2px 4px; font-weight: bold;
                 `;
                 filterBtn.addEventListener('click', (e) => {
@@ -619,7 +678,7 @@ class TransmuteHistoryViewer {
                 deleteBtn.setAttribute('aria-label', 'Delete this session');
                 deleteBtn.style.cssText = `
                     background: none; border: none; color: #dc2626;
-                    cursor: pointer; font-size: 14px; padding: 2px 6px;
+                    cursor: pointer; font-size: ${HISTORY_TYPE_SCALE.body}; padding: 2px 6px;
                     border-radius: 3px; line-height: 1;
                 `;
                 deleteBtn.addEventListener('mouseenter', () => {
@@ -667,98 +726,88 @@ class TransmuteHistoryViewer {
      * @returns {Array<Object>} One entry per distinct inputItemHrid
      */
     computeInputItemTotals() {
-        const groups = new Map();
+        return groupSessionsByInputItem(this.filteredSessions, {
+            getDetail: (session) => this.profitCache.get(session.id) || this.computeSessionProfit(session),
+            getSortName: (hrid) => this.getItemName(hrid),
+            createGroup: (hrid) => ({
+                inputItemHrid: hrid,
+                sessionCount: 0,
+                attempts: 0,
+                successes: 0,
+                netConsumed: 0,
+                nonSelfReturnOutputs: 0,
+                revenue: 0,
+                inputCost: 0,
+                inputUnpriced: false,
+                coinCost: 0,
+                catalystCost: 0,
+                catalystRecordedSessions: 0,
+                catalystUnrecordedSessions: 0,
+                catalystUnpricedSessions: 0,
+                catalystEstimatedSessions: 0,
+                catalystHrids: new Set(),
+                repairedSessions: 0,
+                unreliableSessions: 0,
+                impossible: false,
+            }),
+            accumulate: (group, session, detail) => {
+                group.sessionCount++;
+                group.attempts += session.totalAttempts || 0;
+                group.successes += session.totalSuccesses || 0;
+                group.netConsumed += detail.netConsumed;
+                group.nonSelfReturnOutputs += detail.nonSelfReturnOutputs;
+                group.revenue += detail.revenue;
+                group.inputCost += detail.inputCost;
+                if (detail.inputUnpriced) group.inputUnpriced = true;
+                group.coinCost += detail.coinCost;
 
-        for (const session of this.filteredSessions) {
-            const detail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
-            const hrid = session.inputItemHrid;
+                if (detail.catalystEntries.length > 0) {
+                    group.catalystRecordedSessions++;
+                    for (const entry of detail.catalystEntries) group.catalystHrids.add(entry.hrid);
+                    if (detail.catalystUnpriced) group.catalystUnpricedSessions++;
+                    if (detail.catalystEstimated) group.catalystEstimatedSessions++;
+                    group.catalystCost += detail.catalystCost;
+                } else if (detail.catalystUnrecorded) {
+                    group.catalystUnrecordedSessions++;
+                }
 
-            let group = groups.get(hrid);
-            if (!group) {
-                group = {
-                    inputItemHrid: hrid,
-                    sessionCount: 0,
-                    attempts: 0,
-                    successes: 0,
-                    netConsumed: 0,
-                    nonSelfReturnOutputs: 0,
-                    revenue: 0,
-                    inputCost: 0,
-                    inputUnpriced: false,
-                    coinCost: 0,
-                    catalystCost: 0,
-                    catalystRecordedSessions: 0,
-                    catalystUnrecordedSessions: 0,
-                    catalystUnpricedSessions: 0,
-                    catalystEstimatedSessions: 0,
-                    catalystHrids: new Set(),
-                    repairedSessions: 0,
-                    unreliableSessions: 0,
-                    impossible: false,
-                };
-                groups.set(hrid, group);
-            }
+                if (session.repair?.outcome === 'repaired') group.repairedSessions++;
+                if (session.repair?.outcome === 'unreliable') group.unreliableSessions++;
 
-            group.sessionCount++;
-            group.attempts += session.totalAttempts || 0;
-            group.successes += session.totalSuccesses || 0;
-            group.netConsumed += detail.netConsumed;
-            group.nonSelfReturnOutputs += detail.nonSelfReturnOutputs;
-            group.revenue += detail.revenue;
-            group.inputCost += detail.inputCost;
-            if (detail.inputUnpriced) group.inputUnpriced = true;
-            group.coinCost += detail.coinCost;
+                const resultCount = Object.values(session.results || {}).reduce((sum, r) => sum + (r.count || 0), 0);
+                const successes = session.totalSuccesses || 0;
+                const attempts = session.totalAttempts || 0;
+                if (
+                    session.repair?.outcome === 'unreliable' ||
+                    resultCount > successes ||
+                    (detail.netConsumed === 0 && attempts > 0)
+                ) {
+                    group.impossible = true;
+                }
+            },
+            finalize: (group) => {
+                const net = group.revenue - group.inputCost - group.catalystCost - group.coinCost;
+                const successRate = group.attempts > 0 ? group.successes / group.attempts : null;
+                // Most "successes" are self-returns — the same item handed straight
+                // back, costing nothing and gaining nothing. Dividing by successes
+                // reads as though those free round-trips were purchases, so the
+                // denominator here is only the non-self-return ("jackpot") outputs.
+                // A group that produced nothing but self-returns has no meaningful
+                // ratio at all; null (rendered as a dash) beats a division by zero.
+                const inputsPerOutput =
+                    group.nonSelfReturnOutputs > 0 ? group.netConsumed / group.nonSelfReturnOutputs : null;
+                // The input value at which recorded revenue exactly covers catalyst
+                // and coin cost for what was consumed — answers "was the recorded
+                // catalyst worth it" without needing to know what the input is
+                // worth. Above this value, it paid for itself; below it, it did not.
+                const breakEvenInputValue =
+                    group.netConsumed > 0
+                        ? (group.revenue - group.catalystCost - group.coinCost) / group.netConsumed
+                        : null;
 
-            if (detail.catalystEntries.length > 0) {
-                group.catalystRecordedSessions++;
-                for (const entry of detail.catalystEntries) group.catalystHrids.add(entry.hrid);
-                if (detail.catalystUnpriced) group.catalystUnpricedSessions++;
-                if (detail.catalystEstimated) group.catalystEstimatedSessions++;
-                group.catalystCost += detail.catalystCost;
-            } else if (detail.catalystUnrecorded) {
-                group.catalystUnrecordedSessions++;
-            }
-
-            if (session.repair?.outcome === 'repaired') group.repairedSessions++;
-            if (session.repair?.outcome === 'unreliable') group.unreliableSessions++;
-
-            const resultCount = Object.values(session.results || {}).reduce((sum, r) => sum + (r.count || 0), 0);
-            const successes = session.totalSuccesses || 0;
-            const attempts = session.totalAttempts || 0;
-            if (
-                session.repair?.outcome === 'unreliable' ||
-                resultCount > successes ||
-                (detail.netConsumed === 0 && attempts > 0)
-            ) {
-                group.impossible = true;
-            }
-        }
-
-        const totals = Array.from(groups.values()).map((group) => {
-            const net = group.revenue - group.inputCost - group.catalystCost - group.coinCost;
-            const successRate = group.attempts > 0 ? group.successes / group.attempts : null;
-            // Most "successes" are self-returns — the same item handed straight
-            // back, costing nothing and gaining nothing. Dividing by successes
-            // reads as though those free round-trips were purchases, so the
-            // denominator here is only the non-self-return ("jackpot") outputs.
-            // A group that produced nothing but self-returns has no meaningful
-            // ratio at all; null (rendered as a dash) beats a division by zero.
-            const inputsPerOutput =
-                group.nonSelfReturnOutputs > 0 ? group.netConsumed / group.nonSelfReturnOutputs : null;
-            // The input value at which recorded revenue exactly covers catalyst
-            // and coin cost for what was consumed — answers "was the recorded
-            // catalyst worth it" without needing to know what the input is
-            // worth. Above this value, it paid for itself; below it, it did not.
-            const breakEvenInputValue =
-                group.netConsumed > 0
-                    ? (group.revenue - group.catalystCost - group.coinCost) / group.netConsumed
-                    : null;
-
-            return { ...group, net, successRate, inputsPerOutput, breakEvenInputValue };
+                return { ...group, net, successRate, inputsPerOutput, breakEvenInputValue };
+            },
         });
-
-        totals.sort((a, b) => this.getItemName(a.inputItemHrid).localeCompare(this.getItemName(b.inputItemHrid)));
-        return totals;
     }
 
     /**
@@ -890,22 +939,11 @@ class TransmuteHistoryViewer {
      * @returns {Array<Object>} Zero or more pooled groups
      */
     computePooledTotals(totals) {
-        const byKey = new Map();
-        for (const group of totals) {
-            const key = this.getTransmuteEquivalenceKey(group.inputItemHrid);
-            if (!key) continue;
-            const bucket = byKey.get(key);
-            if (bucket) bucket.push(group);
-            else byKey.set(key, [group]);
-        }
-
-        const pooled = [];
-        for (const members of byKey.values()) {
-            if (members.length < 2) continue;
-            pooled.push(this.buildPooledGroup(members));
-        }
-        pooled.sort((a, b) => this.getItemName(a.memberHrids[0]).localeCompare(this.getItemName(b.memberHrids[0])));
-        return pooled;
+        return poolEquivalentGroups(totals, {
+            getKey: (hrid) => this.getTransmuteEquivalenceKey(hrid),
+            buildPooled: (members) => this.buildPooledGroup(members),
+            getSortName: (hrid) => this.getItemName(hrid),
+        });
     }
 
     /**
@@ -913,94 +951,24 @@ class TransmuteHistoryViewer {
      */
     renderTotals() {
         const container = this.modal.querySelector('.mwi-transmute-history-totals-container');
-        while (container.firstChild) container.removeChild(container.firstChild);
-
         const totals = this.computeInputItemTotals();
-        if (totals.length === 0) return;
 
-        const heading = document.createElement('div');
-        heading.textContent = 'Totals by Input Item';
-        heading.style.cssText = 'color: #fff; font-weight: bold; margin: 18px 0 8px;';
-        container.appendChild(heading);
-
-        const table = document.createElement('table');
-        table.style.cssText = 'width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap;';
-
-        const thead = document.createElement('thead');
-        const headerRow = document.createElement('tr');
-        headerRow.style.background = '#1a1a1a';
-
-        const headers = [
-            { label: 'Input Item' },
-            { label: 'Sessions' },
-            { label: 'Attempts' },
-            { label: 'Consumed' },
-            { label: 'Successes' },
-            { label: 'Revenue' },
-            { label: 'Input Cost' },
-            {
-                label: 'Catalyst Cost',
-                title:
-                    'Catalysts actually seen being consumed, at current buy price — a mid-session swap is costed ' +
-                    'against both. Sessions recorded before that tracking existed are estimated as the catalyst in ' +
-                    'the slot at session start × successes, and are marked ◇.',
-            },
-            { label: 'Coin Cost' },
-            { label: 'Net' },
-            {
-                label: 'Inputs/Jackpot',
-                title:
-                    'Inputs consumed per non-self-return output. Self-returns are excluded from this count — a ' +
-                    'self-return hands back the same item you put in, so it costs nothing and counts as neither ' +
-                    'an input nor an output here. This is the real price of the outputs that were actually worth ' +
-                    'something, not the inflated figure you get from dividing by every "success" including the ' +
-                    'free round-trips.',
-            },
-            {
-                label: 'Break-even Input',
-                title:
-                    'Input value at which revenue exactly covers catalyst + coin cost for what was consumed. ' +
-                    'Above this, the recorded catalyst paid for itself; below it, it did not.',
-            },
-        ];
-
-        headers.forEach((col) => {
-            const th = document.createElement('th');
-            th.textContent = col.label;
-            th.style.cssText =
-                'padding: 8px 10px; text-align: left; border-bottom: 2px solid #555; white-space: nowrap;';
-            if (col.title) th.title = col.title;
-            headerRow.appendChild(th);
-        });
-        thead.appendChild(headerRow);
-        table.appendChild(thead);
-
-        const tbody = document.createElement('tbody');
-        totals.forEach((group, index) => tbody.appendChild(this.buildTotalsRow(group, index)));
+        const rows = totals.map((group, index) => this.buildTotalsRow(group, index));
         // Pooled rows sit below the per-item rows they summarize and above the
         // overall row. They are additional, never a replacement — and they are
         // deliberately NOT fed into `buildOverallTotalsRow`, which reduces over
         // the per-item groups; adding them there would count every session twice.
         this.computePooledTotals(totals).forEach((group, index) =>
-            tbody.appendChild(this.buildTotalsRow(group, totals.length + index))
+            rows.push(this.buildTotalsRow(group, totals.length + index))
         );
-        tbody.appendChild(this.buildOverallTotalsRow(totals));
-        table.appendChild(tbody);
+        if (totals.length > 0) rows.push(this.buildOverallTotalsRow(totals));
 
-        container.appendChild(table);
-
-        const legend = document.createElement('div');
-        legend.style.cssText = 'color: #888; font-size: 11px; margin-top: 6px;';
-        legend.textContent =
-            '* input unpriced — total is incomplete    ' +
-            '† catalyst on some sessions could not be priced — excluded, not zero    ' +
-            '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero    ' +
-            '◇ catalyst estimated on some sessions, not measured    ' +
-            'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members    ' +
-            '§ self-return counts on some sessions were derived from the recorded successes, not observed — ' +
-            'and that success count is itself approximate on these sessions (recorded through the same batching ' +
-            'bug), so input cost on them is likely understated, not just approximate';
-        container.appendChild(legend);
+        renderTotalsSection(container, {
+            heading: 'Totals by Input Item',
+            columns: TRANSMUTE_TOTALS_COLUMNS,
+            rows,
+            legendParts: TRANSMUTE_TOTALS_LEGEND,
+        });
     }
 
     /**
@@ -1010,11 +978,7 @@ class TransmuteHistoryViewer {
      * @returns {HTMLTableCellElement}
      */
     createTotalsCell(text, opts = {}) {
-        const td = document.createElement('td');
-        td.textContent = text;
-        td.style.cssText = `padding: 6px 10px;${opts.color ? ` color: ${opts.color};` : ''}${opts.bold ? ' font-weight: bold;' : ''}`;
-        if (opts.title) td.title = opts.title;
-        return td;
+        return createTotalsCell(text, opts);
     }
 
     /**
@@ -1031,19 +995,7 @@ class TransmuteHistoryViewer {
             'batching bug. The recorded success count comes from the same batched-delta counting that ' +
             'inflated the self-returns, so it cannot be trusted either. Every figure derived from consumed ' +
             'or success count is hidden here to avoid presenting corrupt data as fact.';
-        row.style.cssText = `
-            border-bottom: 1px solid #333;
-            ${group.pooled ? 'border-top: 1px dashed #555;' : ''}
-            background: ${
-                group.impossible
-                    ? 'rgba(251,191,36,0.08)'
-                    : group.pooled
-                      ? 'rgba(74,144,226,0.08)'
-                      : index % 2 === 0
-                        ? '#2a2a2a'
-                        : '#252525'
-            };
-        `;
+        row.style.cssText = totalsRowStyle(index, { pooled: group.pooled, flagged: group.impossible });
 
         const itemCell = document.createElement('td');
         itemCell.style.cssText = 'padding: 6px 10px; display: flex; align-items: center; gap: 8px;';
@@ -1575,7 +1527,7 @@ class TransmuteHistoryViewer {
 
         // Stats
         const stats = document.createElement('span');
-        stats.style.cssText = 'color: #aaa; font-size: 14px;';
+        stats.style.cssText = `color: #aaa; font-size: ${HISTORY_TYPE_SCALE.body};`;
         stats.textContent = `${this.filteredSessions.length} session${this.filteredSessions.length !== 1 ? 's' : ''}`;
         controls.appendChild(stats);
 
@@ -1674,7 +1626,7 @@ class TransmuteHistoryViewer {
                 display: flex; align-items: center; gap: 6px;
                 padding: 4px 8px; background: #3a3a3a;
                 border: 1px solid #555; border-radius: 4px;
-                color: #aaa; font-size: 13px;
+                color: #aaa; font-size: ${HISTORY_TYPE_SCALE.body};
             `;
 
             if (badge.icon) {
@@ -1689,7 +1641,7 @@ class TransmuteHistoryViewer {
             removeBtn.textContent = '✕';
             removeBtn.style.cssText = `
                 background: none; border: none; color: #aaa;
-                cursor: pointer; padding: 0; font-size: 13px; line-height: 1;
+                cursor: pointer; padding: 0; font-size: ${HISTORY_TYPE_SCALE.body}; line-height: 1;
             `;
             removeBtn.addEventListener('click', badge.onRemove);
             el.appendChild(removeBtn);
@@ -1898,7 +1850,7 @@ class TransmuteHistoryViewer {
         if (minDate && maxDate) {
             const rangeInfo = document.createElement('div');
             rangeInfo.style.cssText = `
-                color: #aaa; font-size: 11px; margin-bottom: 10px;
+                color: #aaa; font-size: ${HISTORY_TYPE_SCALE.note}; margin-bottom: 10px;
                 padding: 6px; background: #1a1a1a; border-radius: 3px;
             `;
             rangeInfo.textContent = `Available: ${formatDateTime(minDate, { includeTime: false })} - ${formatDateTime(maxDate, { includeTime: false })}`;
@@ -2102,7 +2054,7 @@ class TransmuteHistoryViewer {
     createDateInput(labelText, value, minDate, maxDate) {
         const label = document.createElement('label');
         label.textContent = labelText;
-        label.style.cssText = 'display: block; color: #aaa; margin-bottom: 4px; font-size: 12px;';
+        label.style.cssText = `display: block; color: #aaa; margin-bottom: 4px; font-size: ${HISTORY_TYPE_SCALE.note};`;
 
         const input = document.createElement('input');
         input.type = 'date';

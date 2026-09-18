@@ -12,6 +12,7 @@ import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { HISTORY_TYPE_SCALE } from './history-totals-table.js';
 
 const CATALYST_OF_COINIFICATION_HRID = '/items/catalyst_of_coinification';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -488,7 +489,7 @@ class CoinifyHistoryViewer {
         while (tableContainer.firstChild) tableContainer.removeChild(tableContainer.firstChild);
 
         const table = document.createElement('table');
-        table.style.cssText = 'width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap;';
+        table.style.cssText = `width: max-content; border-collapse: collapse; color: #fff; white-space: nowrap; font-size: ${HISTORY_TYPE_SCALE.body};`;
 
         // Header
         const thead = document.createElement('thead');
@@ -568,7 +569,7 @@ class CoinifyHistoryViewer {
                 filterBtn.style.cssText = `
                     background: none; border: none;
                     color: ${this.hasActiveFilter(col.key) ? '#4a90e2' : '#aaa'};
-                    cursor: pointer; font-size: 16px;
+                    cursor: pointer; font-size: ${HISTORY_TYPE_SCALE.glyph};
                     padding: 2px 4px; font-weight: bold;
                 `;
                 filterBtn.addEventListener('click', (e) => {
@@ -703,7 +704,7 @@ class CoinifyHistoryViewer {
                 deleteBtn.setAttribute('aria-label', 'Delete this session');
                 deleteBtn.style.cssText = `
                     background: none; border: none; color: #dc2626;
-                    cursor: pointer; font-size: 14px; padding: 2px 6px;
+                    cursor: pointer; font-size: ${HISTORY_TYPE_SCALE.body}; padding: 2px 6px;
                     border-radius: 3px; line-height: 1;
                 `;
                 deleteBtn.addEventListener('mouseenter', () => {
@@ -761,7 +762,7 @@ class CoinifyHistoryViewer {
 
         // Stats
         const stats = document.createElement('span');
-        stats.style.cssText = 'color: #aaa; font-size: 14px;';
+        stats.style.cssText = `color: #aaa; font-size: ${HISTORY_TYPE_SCALE.body};`;
         stats.textContent = `${this.filteredSessions.length} session${this.filteredSessions.length !== 1 ? 's' : ''}`;
         controls.appendChild(stats);
 
@@ -849,7 +850,7 @@ class CoinifyHistoryViewer {
                 display: flex; align-items: center; gap: 6px;
                 padding: 4px 8px; background: #3a3a3a;
                 border: 1px solid #555; border-radius: 4px;
-                color: #aaa; font-size: 13px;
+                color: #aaa; font-size: ${HISTORY_TYPE_SCALE.body};
             `;
 
             if (badge.icon) {
@@ -864,7 +865,7 @@ class CoinifyHistoryViewer {
             removeBtn.textContent = '✕';
             removeBtn.style.cssText = `
                 background: none; border: none; color: #aaa;
-                cursor: pointer; padding: 0; font-size: 13px; line-height: 1;
+                cursor: pointer; padding: 0; font-size: ${HISTORY_TYPE_SCALE.body}; line-height: 1;
             `;
             removeBtn.addEventListener('click', badge.onRemove);
             el.appendChild(removeBtn);
@@ -1070,7 +1071,7 @@ class CoinifyHistoryViewer {
         if (minDate && maxDate) {
             const rangeInfo = document.createElement('div');
             rangeInfo.style.cssText = `
-                color: #aaa; font-size: 11px; margin-bottom: 10px;
+                color: #aaa; font-size: ${HISTORY_TYPE_SCALE.note}; margin-bottom: 10px;
                 padding: 6px; background: #1a1a1a; border-radius: 3px;
             `;
             rangeInfo.textContent = `Available: ${formatDateTime(minDate, { includeTime: false })} - ${formatDateTime(maxDate, { includeTime: false })}`;
@@ -1235,7 +1236,7 @@ class CoinifyHistoryViewer {
     createDateInput(labelText, value, minDate, maxDate) {
         const label = document.createElement('label');
         label.textContent = labelText;
-        label.style.cssText = 'display: block; color: #aaa; margin-bottom: 4px; font-size: 12px;';
+        label.style.cssText = `display: block; color: #aaa; margin-bottom: 4px; font-size: ${HISTORY_TYPE_SCALE.note};`;
 
         const input = document.createElement('input');
         input.type = 'date';
