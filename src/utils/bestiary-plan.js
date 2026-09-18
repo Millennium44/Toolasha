@@ -550,3 +550,30 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid } = {}) {
     }
     return lines.join('\n');
 }
+
+/**
+ * Split a plan zone's `zoneHrid` back into the real combat action HRID and
+ * the difficulty tier it was planned at.
+ *
+ * The planner works on one entry per zone+tier — two tiers of the same zone
+ * are different rows with different kill rates — so callers that build its
+ * `zones` input (`combat-sim-ui.js`'s `_buildBestiaryPlanZones`) key each one
+ * as `` `${realZoneHrid}|T${tier}` ``, which `planBestiaryRoute` then carries
+ * through untouched onto every `segments[].zoneHrid`. Anything that needs the
+ * real action HRID back — opening the zone a plan step means, say — reads it
+ * from here rather than assuming the key has no structure of its own.
+ *
+ * @param {string} zoneKey - A plan zone or segment's `zoneHrid`
+ * @returns {{zoneHrid: string, tier: number}|null} Null if `zoneKey` is not
+ *   in the `<zoneHrid>|T<tier>` shape (e.g. a caller that built its own plan
+ *   input without this convention)
+ */
+export function parseBestiaryZoneKey(zoneKey) {
+    if (typeof zoneKey !== 'string') return null;
+    const idx = zoneKey.lastIndexOf('|T');
+    if (idx === -1) return null;
+    const zoneHrid = zoneKey.slice(0, idx);
+    const tier = Number(zoneKey.slice(idx + 2));
+    if (!zoneHrid || !Number.isInteger(tier) || tier < 0) return null;
+    return { zoneHrid, tier };
+}

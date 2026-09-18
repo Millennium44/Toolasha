@@ -18,6 +18,14 @@
  * by a completed sim, never guesses one, and never presses anything itself —
  * it fills the game's own count input, the same way `findActionInput` +
  * `setReactInputValue` already do for the existing Go-merge feature.
+ *
+ * Every combat task estimate simulates at T0 (`difficultyTier: 0`), so Go
+ * must land on T0 too — through `ensureZoneAndTier` (`utils/combat-zone-open.js`),
+ * which reads the zone panel's own Difficulty combobox rather than a "zone
+ * tab" that measurement on the live game showed never existed (that selector
+ * matched the Combat page's top-level tabs — Combat Zones/Find Party/Combat
+ * Sim/Statistics — never a per-zone entry, so the old fallback here was dead
+ * code and is gone, not merely unused).
  */
 
 import { describe, test, expect, afterEach, vi } from 'vitest';
@@ -202,8 +210,45 @@ function buildTaskCard(description, progress, quantity) {
     return info;
 }
 
-/** A mounted action detail panel, as `resolveDetailPanel`/`findActionInput` read it. */
-function buildDetailPanel(zoneName) {
+/**
+ * A MUI-shaped Difficulty combobox, as measured on the live game: a
+ * `[role="combobox"]` reading its current value (`T0`, `T1`, …), whose
+ * `aria-controls` names a `[role="listbox"]` of `[role="option"]` entries —
+ * portalled to `document.body`, the way MUI's own popovers render, not
+ * nested under the panel.
+ */
+let comboboxIdSeq = 0;
+function buildDifficultyCombobox(panel, tier, availableTiers = [0, 1, 2, 3, 4, 5]) {
+    const id = `mwi-test-difficulty-listbox-${comboboxIdSeq++}`;
+    const combobox = document.createElement('div');
+    combobox.setAttribute('role', 'combobox');
+    combobox.setAttribute('aria-controls', id);
+    combobox.textContent = `T${tier}`;
+    panel.appendChild(combobox);
+
+    const listbox = document.createElement('ul');
+    listbox.id = id;
+    listbox.setAttribute('role', 'listbox');
+    for (const t of availableTiers) {
+        const option = document.createElement('li');
+        option.setAttribute('role', 'option');
+        option.textContent = `T${t}`;
+        option.addEventListener('click', () => {
+            combobox.textContent = `T${t}`;
+        });
+        listbox.appendChild(option);
+    }
+    document.body.appendChild(listbox);
+
+    return combobox;
+}
+
+/**
+ * A mounted action detail panel, as `resolveDetailPanel`/`findActionInput` read
+ * it, with a Difficulty combobox already showing `tier` (default T0, the tier
+ * every combat task estimate simulates at).
+ */
+function buildDetailPanel(zoneName, tier = 0) {
     const panel = document.createElement('div');
     panel.className = 'SkillActionDetail_skillActionDetail__1a';
 
@@ -212,6 +257,8 @@ function buildDetailPanel(zoneName) {
     name.textContent = zoneName;
     panel.appendChild(name);
 
+    const combobox = buildDifficultyCombobox(panel, tier);
+
     const inputContainer = document.createElement('div');
     inputContainer.className = 'maxActionCountInput__1a';
     const input = document.createElement('input');
@@ -219,24 +266,11 @@ function buildDetailPanel(zoneName) {
     panel.appendChild(inputContainer);
 
     document.body.appendChild(panel);
-    return { panel, input };
-}
-
-/** A combat panel zone tab, clickable by its visible name. */
-function buildZoneTab(zoneName, onClick) {
-    const tabs = document.createElement('div');
-    tabs.className = 'CombatPanel_tabsComponentContainer__1a';
-    const tab = document.createElement('button');
-    tab.className = 'MuiTab-root';
-    tab.textContent = zoneName;
-    tab.addEventListener('click', onClick);
-    tabs.appendChild(tab);
-    document.body.appendChild(tabs);
-    return tab;
+    return { panel, input, combobox };
 }
 
 describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', () => {
-    test('fills predicted fights + the buffer when the estimate zone is already showing', () => {
+    test('fills predicted fights + the buffer when the estimate zone and T0 are already showing', async () => {
         dataManager.initClientData = buildGameData([
             {
                 hrid: '/actions/combat/bear_with_it',
@@ -246,17 +280,17 @@ describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', ()
                 monsters: ['/monsters/panda'],
             },
         ]);
-        const { input } = buildDetailPanel('Bear With It');
+        const { input } = buildDetailPanel('Bear With It', 0);
         vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) =>
             key === 'taskCombatGoBuffer' ? 10 : fallback
         );
 
-        taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/bear_with_it', predictedFights: 100 });
+        await taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/bear_with_it', predictedFights: 100 });
 
         expect(input.value).toBe('110');
     });
 
-    test('defaults the buffer to 5% when the setting has never been changed', () => {
+    test('defaults the buffer to 5% when the setting has never been changed', async () => {
         dataManager.initClientData = buildGameData([
             {
                 hrid: '/actions/combat/fly',
@@ -266,15 +300,15 @@ describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', ()
                 monsters: ['/monsters/fly'],
             },
         ]);
-        const { input } = buildDetailPanel('Fly Zone');
+        const { input } = buildDetailPanel('Fly Zone', 0);
 
-        taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/fly', predictedFights: 200 });
+        await taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/fly', predictedFights: 200 });
 
         // ceil(200 * 1.05) = 210
         expect(input.value).toBe('210');
     });
 
-    test('clicks the matching zone tab when a different zone is showing, then fills it', () => {
+    test('switches the Difficulty combobox to T0 first, then fills, when the panel was left on another tier', async () => {
         vi.useFakeTimers();
         try {
             dataManager.initClientData = buildGameData([
@@ -285,36 +319,36 @@ describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', ()
                     sortIndex: 1,
                     monsters: ['/monsters/panda'],
                 },
-                {
-                    hrid: '/actions/combat/other_zone',
-                    name: 'Other Zone',
-                    category: '/categories/other',
-                    sortIndex: 2,
-                    monsters: ['/monsters/rat'],
-                },
             ]);
-            // The game's own Go navigated to a different zone than the estimate used
-            const { panel, input } = buildDetailPanel('Other Zone');
-            buildZoneTab('Bear With It', () => {
-                // Simulate the game swapping the detail panel's content for the
-                // clicked zone, the way a real click would
-                panel.querySelector('.SkillActionDetail_name__1a').textContent = 'Bear With It';
+            // The estimate's zone is already open, but at T3 from an earlier
+            // combat-sim session — Go must not fill against T3
+            const { input, combobox } = buildDetailPanel('Bear With It', 3);
+
+            const applyPromise = taskProfitDisplay._applyGoEstimate({
+                zoneHrid: '/actions/combat/bear_with_it',
+                predictedFights: 40,
             });
 
-            taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/bear_with_it', predictedFights: 40 });
-
-            // Not filled yet — the tab click's effect is asynchronous
+            // Not filled yet — opening and picking from the combobox is asynchronous
             expect(input.value).toBe('');
 
-            vi.advanceTimersByTime(300);
+            await vi.advanceTimersByTimeAsync(300); // combobox opens
+            combobox.click();
+            await vi.advanceTimersByTimeAsync(300); // popup renders
+            const option = Array.from(document.querySelectorAll('[role="option"]')).find((o) => o.textContent === 'T0');
+            option.click();
+            await vi.advanceTimersByTimeAsync(300); // readback settle
 
+            await applyPromise;
+
+            expect(combobox.textContent).toBe('T0');
             expect(input.value).toBe('42'); // ceil(40 * 1.05)
         } finally {
             vi.useRealTimers();
         }
     });
 
-    test('refuses when no zone tab matches the estimate — never fills the wrong zone', () => {
+    test('refuses when a different zone panel is showing — never fills the wrong zone', async () => {
         dataManager.initClientData = buildGameData([
             {
                 hrid: '/actions/combat/bear_with_it',
@@ -324,18 +358,46 @@ describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', ()
                 monsters: ['/monsters/panda'],
             },
         ]);
-        const { input } = buildDetailPanel('Somewhere Else');
+        const { input } = buildDetailPanel('Somewhere Else', 0);
 
-        taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/bear_with_it', predictedFights: 40 });
+        await taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/bear_with_it', predictedFights: 40 });
 
         expect(input.value).toBe('');
     });
 
-    test('refuses when the estimate names a zoneHrid the game no longer has', () => {
+    test('refuses when the estimate names a zoneHrid the game no longer has', async () => {
         dataManager.initClientData = buildGameData([]);
-        const { input } = buildDetailPanel('Bear With It');
+        const { input } = buildDetailPanel('Bear With It', 0);
 
-        taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/gone', predictedFights: 40 });
+        await taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/gone', predictedFights: 40 });
+
+        expect(input.value).toBe('');
+    });
+
+    test('refuses when no Difficulty combobox is found — never fills against an unconfirmed tier', async () => {
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/bear_with_it',
+                name: 'Bear With It',
+                category: '/categories/bear',
+                sortIndex: 1,
+                monsters: ['/monsters/panda'],
+            },
+        ]);
+        const panel = document.createElement('div');
+        panel.className = 'SkillActionDetail_skillActionDetail__1a';
+        const name = document.createElement('div');
+        name.className = 'SkillActionDetail_name__1a';
+        name.textContent = 'Bear With It';
+        panel.appendChild(name);
+        const inputContainer = document.createElement('div');
+        inputContainer.className = 'maxActionCountInput__1a';
+        const input = document.createElement('input');
+        inputContainer.appendChild(input);
+        panel.appendChild(inputContainer);
+        document.body.appendChild(panel);
+
+        await taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/bear_with_it', predictedFights: 40 });
 
         expect(input.value).toBe('');
     });

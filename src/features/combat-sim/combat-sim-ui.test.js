@@ -28,6 +28,10 @@ const mocks = vi.hoisted(() => ({
     abilityGoals: [],
     /** Marketplace navigations a row asked for */
     marketOpened: [],
+    /** Calls to `openCombatZoneAtTier`, in order — the ▶ buttons' only side effect */
+    openZoneCalls: [],
+    /** What `openCombatZoneAtTier` resolves with for the next call */
+    openZoneResult: { opened: true, tierConfirmed: true, filled: false },
     /** What the buy-modal autofill manager was told, in order */
     autofill: [],
     /** Observer ids the panel registered autofill managers under */
@@ -137,6 +141,16 @@ vi.mock('../../utils/equipment-savings.js', () => ({
 
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid, enhancementLevel) => mocks.marketOpened.push({ itemHrid, enhancementLevel }),
+}));
+
+// The ▶ buttons in the all-zones table and the Bestiary plan both call
+// through this — what matters here is what they asked it to do, not the DOM
+// dance inside it (that lives in `combat-zone-open.test.js`).
+vi.mock('../../utils/combat-zone-open.js', () => ({
+    openCombatZoneAtTier: (zoneHrid, tier, options) => {
+        mocks.openZoneCalls.push({ zoneHrid, tier, options });
+        return Promise.resolve(mocks.openZoneResult);
+    },
 }));
 
 // The autofill manager watches the document for buy modals, which this file has
@@ -1987,6 +2001,68 @@ describe('the all-zones table', () => {
             expect(mocks.revenueCalls.length).toBeGreaterThan(0);
             expect(mocks.revenueCalls.every((hrid) => hrid === 'player2')).toBe(true);
         });
+    });
+});
+
+describe('the all-zones row ▶ open button', () => {
+    const HOUR_NS = 3600 * 1e9;
+    const result = (name, { xp = {}, profit = 0, tier = 0 } = {}) => ({
+        zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name.toLowerCase()}` },
+        simResult: {
+            simulatedTime: HOUR_NS,
+            encounters: 10,
+            deaths: { player1: 0 },
+            experienceGained: { player1: xp },
+        },
+        revenue: { netPerHour: profit, revenuePerHour: profit, costPerHour: 0, dropEntries: [] },
+    });
+    const click = (el) => el.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+    beforeEach(() => {
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        mocks.openZoneCalls.length = 0;
+        mocks.openZoneResult = { opened: true, tierConfirmed: true, filled: false };
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test("navigates to the row's exact zone and tier, and fills nothing — a ranking row has no honest count", async () => {
+        await ui._displayAllZonesResults([result('Aqua Planet', { xp: { defense: 900 }, tier: 3 })], 1, {});
+        const btn = ui.panel.querySelector('.mwi-csim-open-btn');
+        expect(btn).not.toBeNull();
+        expect(btn.dataset.hrid).toBe('/actions/combat/aqua planet');
+        expect(btn.dataset.tier).toBe('3');
+
+        click(btn);
+        await Promise.resolve();
+
+        expect(mocks.openZoneCalls).toEqual([{ zoneHrid: '/actions/combat/aqua planet', tier: 3, options: undefined }]);
+    });
+
+    test('a click never bubbles into the sort/target handlers behind it', async () => {
+        await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 } })], 1, {});
+        const btn = ui.panel.querySelector('.mwi-csim-open-btn');
+        const stopSpy = vi.spyOn(Event.prototype, 'stopPropagation');
+
+        click(btn);
+        await Promise.resolve();
+
+        expect(stopSpy).toHaveBeenCalled();
+        stopSpy.mockRestore();
+    });
+
+    test('a failed navigate is left to the shared helper — the row does not retry or throw', async () => {
+        mocks.openZoneResult = { opened: false, tierConfirmed: false, filled: false };
+        await ui._displayAllZonesResults([result('Fly', { xp: { defense: 900 } })], 1, {});
+        const btn = ui.panel.querySelector('.mwi-csim-open-btn');
+
+        expect(() => click(btn)).not.toThrow();
+        await Promise.resolve();
+
+        expect(mocks.openZoneCalls).toHaveLength(1);
     });
 });
 
@@ -4391,10 +4467,12 @@ describe('the Bestiary route planner under the all-zones table', () => {
         );
         expect(rows).toHaveLength(2);
         // Time, then about how many fights that is at the zone's simulated rate, then points
-        expect(rows[0].slice(0, 5)).toEqual(['1', 'Farm T0', '0:30', '≈5', '+3']);
+        // The Zone cell also carries the ▶ open button — its own icon glyph
+        // trails the name with no gap, since the row-open feature was added
+        expect(rows[0].slice(0, 5)).toEqual(['1', 'Farm T0▶', '0:30', '≈5', '+3']);
         expect(rows[0][5]).toContain('Fly 8 → 10');
         expect(rows[0][5]).toContain('Rat 0 → 1');
-        expect(rows[1].slice(0, 3)).toEqual(['2', 'Hive T2', '0:30']);
+        expect(rows[1].slice(0, 3)).toEqual(['2', 'Hive T2▶', '0:30']);
         expect(rows[1][3]).toMatch(/^(≈[0-9,]+|—)$/);
         expect(rows[1][4]).toBe('+0');
         expect(rows[1][5]).toContain('partial: Bee 0/1');
@@ -4537,7 +4615,7 @@ describe('the score tie-break tolerance in the Bestiary planner', () => {
         change('#mwi-csim-bestiary-plan-tolerance');
         click('#mwi-csim-bestiary-plan-btn');
         expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-out tbody tr td:nth-child(2)').textContent.trim()).toBe(
-            'Farm T0'
+            'Farm T0▶'
         );
 
         ui.panel.querySelector('#mwi-csim-bestiary-plan-tolerance').value = '10';
@@ -4547,6 +4625,128 @@ describe('the score tie-break tolerance in the Bestiary planner', () => {
         // Picked over the faster Farm because of Score — the table says so
         expect(nameCell.title).toContain('Score');
         expect(nameCell.innerHTML).toContain('<span');
+    });
+});
+
+describe('the Bestiary plan step ▶ open button', () => {
+    const HOUR_NS = 3600 * 1e9;
+    const result = (name, deaths, tier = 0) => ({
+        zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name.toLowerCase()}` },
+        simResult: {
+            simulatedTime: HOUR_NS,
+            encounters: 10,
+            deaths: { player1: 0, ...deaths },
+            experienceGained: { player1: { defense: 100 } },
+        },
+        revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+    });
+    const gameData = { combatMonsterDetailMap: { '/monsters/fly': { name: 'Fly' }, '/monsters/bee': { name: 'Bee' } } };
+    const click = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('click', { bubbles: true }));
+
+    beforeEach(() => {
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        ui._bestiaryPlanHours = undefined;
+        ui._bestiaryPlanTolerance = undefined;
+        mocks.monsters = null;
+        mocks.openZoneCalls.length = 0;
+        mocks.openZoneResult = { opened: true, tierConfirmed: true, filled: true };
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.monsters = null;
+        vi.restoreAllMocks();
+    });
+
+    test("opens the step's own zone and tier and fills the exact fight count the row shows", async () => {
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 }, 2)], 1, gameData);
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const btn = ui.panel.querySelector('.mwi-csim-plan-open-btn');
+        expect(btn).not.toBeNull();
+        expect(btn.dataset.hrid).toBe('/actions/combat/farm');
+        expect(btn.dataset.tier).toBe('2');
+        // "0:30" of Farm at 10 fights/hr (this run's simulated encounters rate)
+        const shownCount = btn.dataset.count;
+        expect(shownCount).toBe(
+            ui.panel
+                .querySelector('#mwi-csim-bestiary-plan-out tbody tr td:nth-child(4)')
+                .textContent.replace(/[≈,]/g, '')
+        );
+
+        btn.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await Promise.resolve();
+
+        expect(mocks.openZoneCalls).toEqual([
+            { zoneHrid: '/actions/combat/farm', tier: 2, options: { count: shownCount } },
+        ]);
+    });
+
+    test('fills the count baked in at render time, not a re-derived one, when the underlying data changes after render', async () => {
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const btn = ui.panel.querySelector('.mwi-csim-plan-open-btn');
+        const renderedCount = btn.dataset.count;
+
+        // Change what the plan would compute now — the mounted button must
+        // not go back and ask for a fresh number
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 999 }];
+
+        btn.dispatchEvent(new window.Event('click', { bubbles: true }));
+        await Promise.resolve();
+
+        expect(mocks.openZoneCalls[0].options.count).toBe(renderedCount);
+    });
+
+    test('a dungeon step gets an open button the same way, quoting clears as the count', async () => {
+        const dungeonResult = () => ({
+            zone: { name: 'Den', difficultyTier: 1, zoneHrid: '/actions/combat/den' },
+            simResult: {
+                simulatedTime: HOUR_NS,
+                encounters: 300,
+                isDungeon: true,
+                dungeonsCompleted: 6,
+                dungeonsFailed: 0,
+                deaths: { player1: 0, '/monsters/goblin': 60 },
+                experienceGained: { player1: { defense: 100 } },
+            },
+            revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+        });
+        mocks.dungeonRuns = [];
+        mocks.monsters = [{ monsterHrid: '/monsters/goblin', count: 8 }];
+        await ui._displayAllZonesResults([dungeonResult()], 1, {
+            combatMonsterDetailMap: { '/monsters/goblin': { name: 'Goblin' } },
+        });
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const btn = ui.panel.querySelector('.mwi-csim-plan-open-btn');
+        expect(btn.dataset.hrid).toBe('/actions/combat/den');
+        expect(btn.dataset.tier).toBe('1');
+        expect(btn.title).toContain('clears');
+        mocks.dungeonRuns = [];
+    });
+
+    test('no button when a step has no fight count to quote', async () => {
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults(
+            [{ zone: { name: 'Broken', difficultyTier: 0, zoneHrid: '/actions/combat/broken' }, simResult: null }],
+            1,
+            gameData
+        );
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        // The only zone had no sim result, so the plan has nothing to draw at
+        // all — no rows, and so no open buttons either
+        expect(ui.panel.querySelectorAll('.mwi-csim-plan-open-btn')).toHaveLength(0);
     });
 });
 
@@ -4620,7 +4820,7 @@ describe('planning to a points target from the panel', () => {
             [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
         );
         expect(rows).toHaveLength(1);
-        expect(rows[0].slice(0, 3)).toEqual(['1', 'Farm T0', '0:12']);
+        expect(rows[0].slice(0, 3)).toEqual(['1', 'Farm T0▶', '0:12']);
         expect(rows[0][4]).toBe('+2');
 
         const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
@@ -4721,7 +4921,7 @@ describe('dungeons in the all-zones run and in the plan', () => {
         const cells = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')].map((tr) =>
             [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
         );
-        expect(cells[0][1]).toBe('[D] Den T1');
+        expect(cells[0][1]).toBe('[D] Den T1▶');
         expect(cells[0][2]).toBe('1:00');
         // Three clears an hour, your pace — not the simulator's six — and the
         // stay is quoted in clears rather than fights

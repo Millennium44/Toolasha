@@ -50,7 +50,14 @@ import {
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { monsterKillsPerHour, countsByMonster, zoneBestiaryOutlook } from '../../utils/bestiary.js';
-import { planBestiaryRoute, rescaleDungeonRates, formatPlanHours, formatPlanText } from '../../utils/bestiary-plan.js';
+import {
+    planBestiaryRoute,
+    rescaleDungeonRates,
+    formatPlanHours,
+    formatPlanText,
+    parseBestiaryZoneKey,
+} from '../../utils/bestiary-plan.js';
+import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
@@ -3125,7 +3132,13 @@ class CombatSimUI {
                             const targetBtn = row.zoneHrid
                                 ? `<button class="mwi-csim-target-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Set as Configure target" style="margin-left:6px; background:rgba(74,158,255,0.15); border:1px solid rgba(74,158,255,0.4); color:#8ab4f8; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;">&#9678;</button>`
                                 : '';
-                            display = `${val}${marks}${targetBtn}`;
+                            // Open this zone in-game at this exact tier — a
+                            // ranking row has no honest count to prefill, so
+                            // this fills nothing, ever
+                            const openBtn = row.zoneHrid
+                                ? `<button class="mwi-csim-open-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Open this zone at T${row.tier} in-game" style="margin-left:3px; background:rgba(76,175,80,0.15); border:1px solid rgba(76,175,80,0.4); color:#81c995; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;">&#9654;</button>`
+                                : '';
+                            display = `${val}${marks}${targetBtn}${openBtn}`;
                             style += ' color:#e0e0e0; text-align:left;';
                         } else if (col.key === 'tier') {
                             display = `T${val}`;
@@ -3297,6 +3310,18 @@ class CombatSimUI {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this._targetZoneFromResults(btn.dataset.hrid, parseInt(btn.dataset.tier, 10) || 0);
+            });
+        });
+
+        // Each row's ▶ button opens that zone in-game at that exact tier —
+        // filling nothing, since a ranking row has no honest count to
+        // prefill (see `openCombatZoneAtTier`, `combat-zone-open.js`).
+        container.querySelectorAll('.mwi-csim-open-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openCombatZoneAtTier(btn.dataset.hrid, parseInt(btn.dataset.tier, 10) || 0).catch((error) => {
+                    console.error('[CombatSimUI] Opening the zone from the all-zones table failed:', error);
+                });
             });
         });
     }
@@ -3670,10 +3695,26 @@ class CombatSimUI {
                 const scoreMark = segment.viaScore
                     ? ' <span style="color:#8ab4f8;" aria-hidden="true">&#9733;</span>'
                     : '';
+                // Open this step's zone at its exact tier and fill the count
+                // this row displays — never recomputed at click time, so the
+                // number the player agreed to is the number that gets typed.
+                // Baked from `segment.zoneHrid`'s `<zoneHrid>|T<tier>` key
+                // (see `parseBestiaryZoneKey`); no button when either half
+                // is missing — a zone this plan cannot name, or a stay with
+                // no fight count to quote, has nothing honest to fill.
+                const zoneInfo = parseBestiaryZoneKey(segment.zoneHrid);
+                const displayedCount =
+                    segment.encounters === null || segment.encounters === undefined
+                        ? null
+                        : Math.round(segment.encounters);
+                const openBtn =
+                    zoneInfo && displayedCount !== null
+                        ? `<button class="mwi-csim-plan-open-btn" data-hrid="${zoneInfo.zoneHrid}" data-tier="${zoneInfo.tier}" data-count="${displayedCount}" title="Open this zone at T${zoneInfo.tier} in-game and fill ${displayedCount.toLocaleString()} ${segment.isDungeon ? 'clears' : 'fights'}" style="margin-left:4px; background:rgba(76,175,80,0.15); border:1px solid rgba(76,175,80,0.4); color:#81c995; border-radius:4px; padding:0 4px; font-size:9px; line-height:1.4; cursor:pointer;">&#9654;</button>`
+                        : '';
                 return (
                     `<tr style="border-bottom:1px solid #1a1a1a;${stripe}">` +
                     `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
-                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}</td>` +
+                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}${openBtn}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
                     `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="${esc(fightsTitle)}">${fightsCell(segment)}</td>` +
                     `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +
@@ -3713,6 +3754,21 @@ class CombatSimUI {
             </div>
             ${shortfall}
         `;
+
+        // Each step's ▶ button opens its zone at its tier and fills its own
+        // displayed count, read from the button's own dataset rather than
+        // `segment.encounters` — the plan may have recomputed by the time this
+        // fires, and the count filled must be the one the player looked at.
+        out.querySelectorAll('.mwi-csim-plan-open-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openCombatZoneAtTier(btn.dataset.hrid, parseInt(btn.dataset.tier, 10) || 0, {
+                    count: btn.dataset.count,
+                }).catch((error) => {
+                    console.error('[CombatSimUI] Opening the zone from the Bestiary plan failed:', error);
+                });
+            });
+        });
     }
 
     /**

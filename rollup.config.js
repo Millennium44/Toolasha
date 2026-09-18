@@ -163,6 +163,11 @@ const utilsExternalGlobals = new Map([
     // (crafting plan), so a copy each would build and hold the index twice
     [normalize(join(__dirname, 'src/utils/production-index.js')), 'Toolasha.Utils.productionIndex'],
     [normalize(join(__dirname, 'src/utils/item-navigation.js')), 'Toolasha.Utils.itemNavigation'],
+    // The combat-task Go button, the all-zones table's ▶ button, and the
+    // Bestiary plan's ▶ button all share this one "navigate, confirm the
+    // zone, set the Difficulty combobox" seam — stateless, but bundled once
+    // so check-bundle-sharing has a single owner to point at.
+    [normalize(join(__dirname, 'src/utils/combat-zone-open.js')), 'Toolasha.Utils.combatZoneOpen'],
     [normalize(join(__dirname, 'src/utils/marketplace-tabs.js')), 'Toolasha.Utils.marketplaceTabs'],
     [normalize(join(__dirname, 'src/utils/marketplace-autofill.js')), 'Toolasha.Utils.marketplaceAutofill'],
     // One marketplace tab bar, so one list watching it. The consumables panel is

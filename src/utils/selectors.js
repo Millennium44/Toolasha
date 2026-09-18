@@ -105,9 +105,6 @@ export const GAME = {
     // Combat
     COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
     COMBAT_UNIT_NAME: '[class*="CombatUnit_name"]',
-    // The combat panel's own list of zone tabs (left of the zone detail
-    // panel) — the same one zone-indices.js numbers.
-    COMBAT_ZONE_TABS: '[class*="CombatPanel_tabsComponentContainer"] button[class*="MuiTab-root"]',
     // Party members beside a full combat card are drawn as mini units — small
     // clickable boxes with their own name line (guild trial fights draw the
     // whole party this way next to the player's own card)

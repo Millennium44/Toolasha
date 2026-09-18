@@ -86,6 +86,9 @@ import * as panelZIndex from '../utils/panel-z-index.js';
 import * as gameLookups from '../utils/game-lookups.js';
 import * as productionIndex from '../utils/production-index.js';
 import * as itemNavigation from '../utils/item-navigation.js';
+// The shared "open a combat zone at a tier" helper — see the matching
+// utilsExternalGlobals entry in rollup.config.js.
+import * as combatZoneOpen from '../utils/combat-zone-open.js';
 import * as marketplaceTabs from '../utils/marketplace-tabs.js';
 import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
 import * as shoppingList from '../utils/shopping-list.js';
@@ -263,6 +266,7 @@ toolashaRoot.Utils = {
     gameLookups,
     productionIndex,
     itemNavigation,
+    combatZoneOpen,
     marketplaceTabs,
     marketplaceAutofill,
     shoppingList,

@@ -10,7 +10,8 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
-import { findActionInput, resolveDetailPanel, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
+import { findActionInput, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
+import { ensureZoneAndTier } from '../../utils/combat-zone-open.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
 import {
     isCardInConfirmState,
@@ -82,6 +83,9 @@ const MIN_RATED_CARDS_FOR_MEDIAN = 3;
 
 /** How long a shared full-zone sim result stands before it is re-run */
 const ZONE_SIM_TTL_MS = 3 * 60 * 1000;
+
+/** The difficulty tier every combat task estimate simulates at — see `_applyGoEstimate` */
+const GO_ESTIMATE_TIER = 0;
 
 /**
  * How long the coalesced card refresh waits for the rest of the panel to arrive.
@@ -921,7 +925,11 @@ class TaskProfitDisplay {
 
                     // Wait for the game to navigate, same delay as the merge
                     // fill above
-                    setTimeout(() => this._applyGoEstimate(estimate), 300);
+                    setTimeout(() => {
+                        this._applyGoEstimate(estimate).catch((error) => {
+                            console.error('[TaskProfitDisplay] Go estimate fill failed:', error);
+                        });
+                    }, 300);
                 },
                 true
             );
@@ -968,50 +976,42 @@ class TaskProfitDisplay {
      * had time to navigate.
      *
      * Never presses anything — only reads the currently open action detail
-     * panel and, if needed, clicks the matching zone tab, exactly like a
-     * player choosing a different zone from the combat panel's own list.
+     * panel and its Difficulty combobox, exactly like a player checking the
+     * zone and tier before typing a count themselves.
+     *
+     * The estimate is always simulated at T0 (`runSimulation({ ..., difficultyTier: 0 })`
+     * above) — a task's kill count does not care about difficulty, so the
+     * card never simulates any other tier. Go must therefore land on T0 too:
+     * filling the predicted count against whatever tier the panel happened to
+     * already be on (the previous behavior) would fill the right number
+     * against the wrong fight.
      *
      * Refuses rather than guesses at every step: no zone name for the
-     * estimate's `zoneHrid`, no detail panel open, no matching zone tab found,
-     * or the panel that is open (still, or again after clicking a tab) does
-     * not resolve to the estimate's own `zoneHrid` all leave the input
-     * untouched.
+     * estimate's `zoneHrid`, no detail panel open, the panel not resolving to
+     * the estimate's own `zoneHrid`, or the Difficulty combobox not
+     * confirming T0 all leave the input untouched.
      * @param {{zoneHrid: string, predictedFights: number}} estimate
+     * @returns {Promise<void>}
      * @private
      */
-    _applyGoEstimate(estimate) {
+    async _applyGoEstimate(estimate) {
         const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.name;
         if (!zoneName) return;
 
-        const fillIfShowingZone = () => {
-            const panel = document.querySelector(PANEL_SELECTOR);
-            if (!panel) return false;
-            const { actionHrid } = resolveDetailPanel(panel);
-            if (actionHrid !== estimate.zoneHrid) return false;
+        const panel = document.querySelector(PANEL_SELECTOR);
+        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, GO_ESTIMATE_TIER);
+        if (!tierConfirmed) return;
 
-            const inputEl = findActionInput(panel);
-            if (!inputEl) return false;
+        const inputEl = findActionInput(panel);
+        if (!inputEl) return;
 
-            const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
-            const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
-            // A small epsilon before rounding up: 100 * 1.10 is 110.00000000000001
-            // in floating point, and without it that pads a round number by one
-            // extra fight every time the buffer happens to land exactly.
-            const count = Math.ceil(estimate.predictedFights * (1 + bufferPercent / 100) - 1e-9);
-            setReactInputValue(inputEl, String(count), { focus: false });
-            return true;
-        };
-
-        if (fillIfShowingZone()) return;
-
-        // Not already showing the estimate's zone — find and click its tab in
-        // the combat panel's own zone list, then try again once it has had a
-        // moment to render
-        const tabs = document.querySelectorAll(GAME.COMBAT_ZONE_TABS);
-        const tab = Array.from(tabs).find((t) => t.textContent?.trim() === zoneName);
-        if (!tab) return;
-        tab.click();
-        setTimeout(fillIfShowingZone, 300);
+        const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
+        const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
+        // A small epsilon before rounding up: 100 * 1.10 is 110.00000000000001
+        // in floating point, and without it that pads a round number by one
+        // extra fight every time the buffer happens to land exactly.
+        const count = Math.ceil(estimate.predictedFights * (1 + bufferPercent / 100) - 1e-9);
+        setReactInputValue(inputEl, String(count), { focus: false });
     }
 
     /**
