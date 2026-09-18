@@ -235,6 +235,8 @@ describe('sortSummary', () => {
     };
     const rows = () => summariseTally(tally, dropTables, priceOf);
     const order = (mode) => sortSummary(rows(), mode, nameOf).map((row) => row.chestHrid);
+    const gameOrder = (indices) =>
+        sortSummary(rows(), 'game', nameOf, (hrid) => indices[hrid] ?? null).map((row) => row.chestHrid);
 
     test('by name every chest is in one alphabet, opened or not', () => {
         // Splitting them would put half the names in one place and half in
@@ -269,6 +271,30 @@ describe('sortSummary', () => {
 
     test('survives having nothing to sort', () => {
         expect(sortSummary(null, 'name')).toEqual([]);
+    });
+    test('game order follows the game’s own sort index, not the alphabet', () => {
+        // Zebra sits before Aardvark in the game's inventory, so it does here
+        expect(gameOrder({ [CHEST]: 1, '/items/big_chest': 7 })).toEqual([CHEST, '/items/big_chest']);
+        expect(gameOrder({ [CHEST]: 9, '/items/big_chest': 2 })).toEqual(['/items/big_chest', CHEST]);
+    });
+
+    test('game order keeps an unopened chest in its place, unlike the verdict orders', () => {
+        // The luck orders push a chest with no verdict to the back; this one is
+        // the game's shelf, where opening something does not move it
+        const withUnopened = { ...tally, '/items/never_opened': { opened: 0, loot: {} } };
+        const sorted = sortSummary(
+            summariseTally(withUnopened, { ...dropTables, '/items/never_opened': dropTable }, priceOf),
+            'game',
+            nameOf,
+            (hrid) => ({ [CHEST]: 3, '/items/big_chest': 9, '/items/never_opened': 1 })[hrid] ?? null
+        );
+        expect(sorted.map((row) => row.chestHrid)).toEqual(['/items/never_opened', CHEST, '/items/big_chest']);
+    });
+
+    test('a chest the game data cannot place goes last, by name, not first', () => {
+        // Falling back to 0 would park an unknown chest at the top as though the
+        // game had put it there
+        expect(gameOrder({ [CHEST]: 4 })).toEqual([CHEST, '/items/big_chest']);
     });
 });
 

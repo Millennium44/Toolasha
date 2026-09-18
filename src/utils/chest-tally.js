@@ -429,6 +429,7 @@ export function summariseTally(tally, dropTables, priceOf) {
 export const SORT_MODES = [
     { key: 'luck', label: 'Luck (worst first)' },
     { key: 'name', label: 'Name (A–Z)' },
+    { key: 'game', label: 'Game order' },
     { key: 'opened', label: 'Most opened' },
     { key: 'value', label: 'Chest value' },
     { key: 'profit', label: 'Coins up or down' },
@@ -443,10 +444,34 @@ export const SORT_MODES = [
  * @param {Array<Object>} rows - From `summariseTally`
  * @param {string} [mode] - One of `SORT_MODES`
  * @param {Function} [nameOf] - `(chestHrid) => string`, for the name order
+ * @param {Function} [sortIndexOf] - `(chestHrid) => number|null`, the game's own
+ *   order for a chest; anything it cannot place falls to the end, by name
  * @returns {Array<Object>} A new, sorted array
  */
-export function sortSummary(rows, mode = 'luck', nameOf = (chestHrid) => chestHrid) {
+export function sortSummary(rows, mode = 'luck', nameOf = (chestHrid) => chestHrid, sortIndexOf = () => null) {
     const sorted = [...(rows || [])];
+
+    if (mode === 'game') {
+        // The game's own sortIndex, so the panel reads in the same order as the
+        // inventory it came from. A chest the game data cannot place has no
+        // index to rank — it goes last, in name order, rather than at 0 where it
+        // would look deliberately first
+        const indexOf = (row) => {
+            const raw = sortIndexOf(row.chestHrid);
+            // Not `Number(raw)` alone: Number(null) is 0, which would park a
+            // chest the game cannot place at the very front as though the game
+            // had put it there
+            if (raw === null || raw === undefined || raw === '') return Infinity;
+            const value = Number(raw);
+            return Number.isFinite(value) ? value : Infinity;
+        };
+        sorted.sort((a, b) => {
+            const delta = indexOf(a) - indexOf(b);
+            if (delta) return delta;
+            return String(nameOf(a.chestHrid)).localeCompare(String(nameOf(b.chestHrid)));
+        });
+        return sorted;
+    }
 
     if (mode === 'name') {
         // Every chest, opened or not, in one alphabet — splitting them would put

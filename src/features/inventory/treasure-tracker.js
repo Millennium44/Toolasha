@@ -191,6 +191,19 @@ export function itemName(itemHrid) {
 }
 
 /**
+ * Where the game itself puts an item, for the "Game order" sort.
+ *
+ * @param {string} itemHrid - Item
+ * @returns {number|null} The game's sort index, or null when it has none
+ */
+export function itemSortIndex(itemHrid) {
+    const value = dataManager.getItemDetails?.(itemHrid)?.sortIndex;
+    // Number(null) is 0, which would read as "the game puts this first"
+    if (value === null || value === undefined || value === '') return null;
+    return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+/**
  * Whether an opened item is a scroll rather than a chest.
  *
  * A scroll arrives as the same `loot_opened` message a chest does, but it pays
@@ -811,7 +824,7 @@ class TreasureTracker {
         // Totals are taken before sorting, because they are the same figures
         // whichever way the rows are ordered
         const totals = tallyTotals(rows);
-        return { rows: sortSummary(rows, this.settings.sortMode, itemName), totals };
+        return { rows: sortSummary(rows, this.settings.sortMode, itemName, itemSortIndex), totals };
     }
 
     /**

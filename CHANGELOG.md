@@ -19,6 +19,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Treasure panel
+
+- A "Game order" sort puts the chests in the same order the game's own inventory does.
+
 ### Audit round: the settings backup could delete the backups it was protecting
 
 - Mirroring settings after a wipe no longer drops the characters you had not logged in to yet — the backup is merged, not replaced.
