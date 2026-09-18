@@ -91,6 +91,46 @@ describe('insertTabInOrder', () => {
         document.body.appendChild(container);
     });
 
+    test('a tab another script added is ordered after ours, not left mid-strip', () => {
+        container.appendChild(buildGameTab('Market Listings'));
+        container.appendChild(buildGameTab('My Listings'));
+
+        // Observed in game: Market History registers, then another script appends
+        // its own tab, then the rest of ours arrive and used to append past it.
+        const marketHistory = document.createElement('button');
+        insertTabInOrder(container, marketHistory, 'market-history');
+
+        const foreign = document.createElement('button');
+        foreign.textContent = 'Flips';
+        container.appendChild(foreign);
+
+        const ledger = document.createElement('button');
+        const stale = document.createElement('button');
+        insertTabInOrder(container, ledger, 'ledger');
+        insertTabInOrder(container, stale, 'stale');
+
+        const order = [...container.children];
+        expect(order.indexOf(ledger)).toBeLessThan(order.indexOf(foreign));
+        expect(order.indexOf(stale)).toBeLessThan(order.indexOf(foreign));
+        expect(order.at(-1)).toBe(foreign);
+    });
+
+    test("a foreign tab sitting before any of ours is treated as the game's and left alone", () => {
+        container.appendChild(buildGameTab('Market Listings'));
+        container.appendChild(buildGameTab('My Listings'));
+
+        // Nothing of ours precedes it, so it cannot be told from a game tab by
+        // position — we must not shove our tabs in front of it.
+        const unknown = document.createElement('button');
+        container.appendChild(unknown);
+
+        const ledger = document.createElement('button');
+        insertTabInOrder(container, ledger, 'ledger');
+
+        const order = [...container.children];
+        expect(order.indexOf(unknown)).toBeLessThan(order.indexOf(ledger));
+    });
+
     test('tabs arriving in scrambled order end up in the preferred order', () => {
         container.appendChild(buildGameTab('Market Listings'));
         container.appendChild(buildGameTab('My Listings'));

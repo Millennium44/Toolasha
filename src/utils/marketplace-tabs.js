@@ -454,8 +454,32 @@ export function insertTabInOrder(container, tab, key) {
 
     const myRank = tabRank(key);
     let nextSibling = null;
+    let seenOwnTab = false;
     for (const el of container.children) {
-        if (el === tab || !isOwnTab(el)) continue;
+        if (el === tab) continue;
+
+        if (!isOwnTab(el)) {
+            // A tab that is neither ours nor the game's: another script adds one
+            // to this same strip. It carries none of our markers, so it cannot be
+            // ranked — but it must still be ordered AFTER our named tabs, or a
+            // keyed tab arriving later appends past it and the strip reads
+            // "Market History, <theirs>, Ledger, Stale" (observed in game).
+            //
+            // The game's own tabs are told apart from a foreign one by position
+            // rather than by label: the game renders its tabs before anything is
+            // injected, so a non-ours tab with none of ours before it is the
+            // game's and is skipped, while one that follows a tab of ours was
+            // injected and ranks unnamed. Matching on text would put our tabs in
+            // front of a game tab the day the game renames one.
+            if (!seenOwnTab) continue;
+            if (myRank < TAB_ORDER.length) {
+                nextSibling = el;
+                break;
+            }
+            continue;
+        }
+
+        seenOwnTab = true;
         if (tabRank(el.getAttribute(TAB_ORDER_ATTR)) > myRank) {
             nextSibling = el;
             break;
