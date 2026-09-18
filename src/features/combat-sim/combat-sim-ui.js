@@ -3136,7 +3136,7 @@ class CombatSimUI {
                             // ranking row has no honest count to prefill, so
                             // this fills nothing, ever
                             const openBtn = row.zoneHrid
-                                ? `<button class="mwi-csim-open-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Open this zone at T${row.tier} in-game" style="margin-left:3px; background:rgba(76,175,80,0.15); border:1px solid rgba(76,175,80,0.4); color:#81c995; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;">&#9654;</button>`
+                                ? `<button class="mwi-csim-open-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Open this zone at T${row.tier} in-game" style="margin-left:3px; background:transparent; border:1px solid transparent; color:#6b7a6b; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;" onmouseover="this.style.color='#81c995'; this.style.borderColor='rgba(76,175,80,0.35)';" onmouseout="this.style.color='#6b7a6b'; this.style.borderColor='transparent';">&#9654;</button>`
                                 : '';
                             display = `${val}${marks}${targetBtn}${openBtn}`;
                             style += ' color:#e0e0e0; text-align:left;';
@@ -3709,7 +3709,7 @@ class CombatSimUI {
                         : Math.round(segment.encounters);
                 const openBtn =
                     zoneInfo && displayedCount !== null
-                        ? `<button class="mwi-csim-plan-open-btn" data-hrid="${zoneInfo.zoneHrid}" data-tier="${zoneInfo.tier}" data-count="${displayedCount}" title="Open this zone at T${zoneInfo.tier} in-game and fill ${displayedCount.toLocaleString()} ${segment.isDungeon ? 'clears' : 'fights'}" style="margin-left:4px; background:rgba(76,175,80,0.15); border:1px solid rgba(76,175,80,0.4); color:#81c995; border-radius:4px; padding:0 4px; font-size:9px; line-height:1.4; cursor:pointer;">&#9654;</button>`
+                        ? `<button class="mwi-csim-plan-open-btn" data-hrid="${zoneInfo.zoneHrid}" data-tier="${zoneInfo.tier}" data-count="${displayedCount}" title="Open this zone at T${zoneInfo.tier} in-game and fill ${displayedCount.toLocaleString()} ${segment.isDungeon ? 'clears' : 'fights'}" style="margin-left:4px; background:transparent; border:1px solid transparent; color:#6b7a6b; border-radius:4px; padding:0 4px; font-size:9px; line-height:1.4; cursor:pointer;" onmouseover="this.style.color='#81c995'; this.style.borderColor='rgba(76,175,80,0.35)';" onmouseout="this.style.color='#6b7a6b'; this.style.borderColor='transparent';">&#9654;</button>`
                         : '';
                 return (
                     `<tr style="border-bottom:1px solid #1a1a1a;${stripe}">` +
