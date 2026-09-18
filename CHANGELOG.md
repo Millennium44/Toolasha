@@ -19,6 +19,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Audit round: the settings backup could quietly stop backing up
+
+- A settings mirror that failed to write, or saw a clock from another machine, could stop mirroring for good; it checks the backup is really there now.
+- Asking the browser to keep your data is no longer suppressed for as long as another device's clock is ahead.
+- The Iron Bell plan no longer credits star fruit and essence another plan has already claimed, or copies sitting on the market.
+- Clearing old scroll rows can no longer mark itself done before the game data it needs has loaded.
+- Opening a zone from the sim, the plan or a task waits its turn instead of two openings racing, and stops if you switch characters mid-way.
+
 ### Faster all-zones results
 
 - The results table stops waiting on one zone's market-volume lookups before starting the next, so it appears much sooner when price history is on.
