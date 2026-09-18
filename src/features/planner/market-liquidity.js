@@ -149,6 +149,26 @@ async function measureDailyVolume(itemHrid, enhancementLevel, key) {
 }
 
 /**
+ * What is already known about an item's volume, without asking for it.
+ *
+ * `dailyVolume` starts the network lookup synchronously on a cache miss, before
+ * it ever returns — so "call it and ignore the promise" still costs a request.
+ * A surface that wants to cap a figure only where the answer is free needs to
+ * ask this instead. The all-zones table is that surface: sixty-six rows of
+ * ranking, where a lookup per distinct drop item was enough to have the pooled
+ * host refuse us outright (measured live, 2026-09-18).
+ *
+ * @param {string} itemHrid - The item
+ * @param {number} [enhancementLevel=0] - Which variant
+ * @returns {{itemHrid: string, unitsPerDay: number, days: number, known: boolean}|null}
+ *   The cached measurement, or `null` when nothing has looked this up yet —
+ *   which is not the same as a measured zero, and must not be read as one.
+ */
+export function cachedDailyVolume(itemHrid, enhancementLevel = 0) {
+    return cache.get(`${itemHrid}:${enhancementLevel}`) || null;
+}
+
+/**
  * How many units of an item change hands in a day.
  *
  * @param {string} itemHrid - The item
@@ -446,6 +466,7 @@ export default {
     LIQUIDITY_HORIZON_DAYS,
     LIQUIDITY_WINDOW_DAYS,
     dailyVolume,
+    cachedDailyVolume,
     absorbablePerHour,
     describeVelocity,
     sellThrottle,

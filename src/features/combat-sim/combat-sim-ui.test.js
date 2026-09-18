@@ -359,7 +359,9 @@ vi.mock('./all-zones-runner.js', () => ({
 const liquidity = vi.hoisted(() => ({ throttleByItem: {}, calls: [] }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
-    capProfitRate: async ({ goldPerHour, sells }) => {
+    // Synchronous, like the real cache-only variant — never starts a lookup,
+    // so the wiring test can prove the table issues none of its own.
+    capProfitRateCached: ({ goldPerHour, sells }) => {
         liquidity.calls.push({ type: 'cap', items: (sells || []).map((sold) => sold.itemHrid) });
         for (const sold of sells || []) {
             const throttle = liquidity.throttleByItem[sold.itemHrid];
@@ -378,12 +380,6 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
             }
         }
         return { goldPerHour, capped: false, limit: null };
-    },
-    // Records that the batch was warmed before the per-row loop runs, rather
-    // than actually measuring anything — the measurement itself is
-    // utils/liquidity-cap.js's own tested business.
-    prefetchLiquidity: async (items) => {
-        liquidity.calls.push({ type: 'prefetch', items: (items || []).map((item) => item.itemHrid) });
     },
     liquidityMarkerHtml: (limit, { compact = false } = {}) =>
         limit ? `<span title="${limit.note} — ${limit.detail}">${compact ? 'vol-capped' : limit.note}</span>` : '',
@@ -1764,12 +1760,14 @@ describe('the all-zones table', () => {
                 expect(ui.panel.querySelector('#mwi-csim-results').innerHTML).not.toContain('vol-capped');
             });
 
-            test('warms the shared volume cache once, before any row is capped', async () => {
+            test('caps every row from the cache alone — no warm-up, no lookup of its own', async () => {
                 // Two rows share the same thin-selling drop, the way a common rare
-                // find shows up across several zones. A run that paid a fetch wave
-                // per row — the bug this closes — would call capProfitRate for
-                // 'Fantasy' before 'Also fantasy' ever got a turn to prime its own
-                // (identical) item.
+                // find shows up across several zones. The all-zones table must
+                // never issue a volume lookup of its own — that was the bug this
+                // closes, a lookup per distinct drop item that got the pooled
+                // history host to refuse a 66-zone run outright. Capping still
+                // runs per row (from whatever is already cached elsewhere), but
+                // no prefetch/warm-up call happens at all.
                 await ui._displayAllZonesResults(
                     [
                         result('Fantasy', { profit: 10_000, dropEntries: thinLoot }),
@@ -1783,17 +1781,8 @@ describe('the all-zones table', () => {
                 const prefetches = liquidity.calls.filter((call) => call.type === 'prefetch');
                 const caps = liquidity.calls.filter((call) => call.type === 'cap');
 
-                // One warm-up for the whole table, not one per row, and it happens
-                // before any row is bounded.
-                expect(prefetches).toHaveLength(1);
+                expect(prefetches).toHaveLength(0);
                 expect(caps).toHaveLength(3);
-                expect(liquidity.calls[0].type).toBe('prefetch');
-
-                // It carries every row's items — the union the per-row loop is
-                // about to ask for, duplicates and all (the dedupe itself is
-                // prefetchLiquidity's own tested business).
-                expect(prefetches[0].items.filter((hrid) => hrid === '/items/rare_charm')).toHaveLength(2);
-                expect(prefetches[0].items).toContain('/items/meat');
             });
 
             test('records a phase for each part of the render, so a slow run says which part', async () => {
@@ -1815,7 +1804,7 @@ describe('the all-zones table', () => {
 
                 const parts = performanceMonitor.getSpans('allZones:render').map((span) => span.part);
                 expect(parts).toContain('rows');
-                expect(parts).toContain('prefetchVolumes');
+                expect(parts).not.toContain('prefetchVolumes');
                 expect(parts).toContain('capProfit');
             });
         });

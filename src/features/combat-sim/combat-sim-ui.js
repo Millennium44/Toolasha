@@ -59,7 +59,7 @@ import {
 } from '../../utils/bestiary-plan.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
-import { capProfitRate, liquidityMarkerHtml, prefetchLiquidity } from '../../utils/liquidity-cap.js';
+import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
     isSkillingGearItem,
@@ -2993,26 +2993,21 @@ class CombatSimUI {
         // The cap is display-only: `zoneResults` and the snapshot keep the raw
         // figures, and a capped row always carries its marker.
         //
-        // Warm the shared volume cache for every row's items in one pooled pass
-        // first. Without this, a 66-zone run paid a `VOLUME_CONCURRENCY`-bound
-        // fetch wave per ROW, serially — each row's own `await capProfitRate`
-        // had to fully settle before the next row's items got a turn, even
-        // though the distinct item set across zones is much smaller than the
-        // sum of per-row item counts. Priming the union up front lets every
-        // row's items compete for the same four slots continuously, and the
-        // per-row `capProfitRate` calls below then hit the warmed cache.
+        // Cache-only: `capProfitRateCached` never starts a volume lookup, so a
+        // 66-zone run issues none of its own. Warming the cache first (as this
+        // used to, with `prefetchLiquidity`) paid a lookup per distinct drop
+        // item across the whole ranking — on a live account that was enough to
+        // get the pooled history host to refuse the run outright with a wall of
+        // `HTTP 429`s. A row still caps where the answer is already cached from
+        // elsewhere (the goal planner, a price-history pin); an item nothing
+        // has asked about yet reads as uncapped, the same as an unmeasured one.
         endRowsSpan({ rows: rows.length });
-
-        const sells = rows.flatMap((row) => row._sells || []);
-        const endPrefetchSpan = performanceMonitor.startSpan('allZones:render', 'prefetchVolumes');
-        await prefetchLiquidity(sells);
-        endPrefetchSpan({ sells: sells.length });
 
         const endCapSpan = performanceMonitor.startSpan('allZones:render', 'capProfit');
         let cappedRows = 0;
         for (const row of rows) {
             try {
-                const capped = await capProfitRate({ goldPerHour: row.profit, sells: row._sells });
+                const capped = capProfitRateCached({ goldPerHour: row.profit, sells: row._sells });
                 if (capped.capped) {
                     cappedRows += 1;
                     row.uncappedProfit = row.profit;

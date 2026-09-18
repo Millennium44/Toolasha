@@ -61,6 +61,7 @@ const {
     sellsFromProfitData,
     prefetchLiquidity,
     capProfitRate,
+    capProfitRateCached,
     capProfitData,
     liquidityMarkerHtml,
 } = await import('./liquidity-cap.js');
@@ -192,6 +193,80 @@ describe('capProfitRate', () => {
         expect((await capProfitRate({ goldPerHour: 1_000_000, sells: [] })).capped).toBe(false);
         expect((await capProfitRate({ goldPerHour: 1_000_000 })).capped).toBe(false);
         expect((await capProfitRate()).capped).toBe(false);
+    });
+});
+
+describe('capProfitRateCached', () => {
+    test('nothing cached issues no lookup and caps nothing — the all-zones contract', () => {
+        history.rows['/items/essence'] = tradedAt(1 / 7);
+
+        const bounded = capProfitRateCached({
+            goldPerHour: 134_300_000_000,
+            sells: [{ itemHrid: '/items/essence', name: 'Tailoring Essence', unitsPerHour: 500 }],
+        });
+
+        expect(history.calls).toHaveLength(0);
+        expect(bounded.capped).toBe(false);
+        expect(bounded.goldPerHour).toBe(134_300_000_000);
+        expect(bounded.limit).toBeNull();
+    });
+
+    test('a thin item already cached is capped and marked exactly as capProfitRate would', async () => {
+        history.rows['/items/essence'] = tradedAt(1 / 7);
+        await prefetchLiquidity([{ itemHrid: '/items/essence' }]);
+        history.calls = [];
+
+        const sells = [{ itemHrid: '/items/essence', name: 'Tailoring Essence', unitsPerHour: 500 }];
+        const fromCache = capProfitRateCached({ goldPerHour: 134_300_000_000, sells });
+
+        // capProfitRateCached itself issued no lookup, even though the cache
+        // was warm — the point under test.
+        expect(history.calls).toHaveLength(0);
+
+        resetLiquidityCache();
+        history.rows['/items/essence'] = tradedAt(1 / 7);
+        const fromFetch = await capProfitRate({ goldPerHour: 134_300_000_000, sells });
+
+        expect(fromCache).toEqual(fromFetch);
+        expect(fromCache.capped).toBe(true);
+    });
+
+    test('a liquid, cached market leaves the rate exactly as quoted, no lookup', async () => {
+        history.rows['/items/milk'] = tradedAt(1_000_000);
+        await prefetchLiquidity([{ itemHrid: '/items/milk' }]);
+        history.calls = [];
+
+        const bounded = capProfitRateCached({
+            goldPerHour: 12_400_000,
+            sells: [{ itemHrid: '/items/milk', unitsPerHour: 400 }],
+        });
+
+        expect(history.calls).toHaveLength(0);
+        expect(bounded).toEqual({ goldPerHour: 12_400_000, capped: false, limit: null });
+    });
+
+    test('the setting off comes back untouched, even for a cached thin market', async () => {
+        history.rows['/items/essence'] = tradedAt(1 / 7);
+        await prefetchLiquidity([{ itemHrid: '/items/essence' }]);
+        settings.map[LIQUIDITY_CAP_SETTING] = false;
+
+        const bounded = capProfitRateCached({
+            goldPerHour: 134_300_000_000,
+            sells: [{ itemHrid: '/items/essence', unitsPerHour: 500 }],
+        });
+
+        expect(bounded.capped).toBe(false);
+        expect(bounded.goldPerHour).toBe(134_300_000_000);
+    });
+
+    test('a rate that earns nothing or names nothing it sells is left alone', () => {
+        expect(
+            capProfitRateCached({ goldPerHour: -50_000, sells: [{ itemHrid: '/items/dust', unitsPerHour: 1 }] }).capped
+        ).toBe(false);
+        expect(capProfitRateCached({ goldPerHour: 1_000_000, sells: [] }).capped).toBe(false);
+        expect(capProfitRateCached({ goldPerHour: 1_000_000 }).capped).toBe(false);
+        expect(capProfitRateCached().capped).toBe(false);
+        expect(history.calls).toHaveLength(0);
     });
 });
 

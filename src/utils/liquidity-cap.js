@@ -217,6 +217,81 @@ export async function capProfitRate({ goldPerHour, sells } = {}) {
 }
 
 /**
+ * Bound one displayed rate, but only where the answer is already known.
+ *
+ * Same arithmetic as {@link capProfitRate} — same throttle formula, same
+ * marker shape — but it never starts a lookup. It reads the planner's
+ * `cachedDailyVolume` instead of `dailyVolume`, so an item with nothing
+ * cached yet contributes no limit, exactly as an unknown volume does in the
+ * fetching path; it simply never gets the chance to become known from this
+ * call. Callers who need every possible cap have to keep calling
+ * {@link capProfitRate}, or warm the cache first with
+ * {@link prefetchLiquidity} — this function is for a surface that has
+ * decided a lookup per row is not affordable (the all-zones table, whose
+ * per-row `await capProfitRate` used to add up to a lookup per distinct drop
+ * item across the whole ranking and got the pooled host to refuse the run
+ * outright).
+ *
+ * Deliberately synchronous — there is no `await` anywhere in this function,
+ * which is the point: nothing here can start a network request.
+ *
+ * @param {Object} rate - `{goldPerHour, sells: [{itemHrid, unitsPerHour}]}`
+ * @returns {{goldPerHour: number, capped: boolean, limit: Object|null}} Same
+ *   shape as {@link capProfitRate}'s resolved value
+ */
+export function capProfitRateCached({ goldPerHour, sells } = {}) {
+    const raw = Number(goldPerHour) || 0;
+    const uncapped = { goldPerHour: raw, capped: false, limit: null };
+
+    if (raw <= 0 || !liquidityCapEnabled()) return uncapped;
+
+    const list = (Array.isArray(sells) ? sells : []).filter((sold) => sold?.itemHrid && Number(sold.unitsPerHour) > 0);
+    if (!list.length) return uncapped;
+
+    try {
+        const { cachedDailyVolume, absorbablePerHour, describeVelocity } = liquidity();
+
+        let throttle = 1;
+        let binding = null;
+        for (const sold of list) {
+            const volume = cachedDailyVolume(sold.itemHrid, sold.enhancementLevel || 0);
+            if (!volume) continue; // Nothing cached yet — contributes no limit, not a zero.
+
+            const allowed = absorbablePerHour(volume);
+            if (!Number.isFinite(allowed)) continue;
+
+            const wantedRate = Number(sold.unitsPerHour) || 0;
+            const share = Math.min(1, allowed / wantedRate);
+            if (share < throttle) {
+                throttle = share;
+                binding = { ...sold, volume };
+            }
+        }
+
+        if (!(throttle < 1) || !binding) return uncapped;
+
+        const velocity = describeVelocity(binding.volume);
+        const itemName = binding.name || binding.itemHrid.split('/').pop();
+        return {
+            goldPerHour: raw * throttle,
+            capped: true,
+            limit: {
+                kind: 'volume',
+                note: `limited by market volume (${velocity})`,
+                detail: `${itemName} trades ${velocity}, and you are not the only seller.`,
+                itemHrid: binding.itemHrid,
+                itemName,
+                velocity,
+                throttle,
+            },
+        };
+    } catch (error) {
+        console.error('[LiquidityCap] Bounding a displayed rate from cache failed:', error);
+        return uncapped;
+    }
+}
+
+/**
  * A calculator result, copied with its displayed pace bounded.
  *
  * Only the pace claims move: `profitPerHour` and `profitPerDay` are throttled,
@@ -284,6 +359,7 @@ export default {
     sellsFromProfitData,
     prefetchLiquidity,
     capProfitRate,
+    capProfitRateCached,
     capProfitData,
     liquidityMarkerHtml,
 };
