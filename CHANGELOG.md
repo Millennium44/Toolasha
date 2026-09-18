@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Panels stay where you put them
+
+- Buying consumables or opening a shopping list no longer leaves the consumables panel recorded as open, so it stops reappearing by itself on later refreshes.
+
 <!-- shipped in 3.55.0 -->
 
 ### Combat zones in the action queue

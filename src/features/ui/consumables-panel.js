@@ -1581,9 +1581,12 @@ class ConsumablesPanel {
     _openShoppingList(shortfall) {
         try {
             // Out of the way first: it is a floating panel and the marketplace it
-            // is sending you to opens underneath it. Not recorded as closing it
-            // — you went shopping, you did not put the panel away.
-            this.hide({ remember: false });
+            // is sending you to opens underneath it. Recorded as closed, though:
+            // `remember: false` left the panel filed as open forever, so every
+            // later page load reopened it — hours or days after the shopping
+            // trip it was meant to survive, which reads as the panel opening
+            // itself at random. Reported from live use, 2026-09-18.
+            this.hide();
             openShoppingList(shortfall);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the shopping list failed:', error);
@@ -1608,7 +1611,9 @@ class ConsumablesPanel {
     _buy(entry, count, strategy = null) {
         if (!count) return;
         try {
-            this.hide({ remember: false });
+            // Recorded as closed — see `_openShoppingList` for why going
+            // shopping must not leave the panel filed as open
+            this.hide();
             this.autofill.setQuantity(count, { itemHrid: entry.itemHrid });
             navigateToMarketplace(entry.itemHrid);
             this._openRecommendedForm(strategy);

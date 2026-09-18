@@ -185,15 +185,26 @@ describe('whether the panel was open', () => {
         expect(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))).not.toThrow();
     });
 
-    test('going to the marketplace is not closing it', async () => {
-        // The panel gets out of the way so the marketplace is not underneath it.
-        // You went shopping; you did not put the panel away.
+    test('going to the marketplace records the panel as closed', async () => {
+        // It used to be filed as still open — "you went shopping, you did not
+        // put the panel away" — but that memory never expired, so every later
+        // page load reopened the panel, hours or days after the trip. Reported
+        // from live use on 2026-09-18 as the panel opening itself at random.
         consumablesPanel.show();
         await settled();
         consumablesPanel._openShoppingList([]);
         await settled();
 
-        await expect(wasOpen('consumablesPanel')).resolves.toBe(true);
+        await expect(wasOpen('consumablesPanel')).resolves.toBe(false);
+    });
+
+    test('buying a top-up records it as closed too', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._buy({ itemHrid: '/items/coffee' }, 10);
+        await settled();
+
+        await expect(wasOpen('consumablesPanel')).resolves.toBe(false);
     });
 });
 
