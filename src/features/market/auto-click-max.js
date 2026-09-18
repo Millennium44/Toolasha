@@ -15,6 +15,26 @@ class AutoClickMax {
     }
 
     /**
+     * Follow the setting for the rest of the session, so turning it off stops
+     * the clicking immediately and turning it back on resumes it, without a
+     * reload. `initialize()` reads the setting once, at the
+     * `isInitialized`-guarded start-of-session call from the feature registry,
+     * and nothing re-ran it on a later change — so a player who turned this off
+     * because it kept filling a whole stack into the sell quantity went on
+     * having it filled until they reloaded. The same wiring `auto-fill-price.js`
+     * carries next door, for the same reason.
+     */
+    setupSettingListener() {
+        config.onSettingChange('market_autoClickMax', (value) => {
+            if (value) {
+                this.initialize();
+            } else {
+                this.disable();
+            }
+        });
+    }
+
+    /**
      * Initialize the auto-click max feature
      */
     initialize() {
@@ -147,5 +167,6 @@ class AutoClickMax {
 }
 
 const autoClickMax = new AutoClickMax();
+autoClickMax.setupSettingListener();
 
 export default autoClickMax;

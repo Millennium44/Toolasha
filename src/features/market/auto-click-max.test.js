@@ -12,8 +12,31 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, getSettingValue: (_k, d) => d } }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+// Captures the callback `setupSettingListener()` registers at module load, so
+// tests can fire it exactly as `config` would on a live setting change.
+const settingListeners = vi.hoisted(() => new Map());
+const observers = vi.hoisted(() => ({ registered: 0, unregistered: 0 }));
+
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: () => true,
+        getSettingValue: (_k, d) => d,
+        onSettingChange: (key, callback) => {
+            settingListeners.set(key, callback);
+            return () => settingListeners.delete(key);
+        },
+    },
+}));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => {
+            observers.registered += 1;
+            return () => {
+                observers.unregistered += 1;
+            };
+        },
+    },
+}));
 
 const autoClickMax = (await import('./auto-click-max.js')).default;
 
@@ -109,5 +132,41 @@ describe('the one-shot is spent on work done, not on a modal being seen', () => 
         autoClickMax.handleOrderModal(modal);
 
         expect(clicks).toEqual(['qty-max']);
+    });
+});
+
+/**
+ * The setting takes effect without a reload.
+ *
+ * `initialize()` reads it once, at the `isInitialized`-guarded start-of-session
+ * call, so a player who turned this off because it kept filling a whole stack
+ * into the sell quantity went on having it filled until they reloaded.
+ */
+describe('the setting takes effect while the session is running', () => {
+    test('turning it off stops the clicking, and turning it back on resumes it', () => {
+        autoClickMax.disable();
+        observers.registered = 0;
+        observers.unregistered = 0;
+        const onChange = settingListeners.get('market_autoClickMax');
+        expect(onChange).toBeTypeOf('function');
+
+        autoClickMax.initialize();
+        expect(observers.registered - observers.unregistered).toBe(1);
+
+        onChange(false);
+        expect(autoClickMax.isActive).toBe(false);
+        expect(observers.registered - observers.unregistered).toBe(0);
+        const { modal, clicks } = sellModal('All');
+        autoClickMax.handleOrderModal(modal);
+        expect(clicks).toEqual([]);
+
+        onChange(true);
+        expect(autoClickMax.isActive).toBe(true);
+        // …and exactly one watcher, not two stacked on top of each other
+        expect(observers.registered - observers.unregistered).toBe(1);
+        autoClickMax.handleOrderModal(modal);
+        expect(clicks).toEqual(['qty-max']);
+
+        autoClickMax.disable();
     });
 });
