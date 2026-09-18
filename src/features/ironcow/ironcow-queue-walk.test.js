@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { formatWithSeparator } from '../../utils/formatters.js';
 
 const mocks = vi.hoisted(() => ({
     settings: {},
@@ -67,7 +68,8 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
 }));
 
 const { default: craftingPlanWalk } = await import('../crafting-plan/crafting-plan-walk.js');
-const { buildQueueSteps, startQueueWalk, DECOMPOSE_ACTION, COINIFY_ACTION } = await import('./ironcow-queue-walk.js');
+const { buildQueueSteps, startQueueWalk, DECOMPOSE_ACTION, COINIFY_ACTION, MAX_STEP_ACTIONS } =
+    await import('./ironcow-queue-walk.js');
 
 const STARFRUIT = '/items/star_fruit';
 const ESSENCE = '/items/foraging_essence';
@@ -159,6 +161,65 @@ describe('the three steps', () => {
         expect(buildQueueSteps(loop({ missing: ['coinifying'] }), batch())).toEqual([]);
         expect(buildQueueSteps(loop(), null)).toEqual([]);
         expect(startQueueWalk(null, null)).toBe(false);
+    });
+});
+
+describe('a week-sized leg over the cap splits into repeats', () => {
+    test('a leg at or under the cap is still exactly one step', () => {
+        const steps = buildQueueSteps(loop(), batch({ forageActions: MAX_STEP_ACTIONS }));
+        const forageSteps = steps.filter((step) => step.actionHrid === FORAGE_ACTION);
+        expect(forageSteps).toHaveLength(1);
+        expect(forageSteps[0].actions).toBe(MAX_STEP_ACTIONS);
+        expect(forageSteps[0].key).toBe('ironbell:forage');
+    });
+
+    test('a leg over the cap becomes several steps of the same action, in order, summing to the count', () => {
+        const total = MAX_STEP_ACTIONS * 2 + 50_000;
+        const steps = buildQueueSteps(loop(), batch({ forageActions: total, decomposeActions: 0, coinifyActions: 0 }));
+
+        expect(steps).toHaveLength(3);
+        expect(steps.every((step) => step.actionHrid === FORAGE_ACTION)).toBe(true);
+        expect(steps.map((step) => step.actions)).toEqual([MAX_STEP_ACTIONS, MAX_STEP_ACTIONS, 50_000]);
+        expect(steps.reduce((sum, step) => sum + step.actions, 0)).toBe(total);
+        // Distinct keys, so the walk's own step-tracking never confuses one
+        // repeat's press for another's.
+        expect(new Set(steps.map((step) => step.key)).size).toBe(3);
+        expect(steps.map((step) => step.label)).toEqual([
+            `forage ${formatWithSeparator(MAX_STEP_ACTIONS)} × Star Fruit — repeat 1 of 3`,
+            `forage ${formatWithSeparator(MAX_STEP_ACTIONS)} × Star Fruit — repeat 2 of 3`,
+            `forage ${formatWithSeparator(50_000)} × Star Fruit — repeat 3 of 3`,
+        ]);
+    });
+
+    test('an alchemy leg over the cap still names the item every repeat has to wait for', () => {
+        const total = MAX_STEP_ACTIONS + 1;
+        const steps = buildQueueSteps(loop(), batch({ forageActions: 0, decomposeActions: total, coinifyActions: 0 }));
+
+        expect(steps).toHaveLength(2);
+        expect(steps.every((step) => step.requiresItemHrid === STARFRUIT)).toBe(true);
+        expect(steps.every((step) => step.actionHrid === DECOMPOSE_ACTION)).toBe(true);
+    });
+
+    test('the walk stands the player in front of every repeat, one press each', () => {
+        const total = MAX_STEP_ACTIONS + 10;
+        mountPanel(FORAGE_ACTION);
+        expect(startQueueWalk(loop(), batch({ forageActions: total, decomposeActions: 0, coinifyActions: 0 }))).toBe(
+            true
+        );
+        vi.advanceTimersByTime(200);
+        expect(document.querySelector('input').value).toBe(String(MAX_STEP_ACTIONS));
+
+        // First repeat pressed: the walk moves to the second repeat of the same
+        // action, not to decompose.
+        pressed(FORAGE_ACTION);
+        expect(mocks.navigatedActions).toEqual([FORAGE_ACTION, FORAGE_ACTION]);
+        mountPanel(FORAGE_ACTION);
+        vi.advanceTimersByTime(200);
+        expect(document.querySelector('input').value).toBe('10');
+
+        // Second press ends the leg — nothing left to walk.
+        pressed(FORAGE_ACTION);
+        expect(craftingPlanWalk.currentStep()).toBeNull();
     });
 });
 

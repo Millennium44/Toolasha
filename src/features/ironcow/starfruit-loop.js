@@ -407,6 +407,88 @@ export function balanceBatch(loop, hours) {
 }
 
 /**
+ * Shrink a batch by what the character already holds.
+ *
+ * The walk should queue what is missing, not the loop from scratch: Star Fruit
+ * on hand needs no foraging, and foraging essence on hand needs no decomposing.
+ * Crediting only ever shrinks the leg that *consumes* the held item — coinify
+ * is untouched either way, since `balanceBatch` already sized it to the total
+ * essence the batch needs, held or freshly decomposed.
+ *
+ * Never below zero: holdings larger than a leg zero that leg (`Math.min`
+ * caps how many actions get credited at how many the leg had), and a leg the
+ * walk sizes at nothing is a leg `buildQueueSteps` already knows to skip.
+ *
+ * When the loop's items could not be resolved, `readCharacterState` says so
+ * explicitly with `holdingsCredited: false` (never left `undefined` — see its
+ * own comment); nothing is credited then, because crediting a count off the
+ * wrong item would be worse than crediting nothing, and the batch comes back
+ * with a note saying so, the same way `alchemyTargetAssumed` qualifies the
+ * plan when the same lookup fails. A `state` that simply has nothing to say
+ * about holdings (`holdingsCredited` left `undefined`, as an older or a
+ * fixture caller might) credits nothing too, but silently — that is a caller
+ * not answering the question, not the game answering "no".
+ *
+ * @param {Object|null} batch - From {@link balanceBatch}
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {Object|null} state - From `readCharacterState` (`starfruitHeld`, `essenceHeld`,
+ *   `holdingsCredited`)
+ * @returns {Object|null} The batch, `forageActions`/`decomposeActions` reduced and a `credits`
+ *   array of `{item, name, amount, actionsSaved}` describing what was credited; a `holdingsNote`
+ *   instead when holdings were explicitly not resolvable; or `batch` unchanged when there is
+ *   nothing to credit against
+ */
+export function applyHoldings(batch, loop, state) {
+    if (!batch || !loop) return batch;
+
+    if (state?.holdingsCredited === false) {
+        return {
+            ...batch,
+            credits: [],
+            holdingsNote: 'The loop items could not be resolved, so what you already hold was not credited.',
+        };
+    }
+
+    const fruitPerForageAction = loop.fruitPerForageAction || 0;
+    const decomposeBulk = loop.decomposeBulk || 1;
+    const essencePerDecomposeAction = decomposeBulk * (loop.essencePerFruit || 0);
+
+    let forageActions = batch.forageActions;
+    let decomposeActions = batch.decomposeActions;
+    const credits = [];
+
+    const starfruitHeld = state?.starfruitHeld || 0;
+    if (starfruitHeld > 0 && fruitPerForageAction > 0) {
+        const actionsSaved = Math.min(forageActions, Math.floor(starfruitHeld / fruitPerForageAction));
+        if (actionsSaved > 0) {
+            forageActions -= actionsSaved;
+            credits.push({
+                item: 'starfruit',
+                name: loop.items?.starfruitName || 'Star Fruit',
+                amount: starfruitHeld,
+                actionsSaved,
+            });
+        }
+    }
+
+    const essenceHeld = state?.essenceHeld || 0;
+    if (essenceHeld > 0 && essencePerDecomposeAction > 0) {
+        const actionsSaved = Math.min(decomposeActions, Math.floor(essenceHeld / essencePerDecomposeAction));
+        if (actionsSaved > 0) {
+            decomposeActions -= actionsSaved;
+            credits.push({
+                item: 'essence',
+                name: loop.items?.essenceName || 'essence',
+                amount: essenceHeld,
+                actionsSaved,
+            });
+        }
+    }
+
+    return { ...batch, forageActions, decomposeActions, credits, holdingsNote: '' };
+}
+
+/**
  * What is wrong with the loop as it is set up right now.
  *
  * @param {Object} state - From `readCharacterState`

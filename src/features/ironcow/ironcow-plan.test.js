@@ -33,6 +33,9 @@ vi.mock('../../core/data-manager.js', () => ({
 
 vi.mock('./loop-items.js', () => ({ resolveLoopItems: () => loop.items }));
 
+const STARFRUIT = '/items/star_fruit';
+const ESSENCE = '/items/foraging_essence';
+
 const { deriveStages, readCharacterState, isIronCowMode, GATHERING_TARGET, CRAFTING_TARGET, ASSUMED_ALCHEMY_TARGET } =
     await import('./ironcow-plan.js');
 
@@ -69,7 +72,7 @@ beforeEach(() => {
     game.gameMode = 'ironcow';
     // The real loop items, as game data would give them: Star Fruit is level 65,
     // the essence it decomposes into is level 40, so alchemy's target is 65.
-    loop.items = { alchemyTarget: 65, essencePerDecompose: 2 };
+    loop.items = { alchemyTarget: 65, essencePerDecompose: 2, starfruitHrid: STARFRUIT, essenceHrid: ESSENCE };
 });
 
 describe('readCharacterState', () => {
@@ -108,6 +111,33 @@ describe('readCharacterState', () => {
         const state = readCharacterState();
         expect(state.alchemyTarget).toBe(ASSUMED_ALCHEMY_TARGET);
         expect(state.alchemyTargetAssumed).toBe(true);
+    });
+
+    test('reads how much Star Fruit and foraging essence are on hand', () => {
+        game.inventory = [
+            { itemHrid: STARFRUIT, count: 1_240 },
+            { itemHrid: ESSENCE, count: 3_600 },
+        ];
+        const state = readCharacterState();
+        expect(state.starfruitHeld).toBe(1_240);
+        expect(state.essenceHeld).toBe(3_600);
+        expect(state.holdingsCredited).toBe(true);
+    });
+
+    test('nothing held reads as zero, not undefined', () => {
+        game.inventory = [];
+        const state = readCharacterState();
+        expect(state.starfruitHeld).toBe(0);
+        expect(state.essenceHeld).toBe(0);
+    });
+
+    test('credits nothing, and says so, when the loop items could not be resolved', () => {
+        loop.items = null;
+        game.inventory = [{ itemHrid: STARFRUIT, count: 1_240 }];
+        const state = readCharacterState();
+        expect(state.starfruitHeld).toBe(0);
+        expect(state.essenceHeld).toBe(0);
+        expect(state.holdingsCredited).toBe(false);
     });
 });
 

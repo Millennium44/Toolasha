@@ -93,12 +93,16 @@ vi.mock('./starfruit-loop.js', async (importOriginal) => {
     };
 });
 
-vi.mock('./ironcow-queue-walk.js', () => ({
-    startQueueWalk: (costed, batch) => {
-        walk.started.push(batch);
-        return walk.succeeds;
-    },
-}));
+vi.mock('./ironcow-queue-walk.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        startQueueWalk: (costed, batch) => {
+            walk.started.push(batch);
+            return walk.succeeds;
+        },
+    };
+});
 
 const { ironCowFarmPanel } = await import('./ironcow-panel.js');
 
@@ -586,6 +590,49 @@ describe('the queue helper', () => {
         hours.value = '8';
         hours.dispatchEvent(new Event('input', { bubbles: true }));
         expect(text()).toContain('800');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('says how many presses the walk is about to ask for, before the player starts', async () => {
+        loop.result = costedLoop({
+            items: {
+                starfruitName: 'Star Fruit',
+                essenceName: 'Foraging Essence',
+                essencePerDecompose: 5,
+                forageActionHrid: '/actions/foraging/star_fruit',
+                starfruitHrid: '/items/star_fruit',
+                essenceHrid: '/items/foraging_essence',
+            },
+        });
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        // 16h is three legs well under the cap: one press apiece.
+        expect(text()).toContain('3 presses');
+        const go = [...ironCowFarmPanel.panel.querySelectorAll('button')].find((element) =>
+            element.textContent.startsWith('Walk it')
+        );
+        expect(go.textContent).toContain('3 presses');
+    });
+
+    test('what is already held is credited, and said, not folded silently into a smaller count', async () => {
+        plan.state = character({ starfruitHeld: 300, essenceHeld: 0, holdingsCredited: true });
+        loop.result = costedLoop({
+            items: {
+                starfruitName: 'Star Fruit',
+                essenceName: 'Foraging Essence',
+                essencePerDecompose: 5,
+                forageActionHrid: '/actions/foraging/star_fruit',
+                starfruitHrid: '/items/star_fruit',
+                essenceHrid: '/items/foraging_essence',
+            },
+        });
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        // 1,600 forages at 16h, minus the 300 already held.
+        expect(text()).toContain('1,300');
+        expect(text()).toContain('You have 300 Star Fruit');
         expect(text()).not.toContain(FAILED);
     });
 

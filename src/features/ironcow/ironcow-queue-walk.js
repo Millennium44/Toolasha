@@ -41,11 +41,83 @@ export const COINIFY_ACTION = '/actions/alchemy/coinify';
 const SELECT_NOTE = 'put it in the alchemy slot';
 
 /**
- * The three steps of one balanced batch, in the order the loop consumes them.
+ * The most one queued action can hold.
+ *
+ * Not read off the game: nothing in `actionDetailMap`, in the
+ * `actions_updated` payload, or on the game's own count box (it carries no
+ * `max` attribute — see `ironcow-queue-walk.test.js`) states a repeat cap, and
+ * a repo-wide search for a documented one (`maxActionCount`, an int32 bound, a
+ * queue-sizing constant in `src/features/actions/*`) turned up nothing either.
+ * So this is chosen, not discovered: a round number with wide headroom below
+ * the 32-bit signed range (2,147,483,647) that anything this loop asks for in
+ * practice — even a week, even at a fast action rate — clears in a small
+ * number of repeats rather than a stack of them. If the game ever states the
+ * real cap, this is the one constant to correct.
+ * @type {number}
+ */
+export const MAX_STEP_ACTIONS = 100_000;
+
+/**
+ * Split one leg's count into repeats no larger than {@link MAX_STEP_ACTIONS}.
+ * @param {number} count - Total actions the leg needs
+ * @returns {Array<number>} One or more chunk sizes, in order, summing to `count`
+ */
+function splitCount(count) {
+    if (count <= MAX_STEP_ACTIONS) return [count];
+    const chunks = [];
+    let remaining = count;
+    while (remaining > 0) {
+        const chunk = Math.min(MAX_STEP_ACTIONS, remaining);
+        chunks.push(chunk);
+        remaining -= chunk;
+    }
+    return chunks;
+}
+
+/**
+ * One leg of the batch, as one or more walk steps — several when the leg's
+ * count is over {@link MAX_STEP_ACTIONS}, each with its own key so the walk's
+ * existing wait-for-the-item-in-the-slot discipline runs again for every
+ * repeat, not just the first.
+ *
+ * @param {Object} params
+ * @param {string} params.key - Base key; a repeat number is appended when there is more than one
+ * @param {string} params.actionHrid - The action this leg queues
+ * @param {string} params.itemHrid - What the step is named for
+ * @param {string} params.itemName - Its display name
+ * @param {string} [params.requiresItemHrid] - Set when the action is chosen by item (alchemy)
+ * @param {number} params.count - Total actions this leg needs
+ * @param {string} params.verb - `forage`, `decompose` or `coinify`
+ * @param {string} [params.note] - Extra wording, e.g. the alchemy slot reminder
+ * @returns {Array<Object>} Steps for `craftingPlanWalk.start`
+ */
+function legSteps({ key, actionHrid, itemHrid, itemName, requiresItemHrid, count, verb, note }) {
+    const chunks = splitCount(count);
+    return chunks.map((chunk, index) => {
+        const repeat = chunks.length > 1 ? ` — repeat ${index + 1} of ${chunks.length}` : '';
+        const step = {
+            key: chunks.length > 1 ? `${key}#${index + 1}` : key,
+            kind: 'craft',
+            itemHrid,
+            itemName,
+            actionHrid,
+            count: chunk,
+            actions: chunk,
+            label: `${verb} ${formatWithSeparator(chunk)} × ${itemName}${note ? ` — ${note}` : ''}${repeat}`,
+        };
+        if (requiresItemHrid) step.requiresItemHrid = requiresItemHrid;
+        return step;
+    });
+}
+
+/**
+ * The walk steps for one balanced batch, in the order the loop consumes them.
  *
  * Forage first because the decompose leg eats what it grew, decompose before
- * coinify for the same reason. A leg the balance sized at nothing is not a step:
- * there is nothing to type into it.
+ * coinify for the same reason. A leg the balance sized at nothing is not a
+ * step: there is nothing to type into it. A leg over {@link MAX_STEP_ACTIONS}
+ * becomes several steps of the same action, in loop order, each with its own
+ * press — see {@link legSteps}.
  *
  * @param {Object|null} loop - From `calculateStarfruitLoop`
  * @param {Object|null} batch - From `balanceBatch`
@@ -61,44 +133,46 @@ export function buildQueueSteps(loop, batch) {
     const steps = [];
 
     if (batch.forageActions > 0) {
-        steps.push({
-            key: 'ironbell:forage',
-            kind: 'craft',
-            itemHrid: items.starfruitHrid,
-            itemName: fruitName,
-            actionHrid: items.forageActionHrid,
-            count: batch.forageActions,
-            actions: batch.forageActions,
-            label: `forage ${formatWithSeparator(batch.forageActions)} × ${fruitName}`,
-        });
+        steps.push(
+            ...legSteps({
+                key: 'ironbell:forage',
+                actionHrid: items.forageActionHrid,
+                itemHrid: items.starfruitHrid,
+                itemName: fruitName,
+                count: batch.forageActions,
+                verb: 'forage',
+            })
+        );
     }
 
     if (batch.decomposeActions > 0) {
-        steps.push({
-            key: 'ironbell:decompose',
-            kind: 'craft',
-            itemHrid: items.starfruitHrid,
-            itemName: fruitName,
-            actionHrid: DECOMPOSE_ACTION,
-            requiresItemHrid: items.starfruitHrid,
-            count: batch.decomposeActions,
-            actions: batch.decomposeActions,
-            label: `decompose ${formatWithSeparator(batch.decomposeActions)} × ${fruitName} — ${SELECT_NOTE}`,
-        });
+        steps.push(
+            ...legSteps({
+                key: 'ironbell:decompose',
+                actionHrid: DECOMPOSE_ACTION,
+                itemHrid: items.starfruitHrid,
+                itemName: fruitName,
+                requiresItemHrid: items.starfruitHrid,
+                count: batch.decomposeActions,
+                verb: 'decompose',
+                note: SELECT_NOTE,
+            })
+        );
     }
 
     if (batch.coinifyActions > 0) {
-        steps.push({
-            key: 'ironbell:coinify',
-            kind: 'craft',
-            itemHrid: items.essenceHrid,
-            itemName: essenceName,
-            actionHrid: COINIFY_ACTION,
-            requiresItemHrid: items.essenceHrid,
-            count: batch.coinifyActions,
-            actions: batch.coinifyActions,
-            label: `coinify ${formatWithSeparator(batch.coinifyActions)} × ${essenceName} — ${SELECT_NOTE}`,
-        });
+        steps.push(
+            ...legSteps({
+                key: 'ironbell:coinify',
+                actionHrid: COINIFY_ACTION,
+                itemHrid: items.essenceHrid,
+                itemName: essenceName,
+                requiresItemHrid: items.essenceHrid,
+                count: batch.coinifyActions,
+                verb: 'coinify',
+                note: SELECT_NOTE,
+            })
+        );
     }
 
     return steps;
@@ -116,4 +190,4 @@ export function startQueueWalk(loop, batch) {
     return craftingPlanWalk.start(steps);
 }
 
-export default { buildQueueSteps, startQueueWalk, DECOMPOSE_ACTION, COINIFY_ACTION };
+export default { buildQueueSteps, startQueueWalk, DECOMPOSE_ACTION, COINIFY_ACTION, MAX_STEP_ACTIONS };

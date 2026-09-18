@@ -116,6 +116,7 @@ const {
     loopWarnings,
     offlineWindow,
     balanceBatch,
+    applyHoldings,
     bellsForHours,
     hoursForBells,
     LOW_GOLD_BUFFER,
@@ -505,6 +506,73 @@ describe('sizing a batch of the three actions', () => {
         expect(balanceBatch(loop, 0)).toBeNull();
         expect(balanceBatch(loop, -3)).toBeNull();
         expect(balanceBatch(loop, Number.NaN)).toBeNull();
+    });
+});
+
+describe('crediting what is already on hand', () => {
+    test('star fruit held shrinks the forage count; essence held shrinks the decompose count', async () => {
+        const loop = await calculateStarfruitLoop();
+        const batch = balanceBatch(loop, 16); // 1,600 forage, 1,600 decompose, 480 coinify
+
+        const credited = applyHoldings(batch, loop, {
+            starfruitHeld: 300,
+            essenceHeld: 900, // 900 / 3 essence-per-fruit = 300 decompose actions covered
+            holdingsCredited: true,
+        });
+
+        expect(credited.forageActions).toBe(1600 - 300);
+        expect(credited.decomposeActions).toBe(1600 - 300);
+        // Coinify is sized off the total essence the batch needs, held or
+        // freshly decomposed, so holding essence does not touch it.
+        expect(credited.coinifyActions).toBe(batch.coinifyActions);
+        expect(credited.credits).toEqual([
+            { item: 'starfruit', name: 'Star Fruit', amount: 300, actionsSaved: 300 },
+            { item: 'essence', name: 'Foraging Essence', amount: 900, actionsSaved: 300 },
+        ]);
+    });
+
+    test('holding more than a leg needs zeros that leg rather than going negative', async () => {
+        const loop = await calculateStarfruitLoop();
+        const batch = balanceBatch(loop, 16);
+
+        const credited = applyHoldings(batch, loop, { starfruitHeld: 999_999, essenceHeld: 0, holdingsCredited: true });
+
+        expect(credited.forageActions).toBe(0);
+        expect(credited.decomposeActions).toBe(batch.decomposeActions);
+    });
+
+    test('credits nothing, and says so, when the loop items could not be resolved', async () => {
+        const loop = await calculateStarfruitLoop();
+        const batch = balanceBatch(loop, 16);
+
+        const credited = applyHoldings(batch, loop, {
+            starfruitHeld: 300,
+            essenceHeld: 900,
+            holdingsCredited: false,
+        });
+
+        expect(credited.forageActions).toBe(batch.forageActions);
+        expect(credited.decomposeActions).toBe(batch.decomposeActions);
+        expect(credited.credits).toEqual([]);
+        expect(credited.holdingsNote).toMatch(/could not be resolved/);
+    });
+
+    test('nothing held credits nothing, without a note', async () => {
+        const loop = await calculateStarfruitLoop();
+        const batch = balanceBatch(loop, 16);
+
+        const credited = applyHoldings(batch, loop, { starfruitHeld: 0, essenceHeld: 0, holdingsCredited: true });
+
+        expect(credited.forageActions).toBe(batch.forageActions);
+        expect(credited.decomposeActions).toBe(batch.decomposeActions);
+        expect(credited.credits).toEqual([]);
+        expect(credited.holdingsNote).toBe('');
+    });
+
+    test('without a batch or a loop there is nothing to credit against', async () => {
+        const loop = await calculateStarfruitLoop();
+        expect(applyHoldings(null, loop, { starfruitHeld: 300, holdingsCredited: true })).toBeNull();
+        expect(applyHoldings({ forageActions: 10 }, null, { starfruitHeld: 300 })).toEqual({ forageActions: 10 });
     });
 });
 

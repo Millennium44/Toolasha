@@ -39,6 +39,7 @@ import { HOURS_PER_DAY } from '../../utils/profit-constants.js';
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import {
     ASSUMED_OFFLINE_HOURS,
+    applyHoldings,
     balanceBatch,
     bellsForHours,
     calculateStarfruitLoop,
@@ -47,7 +48,7 @@ import {
     loopWarnings,
     offlineWindow,
 } from './starfruit-loop.js';
-import { startQueueWalk } from './ironcow-queue-walk.js';
+import { buildQueueSteps, startQueueWalk } from './ironcow-queue-walk.js';
 import {
     loadOverrides,
     loadPlanCollapsed,
@@ -580,12 +581,19 @@ class IronCowFarmPanel {
         const state = this._safeState();
         const stages = state ? deriveStages(state, this.overrides) : [];
 
+        // Kept for `_walkQueue()`, which runs from a button handler outside of
+        // `_render()` and needs the same character state the queue card just
+        // priced its batch against — the holdings the walk credits must be the
+        // ones the player was shown, not whatever the character looks like by
+        // the time they click.
+        this._queueState = state;
+
         const sections = [
             () => this._modeNote(state),
             () => this._planCard(stages),
             () => this._loopCard(),
             () => this._bellsCard(),
-            () => this._queueCard(),
+            () => this._queueCard(state),
             () => this._checksCard(state),
         ];
         for (const build of sections) this._section(build);
@@ -930,9 +938,10 @@ class IronCowFarmPanel {
      * the cowbell target are the same figure said two ways, and each fills the
      * other in.
      *
+     * @param {Object|null} state - From `readCharacterState`, for what to credit
      * @returns {HTMLElement} The card
      */
-    _queueCard() {
+    _queueCard(state) {
         const holder = card('Queue helper');
         const loop = this.loop;
 
@@ -942,7 +951,7 @@ class IronCowFarmPanel {
         }
 
         const hasBellPrice = Number.isFinite(loop.bellPrice) && loop.bellPrice > 0;
-        const batch = balanceBatch(loop, this.batchHours);
+        const batch = this._batchFor(this.batchHours, state);
         if (!batch) {
             holder.appendChild(span('This loop cannot be sized into a batch.', { color: COLORS.warn }));
             return holder;
@@ -1013,7 +1022,7 @@ class IronCowFarmPanel {
         const summary = span('', { display: 'block', color: COLORS.textDim, fontSize: '11px' });
         holder.appendChild(summary);
 
-        const walk = button('Walk it — three actions, one press each', () => this._walkQueue());
+        const walk = button('Walk it', () => this._walkQueue());
         walk.style.marginTop = '4px';
         walk.style.alignSelf = 'flex-start';
         walk.title =
@@ -1021,15 +1030,31 @@ class IronCowFarmPanel {
             'It never presses anything — the press that queues each action is yours.';
         holder.appendChild(walk);
 
-        this.queueRefs = { hoursBox, unit, bellsBox, counts, summary, hasBellPrice };
+        this.queueRefs = { hoursBox, unit, bellsBox, counts, summary, walk, hasBellPrice };
         this._drawBatch(batch);
         return holder;
     }
 
     /**
+     * Size a batch for a duration and credit what the character already holds
+     * against it, so every caller — the card's own draw, a duration edit, the
+     * walk button — sizes and walks the same figures.
+     * @param {number} hours - How long the batch should keep the queue busy
+     * @param {Object|null} [state] - From `readCharacterState`; defaults to the one the card
+     *   was last drawn against
+     * @returns {Object|null} The batch, holdings credited, or null when it cannot be sized
+     * @private
+     */
+    _batchFor(hours, state = this._queueState) {
+        const batch = balanceBatch(this.loop, hours);
+        if (!batch) return null;
+        return applyHoldings(batch, this.loop, state);
+    }
+
+    /**
      * Redraw the three counts and the summary, without rebuilding the fields the
      * player may be typing in.
-     * @param {Object} batch - From `balanceBatch`
+     * @param {Object} batch - From `_batchFor`
      * @private
      */
     _drawBatch(batch) {
@@ -1053,11 +1078,41 @@ class IronCowFarmPanel {
                 COLORS.good,
                 `Sized to the ${formatWithSeparator(Math.floor(batch.essence))} ${essence} the decompose leg yields, ` +
                     `${loop?.coinifyBulk || 1} to an action.`
-            )
+            ),
+            ...this._creditLines(batch)
         );
 
         const earns = batch.bells === null ? '' : ` · about ${bells(batch.bells)} bells`;
-        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${earns}.`;
+        const steps = buildQueueSteps(loop, batch);
+        const presses = steps.length === 1 ? '1 press' : `${formatWithSeparator(steps.length)} presses`;
+        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${earns} — ${presses}.`;
+
+        if (refs.walk) refs.walk.textContent = steps.length ? `Walk it — ${presses}` : 'Walk it';
+    }
+
+    /**
+     * What the batch credited off the inventory, as lines under the counts —
+     * shown, not folded silently into smaller numbers above, because a count
+     * that changed for an unexplained reason is worse than a bigger one.
+     * @param {Object} batch - From `_batchFor`
+     * @returns {Array<HTMLElement>} Zero or more lines
+     * @private
+     */
+    _creditLines(batch) {
+        const lines = [];
+        for (const credit of batch.credits || []) {
+            lines.push(
+                span(
+                    `You have ${formatWithSeparator(credit.amount)} ${credit.name} — ` +
+                        `${formatWithSeparator(credit.actionsSaved)} fewer actions above.`,
+                    { display: 'block', color: COLORS.textDim, fontSize: '11px' }
+                )
+            );
+        }
+        if (batch.holdingsNote) {
+            lines.push(span(batch.holdingsNote, { display: 'block', color: COLORS.warn, fontSize: '11px' }));
+        }
+        return lines;
     }
 
     /**
@@ -1072,7 +1127,7 @@ class IronCowFarmPanel {
         this.batchHours = Math.min(MAX_QUEUE_HOURS, inDays ? hours * HOURS_PER_DAY : hours);
 
         const refs = this.queueRefs;
-        const batch = balanceBatch(this.loop, this.batchHours);
+        const batch = this._batchFor(this.batchHours);
         if (!refs || !batch) return;
 
         // The field the player is typing in is left alone; the other two follow.
@@ -1103,7 +1158,7 @@ class IronCowFarmPanel {
      * @private
      */
     _walkQueue() {
-        const batch = balanceBatch(this.loop, this.batchHours);
+        const batch = this._batchFor(this.batchHours);
         if (!startQueueWalk(this.loop, batch)) {
             this._status('Nothing to walk — cost the loop first.');
         }

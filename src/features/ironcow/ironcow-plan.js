@@ -126,6 +126,18 @@ export function readCharacterState() {
     const coinEntry = inventory.find((item) => item?.itemHrid === '/items/coin');
     const loopItems = resolveLoopItems();
 
+    // How much of the loop's own two items are already on hand. Read here —
+    // rather than in the loop or the walk — because this is the one place the
+    // inventory is already being read for `held`, and because the walk needs
+    // to know before it sizes a single step, not after. Zero rather than a
+    // guess when the loop's items could not be resolved: crediting a count off
+    // the wrong item would be worse than crediting nothing, which is why
+    // `holdingsCredited` exists for the walk to check first.
+    const starfruitHeld = loopItems
+        ? inventory.find((item) => item?.itemHrid === loopItems.starfruitHrid)?.count || 0
+        : 0;
+    const essenceHeld = loopItems ? inventory.find((item) => item?.itemHrid === loopItems.essenceHrid)?.count || 0 : 0;
+
     return {
         levels,
         held,
@@ -135,6 +147,12 @@ export function readCharacterState() {
         gameMode: dataManager.getCurrentCharacterGameMode?.() || null,
         alchemyTarget: loopItems?.alchemyTarget ?? ASSUMED_ALCHEMY_TARGET,
         alchemyTargetAssumed: !loopItems,
+        starfruitHeld,
+        essenceHeld,
+        // Same condition as `alchemyTargetAssumed`, named for what it gates
+        // here: only when the loop's items resolved can `starfruitHeld` and
+        // `essenceHeld` be trusted to be counts of the *right* items.
+        holdingsCredited: !!loopItems,
     };
 }
 
