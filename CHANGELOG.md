@@ -24,6 +24,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Every row of the all-zones table has a button that opens that zone at that tier, filling nothing.
 - Every bestiary plan step has one that opens its zone and tier and fills the fights that step asks for.
 - Pressing Go on a combat task now sets the difficulty the estimate assumed, instead of filling a count against whatever tier happened to be showing.
+- Those buttons open the zone itself rather than leaving you on the zone list.
 
 ### Iron Bell farming
 
