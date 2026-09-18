@@ -356,10 +356,11 @@ vi.mock('./all-zones-runner.js', () => ({
  * zones table ranks and scores the *capped* Profit/day, draws the marker, and
  * the snapshot keeps the raw claim.
  */
-const liquidity = vi.hoisted(() => ({ throttleByItem: {} }));
+const liquidity = vi.hoisted(() => ({ throttleByItem: {}, calls: [] }));
 
 vi.mock('../../utils/liquidity-cap.js', () => ({
     capProfitRate: async ({ goldPerHour, sells }) => {
+        liquidity.calls.push({ type: 'cap', items: (sells || []).map((sold) => sold.itemHrid) });
         for (const sold of sells || []) {
             const throttle = liquidity.throttleByItem[sold.itemHrid];
             if (throttle !== undefined && throttle < 1) {
@@ -377,6 +378,12 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
             }
         }
         return { goldPerHour, capped: false, limit: null };
+    },
+    // Records that the batch was warmed before the per-row loop runs, rather
+    // than actually measuring anything — the measurement itself is
+    // utils/liquidity-cap.js's own tested business.
+    prefetchLiquidity: async (items) => {
+        liquidity.calls.push({ type: 'prefetch', items: (items || []).map((item) => item.itemHrid) });
     },
     liquidityMarkerHtml: (limit, { compact = false } = {}) =>
         limit ? `<span title="${limit.note} — ${limit.detail}">${compact ? 'vol-capped' : limit.note}</span>` : '',
@@ -1618,6 +1625,7 @@ describe('the all-zones table', () => {
             ui.buildPanel();
             ui._allZonesSortCol = null;
             liquidity.throttleByItem = {};
+            liquidity.calls = [];
         });
 
         afterEach(() => {
@@ -1754,6 +1762,38 @@ describe('the all-zones table', () => {
                 await ui._displayAllZonesResults([result('Honest', { profit: 1_000, dropEntries: liquidLoot })], 1, {});
 
                 expect(ui.panel.querySelector('#mwi-csim-results').innerHTML).not.toContain('vol-capped');
+            });
+
+            test('warms the shared volume cache once, before any row is capped', async () => {
+                // Two rows share the same thin-selling drop, the way a common rare
+                // find shows up across several zones. A run that paid a fetch wave
+                // per row — the bug this closes — would call capProfitRate for
+                // 'Fantasy' before 'Also fantasy' ever got a turn to prime its own
+                // (identical) item.
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fantasy', { profit: 10_000, dropEntries: thinLoot }),
+                        result('Also fantasy', { profit: 8_000, dropEntries: thinLoot }),
+                        result('Honest', { profit: 1_000, dropEntries: liquidLoot }),
+                    ],
+                    1,
+                    {}
+                );
+
+                const prefetches = liquidity.calls.filter((call) => call.type === 'prefetch');
+                const caps = liquidity.calls.filter((call) => call.type === 'cap');
+
+                // One warm-up for the whole table, not one per row, and it happens
+                // before any row is bounded.
+                expect(prefetches).toHaveLength(1);
+                expect(caps).toHaveLength(3);
+                expect(liquidity.calls[0].type).toBe('prefetch');
+
+                // It carries every row's items — the union the per-row loop is
+                // about to ask for, duplicates and all (the dedupe itself is
+                // prefetchLiquidity's own tested business).
+                expect(prefetches[0].items.filter((hrid) => hrid === '/items/rare_charm')).toHaveLength(2);
+                expect(prefetches[0].items).toContain('/items/meat');
             });
         });
     });

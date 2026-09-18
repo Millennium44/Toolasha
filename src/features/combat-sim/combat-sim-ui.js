@@ -58,7 +58,7 @@ import {
     parseBestiaryZoneKey,
 } from '../../utils/bestiary-plan.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
-import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
+import { capProfitRate, liquidityMarkerHtml, prefetchLiquidity } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
     isSkillingGearItem,
@@ -2985,6 +2985,17 @@ class CombatSimUI {
         // blended from an unsellable rate would smuggle the fiction back in.
         // The cap is display-only: `zoneResults` and the snapshot keep the raw
         // figures, and a capped row always carries its marker.
+        //
+        // Warm the shared volume cache for every row's items in one pooled pass
+        // first. Without this, a 66-zone run paid a `VOLUME_CONCURRENCY`-bound
+        // fetch wave per ROW, serially — each row's own `await capProfitRate`
+        // had to fully settle before the next row's items got a turn, even
+        // though the distinct item set across zones is much smaller than the
+        // sum of per-row item counts. Priming the union up front lets every
+        // row's items compete for the same four slots continuously, and the
+        // per-row `capProfitRate` calls below then hit the warmed cache.
+        await prefetchLiquidity(rows.flatMap((row) => row._sells || []));
+
         for (const row of rows) {
             try {
                 const capped = await capProfitRate({ goldPerHour: row.profit, sells: row._sells });

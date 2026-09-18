@@ -33,6 +33,9 @@ const history = vi.hoisted(() => ({
     // An item whose fetch throws, to check that one failure does not stop
     // the rest of a prefetch batch from warming.
     failFor: null,
+    // Flips the source to one that carries no volume data at all (mooket I),
+    // so a prefetch test can prove it asks the server nothing.
+    hasVolume: true,
 }));
 
 vi.mock('../features/market/mooket/market-history-api.js', () => ({
@@ -47,7 +50,7 @@ vi.mock('../features/market/mooket/market-history-api.js', () => ({
             }
             return history.rows[itemHrid] ?? null;
         },
-        currentSource: () => ({ key: 'mooket2', hasVolume: true }),
+        currentSource: () => ({ key: 'mooket2', hasVolume: history.hasVolume }),
     },
 }));
 
@@ -86,6 +89,7 @@ beforeEach(() => {
     history.hang = false;
     history.pending = [];
     history.failFor = null;
+    history.hasVolume = true;
     settings.map = {};
 });
 
@@ -253,6 +257,72 @@ describe('prefetchLiquidity', () => {
         expect(history.calls.filter((call) => call.itemHrid === '/items/essence')).toHaveLength(1);
 
         vi.restoreAllMocks();
+    });
+
+    test('a source with no volume data asks the server nothing', async () => {
+        history.hasVolume = false;
+        history.rows['/items/essence'] = tradedAt(24);
+
+        await prefetchLiquidity([{ itemHrid: '/items/essence' }, { itemHrid: '/items/rare_charm' }]);
+
+        expect(history.calls).toHaveLength(0);
+    });
+
+    test('a batch built from several rows with overlapping drops fetches once per distinct item', async () => {
+        // The shape combat-sim-ui.js's all-zones table builds: many rows, each
+        // with its own `_sells`, several of them selling the same item.
+        const rows = [
+            { _sells: [{ itemHrid: '/items/rare_charm' }] },
+            { _sells: [{ itemHrid: '/items/rare_charm' }] },
+            { _sells: [{ itemHrid: '/items/rare_charm' }, { itemHrid: '/items/meat' }] },
+            { _sells: [{ itemHrid: '/items/meat' }] },
+        ];
+        history.rows['/items/rare_charm'] = tradedAt(1 / 7);
+        history.rows['/items/meat'] = tradedAt(1_000_000);
+        history.hang = true;
+
+        const prefetchPromise = prefetchLiquidity(rows.flatMap((row) => row._sells));
+
+        // Both distinct items should be in flight at once — proof the batch is
+        // not paying its round trips one row (or one duplicate) at a time.
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(history.pending.map((p) => p.itemHrid).sort()).toEqual(['/items/meat', '/items/rare_charm']);
+
+        history.pending.forEach((entry) => entry.resolve());
+        history.pending = [];
+        history.hang = false;
+        await prefetchPromise;
+
+        // Four rows and four `_sells` entries collapsed to exactly two fetches —
+        // one per distinct item, not one per row or per duplicate.
+        expect(history.calls).toHaveLength(2);
+        expect(history.calls.map((c) => c.itemHrid).sort()).toEqual(['/items/meat', '/items/rare_charm']);
+    });
+
+    test('capping every row after one warm-up matches capping each row cold, one at a time', async () => {
+        history.rows['/items/rare_charm'] = tradedAt(1 / 7);
+        history.rows['/items/meat'] = tradedAt(1_000_000);
+
+        const rows = [
+            { goldPerHour: 10_000, sells: [{ itemHrid: '/items/rare_charm', name: 'Rare Charm', unitsPerHour: 20 }] },
+            { goldPerHour: 8_000, sells: [{ itemHrid: '/items/rare_charm', name: 'Rare Charm', unitsPerHour: 15 }] },
+            { goldPerHour: 1_000, sells: [{ itemHrid: '/items/meat', name: 'Meat', unitsPerHour: 200 }] },
+        ];
+
+        // Baseline: exactly the old per-row path — no warm-up, one capProfitRate
+        // call after another.
+        resetLiquidityCache();
+        const baseline = [];
+        for (const row of rows) baseline.push(await capProfitRate(row));
+
+        // The new path: warm the union once, then bound each row the same way.
+        resetLiquidityCache();
+        await prefetchLiquidity(rows.flatMap((row) => row.sells));
+        const warmed = [];
+        for (const row of rows) warmed.push(await capProfitRate(row));
+
+        expect(warmed).toEqual(baseline);
     });
 });
 
