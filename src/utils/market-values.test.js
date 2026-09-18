@@ -258,6 +258,15 @@ describe('clampToBand', () => {
         // would pull 0 up to 906, a price no order ever offered.
         expect(clampToBand(0, '/items/cheese')).toBeNull();
     });
+
+    test('a negative price reads as absent too, not passed through raw', () => {
+        // Nothing in the game ever quotes a negative price, but the function
+        // used to hand one straight back unchanged — coherent with treating 0
+        // as absent would be treating every non-positive price the same way.
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        expect(clampToBand(-5, '/items/cheese')).toBeNull();
+    });
 });
 
 describe('reconcileBook', () => {

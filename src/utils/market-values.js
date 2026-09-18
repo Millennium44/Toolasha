@@ -207,12 +207,14 @@ function bandFor(itemHrid, enhancementLevel) {
  * @returns {number|null} The price, banded when a band is known
  */
 export function clampToBand(price, itemHrid, enhancementLevel = 0) {
-    if (typeof price !== 'number' || price < 0) return price ?? null;
-    // A price of 0 is never a real quote — the marketplace's price grid has a
-    // minimum step of 1 and snaps anything at or below it up to 2 — so treat it
-    // as absent rather than clamp it up to band.min, which would fabricate a
-    // price no order ever offered.
-    if (price === 0) return null;
+    if (typeof price !== 'number') return price ?? null;
+    // A non-positive price is never a real quote: 0 falls below the
+    // marketplace's price grid (whose minimum step snaps anything at or below
+    // it up to 2), and a negative price is not a price at all. Treat both as
+    // absent rather than clamp them into the band — clamping 0 up to band.min,
+    // or a negative up to it, would fabricate a price no order ever offered,
+    // and letting a negative pass through unclamped is no better.
+    if (price <= 0) return null;
     if (!isMarketplacePatchLive()) return price;
     // Self-sufficient: direct order-book consumers call this without going
     // through getPrice, and a clamp against an empty cache would be a no-op.
