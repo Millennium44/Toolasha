@@ -4230,7 +4230,9 @@ class ActionTimeDisplay {
                                 actionProfit >= 0
                                     ? config.getSettingValue('color_profit', '#4ade80')
                                     : config.getSettingValue('color_loss', '#f87171');
-                            const profitSign = actionProfit >= 0 ? '+' : '';
+                            // A minus, not a bare number: the colour alone carried the sign, and a
+                            // loss read as a gain to anyone who could not tell the two reds apart
+                            const profitSign = actionProfit >= 0 ? '+' : '-';
                             profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${this.formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
                         }
                     }
@@ -4249,7 +4251,8 @@ class ActionTimeDisplay {
                     isEstimatedValue || totalProfit >= 0
                         ? config.getSettingValue('color_profit', '#4ade80')
                         : config.getSettingValue('color_loss', '#f87171');
-                const valueSign = totalProfit >= 0 ? '+' : '';
+                // As on the rows: a negative total says so in the number, not only in its colour
+                const valueSign = totalProfit >= 0 ? '+' : '-';
                 const valueLabel = isEstimatedValue ? 'Estimated value' : 'Total profit';
                 const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${this.formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>`;
                 totalDiv.innerHTML = baseText + valueText;
