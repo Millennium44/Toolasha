@@ -166,6 +166,20 @@ const FAILURE_THRESHOLD = 2;
 const COOLDOWN_BASE_MS = 30_000;
 const COOLDOWN_MAX_MS = 10 * 60 * 1000;
 
+/**
+ * How close together two failures have to be to count as the same burst.
+ *
+ * {@link FAILURE_THRESHOLD}'s reasoning is about a *burst* — "a rate-limited
+ * sweep fails every request it sends within milliseconds of the last, which
+ * an ordinary one-off drop does not" — but a bare counter cannot tell the
+ * difference, and without a window it does not try: one dropped request while
+ * a chart loads at 10:00 and an unrelated one at 15:00 are "two in a row" as
+ * far as counting goes, and the second would open a cool-down on the strength
+ * of a failure five hours stale. A failure older than this restarts the count
+ * at one instead of adding to it.
+ */
+const FAILURE_WINDOW_MS = COOLDOWN_BASE_MS;
+
 class MarketHistoryAPI {
     constructor() {
         this.cache = new Map();
@@ -182,6 +196,18 @@ class MarketHistoryAPI {
         this.cooldownUntil = 0;
         /** How many cool-downs in a row have been triggered with no success between them */
         this.cooldownStreak = 0;
+        /** `Date.now()` of the most recent failure, so a stale one cannot pair with a fresh one */
+        this.lastFailureAt = 0;
+        /**
+         * Which source the three counters above describe. They are a verdict
+         * on one host's health, and the two sources are different hosts run by
+         * different people — mooket II refusing us says nothing about mooket I.
+         * Switching the source setting is, among other things, exactly what a
+         * player does when one pool is unhealthy, and carrying a ten-minute
+         * cool-down across that switch would answer `null` for the whole
+         * window from a server that was never asked.
+         */
+        this.backoffSourceKey = null;
     }
 
     /** @returns {boolean} Whether history may be fetched at all */
@@ -241,6 +267,11 @@ class MarketHistoryAPI {
         const cached = this.cache.get(key);
         if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
 
+        // A different pool than the one the back-off state is about is a
+        // different server's health; it starts clean rather than serving the
+        // other one's sentence.
+        if (this.backoffSourceKey !== source.key) this.resetBackoff(source.key);
+
         // The pool refused us recently enough that we are still waiting it out.
         // No request goes out, and this reads exactly like any other unanswered
         // lookup to every caller: `dailyVolume` already settles a null answer as
@@ -299,7 +330,12 @@ class MarketHistoryAPI {
      * @returns {void}
      */
     noteFailure(error) {
-        if (Date.now() < this.cooldownUntil) return;
+        const now = Date.now();
+        if (now < this.cooldownUntil) return;
+
+        // Only failures inside the same burst add up — see FAILURE_WINDOW_MS
+        if (this.lastFailureAt && now - this.lastFailureAt > FAILURE_WINDOW_MS) this.consecutiveFailures = 0;
+        this.lastFailureAt = now;
 
         this.consecutiveFailures += 1;
         if (this.consecutiveFailures < FAILURE_THRESHOLD) {
@@ -309,12 +345,27 @@ class MarketHistoryAPI {
 
         this.cooldownStreak += 1;
         const cooldownMs = Math.min(COOLDOWN_BASE_MS * 2 ** (this.cooldownStreak - 1), COOLDOWN_MAX_MS);
-        this.cooldownUntil = Date.now() + cooldownMs;
+        this.cooldownUntil = now + cooldownMs;
         this.consecutiveFailures = 0;
 
         console.error(
             `[MooketHistory] The pool is refusing history requests — backing off for ${Math.round(cooldownMs / 1000)}s.`
         );
+    }
+
+    /**
+     * Forget everything known about one pool's health, and start tracking the
+     * named one instead. Called when the read source changes under us.
+     *
+     * @param {string|null} sourceKey - The source the counters now describe
+     * @returns {void}
+     */
+    resetBackoff(sourceKey) {
+        this.consecutiveFailures = 0;
+        this.cooldownUntil = 0;
+        this.cooldownStreak = 0;
+        this.lastFailureAt = 0;
+        this.backoffSourceKey = sourceKey;
     }
 
     /**

@@ -58,6 +58,8 @@ beforeEach(() => {
     marketHistoryAPI.consecutiveFailures = 0;
     marketHistoryAPI.cooldownUntil = 0;
     marketHistoryAPI.cooldownStreak = 0;
+    marketHistoryAPI.lastFailureAt = 0;
+    marketHistoryAPI.backoffSourceKey = null;
 });
 
 afterEach(() => {
@@ -346,6 +348,59 @@ describe('the shared cool-down', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    test('two failures far apart are not a burst, and do not trip it', async () => {
+        // FAILURE_THRESHOLD's whole justification is that a rate-limited
+        // sweep fails every request within milliseconds of the last, which an
+        // ordinary one-off drop does not. A bare counter cannot tell those
+        // apart: a blip while a chart loads, then an unrelated one an hour
+        // later, would otherwise turn price history off for thirty seconds on
+        // the strength of an hour-stale failure.
+        vi.useFakeTimers();
+        try {
+            globalThis.fetch = refusal();
+
+            await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+            expect(marketHistoryAPI.cooldownUntil).toBe(0);
+
+            vi.advanceTimersByTime(60 * 60 * 1000); // an hour of nothing going wrong
+
+            await marketHistoryAPI.fetchHistory('/items/b', 0, 7);
+            expect(marketHistoryAPI.cooldownUntil).toBe(0);
+
+            // A real burst still trips it on its second request
+            await marketHistoryAPI.fetchHistory('/items/c', 0, 7);
+            expect(marketHistoryAPI.cooldownUntil).toBeGreaterThan(Date.now());
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('switching to the other pool does not serve the first pool’s sentence', async () => {
+        // The two sources are different hosts run by different people, and
+        // switching to the other one is exactly what a player does when the
+        // selected pool is unhealthy. Carrying the cool-down across that
+        // switch answers null for the whole window from a server nobody
+        // asked.
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+
+        await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it on mooket2
+        expect(marketHistoryAPI.cooldownUntil).toBeGreaterThan(Date.now());
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        settings.market_historySource = 'mooket1';
+        fetchMock.mockImplementation(async () => ({
+            ok: true,
+            json: async () => ({ ask: [{ time: 1, price: 5 }], bid: [{ time: 1, price: 4 }] }),
+        }));
+
+        const rows = await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        expect(rows).toEqual([{ a: 5, b: 4, p: 4.5, v: 0, time: 1 }]);
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(marketHistoryAPI.cooldownUntil).toBe(0);
     });
 
     test('one line is logged for the cool-down, not one per refused item', async () => {
