@@ -19,6 +19,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Combat tasks and the bestiary plan
+
+- A combat task's Zone estimate no longer describes an arbitrary zone when it is your only task from that zone.
+- Pressing Go on an estimated combat task opens the zone the estimate used and fills in the fights it predicts.
+- New setting: a percentage added to that predicted count for luck, starting at 5%.
+- The bestiary planner prefers a higher-scoring zone when two are within a tolerance of the fastest, set in the planner and starting at 10%.
+
 ### Treasure panel
 
 - A "Game order" sort puts the chests in the same order the game's own inventory does.
