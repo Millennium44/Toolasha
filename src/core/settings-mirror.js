@@ -29,6 +29,41 @@
  * session that ends early (closing the tab, a crash) still very likely got
  * one mirror in.
  *
+ * ## Cross-tab cost
+ *
+ * `lastWriteAttempt` is per-tab, so left alone every open tab would run its
+ * own ten-minute timer and pay the full cost independently — one
+ * `JSON.stringify` of every character's settings map (70-100 KB each) plus a
+ * `GM_setValue` of the result, times however many tabs are open. Two things
+ * cut that down for the periodic (non-forced) pass:
+ *
+ * - **Cross-tab cadence.** {@link MIRROR_META_KEY} holds a small
+ *   `{writtenAt, fingerprint}` record, separate from the ~1 MB
+ *   {@link MIRROR_KEY} payload so checking it costs a read of a few dozen
+ *   bytes, not the whole mirror. A tab whose own timer fires first checks
+ *   this before doing anything else; if another tab mirrored inside the
+ *   interval, this tab adopts that cadence and returns without touching the
+ *   live store at all.
+ * - **Change fingerprint.** When the cadence does allow a pass, the payload
+ *   collected from the live store is hashed ({@link fingerprintPayload}, a
+ *   cheap non-cryptographic hash — the point is a fast integer compare, not
+ *   avoiding the read) and compared against the fingerprint from the last
+ *   real write. An unchanged fingerprint skips the `JSON.stringify` of the
+ *   full merged payload and the `GM_setValue` of it — the two actually
+ *   expensive steps — while still refreshing the meta record's `writtenAt`
+ *   so other tabs keep deferring.
+ *
+ * Worst case per tab per hour is now one full stringify+write (the settings
+ * genuinely changed) plus up to five cheap meta reads that found nothing to
+ * do (one per ten-minute tick) — down from up to six full stringify+writes
+ * before this, once per open tab.
+ *
+ * A forced call ({@link maybeMirror}'s `force` parameter — the one-time
+ * initial mirror, and tests) skips both of these and always attempts a
+ * write once {@link collectMirrorable} has vouched for the payload. Forcing
+ * still updates {@link MIRROR_META_KEY} on a real write, so a forced write
+ * in one tab still shortens the cadence other tabs see.
+ *
  * ## Never mirroring a wipe
  *
  * The rule that matters most: a mirror write must never replace a good
@@ -74,6 +109,14 @@ import storage from './storage.js';
 
 /** Where the mirror lives in GM (extension-scoped) storage. */
 const MIRROR_KEY = 'toolasha_settingsMirror_v1';
+
+/**
+ * Small cross-tab coordination record — `{writtenAt, fingerprint}` — kept
+ * separate from {@link MIRROR_KEY}'s full payload so every tab's cadence
+ * check is a read of a few dozen bytes rather than the whole mirror. See the
+ * "Cross-tab cost" section of the file doc.
+ */
+const MIRROR_META_KEY = 'toolasha_settingsMirror_meta_v1';
 
 /** How often {@link maybeMirror} is allowed to actually write — see file doc. */
 const MIRROR_INTERVAL_MS = 10 * 60 * 1000;
@@ -144,6 +187,19 @@ async function collectMirrorable() {
         payload[key] = probed.value;
     }
 
+    // A localStorage-era migration can still leave a character's settings map
+    // stored as a JSON *string* rather than the object every current writer
+    // (`storage.setJSON` → `set`) stores. Normalize it the same way the
+    // settings loader itself reads one back, so it is recognized as real data
+    // below instead of silently never being mirrored. A value that does not
+    // parse to an object (or fails to parse at all) is left exactly as read —
+    // still correctly excluded from `hasRealCharacterMap` below.
+    for (const key of Object.keys(payload)) {
+        if (!isCharacterMapKey(key) || typeof payload[key] !== 'string') continue;
+        const parsed = storage.parseJSON(payload[key], key, null);
+        if (parsed && typeof parsed === 'object') payload[key] = parsed;
+    }
+
     // The guarantee: at least one *real* character settings map, not just
     // bookkeeping or an empty shell. Anything short of this is either a fresh
     // install (nothing lost) or a wipe (the one thing that must never
@@ -177,25 +233,112 @@ function readMirrorData() {
 }
 
 /**
+ * The small cross-tab coordination record, or `null` when there is none (or
+ * it cannot be read/parsed). An unreadable/garbled record is treated the
+ * same as "no record" — it must never be mistaken for "just wrote", which
+ * would wedge every tab's cadence check open forever.
+ * @returns {{writtenAt: number, fingerprint: string|null}|null}
+ */
+function readMirrorMeta() {
+    try {
+        const raw = GM_getValue(MIRROR_META_KEY, null);
+        if (!raw) return null;
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.writtenAt !== 'number') return null;
+        return parsed;
+    } catch (error) {
+        console.error('[SettingsMirror] Could not read mirror meta:', error);
+        return null;
+    }
+}
+
+/**
+ * Persist the cross-tab coordination record. Best-effort: a failure here
+ * must not block the mirror write it accompanies, so it only logs.
+ * @param {number} writtenAt
+ * @param {string|null} fingerprint
+ * @returns {void}
+ */
+function writeMirrorMeta(writtenAt, fingerprint) {
+    try {
+        GM_setValue(MIRROR_META_KEY, JSON.stringify({ writtenAt, fingerprint }));
+    } catch (error) {
+        console.error('[SettingsMirror] Could not write mirror meta:', error);
+    }
+}
+
+/**
+ * A cheap fingerprint of a mirrorable payload — cheap in that comparing two
+ * of these is a string equality check rather than a deep object diff, not
+ * that computing one avoids looking at the payload: there is no way to know
+ * a settings map changed without reading it. A collision would at worst skip
+ * a write that should have landed, which the next pass with an actual change
+ * corrects, so a fast 32-bit hash (FNV-1a) is enough.
+ * @param {Object} payload - From {@link collectMirrorable}
+ * @returns {string} A short opaque fingerprint
+ */
+function fingerprintPayload(payload) {
+    let hash = 0x811c9dc5;
+    for (const key of Object.keys(payload).sort()) {
+        const chunk = `${key}=${JSON.stringify(payload[key])}|`;
+        for (let i = 0; i < chunk.length; i++) {
+            hash ^= chunk.charCodeAt(i);
+            hash = Math.imul(hash, 0x01000193);
+        }
+    }
+    return (hash >>> 0).toString(36);
+}
+
+/**
  * Mirror the live settings to GM storage, if the cadence allows it and the
- * live store looks trustworthy. Safe to call often — it self-throttles.
+ * live store looks trustworthy. Safe to call often — it self-throttles, both
+ * within this tab and, for the periodic (non-forced) pass, across tabs — see
+ * the file doc's "Cross-tab cost" section.
  *
- * @param {boolean} [force=false] - Skip the cadence check (the initial mirror, and tests)
+ * @param {boolean} [force=false] - Skip the cadence and change-fingerprint
+ *   checks (the initial mirror, and tests). Anti-poisoning — refusing a
+ *   payload {@link collectMirrorable} would not vouch for — always applies.
  * @returns {Promise<boolean>} Whether a write actually landed
  */
 async function maybeMirror(force = false) {
     if (!gmAvailable()) return false;
-    if (!force && Date.now() - lastWriteAttempt < MIRROR_INTERVAL_MS) return false;
+
+    if (!force) {
+        // Cheapest check first: this tab's own memory, no GM read at all.
+        if (Date.now() - lastWriteAttempt < MIRROR_INTERVAL_MS) return false;
+
+        // Next cheapest: a few dozen bytes of meta rather than the mirror's
+        // full payload. Another tab may have mirrored inside the interval —
+        // if so, adopt its cadence instead of also reading the live store.
+        const meta = readMirrorMeta();
+        if (meta && Date.now() - meta.writtenAt < MIRROR_INTERVAL_MS) {
+            lastWriteAttempt = meta.writtenAt;
+            return false;
+        }
+    }
     lastWriteAttempt = Date.now();
 
     try {
         const payload = await collectMirrorable();
         if (!payload) return false;
 
+        if (!force) {
+            const fingerprint = fingerprintPayload(payload);
+            const meta = readMirrorMeta();
+            if (meta && meta.fingerprint === fingerprint) {
+                // Nothing has changed since the last real write. Refresh the
+                // cadence stamp so other tabs still see this pass happened,
+                // without paying for the full stringify + GM_setValue below.
+                writeMirrorMeta(Date.now(), fingerprint);
+                return false;
+            }
+        }
+
         // Union, live wins — see "Why the write merges rather than replaces".
         const data = { ...(readMirrorData() || {}), ...payload };
 
         GM_setValue(MIRROR_KEY, JSON.stringify({ writtenAt: Date.now(), data }));
+        writeMirrorMeta(Date.now(), fingerprintPayload(payload));
         return true;
     } catch (error) {
         console.error('[SettingsMirror] Mirror write failed:', error);
@@ -243,16 +386,32 @@ function stopMirroring() {
 function getMirroredEntry(characterKey) {
     if (!gmAvailable()) return null;
     const entry = readMirrorData()?.[characterKey];
-    return entry && typeof entry === 'object' ? entry : null;
+    if (entry && typeof entry === 'object') return entry;
+    // Defensive: collectMirrorable() normalizes a legacy string-shaped map
+    // before it is ever written, but parse here too in case an older mirror
+    // (written before that normalization existed) still holds one.
+    if (typeof entry === 'string') {
+        const parsed = storage.parseJSON(entry, characterKey, null);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+    }
+    return null;
 }
 
 /**
- * Reset the cadence throttle. Test-only — production never needs to forget
- * that it just wrote.
+ * Reset the cadence throttle — both this tab's own and, when GM storage is
+ * available, the cross-tab meta record — so the next call behaves as if no
+ * mirror has ever run. Test-only — production never needs to forget that it
+ * just wrote.
  * @returns {void}
  */
 function _resetCadenceForTests() {
     lastWriteAttempt = 0;
+    if (!gmAvailable()) return;
+    try {
+        GM_setValue(MIRROR_META_KEY, JSON.stringify({ writtenAt: 0, fingerprint: null }));
+    } catch (error) {
+        console.error('[SettingsMirror] Could not reset mirror meta (tests only):', error);
+    }
 }
 
 export default {
@@ -261,6 +420,7 @@ export default {
     maybeMirror,
     getMirroredEntry,
     MIRROR_KEY,
+    MIRROR_META_KEY,
     MIRROR_INTERVAL_MS,
     _resetCadenceForTests,
 };

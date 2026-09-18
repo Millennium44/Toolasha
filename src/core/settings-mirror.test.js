@@ -17,6 +17,15 @@ vi.mock('./storage.js', () => ({
             if (unreadable.on) return null;
             return store.has(key) ? { found: true, value: store.get(key) } : { found: false, value: null };
         }),
+        parseJSON: vi.fn((raw, _key, defaultValue = null) => {
+            if (raw === null || raw === undefined) return defaultValue;
+            if (typeof raw === 'object') return raw;
+            try {
+                return JSON.parse(raw);
+            } catch {
+                return defaultValue;
+            }
+        }),
     },
 }));
 
@@ -199,5 +208,101 @@ describe('with GM storage available', () => {
 
         await vi.advanceTimersByTimeAsync(30 * 1000);
         expect(GM_getValue(settingsMirror.MIRROR_KEY, null)).not.toBeNull();
+    });
+
+    describe('cross-tab cost reduction', () => {
+        test('two passes with nothing changed between them produce exactly one write', async () => {
+            vi.useFakeTimers();
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+            settingsMirror._resetCadenceForTests();
+
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+            const writesAfterFirst = GM_setValue.mock.calls.filter(([key]) => key === settingsMirror.MIRROR_KEY).length;
+            expect(writesAfterFirst).toBe(1);
+
+            // Next allowed tick, cadence-wise, but nothing in the live store changed.
+            vi.advanceTimersByTime(settingsMirror.MIRROR_INTERVAL_MS + 1000);
+            expect(await settingsMirror.maybeMirror()).toBe(false);
+
+            const totalWrites = GM_setValue.mock.calls.filter(([key]) => key === settingsMirror.MIRROR_KEY).length;
+            expect(totalWrites).toBe(1);
+        });
+
+        test('a second tab defers to a write another tab already made inside the interval', async () => {
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+
+            // "Tab A": the module instance already imported at file scope.
+            settingsMirror._resetCadenceForTests();
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+
+            // "Tab B": a fresh module instance (its own module-level lastWriteAttempt
+            // starts at 0), sharing the same GM storage and live store as tab A.
+            vi.resetModules();
+            const { default: tabB } = await import('./settings-mirror.js');
+            expect(await tabB.maybeMirror()).toBe(false);
+
+            const totalWrites = GM_setValue.mock.calls.filter(([key]) => key === settingsMirror.MIRROR_KEY).length;
+            expect(totalWrites).toBe(1);
+        });
+
+        test('a changed map still mirrors promptly on the next allowed pass', async () => {
+            vi.useFakeTimers();
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+            settingsMirror._resetCadenceForTests();
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+
+            vi.advanceTimersByTime(settingsMirror.MIRROR_INTERVAL_MS + 1000);
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'light' } } });
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+
+            expect(settingsMirror.getMirroredEntry('script_settingsMap_char1')).toEqual({
+                theme: { id: 'theme', value: 'light' },
+            });
+        });
+
+        test('an unreadable live store does not write and does not permanently disable future writes', async () => {
+            vi.useFakeTimers();
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'dark' } } });
+            settingsMirror._resetCadenceForTests();
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+
+            vi.advanceTimersByTime(settingsMirror.MIRROR_INTERVAL_MS + 1000);
+            unreadable.on = true;
+            expect(await settingsMirror.maybeMirror()).toBe(false);
+
+            unreadable.on = false;
+            setStore({ script_settingsMap_char1: { theme: { id: 'theme', value: 'light' } } });
+            vi.advanceTimersByTime(settingsMirror.MIRROR_INTERVAL_MS + 1000);
+            expect(await settingsMirror.maybeMirror()).toBe(true);
+            expect(settingsMirror.getMirroredEntry('script_settingsMap_char1')).toEqual({
+                theme: { id: 'theme', value: 'light' },
+            });
+        });
+    });
+
+    describe('legacy string-shaped settings maps', () => {
+        test('a settings map stored as a JSON string is mirrored', async () => {
+            setStore({
+                script_settingsMap_char1: JSON.stringify({ theme: { id: 'theme', value: 'dark' } }),
+            });
+
+            const wrote = await settingsMirror.maybeMirror(true);
+            expect(wrote).toBe(true);
+            expect(settingsMirror.getMirroredEntry('script_settingsMap_char1')).toEqual({
+                theme: { id: 'theme', value: 'dark' },
+            });
+        });
+
+        test('a string that parses to a non-object is still refused', async () => {
+            setStore({ script_settingsMap_char1: JSON.stringify('just a string') });
+            const wrote = await settingsMirror.maybeMirror(true);
+            expect(wrote).toBe(false);
+        });
+
+        test('a string that does not parse as JSON at all is still refused', async () => {
+            setStore({ script_settingsMap_char1: 'not json at all {' });
+            const wrote = await settingsMirror.maybeMirror(true);
+            expect(wrote).toBe(false);
+        });
     });
 });
