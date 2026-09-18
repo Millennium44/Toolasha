@@ -19,6 +19,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Leftovers: the settings backup, and the tier a task estimate assumed
+
+- A combat task estimate now uses the difficulty you last fought that zone at, and says so when it has no record of one.
+- Settings can be restored after a wipe without the offer holding up the rest of the script while it waits for you.
+- The settings backup costs far less: tabs share one write, and an unchanged copy is not rewritten.
+- A settings map from a much older build is backed up too, instead of being skipped in silence.
+- Asking the browser to keep your data is no longer suppressed on one device by another device having asked.
+- Scrolls recorded in the treasure ledger before they were excluded are cleared out for good.
+
 ### Open a combat zone at the tier you were reading
 
 - Every row of the all-zones table has a button that opens that zone at that tier, filling nothing.
