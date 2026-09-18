@@ -55,6 +55,9 @@ beforeEach(() => {
     marketHistoryAPI.socket = null;
     marketHistoryAPI.notedTestServer = false;
     marketHistoryAPI.cache.clear();
+    marketHistoryAPI.consecutiveFailures = 0;
+    marketHistoryAPI.cooldownUntil = 0;
+    marketHistoryAPI.cooldownStreak = 0;
 });
 
 afterEach(() => {
@@ -235,6 +238,129 @@ describe('an answer that is not rows', () => {
         fetchMock.mockImplementation(async () => ({ ok: true, json: async () => rows }));
         expect(await marketHistoryAPI.fetchHistory('/items/cheese', 0, 7)).toEqual(rows);
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('the shared cool-down', () => {
+    // The refusal this guards against arrives with no CORS headers, so it never
+    // reaches `response.ok` — the fetch promise itself rejects, same as any
+    // other network failure. That opacity is exactly why the module cannot key
+    // off a status code and has to count failures instead.
+    function refusal() {
+        return vi.fn(async () => {
+            throw new TypeError('NetworkError when attempting to fetch resource.');
+        });
+    }
+
+    beforeEach(() => {
+        on('www.milkywayidle.com');
+    });
+
+    test('a refusal alone does not trip it, but a second one in a row does', async () => {
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+
+        expect(await marketHistoryAPI.fetchHistory('/items/a', 0, 7)).toBeNull();
+        expect(marketHistoryAPI.cooldownUntil).toBe(0);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        expect(await marketHistoryAPI.fetchHistory('/items/b', 0, 7)).toBeNull();
+        expect(marketHistoryAPI.cooldownUntil).toBeGreaterThan(Date.now());
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    test('while it is in force, no further fetches are issued and every lookup answers null', async () => {
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+
+        await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+
+        // A pool of unrelated items asked about while the cool-down holds
+        const results = await Promise.all(
+            ['c', 'd', 'e'].map((letter) => marketHistoryAPI.fetchHistory(`/items/${letter}`, 0, 7))
+        );
+
+        expect(results).toEqual([null, null, null]);
+        expect(fetchMock).toHaveBeenCalledTimes(2); // no new requests went out
+    });
+
+    test('it expires, and a normal lookup afterwards resumes fetching', async () => {
+        vi.useFakeTimers();
+        try {
+            const fetchMock = refusal();
+            globalThis.fetch = fetchMock;
+
+            await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+            await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+
+            const cooldownMs = marketHistoryAPI.cooldownUntil - Date.now();
+            vi.advanceTimersByTime(cooldownMs + 1);
+
+            const rows = [{ a: 5, b: 4, p: 4.5, v: 10, time: 1 }];
+            fetchMock.mockImplementation(async () => ({ ok: true, json: async () => rows }));
+
+            expect(await marketHistoryAPI.fetchHistory('/items/c', 0, 7)).toEqual(rows);
+            expect(fetchMock).toHaveBeenCalledTimes(3);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a success resets the failure count, so a single later refusal does not trip it', async () => {
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+        await marketHistoryAPI.fetchHistory('/items/a', 0, 7); // one failure, not tripped
+
+        const rows = [{ a: 5, b: 4, p: 4.5, v: 10, time: 1 }];
+        fetchMock.mockImplementation(async () => ({ ok: true, json: async () => rows }));
+        await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // succeeds, clears the count
+
+        fetchMock.mockImplementation(refusal());
+        await marketHistoryAPI.fetchHistory('/items/c', 0, 7); // one failure again
+
+        expect(marketHistoryAPI.cooldownUntil).toBe(0);
+    });
+
+    test('repeated cool-downs with no success between them grow, up to the ceiling', async () => {
+        vi.useFakeTimers();
+        try {
+            const fetchMock = refusal();
+            globalThis.fetch = fetchMock;
+
+            const seen = [];
+            for (let round = 0; round < 4; round += 1) {
+                await marketHistoryAPI.fetchHistory(`/items/${round}-a`, 0, 7);
+                await marketHistoryAPI.fetchHistory(`/items/${round}-b`, 0, 7); // trips it
+                seen.push(marketHistoryAPI.cooldownUntil - Date.now());
+                vi.advanceTimersByTime(seen[seen.length - 1] + 1); // clear it for the next round
+            }
+
+            // 30s, 60s, 120s, 240s — each about double the last
+            expect(seen[0]).toBeCloseTo(30_000, -2);
+            expect(seen[1]).toBeCloseTo(60_000, -2);
+            expect(seen[2]).toBeCloseTo(120_000, -2);
+            expect(seen[3]).toBeCloseTo(240_000, -2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('one line is logged for the cool-down, not one per refused item', async () => {
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const fetchMock = refusal();
+        globalThis.fetch = fetchMock;
+
+        // A concurrent burst, the way `VOLUME_CONCURRENCY` in market-liquidity.js
+        // fires several lookups at once rather than one at a time
+        const items = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        await Promise.all(items.map((letter) => marketHistoryAPI.fetchHistory(`/items/${letter}`, 0, 7)));
+
+        const backoffLines = errorLog.mock.calls.filter((call) => String(call[0]).includes('backing off'));
+        expect(backoffLines).toHaveLength(1);
+        expect(errorLog.mock.calls.length).toBeLessThan(items.length);
     });
 });
 

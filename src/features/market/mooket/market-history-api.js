@@ -133,6 +133,39 @@ const REQUEST_TIMEOUT_MS = 10_000;
 /** How long to wait before reconnecting the reporting socket */
 const RECONNECT_DELAY_MS = 30_000;
 
+/**
+ * Consecutive fetch failures, module-wide, before the shared cool-down engages.
+ *
+ * The 429 this pool actually sends back arrives with no CORS headers, so the
+ * browser turns it into an opaque `TypeError` on the `fetch()` promise — the
+ * real HTTP status never reaches this code, and nothing here can tell "the
+ * pool is rate-limiting us" apart from "the network hiccuped" or "the pool is
+ * down". Rather than guess at a status that cannot be read, a burst of
+ * failures is treated as the signal instead of a single one: a rate-limited
+ * sweep fails every request it sends within milliseconds of the last (see
+ * `VOLUME_CONCURRENCY` in `market-liquidity.js`), which an ordinary one-off
+ * drop does not. Two in a row, counted across every caller rather than per
+ * item, catches that burst on its second request while still letting a lone
+ * blip pass without punishing every other lookup in the app for it.
+ */
+const FAILURE_THRESHOLD = 2;
+
+/**
+ * The cool-down's first length, and how long it is allowed to grow to.
+ *
+ * Doubling on every cool-down that is immediately followed by more refusals,
+ * capped at ten minutes: this is a community-run server, not infrastructure
+ * we control, so the bias is toward asking it less rather than retrying on a
+ * fixed clock that would hit it just as hard on day two of an outage as on
+ * the first failure. Thirty seconds is short enough that a brief 429 window
+ * clears before a player notices the volume figures are stale; ten minutes is
+ * a ceiling because an unbounded back-off is its own kind of neglect — a
+ * session left open overnight should still recover once the pool is healthy
+ * again, not silently give up on it.
+ */
+const COOLDOWN_BASE_MS = 30_000;
+const COOLDOWN_MAX_MS = 10 * 60 * 1000;
+
 class MarketHistoryAPI {
     constructor() {
         this.cache = new Map();
@@ -143,6 +176,12 @@ class MarketHistoryAPI {
         this.socketSourceKey = null;
         /** Said once. The getter is read on every book, and on every reconnect. */
         this.notedTestServer = false;
+        /** Failures since the last success or the last cool-down, shared by every caller */
+        this.consecutiveFailures = 0;
+        /** `Date.now()` timestamp the shared cool-down lifts, or 0 when not cooling */
+        this.cooldownUntil = 0;
+        /** How many cool-downs in a row have been triggered with no success between them */
+        this.cooldownStreak = 0;
     }
 
     /** @returns {boolean} Whether history may be fetched at all */
@@ -202,6 +241,13 @@ class MarketHistoryAPI {
         const cached = this.cache.get(key);
         if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
 
+        // The pool refused us recently enough that we are still waiting it out.
+        // No request goes out, and this reads exactly like any other unanswered
+        // lookup to every caller: `dailyVolume` already settles a null answer as
+        // "unknown" rather than "zero traded", which is the correct thing for a
+        // cool-down to mean too.
+        if (Date.now() < this.cooldownUntil) return null;
+
         const url =
             source.key === 'mooket1'
                 ? `${source.host}/market/item/history?name=${encodeURIComponent(itemHrid)}` +
@@ -224,13 +270,51 @@ class MarketHistoryAPI {
             // retries return the same non-answer without asking the server.
             if (!Array.isArray(rows)) throw new Error('history payload is not an array of rows');
             this.remember(key, rows);
+            // A working request is the only evidence the pool is healthy again;
+            // both counters exist to be cleared by exactly this.
+            this.consecutiveFailures = 0;
+            this.cooldownStreak = 0;
             return rows;
         } catch (error) {
-            console.error('[MooketHistory] Fetching history failed:', error);
+            this.noteFailure(error);
             return null;
         } finally {
             clearTimeout(timeout);
         }
+    }
+
+    /**
+     * Count a failed request toward the shared cool-down, and engage it once
+     * {@link FAILURE_THRESHOLD} is reached.
+     *
+     * Concurrent lookups (`VOLUME_CONCURRENCY` in `market-liquidity.js`) can all
+     * be in flight when the pool starts refusing, so more than one failure can
+     * land here before the first one has had a chance to set `cooldownUntil`.
+     * Once it is set, later failures in the same burst are echoes of the burst
+     * that already tripped it, not new evidence — they are swallowed rather
+     * than restarting the doubling or logging again, which is what would turn
+     * one bad run into a wall of "backing off" lines instead of one.
+     *
+     * @param {Error} error - What the failed request threw
+     * @returns {void}
+     */
+    noteFailure(error) {
+        if (Date.now() < this.cooldownUntil) return;
+
+        this.consecutiveFailures += 1;
+        if (this.consecutiveFailures < FAILURE_THRESHOLD) {
+            console.error('[MooketHistory] Fetching history failed:', error);
+            return;
+        }
+
+        this.cooldownStreak += 1;
+        const cooldownMs = Math.min(COOLDOWN_BASE_MS * 2 ** (this.cooldownStreak - 1), COOLDOWN_MAX_MS);
+        this.cooldownUntil = Date.now() + cooldownMs;
+        this.consecutiveFailures = 0;
+
+        console.error(
+            `[MooketHistory] The pool is refusing history requests — backing off for ${Math.round(cooldownMs / 1000)}s.`
+        );
     }
 
     /**
