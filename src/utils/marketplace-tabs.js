@@ -366,6 +366,112 @@ export function ensureClearAllTabsControl(container, referenceTab, onClearAll, o
 }
 
 /**
+ * The attribute `insertTabInOrder` stamps on a tab it places, and reads back
+ * off every tab already in the strip to decide where a new one belongs. A
+ * label is not a safe key: the game's own tabs and ours both carry counts and
+ * badges in their text (`My Listings0`, `Flips 3`), so two features racing to
+ * add "the same" tab by name alone would either duplicate it or misfile it.
+ * The key is a plain string a feature picks once, e.g. `'ledger'`, and is
+ * unrelated to the tab's visible text.
+ */
+const TAB_ORDER_ATTR = 'data-mwi-tab-key';
+
+/**
+ * The fixed left-to-right order our own tabs are kept in, once the game's own
+ * tabs (never touched here — see `insertTabInOrder`). A key with no entry
+ * here — including every per-item pinned tab from `createMaterialTab`, which
+ * intentionally passes no key — sorts after all of these, in the order it
+ * arrived, which is where a companion script's own tab lands too: nothing
+ * here needs to name it to get that placement right.
+ *
+ * `'history'` has no current tab attached to it; it is reserved so a future
+ * "History" tab (distinct from "Market History") has a slot already defined
+ * instead of landing wherever it happened to attach first.
+ */
+const TAB_ORDER = ['market-history', 'ledger', 'stale', 'bulk-sell', 'history'];
+
+/**
+ * @param {string|null|undefined} key
+ * @returns {number} The key's position in `TAB_ORDER`, or `TAB_ORDER.length`
+ *   (after every named slot) for an unlisted or missing key — including every
+ *   pinned material tab, which passes no key at all.
+ */
+function tabRank(key) {
+    const index = key ? TAB_ORDER.indexOf(key) : -1;
+    return index === -1 ? TAB_ORDER.length : index;
+}
+
+/**
+ * Whether `el` is one of ours — a tab this module or a feature built, as
+ * opposed to one of the game's own. Matched by marker attribute rather than
+ * visible text so a game tab whose label happens to contain "Ledger" (it
+ * never has, but nothing guarantees it never will) can't be mistaken for
+ * one of ours, and so a game tab is never a candidate for repositioning.
+ * @param {Element} el
+ * @returns {boolean}
+ */
+function isOwnTab(el) {
+    return (
+        el.hasAttribute(TAB_ORDER_ATTR) ||
+        el.hasAttribute('data-mwi-custom-tab') ||
+        el.hasAttribute('data-mwi-shrine-tab')
+    );
+}
+
+/**
+ * Insert `tab` into `container` at its preferred position instead of
+ * appending, so the marketplace tab strip reads in a fixed left-to-right
+ * order — `Market History`, `Ledger`, `Stale`, `Bulk Sell`, then anything
+ * else in the order it arrived — no matter which feature's `ensureTabExists`
+ * happens to run first or how many times a `MutationObserver` re-runs it
+ * after the game rebuilds the strip.
+ *
+ * The game's own tabs (`Market Listings`, `My Listings`) are never inspected
+ * for repositioning, never detached, and never re-appended — only elements
+ * already marked as ours (`data-mwi-tab-key`, `data-mwi-custom-tab`, or
+ * `data-mwi-shrine-tab`) are candidates to insert before. Because the game
+ * always adds its own tabs first and this function never moves anything that
+ * isn't already one of ours, our tabs settle after the game's regardless of
+ * call order.
+ *
+ * Idempotent: if `tab` is already exactly where this ordering puts it — right
+ * before the same next sibling, or already last when nothing should follow it
+ * — nothing is touched. A `MutationObserver` calling this on every rebuild
+ * does not thrash the DOM once the strip has converged.
+ *
+ * @param {HTMLElement} container - The tab strip (from `visibleTabsContainer`)
+ * @param {HTMLElement} tab - The tab to place. Mutated: stamped with `key` via
+ *   `data-mwi-tab-key` when `key` is given.
+ * @param {string} [key] - Stable identifier from `TAB_ORDER`, e.g. `'ledger'`.
+ *   Omit for a tab that should sort after every named tab, in arrival order
+ *   (what every `createMaterialTab` pinned tab already wants, and what an
+ *   unrecognized tab — including one added by a companion script through this
+ *   module's published surface — gets automatically without special-casing it).
+ */
+export function insertTabInOrder(container, tab, key) {
+    if (!container || !tab) return;
+    if (key) tab.setAttribute(TAB_ORDER_ATTR, key);
+
+    const myRank = tabRank(key);
+    let nextSibling = null;
+    for (const el of container.children) {
+        if (el === tab || !isOwnTab(el)) continue;
+        if (tabRank(el.getAttribute(TAB_ORDER_ATTR)) > myRank) {
+            nextSibling = el;
+            break;
+        }
+    }
+
+    if (nextSibling) {
+        if (tab.nextElementSibling !== nextSibling || tab.parentElement !== container) {
+            container.insertBefore(tab, nextSibling);
+        }
+    } else if (tab.parentElement !== container || container.lastElementChild !== tab) {
+        container.appendChild(tab);
+    }
+}
+
+/**
  * The marketplace tab bar you can actually see.
  *
  * There can be more than one. The marketplace opens as a popout over whatever

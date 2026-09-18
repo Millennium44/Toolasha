@@ -47,7 +47,7 @@ import {
     collectItemsAboveTab,
 } from '../inventory/custom-tabs/custom-tabs-data.js';
 import marketplaceShortcuts from './marketplace-shortcuts.js';
-import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createFloatingWidget } from '../../utils/floating-widget.js';
 import { formatKMB } from '../../utils/formatters.js';
@@ -441,16 +441,10 @@ class BulkSellAssistant {
      */
     _ensureButton(tabBar) {
         if (this.toggleBtn && tabBar.contains(this.toggleBtn)) {
-            // The Market History tab is injected by its own feature and can
-            // land after us — keep our button on its right
-            const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
-            if (
-                historyTab &&
-                historyTab.nextElementSibling !== this.toggleBtn &&
-                historyTab.compareDocumentPosition(this.toggleBtn) & Node.DOCUMENT_POSITION_PRECEDING
-            ) {
-                historyTab.after(this.toggleBtn);
-            }
+            // Another feature's tab (Market History, Ledger, Stale) can land
+            // on either side of us on a later rebuild — re-settle into the
+            // preferred order every time; a no-op once it already matches
+            insertTabInOrder(tabBar, this.toggleBtn, 'bulk-sell');
             return;
         }
         if (this.toggleBtn) this.toggleBtn.remove();
@@ -490,17 +484,7 @@ class BulkSellAssistant {
             this._togglePanel();
         });
 
-        const historyTab = tabBar.querySelector('[data-mwi-market-history-tab="true"]');
-        const firstCustomTab = Array.from(tabBar.children).find(
-            (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
-        );
-        if (historyTab) {
-            historyTab.after(button);
-        } else if (firstCustomTab) {
-            firstCustomTab.before(button);
-        } else {
-            tabBar.appendChild(button);
-        }
+        insertTabInOrder(tabBar, button, 'bulk-sell');
         this.toggleBtn = button;
         this._syncButton();
     }

@@ -26,7 +26,7 @@ import marketPriceStore from './mooket/market-price-store.js';
 import { buildStaleCapital } from '../../utils/stale-capital.js';
 import { formatKMB, formatRelativeTime, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { visibleTabsContainer, navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { visibleTabsContainer, navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 
@@ -137,22 +137,9 @@ class StaleCapitalView {
                 this.openModal();
             });
 
-            // Right after the Ledger tab when it exists, else right after Market
-            // History, else before any pinned material tabs, else at the end
-            const ledgerTab = tabsContainer.querySelector('[data-mwi-trade-ledger-tab="true"]');
-            const historyTab = tabsContainer.querySelector('[data-mwi-market-history-tab="true"]');
-            const firstCustomTab = Array.from(tabsContainer.children).find(
-                (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
-            );
-            if (ledgerTab) {
-                ledgerTab.after(tab);
-            } else if (historyTab) {
-                historyTab.after(tab);
-            } else if (firstCustomTab) {
-                firstCustomTab.before(tab);
-            } else {
-                tabsContainer.appendChild(tab);
-            }
+            // Preferred-order slot: Market History, Ledger, Stale, Bulk Sell,
+            // then anything else in arrival order — see marketplace-tabs.js
+            insertTabInOrder(tabsContainer, tab, 'stale');
 
             this.marketplaceTab = tab;
         };

@@ -98,6 +98,9 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
     }),
     navigateToMarketplace: vi.fn(),
     visibleTabsContainer: () => tabsState.container,
+    // Real ordering isn't what these tests are about; just place the tab like
+    // the plain append used to.
+    insertTabInOrder: vi.fn((container, tab) => container?.appendChild(tab)),
 }));
 
 const { default: sellQueue, navigationBlocked } = await import('./sell-queue.js');

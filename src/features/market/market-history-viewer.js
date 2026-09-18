@@ -15,7 +15,7 @@ import dataManager from '../../core/data-manager.js';
 import { formatWithSeparator, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { navigateToMarketplace, visibleTabsContainer } from '../../utils/marketplace-tabs.js';
+import { navigateToMarketplace, visibleTabsContainer, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
 
@@ -220,17 +220,9 @@ class MarketHistoryViewer {
                 this.openModal();
             });
 
-            // Insert before any missing materials custom tabs (data-mwi-custom-tab="true")
-            const firstCustomTab = Array.from(tabsContainer.children).find(
-                (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
-            );
-
-            if (firstCustomTab) {
-                firstCustomTab.before(tab);
-            } else {
-                // No custom tabs, append to end
-                tabsContainer.appendChild(tab);
-            }
+            // Preferred-order slot: Market History, Ledger, Stale, Bulk Sell,
+            // then anything else in arrival order — see marketplace-tabs.js
+            insertTabInOrder(tabsContainer, tab, 'market-history');
 
             this.marketplaceTab = tab;
         };

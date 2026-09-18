@@ -98,6 +98,7 @@ vi.mock('./estimated-listing-age.js', () => ({ default: estimatedListingAgeMock 
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: vi.fn(),
     visibleTabsContainer: vi.fn(() => null),
+    insertTabInOrder: vi.fn(),
 }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 

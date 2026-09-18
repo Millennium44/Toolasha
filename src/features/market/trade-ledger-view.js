@@ -19,7 +19,7 @@ import { aggregateLedger } from '../../utils/trade-ledger.js';
 import { analyzeFillTimes, MIN_BUCKET_N } from '../../utils/fill-time-analysis.js';
 import { formatKMB, formatDateTime, formatRelativeTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { visibleTabsContainer, navigateToMarketplace } from '../../utils/marketplace-tabs.js';
+import { visibleTabsContainer, navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
@@ -183,19 +183,9 @@ class TradeLedgerView {
                 this.openModal();
             });
 
-            // Sit right after the Market History tab when it exists, otherwise
-            // before any pinned material tabs, otherwise at the end
-            const historyTab = tabsContainer.querySelector('[data-mwi-market-history-tab="true"]');
-            const firstCustomTab = Array.from(tabsContainer.children).find(
-                (btn) => btn.getAttribute('data-mwi-custom-tab') === 'true'
-            );
-            if (historyTab) {
-                historyTab.after(tab);
-            } else if (firstCustomTab) {
-                firstCustomTab.before(tab);
-            } else {
-                tabsContainer.appendChild(tab);
-            }
+            // Preferred-order slot: Market History, Ledger, Stale, Bulk Sell,
+            // then anything else in arrival order — see marketplace-tabs.js
+            insertTabInOrder(tabsContainer, tab, 'ledger');
 
             this.marketplaceTab = tab;
         };

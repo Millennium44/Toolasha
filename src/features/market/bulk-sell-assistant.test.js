@@ -95,7 +95,10 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
         whenReady: () => (game.loadoutsReady ? Promise.resolve(true) : new Promise((r) => game.readyWaiters.push(r))),
     },
 }));
-vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({
+    navigateToMarketplace: () => {},
+    insertTabInOrder: (container, tab) => container?.appendChild(tab),
+}));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({
     createMutationWatcher: () => ({ start: () => {}, stop: () => {} }),
 }));

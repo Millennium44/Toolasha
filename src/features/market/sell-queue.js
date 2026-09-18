@@ -14,6 +14,7 @@ import {
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
     visibleTabsContainer,
+    insertTabInOrder,
 } from '../../utils/marketplace-tabs.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { release, reserve } from '../../utils/inventory-reservations.js';
@@ -286,7 +287,9 @@ function injectTabs() {
             badgeSpan.innerHTML = buildBadgeHtml(entry.itemName, count);
         }
 
-        tabsContainer.appendChild(tab);
+        // No key: these are per-item pinned tabs, not one of the named tabs,
+        // so they sort after all of those, in arrival order — see marketplace-tabs.js
+        insertTabInOrder(tabsContainer, tab);
         currentTabs.push(tab);
     }
 }

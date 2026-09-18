@@ -36,6 +36,7 @@ import {
     ensureClearAllTabsControl,
     watchTabForAcquisition,
     attachRegularTabClearListener,
+    insertTabInOrder,
 } from './marketplace-tabs.js';
 
 /** Fire the exact wildcard path watchTabForAcquisition listens on — the same
@@ -62,6 +63,138 @@ function buildReferenceTab() {
     tab.appendChild(badge);
     return tab;
 }
+
+/** A tab shaped like one of the game's own — `role="tab"`, no `data-mwi-*` marker. */
+function buildGameTab(label) {
+    const tab = document.createElement('button');
+    tab.setAttribute('role', 'tab');
+    tab.textContent = label;
+    return tab;
+}
+
+/** A tab shaped like a pinned material tab — carries `data-mwi-custom-tab`
+ * but no ordering key, same as what `createMaterialTab` stamps. */
+function buildUnkeyedCustomTab(label) {
+    const tab = document.createElement('button');
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('data-mwi-custom-tab', 'true');
+    tab.textContent = label;
+    return tab;
+}
+
+describe('insertTabInOrder', () => {
+    let container;
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        container = document.createElement('div');
+        document.body.appendChild(container);
+    });
+
+    test('tabs arriving in scrambled order end up in the preferred order', () => {
+        container.appendChild(buildGameTab('Market Listings'));
+        container.appendChild(buildGameTab('My Listings'));
+
+        const stale = document.createElement('button');
+        const bulkSell = document.createElement('button');
+        const marketHistory = document.createElement('button');
+        const ledger = document.createElement('button');
+
+        // Deliberately out of order: whichever feature happened to init first
+        insertTabInOrder(container, stale, 'stale');
+        insertTabInOrder(container, bulkSell, 'bulk-sell');
+        insertTabInOrder(container, marketHistory, 'market-history');
+        insertTabInOrder(container, ledger, 'ledger');
+
+        expect(Array.from(container.children)).toEqual([
+            container.children[0], // Market Listings
+            container.children[1], // My Listings
+            marketHistory,
+            ledger,
+            stale,
+            bulkSell,
+        ]);
+    });
+
+    test('a tab already correctly placed is not moved', () => {
+        container.appendChild(buildGameTab('Market Listings'));
+        const marketHistory = document.createElement('button');
+        const ledger = document.createElement('button');
+        insertTabInOrder(container, marketHistory, 'market-history');
+        insertTabInOrder(container, ledger, 'ledger');
+
+        const insertBeforeSpy = vi.spyOn(container, 'insertBefore');
+        const appendChildSpy = vi.spyOn(container, 'appendChild');
+
+        insertTabInOrder(container, marketHistory, 'market-history');
+
+        expect(insertBeforeSpy).not.toHaveBeenCalled();
+        expect(appendChildSpy).not.toHaveBeenCalled();
+    });
+
+    test("the game's tabs stay first and are never re-appended", () => {
+        const marketListings = buildGameTab('Market Listings');
+        const myListings = buildGameTab('My Listings');
+        container.appendChild(marketListings);
+        container.appendChild(myListings);
+
+        const removeSpy = vi.spyOn(marketListings, 'remove');
+        const myListingsRemoveSpy = vi.spyOn(myListings, 'remove');
+
+        const ledger = document.createElement('button');
+        insertTabInOrder(container, ledger, 'ledger');
+        // Run it again from a rebuild-triggered re-render
+        insertTabInOrder(container, ledger, 'ledger');
+
+        expect(container.children[0]).toBe(marketListings);
+        expect(container.children[1]).toBe(myListings);
+        expect(removeSpy).not.toHaveBeenCalled();
+        expect(myListingsRemoveSpy).not.toHaveBeenCalled();
+    });
+
+    test('an unknown tab goes last and keeps its arrival order among other unknowns', () => {
+        container.appendChild(buildGameTab('Market Listings'));
+        const ledger = document.createElement('button');
+        insertTabInOrder(container, ledger, 'ledger');
+
+        // A companion script's tab, or any tab with no recognized key
+        const first = buildUnkeyedCustomTab('flip-1');
+        const second = buildUnkeyedCustomTab('flip-2');
+        insertTabInOrder(container, first);
+        insertTabInOrder(container, second);
+
+        const children = Array.from(container.children);
+        expect(children.indexOf(ledger)).toBeLessThan(children.indexOf(first));
+        expect(children.indexOf(first)).toBeLessThan(children.indexOf(second));
+    });
+
+    test('running the helper twice changes nothing the second time', () => {
+        container.appendChild(buildGameTab('Market Listings'));
+        const tabs = ['bulk-sell', 'market-history', 'stale', 'ledger'].map((key) => {
+            const tab = document.createElement('button');
+            insertTabInOrder(container, tab, key);
+            return tab;
+        });
+
+        const before = Array.from(container.children);
+
+        const insertBeforeSpy = vi.spyOn(container, 'insertBefore');
+        const appendChildSpy = vi.spyOn(container, 'appendChild');
+        for (const [i, key] of ['bulk-sell', 'market-history', 'stale', 'ledger'].entries()) {
+            insertTabInOrder(container, tabs[i], key);
+        }
+
+        expect(Array.from(container.children)).toEqual(before);
+        expect(insertBeforeSpy).not.toHaveBeenCalled();
+        expect(appendChildSpy).not.toHaveBeenCalled();
+    });
+
+    test('stamps the ordering key as a data attribute', () => {
+        const tab = document.createElement('button');
+        insertTabInOrder(container, tab, 'ledger');
+        expect(tab.getAttribute('data-mwi-tab-key')).toBe('ledger');
+    });
+});
 
 describe('createMaterialTab', () => {
     beforeEach(() => {

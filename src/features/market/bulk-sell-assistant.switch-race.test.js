@@ -100,7 +100,10 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({
+    navigateToMarketplace: () => {},
+    insertTabInOrder: (container, tab) => container?.appendChild(tab),
+}));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({
     createMutationWatcher: () => {
         watchers.registered += 1;
