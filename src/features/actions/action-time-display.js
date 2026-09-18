@@ -201,8 +201,11 @@ const COMBAT_UNKNOWN_TEXT = '[? · no sim rate]';
 /** How long a row's "sim 24h" button simulates its zone for */
 const ZONE_SIM_HOURS = 24;
 
-/** The class of the button line under an eligible combat row, cleared with the rest on redraw */
+/** The class of the rate/error line beside an eligible combat row, cleared with the rest on redraw */
 const ZONE_SIM_CLASS = 'mwi-queue-zone-sim';
+
+/** The class of the panel's own header line, which carries the "sim 24h" button */
+const QUEUE_SIM_HEADER_CLASS = 'mwi-queue-sim-header';
 
 /**
  * A cheap signature of a set of single-zone rates, so a re-read can tell whether anything changed.
@@ -215,6 +218,20 @@ function zoneSimRatesStamp(rates) {
         .sort()
         .map((key) => `${key}@${rates[key]?.savedAt ?? ''}`)
         .join(';');
+}
+
+/**
+ * What the header's button reads while a sweep is running.
+ *
+ * The per-row button said `simulating… N%`; a sweep covers several rows, so it says which run it
+ * is on as well — `simulating… 2/4 40%` — in the same vocabulary.
+ *
+ * @param {{done: number, total: number, percent: number}} sweep - The running sweep
+ * @returns {string} The button's label
+ */
+function queueSimButtonLabel(sweep) {
+    const at = Math.min(sweep.done + 1, sweep.total);
+    return `simulating… ${at}/${sweep.total} ${sweep.percent}%`;
 }
 
 /**
@@ -309,7 +326,12 @@ function compareCombatGear(runLoadout, rowLoadout) {
  *   loadout id: a single-zone run from the row's "sim 24h" button, preferred when present
  * @param {number} [input.now=Date.now()] - The clock
  * @returns {{kind: 'estimate'|'unknown'|'infinite', seconds: number|null, flags: Array<string>,
- *   text: string, title: string, source?: string}|null} Null for a row that is not combat
+ *   rateFlags: Array<string>|null, text: string, title: string, source?: string,
+ *   profitPerHour: number|null, profitTotal: number|null}|null} Null for a row that is not
+ *   combat. `rateFlags` is the reading's own flags, or null when the row has no reading at all —
+ *   an empty array is what "this row already has a fresh rate" means. `profitPerHour` is the
+ *   simulated net per hour and `profitTotal` what this row's run is expected to make; either is
+ *   null when the reading could not say, and never a zero standing in for "unknown".
  */
 export function estimateCombatQueueRow({
     actionObj,
@@ -323,20 +345,82 @@ export function estimateCombatQueueRow({
         actionDetails?.type === '/action_types/combat' || Boolean(actionObj?.actionHrid?.includes('/combat/'));
     if (!isCombat) return null;
 
+    const picked = pickCombatRowReading({ actionObj, actionDetails, snapshot, rowLoadout, zoneRate, now });
+
     if (!actionObj.hasMaxCount) {
-        return { kind: 'infinite', seconds: null, flags: [], text: '[∞]', title: '' };
+        // No count, so no total — but the rate the row would be fought at is still worth saying,
+        // and it comes from the same reading a counted row would have been timed by.
+        return {
+            kind: 'infinite',
+            seconds: null,
+            flags: [],
+            text: '[∞]',
+            title: '',
+            rateFlags: picked.reading ? picked.reading.flags : null,
+            profitPerHour: picked.reading?.profitPerHour ?? null,
+            profitTotal: null,
+        };
     }
 
-    const unknown = (why) => ({
-        kind: 'unknown',
-        seconds: null,
-        flags: [],
-        text: COMBAT_UNKNOWN_TEXT,
-        title: `No time estimate: ${why}`,
-    });
+    if (!picked.reading) {
+        return {
+            kind: 'unknown',
+            seconds: null,
+            flags: [],
+            text: COMBAT_UNKNOWN_TEXT,
+            title: `No time estimate: ${picked.why}`,
+            rateFlags: null,
+            profitPerHour: null,
+            profitTotal: null,
+        };
+    }
+
+    const { reading, useZoneRate } = picked;
+    const remaining = Math.max(0, (Number(actionObj.maxCount) || 0) - (Number(actionObj.currentCount) || 0));
+    const seconds = (remaining / reading.rate) * 3600;
+
+    const title = [
+        `Estimated, not measured: ${formatWithSeparator(remaining)} waves left at ` +
+            `${formatWithSeparator(Math.round(reading.rate))} waves/h, ${reading.source}.`,
+        ...reading.sentences,
+    ].join(' ');
+
+    // The total and the rate come from the same reading as the time, so a row's two figures can
+    // never disagree about which simulation they were taken from. A reading that carried no profit
+    // (a run written before the field, or one taken with no market data) has no total — never a
+    // total of zero, which would read as "this fight earns nothing".
+    const profitPerHour = Number.isFinite(reading.profitPerHour) ? reading.profitPerHour : null;
+    const profitTotal = profitPerHour === null ? null : (profitPerHour * seconds) / 3600;
+
+    return {
+        kind: 'estimate',
+        seconds,
+        flags: reading.flags,
+        text: `[~${timeReadable(seconds)} · ${['sim', ...reading.flags].join(', ')}]`,
+        title,
+        rateFlags: reading.flags,
+        source: useZoneRate ? 'zone' : 'allZones',
+        profitPerHour,
+        profitTotal,
+    };
+}
+
+/**
+ * Which stored reading a combat row is answered from, or why it cannot be.
+ *
+ * Split out of {@link estimateCombatQueueRow} so a `Fight ∞` row — which has no count to time,
+ * but does have a rate worth quoting — resolves its reading by exactly the rule a counted row
+ * does, rather than by a second copy of it.
+ *
+ * @param {Object} input - As {@link estimateCombatQueueRow} takes them
+ * @returns {{reading: Object|null, useZoneRate: boolean, why: string|null}} The reading and which
+ *   store it came from, or the sentence saying why there is none
+ */
+function pickCombatRowReading({ actionObj, actionDetails, snapshot, rowLoadout, zoneRate, now }) {
+    const none = (why) => ({ reading: null, useZoneRate: false, why });
 
     if (actionDetails?.combatZoneInfo?.isDungeon) {
-        return unknown("a dungeon's count is runs, and the all-zones sim rates dungeons in waves.");
+        return none("a dungeon's count is runs, and the all-zones sim rates dungeons in waves.");
     }
 
     const tier = Number(actionObj.difficultyTier) || 0;
@@ -354,14 +438,14 @@ export function estimateCombatQueueRow({
         !(allZonesUsable && allZonesGear.flag === null && (zone.savedAt ?? 0) > (zoneRate.savedAt ?? 0));
 
     if (!useZoneRate && !allZonesUsable) {
-        const button = ', or use this row’s “sim 24h” button.';
+        const button = ', or use the panel’s “sim 24h” button.';
         if (!snapshot) {
-            return unknown(`run an all-zones sim in the Combat Simulator to time counted fights${button}`);
+            return none(`run an all-zones sim in the Combat Simulator to time counted fights${button}`);
         }
         if (!zone) {
-            return unknown(`your all-zones run has no result for ${where}${button}`);
+            return none(`your all-zones run has no result for ${where}${button}`);
         }
-        return unknown(
+        return none(
             `your all-zones run for ${where} has no wave rate (it predates one, or cleared no waves) — re-run it${button}`
         );
     }
@@ -369,24 +453,7 @@ export function estimateCombatQueueRow({
     const reading = useZoneRate
         ? describeZoneSimRate(zoneRate, safeRowLoadout, where, now)
         : describeAllZonesRate(zone, allZonesGear, where, now);
-
-    const remaining = Math.max(0, (Number(actionObj.maxCount) || 0) - (Number(actionObj.currentCount) || 0));
-    const seconds = (remaining / reading.rate) * 3600;
-
-    const title = [
-        `Estimated, not measured: ${formatWithSeparator(remaining)} waves left at ` +
-            `${formatWithSeparator(Math.round(reading.rate))} waves/h, ${reading.source}.`,
-        ...reading.sentences,
-    ].join(' ');
-
-    return {
-        kind: 'estimate',
-        seconds,
-        flags: reading.flags,
-        text: `[~${timeReadable(seconds)} · ${['sim', ...reading.flags].join(', ')}]`,
-        title,
-        source: useZoneRate ? 'zone' : 'allZones',
-    };
+    return { reading, useZoneRate, why: null };
 }
 
 /**
@@ -409,7 +476,8 @@ function simReadingAge(savedAt, now) {
  * @param {{flag: string|null, sentence: string}} gear - From `compareCombatGear`
  * @param {string} where - The zone and tier, as a reader says them
  * @param {number} now - The clock
- * @returns {{rate: number, source: string, flags: Array<string>, sentences: Array<string>}}
+ * @returns {{rate: number, profitPerHour: number|null, source: string, flags: Array<string>,
+ *   sentences: Array<string>}}
  */
 function describeAllZonesRate(zone, gear, where, now) {
     const { age, stale } = simReadingAge(zone.savedAt, now);
@@ -418,6 +486,7 @@ function describeAllZonesRate(zone, gear, where, now) {
     if (gear.flag) flags.push(gear.flag);
     return {
         rate: zone.encountersPerHour,
+        profitPerHour: Number.isFinite(zone.profitPerHour) ? zone.profitPerHour : null,
         source: `the rate simulated for ${where} in your all-zones run ${age}`,
         flags,
         sentences: [stale ? 'That run is over a week old.' : null, gear.sentence].filter(Boolean),
@@ -434,7 +503,8 @@ function describeAllZonesRate(zone, gear, where, now) {
  * @param {{known: boolean, name: string|null, signature?: string|null}} rowLoadout - The row's loadout now
  * @param {string} where - The zone and tier, as a reader says them
  * @param {number} now - The clock
- * @returns {{rate: number, source: string, flags: Array<string>, sentences: Array<string>}}
+ * @returns {{rate: number, profitPerHour: number|null, source: string, flags: Array<string>,
+ *   sentences: Array<string>}}
  */
 export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now()) {
     const { age, stale } = simReadingAge(zoneRate.savedAt, now);
@@ -464,6 +534,7 @@ export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now(
 
     return {
         rate: zoneRate.encountersPerHour,
+        profitPerHour: Number.isFinite(zoneRate.profitPerHour) ? zoneRate.profitPerHour : null,
         source: `from a ${hours} solo simulation of ${where} ${age}`,
         flags,
         sentences: [stale ? 'That run is over a week old.' : null, gearSentence].filter(Boolean),
@@ -503,8 +574,10 @@ class ActionTimeDisplay {
         this._lastQueueMenu = null;
         // Single-zone runs started from a row's button, by zoneSimRateKey: {percent, ownerKey}
         this._zoneSimRuns = new Map();
-        // The last failed outcome of a row's button, by zoneSimRateKey: {message, ownerKey}
+        // The last failed outcome of a run, by zoneSimRateKey: {message, ownerKey}
         this._zoneSimErrors = new Map();
+        // The header button's sweep while it runs: {ownerKey, total, done, percent}
+        this._zoneSimSweep = null;
     }
 
     /**
@@ -657,7 +730,22 @@ class ActionTimeDisplay {
      */
     combatRowEstimate(actionObj, actionDetails) {
         if (!actionObj?.hasMaxCount) return null;
-        if (actionDetails?.type !== '/action_types/combat' && !actionObj.actionHrid?.includes('/combat/')) {
+        return this.combatRowReading(actionObj, actionDetails);
+    }
+
+    /**
+     * Any combat row's reading, `Fight ∞` included.
+     *
+     * The counted case is {@link combatRowEstimate}; an endless one is read for its rate alone —
+     * the panel still draws it `[∞]` through the general path, and only the profit figure and
+     * the header button's freshness test need what the simulation said about it.
+     *
+     * @param {Object} actionObj - The queued action
+     * @param {Object} actionDetails - Its action details
+     * @returns {Object|null} From {@link estimateCombatQueueRow}
+     */
+    combatRowReading(actionObj, actionDetails) {
+        if (actionDetails?.type !== '/action_types/combat' && !actionObj?.actionHrid?.includes('/combat/')) {
             return null;
         }
         try {
@@ -674,6 +762,9 @@ class ActionTimeDisplay {
                 kind: 'unknown',
                 seconds: null,
                 flags: [],
+                rateFlags: null,
+                profitPerHour: null,
+                profitTotal: null,
                 text: COMBAT_UNKNOWN_TEXT,
                 title: 'No time estimate: it could not be worked out.',
             };
@@ -681,7 +772,7 @@ class ActionTimeDisplay {
     }
 
     /**
-     * Whether a queued fight can be given a rate by its "sim 24h" button.
+     * Whether a queued fight is one the panel's "sim 24h" button can give a rate.
      *
      * Any non-dungeon combat row, counted or `Fight ∞`: a counted row uses the rate for its time,
      * an endless one shows the rate itself. Dungeons are left out for the reason their time is
@@ -702,8 +793,9 @@ class ActionTimeDisplay {
     }
 
     /**
-     * Draw the "sim 24h" line under an eligible combat row: the button, a running run's
-     * progress, the last failure if there was one, and — on a `Fight ∞` row — the rate itself.
+     * Draw the line beside an eligible combat row: the last failure if there was one, and — on a
+     * `Fight ∞` row — the rate itself. The button that starts a run lives on the panel's header,
+     * not here; one press there covers every row that needs one.
      *
      * @param {HTMLElement} actionDiv - The row
      * @param {Object} actionObj - The queued action
@@ -715,11 +807,9 @@ class ActionTimeDisplay {
             const ownerKey = characterKey(ALL_ZONES_SNAPSHOT_KEY);
             const tier = Number(actionObj.difficultyTier) || 0;
             const key = zoneSimRateKey(actionObj.actionHrid, tier, actionObj.characterLoadoutID || 0);
-            const run = this._zoneSimRuns.get(key);
-            const running = run?.ownerKey === ownerKey;
             const failure = this._zoneSimErrors.get(key);
 
-            // Sits inline after the row's time, so the button does not add a line to the queue
+            // Sits inline after the row's time, so nothing here adds a line to the queue
             const line = document.createElement('span');
             line.className = ZONE_SIM_CLASS;
             line.style.cssText = `
@@ -732,37 +822,6 @@ class ActionTimeDisplay {
                 flex-wrap: wrap;
                 vertical-align: middle;
             `;
-
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'mwi-queue-zone-sim-button';
-            button.dataset.zoneSimKey = key;
-            button.disabled = running;
-            button.textContent = running ? `simulating… ${run.percent}%` : 'sim 24h';
-            button.title =
-                'Simulate this zone and tier solo for 24 hours in the loadout this action uses, ' +
-                'and time the row from that. Runs locally; nothing is sent to the game.';
-            button.style.cssText = `
-                font-size: inherit;
-                padding: 0 6px;
-                border-radius: 3px;
-                border: 1px solid var(--border-color, ${config.COLOR_BORDER});
-                background: transparent;
-                color: inherit;
-                cursor: ${running ? 'progress' : 'pointer'};
-            `;
-            // The row itself is draggable and clickable in the game's menu; the click is ours
-            const swallow = (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-            };
-            button.addEventListener('mousedown', (event) => event.stopPropagation());
-            button.addEventListener('pointerdown', (event) => event.stopPropagation());
-            button.addEventListener('click', (event) => {
-                swallow(event);
-                this.startZoneSim(actionObj);
-            });
-            line.appendChild(button);
 
             if (!actionObj.hasMaxCount) {
                 const rate = this.rowZoneSimRate(actionObj);
@@ -783,7 +842,7 @@ class ActionTimeDisplay {
                 }
             }
 
-            if (!running && failure?.ownerKey === ownerKey) {
+            if (failure?.ownerKey === ownerKey) {
                 const error = document.createElement('span');
                 error.className = 'mwi-queue-zone-sim-error';
                 error.style.color = config.COLOR_WARNING || '#ffa500';
@@ -791,11 +850,13 @@ class ActionTimeDisplay {
                 line.appendChild(error);
             }
 
+            if (!line.childNodes.length) return;
+
             const times = actionDiv.querySelectorAll('.mwi-queue-action-time');
             const container = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
             (times[times.length - 1] || container || actionDiv).appendChild(line);
         } catch (error) {
-            console.error('[ActionTimeDisplay] Drawing a zone sim button failed:', error);
+            console.error('[ActionTimeDisplay] Drawing a zone sim line failed:', error);
         }
     }
 
@@ -864,7 +925,7 @@ class ActionTimeDisplay {
     }
 
     /**
-     * Show a running row's progress on its button, without redrawing the whole menu.
+     * Show the running sweep's progress on the header button, without redrawing the whole menu.
      * @param {string} key - The run's zoneSimRateKey
      * @param {number} percent - 0–100
      */
@@ -883,10 +944,308 @@ class ActionTimeDisplay {
             this.queueMenuObserver();
             this.queueMenuObserver = null;
         }
-        for (const button of queueMenu.querySelectorAll('.mwi-queue-zone-sim-button')) {
-            if (button.dataset.zoneSimKey === key) button.textContent = `simulating… ${rounded}%`;
+        const sweep = this._zoneSimSweep;
+        if (sweep && sweep.key === key) {
+            sweep.percent = rounded;
+            for (const button of queueMenu.querySelectorAll('.mwi-queue-sim-all-button')) {
+                button.textContent = queueSimButtonLabel(sweep);
+            }
         }
         if (wasWatching) this.setupQueueMenuObserver(queueMenu);
+    }
+
+    /**
+     * Whether a combat row may show a profit figure at all.
+     *
+     * Behind the panel's own value toggle, and only in `profit` mode: a stored combat rate is a
+     * net figure and nothing else. `zone-rate-sim.js` keeps `calculateSimRevenue`'s `netPerHour`
+     * and discards its `revenuePerHour`, and the all-zones snapshot does the same, so there is no
+     * gross for `estimated_value` mode to show. A combat row says nothing in that mode rather
+     * than quoting a net figure under a label that promises a gross one.
+     *
+     * @returns {boolean}
+     */
+    combatValueApplies() {
+        return (
+            Boolean(config.getSettingValue('actionQueue_showValue', true)) &&
+            config.getSettingValue('actionQueue_valueMode', 'profit') === 'profit'
+        );
+    }
+
+    /**
+     * What a combat row's profit line reads, or null when there is nothing honest to say.
+     *
+     * A counted row gets the total for its own run and the rate it rests on; an endless one has
+     * no total, so it gets the rate alone. Both figures always share a sign — the total is the
+     * rate times a duration — so only the leading one carries it.
+     *
+     * @param {Object|null} combat - From {@link estimateCombatQueueRow}
+     * @returns {{text: string, negative: boolean}|null}
+     */
+    combatRowProfitFigures(combat) {
+        if (!this.combatValueApplies()) return null;
+        const perHour = Number.isFinite(combat?.profitPerHour) ? combat.profitPerHour : null;
+        if (perHour === null) return null;
+        const total = Number.isFinite(combat.profitTotal) ? combat.profitTotal : null;
+        const money = (value) => this.formatLargeNumber(Math.abs(Math.round(value)));
+        const negative = (total === null ? perHour : total) < 0;
+        const sign = negative ? '-' : '+';
+        const text =
+            total === null
+                ? `${sign}${money(perHour)}/hr`
+                : `${sign}${money(total)} (${negative ? '-' : ''}${money(perHour)}/hr)`;
+        return { text, negative };
+    }
+
+    /**
+     * Draw a combat row's expected profit, under its time.
+     *
+     * Its own line rather than a suffix on the time: the panel is 414px at its widest and the
+     * time already carries a completion clock, so a figure appended to it would wrap mid-number.
+     *
+     * @param {HTMLElement} actionDiv - The row
+     * @param {Object|null} combat - From {@link estimateCombatQueueRow}
+     */
+    appendCombatRowProfit(actionDiv, combat) {
+        try {
+            const figures = this.combatRowProfitFigures(combat);
+            if (!figures) return;
+            const color = figures.negative
+                ? config.getSettingValue('color_loss', '#f87171')
+                : config.getSettingValue('color_profit', '#4ade80');
+            const profitDiv = document.createElement('div');
+            profitDiv.className = 'mwi-queue-action-profit';
+            profitDiv.style.cssText = `
+                color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                font-size: 0.85em;
+                margin-top: 2px;
+            `;
+            profitDiv.innerHTML = `Profit: <span style="color: ${color};">${figures.text}</span>`;
+            profitDiv.title =
+                'Estimated, not measured: the simulated rate for this fight, over the time this row is ' +
+                'expected to take. Net of the consumables the simulation drank.';
+            const container = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
+            (container || actionDiv).appendChild(profitDiv);
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Drawing a combat row profit failed:', error);
+        }
+    }
+
+    /**
+     * Fold one combat row's expected profit into the panel's running value total.
+     *
+     * A row with no total of its own does not contribute a zero — it marks the total incomplete,
+     * the same way a fight with no time marks the time total `+ [?]`.
+     *
+     * @param {{total: number, hasAny: boolean, incomplete: boolean}} tally - Mutated in place
+     * @param {Object|null} combat - From {@link estimateCombatQueueRow}
+     */
+    addCombatValue(tally, combat) {
+        if (!combat || !this.combatValueApplies()) return;
+        const total = Number.isFinite(combat.profitTotal) ? combat.profitTotal : null;
+        if (total === null) {
+            tally.incomplete = true;
+            return;
+        }
+        tally.total += total;
+        tally.hasAny = true;
+    }
+
+    /**
+     * Whether a queued fight's rate is fresh enough that the header button should skip it.
+     *
+     * Fresh means the row has a reading and that reading carries no flags — exactly the flags the
+     * row text already shows: `stale` for a run over a week old, and `other gear`, `unknown gear`
+     * or `gear changed` for a run this fight's loadout cannot be compared with. There is no second
+     * notion of freshness here; a row that reads clean is one nothing would be learned by re-running.
+     *
+     * @param {Object} actionObj - The queued action
+     * @param {Object} actionDetails - Its action details
+     * @returns {boolean}
+     */
+    rowHasFreshRate(actionObj, actionDetails) {
+        const reading = this.combatRowReading(actionObj, actionDetails);
+        return Array.isArray(reading?.rateFlags) && reading.rateFlags.length === 0;
+    }
+
+    /**
+     * Every queued fight the header's button covers, in queue order.
+     *
+     * Two rows in the same zone, tier and loadout are one simulation, so the second is dropped:
+     * running it twice would produce the same rate and cost the time again.
+     *
+     * @returns {Array<{actionObj: Object, actionDetails: Object, key: string, fresh: boolean}>}
+     */
+    collectQueueSimTargets() {
+        try {
+            const actions = [...(dataManager.getCurrentActions() || [])].sort(compareActionQueueOrder);
+            const seen = new Set();
+            const targets = [];
+            for (const actionObj of actions) {
+                const actionDetails = dataManager.getActionDetails(actionObj?.actionHrid);
+                if (!actionDetails || !this.zoneSimEligible(actionObj, actionDetails)) continue;
+                const key = zoneSimRateKey(
+                    actionObj.actionHrid,
+                    Number(actionObj.difficultyTier) || 0,
+                    actionObj.characterLoadoutID || 0
+                );
+                if (seen.has(key)) continue;
+                seen.add(key);
+                targets.push({
+                    actionObj,
+                    actionDetails,
+                    key,
+                    fresh: this.rowHasFreshRate(actionObj, actionDetails),
+                });
+            }
+            return targets;
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Collecting the combat rows in the queue failed:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Draw the panel's header line: one "sim 24h" button for the whole queue.
+     *
+     * Replaces the per-row buttons. Nothing is drawn when the queue holds no fight that could be
+     * simulated; when every fight already reads clean the button is there but disabled, saying so,
+     * rather than looking pressable and then doing nothing.
+     *
+     * @param {HTMLElement} queueMenu - The edit menu
+     */
+    appendQueueSimHeader(queueMenu) {
+        try {
+            if (!config.getSettingValue('actionQueue_zoneSimButton', true)) return;
+            const targets = this.collectQueueSimTargets();
+            if (!targets.length) return;
+
+            const ownerKey = characterKey(ALL_ZONES_SNAPSHOT_KEY);
+            const sweep = this._zoneSimSweep?.ownerKey === ownerKey ? this._zoneSimSweep : null;
+            const stale = targets.filter((target) => !target.fresh);
+
+            const line = document.createElement('div');
+            line.className = QUEUE_SIM_HEADER_CLASS;
+            line.style.cssText = `
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                justify-content: center;
+                flex-wrap: wrap;
+                margin-bottom: 6px;
+                font-size: 0.85em;
+                color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+            `;
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'mwi-queue-sim-all-button';
+            button.disabled = Boolean(sweep) || stale.length === 0;
+            button.textContent = sweep ? queueSimButtonLabel(sweep) : 'sim 24h';
+            button.title = sweep
+                ? 'Simulating the queued fights that need a rate, one at a time.'
+                : stale.length === 0
+                  ? 'Every queued fight already has a fresh rate, so there is nothing to simulate.'
+                  : `Simulate ${stale.length} queued fight${stale.length === 1 ? '' : 's'} solo for 24 hours, ` +
+                    'each in the loadout it uses, and time the rows from that. Fights that already have a ' +
+                    'fresh rate are skipped. Runs locally; nothing is sent to the game.';
+            button.style.cssText = `
+                font-size: inherit;
+                padding: 0 6px;
+                border-radius: 3px;
+                border: 1px solid var(--border-color, ${config.COLOR_BORDER});
+                background: transparent;
+                color: inherit;
+                cursor: ${sweep ? 'progress' : button.disabled ? 'default' : 'pointer'};
+            `;
+            button.addEventListener('mousedown', (event) => event.stopPropagation());
+            button.addEventListener('pointerdown', (event) => event.stopPropagation());
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.runQueueSimSweep();
+            });
+            line.appendChild(button);
+
+            if (!sweep && stale.length === 0) {
+                const note = document.createElement('span');
+                note.className = 'mwi-queue-sim-all-note';
+                note.textContent = 'every queued fight already has a fresh rate';
+                line.appendChild(note);
+            }
+
+            queueMenu.insertAdjacentElement('afterbegin', line);
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Drawing the queue sim header failed:', error);
+        }
+    }
+
+    /**
+     * Simulate every queued fight that needs a rate, one at a time.
+     *
+     * One sweep at a time: a second press while one runs starts nothing, so the button is safe to
+     * press twice. Each run is a heavy simulation, so they are awaited in turn rather than raced.
+     *
+     * The character is captured before the first await and checked again before and after each
+     * run: a sweep must never file one character's rate under another's key, nor keep simulating
+     * a queue that is no longer on screen. A closed panel ends it the same way.
+     *
+     * @returns {Promise<{ok: boolean, simulated: number, reason?: string}|null>} Null when a sweep
+     *   was already running
+     */
+    async runQueueSimSweep() {
+        if (this._zoneSimSweep) return null;
+
+        let ownerKey;
+        try {
+            ownerKey = characterKey(ALL_ZONES_SNAPSHOT_KEY);
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Resolving the character for a queue sim sweep failed:', error);
+            return null;
+        }
+
+        const targets = this.collectQueueSimTargets().filter((target) => !target.fresh);
+        if (!targets.length) return { ok: true, simulated: 0, reason: 'fresh' };
+
+        const sweep = { ownerKey, total: targets.length, done: 0, percent: 0, key: null };
+        this._zoneSimSweep = sweep;
+        this.redrawQueueMenu();
+
+        let simulated = 0;
+        try {
+            for (const target of targets) {
+                if (this._zoneSimSweep !== sweep) break;
+                if (!this._lastQueueMenu?.isConnected || !this.sweepIsStillForOwner(ownerKey)) break;
+                sweep.key = target.key;
+                sweep.percent = 0;
+                await this.startZoneSim(target.actionObj);
+                // The run took minutes; whoever is logged in now may not be who started it. The
+                // run that just finished was filed under the key it started with, so it counts;
+                // what must not happen is the next one starting for somebody else.
+                if (this._zoneSimSweep !== sweep) break;
+                simulated += 1;
+                sweep.done += 1;
+                if (!this.sweepIsStillForOwner(ownerKey)) break;
+            }
+        } finally {
+            if (this._zoneSimSweep === sweep) this._zoneSimSweep = null;
+        }
+
+        this.redrawQueueMenu();
+        return { ok: true, simulated };
+    }
+
+    /**
+     * Whether the character now logged in is the one a running sweep started for.
+     * @param {string} ownerKey - The storage key captured when the sweep started
+     * @returns {boolean}
+     */
+    sweepIsStillForOwner(ownerKey) {
+        try {
+            return characterKey(ALL_ZONES_SNAPSHOT_KEY) === ownerKey;
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -1578,6 +1937,11 @@ class ActionTimeDisplay {
         // old character's figure land in the row created for the new one.
         this.activeProfitCalculationId = null;
         this.activeBarProfitId = null;
+
+        // Abandon a running "sim 24h" sweep: the loop checks the sweep it started is still the
+        // one on the instance, so clearing it here is what ends it, and nothing it simulates
+        // after this point is filed for the character now logged in.
+        this._zoneSimSweep = null;
 
         // Clear appended stats from old character's action panel (before it's removed)
         const oldActionNameElement = document.querySelector('div[class*="Header_actionName"]');
@@ -3627,6 +3991,7 @@ class ActionTimeDisplay {
             queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
             queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
             queueMenu.querySelectorAll(`.${ZONE_SIM_CLASS}`).forEach((el) => el.remove());
+            queueMenu.querySelectorAll(`.${QUEUE_SIM_HEADER_CLASS}`).forEach((el) => el.remove());
             const existingTotal = document.querySelector('#mwi-queue-total-time');
             if (existingTotal) {
                 existingTotal.remove();
@@ -3650,6 +4015,11 @@ class ActionTimeDisplay {
             let usesSimRate = false;
             let hasMaterialLimitEstimate = false;
             const actionsToCalculate = []; // Store actions for async profit calculation (with time in seconds)
+            // What the combat rows contribute to the panel's value total. They are not in
+            // `actionsToCalculate`: their figure comes from a stored simulation, not from the
+            // market calculators, and a row with no figure marks the total incomplete rather than
+            // adding a zero.
+            const combatValue = { total: 0, hasAny: false, incomplete: false };
 
             // Detect current action from DOM so we can avoid double-counting
             let currentAction = null;
@@ -3666,7 +4036,9 @@ class ActionTimeDisplay {
                 const actionDetails = dataManager.getActionDetails(currentAction.actionHrid);
                 const currentCombat = actionDetails ? this.combatRowEstimate(currentAction, actionDetails) : null;
                 if (currentCombat) {
-                    // A counted fight spends nothing from the ledger and has no profit pass here
+                    // A counted fight spends nothing from the ledger, and its value comes from the
+                    // same simulated reading its time does rather than from the profit pass below
+                    this.addCombatValue(combatValue, currentCombat);
                     if (currentCombat.kind === 'estimate') {
                         accumulatedTime += currentCombat.seconds;
                         hasEstimate = true;
@@ -3892,6 +4264,8 @@ class ActionTimeDisplay {
                     const combatTextContainer = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
                     (combatTextContainer || actionDiv).appendChild(combatDiv);
                     this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
+                    this.appendCombatRowProfit(actionDiv, combat);
+                    this.addCombatValue(combatValue, combat);
                     continue;
                 }
 
@@ -4080,8 +4454,16 @@ class ActionTimeDisplay {
                     actionDiv.appendChild(timeDiv);
                 }
 
-                // A Fight ∞ row: no time to give, but its button can still fetch it a rate
-                if (isTrulyInfinite) this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
+                // A Fight ∞ row: no time to give, but the header's button can still fetch it a
+                // rate, and a rate is a profit per hour even with no total to put it against
+                if (isTrulyInfinite) {
+                    this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
+                    const infiniteCombat = this.combatRowReading(actionObj, actionDetails);
+                    if (infiniteCombat) {
+                        this.appendCombatRowProfit(actionDiv, infiniteCombat);
+                        this.addCombatValue(combatValue, infiniteCombat);
+                    }
+                }
 
                 // Create empty profit div for this action (will be populated asynchronously)
                 // Skip enhancing actions — no profit applies
@@ -4109,6 +4491,9 @@ class ActionTimeDisplay {
                     }
                 }
             }
+
+            // One button for the whole queue, above the rows it covers
+            this.appendQueueSimHeader(queueMenu);
 
             // Add total time at bottom (includes current action + all queued)
             const totalDiv = document.createElement('div');
@@ -4158,15 +4543,20 @@ class ActionTimeDisplay {
             // Insert after queue menu
             queueMenu.insertAdjacentElement('afterend', totalDiv);
 
-            // Calculate profit asynchronously (non-blocking)
-            if (
-                actionsToCalculate.length > 0 &&
-                marketAPI.isLoaded() &&
-                config.getSettingValue('actionQueue_showValue', true)
-            ) {
+            // Calculate profit asynchronously (non-blocking). The combat rows have no market
+            // calculation to wait for, but their total is written by the same pass so the panel
+            // only ever shows one value line.
+            const marketRows = actionsToCalculate.length > 0 && marketAPI.isLoaded();
+            if ((marketRows || combatValue.hasAny) && config.getSettingValue('actionQueue_showValue', true)) {
                 // Async will handle observer reconnection after updates complete
                 shouldReconnectObserver = false;
-                this.calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, totalText, queueMenu);
+                this.calculateAndDisplayTotalProfit(
+                    totalDiv,
+                    marketRows ? actionsToCalculate : [],
+                    totalText,
+                    queueMenu,
+                    combatValue
+                );
             }
         } catch (error) {
             console.error('[Toolasha] Error injecting queue times:', error);
@@ -4184,8 +4574,10 @@ class ActionTimeDisplay {
      * @param {Array} actionsToCalculate - Array of {actionHrid, timeSeconds, count, baseActionsNeeded, divIndex} objects
      * @param {string} baseText - Base text (time) to prepend
      * @param {HTMLElement} queueMenu - Queue menu element to reconnect observer after updates
+     * @param {{total: number, hasAny: boolean, incomplete: boolean}} [combatValue] - What the
+     *   queue's combat rows contribute, and whether any of them had no figure to contribute
      */
-    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText, queueMenu) {
+    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText, queueMenu, combatValue = null) {
         // Generate unique ID for this calculation to prevent race conditions
         const calculationId = Date.now() + Math.random();
         this.activeProfitCalculationId = calculationId;
@@ -4239,6 +4631,12 @@ class ActionTimeDisplay {
                 }
             });
 
+            // The combat rows' own figures, out of the same simulated readings that timed them
+            if (combatValue?.hasAny) {
+                totalProfit += combatValue.total;
+                hasProfitData = true;
+            }
+
             // Update display with value
             if (hasProfitData) {
                 // Get value mode setting to determine label and color
@@ -4254,7 +4652,10 @@ class ActionTimeDisplay {
                 // As on the rows: a negative total says so in the number, not only in its colour
                 const valueSign = totalProfit >= 0 ? '+' : '-';
                 const valueLabel = isEstimatedValue ? 'Estimated value' : 'Total profit';
-                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${this.formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>`;
+                // A combat row that could not be valued leaves the total short, and says so the
+                // way the time total says it: `+ [?]`, not a quietly smaller number
+                const incomplete = combatValue?.incomplete ? ' + [?]' : '';
+                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${this.formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`;
                 totalDiv.innerHTML = baseText + valueText;
             }
         } catch (error) {
@@ -4641,6 +5042,7 @@ class ActionTimeDisplay {
             this.waitForPanelTimeout = null;
             this.activeProfitCalculationId = null;
             this.activeBarProfitId = null;
+            this._zoneSimSweep = null;
             this.isInitialized = false;
         } catch (error) {
             console.error('[Action Time Display] Disable failed part-way:', error);

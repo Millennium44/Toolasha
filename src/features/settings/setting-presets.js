@@ -156,6 +156,9 @@ const COMBAT_EXTRAS = [
     // Simulators
     'combatSim',
     'labSim',
+    // The queue's own simulator button: it needs combatSim, so it belongs with the simulators
+    // rather than with the queue's reading settings in ESSENTIALS
+    'actionQueue_zoneSimButton',
     'combatSim_sharedSeed',
     'labSim_keepReplacedGear',
 ];

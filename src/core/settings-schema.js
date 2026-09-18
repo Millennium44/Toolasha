@@ -395,6 +395,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            actionQueue_zoneSimButton: {
+                id: 'actionQueue_zoneSimButton',
+                label: 'Queued actions: Show the "sim 24h" button',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds one button above the queue that simulates each queued fight solo for 24 hours, in the loadout that fight uses, so counted fights can be timed and valued. Fights that already have a fresh rate are skipped. Runs locally and needs the Combat Simulator switched on.',
+            },
             actionQueue_valueMode: {
                 id: 'actionQueue_valueMode',
                 label: 'Queued actions: Value calculation mode',
