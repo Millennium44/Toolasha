@@ -286,7 +286,12 @@ class MarketAPI {
                 return null;
             }
 
-            if (value < 0) {
+            // A price of 0 is not a real quote — the marketplace's price grid has a
+            // minimum step of 1 and snaps anything at or below it up to 2, so nothing
+            // ever legitimately trades at 0. Reading it as absent (like a missing side)
+            // keeps the "the band never invents a price" contract regardless of whether
+            // bands are loaded yet.
+            if (value <= 0) {
                 return null;
             }
 

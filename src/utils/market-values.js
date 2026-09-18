@@ -208,6 +208,11 @@ function bandFor(itemHrid, enhancementLevel) {
  */
 export function clampToBand(price, itemHrid, enhancementLevel = 0) {
     if (typeof price !== 'number' || price < 0) return price ?? null;
+    // A price of 0 is never a real quote — the marketplace's price grid has a
+    // minimum step of 1 and snaps anything at or below it up to 2 — so treat it
+    // as absent rather than clamp it up to band.min, which would fabricate a
+    // price no order ever offered.
+    if (price === 0) return null;
     if (!isMarketplacePatchLive()) return price;
     // Self-sufficient: direct order-book consumers call this without going
     // through getPrice, and a clamp against an empty cache would be a no-op.
@@ -239,16 +244,20 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
  *   "no market data" signal downstream silently stops firing.
  */
 export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
-    const sourceOf = (x) => (typeof x === 'number' && x >= 0 ? 'book' : null);
+    // A side of exactly 0 is never a real quote (see clampToBand), so it is
+    // treated the same as a missing side throughout — sourced as 'value' below
+    // rather than clamped up to band.min, which would fabricate a price no
+    // order ever offered.
+    const sourceOf = (x) => (typeof x === 'number' && x > 0 ? 'book' : null);
     if (!isMarketplacePatchLive()) {
         return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
     }
     const value = marketValueFor(itemHrid, enhancementLevel);
     if (value === null) return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
     const band = bandFor(itemHrid, enhancementLevel);
-    const clamp = (x) => (typeof x === 'number' && x >= 0 ? Math.min(Math.max(x, band.min), band.max) : null);
-    const askIsBook = typeof ask === 'number' && ask >= 0;
-    const bidIsBook = typeof bid === 'number' && bid >= 0;
+    const clamp = (x) => (typeof x === 'number' && x > 0 ? Math.min(Math.max(x, band.min), band.max) : null);
+    const askIsBook = typeof ask === 'number' && ask > 0;
+    const bidIsBook = typeof bid === 'number' && bid > 0;
     return {
         ask: askIsBook ? clamp(ask) : value,
         bid: bidIsBook ? clamp(bid) : value,

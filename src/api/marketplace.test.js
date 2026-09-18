@@ -290,6 +290,38 @@ describe('MarketAPI getPrice bands', () => {
         expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 1000, bid: null });
     });
 
+    test('a zero-valued side reads as absent, not the band floor', async () => {
+        // Nothing in the game trades at 0 — a bare `0` on a side means "no
+        // price", the same as a missing side, and must never come back as
+        // band.min, a price no order ever offered.
+        const { band } = createMocks(true);
+        band.current = { min: 900, max: 1100 };
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.marketData = { '/items/x': { 0: { a: 1000, b: 0 } } };
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 1000, bid: null });
+    });
+
+    test('a zero-valued side reads as absent through the patch path too', async () => {
+        const { band } = createMocks(true);
+        band.current = { min: 900, max: 1100 };
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = { '/items/x:0': { a: 0, b: 950, timestamp: 2000 } };
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: null, bid: 950 });
+    });
+
+    test('a zero-valued side reads as absent even before the Utils bundle lands', async () => {
+        createMocks(true);
+        delete globalThis.window.Toolasha;
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.marketData = { '/items/x': { 0: { a: 5000, b: 0 } } };
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 5000, bid: null });
+    });
+
     test('without a band everything passes through untouched', async () => {
         createMocks(true);
         const { default: marketAPI } = await import('./marketplace.js');

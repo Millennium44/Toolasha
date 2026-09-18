@@ -250,6 +250,14 @@ describe('clampToBand', () => {
         expect(clampToBand(null, '/items/cheese')).toBeNull();
         expect(clampToBand(undefined, '/items/cheese')).toBeNull();
     });
+
+    test('a price of 0 reads as absent, not band.min — nothing trades at 0', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        // Value 1000 under the increment ladder: [906, 1105] — a naive clamp
+        // would pull 0 up to 906, a price no order ever offered.
+        expect(clampToBand(0, '/items/cheese')).toBeNull();
+    });
 });
 
 describe('reconcileBook', () => {
@@ -326,6 +334,24 @@ describe('reconcileBook', () => {
         const clamped = reconcileBook(5000, null, '/items/cheese');
         expect(clamped.askSource).toBe('book');
         expect(clamped.bidSource).toBe('value');
+    });
+
+    test('a raw side of 0 is treated as missing and filled from the value, not clamped to band.min', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+
+        expect(reconcileBook(0, 950, '/items/cheese')).toEqual({
+            ask: 1000,
+            bid: 950,
+            askSource: 'value',
+            bidSource: 'book',
+        });
+        expect(reconcileBook(1050, 0, '/items/cheese')).toEqual({
+            ask: 1050,
+            bid: 1000,
+            askSource: 'book',
+            bidSource: 'value',
+        });
     });
 });
 
