@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Kinder to the market-history server, and the zone buttons work mid-fight
+
+- The ▶ buttons and a combat task's Go now open the zone even while you are fighting, instead of silently doing nothing, and put you back on the tab you were on if they cannot.
+- When the shared price-history server refuses us, every feature that reads it backs off together instead of retrying item after item.
+- The all-zones table stops looking market volume up at all: it caps a row only when the figure is already known, so ranking 66 zones no longer costs a request per drop.
+
 ### Persistent storage is asked for, not sprung on you
 
 - Toolasha no longer asks the browser to keep its data on its own at start-up; it explains why in the settings panel and asks only when you press the button.
