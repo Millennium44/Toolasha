@@ -185,10 +185,19 @@ function getInventoryCount(itemHrid, enhancementLevel = null) {
  * half sold is half still in the bag, and the claim shrinks with it. An empty
  * queue claims nothing, which `reserve` treats as a release.
  *
+ * The era is captured before the write and verified after it, for the same
+ * reason `addToQueue` does: the ledger resolves whose record it is when the
+ * write lands, not when it is asked for. A websocket message arriving a beat
+ * before `character_switching` starts a claim for the departing character's
+ * queue that can settle after the teardown's release — writing the departing
+ * character's claim into the ARRIVING character's ledger, where it holds their
+ * stock back from every crafting plan until the seven-day sweep.
+ *
  * @returns {Promise<boolean>} Whether a write landed
  */
-function claimQueue() {
-    return reserve(
+async function claimQueue() {
+    const era = generation;
+    const landed = await reserve(
         RESERVATION_OWNER,
         queue.map((entry) => ({
             itemHrid: entry.itemHrid,
@@ -197,6 +206,11 @@ function claimQueue() {
         })),
         { label: 'Queued for selling' }
     );
+    if (era !== generation) {
+        release(RESERVATION_OWNER);
+        return false;
+    }
+    return landed;
 }
 
 /**

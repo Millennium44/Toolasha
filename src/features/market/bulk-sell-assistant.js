@@ -771,19 +771,30 @@ class BulkSellAssistant {
     async _populateTabSelect() {
         const sel = this.chip?.querySelector(`.${CHIP_ID}-tab`);
         if (!sel) return;
+        // Both reads below are the DEPARTING character's — the remembered tab id
+        // is keyed by their character id, and the tab config is loaded under it.
+        // `cleanup()` resets `_tabPrefLoaded` and `selectedTabId` on a switch
+        // precisely so the arriving character re-reads their own; a resumed tail
+        // wrote the departing character's remembered tab back over that reset,
+        // and the arriving character's sell run was filtered by a tab that is
+        // not theirs.
+        const ticket = captureOwner(this);
         let tabs = [];
         try {
             if (!this._tabPrefLoaded) {
                 this._tabPrefLoaded = true;
                 const prefKey = this._tabPrefKey();
                 const saved = prefKey ? await storage.get(prefKey, 'settings', null) : null;
+                if (!stillOurs(ticket)) return;
                 if (saved) this.selectedTabId = saved;
             }
             const tabConfig = await loadTabConfig(dataManager.getCurrentCharacterId());
+            if (!stillOurs(ticket)) return;
             tabs = tabConfig.tabs || [];
         } catch (error) {
             console.error('[BulkSellAssistant] Failed to load inventory tab config:', error);
         }
+        if (!stillOurs(ticket)) return;
 
         // The Watchlist is a list of items like a tab is, so it belongs in the
         // same picker rather than as a second control beside it. Offered only
@@ -1135,6 +1146,15 @@ class BulkSellAssistant {
     }
 
     async _start() {
+        // A run belongs to the character who pressed Start. Two awaits below —
+        // the inventory tab config and the loadout store's readiness — can span
+        // a `character_switching` teardown, and everything after them reads the
+        // character in hand: `dataManager.characterItems` is the ARRIVING
+        // character's bag. A resumed tail therefore built a sell queue out of
+        // somebody else's inventory, filtered by the departing character's tab,
+        // and drove straight on into `_prepareCurrent()` — navigating the
+        // marketplace and prefilling a sell modal for a run nobody started.
+        const ticket = captureOwner(this);
         // Resolve the tab filter first: a Toolasha inventory tab stores plain
         // hrids for +0 items and "hrid+level" for enhanced ones
         let tabItems = null;
@@ -1153,6 +1173,7 @@ class BulkSellAssistant {
         } else if (this.selectedTabId && this.selectedTabId !== 'all') {
             try {
                 const tabConfig = await loadTabConfig(dataManager.getCurrentCharacterId());
+                if (!stillOurs(ticket)) return;
                 const found = findTab(tabConfig, this.selectedTabId);
                 if (!found) {
                     this.statusNote = 'Selected tab no longer exists';
@@ -1188,6 +1209,7 @@ class BulkSellAssistant {
         } catch (error) {
             console.error('[BulkSellAssistant] Waiting for loadout snapshots failed:', error);
         }
+        if (!stillOurs(ticket)) return;
 
         const clientData = dataManager.getInitClientData();
         // Gear saved into a loadout is gear you are still using — just not right

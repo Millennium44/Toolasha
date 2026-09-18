@@ -537,4 +537,25 @@ describe('a character switch takes the queue with it', () => {
         // back, so it cannot sit on the arriving character's bag
         expect(ledger.released.filter((owner) => owner === 'sellQueue').length).toBeGreaterThan(1);
     });
+
+    test('the sold-out sweep restating the claim does not land it under the arriving character', async () => {
+        observerState.handler(popper('<a href="/items/cheese">Cheese</a>'));
+        shiftRightClickInventory();
+        for (let i = 0; i < 4; i++) await Promise.resolve();
+        expect(document.querySelector('[data-item-hrid="/items/cheese"]')).not.toBeNull();
+
+        ledger.reserved = [];
+        ledger.released = [];
+
+        // A websocket message a beat before the switch: the sweep restates the
+        // claim, and that write is still in flight when the teardown releases
+        socketState.handler({ type: 'items_updated' });
+        await switchCharacter();
+        for (let i = 0; i < 4; i++) await Promise.resolve();
+
+        // The teardown's own release, plus the in-flight claim giving itself
+        // back rather than sitting on the ARRIVING character's bag until the
+        // ledger's seven-day sweep
+        expect(ledger.released.filter((owner) => owner === 'sellQueue').length).toBeGreaterThan(1);
+    });
 });

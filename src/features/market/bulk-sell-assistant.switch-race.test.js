@@ -20,6 +20,11 @@ const world = vi.hoisted(() => ({
     /** Held open to park initialize() inside the panel-position read */
     gate: null,
     characterId: 'char1',
+    /** Held open to park `_start()` inside the loadout store's readiness wait */
+    loadoutGate: null,
+    /** The bag `_start()` reads AFTER its awaits — i.e. whoever is current then */
+    items: [],
+    itemDetails: {},
 }));
 
 /** Every live dataManager listener, by event, so leaks are countable. */
@@ -38,8 +43,10 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => world.characterId,
-        getInitClientData: () => ({ itemDetailMap: {} }),
-        characterItems: [],
+        getInitClientData: () => ({ itemDetailMap: world.itemDetails }),
+        get characterItems() {
+            return world.items;
+        },
         on: (event, handler) => {
             (events.handlers[event] ??= []).push(handler);
         },
@@ -85,7 +92,13 @@ vi.mock('./marketplace-shortcuts.js', () => ({
     },
 }));
 vi.mock('../combat/loadout-snapshot.js', () => ({
-    default: { getAllSnapshots: () => [], whenReady: () => Promise.resolve(true) },
+    default: {
+        getAllSnapshots: () => [],
+        whenReady: async () => {
+            if (world.loadoutGate) await world.loadoutGate;
+            return true;
+        },
+    },
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/dom-observer-helpers.js', () => ({
@@ -165,5 +178,55 @@ describe('a character switch landing inside the panel-position read', () => {
         expect(liveBooks()).toBe(0);
         expect(modals.registered - modals.unregistered).toBe(0);
         expect(watchers.registered - watchers.unregistered).toBe(0);
+    });
+});
+
+/**
+ * A character switch landing inside `_start()`'s own awaits.
+ *
+ * `_start` waits on the inventory tab config and on the loadout store declaring
+ * itself ready, and everything after those awaits reads the character in hand —
+ * `dataManager.characterItems` is whoever is current when the tail resumes. A
+ * run started by one character therefore built its sell queue out of the next
+ * character's bag and drove straight on into `_prepareCurrent()`, navigating
+ * the marketplace and prefilling a sell modal for a run nobody had started.
+ */
+describe('a character switch landing inside a queue build', () => {
+    beforeEach(() => {
+        world.gate = null;
+        world.loadoutGate = null;
+        world.characterId = 'char1';
+        world.items = [];
+        world.itemDetails = {};
+        bulkSell.cleanup();
+        events.handlers = {};
+    });
+
+    afterEach(() => {
+        world.gate = null;
+        world.loadoutGate = null;
+        bulkSell.cleanup();
+    });
+
+    test('the interrupted build leaves no queue for the arriving character', async () => {
+        world.itemDetails = { '/items/cheese': { name: 'Cheese', isTradable: true } };
+        let release;
+        world.loadoutGate = new Promise((resolve) => {
+            release = resolve;
+        });
+
+        const pending = bulkSell._start();
+        // The switch: the feature layer comes down, and by the time the wait
+        // resolves the ARRIVING character's bag is what `characterItems` answers
+        bulkSell.cleanup();
+        world.characterId = 'char2';
+        world.items = [{ itemHrid: '/items/cheese', itemLocationHrid: '/item_locations/inventory', count: 10 }];
+        release();
+        world.loadoutGate = null;
+        await pending;
+
+        expect(bulkSell.queue).toHaveLength(0);
+        expect(bulkSell.state).toBe('idle');
+        expect(bulkSell.current).toBeNull();
     });
 });
