@@ -7,7 +7,7 @@
     --toolasha-accent: #5b8def;
     --toolasha-accent-hover: #7aa3f3;
     --toolasha-accent-dim: rgba(91, 141, 239, 0.15);
-    --toolasha-secondary: #8A2BE2;
+    --toolasha-secondary: #8a2be2;
     --toolasha-text: rgba(255, 255, 255, 0.9);
     --toolasha-text-dim: rgba(255, 255, 255, 0.5);
     --toolasha-bg: rgba(20, 25, 35, 0.6);
@@ -184,7 +184,7 @@
 }
 
 .toolasha-slider:before {
-    content: "";
+    content: '';
     position: absolute;
     height: 12px;
     width: 12px;
@@ -291,7 +291,7 @@
 }
 
 .toolasha-utility-button {
-    background: linear-gradient(135deg, var(--toolasha-secondary), #6A1B9A);
+    background: linear-gradient(135deg, var(--toolasha-secondary), #6a1b9a);
     border: 1px solid rgba(138, 43, 226, 0.4);
     color: #ffffff;
     padding: 6px 12px;
@@ -304,7 +304,7 @@
 }
 
 .toolasha-utility-button:hover {
-    background: linear-gradient(135deg, #9A4BCF, var(--toolasha-secondary));
+    background: linear-gradient(135deg, #9a4bcf, var(--toolasha-secondary));
     box-shadow: 0 0 10px rgba(138, 43, 226, 0.3);
     transform: translateY(-1px);
 }
@@ -341,13 +341,33 @@
 }
 
 .toolasha-refresh-notice::before {
-    content: "⚠️";
+    content: '⚠️';
     font-size: 14px;
+}
+
+/* Persistent-storage notice */
+.toolasha-persistence-notice {
+    background: rgba(33, 150, 243, 0.1);
+    border: 1px solid rgba(33, 150, 243, 0.3);
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.toolasha-persistence-notice p {
+    margin: 0;
+    color: #90caf9;
+    font-size: 11px;
+    line-height: 1.5;
 }
 
 /* Dependency Indicator */
 .toolasha-setting.has-dependency::before {
-    content: "↳";
+    content: '↳';
     position: absolute;
     left: -4px;
     color: var(--toolasha-accent);

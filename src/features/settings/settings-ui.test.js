@@ -54,6 +54,18 @@ const mocks = vi.hoisted(() => ({
     launcherShowCalls: 0,
     /** setting key → callbacks registered through `config.onSettingChange` */
     listeners: {},
+    /** Whether `navigator.storage` is faked as present for the persistence notice */
+    persistenceApiPresent: true,
+    /** What `storagePersistence.isPersisted()` currently answers */
+    persisted: false,
+    /** What `storagePersistence.isNoticeDismissed()` currently answers */
+    noticeDismissed: false,
+    /** Times `storagePersistence.requestPersistence()` was called */
+    requestPersistenceCalls: 0,
+    /** Whether the faked `requestPersistence()` call results in a grant */
+    grantOnRequest: false,
+    /** Times `storagePersistence.dismissNotice()` was called */
+    dismissNoticeCalls: 0,
 }));
 
 /**
@@ -365,6 +377,22 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
+vi.mock('../../core/storage-persistence.js', () => ({
+    default: {
+        hasPersistenceApi: () => mocks.persistenceApiPresent,
+        isPersisted: async () => mocks.persisted,
+        isNoticeDismissed: async () => mocks.noticeDismissed,
+        requestPersistence: async () => {
+            mocks.requestPersistenceCalls += 1;
+            if (mocks.grantOnRequest) mocks.persisted = true;
+        },
+        dismissNotice: async () => {
+            mocks.dismissNoticeCalls += 1;
+            mocks.noticeDismissed = true;
+        },
+    },
+}));
+
 vi.mock('../../core/settings-storage.js', () => ({
     default: {
         loadSettings: async () => {
@@ -529,6 +557,12 @@ beforeEach(() => {
     mocks.launcherHidden = false;
     mocks.launcherShowCalls = 0;
     mocks.listeners = {};
+    mocks.persistenceApiPresent = true;
+    mocks.persisted = false;
+    mocks.noticeDismissed = false;
+    mocks.requestPersistenceCalls = 0;
+    mocks.grantOnRequest = false;
+    mocks.dismissNoticeCalls = 0;
     mocks.settingsMap = {};
     mocks.choiceCalls = [];
     mocks.resets = [];
@@ -846,6 +880,103 @@ describe('the buttons that open a panel', () => {
         utilityButton('PFormance').click();
 
         expect(mocks.toggled).toEqual(['pformance']);
+    });
+});
+
+/**
+ * The persistent-storage notice, next to the backup controls.
+ *
+ * `storagePersistence.requestPersistence()` no longer fires unprompted at
+ * startup (see `entrypoint.test.js`) — this is the only remaining way to
+ * reach it, gated behind an explanation and a click. What matters here is
+ * visibility (shown only when there is something worth asking) and that a
+ * decline is recorded rather than silently forgotten.
+ */
+describe('the persistent-storage notice', () => {
+    /** @returns {HTMLElement|null} The notice, if drawn */
+    function notice() {
+        return document.querySelector('.toolasha-persistence-notice');
+    }
+
+    /**
+     * @param {HTMLElement} scope - The notice element
+     * @param {string} label - The button's text
+     * @returns {HTMLElement|undefined} That button
+     */
+    function noticeButton(scope, label) {
+        return [...scope.querySelectorAll('button')].find((button) => button.textContent === label);
+    }
+
+    test('appears when the API exists and storage is not yet persisted', async () => {
+        drawPanel();
+        await settle();
+        expect(notice()).not.toBe(null);
+    });
+
+    test('is absent when storage is already persisted', async () => {
+        mocks.persisted = true;
+        drawPanel();
+        await settle();
+        expect(notice()).toBe(null);
+    });
+
+    test('is absent when navigator.storage has no persistence API', async () => {
+        mocks.persistenceApiPresent = false;
+        drawPanel();
+        await settle();
+        expect(notice()).toBe(null);
+    });
+
+    test('is absent once the player has already dismissed it on this device', async () => {
+        mocks.noticeDismissed = true;
+        drawPanel();
+        await settle();
+        expect(notice()).toBe(null);
+    });
+
+    test('clicking the button calls the request exactly once', async () => {
+        drawPanel();
+        await settle();
+
+        noticeButton(notice(), 'Ask the browser to persist storage').click();
+        await settle();
+
+        expect(mocks.requestPersistenceCalls).toBe(1);
+    });
+
+    test('a grant removes the notice, since storage is now persisted', async () => {
+        mocks.grantOnRequest = true;
+        drawPanel();
+        await settle();
+
+        noticeButton(notice(), 'Ask the browser to persist storage').click();
+        await settle();
+
+        expect(notice()).toBe(null);
+    });
+
+    test('a refusal leaves the notice up — nothing hides it on its own', async () => {
+        mocks.grantOnRequest = false;
+        drawPanel();
+        await settle();
+
+        noticeButton(notice(), 'Ask the browser to persist storage').click();
+        await settle();
+
+        expect(notice()).not.toBe(null);
+        expect(mocks.dismissNoticeCalls).toBe(0);
+    });
+
+    test('dismissing records the decision and never asks the browser', async () => {
+        drawPanel();
+        await settle();
+
+        noticeButton(notice(), 'Not now').click();
+        await settle();
+
+        expect(mocks.dismissNoticeCalls).toBe(1);
+        expect(mocks.requestPersistenceCalls).toBe(0);
+        expect(notice()).toBe(null);
     });
 });
 

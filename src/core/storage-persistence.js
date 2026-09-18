@@ -16,6 +16,14 @@
  * is completely normal — most sites never get it on the first ask. This must
  * never read as an error to the player: no toast, no modal, nothing above
  * `console.info`.
+ *
+ * `requestPersistence()` is never called on its own any more — Firefox shows
+ * an unprompted permission doorhanger for it, which is exactly what surfaced
+ * this whole module to a player with no explanation attached. The only caller
+ * now is a button in the settings panel (`settings-ui.js`, near the backup
+ * controls) that explains first and asks second, on a user gesture. The
+ * guards below (already-persisted check, the retry stamp, the legacy-key
+ * migration) are unchanged and still apply to that manual call.
  */
 
 import storage from './storage.js';
@@ -55,6 +63,22 @@ const LEGACY_LAST_ATTEMPT_KEY = 'toolasha_persistStorageAttemptedAt';
  * per day no matter how many times the page reloads.
  */
 const RETRY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Where a player's explicit "not now" on the settings-panel notice is kept.
+ *
+ * This is separate from {@link LAST_ATTEMPT_KEY}: the attempt stamp throttles
+ * how often the browser API itself gets asked, but this flag is the record of
+ * a decision — the player saw the explanation and chose to dismiss it rather
+ * than grant it. Once set, the notice stops offering itself unprompted; it
+ * does not affect a deliberate later click on the button that still exists
+ * for someone who changes their mind.
+ *
+ * `toolasha_local_` on purpose, same as {@link LAST_ATTEMPT_KEY}: this is a
+ * property of one browser on one machine and must never travel with a
+ * settings sync.
+ */
+const NOTICE_DISMISSED_KEY = 'toolasha_local_persistStorageNoticeDismissed';
 
 /**
  * A stored stamp only if it can be one: a finite, positive moment that has
@@ -141,4 +165,64 @@ async function requestPersistence() {
     }
 }
 
-export default { requestPersistence };
+/**
+ * Whether the persistence API exists at all in this browser.
+ *
+ * @returns {boolean} True when both `persist` and `persisted` are callable
+ */
+function hasPersistenceApi() {
+    return (
+        typeof navigator !== 'undefined' &&
+        typeof navigator.storage?.persist === 'function' &&
+        typeof navigator.storage?.persisted === 'function'
+    );
+}
+
+/**
+ * Whether this origin's storage is already persisted.
+ *
+ * Guarded the same way {@link requestPersistence} is: missing API or a thrown
+ * check both read as "not persisted" rather than surfacing an error.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function isPersisted() {
+    try {
+        if (!hasPersistenceApi()) return false;
+        return await navigator.storage.persisted();
+    } catch (error) {
+        console.debug('[StoragePersistence] Could not check persisted() status:', error);
+        return false;
+    }
+}
+
+/**
+ * Whether the player has already dismissed the settings-panel notice without
+ * granting persistence.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function isNoticeDismissed() {
+    try {
+        return Boolean(await storage.get(NOTICE_DISMISSED_KEY, 'settings', false));
+    } catch (error) {
+        console.debug('[StoragePersistence] Could not read the notice-dismissed flag:', error);
+        return false;
+    }
+}
+
+/**
+ * Record that the player dismissed the settings-panel notice without
+ * granting persistence, so it does not keep offering itself unprompted.
+ *
+ * @returns {Promise<void>}
+ */
+async function dismissNotice() {
+    try {
+        await storage.set(NOTICE_DISMISSED_KEY, true, 'settings', true);
+    } catch (error) {
+        console.debug('[StoragePersistence] Could not record the notice dismissal:', error);
+    }
+}
+
+export default { requestPersistence, hasPersistenceApi, isPersisted, isNoticeDismissed, dismissNotice };

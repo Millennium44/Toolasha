@@ -166,3 +166,62 @@ describe('requestPersistence', () => {
         await expect(storagePersistence.requestPersistence()).resolves.toBeUndefined();
     });
 });
+
+describe('hasPersistenceApi', () => {
+    test('true when both persist and persisted are callable', () => {
+        setNavigatorStorage({ persisted: vi.fn(), persist: vi.fn() });
+        expect(storagePersistence.hasPersistenceApi()).toBe(true);
+    });
+
+    test('false when navigator.storage is entirely absent', () => {
+        setNavigatorStorage(undefined);
+        expect(storagePersistence.hasPersistenceApi()).toBe(false);
+    });
+
+    test('false when only one of persist/persisted exists', () => {
+        setNavigatorStorage({ persist: vi.fn() });
+        expect(storagePersistence.hasPersistenceApi()).toBe(false);
+    });
+});
+
+describe('isPersisted', () => {
+    test('reflects navigator.storage.persisted()', async () => {
+        setNavigatorStorage({ persisted: vi.fn(async () => true), persist: vi.fn() });
+        await expect(storagePersistence.isPersisted()).resolves.toBe(true);
+    });
+
+    test('false when the API is absent, never throws', async () => {
+        setNavigatorStorage(undefined);
+        await expect(storagePersistence.isPersisted()).resolves.toBe(false);
+    });
+
+    test('false when persisted() throws, never propagates', async () => {
+        setNavigatorStorage({
+            persisted: vi.fn(async () => {
+                throw new Error('boom');
+            }),
+            persist: vi.fn(),
+        });
+        await expect(storagePersistence.isPersisted()).resolves.toBe(false);
+    });
+});
+
+describe('the settings-notice dismissal flag', () => {
+    test('isNoticeDismissed is false until recorded', async () => {
+        await expect(storagePersistence.isNoticeDismissed()).resolves.toBe(false);
+    });
+
+    test('dismissNotice records it under the device-local key, and it reads back true', async () => {
+        await storagePersistence.dismissNotice();
+        expect(stored.get('toolasha_local_persistStorageNoticeDismissed')).toBe(true);
+        await expect(storagePersistence.isNoticeDismissed()).resolves.toBe(true);
+    });
+
+    test('a storage failure while recording is swallowed, not propagated', async () => {
+        const { default: storage } = await import('./storage.js');
+        storage.set.mockImplementationOnce(async () => {
+            throw new Error('boom');
+        });
+        await expect(storagePersistence.dismissNotice()).resolves.toBeUndefined();
+    });
+});

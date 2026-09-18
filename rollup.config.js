@@ -46,6 +46,12 @@ const coreExternalGlobals = new Map([
     // second (never-started) throttle and, on the ui side, a mirror that
     // never gets written to at all.
     [normalize(join(__dirname, 'src/core/settings-mirror.js')), 'Toolasha.Core.settingsMirror'],
+    // One device-local "already asked / already declined" stamp. The ui
+    // bundle's settings-panel notice (settings-ui.js) is now the only caller
+    // of requestPersistence(); a bundle-local copy would read and write its
+    // own never-initialized stamp instead of the one this module's own tests
+    // and docs describe.
+    [normalize(join(__dirname, 'src/core/storage-persistence.js')), 'Toolasha.Core.storagePersistence'],
     [normalize(join(__dirname, 'src/core/settings-schema.js')), 'Toolasha.Core'],
     [normalize(join(__dirname, 'src/core/profile-manager.js')), 'Toolasha.Core.profileManager'],
     [normalize(join(__dirname, 'src/api/marketplace.js')), 'Toolasha.Core.marketAPI'],

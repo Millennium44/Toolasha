@@ -133,6 +133,9 @@ const dataManagerHandlers = new Map();
 /** How many times the entrypoint asked the registry to bring the feature layer up */
 let initializeFeaturesCalls = 0;
 
+/** How many times the entrypoint called storagePersistence.requestPersistence() on its own */
+let requestPersistenceCalls = 0;
+
 /** The entrypoint module's own exports, once it has loaded */
 let entrypointModule;
 
@@ -213,7 +216,16 @@ beforeAll(async () => {
             performanceMonitor: { mark: () => {} },
             marketAPI: { fetch: async () => null },
             settingsMirror: { startMirroring: () => {} },
-            storagePersistence: { requestPersistence: async () => {} },
+            // Counted rather than a plain stub: the entrypoint must never call this
+            // on its own any more — see the "storage persistence" describe block
+            // below. A plain counter, not `vi.fn()`, matches `initializeFeaturesCalls`
+            // above and sidesteps Vitest clearing mock call history between the
+            // `beforeAll` that imports the entrypoint and the test that reads it.
+            storagePersistence: {
+                requestPersistence: async () => {
+                    requestPersistenceCalls += 1;
+                },
+            },
             errorLog: { install: () => true, getEntries: () => [], clear: () => {} },
             dualInstallGuard: {
                 claimPage: () => false,
@@ -287,6 +299,35 @@ describe('the registry the entrypoint builds', () => {
     test('carries health checks through, which is the whole point', () => {
         const withChecks = registered.filter((feature) => typeof feature.healthCheck === 'function');
         expect(withChecks.length).toBeGreaterThanOrEqual(12);
+    });
+});
+
+/**
+ * `storagePersistence.requestPersistence()` used to fire unprompted from this
+ * same startup block, right after `config.initialize()`. Silent on Chrome,
+ * but Firefox raises a visible permission doorhanger for it — with nothing on
+ * screen explaining what is asking or why — and a refusal used to bring the
+ * prompt back every day forever.
+ *
+ * It is now only reachable from a button in the settings panel
+ * (`settings-ui.js`'s `addPersistenceNotice`), on a user gesture, after an
+ * explanation. Nothing at startup may call it — this is the regression test
+ * for that: `entrypointModule` is loaded once for the whole file in
+ * `beforeAll` above, well before this test runs, so by now the startup
+ * block's `storageReady` IIFE (which awaits `storage.initialize()` and
+ * `config.initialize()`, both near-instant stubs here) has long since settled.
+ */
+describe('storage persistence is not requested at startup', () => {
+    test('the entrypoint never calls storagePersistence.requestPersistence() on its own', async () => {
+        // The startup block's `storageReady` IIFE is fire-and-forget — `import()`
+        // resolving only means the module's synchronous top level finished, not
+        // that the two awaits ahead of the old call site (`storage.initialize()`,
+        // `config.initialize()`) have settled. A real wait, the same device this
+        // file already uses in `fireCharacterInitialized`, gives it room to run
+        // before the assertion — so this fails honestly against the old code
+        // instead of racing it.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(requestPersistenceCalls).toBe(0);
     });
 });
 

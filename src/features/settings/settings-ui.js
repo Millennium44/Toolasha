@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import { settingsGroups } from '../../core/settings-schema.js';
 import settingsStorage from '../../core/settings-storage.js';
 import storage from '../../core/storage.js';
+import storagePersistence from '../../core/storage-persistence.js';
 import settingsCSS from './settings-styles.css?raw';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -2092,6 +2093,12 @@ class SettingsUI {
         buttonsDiv.appendChild(backupBtn);
         buttonsDiv.appendChild(restoreBackupBtn);
 
+        // Explains persistent storage and offers to ask for it, right beside
+        // the backup controls it is the automatic cousin of. See its own docs
+        // for why this is a notice-then-button instead of the unprompted
+        // startup call it replaced.
+        this.addPersistenceNotice(buttonsDiv);
+
         const overlayBtn = document.createElement('button');
         overlayBtn.textContent = 'Overlay';
         overlayBtn.className = 'toolasha-utility-button';
@@ -2190,6 +2197,85 @@ class SettingsUI {
 
         syncLabel();
         buttonsDiv.appendChild(launcherBtn);
+    }
+
+    /**
+     * A one-off notice explaining `navigator.storage.persist()` and offering
+     * a button to ask for it, next to the backup controls.
+     *
+     * This replaces an unprompted call the same request used to make at every
+     * startup (`storage-persistence.js`) — silent on Chrome, but a visible
+     * permission doorhanger with no explanation on Firefox, and one that came
+     * back every day on a refusal. Asking is now only reachable from here, on
+     * a click, after the player has read why.
+     *
+     * Hidden entirely when there is nothing to ask about: no
+     * `navigator.storage` API at all, storage already persisted, or the
+     * player already dismissed this notice on this device
+     * (`storagePersistence.isNoticeDismissed()`, a device-local flag that is
+     * never synced — see its own docs). No background retry, ever; the button
+     * stays available here for anyone who changes their mind, but nothing
+     * asks the browser on its own again.
+     *
+     * @param {HTMLElement} container - The utility-button row to add it to
+     */
+    addPersistenceNotice(container) {
+        (async () => {
+            try {
+                if (!storagePersistence.hasPersistenceApi()) return;
+                if (await storagePersistence.isPersisted()) return;
+                if (await storagePersistence.isNoticeDismissed()) return;
+
+                const notice = document.createElement('div');
+                notice.className = 'toolasha-persistence-notice';
+
+                const text = document.createElement('p');
+                text.textContent =
+                    'On 2026-09-17, a browser crash that had nothing to do with Toolasha made Chrome discard this ' +
+                    "site's entire saved data and recreate it empty — every character's settings and history, " +
+                    "gone in the same moment. Persistent storage can't stop a crash or corruption, but it does " +
+                    "exempt this site from the browser's least-recently-used cleanup, which is the more likely " +
+                    'way data quietly disappears — no crash needed, just the browser deciding this site has gone ' +
+                    'unused for a while.';
+                notice.appendChild(text);
+
+                const grantBtn = document.createElement('button');
+                grantBtn.textContent = 'Ask the browser to persist storage';
+                grantBtn.className = 'toolasha-utility-button';
+                grantBtn.addEventListener('click', async () => {
+                    grantBtn.disabled = true;
+                    try {
+                        await storagePersistence.requestPersistence();
+                    } catch (error) {
+                        console.error('[SettingsUI] Requesting persistent storage failed:', error);
+                    }
+                    if (await storagePersistence.isPersisted()) {
+                        notice.remove();
+                    } else {
+                        grantBtn.disabled = false;
+                    }
+                });
+                notice.appendChild(grantBtn);
+
+                const dismissBtn = document.createElement('button');
+                dismissBtn.textContent = 'Not now';
+                dismissBtn.className = 'toolasha-utility-button';
+                dismissBtn.title = "Dismisses this notice on this device. Toolasha won't ask again on its own.";
+                dismissBtn.addEventListener('click', async () => {
+                    try {
+                        await storagePersistence.dismissNotice();
+                    } catch (error) {
+                        console.error('[SettingsUI] Dismissing the persistence notice failed:', error);
+                    }
+                    notice.remove();
+                });
+                notice.appendChild(dismissBtn);
+
+                container.appendChild(notice);
+            } catch (error) {
+                console.error('[SettingsUI] Could not set up the persistent-storage notice:', error);
+            }
+        })();
     }
 
     /**

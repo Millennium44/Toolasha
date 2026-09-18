@@ -148,7 +148,6 @@ const {
     errorLog,
     dualInstallGuard,
     settingsMirror,
-    storagePersistence,
 } = Core;
 
 // Claim the page before anything else can. Two Toolasha userscripts share one
@@ -2488,14 +2487,17 @@ if (isCombatSimulatorPage()) {
             await config.initialize();
             performanceMonitor.mark('config:loaded');
 
-            // Best-effort and fire-and-forget: neither is on the critical
-            // path for anything below, and both are guarded to never throw
-            // or surface an error to the player. See their own docs for why
-            // each exists — both are about the 2026-09-17 whole-origin
-            // IndexedDB wipe.
-            storagePersistence.requestPersistence().catch((error) => {
-                console.debug('[Toolasha] Storage persistence request failed:', error);
-            });
+            // Best-effort and fire-and-forget: not on the critical path for
+            // anything below, and guarded to never throw or surface an error
+            // to the player. See its own docs for why it exists.
+            //
+            // storage-persistence.js's requestPersistence() is deliberately
+            // NOT called here any more — it used to fire unprompted at every
+            // boot, which is silent on Chrome but raises a visible permission
+            // doorhanger on Firefox with no explanation attached. It is now
+            // only reachable from a settings-panel notice that explains first
+            // and asks on a user gesture (settings-ui.js, near the backup
+            // controls).
             settingsMirror.startMirroring();
 
             // Flush pending writes on every way a page can go away.
