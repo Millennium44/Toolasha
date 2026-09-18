@@ -19,6 +19,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Audit round: the settings backup could delete the backups it was protecting
+
+- Mirroring settings after a wipe no longer drops the characters you had not logged in to yet — the backup is merged, not replaced.
+- Restoring settings after switching characters said nothing and did nothing; it now refuses out loud.
+- A Welcome Back window left open while you switch characters is no longer filled with the wrong character's briefing.
+- The welcome-back value line sits above the Close button, like the briefing.
+- The queue total marks itself an estimate when the action you are running is the estimated one, in the menu and the hover alike.
+
 ### Settings survive a browser throwing your data away
 
 - Settings are mirrored outside the page, so a browser that discards the site's whole database no longer costs you every character's setup.
