@@ -12,7 +12,13 @@ import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { HISTORY_TYPE_SCALE } from './history-totals-table.js';
+import {
+    HISTORY_TYPE_SCALE,
+    createTotalsCell,
+    groupSessionsByInputItem,
+    renderTotalsSection,
+    totalsRowStyle,
+} from './history-totals-table.js';
 
 const CATALYST_OF_COINIFICATION_HRID = '/items/catalyst_of_coinification';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -33,6 +39,93 @@ function mutationsTouchTablist(mutations) {
         }
     }
     return false;
+}
+
+/**
+ * Columns of the coinify "Totals by Input Item" table.
+ *
+ * The narrowest of the three. Coinify has no drop table, so there is no
+ * jackpot and no inputs-per-jackpot figure; and it is charged no alchemy coin
+ * fee at all (see `computeSessionProfit`), so a Coin Cost column here would be
+ * a column of permanent zeros.
+ *
+ * @type {Array<{label: string, title?: string}>}
+ */
+const COINIFY_TOTALS_COLUMNS = [
+    { label: 'Input Item' },
+    { label: 'Sessions' },
+    { label: 'Attempts' },
+    {
+        label: 'Consumed',
+        title: 'Items destroyed: attempts × the bulk size that was actually billed. A failed attempt consumes the input too.',
+    },
+    { label: 'Successes' },
+    { label: 'Coins Earned', title: 'Coins paid out by the game. No marketplace cut applies — the output is coins.' },
+    { label: 'Input Cost' },
+    {
+        label: 'Catalyst Cost',
+        title: 'Catalysts recorded as consumed, at current buy price. A catalyst the market cannot price is excluded and marked †, never counted as free.',
+    },
+    { label: 'Net' },
+    {
+        label: 'Break-even Input',
+        title:
+            'Input value at which the coins earned exactly cover catalyst cost for what was consumed. ' +
+            'Below this, coinifying paid; above it, the item was worth more than the game paid for it.',
+    },
+];
+
+/** Footnote markers under the coinify totals table. @type {Array<string>} */
+const COINIFY_TOTALS_LEGEND = [
+    '* input unpriced — total is incomplete',
+    '† catalyst on some sessions could not be priced — excluded, not zero',
+    '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
+];
+
+/**
+ * Derive a coinify group's ratios once every session has been folded in.
+ *
+ * @param {Object} group
+ * @returns {Object} The group, plus `net`, `successRate` and `breakEvenInputValue`
+ */
+function finalizeCoinifyGroup(group) {
+    const net = group.revenue - group.inputCost - group.catalystCost;
+    const successRate = group.attempts > 0 ? group.successes / group.attempts : null;
+    // The input value at which the coins earned exactly cover catalyst cost for
+    // what was consumed. Coinify's whole question is "is this item worth more
+    // than the game pays for it", and this is that number, measured rather than
+    // forecast.
+    const breakEvenInputValue = group.netConsumed > 0 ? (group.revenue - group.catalystCost) / group.netConsumed : null;
+    return { ...group, net, successRate, breakEvenInputValue };
+}
+
+/**
+ * Format a group's catalyst-cost cell text + tooltip.
+ *
+ * A catalyst that could not be priced, or was never recorded, is excluded from
+ * the sum and marked — it is not counted as free.
+ *
+ * @param {{catalystCost: number, catalystUnpricedSessions: number, catalystUnrecordedSessions: number}} group
+ * @returns {[string, string|undefined]}
+ */
+function formatCoinifyCatalystTotal(group) {
+    let text = formatKMB(group.catalystCost, 1);
+    const notes = [];
+    if (group.catalystUnpricedSessions > 0) {
+        text += '†';
+        notes.push(
+            `${group.catalystUnpricedSessions} session(s) used a catalyst the market could not price — ` +
+                'excluded from this total, not counted as zero.'
+        );
+    }
+    if (group.catalystUnrecordedSessions > 0) {
+        text += '‡';
+        notes.push(
+            `${group.catalystUnrecordedSessions} session(s) predate catalyst tracking — their catalyst use is ` +
+                'unknown, not zero.'
+        );
+    }
+    return [text, notes.length > 0 ? notes.join(' ') : undefined];
 }
 
 class CoinifyHistoryViewer {
@@ -298,6 +391,11 @@ class CoinifyHistoryViewer {
         tableContainer.className = 'mwi-coinify-history-table-container';
         tableContainer.style.cssText = 'overflow-x: auto;';
 
+        // Totals-by-input-item container
+        const totalsContainer = document.createElement('div');
+        totalsContainer.className = 'mwi-coinify-history-totals-container';
+        totalsContainer.style.cssText = 'overflow-x: auto;';
+
         // Pagination
         const pagination = document.createElement('div');
         pagination.className = 'mwi-coinify-history-pagination';
@@ -312,6 +410,7 @@ class CoinifyHistoryViewer {
         content.appendChild(controls);
         content.appendChild(badges);
         content.appendChild(tableContainer);
+        content.appendChild(totalsContainer);
         content.appendChild(pagination);
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
@@ -454,13 +553,27 @@ class CoinifyHistoryViewer {
         const inputCost = netConsumed * inputPrice;
         const inputUnpriced = inputBasis === null && netConsumed > 0;
 
-        const catalystPrice = (hrid) => {
-            const price = getItemPrice(hrid, { context: 'profit', side: 'buy' });
-            return price > 0 ? price : 0;
-        };
-        const catalystCost =
-            (session.catalystOfCoinificationUsed || 0) * catalystPrice(CATALYST_OF_COINIFICATION_HRID) +
-            (session.primeCatalystUsed || 0) * catalystPrice(PRIME_CATALYST_HRID);
+        // A catalyst the market cannot price used to be silently costed at zero, which
+        // reads as "this catalyst was free" rather than "we do not know what it cost".
+        // The cost still excludes it — there is no number to add — but the session now
+        // says so, and the totals table marks the row †.
+        const catalystUse = [
+            { hrid: CATALYST_OF_COINIFICATION_HRID, count: session.catalystOfCoinificationUsed || 0 },
+            { hrid: PRIME_CATALYST_HRID, count: session.primeCatalystUsed || 0 },
+        ].filter((entry) => entry.count > 0);
+        let catalystCost = 0;
+        let catalystUnpriced = false;
+        const catalystHrids = [];
+        for (const entry of catalystUse) {
+            const price = getItemPrice(entry.hrid, { context: 'profit', side: 'buy' });
+            catalystHrids.push(entry.hrid);
+            if (price > 0) catalystCost += price * entry.count;
+            else catalystUnpriced = true;
+        }
+        // Sessions saved before catalyst counts were persisted carry neither field.
+        // That is "unknown", not "none", and the totals table marks it ‡.
+        const catalystUnrecorded =
+            session.catalystOfCoinificationUsed === undefined && session.primeCatalystUsed === undefined;
 
         // Coinify has no coin fee at all — the item is the input and coins are the output
         // (see utils/alchemy-fees.js). The line outlived the fee, so every tooltip carried a
@@ -470,6 +583,9 @@ class CoinifyHistoryViewer {
             revenue,
             inputCost,
             catalystCost,
+            catalystUnpriced,
+            catalystUnrecorded,
+            catalystHrids,
             netConsumed,
             inputBasis,
             inputUnpriced,
@@ -723,7 +839,200 @@ class CoinifyHistoryViewer {
 
         table.appendChild(tbody);
         tableContainer.appendChild(table);
+        this.renderTotals();
         this.renderPagination();
+    }
+
+    // ─── Totals by Input Item ───────────────────────────────────────────────
+
+    /**
+     * Group the currently filtered sessions by input item and total them.
+     *
+     * Figures come from the same per-session `computeSessionProfit` result
+     * already cached by `applyFilters`, so a totals row and the Profit column
+     * of the rows it sums can never disagree about a single session.
+     *
+     * Coinify is the simplest of the three actions — a fixed coin payout per
+     * success, no drop table and no coin fee — so this table is correspondingly
+     * narrower than transmute's. The marker discipline is the part that carries
+     * over unchanged: an input the market cannot price, or a catalyst that
+     * could not be priced or was never recorded, is excluded and said so,
+     * never quietly counted as zero.
+     *
+     * @returns {Array<Object>} One entry per distinct inputItemHrid
+     */
+    computeInputItemTotals() {
+        return groupSessionsByInputItem(this.filteredSessions, {
+            getDetail: (session) => this.profitCache.get(session.id) || this.computeSessionProfit(session),
+            getSortName: (hrid) => this.getItemName(hrid),
+            createGroup: (hrid) => ({
+                inputItemHrid: hrid,
+                sessionCount: 0,
+                attempts: 0,
+                successes: 0,
+                netConsumed: 0,
+                revenue: 0,
+                inputCost: 0,
+                inputUnpriced: false,
+                catalystCost: 0,
+                catalystUnpricedSessions: 0,
+                catalystUnrecordedSessions: 0,
+                catalystHrids: new Set(),
+            }),
+            accumulate: (group, session, detail) => {
+                group.sessionCount++;
+                group.attempts += session.totalAttempts || 0;
+                group.successes += session.totalSuccesses || 0;
+                group.netConsumed += detail.netConsumed;
+                group.revenue += detail.revenue;
+                group.inputCost += detail.inputCost;
+                if (detail.inputUnpriced) group.inputUnpriced = true;
+                group.catalystCost += detail.catalystCost;
+                if (detail.catalystUnpriced) group.catalystUnpricedSessions++;
+                if (detail.catalystUnrecorded) group.catalystUnrecordedSessions++;
+                for (const hrid of detail.catalystHrids || []) group.catalystHrids.add(hrid);
+            },
+            finalize: (group) => finalizeCoinifyGroup(group),
+        });
+    }
+
+    /**
+     * Render the "Totals by Input Item" table below the session list.
+     */
+    renderTotals() {
+        const container = this.modal.querySelector('.mwi-coinify-history-totals-container');
+        const totals = this.computeInputItemTotals();
+
+        const rows = totals.map((group, index) => this.buildTotalsRow(group, index));
+        if (totals.length > 0) rows.push(this.buildOverallTotalsRow(totals));
+
+        renderTotalsSection(container, {
+            heading: 'Totals by Input Item',
+            columns: COINIFY_TOTALS_COLUMNS,
+            rows,
+            legendParts: COINIFY_TOTALS_LEGEND,
+        });
+    }
+
+    /**
+     * Build one totals row for a single input-item group.
+     * @param {Object} group
+     * @param {number} index
+     * @returns {HTMLTableRowElement}
+     */
+    buildTotalsRow(group, index) {
+        const row = document.createElement('tr');
+        row.style.cssText = totalsRowStyle(index);
+
+        const itemCell = document.createElement('td');
+        itemCell.style.cssText = 'padding: 6px 10px; display: flex; align-items: center; gap: 8px;';
+        this.appendItemIcon(itemCell, group.inputItemHrid, 18);
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = this.getItemName(group.inputItemHrid);
+        itemCell.appendChild(nameSpan);
+        row.appendChild(itemCell);
+
+        row.appendChild(createTotalsCell(String(group.sessionCount)));
+        row.appendChild(createTotalsCell(String(group.attempts)));
+        row.appendChild(createTotalsCell(String(group.netConsumed)));
+
+        const successPct = group.successRate !== null ? `${(group.successRate * 100).toFixed(1)}%` : '—';
+        row.appendChild(createTotalsCell(`${group.successes} (${successPct})`));
+
+        row.appendChild(createTotalsCell(formatKMB(group.revenue, 1)));
+        row.appendChild(
+            createTotalsCell(formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''), {
+                title: group.inputUnpriced
+                    ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
+                    : undefined,
+            })
+        );
+
+        const [catalystText, catalystTitle] = formatCoinifyCatalystTotal(group);
+        row.appendChild(createTotalsCell(catalystText, { title: catalystTitle }));
+
+        row.appendChild(
+            createTotalsCell(formatKMB(group.net, 1), {
+                color: group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                bold: true,
+            })
+        );
+        row.appendChild(
+            createTotalsCell(group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—')
+        );
+
+        return row;
+    }
+
+    /**
+     * Build the "All items" summary row across every group.
+     * @param {Array<Object>} totals
+     * @returns {HTMLTableRowElement}
+     */
+    buildOverallTotalsRow(totals) {
+        const overall = totals.reduce(
+            (acc, group) => {
+                acc.sessionCount += group.sessionCount;
+                acc.attempts += group.attempts;
+                acc.successes += group.successes;
+                acc.netConsumed += group.netConsumed;
+                acc.revenue += group.revenue;
+                acc.inputCost += group.inputCost;
+                acc.catalystCost += group.catalystCost;
+                acc.inputUnpriced = acc.inputUnpriced || group.inputUnpriced;
+                acc.catalystUnpricedSessions += group.catalystUnpricedSessions;
+                acc.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
+                return acc;
+            },
+            {
+                sessionCount: 0,
+                attempts: 0,
+                successes: 0,
+                netConsumed: 0,
+                revenue: 0,
+                inputCost: 0,
+                catalystCost: 0,
+                inputUnpriced: false,
+                catalystUnpricedSessions: 0,
+                catalystUnrecordedSessions: 0,
+            }
+        );
+
+        const row = document.createElement('tr');
+        row.style.cssText = 'border-top: 2px solid #555; background: #1f1f1f;';
+
+        const itemCell = document.createElement('td');
+        itemCell.textContent = 'All items';
+        itemCell.style.cssText = 'padding: 6px 10px; font-weight: bold;';
+        row.appendChild(itemCell);
+
+        row.appendChild(createTotalsCell(String(overall.sessionCount), { bold: true }));
+        row.appendChild(createTotalsCell(String(overall.attempts), { bold: true }));
+        row.appendChild(createTotalsCell(String(overall.netConsumed), { bold: true }));
+
+        const successPct = overall.attempts > 0 ? `${((overall.successes / overall.attempts) * 100).toFixed(1)}%` : '—';
+        row.appendChild(createTotalsCell(`${overall.successes} (${successPct})`, { bold: true }));
+        row.appendChild(createTotalsCell(formatKMB(overall.revenue, 1), { bold: true }));
+        row.appendChild(
+            createTotalsCell(formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''), { bold: true })
+        );
+
+        const [catalystText, catalystTitle] = formatCoinifyCatalystTotal(overall);
+        row.appendChild(createTotalsCell(catalystText, { bold: true, title: catalystTitle }));
+
+        const net = overall.revenue - overall.inputCost - overall.catalystCost;
+        row.appendChild(
+            createTotalsCell(formatKMB(net, 1), {
+                bold: true,
+                color: net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+            })
+        );
+
+        // Mixed input items — a single break-even input value across different
+        // items is not a number that means anything
+        row.appendChild(createTotalsCell('—'));
+
+        return row;
     }
 
     /**

@@ -14,7 +14,14 @@ import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { HISTORY_TYPE_SCALE } from './history-totals-table.js';
+import {
+    HISTORY_TYPE_SCALE,
+    createTotalsCell,
+    groupSessionsByInputItem,
+    poolEquivalentGroups,
+    renderTotalsSection,
+    totalsRowStyle,
+} from './history-totals-table.js';
 
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -35,6 +42,99 @@ function mutationsTouchTablist(mutations) {
         }
     }
     return false;
+}
+
+/**
+ * Columns of the decompose "Totals by Input Item" table.
+ *
+ * Deliberately narrower than transmute's. Decompose has no drop table, so
+ * there is no jackpot and no inputs-per-jackpot figure to report; it does pay
+ * the alchemy coin fee, unlike coinify, so Coin Cost stays.
+ *
+ * @type {Array<{label: string, title?: string}>}
+ */
+const DECOMPOSE_TOTALS_COLUMNS = [
+    { label: 'Input Item' },
+    { label: 'Sessions' },
+    { label: 'Attempts' },
+    {
+        label: 'Consumed',
+        title: 'Items destroyed: attempts × the bulk size that was actually billed. A failed attempt consumes the input too.',
+    },
+    { label: 'Successes' },
+    {
+        label: 'Revenue',
+        title: 'Recorded output value, restated after the marketplace cut — the same basis the forecast quotes.',
+    },
+    { label: 'Input Cost' },
+    {
+        label: 'Catalyst Cost',
+        title: 'Catalysts recorded as consumed, at current buy price. A catalyst the market cannot price is excluded and marked †, never counted as free.',
+    },
+    { label: 'Coin Cost', title: 'The alchemy coin fee charged per attempt.' },
+    { label: 'Net' },
+    {
+        label: 'Break-even Input',
+        title:
+            'Input value at which revenue exactly covers catalyst + coin cost for what was consumed. ' +
+            'Above this, decomposing paid for itself; below it, it did not.',
+    },
+];
+
+/** Footnote markers under the decompose totals table. @type {Array<string>} */
+const DECOMPOSE_TOTALS_LEGEND = [
+    '* input unpriced — total is incomplete',
+    '† catalyst on some sessions could not be priced — excluded, not zero',
+    '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
+    'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
+];
+
+/**
+ * Derive a decompose group's ratios once every session has been folded in.
+ * Shared by the per-item groups and the pooled ones so the two can never
+ * disagree about how a figure is arrived at.
+ *
+ * @param {Object} group
+ * @returns {Object} The group, plus `net`, `successRate` and `breakEvenInputValue`
+ */
+function finalizeDecomposeGroup(group) {
+    const net = group.revenue - group.inputCost - group.catalystCost - group.coinCost;
+    const successRate = group.attempts > 0 ? group.successes / group.attempts : null;
+    // The input value at which recorded revenue exactly covers catalyst and coin
+    // cost for what was consumed — answers "was this worth decomposing" without
+    // needing to agree on what the input is worth.
+    const breakEvenInputValue =
+        group.netConsumed > 0 ? (group.revenue - group.catalystCost - group.coinCost) / group.netConsumed : null;
+    return { ...group, net, successRate, breakEvenInputValue };
+}
+
+/**
+ * Format a group's catalyst-cost cell text + tooltip.
+ *
+ * A catalyst that could not be priced, or was never recorded, is excluded from
+ * the sum and marked — it is not counted as free.
+ *
+ * @param {{catalystCost: number, catalystUnpricedSessions: number, catalystUnrecordedSessions: number}} group
+ * @returns {[string, string|undefined]}
+ */
+function formatDecomposeCatalystTotal(group) {
+    let text = formatKMB(group.catalystCost, 1);
+    const notes = [];
+    if (group.catalystUnpricedSessions > 0) {
+        text += '†';
+        notes.push(
+            `${group.catalystUnpricedSessions} session(s) used a catalyst the market could not price — ` +
+                'excluded from this total, not counted as zero.'
+        );
+    }
+    if (group.catalystUnrecordedSessions > 0) {
+        text += '‡';
+        notes.push(
+            `${group.catalystUnrecordedSessions} session(s) predate catalyst tracking — their catalyst use is ` +
+                'unknown, not zero.'
+        );
+    }
+    return [text, notes.length > 0 ? notes.join(' ') : undefined];
 }
 
 class DecomposeHistoryViewer {
@@ -303,6 +403,11 @@ class DecomposeHistoryViewer {
         tableContainer.className = 'mwi-decompose-history-table-container';
         tableContainer.style.cssText = 'overflow-x: auto;';
 
+        // Totals-by-input-item container
+        const totalsContainer = document.createElement('div');
+        totalsContainer.className = 'mwi-decompose-history-totals-container';
+        totalsContainer.style.cssText = 'overflow-x: auto;';
+
         // Pagination
         const pagination = document.createElement('div');
         pagination.className = 'mwi-decompose-history-pagination';
@@ -317,6 +422,7 @@ class DecomposeHistoryViewer {
         content.appendChild(controls);
         content.appendChild(badges);
         content.appendChild(tableContainer);
+        content.appendChild(totalsContainer);
         content.appendChild(pagination);
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
@@ -491,13 +597,27 @@ class DecomposeHistoryViewer {
         const inputCost = netConsumed * inputPrice;
         const inputUnpriced = inputBasis === null && netConsumed > 0;
 
-        const catalystPrice = (hrid) => {
-            const price = getItemPrice(hrid, { context: 'profit', side: 'buy' });
-            return price > 0 ? price : 0;
-        };
-        const catalystCost =
-            (session.catalystOfDecompositionUsed || 0) * catalystPrice(CATALYST_OF_DECOMPOSITION_HRID) +
-            (session.primeCatalystUsed || 0) * catalystPrice(PRIME_CATALYST_HRID);
+        // A catalyst the market cannot price used to be silently costed at zero, which
+        // reads as "this catalyst was free" rather than "we do not know what it cost".
+        // The cost still excludes it — there is no number to add — but the session now
+        // says so, and the totals table marks the row †.
+        const catalystUse = [
+            { hrid: CATALYST_OF_DECOMPOSITION_HRID, count: session.catalystOfDecompositionUsed || 0 },
+            { hrid: PRIME_CATALYST_HRID, count: session.primeCatalystUsed || 0 },
+        ].filter((entry) => entry.count > 0);
+        let catalystCost = 0;
+        let catalystUnpriced = false;
+        const catalystHrids = [];
+        for (const entry of catalystUse) {
+            const price = getItemPrice(entry.hrid, { context: 'profit', side: 'buy' });
+            catalystHrids.push(entry.hrid);
+            if (price > 0) catalystCost += price * entry.count;
+            else catalystUnpriced = true;
+        }
+        // Sessions saved before catalyst counts were persisted carry neither field.
+        // That is "unknown", not "none", and the totals table marks it ‡.
+        const catalystUnrecorded =
+            session.catalystOfDecompositionUsed === undefined && session.primeCatalystUsed === undefined;
 
         // Alchemy coin fee. This used to charge max(50, vendorPrice / 5) — the transmute
         // formula — while every other decompose site charged (10 + itemLevel) × 5. The fee is
@@ -513,6 +633,9 @@ class DecomposeHistoryViewer {
             revenue,
             inputCost,
             catalystCost,
+            catalystUnpriced,
+            catalystUnrecorded,
+            catalystHrids,
             coinCost,
             netConsumed,
             inputBasis,
@@ -769,6 +892,7 @@ class DecomposeHistoryViewer {
 
         table.appendChild(tbody);
         tableContainer.appendChild(table);
+        this.renderTotals();
         this.renderPagination();
     }
 
@@ -808,6 +932,338 @@ class DecomposeHistoryViewer {
             line.appendChild(text);
             cell.appendChild(line);
         });
+    }
+
+    // ─── Totals by Input Item ───────────────────────────────────────────────
+
+    /**
+     * Group the currently filtered sessions by input item and total them.
+     *
+     * Consumed/cost figures come from the same per-session `computeSessionProfit`
+     * result already cached by `applyFilters`, so a totals row and the Profit
+     * column of the rows it sums can never disagree about a single session.
+     *
+     * Decompose has no self-return and no drop table, so none of transmute's
+     * "internally impossible counts" machinery applies here: every attempt
+     * consumes its input and every success hands back a fixed set of materials.
+     * What does carry over is the marker discipline — an input the market
+     * cannot price, or a catalyst that could not be priced or was never
+     * recorded, is excluded and said so, never quietly counted as zero.
+     *
+     * @returns {Array<Object>} One entry per distinct inputItemHrid
+     */
+    computeInputItemTotals() {
+        return groupSessionsByInputItem(this.filteredSessions, {
+            getDetail: (session) => this.profitCache.get(session.id) || this.computeSessionProfit(session),
+            getSortName: (hrid) => this.getItemName(hrid),
+            createGroup: (hrid) => ({
+                inputItemHrid: hrid,
+                sessionCount: 0,
+                attempts: 0,
+                successes: 0,
+                netConsumed: 0,
+                revenue: 0,
+                inputCost: 0,
+                inputUnpriced: false,
+                catalystCost: 0,
+                catalystUnpricedSessions: 0,
+                catalystUnrecordedSessions: 0,
+                catalystHrids: new Set(),
+                coinCost: 0,
+            }),
+            accumulate: (group, session, detail) => {
+                group.sessionCount++;
+                group.attempts += session.totalAttempts || 0;
+                group.successes += session.totalSuccesses || 0;
+                group.netConsumed += detail.netConsumed;
+                group.revenue += detail.revenue;
+                group.inputCost += detail.inputCost;
+                if (detail.inputUnpriced) group.inputUnpriced = true;
+                group.catalystCost += detail.catalystCost;
+                if (detail.catalystUnpriced) group.catalystUnpricedSessions++;
+                if (detail.catalystUnrecorded) group.catalystUnrecordedSessions++;
+                for (const hrid of detail.catalystHrids || []) group.catalystHrids.add(hrid);
+                group.coinCost += detail.coinCost;
+            },
+            finalize: (group) => finalizeDecomposeGroup(group),
+        });
+    }
+
+    /**
+     * A signature two decompose inputs share only when decomposing one is
+     * genuinely the same trade as decomposing the other.
+     *
+     * The case this exists for is scrolls: a handful of attempts on each of
+     * seven scroll types is seven rows too thin to read, when what is really
+     * being asked is "is decomposing scrolls worth it". Membership is derived
+     * from the game data rather than written down as a list of hrids, for the
+     * same reasons transmute derives its own: a fixed list silently misses a
+     * scroll the game adds later, and keeps averaging one in after the game
+     * changes what it breaks into.
+     *
+     * Equivalent means the same `bulkMultiplier` and the same `decomposeItems`
+     * — same output items, in the same counts. Decompose is deterministic, so
+     * that is the whole of the trade: two inputs with identical outputs and
+     * bulk return identical value per attempt, and their samples can be added.
+     * Requiring the output *hrids* to match, not just the shape, is deliberate
+     * and is the same rule transmute applies to its drop table: two items that
+     * break into different materials at the same rate are not interchangeable,
+     * and summing their revenue would be nonsense.
+     *
+     * @param {string} itemHrid
+     * @returns {string|null} The signature, or null when the item has no usable
+     *   decompose data (it then pools with nothing, which is the safe default)
+     */
+    getDecomposeEquivalenceKey(itemHrid) {
+        const alchemy = dataManager.getItemDetails(itemHrid)?.alchemyDetail;
+        const outputs = alchemy?.decomposeItems;
+        if (!Array.isArray(outputs) || outputs.length === 0) return null;
+
+        const entries = outputs.map((output) => `${output.itemHrid}:${output.count ?? 1}`).sort();
+        return JSON.stringify({ bulk: alchemy.bulkMultiplier ?? 1, entries });
+    }
+
+    /**
+     * Sum a set of equivalent per-item groups into one pooled group.
+     *
+     * Every marker a per-item row can carry has to keep holding here: an
+     * unpriced input poisons the pooled input cost the same way, and unpriced
+     * or unrecorded catalyst sessions are counted, not dropped.
+     *
+     * @param {Array<Object>} members - Groups from `computeInputItemTotals`
+     * @returns {Object} A group shaped like a per-item one, plus `pooled`/`memberHrids`
+     */
+    buildPooledGroup(members) {
+        const pooled = {
+            pooled: true,
+            memberHrids: members.map((group) => group.inputItemHrid),
+            inputItemHrid: null,
+            sessionCount: 0,
+            attempts: 0,
+            successes: 0,
+            netConsumed: 0,
+            revenue: 0,
+            inputCost: 0,
+            inputUnpriced: false,
+            catalystCost: 0,
+            catalystUnpricedSessions: 0,
+            catalystUnrecordedSessions: 0,
+            catalystHrids: new Set(),
+            coinCost: 0,
+        };
+
+        for (const group of members) {
+            pooled.sessionCount += group.sessionCount;
+            pooled.attempts += group.attempts;
+            pooled.successes += group.successes;
+            pooled.netConsumed += group.netConsumed;
+            pooled.revenue += group.revenue;
+            pooled.inputCost += group.inputCost;
+            pooled.catalystCost += group.catalystCost;
+            pooled.catalystUnpricedSessions += group.catalystUnpricedSessions;
+            pooled.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
+            pooled.coinCost += group.coinCost;
+            pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
+            for (const hrid of group.catalystHrids || []) pooled.catalystHrids.add(hrid);
+        }
+
+        pooled.memberHrids.sort((a, b) => this.getItemName(a).localeCompare(this.getItemName(b)));
+        return finalizeDecomposeGroup(pooled);
+    }
+
+    /**
+     * Pooled rows for sets of equivalent decompose inputs, in addition to
+     * (never instead of) the per-item rows.
+     *
+     * @param {Array<Object>} totals - Per-item groups from `computeInputItemTotals`
+     * @returns {Array<Object>} Zero or more pooled groups
+     */
+    computePooledTotals(totals) {
+        return poolEquivalentGroups(totals, {
+            getKey: (hrid) => this.getDecomposeEquivalenceKey(hrid),
+            buildPooled: (members) => this.buildPooledGroup(members),
+            getSortName: (hrid) => this.getItemName(hrid),
+        });
+    }
+
+    /**
+     * Render the "Totals by Input Item" table below the session list.
+     */
+    renderTotals() {
+        const container = this.modal.querySelector('.mwi-decompose-history-totals-container');
+        const totals = this.computeInputItemTotals();
+
+        const rows = totals.map((group, index) => this.buildTotalsRow(group, index));
+        // Pooled rows sit below the per-item rows they summarize and above the
+        // overall row. They are additional, never a replacement — and they are
+        // deliberately NOT fed into `buildOverallTotalsRow`, which reduces over
+        // the per-item groups; adding them there would count every session twice.
+        this.computePooledTotals(totals).forEach((group, index) =>
+            rows.push(this.buildTotalsRow(group, totals.length + index))
+        );
+        if (totals.length > 0) rows.push(this.buildOverallTotalsRow(totals));
+
+        renderTotalsSection(container, {
+            heading: 'Totals by Input Item',
+            columns: DECOMPOSE_TOTALS_COLUMNS,
+            rows,
+            legendParts: DECOMPOSE_TOTALS_LEGEND,
+        });
+    }
+
+    /**
+     * Build one totals row for a single input-item group (or a pooled one).
+     * @param {Object} group
+     * @param {number} index
+     * @returns {HTMLTableRowElement}
+     */
+    buildTotalsRow(group, index) {
+        const row = document.createElement('tr');
+        row.style.cssText = totalsRowStyle(index, { pooled: group.pooled });
+
+        const itemCell = document.createElement('td');
+        itemCell.style.cssText = 'padding: 6px 10px; display: flex; align-items: center; gap: 8px;';
+        if (group.pooled) {
+            for (const hrid of group.memberHrids) this.appendItemIcon(itemCell, hrid, 18);
+        } else {
+            this.appendItemIcon(itemCell, group.inputItemHrid, 18);
+        }
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = group.pooled
+            ? `Pooled: ${group.memberHrids.length} equivalent inputs`
+            : this.getItemName(group.inputItemHrid);
+        if (group.pooled) {
+            nameSpan.style.fontStyle = 'italic';
+            itemCell.title = this.pooledMembershipTitle(group);
+        }
+        itemCell.appendChild(nameSpan);
+        row.appendChild(itemCell);
+
+        row.appendChild(createTotalsCell(String(group.sessionCount)));
+        row.appendChild(createTotalsCell(String(group.attempts)));
+        row.appendChild(createTotalsCell(String(group.netConsumed)));
+
+        const successPct = group.successRate !== null ? `${(group.successRate * 100).toFixed(1)}%` : '—';
+        row.appendChild(createTotalsCell(`${group.successes} (${successPct})`));
+
+        row.appendChild(createTotalsCell(formatKMB(group.revenue, 1)));
+        row.appendChild(
+            createTotalsCell(formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''), {
+                title: group.inputUnpriced
+                    ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
+                    : undefined,
+            })
+        );
+
+        const [catalystText, catalystTitle] = formatDecomposeCatalystTotal(group);
+        row.appendChild(createTotalsCell(catalystText, { title: catalystTitle }));
+
+        row.appendChild(createTotalsCell(formatKMB(group.coinCost, 1)));
+        row.appendChild(
+            createTotalsCell(formatKMB(group.net, 1), {
+                color: group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                bold: true,
+            })
+        );
+        row.appendChild(
+            createTotalsCell(group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—')
+        );
+
+        return row;
+    }
+
+    /**
+     * The tooltip that makes a pooled row's membership discoverable — which
+     * items went in, and on what grounds. A row the reader cannot audit is a
+     * row they have to take on faith.
+     *
+     * @param {Object} group - A pooled group from `buildPooledGroup`
+     * @returns {string}
+     */
+    pooledMembershipTitle(group) {
+        const names = group.memberHrids.map((hrid) => this.getItemName(hrid)).join(', ');
+        return (
+            `Pooled across ${group.memberHrids.length} inputs: ${names}. ` +
+            'These break into the same materials, in the same counts, at the same bulk size, so decomposing any ' +
+            'of them returns the same value per attempt and the samples can be added. Membership is read from ' +
+            'the game data, not a fixed list — an item whose outputs differ drops out by itself. The per-item ' +
+            'rows above are unchanged.'
+        );
+    }
+
+    /**
+     * Build the "All items" summary row across every group.
+     * @param {Array<Object>} totals
+     * @returns {HTMLTableRowElement}
+     */
+    buildOverallTotalsRow(totals) {
+        const overall = totals.reduce(
+            (acc, group) => {
+                acc.sessionCount += group.sessionCount;
+                acc.attempts += group.attempts;
+                acc.successes += group.successes;
+                acc.netConsumed += group.netConsumed;
+                acc.revenue += group.revenue;
+                acc.inputCost += group.inputCost;
+                acc.catalystCost += group.catalystCost;
+                acc.coinCost += group.coinCost;
+                acc.inputUnpriced = acc.inputUnpriced || group.inputUnpriced;
+                acc.catalystUnpricedSessions += group.catalystUnpricedSessions;
+                acc.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
+                return acc;
+            },
+            {
+                sessionCount: 0,
+                attempts: 0,
+                successes: 0,
+                netConsumed: 0,
+                revenue: 0,
+                inputCost: 0,
+                catalystCost: 0,
+                coinCost: 0,
+                inputUnpriced: false,
+                catalystUnpricedSessions: 0,
+                catalystUnrecordedSessions: 0,
+            }
+        );
+
+        const row = document.createElement('tr');
+        row.style.cssText = 'border-top: 2px solid #555; background: #1f1f1f;';
+
+        const itemCell = document.createElement('td');
+        itemCell.textContent = 'All items';
+        itemCell.style.cssText = 'padding: 6px 10px; font-weight: bold;';
+        row.appendChild(itemCell);
+
+        row.appendChild(createTotalsCell(String(overall.sessionCount), { bold: true }));
+        row.appendChild(createTotalsCell(String(overall.attempts), { bold: true }));
+        row.appendChild(createTotalsCell(String(overall.netConsumed), { bold: true }));
+
+        const successPct = overall.attempts > 0 ? `${((overall.successes / overall.attempts) * 100).toFixed(1)}%` : '—';
+        row.appendChild(createTotalsCell(`${overall.successes} (${successPct})`, { bold: true }));
+        row.appendChild(createTotalsCell(formatKMB(overall.revenue, 1), { bold: true }));
+        row.appendChild(
+            createTotalsCell(formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''), { bold: true })
+        );
+
+        const [catalystText, catalystTitle] = formatDecomposeCatalystTotal(overall);
+        row.appendChild(createTotalsCell(catalystText, { bold: true, title: catalystTitle }));
+
+        row.appendChild(createTotalsCell(formatKMB(overall.coinCost, 1), { bold: true }));
+
+        const net = overall.revenue - overall.inputCost - overall.catalystCost - overall.coinCost;
+        row.appendChild(
+            createTotalsCell(formatKMB(net, 1), {
+                bold: true,
+                color: net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+            })
+        );
+
+        // Mixed input items — a single break-even input value across different
+        // items is not a number that means anything
+        row.appendChild(createTotalsCell('—'));
+
+        return row;
     }
 
     /**
