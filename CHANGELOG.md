@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers: prices that were never offered, and a chart that explained itself
+
+- A market price of zero is now read as "no price" instead of being pulled up to the bottom of the tradable range, which made a figure nobody had offered look like a real quote.
+- When the shared price-history server is backing off, the price chart and the My Listings refresh say so instead of drawing blank or reporting "updated 0".
+- The bulk sell strip counted stacks where it said items, so holding a thousand of something across two stacks read as "2 held back".
+
 ### Totals by input item for coinify and decompose
 
 - Both history panels now carry the per-item summary the transmutation panel has: sessions, attempts, consumed, success rate, costs, net and a measured break-even input price.
