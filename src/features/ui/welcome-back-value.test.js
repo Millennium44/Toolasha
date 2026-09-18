@@ -339,6 +339,21 @@ describe('injecting the row', () => {
         expect(modal.querySelector(`.${ROW_CLASS}`).textContent).toContain('Net 1,000');
     });
 
+    test('the row goes above the dialog’s Close button, not under it', () => {
+        // Under Close is under the button the player is already reaching for —
+        // the same bug fixed for the session briefing's section
+        // (src/features/briefing/session-briefing.js), on this feature's row
+        const modal = welcomeModal(`${tile('milk', '400')}<div class="closeRow"><button>Close</button></div>`);
+
+        expect(enrichModal(modal, flatPrices(10))).toBeTruthy();
+
+        const row = modal.querySelector(`.${ROW_CLASS}`);
+        const closeRow = modal.querySelector('.closeRow');
+        expect(row).not.toBeNull();
+        // Document order: the row comes first
+        expect(row.compareDocumentPosition(closeRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
     test('a modal that throws on the way through leaves the game’s own dialog intact', () => {
         const modal = welcomeModal(tile('milk', '400'));
         const thrower = () => {

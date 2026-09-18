@@ -92,6 +92,36 @@ export function currentWelcomeBackModal(root = document) {
 }
 
 /**
+ * Put a decoration where it will be read, not merely where it fits.
+ *
+ * Appending lands it under the dialog's own Close button, which is the button
+ * the player is on their way to press — a decoration below it is a decoration
+ * most returns never see. It goes above that button instead, and falls back to
+ * the end for a dialog that has no such button.
+ *
+ * Shared between the two features that decorate this modal
+ * (`session-briefing.js` and `welcome-back-value.js`), for the same reason the
+ * detection above is shared: two copies of "where does a decoration go" is how
+ * one of them quietly stays under the button after the other is fixed to sit
+ * above it.
+ *
+ * @param {HTMLElement} modal - The dialog's content element
+ * @param {HTMLElement} node - The decoration to place
+ * @returns {void}
+ */
+export function placeInWelcomeBackModal(modal, node) {
+    const closer = [...(modal.querySelectorAll?.('button, [class*="closeButton"], [class*="Button_button"]') || [])]
+        .reverse()
+        .find((el) => /close/i.test(el.textContent || '') || /close/i.test(el.className?.toString() || ''));
+    // The button may sit in a row of its own, so climb to whichever child of
+    // the modal contains it — that is what the decoration has to go in front of
+    let anchor = closer;
+    while (anchor && anchor.parentElement && anchor.parentElement !== modal) anchor = anchor.parentElement;
+    if (anchor?.parentElement === modal) modal.insertBefore(node, anchor);
+    else modal.appendChild(node);
+}
+
+/**
  * Call back once per inserted node that turns out to be the welcome modal.
  *
  * Debounced, because the modal's contents arrive in a burst: a handler that ran

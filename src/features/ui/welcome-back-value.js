@@ -33,7 +33,12 @@
 
 import config from '../../core/config.js';
 import { coinFormatter, formatKMB } from '../../utils/formatters.js';
-import { isWelcomeBackModal, findWelcomeBackModal, onWelcomeBackModal } from '../../utils/welcome-back-modal.js';
+import {
+    isWelcomeBackModal,
+    findWelcomeBackModal,
+    onWelcomeBackModal,
+    placeInWelcomeBackModal,
+} from '../../utils/welcome-back-modal.js';
 import { parseItemCount, gameDigitsSource } from '../../utils/number-parser.js';
 import { getItemPrice } from '../../utils/market-data.js';
 
@@ -298,7 +303,7 @@ export function enrichModal(modal, priceOf = marketPriceOf) {
         if (summary.priced === 0) return null;
 
         const row = buildRow(formatSummary(summary));
-        modal.appendChild(row);
+        placeInWelcomeBackModal(modal, row);
         return row;
     } catch (error) {
         console.error('[WelcomeBackValue] Could not value the welcome modal:', error);
