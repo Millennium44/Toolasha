@@ -19,6 +19,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Every existing character is moved to "Both" for "Market: Where to show listing age" once, since that value was carried over from the three old switches rather than chosen.
 
+### Open a combat zone at the tier you were reading
+
+- Every row of the all-zones table has a button that opens that zone at that tier, filling nothing.
+- Every bestiary plan step has one that opens its zone and tier and fills the fights that step asks for.
+- Pressing Go on a combat task now sets the difficulty the estimate assumed, instead of filling a count against whatever tier happened to be showing.
+
 ### Iron Bell farming
 
 - The plan counts the star fruit and essence you already hold and shrinks the forage and decompose steps to match, saying what it credited.
