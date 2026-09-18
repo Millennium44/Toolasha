@@ -34,6 +34,9 @@ const EXPECTED_SURFACE = {
     removeMaterialTabs: 0, // ([options])
     watchTabForAcquisition: 2, // (tab, options)
     ensureClearAllTabsControl: 3, // (container, referenceTab, [onClearAll], [options])
+    // Gained the same `owner` option as createMaterialTab/removeMaterialTabs, in the same
+    // change — it was missing from this list, so that arity was unpinned.
+    createClearAllTabsControl: 2, // (referenceTab, [onClearAll], [options])
 };
 
 describe('Toolasha.Utils.marketplaceTabs published surface', () => {

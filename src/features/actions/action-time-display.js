@@ -1354,6 +1354,12 @@ class ActionTimeDisplay {
         return {
             totalTime: result.actionTimeSeconds,
             hasInfinite: result.isTrulyInfinite,
+            // The currently-running action can be capped by the same kind of estimated
+            // material limit a queued row can — an enhancing row's expected-protection draw,
+            // or a counted/infinite row capped by a non-exact material read. Dropping this
+            // left the queue tooltip total unmarked whenever ONLY the running action (no
+            // queued row) carried the estimate.
+            isEstimated: result.materialLimitIsEstimated === true,
             actionId: currentAction.id,
         };
     }
@@ -3691,6 +3697,13 @@ class ActionTimeDisplay {
                             count = enhancingTime.count;
                             actionTimeSeconds = enhancingTime.totalTime;
                             accumulatedTime += enhancingTime.totalTime;
+                            // As in the queued-row branch below: the currently-running action
+                            // can rest on the same expected-protection-draw estimate a queued
+                            // row can, and the total must carry the mark for it too.
+                            if (enhancingTime.materialLimitIsEstimated === true) {
+                                hasEstimate = true;
+                                hasMaterialLimitEstimate = true;
+                            }
                         } else if (isInfinite) {
                             hasInfinite = true;
                         }
@@ -3712,6 +3725,13 @@ class ActionTimeDisplay {
                             // Not `|| null`: a limit of 0 is a real answer (the bag is empty),
                             // and coercing it to null would report the action as infinite
                             const materialLimit = limitResult ? limitResult.maxActions : null;
+
+                            // As in the queued-row branch below: an estimated cap on the
+                            // currently-running action must reach the total's mark too.
+                            if (limitResult?.isEstimated === true) {
+                                hasEstimate = true;
+                                hasMaterialLimitEstimate = true;
+                            }
 
                             if (materialLimit !== null) {
                                 // Material-limited infinite action - calculate time
@@ -3735,12 +3755,19 @@ class ActionTimeDisplay {
                         // Counted row: shown for what its materials can actually buy, the same
                         // rule the shared helper applies for the queue tooltip. This block
                         // duplicates that timing logic inline; the two must stay in step.
-                        count = this.capCountedRequestByMaterials(
+                        const capped = this.capCountedRequestByMaterials(
                             currentAction.maxCount - currentAction.currentCount,
                             actionDetails,
                             inventoryLookup,
                             currentAction
-                        ).count;
+                        );
+                        count = capped.count;
+                        // As in the queued-row branch below: an estimated cap on the
+                        // currently-running action must reach the total's mark too.
+                        if (capped.isEstimated) {
+                            hasEstimate = true;
+                            hasMaterialLimitEstimate = true;
+                        }
                         const timeData = this.calculateActionTime(actionDetails, currentAction.actionHrid);
                         if (timeData) {
                             const { actionTime, totalEfficiency } = timeData;

@@ -145,6 +145,45 @@ function total() {
     return document.querySelector('#mwi-queue-total-time');
 }
 
+/**
+ * Mark `actionHrid`'s row (matched the same way `matchCurrentActionFromText` does — by
+ * item name for an enhancing row) as the action actually running right now, not merely
+ * queued. `injectQueueTimes`/`injectQueueTimesTooltip` read this from
+ * `div[class*="Header_actionName"]` rather than from the queue list.
+ */
+function markAsCurrentAction(itemName) {
+    const header = document.createElement('div');
+    header.className = 'Header_actionName__x';
+    header.textContent = itemName;
+    document.body.appendChild(header);
+}
+
+/** A `QueuedActions_queuedActionsTooltip` container shaped for `injectQueueTimesTooltip`. */
+function tooltipContent(labels, { enhancingIndexes = [] } = {}) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'QueuedActions_queuedActionsTooltip__x';
+    const actionsContainer = document.createElement('div');
+    actionsContainer.className = 'QueuedActions_actions__y';
+    actionsContainer.innerHTML = labels
+        .map((label, index) => {
+            const icon = enhancingIndexes.includes(index) ? '<svg><use href="#enhancing"></use></svg>' : '';
+            return `
+        <div class="QueuedActions_action__item">
+            <div class="QueuedActions_actionText__y">
+                <div class="QueuedActions_text__z">${icon}#${index + 1}${label}</div>
+            </div>
+        </div>`;
+        })
+        .join('');
+    wrapper.appendChild(actionsContainer);
+    document.body.appendChild(wrapper);
+    return wrapper;
+}
+
+function tooltipTotal(wrapper) {
+    return wrapper.querySelector('.mwi-queue-tooltip-total');
+}
+
 beforeEach(() => {
     document.body.innerHTML = '';
     game.settings = { actionQueue: true, actionPanel_enhanceMatLimitProtections: true };
@@ -204,5 +243,40 @@ describe('the queue total marks a material-limit estimate, not only a sim rate',
         expect(totalDiv.textContent).not.toContain('~');
         expect(totalDiv.textContent).toMatch(/^Total time: \d/);
         expect(totalDiv.title).toBe('');
+    });
+});
+
+describe('the same mark reaches the total when the estimate sits on the CURRENTLY RUNNING action', () => {
+    // The current action is computed by a second, hand-duplicated code path (both in
+    // injectQueueTimes and in injectQueueTimesTooltip's calculateCurrentActionTime) that
+    // dropped `materialLimitIsEstimated` on the floor instead of folding it into
+    // `hasEstimate` — the same mark a queued row's estimate already reached. With no
+    // other estimated row in the queue, the total read as an exact figure it was not.
+
+    test('injectQueueTimes: an estimated material limit on the running action, no queued rows, still marks the total', () => {
+        game.inventory = [stack(ESSENCE, 500), stack(PROTECTION, 3)];
+        game.currentActions = [enhancingRow(1, { maxCount: 500, protectionItemHrid: PROTECTION })];
+        markAsCurrentAction('Cheese Sword');
+        const menu = queueMenu(['Cheese Sword'], { enhancingIndexes: [0] });
+
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        const totalDiv = total();
+        expect(totalDiv).not.toBeNull();
+        expect(totalDiv.textContent).toContain('~');
+        expect(totalDiv.title).toContain('Estimated, not measured');
+    });
+
+    test('injectQueueTimesTooltip: an estimated material limit on the running action, no queued rows, still marks the total', () => {
+        game.inventory = [stack(ESSENCE, 500), stack(PROTECTION, 3)];
+        game.currentActions = [enhancingRow(1, { maxCount: 500, protectionItemHrid: PROTECTION })];
+        markAsCurrentAction('Cheese Sword');
+        const wrapper = tooltipContent(['Cheese Sword'], { enhancingIndexes: [0] });
+
+        actionTimeDisplay.injectQueueTimesTooltip(wrapper);
+
+        const totalDiv = tooltipTotal(wrapper);
+        expect(totalDiv).not.toBeNull();
+        expect(totalDiv.textContent).toContain('~');
     });
 });
