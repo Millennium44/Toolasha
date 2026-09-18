@@ -24,11 +24,41 @@
  * only the ARIA role and the value format are load-bearing here, both far
  * less likely to move under a game update than a hashed class name.
  *
- * `GAME.COMBAT_ZONE_TABS` — the selector this used to click a "zone tab" by
- * matching its text to a zone's display name — turned out, on measurement, to
- * match the Combat *page's* top-level tabs ("Combat Zones", "Find Party",
- * "Combat Sim", "Statistics"), never a per-zone tab. That fallback could never
- * fire and is not reused here; see `selectors.js` for the corrected comment.
+ * `GAME.COMBAT_ZONE_TABS` (now `GAME.COMBAT_PAGE_TABS`) — the selector this
+ * used to click a "zone tab" by matching its text to a zone's display name —
+ * turned out, on measurement, to match the Combat *page's* top-level tabs
+ * ("Combat Zones", "Find Party", "Combat Sim", "Statistics"), never a
+ * per-zone tab. That old use as a zone-tab fallback could never fire and is
+ * not reused. It is reused for something the page tabs actually are, below.
+ *
+ * ## A player mid-fight has no Combat Zones list in the DOM at all
+ *
+ * Measured live on the maintainer's client: while fighting, the ▶ buttons and
+ * the combat-task Go path did nothing, logging
+ * `[DOM] Timeout waiting for: [class*="CombatZones_combatZones"]`. A class
+ * dump from that same page contained `CombatPanel_combatPanel`,
+ * `CombatPanel_tabsComponentContainer`, `TabsComponent_tabPanelsContainer`,
+ * `TabPanel_tabPanel`, `TabPanel_hidden`, `BattlePanel_combatUnitGrid`,
+ * `CombatUnit_*` — and no `CombatZones_*` whatsoever. It reproduced on the
+ * test server only because the tester was never in combat: the Combat Zones
+ * list is only rendered when the Combat page is showing its "Combat Zones"
+ * tab, and a player mid-fight is viewing the Battle tab/panel instead.
+ *
+ * The fix: if the list does not appear after `navigateToAction`, look among
+ * `GAME.COMBAT_PAGE_TABS` for the one labelled "Combat Zones" (matched
+ * case-insensitively on rendered text, never by position) and click it, then
+ * wait for the list again. Clicking a page tab is navigation, not a game
+ * action — pressing "Add Queue" or "Start Now" remains off-limits everywhere
+ * in this module. If no such tab is found, or the list still does not
+ * appear, this refuses exactly like every other step here: an honest
+ * `{opened: false, ...}` rather than a guess.
+ *
+ * A sequence that switches onto Combat Zones and then fails to reach a
+ * usable, tier-confirmed panel clicks back to whichever tab was selected
+ * before the switch — a player who pressed ▶ mid-fight and got a refusal
+ * should not also be left staring at an empty zones list instead of their
+ * fight. See `findSelectedCombatPageTab`'s doc-comment for what this does and
+ * does not assume about how the game marks the active tab.
  *
  * ## `navigateToAction` does not land on the zone's own panel
  *
@@ -62,12 +92,21 @@ import {
 } from './action-panel-helper.js';
 import { setReactInputValue } from './react-input.js';
 import { waitForElement } from './dom.js';
+import { GAME } from './selectors.js';
 
 /** The Combat Zones list container `navigateToAction` actually lands on. */
 const ZONE_LIST_SELECTOR = '[class*="CombatZones_combatZones"]';
 
 /** How long to wait for the Combat Zones list to render after `navigateToAction`. */
 const ZONE_LIST_TIMEOUT_MS = 5000;
+
+/**
+ * How long to wait for the Combat Zones list a second time, after clicking
+ * the Combat page's own "Combat Zones" tab. Same budget as the first wait —
+ * there is nothing measured to suggest the post-tab-click render is any
+ * faster or slower than the first one.
+ */
+const ZONE_LIST_RETRY_TIMEOUT_MS = ZONE_LIST_TIMEOUT_MS;
 
 /** How long to wait for the zone's own detail panel to mount after its tile is clicked. */
 const PANEL_TIMEOUT_MS = 5000;
@@ -220,6 +259,69 @@ export async function ensureZoneAndTier(panel, zoneHrid, tier) {
 }
 
 /**
+ * The Combat page's own "Combat Zones" tab, matched by its rendered label
+ * text (case-insensitively) rather than position — `GAME.COMBAT_PAGE_TABS`
+ * finds every top-level page tab ("Combat Zones", "Find Party", "Combat Sim",
+ * "Statistics" on the live client), and this is the one whose content is the
+ * `ZONE_LIST_SELECTOR` grid. Refuses (returns null) rather than clicking an
+ * arbitrary tab if none reads "combat zones" — a client whose label differs
+ * gets an honest refusal, not a wrong navigation.
+ * @returns {HTMLElement|null}
+ */
+function findCombatZonesPageTab() {
+    const tabs = document.querySelectorAll(GAME.COMBAT_PAGE_TABS);
+    for (const tab of tabs) {
+        if ((tab.textContent || '').trim().toLowerCase() === 'combat zones') {
+            return tab;
+        }
+    }
+    return null;
+}
+
+/**
+ * Whichever Combat page tab is currently selected — captured before clicking
+ * "Combat Zones", so a sequence that switches tabs and then fails can put the
+ * player back where they were (the Battle view, mid-fight) instead of
+ * stranding them on Combat Zones with nothing open.
+ *
+ * Assumption, not measured on the live client: that the active tab carries
+ * `aria-selected="true"` (mirrored in the `Mui-selected` class), the same
+ * convention every other MUI tab strip in this codebase already reads
+ * (`enhancement-display.js`, `panel-observer.js`, `tea-recommendation.js`,
+ * the alchemy tab-watchers). Unverified specifically for the Combat page's
+ * own tabs. If wrong, `findSelectedCombatPageTab` returns null, nothing is
+ * captured, and `restoreCombatPageTab` becomes a no-op — the player is left
+ * on the Combat Zones tab rather than restored, which is the same
+ * "leave rather than guess" refusal shape as everywhere else in this module.
+ * @returns {HTMLElement|null}
+ */
+function findSelectedCombatPageTab() {
+    const tabs = document.querySelectorAll(GAME.COMBAT_PAGE_TABS);
+    for (const tab of tabs) {
+        if (tab.getAttribute('aria-selected') === 'true' || tab.classList.contains('Mui-selected')) {
+            return tab;
+        }
+    }
+    return null;
+}
+
+/**
+ * Click back to `previousTab` (from {@link findSelectedCombatPageTab}) after
+ * a sequence that switched onto the Combat Zones tab did not end up with a
+ * usable, tier-confirmed panel open. A no-op if nothing was captured, or if
+ * the character has since switched — a tab click for the wrong character's
+ * page is worse than leaving it alone.
+ * @param {HTMLElement|null} previousTab
+ * @param {string|null} capturedCharacterId
+ * @returns {void}
+ */
+function restoreCombatPageTab(previousTab, capturedCharacterId) {
+    if (!previousTab) return;
+    if (characterIdentityChanged(capturedCharacterId)) return;
+    previousTab.click();
+}
+
+/**
  * Find the Combat Zones list tile for `zoneHrid` — resolved the same way
  * every other skill-screen tile is (`resolveActionTile`), which reads the
  * tile's own rendered name and looks that up to an action hrid, rather than
@@ -287,12 +389,33 @@ async function openCombatZoneAtTierSequence(zoneHrid, tier, options) {
 
     if (!navigateToAction(zoneHrid)) return result;
 
-    const zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_TIMEOUT_MS);
-    if (!zoneList) return result;
+    let zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_TIMEOUT_MS);
     if (characterIdentityChanged(characterId)) return result;
 
+    // A player mid-fight is on the Battle view, not the Combat Zones list —
+    // measured live (see module doc-comment). Switching the Combat page's
+    // own tab is navigation, not a game action, so it is allowed here.
+    let previousPageTab = null;
+    if (!zoneList) {
+        const zonesTab = findCombatZonesPageTab();
+        if (!zonesTab) return result;
+
+        previousPageTab = findSelectedCombatPageTab();
+        zonesTab.click();
+
+        zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_RETRY_TIMEOUT_MS);
+        if (characterIdentityChanged(characterId)) return result;
+        if (!zoneList) {
+            restoreCombatPageTab(previousPageTab, characterId);
+            return result;
+        }
+    }
+
     const tile = findZoneTile(zoneList, zoneHrid);
-    if (!tile) return result;
+    if (!tile) {
+        restoreCombatPageTab(previousPageTab, characterId);
+        return result;
+    }
 
     tile.click();
     result.opened = true;
@@ -301,7 +424,10 @@ async function openCombatZoneAtTierSequence(zoneHrid, tier, options) {
     if (characterIdentityChanged(characterId)) return result;
     const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier);
     result.tierConfirmed = tierConfirmed;
-    if (!tierConfirmed) return result;
+    if (!tierConfirmed) {
+        restoreCombatPageTab(previousPageTab, characterId);
+        return result;
+    }
     if (characterIdentityChanged(characterId)) return result;
 
     if (count === undefined || count === null) return result;

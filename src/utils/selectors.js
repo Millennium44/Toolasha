@@ -105,6 +105,14 @@ export const GAME = {
     // Combat
     COMBAT_UNIT: '[class*="CombatUnit_combatUnit"]',
     COMBAT_UNIT_NAME: '[class*="CombatUnit_name"]',
+    // The Combat page's own top-level tabs ("Combat Zones", "Find Party",
+    // "Combat Sim", "Statistics") — NOT a per-zone tab list. Measured live:
+    // this selector used to be named COMBAT_ZONE_TABS and misread as one
+    // (removed in the commit that added combat-zone-open.js); it is these
+    // page tabs. Used to detect and switch onto the "Combat Zones" tab when
+    // a player mid-fight is on the Battle view and the zones list is not in
+    // the DOM at all.
+    COMBAT_PAGE_TABS: '[class*="CombatPanel_tabsComponentContainer"] button[class*="MuiTab-root"]',
     // Party members beside a full combat card are drawn as mini units — small
     // clickable boxes with their own name line (guild trial fights draw the
     // whole party this way next to the player's own card)

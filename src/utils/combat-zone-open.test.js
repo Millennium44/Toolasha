@@ -30,6 +30,9 @@ function resetCharacterTracking() {
     dataManager.isCharacterSwitching = false;
 }
 
+/** Matches `ZONE_LIST_TIMEOUT_MS` / `ZONE_LIST_RETRY_TIMEOUT_MS` in combat-zone-open.js. */
+const ZONE_LIST_WAIT_MS = 5000;
+
 let comboboxIdSeq = 0;
 
 /** A MUI-shaped Difficulty combobox, portalled listbox included, as measured live. */
@@ -117,6 +120,30 @@ function buildZoneList(zones) {
     }
     document.body.appendChild(container);
     return { container, tiles };
+}
+
+/**
+ * The Combat page's own top-level tabs ("Combat Zones", "Find Party", "Combat
+ * Sim", "Statistics" on the live client) — `GAME.COMBAT_PAGE_TABS`-shaped,
+ * with `aria-selected`/`Mui-selected` marking whichever one is active, the
+ * same convention every other MUI tab strip in this codebase uses.
+ */
+function buildCombatPageTabs(labels, selectedLabel) {
+    const container = document.createElement('div');
+    container.className = 'CombatPanel_tabsComponentContainer__1a';
+    const buttons = {};
+    for (const label of labels) {
+        const button = document.createElement('button');
+        button.className = 'MuiButtonBase-root MuiTab-root';
+        button.textContent = label;
+        const selected = label === selectedLabel;
+        button.setAttribute('aria-selected', selected ? 'true' : 'false');
+        if (selected) button.classList.add('Mui-selected');
+        container.appendChild(button);
+        buttons[label] = button;
+    }
+    document.body.appendChild(container);
+    return buttons;
 }
 
 /** Drive an in-progress `selectDifficultyTier`/`openCombatZoneAtTier` call through its three settle waits. */
@@ -453,6 +480,124 @@ describe('openCombatZoneAtTier', () => {
         // while mid-switch.
         expect(navSpy).toHaveBeenCalled();
         expect(result.filled).toBe(false);
+    });
+});
+
+describe('openCombatZoneAtTier — in-combat (Battle view, no Combat Zones list)', () => {
+    // MEASURED CONTRACT (do not re-derive): on the maintainer's live client,
+    // mid-fight, `navigateToAction` fires but the Combat Zones list never
+    // renders — the Combat page is showing its Battle view instead. The
+    // console read `[DOM] Timeout waiting for: [class*="CombatZones_combatZones"]`
+    // and every ▶ button did nothing. A class dump from that same page
+    // contained `CombatPanel_tabsComponentContainer` and no `CombatZones_*`
+    // at all. `GAME.COMBAT_PAGE_TABS` (`CombatPanel_tabsComponentContainer`
+    // + `MuiTab-root`) is itself measured — see selectors.js and the
+    // 2026-09-17/18 combat-zone-open.js module doc-comment.
+    //
+    // ASSUMPTIONS (not measured — see combat-zone-open.js doc-comments):
+    // that the previously active tab is marked via `aria-selected`/
+    // `Mui-selected` (an inference from this codebase's own convention
+    // elsewhere, not verified for the Combat page's specific tabs), and that
+    // clicking "Combat Zones" is what makes the list render (this is the fix
+    // being built, not something separately measured live yet).
+
+    test('list absent, "Combat Zones" page tab present: clicks it, the list then appears, and the open proceeds', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party', 'Combat Sim', 'Statistics'], 'Find Party');
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            // The list is NOT built here — simulating a player on the Battle
+            // view, where navigateToAction fires but nothing Combat-Zones-
+            // shaped is in the DOM until the page tab is switched. This is
+            // exactly the shape that would time out and fail before this fix.
+            tabs['Combat Zones'].addEventListener('click', () => {
+                const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+                tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 3));
+            });
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3);
+        // The first wait for the list has to exhaust before the code looks
+        // for a page tab at all — this is what proves the tab click is a
+        // *fallback*, not the first thing tried.
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS);
+
+        const result = await resultPromise;
+        expect(result).toEqual({ opened: true, tierConfirmed: true, filled: false });
+    });
+
+    test('no "Combat Zones" page tab found: refuses cleanly without clicking anything', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        buildCombatPageTabs(['Find Party', 'Combat Sim', 'Statistics'], 'Find Party'); // no "Combat Zones" tab
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true); // list never renders
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3, { count: 10 });
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS);
+
+        const result = await resultPromise;
+        expect(result).toEqual({ opened: false, tierConfirmed: false, filled: false });
+    });
+
+    test('matches the tab by label case-insensitively', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['combat ZONES', 'Find Party'], 'Find Party');
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            tabs['combat ZONES'].addEventListener('click', () => {
+                const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+                tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 0));
+            });
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 0);
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+    });
+
+    test('tab found, but the list never appears after clicking it: refuses cleanly and restores the previous tab', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party'], 'Find Party');
+        let zonesTabClicked = 0;
+        let battleTabClicked = 0;
+        tabs['Combat Zones'].addEventListener('click', () => zonesTabClicked++); // never builds the list
+        tabs['Find Party'].addEventListener('click', () => battleTabClicked++);
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3, { count: 10 });
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS * 2); // first wait + retry wait
+
+        const result = await resultPromise;
+        expect(result).toEqual({ opened: false, tierConfirmed: false, filled: false });
+        expect(zonesTabClicked).toBe(1);
+        // Restored back to the tab that was selected before the switch.
+        expect(battleTabClicked).toBe(1);
+    });
+
+    test('list already present: never looks for or clicks a page tab', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party'], 'Find Party');
+        let zonesTabClicked = 0;
+        tabs['Combat Zones'].addEventListener('click', () => zonesTabClicked++);
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 1));
+            return true;
+        });
+
+        const result = await openCombatZoneAtTier('/actions/combat/aqua', 1);
+        expect(result).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(zonesTabClicked).toBe(0);
     });
 });
 
