@@ -3154,6 +3154,98 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.55.0](https://github.com/Millennium44/Toolasha/compare/v3.54.0...v3.55.0) (2026-09-18)
+
+
+### Features
+
+* all-zones snapshot stores encounters per hour and the gear it was run in ([7c71f69](https://github.com/Millennium44/Toolasha/commit/7c71f69456ab55892babcbb99048b82893b262b7))
+* bestiary planner prefers a higher-score zone within a settable tolerance ([245d128](https://github.com/Millennium44/Toolasha/commit/245d1286342587d9dc2a649d03c8683959717362))
+* iron Bell walk credits held star fruit and essence, splits a week-sized leg ([1437305](https://github.com/Millennium44/Toolasha/commit/14373059fc8439344cfb366240c710f00bf5afdd))
+* move every existing character to listing age "both" once ([c034d92](https://github.com/Millennium44/Toolasha/commit/c034d92acf18c5d9e74de7ff26cdc75b0b58a58b))
+* open combat zones at their exact tier from the sim table and plan ([2021077](https://github.com/Millennium44/Toolasha/commit/20210773558d782cfe056753271efd346e41400e))
+* queue shows a simulated time for counted combat rows ([e5906c4](https://github.com/Millennium44/Toolasha/commit/e5906c4dee961ddb0a98bdd455f89c81336ba2a9))
+* queued combat rows get a sim 24h button that times the row in its own loadout ([1ab064b](https://github.com/Millennium44/Toolasha/commit/1ab064ba9e21797162c78f90a022ae68d467446b))
+* recover settings after a whole-origin IndexedDB wipe ([da714ba](https://github.com/Millennium44/Toolasha/commit/da714ba1ea80d7d886eebd5f52a8d11e15018f75))
+* scrolls out of the treasure ledger, decimals on the deaths delta, a clock on the target ([7bd7c23](https://github.com/Millennium44/Toolasha/commit/7bd7c2364dc9ba0b7e534fbf01af26f95c47324d))
+* session briefing renders inside the game's Welcome Back modal ([8992b43](https://github.com/Millennium44/Toolasha/commit/8992b435c6aefb9c16b8a8d3fb0f426b0a2b4289))
+* sort the treasure panel in the game s own order ([ec0666d](https://github.com/Millennium44/Toolasha/commit/ec0666d4720960bd8b44ab5065b4ca1bbeb10570))
+
+
+### Bug Fixes
+
+* a future persistence stamp suppresses the storage-persist request for good ([3877139](https://github.com/Millennium44/Toolasha/commit/38771394a855fc46afb0d15fbb494bbf53f098d9))
+* a partial live settings store no longer wipes other characters' mirror backups ([86e6d3a](https://github.com/Millennium44/Toolasha/commit/86e6d3a1b8cffad6e5b37dc8b0ad311bde56bd12))
+* a settings restore accepted after a character switch no longer silently does nothing ([921c005](https://github.com/Millennium44/Toolasha/commit/921c0052b516fdd0cb37689d2b4506b7dd39fb55))
+* chest-opening gold-sources recorder excludes scrolls ([da7a1fb](https://github.com/Millennium44/Toolasha/commit/da7a1fb73b55d9122553e53f8ee161cae3758bb9))
+* click the zone tile before reading a combat zone's detail panel ([a53be96](https://github.com/Millennium44/Toolasha/commit/a53be96d9d4db3d04ee3e430c7e740607f11bf93))
+* combat task Go opens the zone at the last tier you fought it ([3ef16d6](https://github.com/Millennium44/Toolasha/commit/3ef16d6115ca0211636c5109ad8bdd76084b9b4b))
+* combat task Zone estimate picks a real zone with only one task in it ([4987bd9](https://github.com/Millennium44/Toolasha/commit/4987bd9a0a1af458c00a5f3644027b62808cc1ef))
+* cut settings-mirror write cost and mirror legacy string-shaped maps ([419c88a](https://github.com/Millennium44/Toolasha/commit/419c88a976cf99d1aa42931798393bd903c2b321))
+* decimals on the dungeon Success delta, and no "undefined" max wave ([a685908](https://github.com/Millennium44/Toolasha/commit/a6859089437ac665d0750a76cdc3b90cc4a3a8ff))
+* decorate the Welcome Back box, not the full-screen frame around it ([5903366](https://github.com/Millennium44/Toolasha/commit/590336601fffd8e06d0c1d44a2b9615d3757b96d))
+* don't reuse a Welcome Back dialog left open across a character switch ([79435bd](https://github.com/Millennium44/Toolasha/commit/79435bd69a813067e4b906bbdf640cab55accabc))
+* drop the dead restoreOpen option from the panel shell ([68ae505](https://github.com/Millennium44/Toolasha/commit/68ae50596d9fb9f0b0a08965d908948e97ae4450))
+* drop the view property from the difficulty menu mousedown ([c1e4baf](https://github.com/Millennium44/Toolasha/commit/c1e4baf7359ad6517cb9e005d309701b97d819b2))
+* goal planner sends combat earning steps to the zone panel, not the list ([c0209a8](https://github.com/Millennium44/Toolasha/commit/c0209a880f2e60f7bc34e12086c4e78543485510))
+* iron cow holdings credit ignores other plans' inventory claims ([e3f7e24](https://github.com/Millennium44/Toolasha/commit/e3f7e242d4710809d74e65ba09b05e2ce13d8cba))
+* keep the persistence-attempt stamp device-local ([6f49edd](https://github.com/Millennium44/Toolasha/commit/6f49eddf741ae4774533ba9e6caf1fb31f40470a))
+* keep the scroll-purge flag on the device that did the purge ([3fceef0](https://github.com/Millennium44/Toolasha/commit/3fceef05d5e27610f00fe263e56f0738adac9f62))
+* marketplace tabs get an owner so one feature can't clear another's ([af6bf95](https://github.com/Millennium44/Toolasha/commit/af6bf954931a35e83d598592b26aae2ffc4aa0be))
+* open the difficulty menu with mousedown, which is what MUI listens for ([9585d5e](https://github.com/Millennium44/Toolasha/commit/9585d5e25f0b69239d0fb353508b1bff48373624))
+* purge scroll rows already recorded in the treasure ledger, once ([fa6b16e](https://github.com/Millennium44/Toolasha/commit/fa6b16ebc0329feb2215d5d1c428a7533c0bff99))
+* put the briefing above the Welcome Back dialog Close button ([db3d11a](https://github.com/Millennium44/Toolasha/commit/db3d11a71d8f53b13117c981e37b9135849c09e3))
+* put the welcome-back value line above the dialog's Close button too ([f4a5adb](https://github.com/Millennium44/Toolasha/commit/f4a5adbcd8afb69870520873d2ef31c992bac65c))
+* queue rows for tiered combat zones no longer read "[Unknown action]" ([b026d0a](https://github.com/Millennium44/Toolasha/commit/b026d0a496487a438c9f01fe2817bcc93b48449a))
+* queue sim 24h button sits beside the row time instead of adding a line ([4243a0d](https://github.com/Millennium44/Toolasha/commit/4243a0d51511758b78c483af6688367e603dc648))
+* queue total marks a material-limit estimate, not only a sim rate ([1c94d26](https://github.com/Millennium44/Toolasha/commit/1c94d262c9a56e239fda684b3e70d7879ba7c04d))
+* queue total's estimate mark misses the currently running action ([d2b70fc](https://github.com/Millennium44/Toolasha/commit/d2b70fc054daf539544385328b709467768859d3))
+* remove guild-credit's no-op shrine-tab clear ([4f59cc9](https://github.com/Millennium44/Toolasha/commit/4f59cc96645542ac4c91e21a2782fe55e01ae357))
+* serialize zone-open sequences and guard them against character switches ([15a757a](https://github.com/Millennium44/Toolasha/commit/15a757a225478e76f34e64917a3abbcbc43e5ea7))
+* settings mirror stops mirroring after a future or orphaned cadence stamp ([8b95c31](https://github.com/Millennium44/Toolasha/commit/8b95c3187a9e4b1b53ef69bb38693f4a08000c92))
+* stop the settings-mirror restore dialog from blocking startup ([4cd8e69](https://github.com/Millennium44/Toolasha/commit/4cd8e692e89ad57fa8dea03c30c7485dda33f374))
+* the briefing finds a Welcome Back window that is already open ([702960c](https://github.com/Millennium44/Toolasha/commit/702960c27276dbbab0006947eba1b32790696789))
+* treasure tracker records the scroll purge as done before the game data loads ([176f4f7](https://github.com/Millennium44/Toolasha/commit/176f4f7c5231168ff488643ccc3482c748788e5b))
+* warm the volume cache once before capping all-zones profit rows ([72f9ebc](https://github.com/Millennium44/Toolasha/commit/72f9ebc7ebe06fbb513204987d23ee37139e7dd2))
+
+
+### Performance Improvements
+
+* record which phase of the all-zones render took the time ([371273d](https://github.com/Millennium44/Toolasha/commit/371273d7a7eadfe94e8331afc826fad5375dbc36))
+
+
+### Documentation
+
+* changelog for combat queue estimates, and loadout store comments that said name where it is id ([579de5e](https://github.com/Millennium44/Toolasha/commit/579de5e03dc2d99b8442c911ab3eb6e8290188aa))
+* changelog for marketplace tab ownership ([20ab179](https://github.com/Millennium44/Toolasha/commit/20ab179a2ae008cf70b1bcf0a7a20cddbde3b513))
+* changelog for opening a zone at its tier ([c151669](https://github.com/Millennium44/Toolasha/commit/c151669fd999f00e897330341ae6361812ecf54f))
+* changelog for the all-zones snapshot keeping its encounter rate ([903deb9](https://github.com/Millennium44/Toolasha/commit/903deb9bdcd9646dfc66699aa9f406379e588c0b))
+* changelog for the all-zones volume prefetch ([9df23fa](https://github.com/Millennium44/Toolasha/commit/9df23fae49df5312fc004b251040136f35cc37c6))
+* changelog for the audit round ([937d486](https://github.com/Millennium44/Toolasha/commit/937d48619a995e613f8afb88a0e310584ce6c9ef))
+* changelog for the briefing moving into Welcome Back ([dbf0b0e](https://github.com/Millennium44/Toolasha/commit/dbf0b0e01bf2ce5b13e602f2f4a3dd7eaa453746))
+* changelog for the combat task Go work and the bestiary tie-break ([9cc7a3e](https://github.com/Millennium44/Toolasha/commit/9cc7a3e806b64b1a778a7eb8d5947c05044e54cb))
+* changelog for the goal planner combat destination fix ([9d615b3](https://github.com/Millennium44/Toolasha/commit/9d615b3dd00ec59d8b2295252cb7d36a3875b1ed))
+* changelog for the Iron Bell holdings and week-sized walk ([787500c](https://github.com/Millennium44/Toolasha/commit/787500ca3fe77ca728c66afbce259d49ea296cc4))
+* changelog for the leftovers round ([02e663a](https://github.com/Millennium44/Toolasha/commit/02e663ace324fba941a8a981c5586fe146b4b590))
+* changelog for the leftovers round ([239473b](https://github.com/Millennium44/Toolasha/commit/239473b95f1ee47fcb4f2913496e244964fd0c05))
+* changelog for the pre-release audit round ([b69cebe](https://github.com/Millennium44/Toolasha/commit/b69cebe28d8bb4abac5de71bd3ffebdb9629b6ac))
+* changelog for the settings mirror and persistence request ([92d6d6e](https://github.com/Millennium44/Toolasha/commit/92d6d6ece5b289c639011fc462a4b284bb09b100))
+* changelog for the sim 24h queue button ([e9f667b](https://github.com/Millennium44/Toolasha/commit/e9f667b2b09fe2dd2759629bcd214b74910b07f1))
+* changelog for the two-route ceiling being measured ([8bb3980](https://github.com/Millennium44/Toolasha/commit/8bb398054eedb72b6ccc45e6bcfc85f7c4fcbce6))
+* changelog for tiered combat rows being recognised in the queue ([82bdf7d](https://github.com/Millennium44/Toolasha/commit/82bdf7d66ba0a5e0ef8ee248728a00bfac2f2462))
+* note the zone-tile fix in the unreleased entry ([e2340ac](https://github.com/Millennium44/Toolasha/commit/e2340ac7ff576083f4aedd637a1fb0c3dfc3252c))
+* shorten the changelog to one line per change ([8c07f0a](https://github.com/Millennium44/Toolasha/commit/8c07f0accdab71b059e3a3602985f2188c050e53))
+
+
+### Styles
+
+* quiet the zone-open buttons down to a hover-reveal glyph ([1a958b9](https://github.com/Millennium44/Toolasha/commit/1a958b9ae4c2e9209b8122ec3460fcc225612e01))
+
+
+### Tests
+
+* two beacon routes is the ceiling every floor size allows ([bdfae46](https://github.com/Millennium44/Toolasha/commit/bdfae460e49ce603a8595cc8ecaf8bf468809f5b))
+
 ## [3.54.0](https://github.com/Millennium44/Toolasha/compare/v3.53.0...v3.54.0) (2026-09-17)
 
 ### Features
