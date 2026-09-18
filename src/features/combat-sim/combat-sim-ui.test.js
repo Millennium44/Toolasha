@@ -4335,6 +4335,7 @@ describe('the Bestiary route planner under the all-zones table', () => {
         ui.buildPanel();
         ui._allZonesSortCol = null;
         ui._bestiaryPlanHours = undefined;
+        ui._bestiaryPlanTolerance = undefined;
         mocks.monsters = null;
     });
 
@@ -4466,6 +4467,86 @@ describe('the Bestiary route planner under the all-zones table', () => {
         expect(lines[2]).toMatch(/^2\. Hive T2 — 0:48( \(≈[0-9]+ fights\))? — \+0 — \(partial: Bee 0\/1\)$/);
         expect(lines[3]).toBe('Best single zone: Farm T0 — 2 points');
         expect(copyBtn.textContent).toBe('Copied ✓');
+    });
+});
+
+describe('the score tie-break tolerance in the Bestiary planner', () => {
+    const HOUR_NS = 3600 * 1e9;
+    /** A zone result with its own XP, so Score can be made to differ between two otherwise-tied zones */
+    const resultXP = (name, deaths, xp, tier = 0) => ({
+        zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name.toLowerCase()}` },
+        simResult: {
+            simulatedTime: HOUR_NS,
+            encounters: 10,
+            deaths: { player1: 0, ...deaths },
+            experienceGained: { player1: { defense: xp } },
+        },
+        revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+    });
+    const gameData = {
+        combatMonsterDetailMap: {
+            '/monsters/fly': { name: 'Fly' },
+            '/monsters/bee': { name: 'Bee' },
+        },
+    };
+    const click = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('click', { bubbles: true }));
+    const change = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('change', { bubbles: true }));
+
+    beforeEach(() => {
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        ui._bestiaryPlanHours = undefined;
+        ui._bestiaryPlanTolerance = undefined;
+        mocks.monsters = null;
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.monsters = null;
+        vi.restoreAllMocks();
+    });
+
+    test('the tolerance control defaults to 10', async () => {
+        await ui._displayAllZonesResults([resultXP('Farm', { '/monsters/fly': 10 }, 100)], 1, gameData);
+        expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-tolerance').value).toBe('10');
+    });
+
+    test('a changed tolerance is remembered', async () => {
+        await ui._displayAllZonesResults([resultXP('Farm', { '/monsters/fly': 10 }, 100)], 1, gameData);
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-tolerance').value = '25';
+        change('#mwi-csim-bestiary-plan-tolerance');
+        expect(mocks.store.get('settings:combatSimBestiaryPlanTolerance')).toBe(25);
+        expect(ui._bestiaryPlanTolerance).toBe(25);
+    });
+
+    test('changing the tolerance re-plans a route already on screen', async () => {
+        // Farm: fly at 8, 10/hr → next point in 0.2 h. Hive: bee at 0, ~4.762/hr
+        // → next point in 0.21 h, five percent slower. Hive's XP is far higher,
+        // so its Score wins comfortably once the tolerance admits it.
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults(
+            [resultXP('Farm', { '/monsters/fly': 10 }, 100), resultXP('Hive', { '/monsters/bee': 1 / 0.21 }, 100000)],
+            1,
+            gameData
+        );
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-tolerance').value = '0';
+        change('#mwi-csim-bestiary-plan-tolerance');
+        click('#mwi-csim-bestiary-plan-btn');
+        expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-out tbody tr td:nth-child(2)').textContent.trim()).toBe(
+            'Farm T0'
+        );
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-tolerance').value = '10';
+        change('#mwi-csim-bestiary-plan-tolerance');
+        const nameCell = ui.panel.querySelector('#mwi-csim-bestiary-plan-out tbody tr td:nth-child(2)');
+        expect(nameCell.textContent.trim()).toContain('Hive T0');
+        // Picked over the faster Farm because of Score — the table says so
+        expect(nameCell.title).toContain('Score');
+        expect(nameCell.innerHTML).toContain('<span');
     });
 });
 

@@ -183,6 +183,82 @@ describe('planning a Bestiary route', () => {
     });
 });
 
+describe('tie-breaking near-equal bestiary pace by score', () => {
+    test('two zones tied on bestiary pace: the higher score wins (Aqua Planet T0 vs T3)', () => {
+        // Both reach their next point in exactly the same time — the live
+        // all-zones table case: 29.0 pts/day either way, but T3 has roughly
+        // double the XP/hr and profit/day, which shows up only as `score`
+        const plan = planBestiaryRoute({
+            zones: [
+                { zoneHrid: 'aqua-t0', name: 'Aqua Planet T0', killsPerHour: { '/monsters/fish': 10 }, score: 20 },
+                { zoneHrid: 'aqua-t3', name: 'Aqua Planet T3', killsPerHour: { '/monsters/shark': 10 }, score: 70 },
+            ],
+            counts: {},
+            hours: 0.5,
+            tolerancePercent: 10,
+        });
+        expect(plan.segments[0].zoneHrid).toBe('aqua-t3');
+    });
+
+    test('a row 5% slower but with a much higher score wins at tolerance 10, and loses at tolerance 0', () => {
+        // fast: a point at 1 kill / 1 per hour = 1 h. slow: same point at
+        // 1/1.05 per hour = 1.05 h — five percent slower, on the nose
+        const zones = [
+            { zoneHrid: 'fast', name: 'Fast', killsPerHour: { '/monsters/a': 1 }, score: 10 },
+            { zoneHrid: 'slow', name: 'Slow', killsPerHour: { '/monsters/b': 1 / 1.05 }, score: 90 },
+        ];
+
+        const within = planBestiaryRoute({ zones, counts: {}, hours: 2, tolerancePercent: 10 });
+        expect(within.segments[0].zoneHrid).toBe('slow');
+        expect(within.segments[0].viaScore).toBe(true);
+
+        const strict = planBestiaryRoute({ zones, counts: {}, hours: 2, tolerancePercent: 0 });
+        expect(strict.segments[0].zoneHrid).toBe('fast');
+        expect(strict.segments[0].viaScore).toBe(false);
+    });
+
+    test('tolerance 0 ignores score entirely and reproduces the old, speed-only route', () => {
+        const zones = [
+            { zoneHrid: 'fast', name: 'Fast', killsPerHour: { '/monsters/a': 1 }, score: 1 },
+            { zoneHrid: 'slow', name: 'Slow', killsPerHour: { '/monsters/b': 0.5 }, score: 99 },
+        ];
+        const explicit = planBestiaryRoute({ zones, counts: {}, hours: 5, tolerancePercent: 0 });
+        expect(explicit.segments[0].zoneHrid).toBe('fast');
+        expect(explicit.segments[0].viaScore).toBe(false);
+        // Not passing tolerancePercent at all defaults to the same thing
+        const implicit = planBestiaryRoute({ zones, counts: {}, hours: 5 });
+        expect(implicit).toEqual(explicit);
+    });
+
+    test('identical rows resolve to the earlier one, deterministically across runs', () => {
+        const zones = [
+            { zoneHrid: 'x', name: 'X', killsPerHour: { '/monsters/a': 1 }, score: 50 },
+            { zoneHrid: 'y', name: 'Y', killsPerHour: { '/monsters/b': 1 }, score: 50 },
+        ];
+        for (let i = 0; i < 5; i += 1) {
+            const plan = planBestiaryRoute({ zones, counts: {}, hours: 1, tolerancePercent: 10 });
+            expect(plan.segments[0].zoneHrid).toBe('x');
+        }
+    });
+
+    test('the route total reflects the rows the tie-break actually chose, not the fastest ones', () => {
+        const zones = [
+            { zoneHrid: 'fast', name: 'Fast', killsPerHour: { '/monsters/a': 1 }, score: 10 },
+            { zoneHrid: 'slow', name: 'Slow', killsPerHour: { '/monsters/b': 1 / 1.05 }, score: 90 },
+        ];
+        const plan = planBestiaryRoute({ zones, counts: {}, hours: 2, tolerancePercent: 10 });
+        expect(plan.segments[0].zoneHrid).toBe('slow');
+        // Same truthfulness check the untouched route uses: the total is
+        // exactly what the final counts are worth over the starting ones
+        const worth = Object.keys(plan.counts).reduce(
+            (sum, hrid) => sum + pointsFromCount(plan.counts[hrid]) - pointsFromCount(0),
+            0
+        );
+        expect(plan.totalPoints).toBe(worth);
+        expect(plan.segments.reduce((s, seg) => s + seg.points, 0)).toBe(plan.totalPoints);
+    });
+});
+
 describe('plan text', () => {
     test('hours read as h:mm', () => {
         expect(formatPlanHours(0)).toBe('0:00');

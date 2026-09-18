@@ -150,6 +150,16 @@ const BESTIARY_PLAN_POINTS_KEY = 'combatSimBestiaryPlanPoints';
 const BESTIARY_PLAN_DEFAULT_POINTS = 20;
 
 /**
+ * How much slower (in percent) a zone may reach its next Bestiary point and
+ * still be preferred over the fastest one on offer, when its Score is higher —
+ * the Aqua Planet problem: two zones tied on points/day, one worth roughly
+ * double in XP and profit, and pure speed cannot tell them apart. 0 turns the
+ * tie-break off and reproduces the old, speed-only route exactly.
+ */
+const BESTIARY_PLAN_TOLERANCE_KEY = 'combatSimBestiaryPlanTolerance';
+const BESTIARY_PLAN_DEFAULT_TOLERANCE = 10;
+
+/**
  * Whether an All Zones run also simulates every dungeon at every tier.
  *
  * Off by default: dungeons roughly double the run, and a Bestiary route that
@@ -1789,6 +1799,7 @@ class CombatSimUI {
         this._bestiaryPlanMode = 'hours';
         this._bestiaryPlanHours = BESTIARY_PLAN_DEFAULT_HOURS;
         this._bestiaryPlanPoints = BESTIARY_PLAN_DEFAULT_POINTS;
+        this._bestiaryPlanTolerance = BESTIARY_PLAN_DEFAULT_TOLERANCE;
         // What the displayed results were actually run on, so a re-sort keeps
         // saying so and a saved comparison can never be read as a real-loadout run
         this._allZonesMaxTierFood = false;
@@ -3322,6 +3333,9 @@ class CombatSimUI {
                 name: `${row.zone} T${row.tier}`,
                 killsPerHour: row._killsPerHour,
                 encountersPerHour: row.encounters,
+                // Only used to break near-ties in bestiary pace — see
+                // planBestiaryRoute's tolerancePercent
+                score: row.score,
             };
             if (!row._dungeon) return zone;
 
@@ -3364,6 +3378,15 @@ class CombatSimUI {
             if (savedMode === 'points' || savedMode === 'hours') this._bestiaryPlanMode = savedMode;
             const savedPoints = Number(await storage.get(BESTIARY_PLAN_POINTS_KEY, 'settings', null));
             if (savedPoints > 0) this._bestiaryPlanPoints = savedPoints;
+            // Unlike hours/points, 0 is a legitimate stored tolerance (the
+            // tie-break turned off), so "nothing saved yet" has to be told
+            // apart from a saved 0 by checking the raw value, not just the
+            // number — `Number(null)` is itself 0 and would pass a `>= 0` guard
+            const rawTolerance = await storage.get(BESTIARY_PLAN_TOLERANCE_KEY, 'settings', null);
+            const savedTolerance = Number(rawTolerance);
+            if (rawTolerance !== null && Number.isFinite(savedTolerance) && savedTolerance >= 0) {
+                this._bestiaryPlanTolerance = savedTolerance;
+            }
             this._includeDungeons = Boolean(await storage.get(ALL_ZONES_DUNGEONS_KEY, 'settings', false));
         } catch (error) {
             console.error('[CombatSimUI] Failed to read the Bestiary plan preferences:', error);
@@ -3383,6 +3406,11 @@ class CombatSimUI {
                 storage.set(
                     BESTIARY_PLAN_POINTS_KEY,
                     this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS,
+                    'settings'
+                ),
+                storage.set(
+                    BESTIARY_PLAN_TOLERANCE_KEY,
+                    this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE,
                     'settings'
                 ),
                 storage.set(ALL_ZONES_DUNGEONS_KEY, Boolean(this._includeDungeons), 'settings'),
@@ -3415,6 +3443,8 @@ class CombatSimUI {
         const mode = this._bestiaryPlanMode === 'points' ? 'points' : 'hours';
         const hours = this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS;
         const points = this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS;
+        const tolerance =
+            this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE;
         const inputStyle =
             'width:56px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; ' +
             'padding:2px 4px; font-size:11px; text-align:center;';
@@ -3427,6 +3457,9 @@ class CombatSimUI {
                 </select>
                 <label style="color:#888; display:flex; align-items:center; gap:4px;"><span id="mwi-csim-bestiary-plan-label">${mode === 'points' ? 'Points wanted' : 'Hours'}</span>
                     <input id="mwi-csim-bestiary-plan-value" type="number" min="${mode === 'points' ? '1' : '0.1'}" max="100000" step="any" value="${mode === 'points' ? points : hours}" style="${inputStyle}">
+                </label>
+                <label style="color:#888; display:flex; align-items:center; gap:4px;" title="When two zones would reach their next Bestiary point within this many percent of each other's pace, the route prefers the one with the higher Score instead of the merely faster one. 0 turns this off and always takes the fastest.">Tolerance %
+                    <input id="mwi-csim-bestiary-plan-tolerance" type="number" min="0" max="100" step="1" value="${tolerance}" style="${inputStyle}">
                 </label>
                 <button id="mwi-csim-bestiary-plan-btn" style="background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:#8ab4f8; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Plan</button>
                 <button id="mwi-csim-bestiary-plan-copy" style="display:none; background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Copy</button>
@@ -3473,6 +3506,14 @@ class CombatSimUI {
             event.stopPropagation();
             this._includeDungeons = event.target.checked;
             this._persistBestiaryPlanPrefs();
+        });
+        box.querySelector('#mwi-csim-bestiary-plan-tolerance').addEventListener('change', (event) => {
+            event.stopPropagation();
+            const value = parseFloat(event.target.value);
+            this._bestiaryPlanTolerance = value >= 0 ? value : BESTIARY_PLAN_DEFAULT_TOLERANCE;
+            event.target.value = String(this._bestiaryPlanTolerance);
+            this._persistBestiaryPlanPrefs();
+            if (this._bestiaryPlanActive) this._drawBestiaryPlan();
         });
         box.querySelector('#mwi-csim-bestiary-plan-btn').addEventListener('click', (event) => {
             event.stopPropagation();
@@ -3533,6 +3574,8 @@ class CombatSimUI {
             hours: this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
             targetPoints:
                 this._bestiaryPlanMode === 'points' ? this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS : null,
+            tolerancePercent:
+                this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE,
         });
     }
 
@@ -3617,11 +3660,20 @@ class CombatSimUI {
                           segment.note || 'sim clear time'
                       }`
                     : 'About how many fights that stay is, at the fights per hour this run simulated for the zone';
-                const nameTitle = segment.note ? ` title="Clear time: ${esc(segment.note)}"` : '';
+                const scoreNote = segment.viaScore
+                    ? 'Picked over a faster zone here because its Score is meaningfully higher, within the tolerance set above.'
+                    : '';
+                const nameTitle = [segment.note ? `Clear time: ${segment.note}` : '', scoreNote]
+                    .filter(Boolean)
+                    .join(' — ');
+                const nameTitleAttr = nameTitle ? ` title="${esc(nameTitle)}"` : '';
+                const scoreMark = segment.viaScore
+                    ? ' <span style="color:#8ab4f8;" aria-hidden="true">&#9733;</span>'
+                    : '';
                 return (
                     `<tr style="border-bottom:1px solid #1a1a1a;${stripe}">` +
                     `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
-                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitle}>${esc(segment.name)}</td>` +
+                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
                     `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="${esc(fightsTitle)}">${fightsCell(segment)}</td>` +
                     `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +

@@ -261,14 +261,27 @@ export function rescaleDungeonRates({ killsPerHour = {}, simClearsPerHour = 0, r
  * keeps a pathological input from looping; what it reached is still reported,
  * with `unreachable: true`.
  *
+ * Among zones that would reach their next point at nearly the same time, the
+ * hop otherwise has no opinion — it takes whichever sorts first. `tolerancePercent`
+ * gives it one: any zone whose next point lands within that percent of the
+ * soonest one's pace is treated as an equally good hop, and among those the
+ * one with the higher `score` wins (ties within that broken by input order, so
+ * the route never reshuffles on identical data). Zero — the default — is a
+ * no-op: only the literal fastest zone qualifies, which is the old behavior
+ * exactly.
+ *
  * @param {Object} input
  * @param {Array<{zoneHrid: string, name?: string, killsPerHour: Object, encountersPerHour?: number,
- *   isDungeon?: boolean, note?: string}>} input.zones -
+ *   isDungeon?: boolean, note?: string, score?: number}>} input.zones -
  *   Candidate zones with their simulated kills per hour by monster (and, when known, fights per hour, so a
- *   stay can be quoted in fights as well as time); earlier zones win ties
+ *   stay can be quoted in fights as well as time); earlier zones win ties. `score` is an optional relative
+ *   ranking (0-100) used only to break near-ties on bestiary pace — see `tolerancePercent`
  * @param {Object} input.counts - monsterHrid → kills so far (the Bestiary)
  * @param {number} input.hours - The time budget, in hours mode
  * @param {number} [input.targetPoints] - Points wanted; when set, the plan runs to it instead of to a clock
+ * @param {number} [input.tolerancePercent] - How much slower (in percent) a zone may be at reaching its next
+ *   point and still be preferred over the fastest one, when its `score` is higher. 0 (default) reproduces the
+ *   old pure-speed behavior.
  * @returns {{
  *   mode: 'hours'|'points',
  *   hours: number,
@@ -278,13 +291,19 @@ export function rescaleDungeonRates({ killsPerHour = {}, simClearsPerHour = 0, r
  *   totalPoints: number,
  *   pointsByZone: Object,
  *   segments: Array<{zoneHrid: string, name: string, hours: number, encounters: number|null, points: number,
- *     partial: boolean, isDungeon: boolean, note: string|null,
+ *     partial: boolean, isDungeon: boolean, note: string|null, viaScore: boolean,
  *     monsters: Array<{monsterHrid: string, from: number, count: number, to: number, reached: boolean, points: number}>}>,
  *   bestSingle: {zoneHrid: string, name: string, points: number, encounters: number|null, hours?: number|null}|null,
  *   counts: Object,
  * }}
  */
-export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetPoints = null } = {}) {
+export function planBestiaryRoute({
+    zones = [],
+    counts = {},
+    hours = 24,
+    targetPoints = null,
+    tolerancePercent = 0,
+} = {}) {
     const targeting = Number(targetPoints) > 0;
     const target = targeting ? Number(targetPoints) : 0;
     const budget = targeting ? Infinity : Number(hours) > 0 ? Number(hours) : 0;
@@ -319,7 +338,7 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
     const fightsFor = (zone, hoursSpent) =>
         Number(zone.encountersPerHour) > 0 ? Number(zone.encountersPerHour) * hoursSpent : null;
 
-    const record = (zone, hoursSpent, result, partial) => {
+    const record = (zone, hoursSpent, result, partial, viaScore = false) => {
         const last = segments[segments.length - 1];
         if (last && last.zoneHrid === zone.zoneHrid && !last.partial) {
             last.hours += hoursSpent;
@@ -327,6 +346,7 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
             last.encounters = more === null ? last.encounters : (last.encounters || 0) + more;
             last.points += result.points;
             last.partial = partial;
+            last.viaScore = last.viaScore || viaScore;
             // A monster already listed keeps its original starting count
             const seen = new Map(last.monsters.map((m) => [m.monsterHrid, m]));
             for (const m of result.monsters) {
@@ -355,6 +375,7 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
                 partial,
                 isDungeon: Boolean(zone.isDungeon),
                 note: zone.note || null,
+                viaScore,
                 monsters: result.monsters.map((m) => ({ ...m })),
             });
         }
@@ -362,17 +383,42 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
         totalPoints += result.points;
     };
 
+    // A zone within this fraction of the soonest one's pace is treated as an
+    // equally good hop; 0 means only the literal fastest ever qualifies, which
+    // is the old, pure-speed behavior exactly.
+    const toleranceFraction = Math.min(0.99, Math.max(0, Number(tolerancePercent) || 0) / 100);
+
     for (let step = 0; step < MAX_STEPS && remaining > 1e-9 && usable.length; step += 1) {
-        let pick = null;
-        let pickNext = { hours: Infinity, monsterHrid: null };
+        const candidates = [];
         for (const zone of usable) {
             const next = soonestPoint(zone.killsPerHour, state);
-            if (next.hours < pickNext.hours) {
+            if (Number.isFinite(next.hours)) candidates.push({ zone, next });
+        }
+        if (!candidates.length) break;
+
+        const bestHours = candidates.reduce((min, c) => Math.min(min, c.next.hours), Infinity);
+        // hours <= bestHours / (1 - tolerance) is the same test as "this zone's
+        // rate is within tolerance% of the best rate", stated in hours instead
+        // of in points/hour so it stays exact at the tolerance boundary
+        const window = toleranceFraction > 0 ? bestHours / (1 - toleranceFraction) : bestHours;
+
+        let pick = null;
+        let pickNext = null;
+        let pickScore = -Infinity;
+        for (const { zone, next } of candidates) {
+            if (next.hours > window + 1e-9) continue;
+            const score = Number.isFinite(zone.score) ? zone.score : 0;
+            if (score > pickScore) {
                 pick = zone;
                 pickNext = next;
+                pickScore = score;
             }
         }
-        if (!pick || !Number.isFinite(pickNext.hours)) break;
+        if (!pick) break;
+        // The route took a slower option than the fastest available because
+        // its score won the tie-break — worth telling the player about
+        const viaScore = pickNext.hours > bestHours + 1e-9;
+
         // No clock in points mode, so patience is the only stopping rule left
         if (used + pickNext.hours > MAX_PLAN_HOURS) {
             cappedOut = true;
@@ -381,14 +427,14 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
 
         if (pickNext.hours <= remaining) {
             const result = advance(pick.killsPerHour, state, pickNext.hours, pickNext.monsterHrid);
-            record(pick, pickNext.hours, result, false);
+            record(pick, pickNext.hours, result, false, viaScore);
             remaining -= pickNext.hours;
             used += pickNext.hours;
         } else {
             // The budget runs out before the next point: fight here for what
             // is left and show how far each monster got
             const result = advance(pick.killsPerHour, state, remaining, null);
-            record(pick, remaining, result, true);
+            record(pick, remaining, result, true, viaScore);
             used += remaining;
             remaining = 0;
         }
