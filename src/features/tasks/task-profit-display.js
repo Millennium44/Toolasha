@@ -10,7 +10,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import { setReactInputValue } from '../../utils/react-input.js';
-import { findActionInput } from '../../utils/action-panel-helper.js';
+import { findActionInput, resolveDetailPanel, PANEL_SELECTOR } from '../../utils/action-panel-helper.js';
 import { calculateTaskProfit, calculateTaskRewardValue } from './task-profit-calculator.js';
 import {
     isCardInConfirmState,
@@ -527,6 +527,11 @@ class TaskProfitDisplay {
         // character because a switch changes the gear the sim was run with, and
         // expired entries are dropped as they are met rather than kept forever.
         this._zoneSimCache = new Map();
+        // taskNode → { zoneHrid, predictedFights }, the last successfully completed
+        // estimate for that card. Cleared the instant a new run starts (config
+        // re-render or `_runCombatSimEstimate` itself) so a failed re-run, or one
+        // still in flight, never leaves a stale zone/count behind for Go to use.
+        this._cardEstimates = new WeakMap();
         this._estimateMode = 'solo'; // Last-used Solo/Zone choice (persisted)
         this.marketDataInitPromise = null; // Guard against duplicate market data inits
         this._simQueue = Promise.resolve();
@@ -901,7 +906,112 @@ class TaskProfitDisplay {
                 },
                 true
             );
+
+            // Combat estimate → Go: open the zone the card's own estimate used
+            // and pre-fill the predicted fight count, plus a buffer. Only ever
+            // acts on an estimate this exact card completed — a card with no
+            // estimate (or one whose estimate is currently stale, an errored
+            // re-run, or still running) leaves Go exactly as it behaves today.
+            goBtn.addEventListener(
+                'click',
+                () => {
+                    if (isConfirmPendingFor(goBtn)) return;
+                    const estimate = this._resolveGoEstimate(taskNode);
+                    if (!estimate) return;
+
+                    // Wait for the game to navigate, same delay as the merge
+                    // fill above
+                    setTimeout(() => this._applyGoEstimate(estimate), 300);
+                },
+                true
+            );
         }
+    }
+
+    /**
+     * The estimate (if any) a Go click on this card should act on — the seam
+     * `_setupTaskNode`'s click handler defers to, kept separate so it can be
+     * asked "what would Go do here" without a click, a timer, or a mounted
+     * detail panel.
+     *
+     * Returns null (never a guess) when: no estimate has completed for this
+     * card, that estimate's prediction is not a finite number (an unknown
+     * prediction is never dressed up as a count), or taskGoMerge is about to
+     * combine several in-progress tasks for this monster into one exact
+     * count — that total does not come from simulated RNG and should not
+     * race this card's own estimate to overwrite the same input.
+     * @param {HTMLElement} taskNode
+     * @returns {{zoneHrid: string, predictedFights: number, monsterHrid: (string|undefined)}|null}
+     * @private
+     */
+    _resolveGoEstimate(taskNode) {
+        const estimate = this._cardEstimates.get(taskNode);
+        if (!estimate || !estimate.zoneHrid || !Number.isFinite(estimate.predictedFights)) return null;
+
+        if (config.getSetting('taskGoMerge') && estimate.monsterHrid) {
+            const allQuests = dataManager.characterQuests || [];
+            const matchingQuests = allQuests.filter(
+                (q) =>
+                    q.status === '/quest_status/in_progress' &&
+                    q.category === '/quest_category/random_task' &&
+                    q.monsterHrid === estimate.monsterHrid
+            );
+            if (matchingQuests.length > 1) return null;
+        }
+
+        return estimate;
+    }
+
+    /**
+     * Navigate to the zone a combat task estimate used and pre-fill the
+     * predicted fight count (plus the configured buffer). Called after Go has
+     * had time to navigate.
+     *
+     * Never presses anything — only reads the currently open action detail
+     * panel and, if needed, clicks the matching zone tab, exactly like a
+     * player choosing a different zone from the combat panel's own list.
+     *
+     * Refuses rather than guesses at every step: no zone name for the
+     * estimate's `zoneHrid`, no detail panel open, no matching zone tab found,
+     * or the panel that is open (still, or again after clicking a tab) does
+     * not resolve to the estimate's own `zoneHrid` all leave the input
+     * untouched.
+     * @param {{zoneHrid: string, predictedFights: number}} estimate
+     * @private
+     */
+    _applyGoEstimate(estimate) {
+        const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.name;
+        if (!zoneName) return;
+
+        const fillIfShowingZone = () => {
+            const panel = document.querySelector(PANEL_SELECTOR);
+            if (!panel) return false;
+            const { actionHrid } = resolveDetailPanel(panel);
+            if (actionHrid !== estimate.zoneHrid) return false;
+
+            const inputEl = findActionInput(panel);
+            if (!inputEl) return false;
+
+            const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
+            const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
+            // A small epsilon before rounding up: 100 * 1.10 is 110.00000000000001
+            // in floating point, and without it that pads a round number by one
+            // extra fight every time the buffer happens to land exactly.
+            const count = Math.ceil(estimate.predictedFights * (1 + bufferPercent / 100) - 1e-9);
+            setReactInputValue(inputEl, String(count), { focus: false });
+            return true;
+        };
+
+        if (fillIfShowingZone()) return;
+
+        // Not already showing the estimate's zone — find and click its tab in
+        // the combat panel's own zone list, then try again once it has had a
+        // moment to render
+        const tabs = document.querySelectorAll(GAME.COMBAT_ZONE_TABS);
+        const tab = Array.from(tabs).find((t) => t.textContent?.trim() === zoneName);
+        if (!tab) return;
+        tab.click();
+        setTimeout(fillIfShowingZone, 300);
     }
 
     /**
@@ -1259,14 +1369,35 @@ class TaskProfitDisplay {
      * Pick the estimate zone for a monster. When it spawns in several zones
      * (e.g. a dedicated boss action AND a planet), prefer the zone covering
      * the most active Defeat tasks, so cards for co-located tasks agree on
-     * one farming spot. With no other tasks in play, the dedicated zone wins
-     * naturally by being the only candidate scoring its own task.
+     * one farming spot.
+     *
+     * That scoring needs a task from a DIFFERENT zone-qualifying monster to
+     * say anything: this monster's own task is present in `taskMonsters` and
+     * is, by construction, a member of every candidate's `zoneMonsters` set
+     * (that is how each became a candidate), so counting it contributes the
+     * same amount to every candidate and never breaks a tie. That is exactly
+     * "one monster from a zone as a task" — the one case this function is
+     * asked to get right — and previously fell through to `candidates[0]`,
+     * the first zone in `Object.entries(actionMap)` order. That order is
+     * JSON key order from the API response, not the game's own zone order,
+     * so it was effectively arbitrary; when it happened to land on a
+     * different, smaller zone than the one the player farms, a "Zone"
+     * estimate read like a solo one even though the toggle and the sim both
+     * said Zone. The same empty-handed fallback also fires with the Tasks
+     * panel closed, since `_getActiveDefeatMonsters` reads the task list off
+     * the DOM and finds nothing there.
+     *
+     * A genuine tie (including a scoreless one) is broken by the zone's own
+     * `sortIndex` — the same field `zone-indices.js` treats as the game's
+     * canonical map ordering — so the pick is deterministic and tied to the
+     * game's own zone order instead of an accident of object-key order.
      * @param {string} monsterHrid
      * @returns {string|null} Zone action HRID
      * @private
      */
     _pickZoneForMonster(monsterHrid) {
-        const actionMap = dataManager.getInitClientData()?.actionDetailMap;
+        const initClientData = dataManager.getInitClientData();
+        const actionMap = initClientData?.actionDetailMap;
         if (!actionMap) return null;
 
         const candidates = [];
@@ -1276,26 +1407,42 @@ class TaskProfitDisplay {
             const bosses = action.combatZoneInfo?.fightInfo?.bossSpawns || [];
             const zoneMonsters = [...spawns, ...bosses].map((s) => s.combatMonsterHrid);
             if (zoneMonsters.includes(monsterHrid)) {
-                candidates.push({ zoneHrid, zoneMonsters: new Set(zoneMonsters) });
+                const sortIndex = initClientData.actionCategoryDetailMap?.[action.category]?.sortIndex;
+                candidates.push({
+                    zoneHrid,
+                    zoneMonsters: new Set(zoneMonsters),
+                    sortIndex: Number.isFinite(sortIndex) ? sortIndex : Number.MAX_SAFE_INTEGER,
+                });
             }
         }
         if (candidates.length === 0) return null;
         if (candidates.length === 1) return candidates[0].zoneHrid;
 
         const taskMonsters = this._getActiveDefeatMonsters();
-        let best = candidates[0];
         let bestScore = -1;
+        let tied = [];
         for (const c of candidates) {
             let score = 0;
             for (const [mHrid, count] of taskMonsters) {
+                // Every candidate contains monsterHrid itself (that is how it
+                // qualified), so counting it can never distinguish between
+                // them — only OTHER tracked monsters that happen to share a
+                // candidate zone are real signal.
+                if (mHrid === monsterHrid) continue;
                 if (c.zoneMonsters.has(mHrid)) score += count;
             }
             if (score > bestScore) {
                 bestScore = score;
-                best = c;
+                tied = [c];
+            } else if (score === bestScore) {
+                tied.push(c);
             }
         }
-        return best.zoneHrid;
+        if (tied.length === 1) return tied[0].zoneHrid;
+
+        // No other tracked task disambiguated the candidates — fall back to
+        // the game's own zone ordering rather than map iteration order.
+        return tied.reduce((a, b) => (b.sortIndex < a.sortIndex ? b : a)).zoneHrid;
     }
 
     /**
@@ -1306,6 +1453,12 @@ class TaskProfitDisplay {
      * @private
      */
     _renderCombatEstimateConfig(container, taskData) {
+        // Back to "no estimate for this card" the moment the config UI is
+        // shown again (first render, or a Re-run) — Go must not fill a zone
+        // or count computed for a task this card no longer describes.
+        const cardTaskNode = container.closest(GAME.TASK_INFO);
+        if (cardTaskNode) this._cardEstimates.delete(cardTaskNode);
+
         container.innerHTML = '';
         const snapshots = getLoadoutSnapshot()
             .getAllSnapshots()
@@ -1364,6 +1517,12 @@ class TaskProfitDisplay {
      * @private
      */
     async _runCombatSimEstimate(container, taskData, loadoutName, mode = 'solo') {
+        // A new run starting invalidates whatever this card's Go button was
+        // primed with — filled only from a currently-valid estimate, never a
+        // stale one left over from before a re-run.
+        const cardTaskNode = container.closest(GAME.TASK_INFO);
+        if (cardTaskNode) this._cardEstimates.delete(cardTaskNode);
+
         // Extract monster name from "Defeat - Monster Name" description
         const match = taskData.description.match(/^Defeat\s*-\s*(.+)$/i);
         const monsterName = match?.[1]?.trim() || null;
@@ -1507,6 +1666,27 @@ class TaskProfitDisplay {
             const remaining = Math.max((taskData.quantity ?? 0) - (taskData.currentProgress ?? 0), 0);
             const completionSeconds = killsPerHour > 0 ? Math.round((remaining / killsPerHour) * 3600) : null;
             const timeEstimate = completionSeconds !== null ? timeReadable(completionSeconds) : '???';
+
+            // Fights (encounters) needed to land `remaining` kills of the task
+            // monster — same ratio the zone-summary bottleneck below uses,
+            // generalized to every card so Go has something to fill even
+            // outside the multi-task zone-summary case. A fight is not
+            // guaranteed to be against the task monster (zone mode spawns the
+            // whole table), so this is encounters-per-hour scaled by the
+            // target's kill rate, not just `remaining` kills. Null — never 0
+            // or a guess — when the sim recorded no kills of the monster at
+            // all, so Go has nothing certain to pre-fill with.
+            const totalFightsPerHour =
+                (simResult.encounters ?? 0) > 0
+                    ? simResult.encounters / SIM_HOURS
+                    : Object.values(simResult.deaths || {}).reduce((s, v) => s + v, 0) / SIM_HOURS;
+            const predictedFights =
+                killsPerHour > 0 && Number.isFinite(totalFightsPerHour)
+                    ? Math.ceil(remaining * (totalFightsPerHour / killsPerHour))
+                    : null;
+            if (cardTaskNode) {
+                this._cardEstimates.set(cardTaskNode, { zoneHrid, predictedFights, monsterHrid });
+            }
 
             const playerHrid = players[0]?.hrid || 'player1';
             const { netPerHour, dropEntries, consumableEntries } = calculateSimRevenue(

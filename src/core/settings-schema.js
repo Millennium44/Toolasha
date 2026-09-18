@@ -3031,6 +3031,15 @@ export const settingsGroups = {
                 default: true,
                 help: 'When clicking Go on a task, combines the required amounts of all in-progress tasks for the same action into a single pre-filled count',
             },
+            taskCombatGoBuffer: {
+                id: 'taskCombatGoBuffer',
+                label: 'Combat estimate: Go count buffer %',
+                type: 'number',
+                default: 5,
+                min: 0,
+                max: 100,
+                help: 'When Go pre-fills the fight count from a combat task estimate, pad the prediction by this percentage so RNG coming in under the median does not strand you short.',
+            },
             taskRerollProtection: {
                 id: 'taskRerollProtection',
                 label: 'Task reroll protection',

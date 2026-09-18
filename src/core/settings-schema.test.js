@@ -183,3 +183,18 @@ describe('startup recovery defaults', () => {
         expect(setting.help).toMatch(/reload button/i);
     });
 });
+
+describe('combat task Go count buffer defaults', () => {
+    test('defaults to a modest 5% pad, bounded to a sane percentage range', () => {
+        const setting = getSettingDefinition('taskCombatGoBuffer');
+        expect(setting.type).toBe('number');
+        expect(setting.default).toBe(5);
+        expect(setting.min).toBe(0);
+        expect(setting.max).toBe(100);
+        // min <= default <= max, or a fresh install's own default would be
+        // outside the range its own settings UI lets you pick
+        expect(setting.default).toBeGreaterThanOrEqual(setting.min);
+        expect(setting.default).toBeLessThanOrEqual(setting.max);
+        expect(setting.help).toMatch(/RNG/i);
+    });
+});

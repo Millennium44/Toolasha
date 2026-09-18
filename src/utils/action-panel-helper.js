@@ -8,7 +8,7 @@ import domObserver from '../core/dom-observer.js';
 import { getActionHridFromName } from './game-lookups.js';
 
 /** The action detail panels currently mounted */
-const PANEL_SELECTOR = '[class*="SkillActionDetail_skillActionDetail"]';
+export const PANEL_SELECTOR = '[class*="SkillActionDetail_skillActionDetail"]';
 
 /** The class substring every action detail panel carries */
 const DETAIL_PANEL_CLASS = 'SkillActionDetail_skillActionDetail';
