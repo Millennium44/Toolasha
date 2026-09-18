@@ -781,6 +781,16 @@ class TreasureTracker {
      */
     async _purgeScrollRowsOnce(owner) {
         try {
+            // A scroll is told from a chest by its game-data category, so a
+            // pass made before the static client data has loaded finds no
+            // scrolls anywhere — and would then set the flag, recording a
+            // purge that never happened as done for this character for good.
+            // The ordering is real, not hypothetical: data-manager polls for
+            // that data for up to thirty seconds after load
+            // (`tryLoadStaticData`) while features initialize off
+            // `init_character_data`. Stand down and let the next load do it.
+            if (!dataManager.getInitClientData?.()?.itemDetailMap) return;
+
             const done = await readScoped(SCROLL_PURGE_FLAG_KEY, 'settings', false);
             if (!this._stillOurs(owner)) return;
             if (done) return;

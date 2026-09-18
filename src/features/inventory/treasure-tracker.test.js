@@ -96,8 +96,12 @@ const dm = vi.hoisted(() => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getItemDetails: (hrid) => dm.items[hrid] ?? null,
+        getItemDetails: (hrid) => dm.items?.[hrid] ?? null,
         getInitClientData: () => ({
+            // The map `getItemDetails` reads through: absent until the game's
+            // static client data has loaded, which is what the scroll purge
+            // checks before deciding it has seen every scroll there is
+            itemDetailMap: dm.items ?? undefined,
             openableLootDropMap: dm.dropTables,
             shopItemDetailMap: dm.shop,
             labyrinthShopItemDetailMap: dm.labyrinthShop,
@@ -337,6 +341,29 @@ describe('the scroll-row purge, once per character', () => {
         const rows = treasureTracker._summary().rows;
         expect(rows.find((row) => row.chestHrid === CHEST)).toMatchObject({ opened: 3, actualValue: 30 });
         expect(rows.some((row) => row.chestHrid === SCROLL)).toBe(false);
+    });
+
+    test('a load before the game data arrives neither purges nor records the purge as done', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set(TALLY_KEY, { [SCROLL]: { opened: 5, loot: {} } });
+
+        // The static client data is polled for up to thirty seconds after
+        // load, so a feature can initialize before it lands. Without it every
+        // hrid looks like an item the game data cannot name, which is exactly
+        // what "not a scroll" looks like.
+        const items = dm.items;
+        dm.items = null;
+        try {
+            await treasureTracker.initialize();
+            await treasureTracker.ledger.flushed();
+        } finally {
+            dm.items = items;
+        }
+
+        // Nothing purged, and — the part that matters — the flag is not set,
+        // so the next load, with the data in hand, still does the purge
+        expect(treasureTracker.tally[SCROLL]).toEqual({ opened: 5, loot: {} });
+        expect(await storageMock.get(FLAG_KEY, 'settings', false)).toBe(false);
     });
 });
 
