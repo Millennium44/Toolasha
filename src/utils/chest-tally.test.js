@@ -3,6 +3,7 @@ import {
     recordOpening,
     resetTally,
     mergeStoredTally,
+    purgeScrollRows,
     expectedLootPerChest,
     chestPerformance,
     chestBreakdown,
@@ -83,6 +84,77 @@ describe('resetTally', () => {
         const reset = resetTally({ [CHEST]: { opened: 9, loot: {} } }, CHEST, 1000);
         const after = recordOpening(reset, CHEST, 2, [{ itemHrid: '/items/coin', count: 40 }]);
         expect(after[CHEST]).toMatchObject({ opened: 2, loot: { '/items/coin': 40 }, since: 1000 });
+    });
+});
+
+describe('purgeScrollRows', () => {
+    const isScroll = (hrid) => hrid.startsWith('/items/seal_of_');
+
+    test('empties and stamps a scroll row, leaving a real chest alone', () => {
+        const tally = {
+            '/items/seal_of_might': { opened: 12, loot: { '/items/coin': 5 } },
+            [CHEST]: { opened: 3, loot: { '/items/coin': 300 } },
+        };
+        const purged = purgeScrollRows(tally, isScroll, 1000);
+
+        expect(purged['/items/seal_of_might']).toEqual({ opened: 0, loot: {}, since: 1000 });
+        expect(purged[CHEST]).toEqual({ opened: 3, loot: { '/items/coin': 300 } });
+    });
+
+    test('purges every scroll row, not just the first', () => {
+        const tally = {
+            '/items/seal_of_might': { opened: 1, loot: {} },
+            '/items/seal_of_haste': { opened: 2, loot: {} },
+        };
+        const purged = purgeScrollRows(tally, isScroll, 500);
+
+        expect(purged['/items/seal_of_might']).toMatchObject({ opened: 0, since: 500 });
+        expect(purged['/items/seal_of_haste']).toMatchObject({ opened: 0, since: 500 });
+    });
+
+    test('leaves an hrid isScrollHrid does not recognize untouched', () => {
+        // Unknown is not the same as scroll — dropping it would lose a real
+        // chest the game data cannot currently name
+        const tally = { '/items/mystery_hrid': { opened: 4, loot: { '/items/coin': 40 } } };
+        expect(purgeScrollRows(tally, isScroll)).toEqual(tally);
+    });
+
+    test('nothing to purge returns the same tally, by reference', () => {
+        // The caller uses this to know whether a save is even needed — a
+        // character with no scroll rows must write nothing
+        const tally = { [CHEST]: { opened: 1, loot: {} } };
+        expect(purgeScrollRows(tally, isScroll)).toBe(tally);
+    });
+
+    test('a second purge on an already-purged tally is a no-op (same since, nothing new zeroed)', () => {
+        const once = purgeScrollRows({ '/items/seal_of_might': { opened: 9, loot: {} } }, isScroll, 1000);
+        const twice = purgeScrollRows(once, isScroll, 2000);
+        // Reset again — same stamp behaviour as calling resetTally twice —
+        // but there is nothing left in the bucket for it to change
+        expect(twice['/items/seal_of_might']).toEqual({ opened: 0, loot: {}, since: 2000 });
+    });
+
+    /**
+     * The point of purging through `resetTally` rather than deleting the key:
+     * a merge against a peer or a stored copy that still holds the old scroll
+     * counts must not bring them back. `mergeStoredTally`'s own doc explains
+     * why a plain delete cannot survive this — no stamp means the next merge
+     * treats the local (now-missing) bucket as simply absent, and an absent
+     * key loses to a present one, which is exactly how the row would come
+     * back. A stamped, emptied bucket wins over an older, unstamped one
+     * instead.
+     */
+    test('the purge survives a save/merge cycle — a naive delete would not', () => {
+        const stored = { '/items/seal_of_might': { opened: 12, loot: { '/items/coin': 5 } } };
+        const purgedInMemory = purgeScrollRows(stored, isScroll, 1000);
+
+        // Simulates the save: fold the stored copy (which still has the old
+        // scroll counts — this device has not written its purge back yet)
+        // under the purged in-memory tally, the way `mergeStoredTally` runs on
+        // every save
+        const merged = mergeStoredTally(stored, purgedInMemory);
+
+        expect(merged['/items/seal_of_might']).toEqual({ opened: 0, loot: {}, since: 1000 });
     });
 });
 

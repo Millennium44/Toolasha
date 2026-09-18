@@ -96,6 +96,46 @@ export function resetTally(tally, chestHrid, now = Date.now()) {
     return { ...tally, [chestHrid]: cleared() };
 }
 
+/**
+ * Purge rows that should never have been in the ledger, once.
+ *
+ * A build before this one recorded a scroll (`seal_of_*`) as though it were a
+ * chest: it arrives on the same `loot_opened` message a chest does, so it got
+ * its own bucket keyed by its own hrid. The display side filters those rows
+ * out (`withoutScrolls` in `treasure-tracker.js`), but filtering is not
+ * deleting — the bucket is still in storage, and a save folds the stored
+ * ledger back under memory (`mergeStoredTally`), so simply deleting the key
+ * in memory would only have it reappear on the next save, brought back by
+ * storage's own copy or by a peer tab's.
+ *
+ * This is why the purge goes through `resetTally` rather than a plain delete:
+ * a reset stamps the emptied bucket with `since`, and `mergeStoredTally` lets
+ * the newer stamp win *whole* rather than maxing it against an older,
+ * unstamped copy — the same mechanism a manual "Reset this chest" already
+ * relies on to stick. A plain delete leaves no stamp, so the very next merge
+ * against a stored or peer copy that still has the row restores it — see
+ * `mergeStoredTally`'s doc for the contract this leans on.
+ *
+ * Callers should run this once per character behind a persisted flag (see
+ * `settings-storage.js`'s `DEFAULT_REWRITES` for the shape) so a character
+ * with no scroll rows costs nothing on every subsequent load, and so a scroll
+ * row a player re-creates by opening more of the same item some other way is
+ * never fought.
+ *
+ * @param {Object} tally - The ledger
+ * @param {(itemHrid: string) => boolean} isScrollHrid - Which keys are scrolls
+ * @param {number} [now] - The stamp to write; injectable for tests
+ * @returns {Object} A tally with every scroll row emptied and stamped; the
+ *   same object as `tally` (by reference) when there was nothing to purge, so
+ *   a caller can tell "nothing to do" from "purged" without a second pass
+ */
+export function purgeScrollRows(tally, isScrollHrid, now = Date.now()) {
+    const scrollHrids = Object.keys(tally || {}).filter((hrid) => isScrollHrid(hrid));
+    let next = tally || {};
+    for (const hrid of scrollHrids) next = resetTally(next, hrid, now);
+    return next;
+}
+
 /** When a bucket began counting; unstamped buckets have always been counting */
 function sinceOf(bucket) {
     return Number(bucket?.since) || 0;

@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { describe, test, expect, afterEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /** Whether the panel is being drawn for a finger or a cursor */
 const pointer = vi.hoisted(() => ({ touch: false }));
@@ -229,6 +229,114 @@ describe('scrolls are not treasure', () => {
         };
 
         expect(Object.keys(withoutScrolls(tally))).toEqual(['/items/chimerical_chest', '/items/mystery_box']);
+    });
+});
+
+/**
+ * The one-time purge of the scroll rows an older build left sitting in
+ * storage. `withoutScrolls` above only keeps them off the panel — this is
+ * about what `initialize()` does to the stored ledger itself, guarded by the
+ * per-character `treasureScrollPurge_<char>` flag (see `SCROLL_PURGE_FLAG_KEY`
+ * in `treasure-tracker.js`, and `purgeScrollRows` in `chest-tally.js` for why
+ * a reset rather than a plain delete is what makes it stick).
+ */
+describe('the scroll-row purge, once per character', () => {
+    const CHEST = '/items/chimerical_chest';
+    const SCROLL = '/items/seal_of_critical_rate';
+    const TALLY_KEY = 'treasureTally_char-1';
+    const FLAG_KEY = 'treasureScrollPurge_char-1';
+
+    beforeEach(() => {
+        // Earlier describe blocks in this file leave `tally` holding whatever
+        // their last test wrote directly (no storage involved) — start each
+        // test here from a clean slate so `initialize()`'s load only ever
+        // merges against what this test itself seeded in storage
+        treasureTracker.tally = {};
+    });
+
+    afterEach(() => {
+        treasureTracker.disable();
+        storageMock.reset();
+        config.getSetting.mockImplementation(() => false);
+        dm.dropTables = {};
+        treasureTracker.tally = {};
+        treasureTracker.isInitialized = false;
+    });
+
+    test('purges a stored scroll row, stamped, and sets the flag', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set(TALLY_KEY, {
+            [CHEST]: { opened: 3, loot: { '/items/coin': 30 } },
+            [SCROLL]: { opened: 5, loot: {} },
+        });
+
+        await treasureTracker.initialize();
+        await treasureTracker.ledger.flushed();
+
+        expect(treasureTracker.tally[SCROLL]).toMatchObject({ opened: 0, loot: {} });
+        expect(treasureTracker.tally[SCROLL].since).toBeTypeOf('number');
+        // The chest beside it is untouched
+        expect(treasureTracker.tally[CHEST]).toEqual({ opened: 3, loot: { '/items/coin': 30 } });
+
+        expect(await storageMock.get(FLAG_KEY, 'settings', false)).toBe(true);
+        // The purge landed in storage, not just in memory — a save that only
+        // lived in memory would be undone the next time the stored copy (with
+        // its old scroll counts) was folded back in
+        const stored = await storageMock.get(TALLY_KEY, 'settings', null);
+        expect(stored[SCROLL]).toMatchObject({ opened: 0, loot: {} });
+    });
+
+    test('an hrid the game data cannot name is left alone', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock
+            .storeFor('settings')
+            .set(TALLY_KEY, { '/items/mystery_box': { opened: 2, loot: { '/items/coin': 20 } } });
+
+        await treasureTracker.initialize();
+
+        expect(treasureTracker.tally['/items/mystery_box']).toEqual({ opened: 2, loot: { '/items/coin': 20 } });
+    });
+
+    test('a character with no scroll rows sets the flag and writes nothing to the ledger', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set(TALLY_KEY, { [CHEST]: { opened: 1, loot: {} } });
+        const setSpy = vi.spyOn(storageMock, 'set');
+
+        await treasureTracker.initialize();
+        await treasureTracker.ledger.flushed();
+
+        // The ledger's own key is never written — there was nothing to purge
+        expect(setSpy.mock.calls.some(([key]) => key === TALLY_KEY)).toBe(false);
+        expect(await storageMock.get(FLAG_KEY, 'settings', false)).toBe(true);
+        setSpy.mockRestore();
+    });
+
+    test('a second run does nothing — the flag already being set stops it', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        storageMock.storeFor('settings').set(TALLY_KEY, { [SCROLL]: { opened: 5, loot: {} } });
+        storageMock.storeFor('settings').set(FLAG_KEY, true);
+        const setSpy = vi.spyOn(storageMock, 'set');
+
+        await treasureTracker.initialize();
+
+        expect(treasureTracker.tally[SCROLL]).toEqual({ opened: 5, loot: {} });
+        expect(setSpy.mock.calls.some(([key]) => key === TALLY_KEY || key === FLAG_KEY)).toBe(false);
+        setSpy.mockRestore();
+    });
+
+    test('a chest’s own numbers are unaffected, and the drawn ledger still has no scroll row', async () => {
+        config.getSetting.mockImplementation((id) => id === 'treasureTracker');
+        dm.dropTables = { [CHEST]: [{ itemHrid: '/items/coin', dropRate: 1, minCount: 10, maxCount: 10 }] };
+        storageMock.storeFor('settings').set(TALLY_KEY, {
+            [CHEST]: { opened: 3, loot: { '/items/coin': 30 } },
+            [SCROLL]: { opened: 5, loot: {} },
+        });
+
+        await treasureTracker.initialize();
+
+        const rows = treasureTracker._summary().rows;
+        expect(rows.find((row) => row.chestHrid === CHEST)).toMatchObject({ opened: 3, actualValue: 30 });
+        expect(rows.some((row) => row.chestHrid === SCROLL)).toBe(false);
     });
 });
 

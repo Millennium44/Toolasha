@@ -30,6 +30,7 @@ import {
     recordOpening,
     resetTally,
     mergeStoredTally,
+    purgeScrollRows,
     chestPerformance,
     chestBreakdown,
     summariseTally,
@@ -83,6 +84,15 @@ import { registerCommand, unregisterCommand } from '../../utils/command-registry
 const STORAGE_KEY = 'treasureTally';
 const SETTINGS_KEY = 'treasureSettings';
 const ADOPT_LEGACY = { migrate: 'adopt' };
+/**
+ * Guards the one-time purge of scroll rows a build before this one recorded
+ * in the ledger. Same shape as `settings-storage.js`'s `DEFAULT_REWRITES`
+ * flags: read and written per character, and set even when there was nothing
+ * to purge, so a fresh install or an already-clean ledger never pays for this
+ * again. See `purgeScrollRows` in `chest-tally.js` for why the purge itself
+ * has to go through a reset rather than a plain delete.
+ */
+const SCROLL_PURGE_FLAG_KEY = 'treasureScrollPurge';
 const PANEL_ID = 'toolasha-treasure-panel';
 const POPUP_ID = 'toolasha-treasure-popup';
 /** Where each of the two is remembered; they are moved and sized independently */
@@ -509,6 +519,8 @@ class TreasureTracker {
         // registered a second `loot_opened` handler that nothing could remove.
         if (!this._stillOurs(owner)) return;
         this.tally = this.ledger.get();
+        await this._purgeScrollRowsOnce(owner);
+        if (!this._stillOurs(owner)) return;
         const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
         if (!this._stillOurs(owner)) return;
         if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
@@ -747,6 +759,52 @@ class TreasureTracker {
     }
 
     /**
+     * Purge scroll rows a build before this one recorded in the ledger, once
+     * per character.
+     *
+     * `withoutScrolls` keeps them out of what is drawn, but the buckets are
+     * still in storage — see `purgeScrollRows` in `chest-tally.js` for why a
+     * reset, not a plain delete, is what actually removes them for good, and
+     * `mergeStoredTally` for the merge contract that leans on.
+     *
+     * The flag is read and written the same way `settings-storage.js`'s
+     * default-rewrite records are: set even when there was nothing to purge,
+     * so a clean ledger is never charged for this again, and left unset on a
+     * read that could not be made or a write that did not land, so the next
+     * load tries again rather than losing the purge.
+     *
+     * @param {{generation: number, charId: string|null}} owner - From
+     *   `_owner()`, taken before this ran; checked after every await so a
+     *   character switch mid-purge stands this down rather than writing the
+     *   departing character's purge under the arriving character's flag, or
+     *   the arriving character's purged tally under the departing one's key
+     */
+    async _purgeScrollRowsOnce(owner) {
+        try {
+            const done = await readScoped(SCROLL_PURGE_FLAG_KEY, 'settings', false);
+            if (!this._stillOurs(owner)) return;
+            if (done) return;
+
+            const purged = purgeScrollRows(this.tally, isScrollItem);
+            if (purged !== this.tally) {
+                this.tally = purged;
+                this.ledger.set(this.tally);
+                const written = await this.ledger.save();
+                if (!this._stillOurs(owner)) return;
+                // A write that did not land must not be recorded as done: the
+                // scroll rows are still sitting in storage, unstamped, ready
+                // to be folded back in by the very next save — which is
+                // exactly the failure a plain delete would have had every time.
+                if (written === false) return;
+            }
+
+            await writeScoped(SCROLL_PURGE_FLAG_KEY, true, 'settings', true);
+        } catch (error) {
+            console.error('[TreasureTracker] Purging scroll rows failed:', error);
+        }
+    }
+
+    /**
      * Open the panel, or raise it if it is already up.
      * @param {Object} [options] - `remember: false` when reopening at start-up,
      *   so restoring a panel is not itself recorded as opening one
@@ -816,10 +874,12 @@ class TreasureTracker {
      */
     _summary() {
         const dropTables = dataManager.getInitClientData()?.openableLootDropMap || {};
-        // Scrolls a build before this one recorded are dropped here rather than
-        // from the ledger: a save folds what is stored back under memory
-        // (mergeStoredTally), so deleting the keys would only bring them back on
-        // the next opening. Nothing new is recorded for them — see _onLootOpened.
+        // `_purgeScrollRowsOnce` removes any scroll rows a build before this
+        // one left in the ledger, but this filter stays: nothing new is
+        // recorded for a scroll (see the early return in _onLootOpened), so
+        // it is only ever defensive — a ledger the purge has not yet reached
+        // (an unreadable flag read, a write that has not landed) or a stray
+        // row folded in from a peer that has not purged either.
         const rows = summariseTally(withoutScrolls(this.tally), dropTables, this._priceOf());
         // Totals are taken before sorting, because they are the same figures
         // whichever way the rows are ordered
