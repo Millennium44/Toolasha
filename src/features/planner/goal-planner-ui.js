@@ -50,6 +50,7 @@ import dataManager from '../../core/data-manager.js';
 import { openMissingMaterials } from '../actions/missing-materials-button.js';
 import { openShoppingList } from '../../utils/shopping-list.js';
 import { navigateToAction } from '../../utils/item-navigation.js';
+import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
@@ -274,27 +275,39 @@ const ENHANCING_ACTION_HRID = '/actions/enhancing/enhance';
  * happens on a screen the game does not navigate to by action hrid, and buying
  * a base item already has a Buy button that opens the marketplace on it.
  *
+ * An earning step's rate can name a combat zone — `combat-rates.js` ranks the
+ * last all-zones sim alongside every other income — and `navigateToAction`
+ * cannot land there directly (see its own doc-comment). The destination
+ * carries `combat` and the zone's `difficultyTier` so `_goTo` can send it
+ * through `openCombatZoneAtTier` instead.
+ *
  * @param {Object} step - A plan step
- * @returns {{actionHrid: string, title: string}|null} The destination, if there is one
+ * @returns {{actionHrid: string, title: string, combat: boolean, difficultyTier: number}|null}
+ *   The destination, if there is one
  */
 export function navigationFor(step) {
     if (!step || step.done) return null;
     const details = step.details || {};
 
     if (step.kind === 'enhance') {
-        return { actionHrid: ENHANCING_ACTION_HRID, title: 'Open the enhancing screen.' };
+        return { actionHrid: ENHANCING_ACTION_HRID, title: 'Open the enhancing screen.', combat: false };
     }
 
     // Training and earning both rank actions and keep the winner; an earning
     // step that ran out of its best method mid-plan keeps the legs instead, and
     // the first leg is the one you would start with
+    const rate = details.rate?.actionHrid ? details.rate : details.legs?.find((leg) => leg?.rate?.actionHrid)?.rate;
     const actionHrid =
-        details.rate?.actionHrid ||
-        details.legs?.find((leg) => leg?.rate?.actionHrid)?.rate?.actionHrid ||
-        (step.kind === 'acquire' && details.strategy === 'craft' ? details.actionHrid : null);
+        rate?.actionHrid || (step.kind === 'acquire' && details.strategy === 'craft' ? details.actionHrid : null);
 
     if (!actionHrid) return null;
-    return { actionHrid, title: 'Open this action in the game.' };
+    const combat = rate?.kind === 'combat';
+    return {
+        actionHrid,
+        title: 'Open this action in the game.',
+        combat,
+        difficultyTier: combat ? (rate.difficultyTier ?? 0) : 0,
+    };
 }
 
 /**
@@ -1142,10 +1155,24 @@ class GoalPlannerPanel {
      * console, because from the outside a click that did nothing is
      * indistinguishable from a click that missed.
      *
-     * @param {{actionHrid: string}} destination - From {@link navigationFor}
+     * A combat destination cannot be reached by `navigateToAction` alone — it
+     * opens the Combat Zones list, not the zone's own panel (see that
+     * function's doc-comment) — so those go through `openCombatZoneAtTier`,
+     * which also clicks the zone's tile and confirms the panel is the right
+     * one at the right tier.
+     *
+     * @param {{actionHrid: string, combat: boolean, difficultyTier: number}} destination - From {@link navigationFor}
      */
-    _goTo(destination) {
+    async _goTo(destination) {
         try {
+            if (destination.combat) {
+                const result = await openCombatZoneAtTier(destination.actionHrid, destination.difficultyTier);
+                if (!result.opened) {
+                    this._status('The game would not navigate there.');
+                }
+                return;
+            }
+
             if (!navigateToAction(destination.actionHrid)) {
                 this._status('The game would not navigate there.');
             }

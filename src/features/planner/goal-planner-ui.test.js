@@ -104,6 +104,17 @@ vi.mock('../../utils/item-navigation.js', () => ({
     },
 }));
 
+// A combat destination cannot go through navigateToAction alone (it only opens
+// the Combat Zones list) — it goes through this instead, which is its own
+// module's job to test; here only that the planner reaches for it, with what.
+const combatZone = vi.hoisted(() => ({ calls: [], opened: true }));
+vi.mock('../../utils/combat-zone-open.js', () => ({
+    openCombatZoneAtTier: (zoneHrid, tier) => {
+        combatZone.calls.push({ zoneHrid, tier });
+        return Promise.resolve({ opened: combatZone.opened, tierConfirmed: combatZone.opened, filled: false });
+    },
+}));
+
 const plannerContext = vi.hoisted(() => ({ value: null, builds: 0 }));
 vi.mock('./goal-planner-context.js', () => ({
     buildPlannerContext: async () => {
@@ -204,6 +215,8 @@ beforeEach(() => {
     shopping.calls = [];
     navigation.calls = [];
     navigation.answer = true;
+    combatZone.calls = [];
+    combatZone.opened = true;
     plannerContext.builds = 0;
     store.data = {
         goalPlannerGoals_char1: [
@@ -605,6 +618,32 @@ describe('a step that names an activity can take you to it', () => {
 
         expect(clickStep('Earn 450.0M coins')).toBe(true);
         expect(navigation.calls).toEqual(['/actions/milking/cow']);
+    });
+
+    // `navigateToAction('/actions/combat/*')` opens the Combat Zones list, not
+    // the zone's own panel — the earning step must not send a combat rate
+    // through it the same way it sends every other rate. Without the fix in
+    // `_goTo`/`navigationFor` this test fails because the click reaches
+    // `navigation.calls` instead of `combatZone.calls`.
+    test('an earning step whose best rate is a combat zone opens the zone panel, not the list', async () => {
+        plannerContext.value.goldRates = () => [
+            {
+                label: 'Aqua Planet T2 — from your all-zones run 3h ago',
+                goldPerHour: 9_000_000,
+                actionHrid: '/actions/combat/aqua_planet',
+                kind: 'combat',
+                difficultyTier: 2,
+            },
+        ];
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(clickStep('Earn 450.0M coins')).toBe(true);
+        await settled();
+
+        expect(navigation.calls).toEqual([]);
+        expect(combatZone.calls).toEqual([{ zoneHrid: '/actions/combat/aqua_planet', tier: 2 }]);
     });
 
     test('an enhance step opens the enhancing screen', async () => {

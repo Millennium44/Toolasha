@@ -93,6 +93,19 @@ export function openItemDictionary(itemHrid) {
  * Enhancing has one action (`/actions/enhancing/enhance`), so the enhancing
  * screen is reached the same way rather than through a handler of its own.
  *
+ * ## A combat zone hrid (`/actions/combat/*`) does not land on the zone's panel
+ *
+ * Measured live: `handleGoToAction` opens the **Combat Zones list** for a
+ * combat hrid, never the zone's own detail panel — that only mounts once the
+ * zone's tile is clicked there. This function returns as soon as navigation is
+ * requested (its non-combat callers depend on that), so it cannot chase the
+ * click itself. A caller that may be handed a combat hrid — anything ranking
+ * combat as an earning method, for instance — should not call this directly
+ * for that case; use `openCombatZoneAtTier` (`utils/combat-zone-open.js`)
+ * instead, which drives the whole sequence (navigate, wait for the list, click
+ * the tile, wait for the panel, optionally set the tier) and is the one place
+ * that sequence is implemented.
+ *
  * @param {string} actionHrid - Action HRID, e.g. `/actions/cheesesmithing/griffin_bulwark`
  * @returns {boolean} True if the game was navigated, false if it could not be
  */
