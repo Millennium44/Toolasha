@@ -58,6 +58,7 @@ import {
     parseBestiaryZoneKey,
 } from '../../utils/bestiary-plan.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
+import performanceMonitor from '../../utils/performance-monitor.js';
 import { capProfitRate, liquidityMarkerHtml, prefetchLiquidity } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
@@ -2923,6 +2924,12 @@ class CombatSimUI {
         // and redraw when it lands so the column fills in by itself
         this._allZonesRedrawArgs = { hours, gameData };
         if (bestiaryOn && !bestiaryRows) this._requestBestiary();
+        // Phases, so a slow run on a real account says WHICH part was slow rather
+        // than leaving it to be guessed at: building rows, warming the volume
+        // cache, capping, and drawing. Measured on the test server the whole
+        // render ran 1.2-4.7 s with the volume work effectively free, which is
+        // exactly the ambiguity these spans exist to settle.
+        const endRowsSpan = performanceMonitor.startSpan('allZones:render', 'rows');
         const rows = zoneResults
             .filter((r) => r && r.simResult)
             .map((r) => {
@@ -2994,12 +3001,20 @@ class CombatSimUI {
         // sum of per-row item counts. Priming the union up front lets every
         // row's items compete for the same four slots continuously, and the
         // per-row `capProfitRate` calls below then hit the warmed cache.
-        await prefetchLiquidity(rows.flatMap((row) => row._sells || []));
+        endRowsSpan({ rows: rows.length });
 
+        const sells = rows.flatMap((row) => row._sells || []);
+        const endPrefetchSpan = performanceMonitor.startSpan('allZones:render', 'prefetchVolumes');
+        await prefetchLiquidity(sells);
+        endPrefetchSpan({ sells: sells.length });
+
+        const endCapSpan = performanceMonitor.startSpan('allZones:render', 'capProfit');
+        let cappedRows = 0;
         for (const row of rows) {
             try {
                 const capped = await capProfitRate({ goldPerHour: row.profit, sells: row._sells });
                 if (capped.capped) {
+                    cappedRows += 1;
                     row.uncappedProfit = row.profit;
                     row.profit = capped.goldPerHour;
                     row.profitDay = capped.goldPerHour * 24;
@@ -3009,6 +3024,7 @@ class CombatSimUI {
                 console.error('[CombatSimUI] Bounding a zone row by market volume failed:', error);
             }
         }
+        endCapSpan({ capped: cappedRows });
 
         // The Score and the two winners are decided over the whole run, before
         // any sort or column hiding — neither is a property of the current view

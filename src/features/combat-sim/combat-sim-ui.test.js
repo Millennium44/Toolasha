@@ -1795,6 +1795,29 @@ describe('the all-zones table', () => {
                 expect(prefetches[0].items.filter((hrid) => hrid === '/items/rare_charm')).toHaveLength(2);
                 expect(prefetches[0].items).toContain('/items/meat');
             });
+
+            test('records a phase for each part of the render, so a slow run says which part', async () => {
+                // A render that takes six seconds is a question. These spans are
+                // the answer, and they are what a real account's slow run will
+                // be read from — the test server could not reproduce the slow
+                // case, so the figures have to come from the report instead.
+                const { default: performanceMonitor } = await import('../../utils/performance-monitor.js');
+                performanceMonitor.spans?.delete?.('allZones:render');
+
+                await ui._displayAllZonesResults(
+                    [
+                        result('Fantasy', { profit: 10_000, dropEntries: thinLoot }),
+                        result('Honest', { profit: 1_000, dropEntries: liquidLoot }),
+                    ],
+                    1,
+                    {}
+                );
+
+                const parts = performanceMonitor.getSpans('allZones:render').map((span) => span.part);
+                expect(parts).toContain('rows');
+                expect(parts).toContain('prefetchVolumes');
+                expect(parts).toContain('capProfit');
+            });
         });
     });
 
