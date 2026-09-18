@@ -183,6 +183,18 @@ describe('redaction', () => {
         expect(safe.script_settingsMap_shared.updateCheckHours).toEqual({ value: 24 });
     });
 
+    test('strips the persistence-attempt stamp, which is one browser’s history and not the account’s', () => {
+        storeState.stores.settings.toolasha_local_persistStorageAttemptedAt = 1700000000000;
+
+        const safe = redactSettingsStore(storeState.stores.settings);
+
+        // A sync pull carrying this in would suppress this device's own
+        // persist() ask for up to a day, on account of a different device's
+        // history — see storage-persistence.js.
+        expect(safe.toolasha_local_persistStorageAttemptedAt).toBeUndefined();
+        expect(safe.some_other_key).toBe(42);
+    });
+
     test('handles a settings map stored as a JSON string', () => {
         const safe = redactSettingsStore({
             script_settingsMap_abc: JSON.stringify({ sync_token: { value: 'x' }, a: 1 }),

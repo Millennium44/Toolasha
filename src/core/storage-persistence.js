@@ -20,8 +20,29 @@
 
 import storage from './storage.js';
 
-/** Where the last-attempt timestamp is kept, so a refusal is not re-asked every load. */
-const LAST_ATTEMPT_KEY = 'toolasha_persistStorageAttemptedAt';
+/**
+ * Where the last-attempt timestamp is kept, so a refusal is not re-asked every
+ * load.
+ *
+ * Carries the `toolasha_local_` prefix on purpose: persistence is a property
+ * of one browser on one machine, not of the account, so this stamp must never
+ * travel with a settings sync. `toolasha_local_` is what `sync-ownership.js`'s
+ * `OWNED_KEY_PREFIXES`, `sync-payload.js`'s `LOCAL_ONLY_KEY_PREFIXES` and
+ * `settings-storage.js`'s `DEVICE_LOCAL_KEY_PREFIXES` already exclude a pull,
+ * an upload and an export by, so this key rides the same existing machinery
+ * rather than needing a rule of its own.
+ */
+const LAST_ATTEMPT_KEY = 'toolasha_local_persistStorageAttemptedAt';
+
+/**
+ * The pre-rename key. Before this stamp carried `toolasha_local_`, it was
+ * plain `toolasha_persistStorageAttemptedAt` — synced like any other owned
+ * key, which meant a sync pull could carry one device's "already asked" stamp
+ * onto another and suppress its own request for up to a day. Read once as a
+ * fallback so a device upgrading to the renamed key does not lose its stamp
+ * and re-ask the browser the very next load.
+ */
+const LEGACY_LAST_ATTEMPT_KEY = 'toolasha_persistStorageAttemptedAt';
 
 /**
  * How often to retry after the browser has not (yet) granted persistence.
@@ -34,6 +55,34 @@ const LAST_ATTEMPT_KEY = 'toolasha_persistStorageAttemptedAt';
  * per day no matter how many times the page reloads.
  */
 const RETRY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Read the last-attempt stamp, migrating the pre-rename key once if the
+ * renamed one has never been written.
+ *
+ * A device that already has the legacy stamp gets it copied onto the new key
+ * (and the old one removed) so this runs at most once per device; a device
+ * that has neither has genuinely never attempted this before and gets `0`,
+ * same as the original behaviour.
+ *
+ * @returns {Promise<number>} The last-attempt timestamp, or `0` if none
+ * @private
+ */
+async function readLastAttempt() {
+    const current = await storage.get(LAST_ATTEMPT_KEY, 'settings', null);
+    if (current !== null) return current;
+
+    const legacy = await storage.get(LEGACY_LAST_ATTEMPT_KEY, 'settings', null);
+    if (legacy === null) return 0;
+
+    try {
+        await storage.set(LAST_ATTEMPT_KEY, legacy, 'settings', true);
+        await storage.delete(LEGACY_LAST_ATTEMPT_KEY, 'settings');
+    } catch (error) {
+        console.debug('[StoragePersistence] Could not migrate the legacy persistence-attempt stamp:', error);
+    }
+    return legacy;
+}
 
 /**
  * Ask the browser to persist this origin's storage, once, quietly.
@@ -55,7 +104,7 @@ async function requestPersistence() {
 
         if (await navigator.storage.persisted()) return;
 
-        const lastAttempt = await storage.get(LAST_ATTEMPT_KEY, 'settings', 0);
+        const lastAttempt = await readLastAttempt();
         if (Date.now() - lastAttempt < RETRY_INTERVAL_MS) return;
 
         // Recorded before the ask, not after: a refusal is a normal answer and

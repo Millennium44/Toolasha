@@ -11,6 +11,9 @@ vi.mock('./storage.js', () => ({
         set: vi.fn(async (key, value) => {
             stored.set(key, value);
         }),
+        delete: vi.fn(async (key) => {
+            stored.delete(key);
+        }),
     },
 }));
 
@@ -61,7 +64,7 @@ describe('requestPersistence', () => {
         setNavigatorStorage({ persisted: vi.fn(async () => false), persist });
         await storagePersistence.requestPersistence();
         expect(persist).toHaveBeenCalledTimes(1);
-        expect(stored.get('toolasha_persistStorageAttemptedAt')).toBeGreaterThan(0);
+        expect(stored.get('toolasha_local_persistStorageAttemptedAt')).toBeGreaterThan(0);
     });
 
     test('does not re-ask within the retry interval after a refusal', async () => {
@@ -83,10 +86,38 @@ describe('requestPersistence', () => {
         expect(persist).toHaveBeenCalledTimes(1);
 
         // Simulate the attempt flag being a day old
-        stored.set('toolasha_persistStorageAttemptedAt', Date.now() - 25 * 60 * 60 * 1000);
+        stored.set('toolasha_local_persistStorageAttemptedAt', Date.now() - 25 * 60 * 60 * 1000);
 
         await storagePersistence.requestPersistence();
         expect(persist).toHaveBeenCalledTimes(2);
+    });
+
+    test('honours an existing pre-rename stamp instead of re-asking on upgrade', async () => {
+        const persist = vi.fn(async () => false);
+        setNavigatorStorage({ persisted: vi.fn(async () => false), persist });
+
+        // A device from before the rename: only the legacy key has ever been
+        // written, and it is recent.
+        stored.set('toolasha_persistStorageAttemptedAt', Date.now());
+
+        await storagePersistence.requestPersistence();
+
+        // Honoured, not ignored: the recent legacy stamp still suppresses the ask.
+        expect(persist).not.toHaveBeenCalled();
+    });
+
+    test('migrates a pre-rename stamp onto the renamed key and removes the old one', async () => {
+        const persist = vi.fn(async () => false);
+        setNavigatorStorage({ persisted: vi.fn(async () => false), persist });
+
+        const legacyTimestamp = Date.now() - 25 * 60 * 60 * 1000; // stale, so this also re-asks
+        stored.set('toolasha_persistStorageAttemptedAt', legacyTimestamp);
+
+        await storagePersistence.requestPersistence();
+
+        expect(persist).toHaveBeenCalledTimes(1);
+        expect(stored.has('toolasha_persistStorageAttemptedAt')).toBe(false);
+        expect(stored.get('toolasha_local_persistStorageAttemptedAt')).toBeGreaterThan(legacyTimestamp);
     });
 
     test('a thrown error from persist() is swallowed, not propagated', async () => {
