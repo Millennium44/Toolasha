@@ -326,6 +326,24 @@ describe('gear saved into a loadout', () => {
     });
 });
 
+describe('the progress strip counts stacks, not items', () => {
+    // `queue.length` is one entry per inventory stack (one per item, or per
+    // item+enhancement-level under a tab), so the unit of work the strip is
+    // reporting progress through really is stacks — unlike heldCount and
+    // enhancedSkipped just above, which are genuinely item quantities. The
+    // wording has to say which is which rather than calling both "items".
+    test('the finished message says stacks', () => {
+        bulkSell.queue = [
+            { itemHrid: '/items/cheese', enhancementLevel: 0, count: 900, name: 'Cheese', stackValue: 1 },
+            { itemHrid: '/items/milk', enhancementLevel: 0, count: 100, name: 'Milk', stackValue: 1 },
+        ];
+        bulkSell.index = 2; // past the end of the queue
+        bulkSell._prepareCurrent();
+
+        expect(bulkSell.statusNote).toBe('Done — 2 stacks processed');
+    });
+});
+
 describe('the insta-vs-listing decision', () => {
     // A balanced, fresh, high-value book: none of the other three rules fire,
     // so what happens is the spread rule's doing alone

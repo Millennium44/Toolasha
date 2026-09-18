@@ -837,7 +837,14 @@ class BulkSellAssistant {
         const skipBtn = this.chip.querySelector(`.${CHIP_ID}-skip`);
         const detailBox = this.chip.querySelector(`.${CHIP_ID}-detail`);
         const moreBtn = this.chip.querySelector(`.${CHIP_ID}-more`);
-        const progress = this.queue.length ? `${Math.min(this.index + 1, this.queue.length)}/${this.queue.length}` : '';
+        // "Stacks", not "items": the queue holds one entry per inventory stack
+        // (one per item+enhancement-level grouping), and that is the thing this
+        // run is working through — a held-back or enhanced-skipped count is an
+        // item quantity, but progress through the queue is a stack count, and
+        // saying "items" here reads as the same unit when it is not.
+        const progress = this.queue.length
+            ? `${Math.min(this.index + 1, this.queue.length)}/${this.queue.length} stacks`
+            : '';
         const setMain = (label) => {
             if (this.panelWidget?.setMainLabel) this.panelWidget.setMainLabel(label);
             else mainBtn.textContent = label;
@@ -1304,7 +1311,7 @@ class BulkSellAssistant {
         this._clearTransient();
         if (this.index >= this.queue.length) {
             this.state = 'done';
-            this.statusNote = `Done — ${this.queue.length} items processed`;
+            this.statusNote = `Done — ${this.queue.length} stacks processed`;
             this._render();
             return;
         }
