@@ -64,6 +64,19 @@ export const LIQUIDITY_CAP_SETTING = 'profitCalc_liquidityCap';
 const PREFETCH_CONCURRENCY = 4;
 
 /**
+ * Coins are not sold on the marketplace, so they bound nothing — the same
+ * constant, for the same reason, as `market-liquidity.js`'s own `COIN_HRID`,
+ * which `sellThrottle` filters on. Every path here has to filter it too:
+ * `capProfitRate` inherits the filter by going through `sellThrottle`, but
+ * `capProfitRateCached` walks the sells list itself, and a combat zone's drop
+ * table always contains `/items/coin` at a large per-hour rate (see
+ * `combat-sim-adapter.js`'s `calculateSimRevenue`). Warming it is a wasted
+ * round trip; letting it into the cache would then let it bind every combat
+ * row in the all-zones table to a "volume" for a thing nobody trades.
+ */
+const COIN_HRID = '/items/coin';
+
+/**
  * The market-liquidity module that actually holds the volume cache.
  * @returns {Object} The planner's liquidity module
  */
@@ -151,7 +164,7 @@ export async function prefetchLiquidity(items) {
     const { dailyVolume } = liquidity();
     const wanted = new Map();
     for (const item of items || []) {
-        if (!item?.itemHrid) continue;
+        if (!item?.itemHrid || item.itemHrid === COIN_HRID) continue;
         const enhancementLevel = item.enhancementLevel || 0;
         wanted.set(`${item.itemHrid}:${enhancementLevel}`, { itemHrid: item.itemHrid, enhancementLevel });
     }
@@ -245,7 +258,9 @@ export function capProfitRateCached({ goldPerHour, sells } = {}) {
 
     if (raw <= 0 || !liquidityCapEnabled()) return uncapped;
 
-    const list = (Array.isArray(sells) ? sells : []).filter((sold) => sold?.itemHrid && Number(sold.unitsPerHour) > 0);
+    const list = (Array.isArray(sells) ? sells : []).filter(
+        (sold) => sold?.itemHrid && sold.itemHrid !== COIN_HRID && Number(sold.unitsPerHour) > 0
+    );
     if (!list.length) return uncapped;
 
     try {

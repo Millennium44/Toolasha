@@ -231,6 +231,28 @@ describe('capProfitRateCached', () => {
         expect(fromCache.capped).toBe(true);
     });
 
+    test('coins never bind a row, however thin the pool says a coin market is', async () => {
+        // Every combat zone's drop table contains `/items/coin` at a large
+        // per-hour rate (combat-sim-adapter.js's calculateSimRevenue), and
+        // this is the path the all-zones table caps through. Coins are not
+        // sold on the marketplace, so a cached "coin volume" — however it got
+        // there — must bind nothing, exactly as `sellThrottle` refuses to let
+        // it in the fetching path.
+        history.rows['/items/coin'] = tradedAt(1 / 7);
+        await prefetchLiquidity([{ itemHrid: '/items/coin' }]);
+
+        // The warm-up never asked about coins in the first place
+        expect(history.calls).toHaveLength(0);
+
+        const bounded = capProfitRateCached({
+            goldPerHour: 1_000_000,
+            sells: [{ itemHrid: '/items/coin', name: 'Coin', unitsPerHour: 500_000 }],
+        });
+
+        expect(bounded.capped).toBe(false);
+        expect(bounded.goldPerHour).toBe(1_000_000);
+    });
+
     test('a liquid, cached market leaves the rate exactly as quoted, no lookup', async () => {
         history.rows['/items/milk'] = tradedAt(1_000_000);
         await prefetchLiquidity([{ itemHrid: '/items/milk' }]);
