@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { compareActionQueueOrder, runningAction, runningCombatAction } from './combat-actions.js';
+import { compareActionQueueOrder, runningAction, runningCombatAction, lastUsedTierForZone } from './combat-actions.js';
 
 describe('the live party-fight queue after a drag reorder', () => {
     // MillenniumTest on the test server, right after dragging Apple Gummy from
@@ -207,5 +207,44 @@ describe('runningAction', () => {
         expect(runningAction([])).toBeNull();
         expect(runningAction(null)).toBeNull();
         expect(runningAction(undefined)).toBeNull();
+    });
+});
+
+describe('lastUsedTierForZone: the last tier the player set on a zone, read from their own queue', () => {
+    test('a running copy of the zone reports its tier', () => {
+        const actions = [{ actionHrid: '/actions/combat/gobo_planet', difficultyTier: 3, isDone: false, ordinal: 0 }];
+        expect(lastUsedTierForZone(actions, '/actions/combat/gobo_planet')).toBe(3);
+    });
+
+    test('a merely queued (not yet running) copy counts just as much as a running one', () => {
+        const actions = [
+            { actionHrid: '/actions/cooking/apple_gummy', isDone: false, ordinal: 0 },
+            { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 2, isDone: false, ordinal: 9 },
+        ];
+        expect(lastUsedTierForZone(actions, '/actions/combat/gobo_planet')).toBe(2);
+    });
+
+    test('a zone with no difficultyTier field is a real, known T0 — not "unknown"', () => {
+        const actions = [{ actionHrid: '/actions/combat/fly_zone', isDone: false, ordinal: 0 }];
+        expect(lastUsedTierForZone(actions, '/actions/combat/fly_zone')).toBe(0);
+    });
+
+    test('the zone is nowhere in the queue: null, never a guessed tier', () => {
+        const actions = [{ actionHrid: '/actions/combat/pirate_cove', difficultyTier: 1, isDone: false, ordinal: 0 }];
+        expect(lastUsedTierForZone(actions, '/actions/combat/gobo_planet')).toBeNull();
+    });
+
+    test('two copies of the same zone in the queue: the earlier in execution order wins', () => {
+        const actions = [
+            { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 5, isDone: false, ordinal: 9, partyID: 0 },
+            { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 1, isDone: false, ordinal: 0, partyID: 0 },
+        ];
+        expect(lastUsedTierForZone(actions, '/actions/combat/gobo_planet')).toBe(1);
+    });
+
+    test('empty, null or non-array input, or a missing zoneHrid, is null rather than throwing', () => {
+        expect(lastUsedTierForZone([], '/actions/combat/gobo_planet')).toBeNull();
+        expect(lastUsedTierForZone(null, '/actions/combat/gobo_planet')).toBeNull();
+        expect(lastUsedTierForZone([{ actionHrid: '/actions/combat/gobo_planet' }], '')).toBeNull();
     });
 });

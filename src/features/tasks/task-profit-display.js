@@ -47,7 +47,7 @@ import {
 // with a fallback to the static import for dev single-bundle builds.
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
-import { runningAction } from '../../utils/combat-actions.js';
+import { runningAction, lastUsedTierForZone } from '../../utils/combat-actions.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 function getLoadoutSnapshot() {
@@ -84,7 +84,13 @@ const MIN_RATED_CARDS_FOR_MEDIAN = 3;
 /** How long a shared full-zone sim result stands before it is re-run */
 const ZONE_SIM_TTL_MS = 3 * 60 * 1000;
 
-/** The difficulty tier every combat task estimate simulates at — see `_applyGoEstimate` */
+/**
+ * Fallback tier for a combat task estimate when the zone is nowhere in the
+ * player's own action queue — `lastUsedTierForZone` (`utils/combat-actions.js`)
+ * found nothing, so there is no honest tier to simulate or to send Go to, and
+ * this is the same T0 the card and Go have always fallen back to. See
+ * `_resolveEstimateTier` and `_applyGoEstimate`.
+ */
 const GO_ESTIMATE_TIER = 0;
 
 /**
@@ -949,7 +955,7 @@ class TaskProfitDisplay {
      * count — that total does not come from simulated RNG and should not
      * race this card's own estimate to overwrite the same input.
      * @param {HTMLElement} taskNode
-     * @returns {{zoneHrid: string, predictedFights: number, monsterHrid: (string|undefined)}|null}
+     * @returns {{zoneHrid: string, predictedFights: number, monsterHrid: (string|undefined), tier: (number|undefined)}|null}
      * @private
      */
     _resolveGoEstimate(taskNode) {
@@ -979,18 +985,24 @@ class TaskProfitDisplay {
      * panel and its Difficulty combobox, exactly like a player checking the
      * zone and tier before typing a count themselves.
      *
-     * The estimate is always simulated at T0 (`runSimulation({ ..., difficultyTier: 0 })`
-     * above) — a task's kill count does not care about difficulty, so the
-     * card never simulates any other tier. Go must therefore land on T0 too:
-     * filling the predicted count against whatever tier the panel happened to
-     * already be on (the previous behavior) would fill the right number
-     * against the wrong fight.
+     * The estimate simulates at whatever tier `_resolveEstimateTier` found for
+     * this zone in the player's own queue (`estimate.tier`) — T0 only when
+     * the zone was nowhere in it. Go must land on that same tier: filling the
+     * predicted count against whatever tier the panel happened to already be
+     * on (the original behavior, before either of these tracked a tier at
+     * all) would fill the right number against the wrong fight.
+     *
+     * `estimate.tier` is read, never recomputed — the tier the card actually
+     * simulated must be the tier Go opens, even if the player's queue has
+     * since changed. A missing `tier` (an older/foreign estimate record)
+     * falls back to {@link GO_ESTIMATE_TIER}, same as an unknown tier always
+     * has.
      *
      * Refuses rather than guesses at every step: no zone name for the
      * estimate's `zoneHrid`, no detail panel open, the panel not resolving to
      * the estimate's own `zoneHrid`, or the Difficulty combobox not
-     * confirming T0 all leave the input untouched.
-     * @param {{zoneHrid: string, predictedFights: number}} estimate
+     * confirming the estimate's tier all leave the input untouched.
+     * @param {{zoneHrid: string, predictedFights: number, tier: (number|undefined)}} estimate
      * @returns {Promise<void>}
      * @private
      */
@@ -999,7 +1011,8 @@ class TaskProfitDisplay {
         if (!zoneName) return;
 
         const panel = document.querySelector(PANEL_SELECTOR);
-        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, GO_ESTIMATE_TIER);
+        const tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
+        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, tier);
         if (!tierConfirmed) return;
 
         const inputEl = findActionInput(panel);
@@ -1446,6 +1459,30 @@ class TaskProfitDisplay {
     }
 
     /**
+     * The difficulty tier a combat task estimate for `zoneHrid` should
+     * simulate — and the tier Go should later open the zone at.
+     *
+     * Reads `lastUsedTierForZone` (`utils/combat-actions.js`) over the
+     * player's own action queue: a queued or running copy of this zone
+     * carries the tier the player themselves last set it to, which is the
+     * only honest source of "the tier they actually fight this zone at" —
+     * there is no persisted history of tiers once a zone leaves the queue,
+     * and nothing here invents one.
+     *
+     * When the zone is nowhere in the queue, `known` is false and `tier`
+     * falls back to {@link GO_ESTIMATE_TIER} (T0) — today's behavior,
+     * unchanged, with the card saying so rather than presenting a guess as
+     * fact.
+     * @param {string} zoneHrid
+     * @returns {{tier: number, known: boolean}}
+     * @private
+     */
+    _resolveEstimateTier(zoneHrid) {
+        const tier = lastUsedTierForZone(dataManager.getCurrentActions?.() || [], zoneHrid);
+        return tier === null ? { tier: GO_ESTIMATE_TIER, known: false } : { tier, known: true };
+    }
+
+    /**
      * Render the pre-run config state for the combat task estimate.
      * Shows a loadout dropdown and an "Estimate" button.
      * @param {Element} container - Container element to render into
@@ -1558,6 +1595,11 @@ class TaskProfitDisplay {
             return;
         }
 
+        // The tier this estimate simulates at, and the tier Go later opens the
+        // zone at — see `_resolveEstimateTier`. Resolved once, up front, and
+        // carried on the estimate record rather than re-read at Go time.
+        const { tier: estimateTier, known: estimateTierKnown } = this._resolveEstimateTier(zoneHrid);
+
         container.innerHTML = '<span style="color:#888; font-size:11px;">⏳ Simulating…</span>';
 
         try {
@@ -1618,7 +1660,11 @@ class TaskProfitDisplay {
             const sharedZoneSim = mode === 'zone' || isBossTarget;
             let simResult;
             if (sharedZoneSim) {
-                const cacheKey = `${dataManager.getCurrentCharacterId() || ''}|${zoneHrid}|${loadoutName || ''}`;
+                // Tier is part of the cache key: a shared sim result is only
+                // interchangeable between cards simulating the same zone at
+                // the same tier — strength scales with tier, so a T3 result
+                // reused for a T0 estimate (or vice versa) would be wrong.
+                const cacheKey = `${dataManager.getCurrentCharacterId() || ''}|${zoneHrid}|${estimateTier}|${loadoutName || ''}`;
                 const cached = this._zoneSimCache.get(cacheKey);
                 if (cached && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
                     simResult = await cached.promise;
@@ -1631,7 +1677,7 @@ class TaskProfitDisplay {
                         gameData: simGameData,
                         playerDTOs: players,
                         zoneHrid,
-                        difficultyTier: 0,
+                        difficultyTier: estimateTier,
                         hours: SIM_HOURS,
                         communityBuffs: getCommunityBuffs(),
                     });
@@ -1648,7 +1694,7 @@ class TaskProfitDisplay {
                     gameData: simGameData,
                     playerDTOs: players,
                     zoneHrid,
-                    difficultyTier: 0,
+                    difficultyTier: estimateTier,
                     hours: SIM_HOURS,
                     communityBuffs: getCommunityBuffs(),
                     // Solo mode filtered the spawn table down to this card's
@@ -1685,7 +1731,11 @@ class TaskProfitDisplay {
                     ? Math.ceil(remaining * (totalFightsPerHour / killsPerHour))
                     : null;
             if (cardTaskNode) {
-                this._cardEstimates.set(cardTaskNode, { zoneHrid, predictedFights, monsterHrid });
+                // `tier` travels with the estimate so Go (`_applyGoEstimate`)
+                // acts on the tier this exact estimate simulated, never one
+                // recomputed at click time — the same reason the zone itself
+                // is carried here rather than re-derived.
+                this._cardEstimates.set(cardTaskNode, { zoneHrid, predictedFights, monsterHrid, tier: estimateTier });
             }
 
             const playerHrid = players[0]?.hrid || 'player1';
@@ -1713,7 +1763,9 @@ class TaskProfitDisplay {
                 consumableEntries,
                 mode,
                 simResult,
-                zoneHrid
+                zoneHrid,
+                estimateTier,
+                estimateTierKnown
             );
         } catch (e) {
             console.error('[TaskProfit] Combat estimate failed:', e);
@@ -1738,6 +1790,9 @@ class TaskProfitDisplay {
      * @param {number} netGoldPerHour - Net gold/hr (drops - consumable costs)
      * @param {Array} dropEntries - Array of {name, count, unitValue, totalValue} per drop
      * @param {Array} consumableEntries - Array of {name, count, unitCost, totalCost} per consumable
+     * @param {number} estimateTier - The difficulty tier this estimate simulated at
+     * @param {boolean} estimateTierKnown - Whether `estimateTier` came from the player's own
+     *   queue (`_resolveEstimateTier`) rather than the no-recorded-tier T0 fallback
      * @private
      */
     _renderCombatEstimateResult(
@@ -1754,7 +1809,9 @@ class TaskProfitDisplay {
         consumableEntries,
         mode,
         simResult,
-        zoneHrid
+        zoneHrid,
+        estimateTier,
+        estimateTierKnown
     ) {
         container.innerHTML = '';
         if (completionSeconds !== null) {
@@ -1786,11 +1843,17 @@ class TaskProfitDisplay {
         `;
 
         const remaining = Math.max((taskData.quantity ?? 0) - (taskData.currentProgress ?? 0), 0);
+        // The tier these numbers were simulated at — and the tier Go will
+        // open the zone at. `known` false means the zone was nowhere in the
+        // queue when the estimate ran, so this is the T0 fallback rather than
+        // a tier the player actually chose, and the card says exactly that
+        // instead of presenting T0 as if it were read off the player's play.
+        const tierSuffix = estimateTierKnown ? `T${estimateTier}` : `T${estimateTier}, no recorded tier for this zone`;
         const lines = [];
         lines.push('<div style="font-weight: bold; margin-bottom: 4px;">Task Profit Breakdown</div>');
         lines.push('<div style="border-bottom: 1px solid #555; margin-bottom: 4px;"></div>');
         lines.push(
-            `<div style="margin-bottom: 2px; color: #aaa;">Monster: ${monsterName} × ${remaining.toLocaleString()} kills (${formatKMB(killsPerHour)}/hr)</div>`
+            `<div style="margin-bottom: 2px; color: #aaa;">Monster: ${monsterName} × ${remaining.toLocaleString()} kills (${formatKMB(killsPerHour)}/hr, ${tierSuffix})</div>`
         );
         lines.push(`<div style="margin-bottom: 4px; color: #aaa;">Loadout: ${loadoutName || 'Current Gear'}</div>`);
 

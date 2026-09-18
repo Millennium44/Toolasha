@@ -19,19 +19,40 @@
  * it fills the game's own count input, the same way `findActionInput` +
  * `setReactInputValue` already do for the existing Go-merge feature.
  *
- * Every combat task estimate simulates at T0 (`difficultyTier: 0`), so Go
- * must land on T0 too — through `ensureZoneAndTier` (`utils/combat-zone-open.js`),
- * which reads the zone panel's own Difficulty combobox rather than a "zone
- * tab" that measurement on the live game showed never existed (that selector
- * matched the Combat page's top-level tabs — Combat Zones/Find Party/Combat
- * Sim/Statistics — never a per-zone entry, so the old fallback here was dead
- * code and is gone, not merely unused).
+ * A combat task estimate simulates at the tier `_resolveEstimateTier` finds
+ * for the zone in the player's own action queue (`lastUsedTierForZone`,
+ * `utils/combat-actions.js`) — T0 only as the no-recorded-tier fallback — and
+ * Go must land on that same tier, through `ensureZoneAndTier`
+ * (`utils/combat-zone-open.js`), which reads the zone panel's own Difficulty
+ * combobox rather than a "zone tab" that measurement on the live game showed
+ * never existed (that selector matched the Combat page's top-level tabs —
+ * Combat Zones/Find Party/Combat Sim/Statistics — never a per-zone entry, so
+ * the old fallback here was dead code and is gone, not merely unused).
+ *
+ * Ask 4 (the tier travels on the estimate, and honors the last-used tier):
+ * `_resolveEstimateTier` reads the queue once, up front, and the result rides
+ * on the same `_cardEstimates` record as `zoneHrid`/`predictedFights` —
+ * `_applyGoEstimate` never re-reads the queue, so a queue change between the
+ * estimate finishing and Go being clicked cannot change which tier Go opens.
  */
 
 import { describe, test, expect, afterEach, vi } from 'vitest';
 import taskProfitDisplay from './task-profit-display.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
+import { runSimulation } from '../combat-sim/combat-sim-runner.js';
+import { buildAllPlayerDTOs, buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
+
+vi.mock('../combat-sim/combat-sim-runner.js', () => ({
+    runSimulation: vi.fn(),
+}));
+vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
+    buildAllPlayerDTOs: vi.fn(),
+    buildGameDataPayload: vi.fn(),
+    getCommunityBuffs: vi.fn(() => ({})),
+    applyLoadoutSnapshotToDTO: vi.fn(),
+    calculateSimRevenue: vi.fn(() => ({ netPerHour: 0, dropEntries: [], consumableEntries: [] })),
+}));
 
 /**
  * A minimal set of combat zone actions, as `dataManager.getInitClientData()`
@@ -65,6 +86,7 @@ function buildGameData(zones) {
 afterEach(() => {
     dataManager.initClientData = null;
     dataManager.characterQuests = [];
+    dataManager.characterActions = [];
     document.body.innerHTML = '';
     vi.restoreAllMocks();
 });
@@ -467,5 +489,216 @@ describe('_resolveGoEstimate: what a Go click on this card would do', () => {
         ];
 
         expect(taskProfitDisplay._resolveGoEstimate(taskNode)).toBe(estimate);
+    });
+});
+
+describe('_resolveEstimateTier: the tier a combat estimate simulates at, and Go later opens', () => {
+    test('a zone queued (or running) at a non-zero tier is honored, not T0', () => {
+        dataManager.characterActions = [
+            { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 3, isDone: false, ordinal: 0 },
+        ];
+
+        expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/gobo_planet')).toEqual({
+            tier: 3,
+            known: true,
+        });
+    });
+
+    test('a zone the player queues at T0 is a known T0, not "unknown"', () => {
+        dataManager.characterActions = [{ actionHrid: '/actions/combat/fly_zone', isDone: false, ordinal: 0 }];
+
+        expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/fly_zone')).toEqual({ tier: 0, known: true });
+    });
+
+    test('the zone is nowhere in the queue: falls back to T0 and says so, never a guessed tier', () => {
+        dataManager.characterActions = [
+            { actionHrid: '/actions/combat/pirate_cove', difficultyTier: 4, isDone: false, ordinal: 0 },
+        ];
+
+        expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/gobo_planet')).toEqual({
+            tier: 0,
+            known: false,
+        });
+    });
+});
+
+describe('Go honors the tier the estimate actually simulated', () => {
+    test('a non-zero estimate.tier moves the Difficulty combobox off T0', async () => {
+        vi.useFakeTimers();
+        try {
+            dataManager.initClientData = buildGameData([
+                {
+                    hrid: '/actions/combat/gobo_planet',
+                    name: 'Gobo Planet',
+                    category: '/categories/gobo',
+                    sortIndex: 1,
+                    monsters: ['/monsters/gobo'],
+                },
+            ]);
+            // Starting tier (T1) is neither the old hardcoded fallback (T0)
+            // nor the target (T3) — only reading `estimate.tier` can land on
+            // T3; a stray fallback to T0 would stop there instead, and a
+            // no-op would leave the combobox at T1. Also left un-clicked by
+            // this test: `selectDifficultyTier` (`utils/combat-zone-open.js`)
+            // opens the combobox and clicks the matching option itself —
+            // this only drives the fake clock past its two internal
+            // `wait(300ms)` calls.
+            const { input, combobox } = buildDetailPanel('Gobo Planet', 1);
+
+            const applyPromise = taskProfitDisplay._applyGoEstimate({
+                zoneHrid: '/actions/combat/gobo_planet',
+                predictedFights: 40,
+                tier: 3,
+            });
+
+            await vi.advanceTimersByTimeAsync(300); // combobox opens
+            await vi.advanceTimersByTimeAsync(300); // option picked, readback settle
+
+            await applyPromise;
+
+            expect(combobox.textContent).toBe('T3');
+            expect(input.value).toBe('42'); // ceil(40 * 1.05)
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('an estimate with no tier field (older/foreign record) still falls back to T0', async () => {
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/bear_with_it',
+                name: 'Bear With It',
+                category: '/categories/bear',
+                sortIndex: 1,
+                monsters: ['/monsters/panda'],
+            },
+        ]);
+        const { input } = buildDetailPanel('Bear With It', 0);
+
+        await taskProfitDisplay._applyGoEstimate({ zoneHrid: '/actions/combat/bear_with_it', predictedFights: 40 });
+
+        expect(input.value).toBe('42'); // ceil(40 * 1.05), filled at the already-showing T0
+    });
+
+    test('the tier travels on the estimate record — Go uses it even after the queue has since changed', async () => {
+        // The estimate ran while Gobo Planet sat in the queue at T3 (what
+        // `_resolveEstimateTier` would have read then). By the time Go is
+        // clicked the player has re-queued the same zone at T5 — Go must
+        // still open T3, the tier this exact estimate simulated, never a
+        // tier recomputed from the queue's current state.
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/gobo_planet',
+                name: 'Gobo Planet',
+                category: '/categories/gobo',
+                sortIndex: 1,
+                monsters: ['/monsters/gobo'],
+            },
+        ]);
+        const { input, combobox } = buildDetailPanel('Gobo Planet', 3);
+        const estimate = { zoneHrid: '/actions/combat/gobo_planet', predictedFights: 40, tier: 3 };
+
+        // The queue now disagrees with the estimate's stamped tier
+        dataManager.characterActions = [
+            { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 5, isDone: false, ordinal: 0 },
+        ];
+
+        await taskProfitDisplay._applyGoEstimate(estimate);
+
+        expect(combobox.textContent).toBe('T3');
+        expect(input.value).toBe('42'); // ceil(40 * 1.05)
+    });
+});
+
+describe('_runCombatSimEstimate: the estimate itself simulates at the last-used tier', () => {
+    test('a zone queued at T3 is simulated at T3, and the estimate + card carry T3', async () => {
+        dataManager.initClientData = {
+            ...buildGameData([
+                {
+                    hrid: '/actions/combat/gobo_planet',
+                    name: 'Gobo Planet',
+                    category: '/categories/gobo',
+                    sortIndex: 1,
+                    monsters: ['/monsters/gobo'],
+                },
+            ]),
+            combatMonsterDetailMap: { '/monsters/gobo': { name: 'Gobo' } },
+        };
+        // This is the honest source `_resolveEstimateTier` reads: the player
+        // has this zone queued at T3 right now.
+        dataManager.characterActions = [
+            { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 3, isDone: false, ordinal: 0 },
+        ];
+
+        buildGameDataPayload.mockReturnValue(dataManager.initClientData);
+        buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player1' }] });
+        runSimulation.mockResolvedValue({ deaths: { '/monsters/gobo': 10 }, encounters: 10 });
+
+        const cardTaskNode = document.createElement('div');
+        cardTaskNode.className = 'RandomTask_taskInfo__1a';
+        const container = document.createElement('div');
+        cardTaskNode.appendChild(container);
+        document.body.appendChild(cardTaskNode);
+
+        const taskData = {
+            description: 'Defeat - Gobo',
+            quantity: 100,
+            currentProgress: 0,
+            coinReward: 0,
+            taskTokenReward: 0,
+        };
+
+        await taskProfitDisplay._runCombatSimEstimate(container, taskData, '', 'solo');
+
+        expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ difficultyTier: 3 }));
+
+        const estimate = taskProfitDisplay._cardEstimates.get(cardTaskNode);
+        expect(estimate).toMatchObject({ zoneHrid: '/actions/combat/gobo_planet', predictedFights: 100, tier: 3 });
+
+        // The card says which tier its numbers are for
+        expect(container.innerHTML).toContain('T3');
+    });
+
+    test('a zone nowhere in the queue simulates at T0 and the card says the tier is not recorded', async () => {
+        dataManager.initClientData = {
+            ...buildGameData([
+                {
+                    hrid: '/actions/combat/gobo_planet',
+                    name: 'Gobo Planet',
+                    category: '/categories/gobo',
+                    sortIndex: 1,
+                    monsters: ['/monsters/gobo'],
+                },
+            ]),
+            combatMonsterDetailMap: { '/monsters/gobo': { name: 'Gobo' } },
+        };
+        dataManager.characterActions = []; // Nothing queued for this zone at all
+
+        buildGameDataPayload.mockReturnValue(dataManager.initClientData);
+        buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player1' }] });
+        runSimulation.mockResolvedValue({ deaths: { '/monsters/gobo': 10 }, encounters: 10 });
+
+        const cardTaskNode = document.createElement('div');
+        cardTaskNode.className = 'RandomTask_taskInfo__1a';
+        const container = document.createElement('div');
+        cardTaskNode.appendChild(container);
+        document.body.appendChild(cardTaskNode);
+
+        const taskData = {
+            description: 'Defeat - Gobo',
+            quantity: 100,
+            currentProgress: 0,
+            coinReward: 0,
+            taskTokenReward: 0,
+        };
+
+        await taskProfitDisplay._runCombatSimEstimate(container, taskData, '', 'solo');
+
+        expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ difficultyTier: 0 }));
+
+        const estimate = taskProfitDisplay._cardEstimates.get(cardTaskNode);
+        expect(estimate).toMatchObject({ zoneHrid: '/actions/combat/gobo_planet', tier: 0 });
+
+        expect(container.innerHTML).toContain('no recorded tier');
     });
 });

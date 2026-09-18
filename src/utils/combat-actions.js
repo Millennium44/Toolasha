@@ -118,3 +118,34 @@ export function runningAction(actions, predicate = () => true, { includeFinished
 export function runningCombatAction(actions, options) {
     return runningAction(actions, (a) => String(a.actionHrid || '').startsWith('/actions/combat/'), options);
 }
+
+/**
+ * The difficulty tier the player last chose for a combat zone, read from
+ * their own action queue — never guessed.
+ *
+ * A queued (not yet running) copy of the zone counts exactly as much as a
+ * running one: both are the tier the player themselves picked the last time
+ * they set this zone up, which is the only honest source available. There is
+ * no persisted "last fought tier" history once a zone leaves the queue — the
+ * game does not record one and this reads nothing that was invented for the
+ * purpose (see the callers in `task-profit-display.js`).
+ *
+ * When the same zone appears more than once in the queue (rare — normally at
+ * the same tier either way), the earliest one in execution order wins, same
+ * tie-break as {@link runningAction}.
+ *
+ * @param {Array<{actionHrid?: string, difficultyTier?: number, ordinal?: number, partyID?: number}>} actions -
+ *   The character action queue (e.g. `dataManager.getCurrentActions()`)
+ * @param {string} zoneHrid - The combat zone's action hrid
+ * @returns {number|null} The tier last set for this zone, or null when the
+ *   zone is not anywhere in the queue
+ */
+export function lastUsedTierForZone(actions, zoneHrid) {
+    if (!Array.isArray(actions) || !zoneHrid) return null;
+
+    const matches = actions.filter((a) => a && a.actionHrid === zoneHrid);
+    if (matches.length === 0) return null;
+
+    const front = matches.reduce((f, a) => (compareActionQueueOrder(a, f) < 0 ? a : f));
+    return Number(front.difficultyTier) || 0;
+}
