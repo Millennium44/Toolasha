@@ -128,8 +128,11 @@ export async function selectDifficultyTier(panel, tier) {
     // MUI opens its menu on mousedown, not click: measured live on 2026-09-17,
     // a bare `.click()` left the listbox unopened and the tier unconfirmed, so
     // every caller refused to fill and the buttons did nothing
-    combobox.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-    combobox.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    // No `view`: in the userscript sandbox `window` is not the page's Window and
+    // the MouseEvent constructor throws on it — measured live, it took the whole
+    // open sequence down. Every other dispatch in this codebase omits it too.
+    combobox.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    combobox.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
     combobox.click();
     await wait(TIER_MENU_SETTLE_MS);
 
