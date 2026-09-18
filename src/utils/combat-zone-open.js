@@ -205,9 +205,11 @@ function findDifficultyCombobox(panel) {
  *
  * @param {HTMLElement} panel - An already-open, already-confirmed zone detail panel
  * @param {number} tier - The difficulty tier to select (0+)
+ * @param {string|null} [capturedCharacterId] - The character this was started
+ *   for, if the caller is guarding against a switch. Omit to skip the check.
  * @returns {Promise<boolean>} True once the combobox reads back `T{tier}`
  */
-export async function selectDifficultyTier(panel, tier) {
+export async function selectDifficultyTier(panel, tier, capturedCharacterId) {
     const target = `T${tier}`;
     const combobox = findDifficultyCombobox(panel);
     if (!combobox) return false;
@@ -236,6 +238,14 @@ export async function selectDifficultyTier(panel, tier) {
     );
     if (!option) return false;
 
+    // Picking the option is a WRITE to the panel, and the settle wait above is
+    // real time a character switch can land inside. The callers' own guards
+    // run only after this function returns, by which point the tier has
+    // already been changed — on whatever panel the game is now showing. A
+    // switch here leaves the new character's Difficulty set to the old
+    // character's tier, ready for them to press Start Now against.
+    if (capturedCharacterId !== undefined && characterIdentityChanged(capturedCharacterId)) return false;
+
     option.click();
     await wait(TIER_MENU_SETTLE_MS);
 
@@ -249,13 +259,15 @@ export async function selectDifficultyTier(panel, tier) {
  * @param {HTMLElement|null} panel
  * @param {string} zoneHrid
  * @param {number} tier
+ * @param {string|null} [capturedCharacterId] - Passed through to
+ *   {@link selectDifficultyTier} so the tier is not written after a switch
  * @returns {Promise<boolean>}
  */
-export async function ensureZoneAndTier(panel, zoneHrid, tier) {
+export async function ensureZoneAndTier(panel, zoneHrid, tier, capturedCharacterId) {
     if (!panel) return false;
     const { actionHrid } = resolveDetailPanel(panel);
     if (actionHrid !== zoneHrid) return false;
-    return selectDifficultyTier(panel, tier);
+    return selectDifficultyTier(panel, tier, capturedCharacterId);
 }
 
 /**
@@ -365,7 +377,15 @@ function findZoneTile(zoneList, zoneHrid) {
  * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean}>}
  */
 export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
-    return runZoneOpenExclusive(() => openCombatZoneAtTierSequence(zoneHrid, tier, options));
+    // Captured HERE, at the press, not inside the sequence. The sequence does
+    // not begin until whatever is ahead of it in `runZoneOpenExclusive`'s
+    // queue has drained, and that wait is itself an await straddling the
+    // identity read — a sequence that read the character id when its turn
+    // finally came would read whoever the player had *switched to* during the
+    // wait, and then happily "confirm" that nothing had changed. Every guard
+    // below is only as good as the identity it compares against.
+    const characterId = dataManager.getCurrentCharacterId();
+    return runZoneOpenExclusive(() => openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId));
 }
 
 /**
@@ -376,16 +396,16 @@ export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
  * @param {number} tier
  * @param {Object} options
  * @param {number|string} [options.count]
+ * @param {string|null} characterId - Captured by {@link openCombatZoneAtTier}
+ *   before this was queued, not re-read here
  * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean}>}
  */
-async function openCombatZoneAtTierSequence(zoneHrid, tier, options) {
+async function openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId) {
     const { count } = options;
     const result = { opened: false, tierConfirmed: false, filled: false };
 
     const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.name;
     if (!zoneName) return result;
-
-    const characterId = dataManager.getCurrentCharacterId();
 
     if (!navigateToAction(zoneHrid)) return result;
 
@@ -422,7 +442,7 @@ async function openCombatZoneAtTierSequence(zoneHrid, tier, options) {
 
     const panel = await waitForElement(PANEL_SELECTOR, PANEL_TIMEOUT_MS);
     if (characterIdentityChanged(characterId)) return result;
-    const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier);
+    const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier, characterId);
     result.tierConfirmed = tierConfirmed;
     if (!tierConfirmed) {
         restoreCombatPageTab(previousPageTab, characterId);

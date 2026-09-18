@@ -929,6 +929,13 @@ class TaskProfitDisplay {
                     const estimate = this._resolveGoEstimate(taskNode);
                     if (!estimate) return;
 
+                    // Who pressed Go, captured at the press. Both waits below
+                    // — the 300 ms settle AND the queue the fill is put on —
+                    // are time a character switch can land in, so reading the
+                    // character id when the fill finally runs would read
+                    // whoever the player switched TO and find nothing amiss.
+                    const characterId = dataManager.getCurrentCharacterId();
+
                     // Wait for the game to navigate, same delay as the merge
                     // fill above. Queued through the same lock a ▶ button's
                     // openCombatZoneAtTier uses (combat-zone-open.js) — Go and
@@ -936,7 +943,7 @@ class TaskProfitDisplay {
                     // game gives us, and firing while the other is mid-flight
                     // is exactly the interleave that corrupts it.
                     setTimeout(() => {
-                        runZoneOpenExclusive(() => this._applyGoEstimate(estimate)).catch((error) => {
+                        runZoneOpenExclusive(() => this._applyGoEstimate(estimate, characterId)).catch((error) => {
                             console.error('[TaskProfitDisplay] Go estimate fill failed:', error);
                         });
                     }, 300);
@@ -1007,22 +1014,26 @@ class TaskProfitDisplay {
      * the estimate's own `zoneHrid`, or the Difficulty combobox not
      * confirming the estimate's tier all leave the input untouched.
      * @param {{zoneHrid: string, predictedFights: number, tier: (number|undefined)}} estimate
+     * @param {string|null} [capturedCharacterId] - Who pressed Go, read by the
+     *   click handler before the settle timer and the queue wait. Defaults to
+     *   the current character for a direct call with nothing to straddle.
      * @returns {Promise<void>}
      * @private
      */
-    async _applyGoEstimate(estimate) {
+    async _applyGoEstimate(estimate, capturedCharacterId = dataManager.getCurrentCharacterId()) {
         const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.name;
         if (!zoneName) return;
 
-        // Captured before the only await below — a character switch landing
-        // mid-confirm leaves this panel now belonging to someone else, and
-        // this estimate's tier/count were never meant for them. See
-        // `characterIdentityChanged`'s doc-comment (combat-zone-open.js).
-        const characterId = dataManager.getCurrentCharacterId();
+        // A character switch landing mid-confirm leaves this panel now
+        // belonging to someone else, and this estimate's tier/count were
+        // never meant for them. See `characterIdentityChanged`'s doc-comment
+        // (combat-zone-open.js).
+        const characterId = capturedCharacterId;
+        if (characterIdentityChanged(characterId)) return;
 
         const panel = document.querySelector(PANEL_SELECTOR);
         const tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
-        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, tier);
+        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, tier, characterId);
         if (!tierConfirmed) return;
         if (characterIdentityChanged(characterId)) return;
 

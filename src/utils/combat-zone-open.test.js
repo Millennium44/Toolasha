@@ -601,6 +601,83 @@ describe('openCombatZoneAtTier — in-combat (Battle view, no Combat Zones list)
     });
 });
 
+describe('openCombatZoneAtTier — a switch during the QUEUE wait', () => {
+    test('a press queued behind another sequence aborts if the character changed while it waited', async () => {
+        // The identity guard is only as good as the identity it compares
+        // against, and `runZoneOpenExclusive`'s queue wait is itself an await
+        // straddling that read. Two ▶ presses, back to back: the second sits
+        // in the queue while the first settles, and the player switches
+        // character during that wait. Reading the character id when the
+        // second sequence finally got its turn read whoever had just been
+        // switched TO, so every guard downstream agreed nothing had changed
+        // and the second press filled its count into the new character's
+        // panel.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([
+            { hrid: '/actions/combat/aqua', name: 'Aqua Planet' },
+            { hrid: '/actions/combat/fly', name: 'Fly Plains' },
+        ]);
+        dataManager.currentCharacterId = 'char-a';
+
+        let flyInput = null;
+        const { tiles } = buildZoneList([
+            { hrid: '/actions/combat/aqua', name: 'Aqua Planet' },
+            { hrid: '/actions/combat/fly', name: 'Fly Plains' },
+        ]);
+        tiles['/actions/combat/aqua'].addEventListener('click', () => {
+            setTimeout(() => {
+                buildPanel('Aqua Planet', 0);
+                // The switch lands while the SECOND press is still queued
+                dataManager.currentCharacterId = 'char-b';
+            }, 50);
+        });
+        tiles['/actions/combat/fly'].addEventListener('click', () => {
+            document.querySelectorAll(PANEL_SELECTOR).forEach((el) => el.remove());
+            ({ input: flyInput } = buildPanel('Fly Plains', 0));
+        });
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const first = openCombatZoneAtTier('/actions/combat/aqua', 0);
+        const second = openCombatZoneAtTier('/actions/combat/fly', 0, { count: 999 });
+
+        const [, secondResult] = await Promise.all([vi.advanceTimersByTimeAsync(1000).then(() => first), second]);
+
+        expect(secondResult.filled).toBe(false);
+        expect(flyInput?.value ?? '').toBe('');
+    });
+
+    test('the tier is not written into the new character’s panel when the switch lands mid-pick', async () => {
+        // `selectDifficultyTier` clicks an option — a WRITE — after a 300 ms
+        // settle wait, and the callers' guards only run once it has returned.
+        // A switch inside that wait leaves the new character's Difficulty set
+        // to the old character's tier, sitting there for them to press Start
+        // Now against.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        dataManager.currentCharacterId = 'char-a';
+
+        let combobox = null;
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => {
+                ({ combobox } = buildPanel('Aqua Planet', 0));
+            });
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 5);
+        await vi.advanceTimersByTimeAsync(0); // through the list, the tile and the panel
+        // The combobox popup is open and the sequence is inside its settle
+        // wait — exactly where the switch lands.
+        dataManager.currentCharacterId = 'char-b';
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const result = await resultPromise;
+        expect(result.tierConfirmed).toBe(false);
+        expect(combobox.textContent).toBe('T0');
+    });
+});
+
 describe('openCombatZoneAtTier re-entrancy — runZoneOpenExclusive', () => {
     test('a second call never touches the shared panel until the first has fully settled', async () => {
         // Two ▶ clicks on different rows, back to back. Aqua's own panel
