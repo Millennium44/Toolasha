@@ -4520,8 +4520,12 @@ describe('the Bestiary route planner under the all-zones table', () => {
         expect(rows).toHaveLength(2);
         // Time, then about how many fights that is at the zone's simulated rate, then points
         // The Zone cell also carries the ▶ open button — its own icon glyph
-        // trails the name with no gap, since the row-open feature was added
-        expect(rows[0].slice(0, 5)).toEqual(['1', 'Farm T0▶', '0:30', '≈5', '+3']);
+        // trails the name with no gap, since the row-open feature was added.
+        // The fight count is the confidence-padded one (`utils/fight-confidence.js`):
+        // the stay's binding threshold is Rat 0 → 1 at one kill in five fights,
+        // and eleven fights is what lands it nine times in ten, against the
+        // five fights the bare rate arithmetic quotes.
+        expect(rows[0].slice(0, 5)).toEqual(['1', 'Farm T0▶', '0:30', '≈11', '+3']);
         expect(rows[0][5]).toContain('Fly 8 → 10');
         expect(rows[0][5]).toContain('Rat 0 → 1');
         expect(rows[1].slice(0, 3)).toEqual(['2', 'Hive T2▶', '0:30']);

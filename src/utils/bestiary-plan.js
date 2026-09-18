@@ -21,10 +21,19 @@
  * target and no clock, run until the target is crossed and report how long it
  * took and where the time went.
  *
- * Pure: everything is an argument and nothing is read from the game.
+ * The walk itself is pure: everything it needs is an argument and nothing is
+ * read from the game. The one thing that is not is the fight-count padding
+ * applied to the finished segments, which defaults its confidence, its flat
+ * floor and its boss test from the player's settings and the game data —
+ * every one of them overridable by argument, which is how the tests keep the
+ * whole thing pure.
  */
 
+import config from '../core/config.js';
+import dataManager from '../core/data-manager.js';
+import { getSettingDefinition } from '../core/settings-schema.js';
 import { pointsFromCount, nextPointCount } from './bestiary.js';
+import { padFightCount } from './fight-confidence.js';
 
 /** A guard against a pathological input looping forever */
 const MAX_STEPS = 20_000;
@@ -252,6 +261,73 @@ export function rescaleDungeonRates({ killsPerHour = {}, simClearsPerHour = 0, r
 }
 
 /**
+ * A number setting, falling back to its schema default and then to a hard one.
+ * @param {string} id
+ * @param {number} hardDefault
+ * @returns {number}
+ */
+function settingNumber(id, hardDefault) {
+    try {
+        const schemaDefault = Number(getSettingDefinition(id)?.default);
+        const fallback = Number.isFinite(schemaDefault) ? schemaDefault : hardDefault;
+        const value = Number(config.getSettingValue(id, fallback));
+        return Number.isFinite(value) ? value : fallback;
+    } catch (error) {
+        console.error(`[BestiaryPlan] Reading the ${id} setting failed:`, error);
+        return hardDefault;
+    }
+}
+
+/**
+ * Raise each segment's quoted fight count until the thresholds that segment
+ * crosses are actually reached at the configured confidence.
+ *
+ * Both the plan's "Fights" column and its ▶ button read `segment.encounters`
+ * (the button bakes the displayed number into its own dataset at render time),
+ * so padding here is what both of them show and fill — there is no second
+ * place to keep in step.
+ *
+ * A segment's kill chance per fight is its zone's kills/hour for that monster
+ * over its fights/hour; a zone that never reported fights/hour cannot form the
+ * rate and is left alone rather than guessed at. A partial segment crosses
+ * nothing, so there is nothing to be confident about and it keeps its count.
+ *
+ * @param {Array<Object>} segments
+ * @param {Map<string, Object>} zonesByHrid
+ * @param {{confidencePercent: number, bufferPercent: number, isBossMonster: function(string): boolean}} options
+ */
+function padSegmentFights(segments, zonesByHrid, options) {
+    for (const segment of segments) {
+        segment.encountersUnpadded = segment.encounters;
+        segment.fightPadding = null;
+        const zone = zonesByHrid.get(segment.zoneHrid);
+        const perHour = Number(zone?.encountersPerHour) || 0;
+        if (!zone || !(perHour > 0)) continue;
+        if (segment.encounters === null || segment.encounters === undefined) continue;
+
+        const crossings = segment.monsters.filter((m) => m.reached);
+        if (!crossings.length) continue;
+
+        const thresholds = crossings.map((m) => ({
+            killsNeeded: m.to - m.from,
+            killsPerFight: (Number(zone.killsPerHour?.[m.monsterHrid]) || 0) / perHour,
+            deterministic: Boolean(options.isBossMonster(m.monsterHrid)),
+        }));
+        const { fights, basis } = padFightCount({
+            unpaddedFights: segment.encounters,
+            thresholds,
+            confidencePercent: options.confidencePercent,
+            floorPercent: options.bufferPercent,
+        });
+        // Nothing bound: leave the original figure alone rather than rounding
+        // it up for no reason.
+        if (basis === 'unpadded') continue;
+        segment.encounters = fights;
+        segment.fightPadding = basis;
+    }
+}
+
+/**
  * Plan a Bestiary route through `zones`, either for a time budget or to a
  * points target.
  *
@@ -282,6 +358,14 @@ export function rescaleDungeonRates({ killsPerHour = {}, simClearsPerHour = 0, r
  * @param {number} [input.tolerancePercent] - How much slower (in percent) a zone may be at reaching its next
  *   point and still be preferred over the fastest one, when its `score` is higher. 0 (default) reproduces the
  *   old pure-speed behavior.
+ * @param {number} [input.confidencePercent] - How often a segment's quoted fight count should be enough to
+ *   actually cross the thresholds it claims. Defaults to the `combatFightConfidence` setting; 0 turns the
+ *   variance padding off and leaves only the flat floor.
+ * @param {number} [input.bufferPercent] - The flat minimum padding, in percent, below which a quoted count
+ *   never falls. Defaults to the `taskCombatGoBuffer` setting. Ignored for a stay whose every crossing is a
+ *   boss, which needs no padding at all.
+ * @param {function(string): boolean} [input.isBossMonster] - Whether a monster spawns on a fixed wave rather
+ *   than out of the spawn table. Defaults to the game's own answer.
  * @returns {{
  *   mode: 'hours'|'points',
  *   hours: number,
@@ -290,7 +374,8 @@ export function rescaleDungeonRates({ killsPerHour = {}, simClearsPerHour = 0, r
  *   unreachable: boolean,
  *   totalPoints: number,
  *   pointsByZone: Object,
- *   segments: Array<{zoneHrid: string, name: string, hours: number, encounters: number|null, points: number,
+ *   segments: Array<{zoneHrid: string, name: string, hours: number, encounters: number|null,
+ *     encountersUnpadded: number|null, fightPadding: ('confidence'|'flat'|'deterministic'|null), points: number,
  *     partial: boolean, isDungeon: boolean, note: string|null, viaScore: boolean,
  *     monsters: Array<{monsterHrid: string, from: number, count: number, to: number, reached: boolean, points: number}>}>,
  *   bestSingle: {zoneHrid: string, name: string, points: number, encounters: number|null, hours?: number|null}|null,
@@ -303,6 +388,9 @@ export function planBestiaryRoute({
     hours = 24,
     targetPoints = null,
     tolerancePercent = 0,
+    confidencePercent = null,
+    bufferPercent = null,
+    isBossMonster = null,
 } = {}) {
     const targeting = Number(targetPoints) > 0;
     const target = targeting ? Number(targetPoints) : 0;
@@ -472,6 +560,27 @@ export function planBestiaryRoute({
             }
         }
     }
+
+    // Fight counts are quoted last, once each segment's crossings are final:
+    // a segment that was merged across several steps has to be padded for the
+    // whole stay, not for whichever step happened to end it.
+    padSegmentFights(segments, new Map(usable.map((zone) => [zone.zoneHrid, zone])), {
+        confidencePercent: Number.isFinite(confidencePercent)
+            ? Number(confidencePercent)
+            : settingNumber('combatFightConfidence', 90),
+        bufferPercent: Number.isFinite(bufferPercent) ? Number(bufferPercent) : settingNumber('taskCombatGoBuffer', 5),
+        // A data manager that cannot answer — game data that has not loaded,
+        // or a partial test double — means "not a boss". Padding a boss that
+        // did not need it costs a slightly long queue; skipping the padding on
+        // a monster that did need it is the stranding this exists to stop.
+        isBossMonster:
+            typeof isBossMonster === 'function'
+                ? isBossMonster
+                : (hrid) =>
+                      typeof dataManager.isBossMonster === 'function'
+                          ? Boolean(dataManager.isBossMonster(hrid))
+                          : false,
+    });
 
     return {
         mode: targeting ? 'points' : 'hours',

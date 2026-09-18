@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import { planBestiaryRoute, rescaleDungeonRates, formatPlanHours, formatPlanText } from './bestiary-plan.js';
 import { pointsFromCount } from './bestiary.js';
+import { fightsForKillConfidence } from './fight-confidence.js';
 
 const zone = (zoneHrid, killsPerHour, name = zoneHrid) => ({ zoneHrid, name, killsPerHour });
 
@@ -288,7 +289,16 @@ describe('fights per stay', () => {
             { zoneHrid: 'a', name: 'a', killsPerHour: { fly: 10 }, encountersPerHour: 120 },
             { zoneHrid: 'b', name: 'b', killsPerHour: { bee: 10 } },
         ];
-        const plan = planBestiaryRoute({ zones, counts: { fly: 0, bee: 0 }, hours: 1 });
+        // Padding off, so this stays a test of the raw rate arithmetic; the
+        // confidence padding has its own describe below.
+        const plan = planBestiaryRoute({
+            zones,
+            counts: { fly: 0, bee: 0 },
+            hours: 1,
+            confidencePercent: 0,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+        });
         const a = plan.segments.filter((seg) => seg.zoneHrid === 'a');
         const b = plan.segments.filter((seg) => seg.zoneHrid === 'b');
         expect(a.length).toBeGreaterThan(0);
@@ -477,5 +487,124 @@ describe('a dungeon at your own clear time', () => {
         expect(plan.segments[0].isDungeon).toBe(true);
         expect(plan.segments[0].note).toBe('measured (2 runs)');
         expect(formatPlanText(plan)).toMatch(/≈\d+ clears/);
+    });
+});
+
+describe('fight-count confidence padding', () => {
+    // One zone, one monster six kills short of its next threshold: the exact
+    // shape of the maintainer's Crystal Colossus row.
+    const sixShort = (killsPerHour = 10, encountersPerHour = 100) => ({
+        zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { colossus: killsPerHour }, encountersPerHour }],
+        counts: { colossus: 94 },
+        hours: 0.6,
+    });
+
+    test('a boss threshold pads nothing — not the quantile, not the flat floor', () => {
+        const plan = planBestiaryRoute({
+            ...sixShort(),
+            confidencePercent: 90,
+            bufferPercent: 5,
+            isBossMonster: () => true,
+        });
+        const [segment] = plan.segments;
+        expect(segment.monsters.find((m) => m.monsterHrid === 'colossus')).toMatchObject({ from: 94, to: 100 });
+        // 6 kills at 0.1 per fight is 60 fights, exactly and always.
+        expect(segment.encounters).toBeCloseTo(60, 6);
+        expect(segment.encountersUnpadded).toBeCloseTo(60, 6);
+        expect(segment.fightPadding).toBeNull();
+    });
+
+    test('the same row from the spawn table pads to the confidence quantile', () => {
+        const plan = planBestiaryRoute({
+            ...sixShort(),
+            confidencePercent: 90,
+            bufferPercent: 5,
+            isBossMonster: () => false,
+        });
+        const [segment] = plan.segments;
+        expect(segment.encountersUnpadded).toBeCloseTo(60, 6);
+        expect(segment.encounters).toBe(91);
+        expect(segment.fightPadding).toBe('confidence');
+    });
+
+    test('a small target pads proportionally far harder than a large one', () => {
+        const small = planBestiaryRoute({
+            ...sixShort(),
+            confidencePercent: 90,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+        }).segments[0];
+        // Black Bear 6167 -> 10000: 3833 kills in an hour at 13,832 fights.
+        const large = planBestiaryRoute({
+            zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { bear: 3833 }, encountersPerHour: 13_832 }],
+            counts: { bear: 6167 },
+            hours: 1,
+            confidencePercent: 90,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+        }).segments[0];
+
+        expect(large.encounters).toBe(14_076);
+        expect(small.encounters / small.encountersUnpadded).toBeGreaterThan(1.5);
+        expect(large.encounters / large.encountersUnpadded).toBeLessThan(1.02);
+    });
+
+    test('a stay crossing several thresholds is sized by the hungriest one', () => {
+        // `a` crosses 94 -> 100 (6 kills at 0.01/fight); `b` crosses
+        // 900 -> 1000 (100 kills at 0.1/fight), both inside one merged stay.
+        const plan = planBestiaryRoute({
+            zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { a: 10, b: 100 }, encountersPerHour: 1000 }],
+            counts: { a: 94, b: 900 },
+            hours: 1,
+            confidencePercent: 90,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+        });
+        const segment = plan.segments[0];
+        expect(plan.segments).toHaveLength(1);
+        expect(segment.monsters.filter((m) => m.reached)).toHaveLength(2);
+        expect(segment.encountersUnpadded).toBeCloseTo(1000, 6);
+
+        const each = [
+            fightsForKillConfidence({ killsNeeded: 6, killsPerFight: 0.01, confidencePercent: 90 }),
+            fightsForKillConfidence({ killsNeeded: 100, killsPerFight: 0.1, confidencePercent: 90 }),
+        ];
+        expect(segment.encounters).toBe(Math.max(...each));
+        expect(segment.encounters).toBeGreaterThan(1000);
+    });
+
+    test('confidence off leaves the flat buffer as the floor', () => {
+        const segment = planBestiaryRoute({
+            ...sixShort(),
+            confidencePercent: 0,
+            bufferPercent: 5,
+            isBossMonster: () => false,
+        }).segments[0];
+        expect(segment.encounters).toBe(63);
+        expect(segment.fightPadding).toBe('flat');
+    });
+
+    test('both off leaves the raw prediction untouched, fractions and all', () => {
+        const segment = planBestiaryRoute({
+            ...sixShort(),
+            confidencePercent: 0,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+        }).segments[0];
+        expect(segment.encounters).toBeCloseTo(60, 6);
+        expect(segment.fightPadding).toBeNull();
+    });
+
+    test('a zone with no fight rate is left alone rather than guessed at', () => {
+        const segment = planBestiaryRoute({
+            zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { colossus: 10 } }],
+            counts: { colossus: 94 },
+            hours: 0.6,
+            confidencePercent: 90,
+            bufferPercent: 5,
+            isBossMonster: () => false,
+        }).segments[0];
+        expect(segment.encounters).toBeNull();
+        expect(segment.fightPadding).toBeNull();
     });
 });

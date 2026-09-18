@@ -3045,7 +3045,23 @@ export const settingsGroups = {
                 default: 5,
                 min: 0,
                 max: 100,
-                help: 'When Go pre-fills the fight count from a combat task estimate, pad the prediction by this percentage so RNG coming in under the median does not strand you short.',
+                help:
+                    'The smallest padding a pre-filled fight count ever gets. The confidence setting below usually ' +
+                    'asks for more than this; this is the floor it can never fall below. Boss fights ignore it — ' +
+                    'bosses spawn on a fixed wave, so there is no bad luck to pad against.',
+            },
+            combatFightConfidence: {
+                id: 'combatFightConfidence',
+                label: 'Combat pre-fill: confidence %',
+                type: 'number',
+                default: 90,
+                min: 0,
+                max: 99,
+                help:
+                    'How often a pre-filled fight count — the task Go button and the Bestiary plan both — should ' +
+                    'actually be enough. At 90 you finish the kills you were after nine runs in ten instead of ' +
+                    'roughly half of them. Small targets get padded much harder than large ones, because that is ' +
+                    'where luck actually swings the result. 0 turns it off and leaves only the flat buffer above.',
             },
             taskRerollProtection: {
                 id: 'taskRerollProtection',

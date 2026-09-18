@@ -195,6 +195,25 @@ describe('combat task Go count buffer defaults', () => {
         // outside the range its own settings UI lets you pick
         expect(setting.default).toBeGreaterThanOrEqual(setting.min);
         expect(setting.default).toBeLessThanOrEqual(setting.max);
-        expect(setting.help).toMatch(/RNG/i);
+        // It is a floor now, not the whole padding — the confidence setting
+        // usually asks for more — and the help has to say both that and the
+        // boss exception, or a player raising it expects it to do something
+        // on a boss task that it deliberately will not.
+        expect(setting.help).toMatch(/smallest padding|minimum|floor/i);
+        expect(setting.help).toMatch(/boss/i);
+    });
+
+    test('the confidence setting defaults to 90, in range, and explains the consequence', () => {
+        const setting = getSettingDefinition('combatFightConfidence');
+        expect(setting.type).toBe('number');
+        expect(setting.default).toBe(90);
+        expect(setting.min).toBe(0);
+        expect(setting.max).toBe(99);
+        expect(setting.default).toBeGreaterThanOrEqual(setting.min);
+        expect(setting.default).toBeLessThanOrEqual(setting.max);
+        // Says what you get, not how the quantile is computed
+        expect(setting.help).toMatch(/nine runs in ten|how often/i);
+        // And says what zero does, since zero is the off switch
+        expect(setting.help).toMatch(/0 turns it off/i);
     });
 });
