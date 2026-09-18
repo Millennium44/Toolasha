@@ -31,7 +31,9 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+
 import { resolveLoopItems } from './loop-items.js';
+import { effectiveInventory } from '../../utils/inventory-reservations.js';
 
 /** Where stages 1 and 2 stop */
 export const GATHERING_TARGET = 80;
@@ -126,17 +128,24 @@ export function readCharacterState() {
     const coinEntry = inventory.find((item) => item?.itemHrid === '/items/coin');
     const loopItems = resolveLoopItems();
 
-    // How much of the loop's own two items are already on hand. Read here —
-    // rather than in the loop or the walk — because this is the one place the
-    // inventory is already being read for `held`, and because the walk needs
-    // to know before it sizes a single step, not after. Zero rather than a
-    // guess when the loop's items could not be resolved: crediting a count off
-    // the wrong item would be worse than crediting nothing, which is why
-    // `holdingsCredited` exists for the walk to check first.
-    const starfruitHeld = loopItems
-        ? inventory.find((item) => item?.itemHrid === loopItems.starfruitHrid)?.count || 0
-        : 0;
-    const essenceHeld = loopItems ? inventory.find((item) => item?.itemHrid === loopItems.essenceHrid)?.count || 0 : 0;
+    // How much of the loop's own two items are already on hand and not already
+    // spoken for by another plan. Read here — rather than in the loop or the
+    // walk — because this is the one place the inventory is already being read
+    // for `held`, and because the walk needs to know before it sizes a single
+    // step, not after. Zero rather than a guess when the loop's items could not
+    // be resolved: crediting a count off the wrong item would be worse than
+    // crediting nothing, which is why `holdingsCredited` exists for the walk to
+    // check first.
+    //
+    // Goes through `effectiveInventory` rather than a raw inventory scan for two
+    // reasons: it only counts the bag (not an equipped or market-listed copy,
+    // which a plain `count` mixes in — see `inventory-reservations.js`'s
+    // `INVENTORY_LOCATION`), and it takes off whatever the goal planner, a
+    // crafting plan or the sell queue has already claimed against the same
+    // stack. Crediting the walk with Star Fruit another plan is about to spend
+    // would size the forage leg short and leave the queue running dry early.
+    const starfruitHeld = loopItems ? effectiveInventory(loopItems.starfruitHrid) : 0;
+    const essenceHeld = loopItems ? effectiveInventory(loopItems.essenceHrid) : 0;
 
     return {
         levels,

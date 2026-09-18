@@ -20,6 +20,13 @@ const game = vi.hoisted(() => ({
 
 const loop = vi.hoisted(() => ({ items: null }));
 
+// Owner id → units another plan has already claimed against that item, the
+// way `inventory-reservations.js` would answer `effectiveInventory` for real.
+// Not the real ledger — that module has its own tests — just enough of its
+// contract (bag count, less everyone else's claim, floored at zero) for
+// `readCharacterState` to be checked against it honestly.
+const reservations = vi.hoisted(() => ({ claimed: {} }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getSkills: () => game.skills,
@@ -32,6 +39,15 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('./loop-items.js', () => ({ resolveLoopItems: () => loop.items }));
+
+vi.mock('../../utils/inventory-reservations.js', () => ({
+    effectiveInventory: (itemHrid) => {
+        const raw = game.inventory
+            .filter((item) => item?.itemHrid === itemHrid)
+            .reduce((sum, item) => sum + (item.count || 0), 0);
+        return Math.max(0, raw - (reservations.claimed[itemHrid] || 0));
+    },
+}));
 
 const STARFRUIT = '/items/star_fruit';
 const ESSENCE = '/items/foraging_essence';
@@ -70,6 +86,7 @@ beforeEach(() => {
     game.rooms = {};
     game.actions = [];
     game.gameMode = 'ironcow';
+    reservations.claimed = {};
     // The real loop items, as game data would give them: Star Fruit is level 65,
     // the essence it decomposes into is level 40, so alchemy's target is 65.
     loop.items = { alchemyTarget: 65, essencePerDecompose: 2, starfruitHrid: STARFRUIT, essenceHrid: ESSENCE };
@@ -138,6 +155,33 @@ describe('readCharacterState', () => {
         expect(state.starfruitHeld).toBe(0);
         expect(state.essenceHeld).toBe(0);
         expect(state.holdingsCredited).toBe(false);
+    });
+
+    // Regression: readCharacterState used to read the bag directly
+    // (`inventory.find(...).count`), so Star Fruit another plan had already
+    // claimed through `inventory-reservations.js` (a goal, a crafting plan, the
+    // sell queue) was credited to the Iron Bell walk a second time. That shrinks
+    // the forage/decompose legs by stock that is not actually free, and the
+    // queue runs dry before the batch the player agreed to is done.
+    test('holdings another plan has already claimed are not credited twice', () => {
+        game.inventory = [
+            { itemHrid: STARFRUIT, count: 1_000 },
+            { itemHrid: ESSENCE, count: 2_000 },
+        ];
+        reservations.claimed[STARFRUIT] = 700;
+        reservations.claimed[ESSENCE] = 500;
+
+        const state = readCharacterState();
+
+        expect(state.starfruitHeld).toBe(300);
+        expect(state.essenceHeld).toBe(1_500);
+    });
+
+    test('a claim larger than the stack never credits a negative amount', () => {
+        game.inventory = [{ itemHrid: STARFRUIT, count: 100 }];
+        reservations.claimed[STARFRUIT] = 500;
+
+        expect(readCharacterState().starfruitHeld).toBe(0);
     });
 });
 
