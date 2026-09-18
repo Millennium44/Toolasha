@@ -120,6 +120,32 @@ describe('requestPersistence', () => {
         expect(stored.get('toolasha_local_persistStorageAttemptedAt')).toBeGreaterThan(legacyTimestamp);
     });
 
+    test('a stamp from the future does not suppress the ask forever', async () => {
+        const persist = vi.fn(async () => false);
+        setNavigatorStorage({ persisted: vi.fn(async () => false), persist });
+
+        // The pre-rename key synced between devices, so the stamp on hand can
+        // carry another machine's clock — a year ahead here.
+        stored.set('toolasha_persistStorageAttemptedAt', Date.now() + 365 * 24 * 60 * 60 * 1000);
+
+        await storagePersistence.requestPersistence();
+
+        expect(persist).toHaveBeenCalledTimes(1);
+        expect(stored.get('toolasha_local_persistStorageAttemptedAt')).toBeLessThanOrEqual(Date.now());
+    });
+
+    test('a stamp that is not a number at all is treated as never asked', async () => {
+        const persist = vi.fn(async () => false);
+        setNavigatorStorage({ persisted: vi.fn(async () => false), persist });
+
+        stored.set('toolasha_local_persistStorageAttemptedAt', 'not a timestamp');
+
+        await storagePersistence.requestPersistence();
+
+        expect(persist).toHaveBeenCalledTimes(1);
+        expect(stored.get('toolasha_local_persistStorageAttemptedAt')).toBeGreaterThan(0);
+    });
+
     test('a thrown error from persist() is swallowed, not propagated', async () => {
         setNavigatorStorage({
             persisted: vi.fn(async () => false),

@@ -57,6 +57,28 @@ const LEGACY_LAST_ATTEMPT_KEY = 'toolasha_persistStorageAttemptedAt';
 const RETRY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * A stored stamp only if it can be one: a finite, positive moment that has
+ * already happened.
+ *
+ * Anything else is treated as no stamp at all, so the next load asks and
+ * writes a good one over it rather than being suppressed by it forever. Both
+ * shapes are reachable through the pre-rename key, which synced between
+ * devices: a value that is not a number, and a moment in the future carrying
+ * another machine's clock — which would hold this device's own request off
+ * for as long as the skew, for the one thing that protects its storage from
+ * being evicted.
+ *
+ * @param {*} value - As read from storage
+ * @returns {number|null} The stamp, or `null` when it cannot be used
+ * @private
+ */
+function usableStamp(value) {
+    const stamp = Number(value);
+    if (!Number.isFinite(stamp) || stamp <= 0 || stamp > Date.now()) return null;
+    return stamp;
+}
+
+/**
  * Read the last-attempt stamp, migrating the pre-rename key once if the
  * renamed one has never been written.
  *
@@ -69,10 +91,10 @@ const RETRY_INTERVAL_MS = 24 * 60 * 60 * 1000;
  * @private
  */
 async function readLastAttempt() {
-    const current = await storage.get(LAST_ATTEMPT_KEY, 'settings', null);
+    const current = usableStamp(await storage.get(LAST_ATTEMPT_KEY, 'settings', null));
     if (current !== null) return current;
 
-    const legacy = await storage.get(LEGACY_LAST_ATTEMPT_KEY, 'settings', null);
+    const legacy = usableStamp(await storage.get(LEGACY_LAST_ATTEMPT_KEY, 'settings', null));
     if (legacy === null) return 0;
 
     try {
