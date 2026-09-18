@@ -153,14 +153,22 @@ class QueueLengthEstimator {
             return;
         }
 
+        // Nothing to say about this item means saying nothing — not leaving the
+        // last item's figures standing under the button. Every "we don't know"
+        // path below wipes first, because the container is shared between items
+        // and enhancement levels.
+        const forget = () => buttonContainer.querySelectorAll('.mwi-queue-length').forEach((el) => el.remove());
+
         // Get current item and order book data from estimated-listing-age module
         const currentItemHrid = this.getCurrentItemHrid();
         if (!currentItemHrid) {
+            forget();
             return;
         }
 
         const orderBooksCache = this.orderBooksCache;
         if (!orderBooksCache[currentItemHrid]) {
+            forget();
             return;
         }
 
@@ -172,6 +180,7 @@ class QueueLengthEstimator {
         const orderBookAtLevel = orderBookData.orderBooks?.[enhancementLevel];
 
         if (!orderBookAtLevel) {
+            forget();
             return;
         }
 
@@ -190,6 +199,14 @@ class QueueLengthEstimator {
      * @param {boolean} isAsk - True for asks (sell side), false for bids (buy side)
      */
     displayQueueLength(buttonContainer, listings, isAsk) {
+        // The old figure goes FIRST, before anything can return early. The
+        // button container outlives the item it is showing (that is why
+        // `repaint()` clears the processed flags rather than trusting React to
+        // throw the row away), so an item whose side of the book is empty used
+        // to leave the previous item's queue length sitting under the button —
+        // a number the player reads as this item's depth.
+        buttonContainer.querySelector(`.mwi-queue-length-${isAsk ? 'ask' : 'bid'}`)?.remove();
+
         if (!listings || listings.length === 0) {
             return;
         }
@@ -223,13 +240,6 @@ class QueueLengthEstimator {
                 queueLength = visibleCount * queueMultiplier;
                 isEstimated = true;
             }
-        }
-
-        // Create or update the display element
-        const existingElement = buttonContainer.querySelector(`.mwi-queue-length-${isAsk ? 'ask' : 'bid'}`);
-
-        if (existingElement) {
-            existingElement.remove();
         }
 
         const displayElement = document.createElement('div');

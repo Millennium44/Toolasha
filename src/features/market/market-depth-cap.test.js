@@ -6,7 +6,11 @@ vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(() => (
 vi.mock('../../core/config.js', () => ({ default: { getSetting: vi.fn(() => true) } }));
 // The panel is reached through the bundle bridge, never imported (a direct import
 // shipped a second copy of it in the market bundle)
-vi.mock('../../utils/bundle-bridge.js', () => ({ riskOfRuinUI: () => ({ getDepthCapContext: vi.fn(() => null) }) }));
+/** What the Risk of Ruin panel is currently offering; null means "no run to cost against" */
+const bridge = vi.hoisted(() => ({ context: null }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    riskOfRuinUI: () => ({ getDepthCapContext: () => bridge.context }),
+}));
 
 const { calculateDepthCap, default: marketDepthCap } = await import('./market-depth-cap.js');
 const { default: dataManager } = await import('../../core/data-manager.js');
@@ -113,5 +117,88 @@ describe('calculateDepthCap', () => {
         const withExplicit = calculateDepthCap({ bids, costPerAction: 100, quantityPerAction: 1, marketTax: 0.05 });
 
         expect(withDefault).toEqual(withExplicit);
+    });
+});
+
+describe('the widget under the button belongs to the item on screen', () => {
+    /**
+     * @param {string} iconName - Sprite id the marketplace panel is showing
+     * @returns {{buttons: HTMLElement, cleanup: Function}} The shared button row
+     */
+    const showItem = (iconName) => {
+        document.querySelector('[class*="MarketplacePanel_currentItem"]').innerHTML =
+            `<svg><use href="#${iconName}"></use></svg>`;
+    };
+    const panel = (iconName) => {
+        document.body.textContent = '';
+        const currentItem = document.createElement('div');
+        currentItem.className = 'MarketplacePanel_currentItem__x';
+        document.body.appendChild(currentItem);
+        showItem(iconName);
+        const books = document.createElement('div');
+        books.className = 'MarketplacePanel_orderBooksContainer__z';
+        const buttons = document.createElement('div');
+        buttons.className = 'MarketplacePanel_newListingButtonsContainer__y';
+        buttons.appendChild(document.createElement('button'));
+        buttons.appendChild(document.createElement('button'));
+        document.body.append(books, buttons);
+        return {
+            buttons,
+            cleanup: () => {
+                document.body.textContent = '';
+                marketDepthCap.orderBooksCache = {};
+                bridge.context = null;
+            },
+        };
+    };
+
+    test('moving to an item the run does not produce takes the last figure down', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            bridge.context = {
+                costPerAction: 100,
+                items: [{ itemHrid: '/items/cheese', quantityPerAction: 1 }],
+            };
+            marketDepthCap.orderBooksCache = {
+                '/items/cheese': { data: { orderBooks: [{ bids: [{ price: 1000, quantity: 900 }] }] } },
+                '/items/milk': { data: { orderBooks: [{ bids: [{ price: 50, quantity: 10 }] }] } },
+            };
+            marketDepthCap.processOrderBook();
+            expect(buttons.querySelector('.mwi-depth-cap').textContent).toContain('900');
+
+            // Milk is not one of the run's outputs, so there is nothing to say
+            // about it — and the button row is the same element.
+            showItem('milk');
+            marketDepthCap.repaint();
+
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+        } finally {
+            cleanup();
+        }
+    });
+
+    test('an enhancement level with no resting bids clears rather than keeps the level below', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            bridge.context = {
+                costPerAction: 100,
+                items: [{ itemHrid: '/items/cheese', quantityPerAction: 1 }],
+            };
+            marketDepthCap.orderBooksCache = {
+                '/items/cheese': {
+                    data: { orderBooks: [{ bids: [{ price: 1000, quantity: 900 }] }, { bids: [] }] },
+                },
+            };
+            marketDepthCap.processOrderBook();
+            expect(buttons.querySelector('.mwi-depth-cap').textContent).toContain('900');
+
+            document.querySelector('[class*="MarketplacePanel_currentItem"]').innerHTML =
+                '<svg><use href="#cheese"></use></svg><div class="Item_enhancementLevel__a">+1</div>';
+            marketDepthCap.repaint();
+
+            expect(buttons.querySelector('.mwi-depth-cap')).toBeNull();
+        } finally {
+            cleanup();
+        }
     });
 });

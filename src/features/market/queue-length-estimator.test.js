@@ -169,3 +169,88 @@ describe('displayQueueLength', () => {
         expect(els[0].textContent).toBe('9');
     });
 });
+
+describe('the figure under the button belongs to the item on screen', () => {
+    /**
+     * @param {string} iconName - Sprite id the marketplace panel is showing
+     * @returns {{buttons: HTMLElement, cleanup: Function}} The shared button row
+     */
+    const showItem = (iconName) => {
+        const el = document.querySelector('[class*="MarketplacePanel_currentItem"]');
+        el.innerHTML = `<svg><use href="#${iconName}"></use></svg>`;
+    };
+    const panel = (iconName) => {
+        document.body.textContent = '';
+        const currentItem = document.createElement('div');
+        currentItem.className = 'MarketplacePanel_currentItem__x';
+        document.body.appendChild(currentItem);
+        showItem(iconName);
+        const buttons = document.createElement('div');
+        buttons.className = 'MarketplacePanel_newListingButtonsContainer__y';
+        buttons.appendChild(document.createElement('button'));
+        buttons.appendChild(document.createElement('button'));
+        const books = document.createElement('div');
+        books.className = 'MarketplacePanel_orderBooksContainer__z';
+        document.body.append(books, buttons);
+        return {
+            buttons,
+            cleanup: () => {
+                document.body.textContent = '';
+            },
+        };
+    };
+
+    test('an item with nothing resting on one side does not inherit the last item the other way', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            queueLengthEstimator.orderBooksCache = {
+                '/items/cheese': {
+                    data: {
+                        orderBooks: [
+                            {
+                                asks: [{ price: 10, quantity: 500, createdTimestamp: 1 }],
+                                bids: [{ price: 9, quantity: 400, createdTimestamp: 1 }],
+                            },
+                        ],
+                    },
+                },
+                '/items/milk': { data: { orderBooks: [{ asks: [], bids: [] }] } },
+            };
+            queueLengthEstimator.processOrderBook();
+            expect(buttons.querySelector('.mwi-queue-length-ask').textContent).toBe('500');
+            expect(buttons.querySelector('.mwi-queue-length-bid').textContent).toBe('400');
+
+            // The panel now shows a different item, whose book is empty on both
+            // sides. The button row is the same element.
+            showItem('milk');
+            queueLengthEstimator.repaint();
+
+            expect(buttons.querySelector('.mwi-queue-length-ask')).toBeNull();
+            expect(buttons.querySelector('.mwi-queue-length-bid')).toBeNull();
+        } finally {
+            queueLengthEstimator.orderBooksCache = {};
+            cleanup();
+        }
+    });
+
+    test('an item whose book has not arrived yet clears the last one rather than keeping it', () => {
+        const { buttons, cleanup } = panel('cheese');
+        try {
+            queueLengthEstimator.orderBooksCache = {
+                '/items/cheese': {
+                    data: { orderBooks: [{ asks: [{ price: 10, quantity: 7, createdTimestamp: 1 }], bids: [] }] },
+                },
+            };
+            queueLengthEstimator.processOrderBook();
+            expect(buttons.querySelector('.mwi-queue-length-ask').textContent).toBe('7');
+
+            showItem('milk');
+            queueLengthEstimator.repaint();
+
+            expect(buttons.querySelector('.mwi-queue-length-ask')).toBeNull();
+        } finally {
+            queueLengthEstimator.orderBooksCache = {};
+            cleanup();
+        }
+    });
+});

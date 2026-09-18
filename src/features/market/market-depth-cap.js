@@ -156,18 +156,36 @@ class MarketDepthCap {
         if (!buttonContainer) return;
         if (buttonContainer.classList.contains('mwi-depth-cap-set')) return;
 
+        // The button container is shared between items and enhancement levels —
+        // that is why `repaint()` clears the processed flags rather than
+        // trusting React to throw the row away. So every "nothing to say about
+        // THIS item" path has to take the last item's widget down with it;
+        // otherwise a "Sell depth: 4,000 actions" computed for the chest you
+        // were just looking at stays on screen, now captioned by a different
+        // item's order book.
+        const forget = () => buttonContainer.querySelector('.mwi-depth-cap')?.remove();
+
         const itemHrid = this.getCurrentItemHrid();
-        if (!itemHrid) return;
+        if (!itemHrid) {
+            forget();
+            return;
+        }
 
         const depthContext = riskOfRuinUI()?.getDepthCapContext?.() ?? null;
         const item = depthContext?.items.find((i) => i.itemHrid === itemHrid);
         const cached = this.orderBooksCache[itemHrid];
-        if (!depthContext || !item || !cached) return;
+        if (!depthContext || !item || !cached) {
+            forget();
+            return;
+        }
 
         const enhancementLevel = this.getCurrentEnhancementLevel();
         const orderBookAtLevel = cached.data.orderBooks?.[enhancementLevel];
         const bids = orderBookAtLevel?.bids;
-        if (!bids?.length) return;
+        if (!bids?.length) {
+            forget();
+            return;
+        }
 
         buttonContainer.classList.add('mwi-depth-cap-set');
 
