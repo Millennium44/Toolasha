@@ -17,14 +17,24 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { settingsStorageMock } = vi.hoisted(() => ({
-    settingsStorageMock: {
+const { settingsStorageMock } = vi.hoisted(() => {
+    const mock = {
         storageKey: 'script_settingsMap',
         storageArea: 'settings',
-        setCharacterId: vi.fn(),
+        currentCharacterId: null,
+        currentCharacterName: null,
+        // The real one moves `currentCharacterId`, and the restore path reads
+        // it back after the dialog to check the player is still on the
+        // character the offer was for — a mock that only records the call
+        // cannot see that.
+        setCharacterId: vi.fn((characterId, characterName) => {
+            mock.currentCharacterId = characterId;
+            if (characterName) mock.currentCharacterName = characterName;
+        }),
         importSettings: vi.fn(async () => ({ imported: 1, skipped: 0 })),
-    },
-}));
+    };
+    return { settingsStorageMock: mock };
+});
 vi.mock('../../core/settings-storage.js', () => ({ default: settingsStorageMock }));
 
 const { settingsMirrorMock } = vi.hoisted(() => ({
@@ -40,6 +50,8 @@ const { default: settingsMirrorRestore } = await import('./settings-mirror-resto
 beforeEach(() => {
     stored.clear();
     unreadable.on = false;
+    settingsStorageMock.currentCharacterId = null;
+    settingsStorageMock.currentCharacterName = null;
     settingsStorageMock.setCharacterId.mockClear();
     settingsStorageMock.importSettings.mockClear();
     settingsMirrorMock.getMirroredEntry.mockReset().mockReturnValue(null);
@@ -108,6 +120,26 @@ describe('maybeOffer', () => {
         settingsMirrorMock.getMirroredEntry.mockReturnValue({ theme: { id: 'theme', value: 'light' } });
         await settingsMirrorRestore.maybeOffer('char1', 'Hero');
         expect(settingsStorageMock.setCharacterId).toHaveBeenCalledWith('char1', 'Hero');
+    });
+
+    test('a restore accepted after the player has switched characters is abandoned, not silently skipped', async () => {
+        settingsMirrorMock.getMirroredEntry.mockReturnValue({ theme: { id: 'theme', value: 'light' } });
+        // The player leaves the dialog open, goes out to character select and
+        // picks a different character — whose own load moves the id — and only
+        // then clicks Restore.
+        askChoiceMock.mockImplementation(async () => {
+            settingsStorageMock.setCharacterId('char2', 'Other');
+            return 'restore';
+        });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await settingsMirrorRestore.maybeOffer('char1', 'Hero');
+
+        // importSettings would have filtered char1's key out as "another
+        // character's" and reported a successful import of nothing.
+        expect(settingsStorageMock.importSettings).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
     });
 
     test('a thrown error anywhere is caught, not propagated', async () => {

@@ -71,6 +71,25 @@ async function maybeOffer(characterId, characterName) {
 
         if (choice !== 'restore') return;
 
+        // The dialog is open for as long as the player leaves it open, and a
+        // trip out to character select and into a different character is
+        // exactly the thing a player does when their settings look wrong.
+        // `importSettings` filters by `settingsStorage.currentCharacterId`,
+        // which the arriving character's own load has moved by then, so the
+        // accepted restore would quietly count this map as "belongs to another
+        // character" and skip it — a Restore click that reports success and
+        // writes nothing. Re-asserting the id instead would be worse: the
+        // singleton is what every concurrent save reads, so pointing it back at
+        // the departed character files the character the player is now looking
+        // at under the wrong key. Leave it alone and say what happened.
+        if (String(settingsStorage.currentCharacterId) !== String(characterId)) {
+            console.warn(
+                `[SettingsMirrorRestore] Restore for ${characterId} abandoned: the active character changed to ` +
+                    `${settingsStorage.currentCharacterId} while the dialog was open`
+            );
+            return;
+        }
+
         const result = await settingsStorage.importSettings(JSON.stringify({ [characterKey]: mirrored }));
         if (!result) {
             console.error('[SettingsMirrorRestore] Restore import failed');
