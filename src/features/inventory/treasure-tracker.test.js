@@ -240,7 +240,7 @@ describe('scrolls are not treasure', () => {
  * The one-time purge of the scroll rows an older build left sitting in
  * storage. `withoutScrolls` above only keeps them off the panel — this is
  * about what `initialize()` does to the stored ledger itself, guarded by the
- * per-character `treasureScrollPurge_<char>` flag (see `SCROLL_PURGE_FLAG_KEY`
+ * per-character `toolasha_local_treasureScrollPurge_<char>` flag (see `SCROLL_PURGE_FLAG_KEY`
  * in `treasure-tracker.js`, and `purgeScrollRows` in `chest-tally.js` for why
  * a reset rather than a plain delete is what makes it stick).
  */
@@ -248,7 +248,9 @@ describe('the scroll-row purge, once per character', () => {
     const CHEST = '/items/chimerical_chest';
     const SCROLL = '/items/seal_of_critical_rate';
     const TALLY_KEY = 'treasureTally_char-1';
-    const FLAG_KEY = 'treasureScrollPurge_char-1';
+    // Device-local: the flag says this stored ledger was purged, not this
+    // account, so it never travels to another browser (see SCROLL_PURGE_FLAG_KEY)
+    const FLAG_KEY = 'toolasha_local_treasureScrollPurge_char-1';
 
     beforeEach(() => {
         // Earlier describe blocks in this file leave `tally` holding whatever
@@ -364,6 +366,18 @@ describe('the scroll-row purge, once per character', () => {
         // so the next load, with the data in hand, still does the purge
         expect(treasureTracker.tally[SCROLL]).toEqual({ opened: 5, loot: {} });
         expect(await storageMock.get(FLAG_KEY, 'settings', false)).toBe(false);
+    });
+    test('the flag never leaves the device that did the purge', async () => {
+        // A synced flag would let a second browser be told the purge was done
+        // while its own ledger still held the rows: a pull of a dozen
+        // stamped-empty buckets can be refused by mergeStoredTally's mass-reset
+        // guard, and that device would then keep them for good. Device-local,
+        // every device purges its own copy and the fold never matters.
+        const { OWNED_KEY_PREFIXES } = await import('../sync/sync-ownership.js');
+        const { DEVICE_LOCAL_PREFIX_SAMPLE } = { DEVICE_LOCAL_PREFIX_SAMPLE: 'toolasha_local_' };
+
+        expect(FLAG_KEY.startsWith(DEVICE_LOCAL_PREFIX_SAMPLE)).toBe(true);
+        expect(OWNED_KEY_PREFIXES.some((prefix) => 'treasureScrollPurge'.startsWith(prefix))).toBe(false);
     });
 });
 

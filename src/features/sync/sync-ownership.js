@@ -226,7 +226,6 @@ export const OWNED_KEY_PREFIXES = [
     'networthChartPrefs',
     'treasureTally',
     'treasureSettings',
-    'treasureScrollPurge',
     'goalPlanner',
     'briefingSnapshot_',
     'briefingAwayDiffSeen_',

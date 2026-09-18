@@ -91,8 +91,19 @@ const ADOPT_LEGACY = { migrate: 'adopt' };
  * to purge, so a fresh install or an already-clean ledger never pays for this
  * again. See `purgeScrollRows` in `chest-tally.js` for why the purge itself
  * has to go through a reset rather than a plain delete.
+ *
+ * Under `toolasha_local_`, so it stays on the device that did the work. The
+ * flag answers "has THIS stored ledger been purged", which is a property of one
+ * browser's storage rather than of the account — the same reasoning that keeps
+ * the storage-persistence stamp device-local. Syncing it would let a second
+ * device be told the purge was done while its own copy still held the rows: a
+ * pull carrying a dozen stamped-empty buckets can be refused by
+ * `mergeStoredTally`'s mass-reset guard (`RESET_FOLD_LIMIT`, twelve, against
+ * exactly twelve scrolls today), and a device that skipped its own purge on the
+ * strength of a synced flag would then keep them for the life of the install.
+ * Device-local, every device purges its own ledger and the fold never matters.
  */
-const SCROLL_PURGE_FLAG_KEY = 'treasureScrollPurge';
+const SCROLL_PURGE_FLAG_KEY = 'toolasha_local_treasureScrollPurge';
 const PANEL_ID = 'toolasha-treasure-panel';
 const POPUP_ID = 'toolasha-treasure-popup';
 /** Where each of the two is remembered; they are moved and sized independently */
