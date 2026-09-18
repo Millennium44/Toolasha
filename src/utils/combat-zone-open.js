@@ -125,6 +125,11 @@ export async function selectDifficultyTier(panel, tier) {
         return true;
     }
 
+    // MUI opens its menu on mousedown, not click: measured live on 2026-09-17,
+    // a bare `.click()` left the listbox unopened and the tier unconfirmed, so
+    // every caller refused to fill and the buttons did nothing
+    combobox.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    combobox.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
     combobox.click();
     await wait(TIER_MENU_SETTLE_MS);
 

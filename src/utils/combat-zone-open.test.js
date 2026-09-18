@@ -188,6 +188,20 @@ describe('selectDifficultyTier', () => {
         expect(await resultPromise).toBe(false);
         void combobox;
     });
+    test('opens the menu the way MUI listens for it, not with a bare click', () => {
+        // Measured live: MUI's Select opens on mousedown. A combobox that only
+        // answers click left the listbox closed, the tier unconfirmed, and every
+        // caller refusing to fill — the buttons looked like they did nothing.
+        const { panel, combobox } = buildPanel('Aqua Planet', 0);
+        const seen = [];
+        for (const type of ['mousedown', 'mouseup', 'click']) {
+            combobox.addEventListener(type, () => seen.push(type));
+        }
+
+        selectDifficultyTier(panel, 3);
+
+        expect(seen).toContain('mousedown');
+    });
 });
 
 describe('ensureZoneAndTier', () => {
