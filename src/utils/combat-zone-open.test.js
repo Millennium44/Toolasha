@@ -7,6 +7,12 @@
  * (the combat-task Go estimate, the all-zones results table, the Bestiary
  * plan). Never presses Start Now / Add Queue — only navigates and types into
  * the game's own inputs.
+ *
+ * `navigateToAction` lands on the Combat Zones *list*, not the zone's own
+ * panel (measured live — see the module doc-comment), so
+ * `openCombatZoneAtTier`'s own tests drive a list → tile click → panel
+ * sequence rather than assuming a panel is already there once navigation
+ * "succeeds".
  */
 
 import { describe, test, expect, afterEach, vi } from 'vitest';
@@ -76,6 +82,31 @@ function buildGameData(zones) {
         actionDetailMap[z.hrid] = { type: '/action_types/combat', name: z.name };
     }
     return { actionDetailMap };
+}
+
+/**
+ * The Combat Zones list `navigateToAction` actually lands on — a grid of
+ * zone tiles, none of them a detail panel. Callers wire up their own click
+ * listener on the tile they care about (or none, to simulate a tile that
+ * does not open anything) before handing control back to the code under
+ * test, the same way the old tests wired `navigateToAction` itself.
+ */
+function buildZoneList(zones) {
+    const container = document.createElement('div');
+    container.className = 'CombatZones_combatZones__1a';
+    const tiles = {};
+    for (const z of zones) {
+        const tile = document.createElement('div');
+        tile.className = 'SkillAction_skillAction__1a';
+        const name = document.createElement('div');
+        name.className = 'SkillAction_name__1a';
+        name.textContent = z.name;
+        tile.appendChild(name);
+        container.appendChild(tile);
+        tiles[z.hrid] = tile;
+    }
+    document.body.appendChild(container);
+    return { container, tiles };
 }
 
 /** Drive an in-progress `selectDifficultyTier`/`openCombatZoneAtTier` call through its three settle waits. */
@@ -178,37 +209,62 @@ describe('ensureZoneAndTier', () => {
 });
 
 describe('openCombatZoneAtTier', () => {
-    test('navigates, confirms the tier, and fills nothing when no count is given', async () => {
+    test('navigates, clicks the zone tile, confirms the tier, and fills nothing when no count is given', async () => {
         vi.useFakeTimers();
         dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
         vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
-            buildPanel('Aqua Planet', 3);
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 3));
             return true;
         });
 
         const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3);
-        await vi.advanceTimersByTimeAsync(300); // navigate settle
+        await vi.advanceTimersByTimeAsync(0); // list already present, tile click, panel already present
 
         const result = await resultPromise;
         expect(result).toEqual({ opened: true, tierConfirmed: true, filled: false });
         expect(document.querySelector('.maxActionCountInput__1a input').value).toBe('');
     });
 
-    test('navigates, confirms the tier, and fills the given count exactly — never recomputing it', async () => {
+    test('navigates, clicks the zone tile, confirms the tier, and fills the given count exactly — never recomputing it', async () => {
         vi.useFakeTimers();
         dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
         let input;
         vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
-            ({ input } = buildPanel('Aqua Planet', 3));
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => {
+                ({ input } = buildPanel('Aqua Planet', 3));
+            });
             return true;
         });
 
         const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3, { count: 4667 });
-        await vi.advanceTimersByTimeAsync(300);
+        await vi.advanceTimersByTimeAsync(0);
 
         const result = await resultPromise;
         expect(result).toEqual({ opened: true, tierConfirmed: true, filled: true });
         expect(input.value).toBe('4667');
+    });
+
+    test('picks the right tile out of several, ignoring the others', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([
+            { hrid: '/actions/combat/aqua', name: 'Aqua Planet' },
+            { hrid: '/actions/combat/fly', name: 'Fly Plains' },
+        ]);
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            const { tiles } = buildZoneList([
+                { hrid: '/actions/combat/aqua', name: 'Aqua Planet' },
+                { hrid: '/actions/combat/fly', name: 'Fly Plains' },
+            ]);
+            tiles['/actions/combat/fly'].addEventListener('click', () => buildPanel('Fly Plains', 0));
+            tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 1));
+            return true;
+        });
+
+        const result = await openCombatZoneAtTier('/actions/combat/fly', 0);
+        expect(result).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(document.querySelector('[class*="SkillActionDetail_name"]').textContent).toBe('Fly Plains');
     });
 
     test('opens and picks the tier when the panel was left on a different one, then fills', async () => {
@@ -217,12 +273,15 @@ describe('openCombatZoneAtTier', () => {
         let panel;
         let input;
         vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
-            ({ panel, input } = buildPanel('Aqua Planet', 0));
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => {
+                ({ panel, input } = buildPanel('Aqua Planet', 0));
+            });
             return true;
         });
 
         const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 4, { count: 10 });
-        await vi.advanceTimersByTimeAsync(300); // navigate settle
+        await vi.advanceTimersByTimeAsync(0); // list present, tile click opens the panel
         panel.querySelector('[role="combobox"]').click();
         await pickTierOption(4);
 
@@ -248,17 +307,77 @@ describe('openCombatZoneAtTier', () => {
         expect(navSpy).not.toHaveBeenCalled();
     });
 
+    test('refuses when the Combat Zones list never renders after navigateToAction', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true); // "succeeds" but nothing renders
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 1, { count: 10 });
+        await vi.advanceTimersByTimeAsync(5000); // exhaust the list wait
+
+        const result = await resultPromise;
+        expect(result).toEqual({ opened: false, tierConfirmed: false, filled: false });
+    });
+
+    test('refuses when the zone list renders without a tile for this zone', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            // Only some other zone's tile is present, not aqua's
+            buildZoneList([{ hrid: '/actions/combat/fly', name: 'Fly Plains' }]);
+            return true;
+        });
+
+        const result = await openCombatZoneAtTier('/actions/combat/aqua', 1, { count: 10 });
+        expect(result).toEqual({ opened: false, tierConfirmed: false, filled: false });
+    });
+
+    test('refuses when the tile click never opens a detail panel', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]); // no click listener wired
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 1, { count: 10 });
+        await vi.advanceTimersByTimeAsync(5000); // exhaust the panel wait
+
+        const result = await resultPromise;
+        expect(result).toEqual({ opened: true, tierConfirmed: false, filled: false });
+    });
+
+    test('refuses when the tile click opens the wrong zone panel', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([
+            { hrid: '/actions/combat/aqua', name: 'Aqua Planet' },
+            { hrid: '/actions/combat/fly', name: 'Fly Plains' },
+        ]);
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            // Simulate a stale panel for a different zone left mounted from before
+            tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Fly Plains', 0));
+            return true;
+        });
+
+        const result = await openCombatZoneAtTier('/actions/combat/aqua', 1, { count: 10 });
+        expect(result).toEqual({ opened: true, tierConfirmed: false, filled: false });
+    });
+
     test('never fills when the tier cannot be confirmed, even with a count given', async () => {
         vi.useFakeTimers();
         dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
         let input;
         vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
-            ({ input } = buildPanel('Aqua Planet', 0, { withDifficultyCombobox: false }));
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => {
+                ({ input } = buildPanel('Aqua Planet', 0, { withDifficultyCombobox: false }));
+            });
             return true;
         });
 
         const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3, { count: 10 });
-        await vi.advanceTimersByTimeAsync(300);
+        await vi.advanceTimersByTimeAsync(0);
 
         const result = await resultPromise;
         expect(result).toEqual({ opened: true, tierConfirmed: false, filled: false });

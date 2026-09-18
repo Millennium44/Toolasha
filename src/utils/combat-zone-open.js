@@ -29,15 +29,48 @@
  * match the Combat *page's* top-level tabs ("Combat Zones", "Find Party",
  * "Combat Sim", "Statistics"), never a per-zone tab. That fallback could never
  * fire and is not reused here; see `selectors.js` for the corrected comment.
+ *
+ * ## `navigateToAction` does not land on the zone's own panel
+ *
+ * Measured live: `navigateToAction('/actions/combat/<zone>')` opens the
+ * **Combat Zones list** (`ZONE_LIST_SELECTOR`), a grid of every zone as a
+ * tile — never the zone's detail panel. The panel only mounts after that
+ * zone's own tile is clicked. Every earlier version of this module (and the
+ * combat-task Go path this was extracted from) skipped straight to reading
+ * `PANEL_SELECTOR` after `navigateToAction`, which is why
+ * `openCombatZoneAtTier` used to report `{opened: true}` with nothing open —
+ * `ensureZoneAndTier` was checking a panel that did not exist yet, and a null
+ * `panel` fails its own null check the same way a wrong one does. The Go path
+ * in `task-profit-display.js` never had this problem: it reads the panel
+ * after the GAME's own Go button (a real click on the game's DOM node, not
+ * `navigateToAction`) has already opened it directly.
+ *
+ * The tile is matched the same way every other skill-screen tile in this
+ * codebase is resolved — `resolveActionTile` (`action-panel-helper.js`),
+ * which reads the tile's own name text and looks up its action hrid — rather
+ * than comparing display-name strings here a second time.
  */
 
 import dataManager from '../core/data-manager.js';
 import { navigateToAction } from './item-navigation.js';
-import { findActionInput, resolveDetailPanel, PANEL_SELECTOR } from './action-panel-helper.js';
+import {
+    findActionInput,
+    resolveDetailPanel,
+    resolveActionTile,
+    PANEL_SELECTOR,
+    TILE_SELECTOR,
+} from './action-panel-helper.js';
 import { setReactInputValue } from './react-input.js';
+import { waitForElement } from './dom.js';
 
-/** How long to let the game render after `navigateToAction`, before reading the panel. */
-const NAVIGATE_SETTLE_MS = 300;
+/** The Combat Zones list container `navigateToAction` actually lands on. */
+const ZONE_LIST_SELECTOR = '[class*="CombatZones_combatZones"]';
+
+/** How long to wait for the Combat Zones list to render after `navigateToAction`. */
+const ZONE_LIST_TIMEOUT_MS = 5000;
+
+/** How long to wait for the zone's own detail panel to mount after its tile is clicked. */
+const PANEL_TIMEOUT_MS = 5000;
 
 /** How long to let a combobox's popup (or its close, after picking an option) render. */
 const TIER_MENU_SETTLE_MS = 300;
@@ -127,14 +160,41 @@ export async function ensureZoneAndTier(panel, zoneHrid, tier) {
 }
 
 /**
- * Navigate to a combat zone's action, wait for the game to render its detail
- * panel, and set the Difficulty combobox to `tier` — optionally filling the
- * fight-count input afterward. Never queues or starts anything.
+ * Find the Combat Zones list tile for `zoneHrid` — resolved the same way
+ * every other skill-screen tile is (`resolveActionTile`), which reads the
+ * tile's own rendered name and looks that up to an action hrid, rather than
+ * comparing display-name text against `zoneHrid`'s name a second time here.
+ * @param {HTMLElement} zoneList
+ * @param {string} zoneHrid
+ * @returns {HTMLElement|null}
+ */
+function findZoneTile(zoneList, zoneHrid) {
+    const tiles = zoneList.querySelectorAll(TILE_SELECTOR);
+    for (const tile of tiles) {
+        if (resolveActionTile(tile).actionHrid === zoneHrid) {
+            return tile;
+        }
+    }
+    return null;
+}
+
+/**
+ * Navigate to a combat zone, click its tile in the Combat Zones list that
+ * lands on, wait for its detail panel to mount, and set the Difficulty
+ * combobox to `tier` — optionally filling the fight-count input afterward.
+ * Never queues or starts anything.
+ *
+ * `navigateToAction` only opens the Combat Zones *list*; the zone's own
+ * detail panel appears only after its tile is clicked (see the module
+ * doc-comment for how this was measured). Clicking a tile and reading the
+ * panel it opens are both allowed — only "Add Queue" / "Start Now" are not,
+ * and this never touches either.
  *
  * Refuses at every step rather than guessing: an unknown `zoneHrid`, a failed
- * `navigateToAction`, a panel that never confirms `zoneHrid`, or a tier that
- * cannot be confirmed all leave the count input untouched. `count`, when
- * given, is trusted as-is — this never recomputes it.
+ * `navigateToAction`, a Combat Zones list that never renders, a tile that
+ * never appears in it, a panel that never mounts or never confirms
+ * `zoneHrid`, or a tier that cannot be confirmed all leave the count input
+ * untouched. `count`, when given, is trusted as-is — this never recomputes it.
  *
  * @param {string} zoneHrid - Action HRID, e.g. `/actions/combat/aqua_planet`
  * @param {number} tier - Difficulty tier to open at (0+)
@@ -151,11 +211,17 @@ export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
 
     if (!navigateToAction(zoneHrid)) return result;
 
-    await wait(NAVIGATE_SETTLE_MS);
+    const zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_TIMEOUT_MS);
+    if (!zoneList) return result;
 
-    const panel = document.querySelector(PANEL_SELECTOR);
-    const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier);
+    const tile = findZoneTile(zoneList, zoneHrid);
+    if (!tile) return result;
+
+    tile.click();
     result.opened = true;
+
+    const panel = await waitForElement(PANEL_SELECTOR, PANEL_TIMEOUT_MS);
+    const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier);
     result.tierConfirmed = tierConfirmed;
     if (!tierConfirmed) return result;
 

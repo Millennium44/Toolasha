@@ -16,6 +16,15 @@ const DETAIL_PANEL_CLASS = 'SkillActionDetail_skillActionDetail';
 /** The class substring every skill-screen action tile carries */
 const ACTION_TILE_CLASS = 'SkillAction_skillAction';
 
+/**
+ * The skill-screen action tiles currently mounted — e.g. every zone shown by
+ * the Combat Zones list. `navigateToAction` (`item-navigation.js`) lands on a
+ * list of these for a combat zone rather than that zone's own detail panel;
+ * a caller that needs the panel must find and click the matching tile first
+ * (see `resolveActionTile`, `combat-zone-open.js`).
+ */
+export const TILE_SELECTOR = `[class*="${ACTION_TILE_CLASS}"]`;
+
 /** How long after the last `actions_updated` the shared refresh runs */
 const REFRESH_DEBOUNCE_MS = 200;
 
