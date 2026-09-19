@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim: a killing blow keeps its attacker's swing timer
+
+- An auto-attack killing blow now re-arms its attacker before the wave is torn down, as an ability killing blow already did, so a build slower than the respawn gap no longer restarts its clock from the respawn.
+
 ### Combat sim export carries guild shrine levels
 
 - The export now includes your five combat shrine levels, so external simulators that read it stop treating every character as unbuffed; a character whose levels we cannot know omits them rather than claiming zeros.

@@ -941,10 +941,32 @@ class CombatSimulator {
             }
         }
 
-        // checkEncounterEnd must run first (side effects); a source dead from thorns/parry must not re-queue
-        if (!this.checkEncounterEnd() && event.source.combatDetails.currentHitpoints > 0) {
+        // Re-arm BEFORE the encounter is torn down, exactly as `tryUseAbility`
+        // already does. Two reasons, in order of importance:
+        //
+        // 1. `addNextAttackEvent` reads `this.enemies` — it picks the ability
+        //    target from it, hands it to `shouldTrigger` as the enemy list, and
+        //    bails out entirely on `if (!enemies) return;`. Run it after
+        //    `checkEncounterEnd` has set `this.enemies = null` and the swing is
+        //    neither ability-selected nor queued at all.
+        // 2. A killing blow used to leave its owner un-armed until the next
+        //    wave's `startAttacks`, so the attacker's own clock restarted from
+        //    the respawn instead of from the blow. An ability killing blow never
+        //    had that gap; only the auto-attack path did. This is the ordering
+        //    inconsistency between the two call sites, not a new mechanic.
+        //
+        // A dead source is still never re-armed: `addNextAttackEvent` returns on
+        // `currentHitpoints <= 0` and the guard below repeats it, so a source
+        // killed by thorns or retaliation on this same exchange stays down. The
+        // branches that must not carry a swing across still clear it after this
+        // point — a wipe clears `AutoAttackEvent` by type, a labyrinth resolve
+        // or timeout clears the whole queue — and the wave-cleared branch only
+        // retires the departing monsters' swings, which is the behavior being
+        // preserved here.
+        if (event.source.combatDetails.currentHitpoints > 0) {
             this.addNextAttackEvent(event.source);
         }
+        this.checkEncounterEnd();
     }
 
     checkEncounterEnd() {

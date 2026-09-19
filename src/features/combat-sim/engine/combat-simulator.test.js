@@ -1182,3 +1182,152 @@ describe('a buff does not outlive its duration when a downed player is put back 
         expect(victim.combatBuffs[TEST_BUFF.uniqueHrid]).toBeUndefined();
     });
 });
+
+/**
+ * What survives a wave transition, and what the killing blow re-arms.
+ *
+ * Two things are pinned here, both of them ordering rather than arithmetic, and
+ * both invisible to every other test in this file.
+ *
+ * 1. Clearing the queued swings wholesale at a wave clear used to hand every
+ *    player a fresh full attack interval at the next spawn, shaving part of a
+ *    swing off each of a run's waves. Only the departing monsters' swings are
+ *    retired now, so every survivor carries its own rhythm across. A revert to
+ *    clearing `AutoAttackEvent` by type shows up here as an empty respawn gap.
+ * 2. `processAutoAttackEvent` re-arms its source *before* tearing the encounter
+ *    down, as the ability path always has. That ordering is load bearing twice
+ *    over: `addNextAttackEvent` reads `this.enemies` to pick a target and bails
+ *    out entirely on a null enemy list, so running it after the teardown queues
+ *    nothing at all; and an attacker whose own killing blow left it un-armed
+ *    restarted its clock from the respawn instead of from the blow.
+ *
+ * A swing that falls inside the respawn gap is consumed with no re-arm — the
+ * event handler returns early on the null enemy list. So for a build whose
+ * attack interval is shorter than the gap (the fixture's is, at ~2.90 s against
+ * a 3.04 s gap) the killer's re-armed swing is discarded exactly as it would
+ * have been, and nothing about the run moves. It is builds slower than the gap
+ * that gain, which is why this pins the re-arm *time* rather than a total.
+ *
+ * The fixture party is deliberately sturdy and ability-less: nobody dies, is
+ * stunned, blinded or silenced, so a missing swing means a missing swing.
+ */
+describe('a wave transition and the swings that cross it', () => {
+    const PARTY_SECONDS = 600;
+    const RESPAWN_GAP = 3.0369 * ONE_SECOND;
+
+    /**
+     * A party member tough enough to survive the fixture zone for a whole run.
+     * @param {string} hrid - Unique player identifier
+     * @returns {Player} The party member
+     */
+    function partyPlayer(hrid) {
+        return Player.createFromDTO({
+            hrid,
+            staminaLevel: 110,
+            intelligenceLevel: 40,
+            attackLevel: 70,
+            meleeLevel: 70,
+            defenseLevel: 100,
+            rangedLevel: 1,
+            magicLevel: 1,
+            equipment: {},
+            food: [null, null, null],
+            drinks: [null, null, null],
+            abilities: [null, null, null, null],
+            houseRooms: {},
+            debuffOnLevelGap: 0,
+        });
+    }
+
+    /**
+     * One seeded party run, with every respawn gap recorded.
+     *
+     * A gap opens on the pass that sets `this.enemies` to null — in this open
+     * zone that is the wave-cleared branch and nothing else — and every auto
+     * attack processed while the list is null fell inside it. Gaps opened while
+     * somebody was down are dropped: a corpse has no swing to carry.
+     * @param {number} seed - RNG seed
+     * @param {number} partySize - Number of players in the party
+     * @returns {Object} The run's result, players, gaps and attack interval
+     */
+    function partyRun(seed, partySize) {
+        installGameData();
+        seedSimRng(seed);
+
+        const zone = new Zone(ZONE_HRID, 0);
+        const players = [];
+        for (let i = 1; i <= partySize; i++) {
+            const player = partyPlayer(`party${i}`);
+            player.zoneBuffs = zone.buffs;
+            player.extraBuffs = [];
+            players.push(player);
+        }
+
+        const simulator = new CombatSimulator(players, zone);
+        const gaps = [];
+        let openGap = null;
+        const processAutoAttack = simulator.processAutoAttackEvent.bind(simulator);
+        simulator.processAutoAttackEvent = (event) => {
+            const hadEnemies = Boolean(simulator.enemies);
+            if (!hadEnemies && openGap) {
+                openGap.swings.push(event.source.hrid);
+            }
+            processAutoAttack(event);
+            if (hadEnemies && !simulator.enemies) {
+                openGap = {
+                    killer: event.source.hrid,
+                    killedAt: simulator.simulationTime,
+                    // Whatever the killer's own re-arm put on the queue, read
+                    // before anything downstream can consume it
+                    rearm: simulator.eventQueue.getByTypeAndSource(AutoAttackEvent.type, event.source)?.time ?? null,
+                    aliveAtOpen: players.filter((player) => player.combatDetails.currentHitpoints > 0).length,
+                    swings: [],
+                };
+                gaps.push(openGap);
+            }
+        };
+
+        const result = simulator.simulate(PARTY_SECONDS * ONE_SECOND);
+        return {
+            result,
+            players,
+            gaps: gaps.filter((gap) => gap.aliveAtOpen === partySize),
+            attackInterval: players[0].combatDetails.combatStats.attackInterval,
+        };
+    }
+
+    test('every player who did not land the killing blow carries its swing into the gap', () => {
+        const partySize = 3;
+        const { gaps, players, attackInterval } = partyRun(20260806, partySize);
+
+        // For this to be a statement about preserved timers at all the interval
+        // has to be shorter than the gap: a slower build's carried swing would
+        // land past the respawn and never show up inside one
+        expect(attackInterval).toBeLessThan(RESPAWN_GAP);
+        // Enough waves that this is a pattern rather than an accident
+        expect(gaps.length).toBeGreaterThanOrEqual(10);
+
+        const everyone = players.map((player) => player.hrid);
+        for (const gap of gaps) {
+            const others = everyone.filter((hrid) => hrid !== gap.killer).sort();
+            const fired = gap.swings.filter((hrid) => hrid !== gap.killer).sort();
+
+            // Each of the other players, exactly once. Clearing the queue by
+            // event type at the wave clear leaves this empty.
+            expect(fired).toEqual(others);
+        }
+    });
+
+    test('the killing blow re-arms its own attacker, from the blow and not from the respawn', () => {
+        const { gaps, attackInterval } = partyRun(20260806, 3);
+
+        expect(gaps.length).toBeGreaterThanOrEqual(10);
+        for (const gap of gaps) {
+            // Non-null proves the re-arm ran while `this.enemies` was still
+            // standing: after the teardown `addNextAttackEvent` returns on the
+            // null enemy list and queues nothing at all
+            expect(gap.rearm).not.toBeNull();
+            expect(gap.rearm - gap.killedAt).toBeCloseTo(attackInterval, 0);
+        }
+    });
+});
