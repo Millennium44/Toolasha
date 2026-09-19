@@ -3215,6 +3215,72 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.56.0](https://github.com/Millennium44/Toolasha/compare/v3.55.0...v3.56.0) (2026-09-19)
+
+
+### Features
+
+* an action panel set to Repeat unlimited shows the materials-bounded time and profit ([e7a2cad](https://github.com/Millennium44/Toolasha/commit/e7a2cad744c13246e4af7ade8aefce6849c7a5aa))
+* combat rows answer the queue panel's Estimated Value mode ([bfe2304](https://github.com/Millennium44/Toolasha/commit/bfe2304a2576c88adb473f8b452d3dd028c0debb))
+* enhancing panel shows the bounded time for a Repeat ∞ run ([128a05b](https://github.com/Millennium44/Toolasha/commit/128a05b9a240af98285ff93bfc1cf75b366fcb61))
+* fight pre-fills are sized by confidence instead of a flat percentage ([39a7972](https://github.com/Millennium44/Toolasha/commit/39a797252daeb165671ba507881f507535ab5757))
+* queued action rows show the completion clock without "Complete at" ([47c6b90](https://github.com/Millennium44/Toolasha/commit/47c6b905ceea1239827a14593aa1eb70f9bf1040))
+* queued fights show expected profit, and one "sim 24h" button covers the queue ([ae17a51](https://github.com/Millennium44/Toolasha/commit/ae17a512b8d848542efecc35c538a6dd755f720e))
+* totals by input item in the coinify and decompose history panels ([03b6627](https://github.com/Millennium44/Toolasha/commit/03b66273e19261b2dfcfb937933c34932c936de8))
+* unlimited-Repeat time and profit show on both action panels ([41d43b4](https://github.com/Millennium44/Toolasha/commit/41d43b4bc7c204e02c1ef521bfc23065383d12dc))
+
+
+### Bug Fixes
+
+* a bulk sell run and a sell-queue claim stay with the character that started them ([02ab5ab](https://github.com/Millennium44/Toolasha/commit/02ab5ab8628db8a3bfbb3c951add3aba08a43b6f))
+* a dungeon's drawn kill count is padded like every other row ([51ffc97](https://github.com/Millennium44/Toolasha/commit/51ffc97367535c291241de9531e20e5cdabb7944))
+* a losing queued action shows its minus sign, not only a red number ([0f7d410](https://github.com/Millennium44/Toolasha/commit/0f7d41011ec264b1d43bc6b11b4da4d8ca67f77e))
+* a Repeat-infinity enhancing row names the materials that bound it ([35a7344](https://github.com/Millennium44/Toolasha/commit/35a73441de73181e530cce4d5a4ee09ee4a135ad))
+* a zero-valued market price side no longer clamps to the band floor ([1a441c6](https://github.com/Millennium44/Toolasha/commit/1a441c6195894cb2e93f4741b0996f481ec252ed))
+* alchemy history marks an unpriced output instead of showing it as zero revenue ([cad37b0](https://github.com/Millennium44/Toolasha/commit/cad37b0932628f3b6e709e18c9687ee08a6796ef))
+* an unvaluable queue row marks the panel's value total short ([28e49bf](https://github.com/Millennium44/Toolasha/commit/28e49bfa1e2ea6907398ae0a387241dc64ef76bd))
+* back off market history fetches when the pool rate-limits us ([1812fd0](https://github.com/Millennium44/Toolasha/commit/1812fd0c2343da5e17f3b04ad968df250cd7b425))
+* bulk sell held-back and enhanced-skipped counts report item quantity, not stack count ([01ca438](https://github.com/Millennium44/Toolasha/commit/01ca4380a7ade6bd5761ab52bf28e29c9242c520))
+* bulk sell progress strip says stacks, not items ([08d5a61](https://github.com/Millennium44/Toolasha/commit/08d5a612e56c5231414bad1244def152e0eb6921))
+* cap all-zones profit only from already-cached market volume ([7d3372b](https://github.com/Millennium44/Toolasha/commit/7d3372b1495e30db1c627314199e182be4cc4057))
+* clampToBand answers null for a negative price too ([f502cc3](https://github.com/Millennium44/Toolasha/commit/f502cc3512cf9c1bae24d21e197fc5b6f3b479dc))
+* coins never bound an all-zones row, and are never warmed ([0b7b3d8](https://github.com/Millennium44/Toolasha/commit/0b7b3d88320df937fcd31641a597bb156b5487d1))
+* cooldownRemainingMs defaults to the current source ([89d9f14](https://github.com/Millennium44/Toolasha/commit/89d9f14a4797098eb0e4fdbb925cb2911bc1f217))
+* going shopping records the consumables panel as closed ([77c38aa](https://github.com/Millennium44/Toolasha/commit/77c38aa7c27c949eb3ef2c4f24efcaa0afe8173e))
+* long durations print two units, not three ([d54c43c](https://github.com/Millennium44/Toolasha/commit/d54c43c759ef7f7daf3a936897249a26c4a4e150))
+* market history surfaces explain a pooled back-off instead of drawing blank ([5a316e8](https://github.com/Millennium44/Toolasha/commit/5a316e8e1aca6e504bbfe0989e27ce28450b851b))
+* market-history back-off is per pool, and two stale failures are not a burst ([53ef3ff](https://github.com/Millennium44/Toolasha/commit/53ef3ffb5b5308e6a6b215550623e6e69e647500))
+* marketplace tab strip keeps a fixed preferred order ([c24fd23](https://github.com/Millennium44/Toolasha/commit/c24fd231798f68cce54bef253dc2dacfa4b26fca))
+* one type scale across the alchemy history panels ([e5d3962](https://github.com/Millennium44/Toolasha/commit/e5d396200732f474a592fc7d4f3f5a621e2c533d))
+* only ask for persistent storage from a settings-panel button ([cc9e5b3](https://github.com/Millennium44/Toolasha/commit/cc9e5b3c03ad208d5ec433855faeed7642a6bf87))
+* open combat zones while mid-fight by switching to the Combat Zones page tab ([6cd4ca6](https://github.com/Millennium44/Toolasha/commit/6cd4ca6e876c6fb6ba26ced15d567a5dfba6a711))
+* our marketplace tabs sort ahead of a tab another script adds ([1e9fcbd](https://github.com/Millennium44/Toolasha/commit/1e9fcbd49c67d4224d40c34a99b163309ef5dfe2))
+* queue length and sell depth clear when the item on screen has nothing to say ([0d32012](https://github.com/Millennium44/Toolasha/commit/0d3201293f6c34cf0b97d1c8dbf10985ab1a1af8))
+* queued-actions panel no longer caps large numbers at M ([67d7d65](https://github.com/Millennium44/Toolasha/commit/67d7d6572957b6f39058b6e2dd95f95fe92855c4))
+* share the fight-confidence maths between the sim and ui bundles ([8826fa6](https://github.com/Millennium44/Toolasha/commit/8826fa60e7266c683ed49d805dc1d3e01c9596ad))
+* task Go pads boss fight counts for randomness bosses do not have ([fc6f8a1](https://github.com/Millennium44/Toolasha/commit/fc6f8a1ae5d0da92705c718c8d02d8593196c7d4))
+* the auto-click Max toggle takes effect without a reload ([426b2a9](https://github.com/Millennium44/Toolasha/commit/426b2a92d2c572c44cdea02d92d3e18ba8ac3264))
+* the Current Action tab no longer invents a Total profit of 0 ([b67d511](https://github.com/Millennium44/Toolasha/commit/b67d511bd0fdf266e588b75b23727e9896958d82))
+* the queue's sim button sits beside the panel title, not under it ([ce13083](https://github.com/Millennium44/Toolasha/commit/ce1308308e729d3a6249b89b58ab4eb9663cf904))
+* zone-open guards compare against who pressed, not who the queue landed on ([1346237](https://github.com/Millennium44/Toolasha/commit/134623728a46d2c371de05e8afbc89b8b5da868c))
+
+
+### Code Refactoring
+
+* keep the enhancing-specific unlimited-repeat helpers, fix a stale example ([fc285ee](https://github.com/Millennium44/Toolasha/commit/fc285ee0bd1eabc2fb4cf73d1a0d6f4b0d0024c9))
+
+
+### Documentation
+
+* changelog for the audit round and the alchemy totals tables ([97449d7](https://github.com/Millennium44/Toolasha/commit/97449d7740033ceb4fd2b2da369782ce093eb8cd))
+* changelog for the Current Action total fix ([98451b5](https://github.com/Millennium44/Toolasha/commit/98451b510a3b97afa73f844e654602026b373c0c))
+* changelog for the leftovers round ([f833fe7](https://github.com/Millennium44/Toolasha/commit/f833fe7371be7b64dc01976752be619f18874e5b))
+* changelog for the leftovers round ([e2aaa92](https://github.com/Millennium44/Toolasha/commit/e2aaa92625b3c8c9b2eb350e3372dde6b6b539c2))
+* changelog for the persistence notice ([c3c8d50](https://github.com/Millennium44/Toolasha/commit/c3c8d50f8c8093a49ce5f37c529a3c8b0a7821b4))
+* changelog for the queued-actions number format fix ([f643eb9](https://github.com/Millennium44/Toolasha/commit/f643eb9d94e4df14f77b3fa918c0606b939d9ad1))
+* changelog for the unlimited estimate on both panels ([e026850](https://github.com/Millennium44/Toolasha/commit/e026850cf3b63e205017c772b77aa98595778c6c))
+* changelog for the zone-tab fix, the history backoff and cache-only capping ([e6b529c](https://github.com/Millennium44/Toolasha/commit/e6b529c15cc9256db44e548e71b0280dbf11d65c))
+
 ## [3.55.0](https://github.com/Millennium44/Toolasha/compare/v3.54.0...v3.55.0) (2026-09-18)
 
 ### Features
