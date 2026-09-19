@@ -302,6 +302,18 @@ function mirrorExists() {
  * a settings map changed without reading it. A collision would at worst skip
  * a write that should have landed, which the next pass with an actual change
  * corrects, so a fast 32-bit hash (FNV-1a) is enough.
+ *
+ * What this costs, weighed and accepted: a large account serializes on the
+ * order of a megabyte here every {@link MIRROR_INTERVAL_MS}, whether or not
+ * anything changed, because the only way to find out is to look. It is one
+ * pass per browser session rather than per tab — a tab that sees a recent
+ * meta stamp returns before reaching this — and it buys skipping the much
+ * larger merge, stringify and `GM_setValue` below. Making it cheaper means
+ * trusting something other than the bytes (a stored size, an mtime, a cached
+ * per-key hash) to say a map is unchanged, which is a weaker guarantee than
+ * the thing it guards. Left as is deliberately; do not re-raise it as a
+ * finding without a measurement showing this pass is actually hurting.
+ *
  * @param {Object} payload - From {@link collectMirrorable}
  * @returns {string} A short opaque fingerprint
  */
