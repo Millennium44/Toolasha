@@ -23,6 +23,7 @@ import { resolveItemPrice } from '../../utils/profit-helpers.js';
 import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { estimateUnlimitedAction, formatEnhancingUnlimitedText } from './unlimited-action-estimate.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -520,6 +521,114 @@ export function getTargetLevelFromUI(panel) {
 }
 
 /**
+ * Whether the panel's Repeat field reads ∞ — the same "unlimited" shape every other action
+ * panel's Repeat field can take, and what makes a queued enhancing row `hasMaxCount: false`.
+ * @param {HTMLElement} panel - Enhancing panel element
+ * @returns {boolean}
+ */
+export function isRepeatUnlimitedFromUI(panel) {
+    const labels = Array.from(panel.querySelectorAll('*')).filter(
+        (el) => el.textContent.trim() === 'Repeat' && el.children.length === 0
+    );
+    if (labels.length === 0) return false;
+    const input = labels[0].parentElement?.querySelector('input[type="number"], input[type="text"]');
+    return input?.value === '∞';
+}
+
+/**
+ * The enhancement level the item on the panel is currently at: the queued/running enhance
+ * action's own hash when there is one (authoritative — several items can be queued, and this
+ * is the one actually running, via `runningAction`), falling back to the level parsed off the
+ * item name shown in the panel itself (e.g. "Dairyhand's Top +5") before anything is queued.
+ * @param {HTMLElement} panel - Enhancing panel element
+ * @returns {number|null} Current enhancement level, or null when nothing says otherwise
+ */
+export function getCurrentEnhancementLevel(panel) {
+    let currentLevel = null;
+
+    const currentActions = dataManager.getCurrentActions();
+    // The enhance action running now: with several items queued, the first
+    // enhance entry in array order can be a queued one, whose item this
+    // would then read
+    const enhancingAction = runningAction(currentActions, (a) => a.actionHrid === '/actions/enhancing/enhance');
+    if (enhancingAction?.primaryItemHash) {
+        const parts = enhancingAction.primaryItemHash.split('::');
+        const lastPart = parts[parts.length - 1];
+        if (lastPart && !lastPart.startsWith('/')) {
+            const parsed = parseInt(lastPart, 10);
+            if (!isNaN(parsed)) currentLevel = parsed;
+        }
+    }
+
+    // Fallback: read from the enhancing input item name in the DOM (e.g., "Dairyhand's Top +5")
+    if (currentLevel === null) {
+        const inputItems = panel.querySelectorAll('.SkillActionDetail_item__2vEAz .Item_name__2C42x');
+        if (inputItems.length > 0) {
+            const inputName = inputItems[0].textContent.trim();
+            const levelMatch = inputName.match(/\+(\d+)$/);
+            currentLevel = levelMatch ? parseInt(levelMatch[1], 10) : 0;
+        }
+    }
+
+    return currentLevel;
+}
+
+/**
+ * The materials-bounded time a "Repeat ∞" enhancing run would actually take, shown only when
+ * the panel's Repeat field reads ∞ and a Target Level is set. Built from the same
+ * `estimateUnlimitedAction` the general and alchemy panels draw their own Repeat ∞ figure
+ * from — `calculateEnhancingQueueTime`'s dedicated enhancing path, reached because the
+ * synthetic action object here is `hasMaxCount: false` just like theirs — so this panel can
+ * never disagree with the one calculator every panel answers from. Enhancing has no
+ * "Total profit" line anywhere in this file: an enhanced item is not sold, so nothing here
+ * prices the run, only times it.
+ *
+ * @param {Object} args
+ * @param {HTMLElement} args.panel - Enhancing panel element
+ * @param {Object} args.itemDetails - The item being enhanced
+ * @param {number|null} args.currentLevel - The item's current enhancement level
+ * @param {number|null} args.targetLevel - The panel's Target Level, null when unreadable
+ * @param {number} args.protectFromLevel - Effective Protect From Level (0 = none)
+ * @param {string|null} args.protectionItemHrid - What the protection slot holds
+ * @returns {string} HTML, or '' when Repeat is not ∞ or there is no target to estimate against
+ */
+export function unlimitedRepeatHTML({
+    panel,
+    itemDetails,
+    currentLevel,
+    targetLevel,
+    protectFromLevel,
+    protectionItemHrid,
+}) {
+    try {
+        if (!isRepeatUnlimitedFromUI(panel)) return '';
+        // An item is the one thing this cannot do without; a Target Level is not — with none
+        // set, the estimate itself is truly infinite and `formatEnhancingUnlimitedText` says so.
+        if (!itemDetails?.hrid) return '';
+
+        const timing = estimateUnlimitedAction({
+            actionHrid: '/actions/enhancing/enhance',
+            itemHrid: itemDetails.hrid,
+            enhancementLevel: currentLevel || 0,
+            enhancingMaxLevel: targetLevel || 0,
+            enhancingProtectionMinLevel: protectFromLevel,
+            enhancingProtectionItemHrid: protectionItemHrid,
+        });
+
+        const toLabel = targetLevel ? `To +${targetLevel}: ` : '';
+        return (
+            '<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">' +
+            '<div style="color: #9bd; font-weight: bold; font-size: 0.95em;">Repeat ∞</div>' +
+            `<div style="color: #ccc; font-size: 0.85em; margin-top: 2px;">${toLabel}${formatEnhancingUnlimitedText(timing)}</div>` +
+            '</div>'
+        );
+    } catch (error) {
+        console.error('[EnhancementDisplay] Building the unlimited-repeat estimate failed:', error);
+        return '';
+    }
+}
+
+/**
  * Format enhancement display HTML
  * @param {HTMLElement} panel - Enhancement action panel element (for reading protection slot)
  * @param {Object} params - Auto-detected parameters
@@ -876,32 +985,7 @@ function formatEnhancementDisplay(
         lines.push('<div id="mwi-enh-success" style="display: none;">');
 
         // Show base rate and final rate for current enhancement level
-        let currentLevel = null;
-
-        // Try to get level from the action queue first
-        const currentActions = dataManager.getCurrentActions();
-        // The enhance action running now: with several items queued, the first
-        // enhance entry in array order can be a queued one, whose item this
-        // would then read
-        const enhancingAction = runningAction(currentActions, (a) => a.actionHrid === '/actions/enhancing/enhance');
-        if (enhancingAction?.primaryItemHash) {
-            const parts = enhancingAction.primaryItemHash.split('::');
-            const lastPart = parts[parts.length - 1];
-            if (lastPart && !lastPart.startsWith('/')) {
-                const parsed = parseInt(lastPart, 10);
-                if (!isNaN(parsed)) currentLevel = parsed;
-            }
-        }
-
-        // Fallback: read from the enhancing input item name in the DOM (e.g., "Dairyhand's Top +5")
-        if (currentLevel === null) {
-            const inputItems = panel.querySelectorAll('.SkillActionDetail_item__2vEAz .Item_name__2C42x');
-            if (inputItems.length > 0) {
-                const inputName = inputItems[0].textContent.trim();
-                const levelMatch = inputName.match(/\+(\d+)$/);
-                currentLevel = levelMatch ? parseInt(levelMatch[1], 10) : 0;
-            }
-        }
+        const currentLevel = getCurrentEnhancementLevel(panel);
 
         if (currentLevel !== null && currentLevel >= 0 && currentLevel < BASE_SUCCESS_RATES.length) {
             const baseRate = BASE_SUCCESS_RATES[currentLevel];
@@ -1116,6 +1200,21 @@ function formatEnhancementDisplay(
     lines.push('</div>'); // Close grid
     lines.push('</div>'); // Close stats section
 
+    // Read once and shared by both sections below it, the way the panel's other lookups
+    // (protection item, protect-from level) are read once by the caller and threaded through.
+    const targetLevelForPanel = getTargetLevelFromUI(panel);
+
+    lines.push(
+        unlimitedRepeatHTML({
+            panel,
+            itemDetails,
+            currentLevel: getCurrentEnhancementLevel(panel),
+            targetLevel: targetLevelForPanel,
+            protectFromLevel,
+            protectionItemHrid,
+        })
+    );
+
     // Costs by level table for all 20 levels
     const costsByLevelHTML = generateCostsByLevelTable(
         panel,
@@ -1132,7 +1231,7 @@ function formatEnhancementDisplay(
         protectSweepHTML({
             params,
             itemDetails,
-            targetLevel: getTargetLevelFromUI(panel),
+            targetLevel: targetLevelForPanel,
             protectFromLevel,
             enhancementCosts,
             protectionItemHrid,

@@ -58,10 +58,24 @@ function buildItemHash(itemHrid, enhancementLevel = 0) {
 /**
  * Build the synthetic, unqueued action object the shared calculator takes.
  * `hasMaxCount: false` is what makes it the "Repeat ∞" case.
- * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid }
+ *
+ * The enhancing fields are only read by `calculateEnhancingQueueTime` (gated on
+ * `actionDetails.type === '/action_types/enhancing'`), so passing them for a crafting or
+ * alchemy spec is harmless — they simply go unread.
+ *
+ * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid,
+ *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid }
  * @returns {Object} Action object shaped like one from dataManager
  */
-export function buildUnqueuedActionObject({ actionHrid, itemHrid = null, enhancementLevel = 0, catalystHrid = null }) {
+export function buildUnqueuedActionObject({
+    actionHrid,
+    itemHrid = null,
+    enhancementLevel = 0,
+    catalystHrid = null,
+    enhancingMaxLevel = 0,
+    enhancingProtectionMinLevel = 0,
+    enhancingProtectionItemHrid = null,
+}) {
     return {
         id: UNQUEUED_ACTION_ID,
         actionHrid,
@@ -70,6 +84,12 @@ export function buildUnqueuedActionObject({ actionHrid, itemHrid = null, enhance
         maxCount: 0,
         primaryItemHash: buildItemHash(itemHrid, enhancementLevel),
         secondaryItemHash: buildItemHash(catalystHrid, 0),
+        // Read directly by `calculateEnhancingQueueTime` / `getEnhancingProtectionDraw`, the
+        // same fields a real queued enhancing row carries (see
+        // action-time-display.enhancing-protection-limit.test.js's `enhancingRow` fixture).
+        enhancingMaxLevel,
+        enhancingProtectionMinLevel,
+        enhancingProtectionItemHrid,
     };
 }
 
@@ -80,16 +100,23 @@ export function buildUnqueuedActionObject({ actionHrid, itemHrid = null, enhance
  * present and means the same thing: `totalTime`, `count`, `materialLimit`, `limitLabel`,
  * `materialLimitIsEstimated`, `isTrulyInfinite`.
  *
- * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid }
+ * @param {Object} spec - { actionHrid, itemHrid, enhancementLevel, catalystHrid,
+ *   enhancingMaxLevel, enhancingProtectionMinLevel, enhancingProtectionItemHrid }
  * @returns {Object|null} The calculator result, or null when the action is not recognised
  */
 export function estimateUnlimitedAction(spec) {
     try {
         if (!spec || !spec.actionHrid) return null;
 
-        const key = [spec.actionHrid, spec.itemHrid || '', spec.enhancementLevel || 0, spec.catalystHrid || ''].join(
-            '|'
-        );
+        const key = [
+            spec.actionHrid,
+            spec.itemHrid || '',
+            spec.enhancementLevel || 0,
+            spec.catalystHrid || '',
+            spec.enhancingMaxLevel || 0,
+            spec.enhancingProtectionMinLevel || 0,
+            spec.enhancingProtectionItemHrid || '',
+        ].join('|');
         const now = Date.now();
         if (cache.key === key && now - cache.at < ESTIMATE_TTL_MS) {
             return cache.value;
@@ -170,4 +197,43 @@ export function formatUnlimitedProfitText(timing, totalsForCount) {
     if (!isBoundedEstimate(timing)) return '∞';
     const totalProfit = Math.round(totalsForCount(timing.count).totalProfit);
     return `${formatLargeNumber(totalProfit)} · ${formatMaterialNote(timing)}`;
+}
+
+/**
+ * True when an enhancing estimate is a real, finite, affordable run worth showing.
+ *
+ * `isBoundedEstimate` above insists on `materialLimit !== null`, which the crafting/alchemy
+ * branch of `calculateSingleQueueActionTime` only ever sets from a *capped counted* row
+ * (`options.limitCountedByMaterials` binding against `actionObj.hasMaxCount`). This estimate's
+ * action object is always `hasMaxCount: false` — the "Repeat ∞" shape — so for enhancing that
+ * cap path never runs and `materialLimit` stays `null` even when `calculateEnhancingQueueTime`
+ * genuinely bounded the run by its per-attempt bill. `count` and `totalTime` are trustworthy
+ * regardless: they come straight out of `calculateMaterialLimit`'s enhancing branch by way of
+ * `calculateEnhancingQueueTime`'s own `queuedActions` — see action-time-display.js around
+ * `calculateEnhancingQueueTime` (~line 2874) and `calculateSingleQueueActionTime`'s enhancing
+ * branch (~line 1778), which only forwards `materialLimit` from `enhancingTime.limitType`.
+ * @param {Object|null} timing - Result from `estimateUnlimitedAction`
+ * @returns {boolean}
+ */
+export function isBoundedEnhancingEstimate(timing) {
+    return Boolean(
+        timing && timing.isEnhancing && !timing.isTrulyInfinite && Number.isFinite(timing.totalTime) && timing.count > 0
+    );
+}
+
+/**
+ * The bounded time text for an enhancing action whose Repeat is set to unlimited (∞): the time
+ * its materials and protection items actually pay for, and how many attempts that is — carrying
+ * the `~` marker when the bound rests on the expected protection draw rather than a stock count
+ * (`materialLimitIsEstimated`, set by `getEnhancingProtectionDraw`).
+ *
+ * A genuinely unbounded run (no Target Level set, or nothing to predict from) gets `∞` back
+ * rather than an invented figure.
+ * @param {Object|null} timing - Result from `estimateUnlimitedAction`
+ * @returns {string} Formatted text, or '∞'
+ */
+export function formatEnhancingUnlimitedText(timing) {
+    if (!isBoundedEnhancingEstimate(timing)) return '∞';
+    const mark = timing.materialLimitIsEstimated ? '~' : '';
+    return `${timeReadable(timing.totalTime)} · ${mark}${formatLargeNumber(Math.round(timing.count))} attempts`;
 }
