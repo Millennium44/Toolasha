@@ -66,17 +66,37 @@ export function numberFormatter(num, digits = 0) {
 }
 
 /**
- * Convert seconds to human-readable time format
+ * How many units a duration of a day or more prints.
+ *
+ * Two, because the third one is noise at that scale: a figure of "73 years 9 months 29 days"
+ * spends its last word on a precision nothing rests on, and the same is true of the minutes in
+ * "4 days 3h 41m". `overlay-format.js`'s `shortDuration` reached the same two-unit rule
+ * independently when a tile could not hold three; this makes it the app's convention rather than
+ * one panel's workaround.
+ */
+const TIME_READABLE_MAX_UNITS = 2;
+
+/**
+ * Convert seconds to human-readable time format.
+ *
+ * Under a day the clock is unchanged — `0h 03m 28s` is three units and every one of them is a
+ * figure someone acts on. At a day and over, the output is capped at its two largest units (see
+ * {@link TIME_READABLE_MAX_UNITS}); a surface that genuinely needs the third passes `maxUnits`.
+ *
  * @param {number} sec - Seconds to convert
- * @returns {string} Formatted time (e.g., "1h 23m 45s" or "3 years 5 months 3 days")
+ * @param {Object} [options]
+ * @param {number} [options.maxUnits=2] - How many units a duration of a day or more may print.
+ *   Only the day/hour/minute and year/month/day forms are capped; the sub-day clock is not.
+ * @returns {string} Formatted time (e.g., "1h 23m 45s" or "3 years 5 months")
  *
  * @example
  * timeReadable(3661) // "1h 01m 01s"
- * timeReadable(90000) // "1 day"
+ * timeReadable(90000) // "1 day 1h"
  * timeReadable(31536000) // "1 year"
- * timeReadable(100000000) // "3 years 2 months 3 days"
+ * timeReadable(100000000) // "3 years 2 months"
+ * timeReadable(100000000, { maxUnits: 3 }) // "3 years 2 months 3 days"
  */
-export function timeReadable(sec) {
+export function timeReadable(sec, { maxUnits = TIME_READABLE_MAX_UNITS } = {}) {
     // For times >= 1 year, show in years/months/days
     if (sec >= 31536000) {
         // 365 days
@@ -91,7 +111,9 @@ export function timeReadable(sec) {
         if (months > 0) parts.push(`${months} month${months !== 1 ? 's' : ''}`);
         if (days > 0) parts.push(`${days} day${days !== 1 ? 's' : ''}`);
 
-        return parts.join(' ');
+        // The two largest units that are actually present, so "1 year 5 days" keeps the days it
+        // has rather than losing them to an absent months slot
+        return parts.slice(0, maxUnits).join(' ');
     }
 
     // For times >= 1 day, show in days/hours/minutes
@@ -107,7 +129,7 @@ export function timeReadable(sec) {
         if (hours > 0) parts.push(`${hours}h`);
         if (minutes > 0) parts.push(`${minutes}m`);
 
-        return parts.join(' ');
+        return parts.slice(0, maxUnits).join(' ');
     }
 
     // For times < 1 day, show as HH:MM:SS

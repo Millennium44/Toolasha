@@ -128,6 +128,35 @@ describe('timeReadable', () => {
             expect(result).toBe('2 years');
         });
     });
+
+    // A duration of a day or more is capped at two units: the third is noise at that scale, and
+    // the queue panel printed things like "73 years 9 months 29 days" before it was.
+    describe('two-unit cap (>= 1 day)', () => {
+        test('a years figure stops after the months', () => {
+            // 73 years 9 months 29 days
+            expect(timeReadable(2_327_961_600)).toBe('73 years 9 months');
+        });
+
+        test('a days figure stops after the hours', () => {
+            // 4 days 3h 41m
+            expect(timeReadable(358_860)).toBe('4 days 3h');
+        });
+
+        test('the two largest units present are kept, not the two largest slots', () => {
+            // 1 year, no whole months, 5 days: the days are the second unit it has
+            expect(timeReadable(31536000 + 5 * 86400)).toBe('1 year 5 days');
+        });
+
+        test('a duration under a day is untouched, seconds and all', () => {
+            expect(timeReadable(208)).toBe('0h 03m 28s');
+            expect(timeReadable(86399)).toBe('23h 59m 59s');
+        });
+
+        test('a surface that needs the third unit can ask for it', () => {
+            expect(timeReadable(2_327_961_600, { maxUnits: 3 })).toBe('73 years 9 months 29 days');
+            expect(timeReadable(358_860, { maxUnits: 3 })).toBe('4 days 3h 41m');
+        });
+    });
 });
 
 describe('formatWithSeparator', () => {

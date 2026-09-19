@@ -571,10 +571,10 @@ export function signedPercent(percent, band = 5) {
 /**
  * A duration short enough to sit in a tile.
  *
- * `timeReadable` writes "71 days 9h 55m", which is right in a tooltip and wrong
- * in a tile forty pixels wide — it pushed the label it sat beside down to a
- * single letter. Two units at most, and the small one drops off once the large
- * one is big enough to make it noise.
+ * `timeReadable` writes "71 days 9h", which is right in a tooltip and wrong in a
+ * tile forty pixels wide — its spelled-out units pushed the label they sat
+ * beside down to a single letter. Same two-unit rule, in single letters, and the
+ * small one drops off once the large one is big enough to make it noise.
  *
  * @param {number} seconds - Duration
  * @returns {string} e.g. `45s`, `12m`, `3h 20m`, `4d 16h`, `71d`

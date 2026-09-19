@@ -194,7 +194,10 @@ describe('queue tooltip costs each row against what the rows before it leave', (
         const el = queueTooltipPopper(['Coinify: Cheese']);
         observerState.handler(el);
 
-        expect(rowLimits(el)).toEqual(['[396 years 4 months 15 days · mat: 1.25B]']);
+        // Two units, not three: `timeReadable` caps a duration of a day or more at its two
+        // largest units, so the days that used to trail this figure are gone. The point of the
+        // test is the `1.25B`, which is unchanged.
+        expect(rowLimits(el)).toEqual(['[396 years 4 months · mat: 1.25B]']);
         expect(rowLimits(el)[0]).not.toContain('M');
     });
 
