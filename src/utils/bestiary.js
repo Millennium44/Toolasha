@@ -23,6 +23,17 @@
  * is not: `simResult.deaths` counts bodies, at one tier, for the whole party.
  * {@link monsterCreditsPerHour} is where those bodies become credits, and it is
  * the only place in the planner where a tier or a party size is looked at.
+ *
+ * That conversion is only ever right for an ordinary zone or dungeon. A guild
+ * trial monster is not tier-weighted at all — see {@link creditsPerKill}'s doc
+ * for the measured proof — and this module has no way to tell one apart from
+ * an ordinary monster by its arguments alone. What keeps it safe today is
+ * that nothing feeds it one: the planner is built only from all-zones combat
+ * rows (`combat-sim-ui.js`'s `_buildBestiaryPlanZones`), and no trial monster
+ * ever reaches an all-zones row — a trial is fought from the guild panel,
+ * never queued as a zone. A future caller that starts feeding this module a
+ * trial monster's kills would need to skip {@link creditsPerKill}'s tier
+ * weighting entirely, per fact 2 below, not pass it a corrected tier.
  */
 
 /** The prefix the simulator's monster units carry in `deaths` */
@@ -70,16 +81,28 @@ export function nextPointCount(count) {
  * - "When fighting in a party, you receive fractional credit based on party
  *   size."
  *
- * The tier half is settled: a live Manticore tooltip reading `Defeated: 496.8 |
- * T0 Defeated: 45 | T2 Defeated: 150.6` is 45x1 + 150.6x3 to the decimal.
+ * Both halves are now measured, off `tierData` (a JSON map of tier → kill
+ * count) inside `monsters_updated`, on a 92-monster character:
  *
- * ASSUMPTION - and this expression is the only place it is made, so it is also
- * the only line to change if it turns out wrong: the party share is an even
- * `1 / N`. The game says the credit is "fractional based on party size" and says
- * no more; nothing in the client data the fork carries says how the fraction is
- * struck. The same tooltip is *consistent* with 1/N over many kills but cannot
- * prove it - a contribution-weighted share would read identically for a member
- * pulling an even weight.
+ * 1. **Tier weighting is exact.** `count = Σ tierData[t] × (t + 1)` holds to
+ *    floating-point precision for 84 of the 92 monsters — every one that
+ *    is not a guild trial monster (fact 2 below). Highest tier observed
+ *    among these: 6. Worked example — Granite Golem's
+ *    `{"0":8774,"4":31,"6":1028.8}` gives 8774x1 + 31x5 + 1028.8x7 =
+ *    8774 + 155 + 7201.6 = 16130.6, its exact `count`.
+ * 2. **A guild trial monster is not tier-weighted at all.** The 8 exceptions
+ *    above are all `trial_*` monsters. Their "tiers" run as high as 21 —
+ *    those are trial *wave numbers*, not difficulty tiers — and for every
+ *    one of them `count` is the plain, unweighted sum of `tierData`. Worked
+ *    example — Trial Hedgehog's `{"1":10,"2":9,"3":7,…,"21":7}` sums to 152,
+ *    its exact `count`; running this function's `tier + 1` rule against it
+ *    would claim 1,776 — about 12x too high. {@link creditsPerKill} has no
+ *    way to know it was handed a trial monster, so it must never be pointed
+ *    at one — see the module doc for where that safety currently comes from.
+ * 3. **The party share is an even `1 / N`, and this is now measured, not
+ *    assumed.** All 42 fractional `tierData` entries across the character
+ *    are multiples of 1/2, 1/5 or 1/10, with zero unexplained. A
+ *    contribution-weighted split would produce arbitrary reals instead.
  *
  * A dungeon is weighted on the same `tier + 1` rule as an ordinary zone, on the
  * basis that a dungeon row is simulated at the same `difficultyTier` field the
@@ -88,7 +111,8 @@ export function nextPointCount(count) {
  * help text draws no distinction between the two.
  *
  * @param {Object} [input]
- * @param {number} [input.difficultyTier=0] - The tier being fought
+ * @param {number} [input.difficultyTier=0] - The tier being fought; never a guild
+ *   trial's wave number — see fact 2 above
  * @param {number} [input.partySize=1] - Players in the party, 1 for solo
  * @returns {number} Credits one kill is worth to you
  */

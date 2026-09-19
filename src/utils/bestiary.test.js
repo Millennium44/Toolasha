@@ -119,6 +119,43 @@ describe('a zone’s outlook', () => {
         });
         expect(outlook.monsters.every((m) => m.count === 0)).toBe(true);
     });
+
+    /**
+     * A guild trial monster is not tier-weighted at all — see `creditsPerKill`'s
+     * doc for the measured proof, with the real Trial Hedgehog figures this test
+     * reuses: `tierData` up to wave 21 summing to a plain 152, where this
+     * module's `tier + 1` rule would claim 1,776 — about 12x too high.
+     *
+     * Neither `creditsPerKill` nor `zoneBestiaryOutlook` knows a monster is a
+     * trial monster, so there is nothing to assert about how either function
+     * *would* treat one directly — asserting that would just re-describe the
+     * bug fact 2 warns about. What is real and testable is the actual guard:
+     * `monsters_updated` lists every monster, trials included, but a trial
+     * monster's kills never appear in `creditsPerHour` because no all-zones row
+     * simulates a trial fight (see the module doc's `_buildBestiaryPlanZones`
+     * note). `zoneBestiaryOutlook` only ever visits `creditsPerHour`'s keys, so
+     * a trial monster sitting in `counts` — however large its true count is —
+     * must be silently skipped, not weighted. A future change that switched
+     * the loop to iterate `counts` instead, to "not miss" an unmet monster,
+     * would revive exactly the 12x bug and fail this test loudly.
+     */
+    test('a trial monster’s Bestiary count is ignored, not tier-weighted, when it has no simulated rate', () => {
+        const outlook = zoneBestiaryOutlook({
+            creditsPerHour: { '/monsters/fly': 60 },
+            counts: {
+                '/monsters/fly': 12,
+                // The real Trial Hedgehog reading: tierData {"1":10,"2":9,"3":7,
+                // ...,"21":7} sums to 152 kills, no tier weighting — its "tiers"
+                // are trial wave numbers, not difficulty tiers.
+                '/monsters/trial_hedgehog': 152,
+            },
+            hours: 1,
+        });
+
+        expect(outlook.monsters).toHaveLength(1);
+        expect(outlook.monsters[0].monsterHrid).toBe('/monsters/fly');
+        expect(outlook.monsters.some((m) => m.monsterHrid === '/monsters/trial_hedgehog')).toBe(false);
+    });
 });
 
 describe('a kill is not a credit', () => {
