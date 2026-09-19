@@ -187,6 +187,76 @@ async function getProfileList() {
 }
 
 /**
+ * The five combat guild shrine buffs, in the order external simulators that read this
+ * export list them. Skilling shrines are deliberately absent — a combat sim has no use
+ * for them, and the consumer ignores keys it does not recognize.
+ * @type {string[]}
+ */
+const GUILD_COMBAT_BUFF_HRIDS = [
+    '/guild_buffs/force_combat',
+    '/guild_buffs/tempo_combat',
+    '/guild_buffs/spirit_combat',
+    '/guild_buffs/rarity_combat',
+    '/guild_buffs/scholar_combat',
+];
+
+/**
+ * Short key an external simulator expects for a guild combat buff hrid
+ * ('/guild_buffs/force_combat' → 'force'). Derived rather than tabulated so a shrine
+ * added later needs no second list to edit.
+ * @param {string} buffHrid - Guild buff HRID
+ * @returns {string} Short key
+ */
+function guildCombatBuffKey(buffHrid) {
+    return buffHrid
+        .split('/')
+        .pop()
+        .replace(/_combat$/, '');
+}
+
+/**
+ * Level out of a guild buff map entry, which is a bare number on a shared profile and
+ * a `{level}` object on your own character data.
+ * @param {number|Object|undefined} entry - Map entry
+ * @returns {number} Level, or 0 when the entry says nothing
+ */
+function guildBuffEntryLevel(entry) {
+    return Number(typeof entry === 'number' ? entry : entry?.level) || 0;
+}
+
+/**
+ * Combat shrine hrids present in a level source but outside the canonical five.
+ * @param {Object} levelMap - buffHrid → anything
+ * @returns {Array<string>} Extra combat buff hrids
+ */
+function extraCombatBuffHrids(levelMap) {
+    if (!levelMap || typeof levelMap !== 'object') return [];
+    return Object.keys(levelMap).filter(
+        (hrid) => /^\/guild_buffs\/.+_combat$/.test(hrid) && !GUILD_COMBAT_BUFF_HRIDS.includes(hrid)
+    );
+}
+
+/**
+ * Turn a buffHrid → level source into the `guildCombatBuffLevels` block the export carries.
+ *
+ * Every combat shrine is emitted, zeros included, because a level known to be zero is real
+ * information. Callers decide whether the levels are knowable at all: a source that never
+ * arrived must produce no block rather than an authoritative-looking row of zeros, which
+ * would silently strip the character's shrine buffs in the consumer.
+ *
+ * @param {function(string): number} levelOf - Level for a buff hrid
+ * @param {Array<string>} extraHrids - Combat buff hrids present in the source but not canonical
+ * @returns {Object} Short key → non-negative integer level
+ */
+function buildGuildCombatBuffLevels(levelOf, extraHrids = []) {
+    const levels = {};
+    for (const buffHrid of [...GUILD_COMBAT_BUFF_HRIDS, ...extraHrids]) {
+        levels[guildCombatBuffKey(buffHrid)] = Math.max(0, Math.floor(Number(levelOf(buffHrid)) || 0));
+    }
+    return levels;
+}
+
+/**
  * Construct player export object from own character data
  * @param {Object} characterObj - Character data from init_character_data
  * @param {Object} clientObj - Client data (optional)
@@ -334,6 +404,21 @@ function constructSelfPlayer(characterObj, clientObj) {
                 playerObj.achievements[achievement.achievementHrid] = true;
             }
         }
+    }
+
+    // Guild shrine levels. The login snapshot carries `characterGuildBuffMap`
+    // ({buffHrid: {level}}); on the game page dataManager keeps a fresher copy that also
+    // survives a session where no guild traffic arrived. Either source counts as knowing
+    // the levels — an empty map is not a reading (it is what a character looks like before
+    // guild traffic arrives), and without a reading the block is omitted rather than zeroed.
+    const ownBuffMap = characterObj.characterGuildBuffMap;
+    const liveLevel = (buffHrid) => dataManager.getCharacterGuildBuffLevel?.(buffHrid) || 0;
+    const hasOwnMap = !!ownBuffMap && typeof ownBuffMap === 'object' && Object.keys(ownBuffMap).length > 0;
+    if (hasOwnMap || GUILD_COMBAT_BUFF_HRIDS.some((hrid) => liveLevel(hrid) > 0)) {
+        playerObj.guildCombatBuffLevels = buildGuildCombatBuffLevels(
+            (buffHrid) => guildBuffEntryLevel(ownBuffMap?.[buffHrid]) || liveLevel(buffHrid),
+            extraCombatBuffHrids(ownBuffMap)
+        );
     }
 
     return playerObj;
@@ -497,6 +582,21 @@ function constructPartyPlayer(profile, clientObj, battleObj) {
                 playerObj.achievements[achievement.achievementHrid] = true;
             }
         }
+    }
+
+    // Guild shrine levels from the shared profile. A shared capture carries
+    // `guildBuffLevelMap` (bare numbers); a capture of your own profile carries
+    // `characterGuildBuffMap` ({level}) instead, and guildBuffEntryLevel reads either.
+    // An older capture that predates both cannot know the levels, so it gets no block at
+    // all — zeros would read as "this character has no shrines".
+    const profileOwnMap = profile.profile?.characterGuildBuffMap;
+    const profileBuffLevels =
+        profileOwnMap && Object.keys(profileOwnMap).length > 0 ? profileOwnMap : profile.profile?.guildBuffLevelMap;
+    if (profileBuffLevels && typeof profileBuffLevels === 'object' && Object.keys(profileBuffLevels).length > 0) {
+        playerObj.guildCombatBuffLevels = buildGuildCombatBuffLevels(
+            (buffHrid) => guildBuffEntryLevel(profileBuffLevels[buffHrid]),
+            extraCombatBuffHrids(profileBuffLevels)
+        );
     }
 
     return playerObj;

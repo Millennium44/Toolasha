@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim export carries guild shrine levels
+
+- The export now includes your five combat shrine levels, so external simulators that read it stop treating every character as unbuffed; a character whose levels we cannot know omits them rather than claiming zeros.
+
 ### Combat sim: three behaviors measured against the game
 
 - Players keep their attack rhythm across a dungeon wave transition instead of restarting the swing timer at every wave; a wipe or a restart still starts cold.
