@@ -247,6 +247,85 @@ describe('the mirror path behaves like the plain path', () => {
     });
 });
 
+// A Repeat ∞ enhancing row is bounded in reality — by its per-attempt bill, or by the target
+// level it is enhancing towards — but only the counted shape ever named the channel that bound
+// it, so the queue drew a bare `[time]` bracket with no `mat:` and no `~` for a row the bag was
+// plainly stopping.
+describe('an uncounted row names the channel that bound it', () => {
+    test('a Repeat ∞ row the bag stops carries the channel and the estimate marker', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const action = enhancingRow({ protectionItemHrid: PROTECTION });
+
+        const result = actionTimeDisplay.calculateSingleQueueActionTime(action, details(), lookup, {
+            limitCountedByMaterials: true,
+        });
+
+        // 3 protections at one per ten attempts is 30, well short of the 1000 expected attempts
+        expect(result.count).toBe(30);
+        expect(result.materialLimit).toBe(30);
+        expect(result.limitType).toBe(`material:${PROTECTION}`);
+        expect(result.materialLimitIsEstimated).toBe(true);
+    });
+
+    test('a Repeat ∞ row that reaches its target level first names nothing', () => {
+        // Materials for 500 attempts, no protection channel, and only 80 attempts expected:
+        // the enhancement is what ends this row, not the bag, and labelling it `mat:` would
+        // say the player ran out of something they did not
+        game.predictions = { ...game.predictions, expectedAttempts: 80, expectedProtections: 0 };
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+
+        const result = actionTimeDisplay.calculateSingleQueueActionTime(enhancingRow({}), details(), lookup, {
+            limitCountedByMaterials: true,
+        });
+
+        expect(result.count).toBe(80);
+        expect(result.materialLimit).toBeNull();
+        expect(result.limitType).toBeNull();
+    });
+
+    test('an uncounted mirror row names the mirrors, exactly', () => {
+        game.inventory = [stack(ESSENCE, 500), stack(PHILOSOPHERS_MIRROR, 7)];
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const action = enhancingRow({ protectionItemHrid: PHILOSOPHERS_MIRROR, protectFrom: 0 });
+
+        const result = actionTimeDisplay.calculateSingleQueueActionTime(action, details(), lookup, {
+            limitCountedByMaterials: true,
+        });
+
+        expect(result.materialLimit).toBe(7);
+        expect(result.limitType).toBe(`material:${PHILOSOPHERS_MIRROR}`);
+        // One mirror per attempt is a flat cost, so the figure is exact
+        expect(result.materialLimitIsEstimated).toBe(false);
+    });
+
+    test('a counted row is untouched: it is still capped, and by its own cap', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+        const action = enhancingRow({ maxCount: 500, protectionItemHrid: PROTECTION });
+
+        const result = actionTimeDisplay.calculateSingleQueueActionTime(action, details(), lookup, {
+            limitCountedByMaterials: true,
+        });
+
+        expect(result.count).toBe(30);
+        expect(result.limitType).toBe(`material:${PROTECTION}`);
+        expect(result.materialLimitIsEstimated).toBe(true);
+    });
+
+    test('a counted row inside its materials still names nothing', () => {
+        const lookup = actionTimeDisplay.buildInventoryLookup(game.inventory);
+
+        const result = actionTimeDisplay.calculateSingleQueueActionTime(
+            enhancingRow({ maxCount: 10 }),
+            details(),
+            lookup,
+            { limitCountedByMaterials: true }
+        );
+
+        expect(result.count).toBe(10);
+        expect(result.limitType).toBeNull();
+    });
+});
+
 describe('a protection that cannot be quantified', () => {
     // Decision: a configured protection the calculation cannot quantify neither caps the row
     // at zero nor passes as unlimited protection — the row keeps its material limit and is

@@ -2928,7 +2928,12 @@ class ActionTimeDisplay {
         // A row's figure and the time built on it, capped by materials where the caller asked
         // for it. `elapsed` belongs to the attempt already running, so it is subtracted after
         // the cap rather than scaled with it.
-        const settle = (rawCount, estimatedFromLimit = false) => {
+        //
+        // `bagLimit` is the uncounted shape's equivalent of `cap`: a Repeat ∞ row is never
+        // handed a request to cap, its figure *is* the material limit, and when that limit is
+        // what stopped it the row has a channel to name just like a capped counted one. Without
+        // it the row drew a bare `[time]` and said nothing about the materials that bound it.
+        const settle = (rawCount, estimatedFromLimit = false, bagLimit = null) => {
             let finalCount = Number.isFinite(rawCount) ? Math.max(0, rawCount) : 0;
             let cap = null;
             if (options.limitCountedByMaterials && actionObj.hasMaxCount) {
@@ -2952,9 +2957,21 @@ class ActionTimeDisplay {
                 perActionTime
             );
             const totalTime = Math.max(0, finalCount * perActionTime - elapsed);
-            // An uncapped row can still rest on an estimate: an uncounted row's figure comes
-            // from the material limit directly, and that limit counts the protection draw.
             if (!cap) {
+                // The bag is what stopped an uncounted row only when the row ran all the way
+                // into it. A row that reaches its target level first is bounded by the
+                // enhancement, not by a material channel, and must not be labelled as if it
+                // were — the same rule the counted branch follows through `cap.limitType`.
+                if (bagLimit?.limitType && Number.isFinite(bagLimit.count) && finalCount >= bagLimit.count) {
+                    return {
+                        count: finalCount,
+                        totalTime,
+                        limitType: bagLimit.limitType,
+                        materialLimitIsEstimated: estimatedFromLimit,
+                    };
+                }
+                // An uncapped row can still rest on an estimate: an uncounted row's figure comes
+                // from the material limit directly, and that limit counts the protection draw.
                 return estimatedFromLimit
                     ? { count: finalCount, totalTime, materialLimitIsEstimated: true }
                     : { count: finalCount, totalTime };
@@ -2972,18 +2989,22 @@ class ActionTimeDisplay {
         // a "Repeat ∞" mirror row is bounded by its bill the way every other row is.
         let queuedActions;
         let estimatedFromLimit = false;
+        let bagLimit = null;
         if (actionObj.hasMaxCount) {
             queuedActions = actionObj.maxCount - actionObj.currentCount;
         } else {
             const limitResult = this.calculateMaterialLimit(actionDetails, inventoryLookup, 0, actionObj);
             queuedActions = limitResult?.maxActions ?? Infinity;
             estimatedFromLimit = limitResult?.isEstimated === true;
+            if (limitResult?.limitType) {
+                bagLimit = { count: limitResult.maxActions, limitType: limitResult.limitType };
+            }
         }
 
         if (usesMirror) {
             // A mirror guarantees the attempt, so exactly one attempt per level remains
             const actions = Math.min(targetLevel - currentLevel, queuedActions);
-            return settle(actions, estimatedFromLimit);
+            return settle(actions, estimatedFromLimit, bagLimit);
         }
 
         const realisticActions =
@@ -2991,7 +3012,7 @@ class ActionTimeDisplay {
                 ? predictions.expectedAttempts
                 : Math.min(queuedActions, predictions.expectedAttempts);
 
-        return settle(realisticActions, estimatedFromLimit);
+        return settle(realisticActions, estimatedFromLimit, bagLimit);
     }
 
     parseActionNameFromDom(actionNameText) {
