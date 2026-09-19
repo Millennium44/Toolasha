@@ -3,7 +3,7 @@
  *
  * An action panel set to Repeat ∞ used to read `Total time: ∞` / `Total profit: ∞`, while the
  * moment the same action was queued the queue row showed a real, materials-bounded figure
- * (`[4 days 3h 41m · mat: 85.4K]`). The two were describing the same run, so they must not
+ * (`[4 days 3h · mat: 85.4K]`). The two were describing the same run, so they must not
  * disagree — and the arithmetic behind the queue row already answers for an unqueued action:
  * `calculateSingleQueueActionTime`'s own JSDoc says so, and its `limitCountedByMaterials`
  * option is off by default precisely so the whole bag is the basis when nothing is queued.
@@ -172,7 +172,7 @@ export function formatMaterialNote(timing) {
 
 /**
  * The bounded time a queue row would show for this action, with its material note — the same
- * `4 days 3h 41m · mat: 85.4K` text, without the queue's surrounding brackets.
+ * `4 days 3h · mat: 85.4K` text, without the queue's surrounding brackets.
  * @param {Object|null} timing - Result from `estimateUnlimitedAction`
  * @returns {string|null} Formatted text, or null when the action really is unbounded
  */
