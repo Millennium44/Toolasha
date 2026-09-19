@@ -18,6 +18,7 @@
 import dataManager from '../../core/data-manager.js';
 import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
 import actionTimeDisplay from './action-time-display.js';
+import { runningAction } from '../../utils/combat-actions.js';
 
 /**
  * How long a computed estimate is reused before the inventory is walked again.
@@ -236,4 +237,50 @@ export function formatEnhancingUnlimitedText(timing) {
     if (!isBoundedEnhancingEstimate(timing)) return '∞';
     const mark = timing.materialLimitIsEstimated ? '~' : '';
     return `${timeReadable(timing.totalTime)} · ${mark}${formatLargeNumber(Math.round(timing.count))} attempts`;
+}
+
+/**
+ * The "Total profit" text for a panel with no Repeat input at all — the Current Action tab,
+ * which shows the action actually running (with a Stop button) rather than one being
+ * configured. There is no `∞` / a typed count to read from a field here, so the answer has to
+ * come from the running action's own queue entry instead of an input's value.
+ *
+ * `dataManager.getCurrentActions()` is the character's queue; `runningAction` (not array
+ * position — see its own doc header) finds the one actually executing, matched to this panel by
+ * `spec.actionHrid`. From there:
+ * - `hasMaxCount === false` is the Repeat-∞ shape, exactly what `estimateUnlimitedAction` already
+ *   answers for the configure tab's own `∞` case — reusing it here is what keeps the two tabs
+ *   from ever disagreeing about the same run.
+ * - `hasMaxCount === true` is a counted run in progress; what is left to earn is `maxCount -
+ *   currentCount`, priced through the caller's own totals helper. A run that has already used up
+ *   its count prices to a real, computed 0 — that is not a fabrication, it is the answer.
+ *
+ * Returns `null` — never a string `'0'` — when there is nothing honest to price: no running
+ * action matches `spec.actionHrid` at all. The caller is expected to omit the whole
+ * "| Total profit: …" clause in that case rather than print an invented figure.
+ *
+ * @param {Object} spec - Same shape `estimateUnlimitedAction` takes: {actionHrid, itemHrid,
+ *   enhancementLevel, catalystHrid, enhancingMaxLevel, enhancingProtectionMinLevel,
+ *   enhancingProtectionItemHrid}
+ * @param {(count: number) => {totalProfit: number}} totalsForCount - Panel's own totals helper
+ * @returns {string|null} Formatted profit text ('∞' included), or null to omit the clause
+ */
+export function formatRunningActionProfitText(spec, totalsForCount) {
+    try {
+        if (!spec || !spec.actionHrid) return null;
+
+        const running = runningAction(dataManager.getCurrentActions(), (a) => a.actionHrid === spec.actionHrid);
+        if (!running) return null;
+
+        if (running.hasMaxCount === false) {
+            return formatUnlimitedProfitText(estimateUnlimitedAction(spec), totalsForCount);
+        }
+
+        const remaining = Math.max(0, (running.maxCount || 0) - (running.currentCount || 0));
+        const totalProfit = Math.round(totalsForCount(remaining).totalProfit);
+        return formatLargeNumber(totalProfit);
+    } catch (error) {
+        console.error('[UnlimitedActionEstimate] Failed to price the running action:', error);
+        return null;
+    }
 }

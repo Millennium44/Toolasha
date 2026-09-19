@@ -111,6 +111,7 @@ const {
     isBoundedEstimate,
     buildUnqueuedActionObject,
     clearUnlimitedEstimateCache,
+    formatRunningActionProfitText,
 } = await import('./unlimited-action-estimate.js');
 
 const LOG = '/items/log';
@@ -135,6 +136,16 @@ function unlimitedQueued(id, actionHrid) {
         maxCount: 0,
         currentCount: 0,
     };
+}
+
+/** The action actually running right now (ordinal 1, front of the queue), Repeat ∞ shape. */
+function unlimitedRunning(actionHrid) {
+    return { id: 1, ordinal: 1, actionHrid, primaryItemHash: null, hasMaxCount: false, maxCount: 0, currentCount: 0 };
+}
+
+/** The action actually running right now, a counted Repeat partway through. */
+function countedRunning(actionHrid, currentCount, maxCount) {
+    return { id: 1, ordinal: 1, actionHrid, primaryItemHash: null, hasMaxCount: true, maxCount, currentCount };
 }
 
 /** The "+N Queued Actions" popper with one row per queued action. */
@@ -557,6 +568,121 @@ describe('settings', () => {
 
         expect(container.textContent).toBe('');
         expect(alchemyDisplay.displayElement).toBe(null);
+    });
+});
+
+describe('formatRunningActionProfitText — the Current Action tab, no Repeat input to read', () => {
+    // Flat 1000 profit per completed action, same shape the other totalsForCount stubs use.
+    const totalsForCount = (actionsCount) => ({ totalProfit: actionsCount * 1000 });
+
+    test('a Repeat-∞ running action prices the same materials bound the configure tab would', () => {
+        game.currentActions = [unlimitedRunning(CRAFT_PLANK)];
+
+        // 80 logs at 2 per plank pays for 40 crafts — the exact figure buildUnlimitedProfitText
+        // already gives the configure tab's own ∞ case, so the two tabs cannot disagree.
+        expect(formatRunningActionProfitText({ actionHrid: CRAFT_PLANK }, totalsForCount)).toBe('40.00K · mat: 40');
+    });
+
+    test('a genuinely unbounded running action still reads ∞, not a fabricated figure', () => {
+        game.currentActions = [unlimitedRunning(CHOP_LOG)];
+
+        expect(formatRunningActionProfitText({ actionHrid: CHOP_LOG }, totalsForCount)).toBe('∞');
+    });
+
+    test('a counted running action prices what is actually left to earn', () => {
+        // Repeat 100, 63 done: 37 remain.
+        game.currentActions = [countedRunning(CRAFT_PLANK, 63, 100)];
+
+        expect(formatRunningActionProfitText({ actionHrid: CRAFT_PLANK }, totalsForCount)).toBe('37.00K');
+    });
+
+    test('a counted running action that has already used up its count prices to a real 0', () => {
+        game.currentActions = [countedRunning(CRAFT_PLANK, 100, 100)];
+
+        expect(formatRunningActionProfitText({ actionHrid: CRAFT_PLANK }, totalsForCount)).toBe('0');
+    });
+
+    test('no running action matching this panel returns null — the caller omits the clause', () => {
+        game.currentActions = [unlimitedRunning(CHOP_LOG)]; // a different action is running
+
+        expect(formatRunningActionProfitText({ actionHrid: CRAFT_PLANK }, totalsForCount)).toBe(null);
+    });
+
+    test('an empty queue returns null rather than 0', () => {
+        game.currentActions = [];
+
+        expect(formatRunningActionProfitText({ actionHrid: CRAFT_PLANK }, totalsForCount)).toBe(null);
+    });
+
+    test('no spec at all returns null', () => {
+        expect(formatRunningActionProfitText(null, totalsForCount)).toBe(null);
+        expect(formatRunningActionProfitText({}, totalsForCount)).toBe(null);
+    });
+});
+
+describe('the alchemy panel on the Current Action tab (no Repeat input at all)', () => {
+    beforeEach(() => {
+        game.inventory = [...game.inventory, stack(PLANK, 40), stack('/items/coin', 1_000_000)];
+    });
+
+    test('a Repeat-∞ running decompose shows the same bound the configure tab shows', () => {
+        game.currentActions = [unlimitedRunning(DECOMPOSE)];
+        const container = document.createElement('div');
+
+        // No buildAlchemyComponent(): no Repeat input in the DOM, and nothing cached from an
+        // earlier configure-tab visit — the Current Action tab's own shape.
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        expect(profitSummaryText(container)).toContain('Total profit: 40.00K · mat: 40');
+    });
+
+    test('a counted running decompose prices what remains, not the whole run', () => {
+        game.currentActions = [countedRunning(DECOMPOSE, 70, 100)];
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        // 30 left × the flat 1000 profitPerAction decomposeProfitData() stubs
+        expect(profitSummaryText(container)).toContain('Total profit: 30.00K');
+        expect(profitSummaryText(container)).not.toContain('mat:');
+    });
+
+    test('with no running action to match, the clause is omitted rather than reading 0', () => {
+        game.currentActions = [];
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        const text = profitSummaryText(container);
+        expect(text).not.toContain('Total profit');
+        expect(text).not.toBeNull();
+    });
+
+    test('an empty Repeat box (a configure tab with nothing typed) omits the clause too', () => {
+        buildAlchemyComponent('');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        expect(profitSummaryText(container)).not.toContain('Total profit');
+    });
+
+    test('a literal 0 typed into Repeat is still a genuine zero', () => {
+        buildAlchemyComponent('0');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        expect(profitSummaryText(container)).toContain('Total profit: 0');
+    });
+
+    test('the configure tab (Repeat ∞) is unchanged by any of this', () => {
+        buildAlchemyComponent('∞');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        expect(profitSummaryText(container)).toContain('Total profit: 40.00K · mat: 40');
     });
 });
 

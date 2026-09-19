@@ -25,7 +25,11 @@ import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
-import { estimateUnlimitedAction, formatUnlimitedProfitText } from './unlimited-action-estimate.js';
+import {
+    estimateUnlimitedAction,
+    formatUnlimitedProfitText,
+    formatRunningActionProfitText,
+} from './unlimited-action-estimate.js';
 
 // The only gathering action type whose drop table is a set of mutually exclusive outcomes
 // rather than a guaranteed haul — see the actionPanel_foragingTotal gate in renderGatheringProfit.
@@ -200,9 +204,12 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     const revenue = Math.round(profitData.revenuePerHour);
     const marketTax = Math.round(revenue * MARKET_TAX);
     const costs = Math.round(profitData.drinkCostPerHour + marketTax);
+    // No "| Total profit: 0" here: whether the clause even appears, and what it says, is
+    // decided below once we know if there is a Repeat input to read or a running action to
+    // price instead — never a hardcoded figure that might outlive both.
     const summary = formatMissingLabel(
         netMissing,
-        `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`
+        `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
     );
 
     const detailsContent = document.createElement('div');
@@ -635,7 +642,7 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
 
     // Set up listener to update summary with total profit when input changes
-    if (inputField && profitSummaryDiv) {
+    if (profitSummaryDiv) {
         const baseSummary = formatMissingLabel(
             netMissing,
             `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
@@ -653,31 +660,45 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
                 efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
             });
 
-        const updateSummary = (newValue) => {
-            if (netMissing) {
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
-                return;
-            }
-            const inputValue = inputField.value;
+        if (inputField) {
+            const updateSummary = (newValue) => {
+                if (netMissing) {
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+                    return;
+                }
+                const inputValue = inputField.value;
 
-            if (inputValue === '∞') {
-                const text = buildUnlimitedProfitText(actionHrid, gatheringTotalsForCount);
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${text}`;
-            } else if (newValue > 0) {
-                const totals = gatheringTotalsForCount(newValue);
-                const totalProfit = Math.round(totals.totalProfit);
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
-            } else {
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
-            }
-        };
+                // An empty box is "nothing entered yet", not "zero requested" — the literal
+                // digit '0' still falls through to the genuine-zero branch below.
+                if (inputValue.trim() === '') {
+                    profitSummaryDiv.textContent = baseSummary;
+                } else if (inputValue === '∞') {
+                    const text = buildUnlimitedProfitText(actionHrid, gatheringTotalsForCount);
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${text}`;
+                } else if (newValue > 0) {
+                    const totals = gatheringTotalsForCount(newValue);
+                    const totalProfit = Math.round(totals.totalProfit);
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
+                } else {
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
+                }
+            };
 
-        // Update summary initially
-        const initialValue = parseInt(inputField.value) || 0;
-        updateSummary(initialValue);
+            // Update summary initially
+            const initialValue = parseInt(inputField.value) || 0;
+            updateSummary(initialValue);
 
-        // Attach listener for future changes
-        trackPanelInputListener(panel, attachInputListeners(panel, inputField, updateSummary));
+            // Attach listener for future changes
+            trackPanelInputListener(panel, attachInputListeners(panel, inputField, updateSummary));
+        } else if (netMissing) {
+            profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+        } else {
+            // The Current Action tab: no Repeat box to read, but the action actually running
+            // (Stop button, not a configure form) still has a real answer when its own queue
+            // entry names one — see formatRunningActionProfitText's doc header.
+            const text = formatRunningActionProfitText({ actionHrid }, gatheringTotalsForCount);
+            profitSummaryDiv.textContent = text !== null ? `${baseSummary} | Total profit: ${text}` : baseSummary;
+        }
     }
 
     // Find insertion point - look for existing collapsible sections or drop table
@@ -827,9 +848,8 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     // Calculate market tax
     const marketTax = Math.round(revenue * MARKET_TAX);
     const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
-    const summary = netMissing
-        ? '-- ⚠'
-        : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day | Total profit: 0`;
+    // No "| Total profit: 0" here: see the matching comment in renderGatheringProfit above.
+    const summary = netMissing ? '-- ⚠' : `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
 
     const detailsContent = document.createElement('div');
 
@@ -1287,7 +1307,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
 
     // Set up listener to update summary with total profit when input changes
-    if (inputField && profitSummaryDiv) {
+    if (profitSummaryDiv) {
         const baseSummary = formatMissingLabel(
             netMissing,
             `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`
@@ -1306,31 +1326,45 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
                 efficiencyMultiplier: profitData.efficiencyMultiplier || 1,
             });
 
-        const updateSummary = (newValue) => {
-            if (netMissing) {
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
-                return;
-            }
-            const inputValue = inputField.value;
+        if (inputField) {
+            const updateSummary = (newValue) => {
+                if (netMissing) {
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+                    return;
+                }
+                const inputValue = inputField.value;
 
-            if (inputValue === '∞') {
-                const text = buildUnlimitedProfitText(actionHrid, productionTotalsForCount);
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${text}`;
-            } else if (newValue > 0) {
-                const totals = productionTotalsForCount(newValue);
-                const totalProfit = Math.round(totals.totalProfit);
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
-            } else {
-                profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
-            }
-        };
+                // An empty box is "nothing entered yet", not "zero requested" — the literal
+                // digit '0' still falls through to the genuine-zero branch below.
+                if (inputValue.trim() === '') {
+                    profitSummaryDiv.textContent = baseSummary;
+                } else if (inputValue === '∞') {
+                    const text = buildUnlimitedProfitText(actionHrid, productionTotalsForCount);
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${text}`;
+                } else if (newValue > 0) {
+                    const totals = productionTotalsForCount(newValue);
+                    const totalProfit = Math.round(totals.totalProfit);
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
+                } else {
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
+                }
+            };
 
-        // Update summary initially
-        const initialValue = parseInt(inputField.value) || 0;
-        updateSummary(initialValue);
+            // Update summary initially
+            const initialValue = parseInt(inputField.value) || 0;
+            updateSummary(initialValue);
 
-        // Attach listener for future changes
-        trackPanelInputListener(panel, attachInputListeners(panel, inputField, updateSummary));
+            // Attach listener for future changes
+            trackPanelInputListener(panel, attachInputListeners(panel, inputField, updateSummary));
+        } else if (netMissing) {
+            profitSummaryDiv.textContent = `${baseSummary} | Total profit: -- ⚠`;
+        } else {
+            // The Current Action tab: no Repeat box to read, but the action actually running
+            // (Stop button, not a configure form) still has a real answer when its own queue
+            // entry names one — see formatRunningActionProfitText's doc header.
+            const text = formatRunningActionProfitText({ actionHrid }, productionTotalsForCount);
+            profitSummaryDiv.textContent = text !== null ? `${baseSummary} | Total profit: ${text}` : baseSummary;
+        }
     }
 
     // Find insertion point - look for existing collapsible sections or drop table

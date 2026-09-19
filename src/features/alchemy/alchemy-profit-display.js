@@ -22,6 +22,7 @@ import {
     estimateUnlimitedAction,
     formatUnlimitedTimeText,
     formatUnlimitedProfitText,
+    formatRunningActionProfitText,
     clearUnlimitedEstimateCache,
 } from '../actions/unlimited-action-estimate.js';
 
@@ -1049,10 +1050,13 @@ class AlchemyProfitDisplay {
             : null;
 
         // Create main profit section
+        // No hardcoded "| Total profit: 0" placeholder: whether the clause appears at all, and
+        // what it says, is decided below once we know whether there is a Repeat input to read
+        // or a running action to price instead.
         const profitSection = this.createTrackedCollapsible(
             '💰',
             'Profitability',
-            `${baseSummary} | Total profit: 0`,
+            baseSummary,
             topLevelContent,
             false,
             0
@@ -1079,6 +1083,13 @@ class AlchemyProfitDisplay {
         if (effectiveInputField && profitSummaryDiv) {
             const updateProfitSummary = () => {
                 const inputValue = effectiveInputField.value;
+
+                // An empty box is "nothing entered yet", not "zero requested" — the literal
+                // digit '0' still falls through to the genuine-zero branch below.
+                if (inputValue.trim() === '') {
+                    profitSummaryDiv.textContent = baseSummary;
+                    return;
+                }
 
                 if (inputValue === '∞') {
                     const text = formatUnlimitedProfitText(
@@ -1108,6 +1119,12 @@ class AlchemyProfitDisplay {
             effectiveInputField.addEventListener('input', onInput);
             effectiveInputField.addEventListener('change', onChange);
             this.profitSummaryInputListeners = { field: effectiveInputField, onInput, onChange };
+        } else if (profitSummaryDiv) {
+            // The Current Action tab: no Repeat box exists and none was cached from an earlier
+            // configure-tab visit this session, but the action actually running (Stop button,
+            // not a configure form) still has a real answer when its own queue entry names one.
+            const text = estimateSpec ? formatRunningActionProfitText(estimateSpec, alchemyTotalsForCount) : null;
+            profitSummaryDiv.textContent = text !== null ? `${baseSummary} | Total profit: ${text}` : baseSummary;
         }
 
         // Create Action Speed & Time section (after profitability)
