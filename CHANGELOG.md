@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Bestiary planner was counting kills against a score kept in credits
+
+- The game pays 1 extra Bestiary credit per difficulty tier, so a T2 kill is worth three — and it shows you the weighted total, not a kill count. The planner read that total correctly but then added raw simulated kills onto it, so a route through a T2 zone asked for roughly three times the fights it needed. T0 routes were always right, which is why it stayed hidden.
+- Party runs are handled too: a simulated party splits the credit for each kill, so the plan now divides by the party size the run was simulated with. An all-zones run records that size from now on; a setting covers a run saved before this change.
+- Fight-count padding is applied over bodies rather than credits, so the confidence you set means the same thing at every tier. Worth knowing: a large party makes padding _smaller_, not larger — more real kills are needed, and a bigger count needs proportionally less margin.
+- The fractional part of your credit count is no longer thrown away, on the panel and in the plan.
+
+### Pinned Actions opens the zone you clicked
+
+- A combat row on the Pinned Actions page dropped you on the Combat Zones list instead of the zone, at whatever difficulty happened to be showing. Since every zone from your last all-zones simulation appears there once per tier, six rows that differ only by tier all did the same thing. Each now opens its own zone at its own tier, and fills nothing.
+
 ### Leftovers: counts that were never padded, and earnings that were never earned
 
 - A zone where your task monster fills more than one slot a fight — and every dungeon row — was padded by nothing at all, because more than one kill per fight was treated as certainty. Those counts are padded now, and a boss or a fixed roster still is not.
