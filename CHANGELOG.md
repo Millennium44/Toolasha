@@ -9,7 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### The Bestiary planner was counting kills against a score kept in credits
 
 - The game pays 1 extra Bestiary credit per difficulty tier, so a T2 kill is worth three — and it shows you the weighted total, not a kill count. The planner read that total correctly but then added raw simulated kills onto it, so a route through a T2 zone asked for roughly three times the fights it needed. T0 routes were always right, which is why it stayed hidden.
-- Party runs are handled too: a simulated party splits the credit for each kill, so the plan now divides by the party size the run was simulated with. An all-zones run records that size from now on; a setting covers a run saved before this change.
+- Party runs are handled too: a party splits the credit for each kill five ways in a full party, so the plan now divides by the party size the run was simulated with. An all-zones run records that size from now on, and a run saved before this change is assumed solo and says so on the row rather than guessing.
 - Fight-count padding is applied over bodies rather than credits, so the confidence you set means the same thing at every tier. Worth knowing: a large party makes padding _smaller_, not larger — more real kills are needed, and a bigger count needs proportionally less margin.
 - The fractional part of your credit count is no longer thrown away, on the panel and in the plan.
 
