@@ -8,7 +8,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat sim: three behaviors measured against the game
 
+- Players keep their attack rhythm across a dungeon wave transition instead of restarting the swing timer at every wave; a wipe or a restart still starts cold.
 - A Life Drain heal rounds up, as the game does; the life steal stat stays rounded down because it has never been measured.
+- The clear-to-next-wave gap uses the measured 3,036.9 ms mean rather than a flat 3 s.
 
 <!-- shipped in 3.56.0 -->
 

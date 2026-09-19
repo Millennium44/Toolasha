@@ -202,9 +202,9 @@ describe('golden run: one seeded hour, pinned exactly', () => {
 
         // Damage dealt by the player, and taken from each monster type
         expect(result.totalDamageDealt).toEqual({
-            player1: 16565,
-            '/monsters/golden_toad': 6123,
-            '/monsters/golden_rat': 3815,
+            player1: 16520,
+            '/monsters/golden_toad': 6107,
+            '/monsters/golden_rat': 3723,
         });
 
         // The run stops on the first event at or past the hour; with this seed

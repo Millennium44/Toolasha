@@ -122,8 +122,23 @@ const ONE_SECOND = 1e9;
 const HOT_TICK_INTERVAL = 5 * ONE_SECOND;
 const DOT_TICK_INTERVAL = 3 * ONE_SECOND;
 const REGEN_TICK_INTERVAL = 10 * ONE_SECOND;
-const ENEMY_RESPAWN_INTERVAL = 3 * ONE_SECOND;
+// The clear-to-next-wave gap is not the flat 3.000 s it looks like. Measured,
+// it spreads over a 12-bin table from 3,023 ms to 3,090 ms with a mean of
+// 3,036.9 ms, because the spawn aligns to the server's 120 s clock cycle.
+// Only the mean and the range are published, not the bins, so the mean stands
+// in for the distribution. Observation from the metz-combat-simulator accuracy
+// page (https://metzlii.github.io/metz-combat-simulator/), which credits a
+// player named Weylan for the measurement.
+//
+// The measurement was taken in a dungeon, but it is applied to the open-zone
+// respawn as well (both share this constant, as they share the branch in
+// checkEncounterEnd): the stated mechanism is alignment to a server clock that
+// runs regardless of where the fight is, so a dungeon-only value would be the
+// less likely of the two guesses. Worth ~37 ms a wave either way.
+const ENEMY_RESPAWN_INTERVAL = 3.0369 * ONE_SECOND;
 const PLAYER_RESPAWN_INTERVAL = 150 * ONE_SECOND;
+// Left flat, unlike ENEMY_RESPAWN_INTERVAL above: the dungeon-wipe restart is
+// measured as an even 3.0 s on the same page.
 const RESTART_INTERVAL = 3 * ONE_SECOND;
 const ENRAGE_TICK_INTERVAL = 60 * ONE_SECOND;
 
@@ -974,7 +989,27 @@ class CombatSimulator {
         const allPlayersDown = !this.players.some((player) => player.combatDetails.currentHitpoints > 0);
 
         if (this.enemies && !this.enemies.some((enemy) => enemy.combatDetails.currentHitpoints > 0)) {
-            this.eventQueue.clearEventsOfType(AutoAttackEvent.type);
+            // Only the departing monsters' swings are retired here. Clearing
+            // AutoAttackEvent by type used to take the players' queued swings
+            // with them, and startNewEncounter -> startAttacks then handed every
+            // player a fresh full attackInterval — so each of a dungeon run's
+            // ~10 waves shaved off part of a swing. The game keeps a player's
+            // attack rhythm running across a wave transition; only the newly
+            // spawned monsters start from zero. Observation from the
+            // metz-combat-simulator accuracy page
+            // (https://metzlii.github.io/metz-combat-simulator/).
+            //
+            // startAttacks() is safe to run over the survivors afterwards:
+            // addNextAttackEvent returns early for any unit that already has an
+            // AutoAttackEvent or an AbilityCastEndEvent queued, so nobody gets a
+            // second one. The branches that must NOT preserve player timers do
+            // their own clearing below — a labyrinth resolve and a labyrinth
+            // timeout call eventQueue.clear(), the dungeon wipe clears
+            // AutoAttackEvent by type before its restart, and an open-zone wipe
+            // does the same.
+            for (const enemy of this.enemies) {
+                this.eventQueue.clearByTypeAndSource(AutoAttackEvent.type, enemy);
+            }
 
             if (!this.labyrinth && this.zone.isDungeon && allPlayersDown) {
                 // Wipe wins in a dungeon. A dungeon run ends the moment the
