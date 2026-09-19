@@ -271,7 +271,7 @@ describe('action bar profit line — the market-volume cap', () => {
 
         const html = actionTimeDisplay.profitElement.innerHTML;
         // 1.9M/hr the calculator claims, 190K/hr the market will pay
-        expect(html).toContain('+190.0K/hr');
+        expect(html).toContain('+190.00K/hr');
         expect(html).not.toContain('+1.90M/hr');
         expect(html).toContain('vol-capped');
         expect(html).toContain('limited by market volume (~1/week)');
@@ -286,7 +286,7 @@ describe('action bar profit line — the market-volume cap', () => {
 
         const html = actionTimeDisplay.profitElement.innerHTML;
         expect(html).toContain('remaining');
-        expect(html).toContain('+190.0K');
+        expect(html).toContain('+190.00K');
     });
 
     test('an uncapped rate shows no marker — the cap is never implied', async () => {

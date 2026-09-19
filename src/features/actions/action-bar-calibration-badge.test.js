@@ -103,7 +103,7 @@ describe('action bar profit line', () => {
         await actionTimeDisplay.updateActionBarProfit({ actionHrid: '/actions/milking/cow' }, 0);
 
         const line = actionTimeDisplay.profitElement;
-        expect(line.textContent).toContain('+120.0K/hr');
+        expect(line.textContent).toContain('+120.00K/hr');
         const badge = line.querySelector('.mwi-calibration-badge');
         expect(badge).not.toBeNull();
         expect(badge.textContent).toBe('−12% over 40 runs');
@@ -114,7 +114,7 @@ describe('action bar profit line', () => {
     it('shows the bare forecast when nothing is measured, or the badges are off', async () => {
         await loadCalibrationBadges();
         await actionTimeDisplay.updateActionBarProfit({ actionHrid: '/actions/milking/cow' }, 0);
-        expect(actionTimeDisplay.profitElement.textContent).toContain('+120.0K/hr');
+        expect(actionTimeDisplay.profitElement.textContent).toContain('+120.00K/hr');
         expect(actionTimeDisplay.profitElement.querySelector('.mwi-calibration-badge')).toBeNull();
 
         world.ledger = hotLedger();

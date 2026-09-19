@@ -140,7 +140,7 @@ export function isBoundedEstimate(timing) {
 export function formatMaterialNote(timing) {
     if (!isBoundedEstimate(timing)) return '';
     const mark = timing.materialLimitIsEstimated ? '~' : '';
-    return `${timing.limitLabel}: ${mark}${actionTimeDisplay.formatLargeNumber(timing.materialLimit)}`;
+    return `${timing.limitLabel}: ${mark}${formatLargeNumber(timing.materialLimit)}`;
 }
 
 /**

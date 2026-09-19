@@ -255,8 +255,28 @@ describe('the Queued Actions panel shows what a fight is expected to make', () =
         actionTimeDisplay.injectQueueTimes(menu);
         await flush();
 
-        expect(profits(menu)).toEqual(['Profit: -1.00M (-500.0K/hr)']);
+        expect(profits(menu)).toEqual(['Profit: -1.00M (-500.00K/hr)']);
         expect(totalText()).toContain('Total profit: -1.00M');
+    });
+
+    // Regression for the live-observed bug: the panel's own capped formatLargeNumber
+    // (removed) hard-stopped at 'M', so a trillion-scale total like this one printed as
+    // "1953652.64M" instead of "1.95T" — the crafting/action panels, which already used the
+    // shared formatters.js formatLargeNumber, read it correctly the whole time.
+    test('a trillion-scale total reads in T, not a giant M figure', async () => {
+        // 1000 waves at 500/hr is 2 hours (see combatAction's own comment), so a
+        // profitPerHour of 975B doubles to a 1.95T total.
+        game.snapshot = snapshot({ profitPerHour: 975_000_000_000 });
+        await actionTimeDisplay.refreshCombatSnapshot();
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(profits(menu)).toEqual(['Profit: +1.95T (975.00B/hr)']);
+        expect(profits(menu)[0]).not.toContain('M');
+        expect(totalText()).toContain('Total profit: +1.95T');
+        expect(totalText()).not.toContain('M');
     });
 
     test('nothing is shown with the panel’s value toggle off', async () => {

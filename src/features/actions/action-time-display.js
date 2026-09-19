@@ -24,7 +24,7 @@ import { GATHERING_ACTION_TYPES, lootEntryValue } from '../networth/gold-sources
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
-import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
+import { timeReadable, formatWithSeparator, formatDateTime, formatLargeNumber } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { getCommunityGatheringQuantity } from '../../utils/community-buffs.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
@@ -987,7 +987,7 @@ class ActionTimeDisplay {
         const perHour = Number.isFinite(combat?.profitPerHour) ? combat.profitPerHour : null;
         if (perHour === null) return null;
         const total = Number.isFinite(combat.profitTotal) ? combat.profitTotal : null;
-        const money = (value) => this.formatLargeNumber(Math.abs(Math.round(value)));
+        const money = (value) => formatLargeNumber(Math.abs(Math.round(value)));
         const negative = (total === null ? perHour : total) < 0;
         const sign = negative ? '-' : '+';
         const text =
@@ -1589,7 +1589,7 @@ class ActionTimeDisplay {
                 } else if (result.isInfinite && result.materialLimit !== null) {
                     const timeStr = timeReadable(result.totalTime);
                     const mark = result.materialLimitIsEstimated ? '~' : '';
-                    timeText = `[${timeStr} · ${result.limitLabel}: ${mark}${this.formatLargeNumber(result.materialLimit)}]`;
+                    timeText = `[${timeStr} · ${result.limitLabel}: ${mark}${formatLargeNumber(result.materialLimit)}]`;
                 } else {
                     const timeStr = timeReadable(result.totalTime);
                     timeText = `[${timeStr}]`;
@@ -2505,7 +2505,7 @@ class ActionTimeDisplay {
                 } else {
                     limitLabel = 'max';
                 }
-                statsToAppend.push(`(∞ · ${limitLabel}: ${this.formatLargeNumber(materialLimit)})`);
+                statsToAppend.push(`(∞ · ${limitLabel}: ${formatLargeNumber(materialLimit)})`);
             } else {
                 statsToAppend.push(`(∞)`);
             }
@@ -3156,21 +3156,6 @@ class ActionTimeDisplay {
             includeCommunityBuff: true,
             includeBreakdown: false,
         });
-    }
-
-    /**
-     * Format a number with K/M suffix for large values
-     * @param {number} num - Number to format
-     * @returns {string} Formatted string (e.g., "1.23K", "5.67M")
-     */
-    formatLargeNumber(num) {
-        if (num < 10000) {
-            return num.toLocaleString(); // Under 10K: show full number with commas
-        } else if (num < 1000000) {
-            return (num / 1000).toFixed(1) + 'K'; // 10K-999K: show with K
-        } else {
-            return (num / 1000000).toFixed(2) + 'M'; // 1M+: show with M
-        }
     }
 
     /**
@@ -4439,7 +4424,7 @@ class ActionTimeDisplay {
                     }
                     const timeStr = timeReadable(totalTime);
                     const mark = materialLimitIsEstimated ? '~' : '';
-                    timeDiv.textContent = `[${timeStr} · ${limitLabel}: ${mark}${this.formatLargeNumber(materialLimit)}]${completionText}`;
+                    timeDiv.textContent = `[${timeStr} · ${limitLabel}: ${mark}${formatLargeNumber(materialLimit)}]${completionText}`;
                 } else {
                     const timeStr = timeReadable(totalTime);
                     timeDiv.textContent = `[${timeStr}]${completionText}`;
@@ -4625,7 +4610,7 @@ class ActionTimeDisplay {
                             // A minus, not a bare number: the colour alone carried the sign, and a
                             // loss read as a gain to anyone who could not tell the two reds apart
                             const profitSign = actionProfit >= 0 ? '+' : '-';
-                            profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${this.formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
+                            profitDiv.innerHTML = `Profit: <span style="color: ${profitColor};">${profitSign}${formatLargeNumber(Math.abs(Math.round(actionProfit)))}</span>`;
                         }
                     }
                 }
@@ -4655,7 +4640,7 @@ class ActionTimeDisplay {
                 // A combat row that could not be valued leaves the total short, and says so the
                 // way the time total says it: `+ [?]`, not a quietly smaller number
                 const incomplete = combatValue?.incomplete ? ' + [?]' : '';
-                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${this.formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`;
+                const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`;
                 totalDiv.innerHTML = baseText + valueText;
             }
         } catch (error) {
@@ -4910,7 +4895,7 @@ class ActionTimeDisplay {
                 ? config.getSettingValue('color_profit', '#4ade80')
                 : config.getSettingValue('color_loss', '#f87171');
         const sign = value >= 0 ? '+' : '';
-        const valueHtml = `<span style="color:${color}; font-weight:600;">${sign}${this.formatLargeNumber(Math.abs(Math.round(value)))}</span>`;
+        const valueHtml = `<span style="color:${color}; font-weight:600;">${sign}${formatLargeNumber(Math.abs(Math.round(value)))}</span>`;
 
         // `currentCount` is the game's whole-run figure; `totals` only ever covers what the
         // recorder actually watched. Pairing them is only honest when recording began at or
@@ -4994,7 +4979,7 @@ class ActionTimeDisplay {
                     : config.getSettingValue('color_loss', '#f87171');
             const sign = profitPerHour >= 0 ? '+' : '';
 
-            let html = `<span style="color:#888;">Profit:</span> <span style="color:${profitColor}; font-weight:600;">${sign}${this.formatLargeNumber(Math.abs(Math.round(profitPerHour)))}/hr</span>`;
+            let html = `<span style="color:#888;">Profit:</span> <span style="color:${profitColor}; font-weight:600;">${sign}${formatLargeNumber(Math.abs(Math.round(profitPerHour)))}/hr</span>`;
 
             // A capped figure is never shown silently
             if (profitData.liquidityLimit) {
@@ -5013,7 +4998,7 @@ class ActionTimeDisplay {
                         ? config.getSettingValue('color_profit', '#4ade80')
                         : config.getSettingValue('color_loss', '#f87171');
                 const remSign = remainingProfit >= 0 ? '+' : '';
-                html += ` <span style="color:#888;">·</span> <span style="color:#888;">remaining</span> <span style="color:${remColor}; font-weight:600;">${remSign}${this.formatLargeNumber(Math.abs(Math.round(remainingProfit)))}</span>`;
+                html += ` <span style="color:#888;">·</span> <span style="color:#888;">remaining</span> <span style="color:${remColor}; font-weight:600;">${remSign}${formatLargeNumber(Math.abs(Math.round(remainingProfit)))}</span>`;
             }
 
             if (this.activeBarProfitId !== calcId) return;

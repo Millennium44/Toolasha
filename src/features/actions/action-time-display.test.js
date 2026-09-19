@@ -363,7 +363,7 @@ describe('updateRunSoFar — "so far this run"', () => {
         actionTimeDisplay.updateRunSoFar({ id: 1, currentCount: 100 }, gatheringDetails);
 
         expect(actionTimeDisplay.runElement.innerHTML).toContain('100 actions');
-        expect(actionTimeDisplay.runElement.innerHTML).toContain('1,000');
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
     });
 
     test('says the run predates recording rather than printing a lying zero', () => {
@@ -435,7 +435,7 @@ describe('updateRunSoFar — whole-run count vs. a partially recorded run', () =
 
         expect(actionTimeDisplay.runElement.innerHTML).toContain('This run:');
         expect(actionTimeDisplay.runElement.innerHTML).toContain('258,632 actions');
-        expect(actionTimeDisplay.runElement.innerHTML).toContain('1,000');
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
     });
 
     test('a short gap (reload, feature just turned on) still counts as full coverage', () => {
@@ -467,7 +467,7 @@ describe('updateRunSoFar — whole-run count vs. a partially recorded run', () =
         // No whole-run action count anywhere near the value — that pairing is the bug.
         expect(html).not.toContain('258,632');
         expect(html).not.toContain('actions');
-        expect(html).toContain('1,000');
+        expect(html).toContain('1.00K');
         // Recorded days before the real clock's today, so the day is named.
         const expectedTime = formatDateTime(new Date(recordedFrom), { includeDate: true, includeSeconds: false });
         expect(html).toContain(`Since ${expectedTime}:`);
@@ -573,7 +573,7 @@ describe('the "so far this run" row redraws when the recorder catches up', () =>
         actionTimeDisplay.redrawRunSoFar();
 
         expect(actionTimeDisplay.runElement.innerHTML).not.toContain('started before recording');
-        expect(actionTimeDisplay.runElement.innerHTML).toContain('1,000');
+        expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
     });
 
     test('redrawRunSoFar is a no-op once nothing is running (clearRunSoFar dropped the cached pair)', () => {
@@ -596,7 +596,7 @@ describe('the "so far this run" row redraws when the recorder catches up', () =>
             // First notification: leading-edge redraw, immediate.
             game.runGathering = { gained: { '/items/milk': 100 }, from: 0, to: 1000 };
             actionTimeDisplay.scheduleRunSoFarRedraw();
-            expect(actionTimeDisplay.runElement.innerHTML).toContain('1,000');
+            expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
 
             // A burst of further notifications inside the throttle window must not each redraw —
             // only collapse into one trailing redraw once the window closes.
@@ -604,11 +604,11 @@ describe('the "so far this run" row redraws when the recorder catches up', () =>
             actionTimeDisplay.scheduleRunSoFarRedraw();
             actionTimeDisplay.scheduleRunSoFarRedraw();
             // Still the first value — the trailing redraw has not fired yet.
-            expect(actionTimeDisplay.runElement.innerHTML).toContain('1,000');
-            expect(actionTimeDisplay.runElement.innerHTML).not.toContain('5,000');
+            expect(actionTimeDisplay.runElement.innerHTML).toContain('1.00K');
+            expect(actionTimeDisplay.runElement.innerHTML).not.toContain('5.00K');
 
             vi.runAllTimers();
-            expect(actionTimeDisplay.runElement.innerHTML).toContain('5,000');
+            expect(actionTimeDisplay.runElement.innerHTML).toContain('5.00K');
         } finally {
             vi.useRealTimers();
         }

@@ -184,6 +184,20 @@ describe('queue tooltip costs each row against what the rows before it leave', (
         expect(rowLimits(el)).toEqual(['[50s · mat: 5]', '[0s · mat: 0]']);
     });
 
+    // Regression for the live-observed bug: the panel's own capped formatLargeNumber
+    // (removed) hard-stopped at 'M', so a billion-scale material limit like this one printed
+    // as "1248.63M" instead of reading in billions.
+    test('a billion-scale material limit reads in B, not a four-digit M figure', () => {
+        game.inventory = [stack(CHEESE, 1_250_000_000)];
+        game.currentActions = [alchemyAction(1, COINIFY)];
+
+        const el = queueTooltipPopper(['Coinify: Cheese']);
+        observerState.handler(el);
+
+        expect(rowLimits(el)).toEqual(['[396 years 4 months 15 days · mat: 1.25B]']);
+        expect(rowLimits(el)[0]).not.toContain('M');
+    });
+
     test('a counted row spends only what it performs, and the clock follows the reduced counts', () => {
         game.inventory = [stack(CHEESE, 8)];
         game.currentActions = [alchemyAction(1, COINIFY, { maxCount: 3 }), alchemyAction(2, COINIFY)];
