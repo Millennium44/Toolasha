@@ -15,6 +15,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A boss is not random — it comes every tenth wave — so boss counts are no longer padded at all. Pressing Go on a boss task used to queue 5% more fights than it could ever need.
 - An action set to repeat unlimited now shows the time and profit its materials will actually buy, before you queue it, instead of only saying it will run forever. Both figures appear on the crafting-style panels and on the alchemy ones, and quote the same materials bound.
 - The marketplace tabs keep a fixed order instead of rearranging themselves between renders.
+- The queued actions panel stopped capping every large number at "M": a profit of 1.95T read as 1953652.64M, and a count of 1.25B as 1248.63M. It now uses the same number format as the rest of the script, and follows your formatting setting.
 
 ### Leftovers: prices that were never offered, and a chart that explained itself
 
