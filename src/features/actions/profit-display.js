@@ -25,7 +25,7 @@ import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
-import { estimateUnlimitedAction, formatMaterialNote, isBoundedEstimate } from './unlimited-action-estimate.js';
+import { estimateUnlimitedAction, formatUnlimitedProfitText } from './unlimited-action-estimate.js';
 
 // The only gathering action type whose drop table is a set of mutually exclusive outcomes
 // rather than a guaranteed haul — see the actionPanel_foragingTotal gate in renderGatheringProfit.
@@ -49,10 +49,7 @@ const FORAGING_ACTION_TYPE = '/action_types/foraging';
  * @returns {string} Formatted profit text, or '∞'
  */
 export function buildUnlimitedProfitText(actionHrid, totalsForCount) {
-    const timing = estimateUnlimitedAction({ actionHrid });
-    if (!isBoundedEstimate(timing)) return '∞';
-    const totalProfit = Math.round(totalsForCount(timing.count).totalProfit);
-    return `${formatLargeNumber(totalProfit)} · ${formatMaterialNote(timing)}`;
+    return formatUnlimitedProfitText(estimateUnlimitedAction({ actionHrid }), totalsForCount);
 }
 
 const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');

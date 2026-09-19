@@ -16,7 +16,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import { timeReadable } from '../../utils/formatters.js';
+import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
 import actionTimeDisplay from './action-time-display.js';
 
 /**
@@ -152,4 +152,22 @@ export function formatMaterialNote(timing) {
 export function formatUnlimitedTimeText(timing) {
     if (!isBoundedEstimate(timing)) return null;
     return `${timeReadable(timing.totalTime)} · ${formatMaterialNote(timing)}`;
+}
+
+/**
+ * The "Total profit" text a panel shows for an action whose Repeat is set to unlimited (∞),
+ * priced through that panel's own totals helper for the materials-bounded count the estimate
+ * settled on — the same bound `formatUnlimitedTimeText` reports for the same `timing`, so a
+ * panel that shows both never has one line disagree with the other.
+ *
+ * A genuinely unbounded action gets `∞` back rather than an invented figure.
+ *
+ * @param {Object|null} timing - Result from `estimateUnlimitedAction`
+ * @param {(count: number) => {totalProfit: number}} totalsForCount - Panel's own totals helper
+ * @returns {string} Formatted profit text, or '∞'
+ */
+export function formatUnlimitedProfitText(timing, totalsForCount) {
+    if (!isBoundedEstimate(timing)) return '∞';
+    const totalProfit = Math.round(totalsForCount(timing.count).totalProfit);
+    return `${formatLargeNumber(totalProfit)} · ${formatMaterialNote(timing)}`;
 }

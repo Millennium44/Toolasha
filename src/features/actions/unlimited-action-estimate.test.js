@@ -117,6 +117,7 @@ const LOG = '/items/log';
 const PLANK = '/items/plank';
 const CRAFT_PLANK = '/actions/crafting/plank';
 const CHOP_LOG = '/actions/woodcutting/log';
+const DECOMPOSE = '/actions/alchemy/decompose';
 
 /** Inventory rows in the one location the lookup counts */
 function stack(itemHrid, count, enhancementLevel = 0) {
@@ -204,6 +205,16 @@ beforeEach(() => {
             inputItems: [],
             outputItems: [{ itemHrid: LOG, count: 1 }],
         },
+        // Same material shape as CRAFT_PLANK (2 logs each) so the alchemy panel's bound is the
+        // same 40 already exercised above.
+        [DECOMPOSE]: {
+            hrid: DECOMPOSE,
+            name: 'Decompose',
+            type: '/action_types/alchemy',
+            coinCost: 0,
+            inputItems: [{ itemHrid: LOG, count: 2 }],
+            outputItems: [],
+        },
     };
     game.inventory = [stack(LOG, 80)];
     game.currentActions = [];
@@ -215,9 +226,57 @@ afterEach(() => {
     clearUnlimitedEstimateCache();
     alchemyDisplay.sectionExpanded.clear();
     alchemyDisplay.removeSpeedTimeInputListeners();
+    alchemyDisplay.removeProfitSummaryInputListeners();
     alchemyDisplay.displayElement = null;
+    alchemyDisplay.cachedInputField = null;
     vi.useRealTimers();
 });
+
+/** The alchemy component with a Repeat input, the way `createDisplay` looks it up. */
+function buildAlchemyComponent(value) {
+    const component = document.createElement('div');
+    component.className = 'SkillActionDetail_alchemyComponent__x';
+    const inputContainer = document.createElement('div');
+    inputContainer.className = 'maxActionCountInput_wrapper';
+    const input = document.createElement('input');
+    input.value = value;
+    inputContainer.appendChild(input);
+    component.appendChild(inputContainer);
+    document.body.appendChild(component);
+    return { component, input };
+}
+
+/** A minimal-but-valid decompose profitData, shaped so createDisplay draws without crashing. */
+function decomposeProfitData(overrides = {}) {
+    return {
+        dropRevenues: [],
+        requirementCosts: [],
+        catalystCost: {},
+        consumableCosts: [],
+        profitPerHour: 3600,
+        profitPerDay: 3600 * 24,
+        revenuePerHour: 3600,
+        materialCostPerHour: 0,
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        successRate: 1,
+        actionsPerHour: 360,
+        actionTime: ACTION_TIME,
+        efficiency: 0,
+        efficiencyBreakdown: {},
+        pricingMode: 'hybrid',
+        // A flat 1000 profit per completed action, so the arithmetic under test is "how many
+        // actions", not "what is an action worth" — that has its own tests.
+        profitPerAction: 1000,
+        ...overrides,
+    };
+}
+
+/** The Profitability section's collapsed summary line. */
+function profitSummaryText(container) {
+    const section = container.querySelector('#mwi-alchemy-profit');
+    return section?.querySelector('.mwi-section-header + div')?.textContent ?? null;
+}
 
 describe('the estimate itself', () => {
     test('an unlimited action bounded by materials gets a finite time and count', () => {
@@ -382,6 +441,81 @@ describe('the alchemy panel draws the bounded time', () => {
     });
 });
 
+describe('the alchemy panel draws the bounded profit', () => {
+    // Decompose's material limit is costed against the item being processed itself (the
+    // inventory's enhanced-key count for PLANK), not actionDetails.inputItems — see
+    // calculateMaterialLimit's alchemy branch in action-time-display.js. Decompose also
+    // charges an unrecorded coin fee per action (utils/alchemy-fees.js), so a bag with
+    // plenty of coin keeps the plank count, not the gold, as the binding limit.
+    beforeEach(() => {
+        game.inventory = [...game.inventory, stack(PLANK, 40), stack('/items/coin', 1_000_000)];
+    });
+
+    test('Repeat ∞ prices the run the materials actually pay for', () => {
+        buildAlchemyComponent('∞');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        // 40 planks in the bag × 1000 flat profit per action = 40,000
+        expect(profitSummaryText(container)).toContain('Total profit: 40.00K · mat: 40');
+    });
+
+    test('both lines on the panel quote the same bound', () => {
+        buildAlchemyComponent('∞');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        const profitMat = profitSummaryText(container).match(/mat: (\d+)/)[1];
+        const speedTimeSection = container.querySelector('#mwi-alchemy-speed-time');
+        const timeSummary = speedTimeSection.querySelector('.mwi-section-header + div').textContent;
+        const timeMat = timeSummary.match(/mat: (\d+)/)[1];
+
+        expect(profitMat).toBe(timeMat);
+    });
+
+    test('with nothing describing the action on screen, ∞ stays ∞', () => {
+        buildAlchemyComponent('∞');
+        const container = document.createElement('div');
+
+        // No actionType: createDisplay cannot build an estimateSpec, so there is nothing to
+        // cost the run against — the same "no invented figure" rule as a genuinely unbounded
+        // action, covered from the estimate's own side in "a genuine infinity stays honest" above.
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), null, PLANK, 0);
+
+        expect(profitSummaryText(container)).toContain('Total profit: ∞');
+    });
+
+    test('a finite Repeat is unchanged', () => {
+        buildAlchemyComponent('10');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        // 10 completed actions × 1000 flat profit per action
+        expect(profitSummaryText(container)).toContain('Total profit: 10.00K');
+        expect(profitSummaryText(container)).not.toContain('mat:');
+    });
+
+    test('typing switches between the bounded figure and the counted one', () => {
+        const { input } = buildAlchemyComponent('∞');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+        expect(profitSummaryText(container)).toContain('Total profit: 40.00K · mat: 40');
+
+        input.value = '10';
+        input.dispatchEvent(new Event('input'));
+        expect(profitSummaryText(container)).toContain('Total profit: 10.00K');
+        expect(profitSummaryText(container)).not.toContain('mat:');
+
+        input.value = '∞';
+        input.dispatchEvent(new Event('input'));
+        expect(profitSummaryText(container)).toContain('Total profit: 40.00K · mat: 40');
+    });
+});
+
 describe('the action panel draws the bounded profit', () => {
     // The panel's own totals helper, stubbed to a flat 1000 per action so the arithmetic under
     // test is "how many actions", not "what is an action worth" — that has its own tests.
@@ -455,5 +589,40 @@ describe('redraw cost', () => {
         vi.setSystemTime(new Date('2026-01-01T10:00:05'));
 
         expect(estimateUnlimitedAction({ actionHrid: CRAFT_PLANK }).count).toBe(10);
+    });
+
+    test('the action panel time line and profit line share one walk', () => {
+        // quick-input-buttons.js (time) and profit-display.js (profit) are two independent
+        // consumers on the same panel; both must land on the shared cache rather than each
+        // walking the bag itself.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-01-01T10:00:00'));
+        const walk = vi.spyOn(actionTimeDisplay, 'buildInventoryLookup');
+        const totalsForCount = (actionsCount) => ({ totalProfit: actionsCount * 1000 });
+
+        const timing = estimateUnlimitedAction({ actionHrid: CRAFT_PLANK }); // as the time line would
+        const profitText = buildUnlimitedProfitText(CRAFT_PLANK, totalsForCount); // as the profit line would
+
+        expect(walk).toHaveBeenCalledTimes(1);
+        expect(formatUnlimitedTimeText(timing)).toBe('0h 06m 40s · mat: 40');
+        expect(profitText).toBe('40.00K · mat: 40');
+
+        walk.mockRestore();
+    });
+
+    test('the alchemy panel builds both its lines from one walk', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-01-01T10:00:00'));
+        const walk = vi.spyOn(actionTimeDisplay, 'buildInventoryLookup');
+        game.inventory = [...game.inventory, stack(PLANK, 40), stack('/items/coin', 1_000_000)];
+        buildAlchemyComponent('∞');
+        const container = document.createElement('div');
+
+        alchemyDisplay.createDisplay(container, decomposeProfitData(), 'decompose', PLANK, 0);
+
+        expect(walk).toHaveBeenCalledTimes(1);
+        expect(profitSummaryText(container)).toContain('mat: 40');
+
+        walk.mockRestore();
     });
 });

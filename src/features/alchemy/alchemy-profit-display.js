@@ -21,6 +21,7 @@ import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import {
     estimateUnlimitedAction,
     formatUnlimitedTimeText,
+    formatUnlimitedProfitText,
     clearUnlimitedEstimateCache,
 } from '../actions/unlimited-action-estimate.js';
 
@@ -40,6 +41,7 @@ class AlchemyProfitDisplay {
         this.sectionExpanded = new Map(); // Persistent expand/collapse state across rebuilds
         this.cachedInputField = null; // Cache input field since it gets removed when action starts
         this.speedTimeInputListeners = null; // { field, onInput, onChange } attached to the Repeat input
+        this.profitSummaryInputListeners = null; // { field, onInput, onChange } for the Profitability total
         this._alchemyTargetLevel = null;
         this.pricingUnsubscribers = []; // config listener unregister functions
     }
@@ -517,7 +519,7 @@ class AlchemyProfitDisplay {
         const costs = Math.round(
             profitData.materialCostPerHour + profitData.catalystCostPerHour + profitData.totalTeaCostPerHour
         );
-        const summary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        const baseSummary = `${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
 
         const detailsContent = document.createElement('div');
 
@@ -1020,16 +1022,9 @@ class AlchemyProfitDisplay {
 
         topLevelContent.appendChild(detailedBreakdownSection);
 
-        // Create main profit section
-        const profitSection = this.createTrackedCollapsible('💰', 'Profitability', summary, topLevelContent, false, 0);
-        profitSection.id = 'mwi-alchemy-profit';
-        profitSection.classList.add('mwi-alchemy-profit');
-        profitSection.setAttribute('data-mwi-profit-display', 'true');
-
-        // Append to container
-        container.appendChild(profitSection);
-
-        // Find the Repeat input field for dynamic updates
+        // Find the Repeat input field for dynamic updates — resolved before the Profitability
+        // section is built so its "Total profit" line and the Action Speed & Time section below
+        // it share the one estimateSpec, and so price the very same unlimited Repeat estimate.
         const alchemyComponent = document.querySelector('[class*="SkillActionDetail_alchemyComponent"]');
         const inputContainer = alchemyComponent?.querySelector('[class*="maxActionCountInput"]');
         const inputField = inputContainer?.querySelector('input');
@@ -1042,18 +1037,81 @@ class AlchemyProfitDisplay {
         // Use cached input field if current one is not available
         const effectiveInputField = inputField || this.cachedInputField;
 
+        // What the panel knows about the action being looked at, so an unlimited Repeat can be
+        // costed against the bag by the same calculator the queue row uses.
+        const estimateSpec = actionType
+            ? {
+                  actionHrid: `/actions/alchemy/${actionType}`,
+                  itemHrid,
+                  enhancementLevel,
+                  catalystHrid: profitData?.catalystCost?.itemHrid || null,
+              }
+            : null;
+
+        // Create main profit section
+        const profitSection = this.createTrackedCollapsible(
+            '💰',
+            'Profitability',
+            `${baseSummary} | Total profit: 0`,
+            topLevelContent,
+            false,
+            0
+        );
+        profitSection.id = 'mwi-alchemy-profit';
+        profitSection.classList.add('mwi-alchemy-profit');
+        profitSection.setAttribute('data-mwi-profit-display', 'true');
+
+        // Append to container
+        container.appendChild(profitSection);
+
+        // An unlimited Repeat is not actually unlimited: it stops when the materials do, and
+        // the shared estimate already says exactly when. Price that many actions through this
+        // action's own per-action profit so the Profitability total and the Action Speed & Time
+        // total below it never disagree about the bound.
+        const alchemyTotalsForCount = (count) => ({
+            totalProfit:
+                count *
+                (profitData.profitPerAction ??
+                    (profitData.actionsPerHour ? profitData.profitPerHour / profitData.actionsPerHour : 0)),
+        });
+
+        const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
+        if (effectiveInputField && profitSummaryDiv) {
+            const updateProfitSummary = () => {
+                const inputValue = effectiveInputField.value;
+
+                if (inputValue === '∞') {
+                    const text = formatUnlimitedProfitText(
+                        estimateUnlimitedAction(estimateSpec),
+                        alchemyTotalsForCount
+                    );
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${text}`;
+                    return;
+                }
+
+                const repeatCount = parseInt(inputValue) || 0;
+                if (repeatCount > 0) {
+                    const totalProfit = Math.round(alchemyTotalsForCount(repeatCount).totalProfit);
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: ${formatLargeNumber(totalProfit)}`;
+                } else {
+                    profitSummaryDiv.textContent = `${baseSummary} | Total profit: 0`;
+                }
+            };
+
+            updateProfitSummary();
+
+            // Remove the previous rebuild's listeners first — the input element is reused
+            // across rebuilds via this.cachedInputField.
+            this.removeProfitSummaryInputListeners();
+            const onInput = () => updateProfitSummary();
+            const onChange = () => updateProfitSummary();
+            effectiveInputField.addEventListener('input', onInput);
+            effectiveInputField.addEventListener('change', onChange);
+            this.profitSummaryInputListeners = { field: effectiveInputField, onInput, onChange };
+        }
+
         // Create Action Speed & Time section (after profitability)
         if (effectiveInputField && profitData.actionTime && profitData.efficiencyBreakdown) {
-            // What the panel knows about the action being looked at, so an unlimited Repeat
-            // can be costed against the bag by the same calculator the queue row uses.
-            const estimateSpec = actionType
-                ? {
-                      actionHrid: `/actions/alchemy/${actionType}`,
-                      itemHrid,
-                      enhancementLevel,
-                      catalystHrid: profitData?.catalystCost?.itemHrid || null,
-                  }
-                : null;
             const speedTimeSection = this.createActionSpeedTimeSection(profitData, effectiveInputField, estimateSpec);
             if (speedTimeSection) {
                 speedTimeSection.id = 'mwi-alchemy-speed-time';
@@ -1525,6 +1583,18 @@ class AlchemyProfitDisplay {
     }
 
     /**
+     * Remove the Repeat input listeners attached to the Profitability section's total-profit line
+     */
+    removeProfitSummaryInputListeners() {
+        if (this.profitSummaryInputListeners) {
+            const { field, onInput, onChange } = this.profitSummaryInputListeners;
+            field.removeEventListener('input', onInput);
+            field.removeEventListener('change', onChange);
+            this.profitSummaryInputListeners = null;
+        }
+    }
+
+    /**
      * Remove profit display
      */
     removeDisplay() {
@@ -1607,6 +1677,7 @@ class AlchemyProfitDisplay {
             }
 
             this.removeSpeedTimeInputListeners();
+            this.removeProfitSummaryInputListeners();
             this.removeDisplay();
             this.lastFingerprint = null; // Clear fingerprint on disable
             this.isActive = false;

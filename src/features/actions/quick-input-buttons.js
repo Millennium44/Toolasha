@@ -38,6 +38,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { scrollSimulator } from '../../utils/bundle-bridge.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
+import { estimateUnlimitedAction, formatUnlimitedTimeText } from './unlimited-action-estimate.js';
 
 /**
  * Paint the add-mode toggle for the state it is in.
@@ -641,11 +642,20 @@ class QuickInputButtons {
                           )
                         : Math.ceil(queueCount / efficiencyMultiplier) * actionTime;
 
+                // An unlimited Repeat is bounded by what the player is holding, and the queue
+                // row for this very action already says so. Ask the same calculator rather than
+                // printing ∞ at someone who can see the finite answer one click later.
+                const unlimitedTimeText = () =>
+                    actionDetails.hrid
+                        ? formatUnlimitedTimeText(estimateUnlimitedAction({ actionHrid: actionDetails.hrid }))
+                        : null;
+
                 const updateTotalTime = () => {
                     const inputValue = numberInput.value;
 
                     if (inputValue === '∞') {
-                        totalTimeLine.textContent = 'Total time: ∞';
+                        const bounded = unlimitedTimeText();
+                        totalTimeLine.textContent = bounded ? `Total time: ${bounded}` : 'Total time: ∞';
                         return;
                     }
 
@@ -724,7 +734,8 @@ class QuickInputButtons {
                     if (speedSummaryDiv) {
                         const inputValue = numberInput.value;
                         if (inputValue === '∞') {
-                            speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: ∞`;
+                            const bounded = unlimitedTimeText();
+                            speedSummaryDiv.textContent = `${actionsPerHourWithEfficiency}/hr | Total time: ${bounded || '∞'}`;
                         } else {
                             const queueCount = parseInt(inputValue) || 0;
                             if (queueCount > 0) {
