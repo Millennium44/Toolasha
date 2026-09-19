@@ -143,7 +143,11 @@ function singleZoneHoursToTarget(creditsPerHour, counts, target) {
     for (const [hrid, rate] of Object.entries(creditsPerHour || {})) {
         const perHour = Number(rate) || 0;
         if (!(perHour > 0)) continue;
-        state.push({ perHour, count: Math.max(0, Math.floor(Number(counts[hrid]) || 0)) });
+        // `counts` here is the route's own `start`, which is fractional — flooring
+        // it would make this comparison start from a different number than the
+        // route it is being compared against.
+        const rawCount = Number(counts[hrid]);
+        state.push({ perHour, count: Number.isFinite(rawCount) ? Math.max(0, rawCount) : 0 });
     }
     if (!state.length) return null;
 

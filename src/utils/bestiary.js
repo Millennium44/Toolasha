@@ -196,7 +196,11 @@ export function zoneBestiaryOutlook({ creditsPerHour = {}, counts = {}, hours = 
     for (const [hrid, rate] of Object.entries(creditsPerHour)) {
         const perHour = Number(rate) || 0;
         if (!(perHour > 0)) continue;
-        const count = Math.max(0, Math.floor(Number(counts[hrid]) || 0));
+        // Kept fractional for the same reason {@link countsByMonster} keeps it:
+        // flooring here would silently undo that, since this is the consumer the
+        // live panel actually renders from.
+        const rawCount = Number(counts[hrid]);
+        const count = Number.isFinite(rawCount) ? Math.max(0, rawCount) : 0;
         const reached = count + perHour * horizon;
         const gained = pointsFromCount(reached) - pointsFromCount(count);
         const nextAt = nextPointCount(count);

@@ -96,6 +96,29 @@ describe('a zone’s outlook', () => {
             monsters: [],
         });
     });
+
+    test('the fractional part of a credit count survives into the outlook', () => {
+        // The live panel renders from here, so a floor in this function would
+        // silently undo `countsByMonster` keeping the fraction — the reading
+        // would be right at the source and wrong on screen.
+        const outlook = zoneBestiaryOutlook({
+            creditsPerHour: { '/monsters/fly': 1 },
+            counts: { '/monsters/fly': 496.8 },
+            hours: 1,
+        });
+        expect(outlook.monsters[0].count).toBe(496.8);
+        // 503.2 credits short of 1000, not the 504 a floored 496 would claim
+        expect(outlook.monsters[0].hoursToNext).toBeCloseTo(503.2, 6);
+    });
+
+    test('a count that is negative or not a number still clamps to zero', () => {
+        const outlook = zoneBestiaryOutlook({
+            creditsPerHour: { '/monsters/fly': 1, '/monsters/rat': 1 },
+            counts: { '/monsters/fly': -5, '/monsters/rat': Number.NaN },
+            hours: 1,
+        });
+        expect(outlook.monsters.every((m) => m.count === 0)).toBe(true);
+    });
 });
 
 describe('a kill is not a credit', () => {
