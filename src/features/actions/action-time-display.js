@@ -1167,14 +1167,39 @@ class ActionTimeDisplay {
             });
             line.appendChild(button);
 
-            if (!sweep && stale.length === 0) {
-                const note = document.createElement('span');
-                note.className = 'mwi-queue-sim-all-note';
-                note.textContent = 'every queued fight already has a fresh rate';
-                line.appendChild(note);
+            // Beside the panel's own title rather than on a line of its own. The
+            // title is a plain block div, so it is switched to flex to seat the
+            // button next to the text; the game rebuilds the node on every render,
+            // so the style never outlives the menu it was applied to. The class
+            // hash (`QueuedActions_label__1lTOW`) changes between game builds, so
+            // it is matched by prefix, and a miss falls back to the old line above
+            // the queue rather than dropping the button.
+            const title = queueMenu.querySelector('[class*="QueuedActions_label"]');
+            if (title) {
+                title.style.display = 'flex';
+                title.style.alignItems = 'center';
+                title.style.justifyContent = 'center';
+                title.style.gap = '8px';
+                line.style.marginBottom = '0';
+                title.appendChild(line);
+            } else {
+                queueMenu.insertAdjacentElement('afterbegin', line);
             }
 
-            queueMenu.insertAdjacentElement('afterbegin', line);
+            // The note is a sentence, and the panel is 414px at its widest, so it
+            // stays on its own line under the title instead of beside the button.
+            if (!sweep && stale.length === 0) {
+                const note = document.createElement('div');
+                note.className = `${QUEUE_SIM_HEADER_CLASS} mwi-queue-sim-all-note`;
+                note.textContent = 'every queued fight already has a fresh rate';
+                note.style.cssText = `
+                    text-align: center;
+                    margin-bottom: 6px;
+                    font-size: 0.85em;
+                    color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                `;
+                (title || queueMenu).insertAdjacentElement(title ? 'afterend' : 'afterbegin', note);
+            }
         } catch (error) {
             console.error('[ActionTimeDisplay] Drawing the queue sim header failed:', error);
         }

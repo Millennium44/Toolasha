@@ -391,6 +391,39 @@ describe('the panel\u2019s "sim 24h" button', () => {
         expect(rowTexts(menu)[0]).toMatch(/^\[~1h 00m 00s · sim, other gear\]/);
     });
 
+    test('sits inside the panel title, beside its text', () => {
+        game.actions = [combatAction(1, { hrid: GOBO, tier: 3 }), coinifyAction(2)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Coinify'], { withTitle: true });
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        const title = menu.querySelector('[class*="QueuedActions_label"]');
+        expect(title.contains(header(menu))).toBe(true);
+        // The title text survives alongside it, and is laid out to seat the button
+        expect(title.textContent).toContain('Queued Actions (2/6)');
+        expect(title.style.display).toBe('flex');
+        // And it is no longer a line of its own above the first row
+        expect(menu.firstElementChild).toBe(title);
+    });
+
+    test('falls back to its own line when the title cannot be found', () => {
+        game.actions = [combatAction(1, { hrid: GOBO, tier: 3 }), coinifyAction(2)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Coinify']);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        expect(menu.querySelector('[class*="QueuedActions_label"]')).toBeNull();
+        expect(menu.querySelectorAll('.mwi-queue-sim-all-button')).toHaveLength(1);
+        expect(menu.firstElementChild.classList.contains('mwi-queue-sim-header')).toBe(true);
+    });
+
+    test('redrawing with a title present still leaves one button', () => {
+        game.actions = [combatAction(1, { hrid: GOBO, tier: 3 }), coinifyAction(2)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Coinify'], { withTitle: true });
+        actionTimeDisplay.injectQueueTimes(menu);
+        actionTimeDisplay.injectQueueTimes(menu);
+
+        expect(menu.querySelectorAll('.mwi-queue-sim-all-button')).toHaveLength(1);
+    });
+
     test('is not offered with the Combat Simulator switched off', () => {
         game.combatSim = false;
         game.currentActions = [combatAction(1)];
@@ -569,11 +602,19 @@ describe('the panel\u2019s "sim 24h" button', () => {
 });
 
 /** The edit menu as the game draws it, one row per label. */
-function queueMenu(labels) {
+function queueMenu(labels, { withTitle = false } = {}) {
     const parent = document.createElement('div');
     const menu = document.createElement('div');
     menu.className = 'QueuedActions_queuedActionsEditMenu__x';
-    menu.innerHTML = labels
+    if (withTitle) {
+        // The real panel opens with its own title line; the class carries a build
+        // hash in game (`QueuedActions_label__1lTOW`), hence the prefix match.
+        const title = document.createElement('div');
+        title.className = 'QueuedActions_label__x';
+        title.textContent = `Queued Actions (${labels.length}/6)`;
+        menu.appendChild(title);
+    }
+    menu.innerHTML += labels
         .map(
             (label, index) => `
         <div class="QueuedActions_action__item">
