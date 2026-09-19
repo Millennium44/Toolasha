@@ -1132,6 +1132,30 @@ class ActionTimeDisplay {
     }
 
     /**
+     * Mark the panel's value total short by a row that can never be valued.
+     *
+     * A row the queue runs forever and cannot cost — a gathering action set to Repeat ∞, which
+     * has no materials to bound it — contributes nothing to the total, and a total that prints
+     * without saying so reads as the whole queue's worth. `+ [?]` is the same admission the time
+     * total makes through `hasUnknown`, and the same one a counted fight with no simulated rate
+     * already makes here.
+     *
+     * A Repeat-∞ crafting or alchemy row is not this case: its materials bound it, so it has a
+     * count, a figure, and nothing to admit.
+     *
+     * Enhancing rows are left out because no enhancing row is ever valued, bounded or not —
+     * marking only the endless ones would say the panel had lost a figure it never had.
+     *
+     * @param {{total: number, hasAny: boolean, incomplete: boolean}} tally - Mutated in place
+     * @param {Object} actionDetails - The row's action details
+     */
+    markValueUnbounded(tally, actionDetails) {
+        if (!tally || !this.combatValueApplies()) return;
+        if (actionDetails?.type === '/action_types/enhancing') return;
+        tally.incomplete = true;
+    }
+
+    /**
      * Whether a queued fight's rate is fresh enough that the header button should skip it.
      *
      * Fresh means the row has a reading and that reading carries no flags — exactly the flags the
@@ -4105,11 +4129,13 @@ class ActionTimeDisplay {
             let usesSimRate = false;
             let hasMaterialLimitEstimate = false;
             const actionsToCalculate = []; // Store actions for async profit calculation (with time in seconds)
-            // What the combat rows contribute to the panel's value total. They are not in
-            // `actionsToCalculate`: their figure comes from a stored simulation, not from the
-            // market calculators, and a row with no figure marks the total incomplete rather than
-            // adding a zero.
-            const combatValue = { total: 0, hasAny: false, incomplete: false };
+            // What the rows the market pass cannot answer contribute to the panel's value
+            // total, and whether any of them could not be answered at all. The combat rows are
+            // not in `actionsToCalculate`: their figure comes from a stored simulation, not from
+            // the market calculators, and a row with no figure marks the total incomplete rather
+            // than adding a zero. A row that runs forever with nothing to bound it marks it the
+            // same way, for the same reason.
+            const valueTally = { total: 0, hasAny: false, incomplete: false };
 
             // Detect current action from DOM so we can avoid double-counting
             let currentAction = null;
@@ -4128,7 +4154,7 @@ class ActionTimeDisplay {
                 if (currentCombat) {
                     // A counted fight spends nothing from the ledger, and its value comes from the
                     // same simulated reading its time does rather than from the profit pass below
-                    this.addCombatValue(combatValue, currentCombat);
+                    this.addCombatValue(valueTally, currentCombat);
                     if (currentCombat.kind === 'estimate') {
                         accumulatedTime += currentCombat.seconds;
                         hasEstimate = true;
@@ -4168,6 +4194,7 @@ class ActionTimeDisplay {
                             }
                         } else if (isInfinite) {
                             hasInfinite = true;
+                            this.markValueUnbounded(valueTally, actionDetails);
                         }
                     } else if (isInfinite) {
                         // Check for material limit on infinite actions
@@ -4195,6 +4222,12 @@ class ActionTimeDisplay {
                                 hasMaterialLimitEstimate = true;
                             }
 
+                            if (materialLimit === null) {
+                                // Endless and unbounded: no count, so no figure, and the total
+                                // must not print as if this row were worth nothing
+                                this.markValueUnbounded(valueTally, actionDetails);
+                            }
+
                             if (materialLimit !== null) {
                                 // Material-limited infinite action - calculate time
                                 count = materialLimit; // Max queued actions based on materials
@@ -4212,6 +4245,7 @@ class ActionTimeDisplay {
                         } else {
                             // Could not calculate action time
                             hasInfinite = true;
+                            this.markValueUnbounded(valueTally, actionDetails);
                         }
                     } else {
                         // Counted row: shown for what its materials can actually buy, the same
@@ -4355,7 +4389,7 @@ class ActionTimeDisplay {
                     (combatTextContainer || actionDiv).appendChild(combatDiv);
                     this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
                     this.appendCombatRowProfit(actionDiv, combat);
-                    this.addCombatValue(combatValue, combat);
+                    this.addCombatValue(valueTally, combat);
                     continue;
                 }
 
@@ -4551,7 +4585,10 @@ class ActionTimeDisplay {
                     const infiniteCombat = this.combatRowReading(actionObj, actionDetails);
                     if (infiniteCombat) {
                         this.appendCombatRowProfit(actionDiv, infiniteCombat);
-                        this.addCombatValue(combatValue, infiniteCombat);
+                        this.addCombatValue(valueTally, infiniteCombat);
+                    } else {
+                        // Nothing to value this row by, and it never ends: the total says so
+                        this.markValueUnbounded(valueTally, actionDetails);
                     }
                 }
 
@@ -4637,7 +4674,10 @@ class ActionTimeDisplay {
             // calculation to wait for, but their total is written by the same pass so the panel
             // only ever shows one value line.
             const marketRows = actionsToCalculate.length > 0 && marketAPI.isLoaded();
-            if ((marketRows || combatValue.hasAny) && config.getSettingValue('actionQueue_showValue', true)) {
+            // `incomplete` alone is not enough to start the pass: with nothing to total, there
+            // is no figure for a `+ [?]` to qualify, and the value line stays off entirely — the
+            // same as a queue of nothing but fights with no simulated rate.
+            if ((marketRows || valueTally.hasAny) && config.getSettingValue('actionQueue_showValue', true)) {
                 // Async will handle observer reconnection after updates complete
                 shouldReconnectObserver = false;
                 this.calculateAndDisplayTotalProfit(
@@ -4645,7 +4685,7 @@ class ActionTimeDisplay {
                     marketRows ? actionsToCalculate : [],
                     totalText,
                     queueMenu,
-                    combatValue
+                    valueTally
                 );
             }
         } catch (error) {
@@ -4664,10 +4704,12 @@ class ActionTimeDisplay {
      * @param {Array} actionsToCalculate - Array of {actionHrid, timeSeconds, count, baseActionsNeeded, divIndex} objects
      * @param {string} baseText - Base text (time) to prepend
      * @param {HTMLElement} queueMenu - Queue menu element to reconnect observer after updates
-     * @param {{total: number, hasAny: boolean, incomplete: boolean}} [combatValue] - What the
-     *   queue's combat rows contribute, and whether any of them had no figure to contribute
+     * @param {{total: number, hasAny: boolean, incomplete: boolean}} [valueTally] - What the
+     *   rows the market pass cannot answer contribute, and whether any row had no figure to
+     *   contribute at all — a fight with no simulated rate, or a row that runs forever with
+     *   nothing to bound it
      */
-    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText, queueMenu, combatValue = null) {
+    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText, queueMenu, valueTally = null) {
         // Generate unique ID for this calculation to prevent race conditions
         const calculationId = Date.now() + Math.random();
         this.activeProfitCalculationId = calculationId;
@@ -4722,8 +4764,8 @@ class ActionTimeDisplay {
             });
 
             // The combat rows' own figures, out of the same simulated readings that timed them
-            if (combatValue?.hasAny) {
-                totalProfit += combatValue.total;
+            if (valueTally?.hasAny) {
+                totalProfit += valueTally.total;
                 hasProfitData = true;
             }
 
@@ -4742,9 +4784,10 @@ class ActionTimeDisplay {
                 // As on the rows: a negative total says so in the number, not only in its colour
                 const valueSign = totalProfit >= 0 ? '+' : '-';
                 const valueLabel = isEstimatedValue ? 'Estimated value' : 'Total profit';
-                // A combat row that could not be valued leaves the total short, and says so the
+                // A row that could not be valued — a fight with no simulated rate, or one that
+                // runs forever with nothing to bound it — leaves the total short, and says so the
                 // way the time total says it: `+ [?]`, not a quietly smaller number
-                const incomplete = combatValue?.incomplete ? ' + [?]' : '';
+                const incomplete = valueTally?.incomplete ? ' + [?]' : '';
                 const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`;
                 totalDiv.innerHTML = baseText + valueText;
             }

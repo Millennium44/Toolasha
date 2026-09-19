@@ -87,6 +87,30 @@ const COMBAT_ID = 41704;
 
 const gobo = { hrid: GOBO, name: 'Gobo Planet', type: '/action_types/combat', combatZoneInfo: { isDungeon: false } };
 
+const MILK = '/actions/milking/cow';
+/** A gathering action: no inputs, so nothing bounds it when it is queued as Repeat ∞. */
+const cow = {
+    hrid: MILK,
+    name: 'Milk Cow',
+    type: '/action_types/milking',
+    inputItems: [],
+    outputItems: [{ itemHrid: '/items/milk', count: 1 }],
+    experienceGain: { skillHrid: '/skills/milking', value: 10 },
+};
+
+/** A Repeat-∞ row: no count, and for a gathering action nothing to cap it either. */
+function endlessAction(id, actionHrid) {
+    return {
+        id,
+        ordinal: id,
+        actionHrid,
+        primaryItemHash: '',
+        hasMaxCount: false,
+        maxCount: 0,
+        currentCount: 0,
+    };
+}
+
 /** A fight with 1000 waves left, which at 500 waves an hour is two hours. */
 function combatAction(id, { maxCount = 1080, currentCount = 80, tier = 3, loadoutId = COMBAT_ID } = {}) {
     return {
@@ -226,6 +250,30 @@ describe('the Queued Actions panel shows what a fight is expected to make', () =
         vi.useRealTimers();
         actionTimeDisplay._combatSnapshotCache = null;
         actionTimeDisplay._lastQueueMenu = null;
+    });
+
+    // A row that runs forever with no materials to bound it has no figure to give, and the
+    // total used to print as though the whole queue were in it. The `+ [?]` the time total makes
+    // through `hasUnknown`, and a counted fight with no rate already made here, now covers it.
+    test('a gathering Repeat-∞ row leaves the total marked short', async () => {
+        game.actionDetails = { [GOBO]: gobo, [MILK]: cow };
+        game.currentActions = [combatAction(1), endlessAction(2, MILK)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Milk Cow']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(totalText()).toContain('Total profit: +2.00M + [?]');
+    });
+
+    test('the same row marks the Estimated Value total short too', async () => {
+        game.valueMode = 'estimated_value';
+        game.actionDetails = { [GOBO]: gobo, [MILK]: cow };
+        game.currentActions = [combatAction(1), endlessAction(2, MILK)];
+        const menu = queueMenu(['Gobo Planet (T3)', 'Milk Cow']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        expect(totalText()).toContain('Estimated value: +2.80M + [?]');
     });
 
     test('a counted row reads its total and its rate', async () => {
