@@ -213,3 +213,79 @@ describe('calculateTickValue distributes a total across ticks', () => {
         }
     });
 });
+
+/**
+ * Life Drain rounds its heal up, and life steal does not.
+ *
+ * Fifteen of fifteen captured Life Drain casts came back at the ceiling of
+ * ratio x damage x healing amplify (observation from the metz-combat-simulator
+ * accuracy page). The life steal combat stat has never been measured against
+ * the game, so it stays floored — this pins the asymmetry so it is not
+ * "tidied" into agreement.
+ */
+describe('drain and steal rounding', () => {
+    /**
+     * A unit that records every heal it is asked for instead of applying it.
+     * @param {Object} statOverrides - Combat stat overrides
+     * @returns {{unit: Object, heals: number[]}}
+     */
+    function recordingSource(statOverrides = {}) {
+        const heals = [];
+        // healingAmplify is not in zeroStats; without it the drain math is NaN
+        const source = unit({ healingAmplify: 0, ...statOverrides });
+        source.addHitpoints = (amount) => {
+            heals.push(amount);
+            return amount;
+        };
+        return { unit: source, heals };
+    }
+
+    /** An ability effect that hits like an auto attack and drains on hit. */
+    function drainEffect(hpDrainRatio) {
+        return {
+            combatStyleHrid: '/combat_styles/stab',
+            damageType: '/damage_types/physical',
+            damageFlat: 0,
+            damageRatio: 1,
+            armorDamageRatio: 0,
+            bonusAccuracyRatio: 0,
+            hpDrainRatio,
+        };
+    }
+
+    test('a Life Drain heal rounds up', () => {
+        // A ratio whose product with any whole damage number lands off an
+        // integer, so floor and ceil cannot agree by luck
+        const ratio = 0.333;
+        const { unit: source, heals } = recordingSource();
+        seedSimRng(SEED);
+        const result = CombatUtilities.processAttack(source, unit(), drainEffect(ratio));
+
+        expect(result.didHit).toBe(true);
+        expect(result.damageDone).toBeGreaterThan(0);
+        expect(heals).toHaveLength(1);
+        expect(heals[0]).toBe(Math.ceil(ratio * result.damageDone));
+        expect(heals[0]).toBeGreaterThan(Math.floor(ratio * result.damageDone));
+    });
+
+    test('healing amplify is inside the rounding, not applied after it', () => {
+        const ratio = 0.25;
+        const { unit: source, heals } = recordingSource({ healingAmplify: 0.13 });
+        seedSimRng(SEED);
+        const result = CombatUtilities.processAttack(source, unit(), drainEffect(ratio));
+
+        expect(heals[0]).toBe(Math.ceil(ratio * result.damageDone * 1.13));
+    });
+
+    test('life steal still rounds down — it has never been measured', () => {
+        const lifeSteal = 0.333;
+        const { unit: source, heals } = recordingSource({ lifeSteal });
+        seedSimRng(SEED);
+        const result = CombatUtilities.processAttack(source, unit());
+
+        expect(result.didHit).toBe(true);
+        expect(heals).toHaveLength(1);
+        expect(heals[0]).toBe(Math.floor(lifeSteal * result.damageDone));
+        expect(heals[0]).toBeLessThan(Math.ceil(lifeSteal * result.damageDone));
+    });
+});

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim: three behaviors measured against the game
+
+- A Life Drain heal rounds up, as the game does; the life steal stat stays rounded down because it has never been measured.
+
 <!-- shipped in 3.56.0 -->
 
 ### The Bestiary planner was counting kills against a score kept in credits

@@ -340,6 +340,12 @@ class CombatUtilities {
         }
 
         let lifeStealHeal = 0;
+        // Deliberately floored, and deliberately NOT changed to match the Life
+        // Drain rounding below: the life steal combat stat has never been
+        // measured against the game (the metz-combat-simulator accuracy page,
+        // https://metzlii.github.io/metz-combat-simulator/, says as much of both
+        // life steal and mana leech). Only the Life Drain ability was captured.
+        // Do not "fix" this for consistency without a measurement.
         if (!abilityEffect && didHit && source.combatDetails.combatStats.lifeSteal > 0) {
             lifeStealHeal = source.addHitpoints(Math.floor(source.combatDetails.combatStats.lifeSteal * damageDone));
         }
@@ -347,7 +353,10 @@ class CombatUtilities {
         let hpDrain = 0;
         if (abilityEffect && didHit && abilityEffect.hpDrainRatio > 0) {
             const healingAmplify = 1 + source.combatDetails.combatStats.healingAmplify;
-            hpDrain = source.addHitpoints(Math.floor(abilityEffect.hpDrainRatio * damageDone * healingAmplify));
+            // The game rounds a Life Drain heal UP: 15 of 15 captured casts came
+            // back at the ceiling of ratio x damage x amplify. Observation from
+            // the metz-combat-simulator accuracy page (see above).
+            hpDrain = source.addHitpoints(Math.ceil(abilityEffect.hpDrainRatio * damageDone * healingAmplify));
         }
 
         let manaLeechMana = 0;
