@@ -14,6 +14,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - A queued row that can never be valued now marks the panel's total as short, instead of leaving a total that looks complete.
 - A repeat-unlimited enhancing run shows the time its materials and protections will buy, on the panel and in the queue — and says nothing about materials when it is the target level that stops it.
 - Long durations print two units rather than three: "73 years 9 months", not "73 years 9 months 29 days". Anything under a day is unchanged.
+- The action panel's Current Action tab said your running action would make a total of 0. It shows what the run will actually make now, and says nothing at all where there is no honest figure — an empty repeat box no longer reads as zero profit either.
 
 ### The queued actions panel, and fight counts you can trust
 
