@@ -79,8 +79,8 @@ export async function loadAllZonesSnapshot() {
  * @param {string} zoneHrid - The zone being measured, e.g. `/actions/combat/fly`
  * @param {number} [difficultyTier] - Its difficulty tier
  * @returns {{zoneName: string, zoneHrid: string, difficultyTier: number,
- *   profitPerHour: number, xpPerHour: number|null, encountersPerHour: number|null,
- *   savedAt: number|null, fingerprint: string|null,
+ *   profitPerHour: number, revenuePerHour: number|null, xpPerHour: number|null,
+ *   encountersPerHour: number|null, savedAt: number|null, fingerprint: string|null,
  *   loadout: {source: string, name: string|null}|null}|null}
  *   The row, or null when the snapshot has none
  */
@@ -98,6 +98,10 @@ export function zoneFromSnapshot(snapshot, zoneHrid, difficultyTier = 0) {
         zoneHrid: zone.zoneHrid,
         difficultyTier: zone.difficultyTier ?? 0,
         profitPerHour: zone.profitPerHour,
+        // The gross the zone's drops fetch after sale tax, before consumables. A run written
+        // before the field has none, and null is the answer — never the net figure standing in
+        // for it, which would quote a profit under a revenue label.
+        revenuePerHour: Number.isFinite(zone.revenuePerHour) ? zone.revenuePerHour : null,
         xpPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
         // A rate of zero would read as "this fight never ends"; a run that
         // predates the field has no reading at all, and says so
@@ -295,7 +299,8 @@ export async function saveZoneSimRate(storageKey, entry) {
  * @param {number|string} [loadoutId=0] - The loadout the fight uses
  * @returns {{zoneHrid: string, difficultyTier: number, loadoutId: string, loadoutName: string|null,
  *   signature: string|null, encountersPerHour: number, profitPerHour: number|null,
- *   xpPerHour: number|null, hours: number|null, savedAt: number|null}|null}
+ *   revenuePerHour: number|null, xpPerHour: number|null, hours: number|null,
+ *   savedAt: number|null}|null}
  */
 export function zoneSimRateFor(rates, zoneHrid, difficultyTier = 0, loadoutId = 0) {
     if (!rates || !zoneHrid) return null;
@@ -310,6 +315,9 @@ export function zoneSimRateFor(rates, zoneHrid, difficultyTier = 0, loadoutId = 
         signature: entry.signature ?? null,
         encountersPerHour: entry.encountersPerHour,
         profitPerHour: finite(entry.profitPerHour),
+        // As in `zoneFromSnapshot`: absent in a rate stored before the field, and null rather
+        // than the net figure
+        revenuePerHour: finite(entry.revenuePerHour),
         xpPerHour: finite(entry.xpPerHour),
         hours: finite(entry.hours),
         savedAt: finite(entry.savedAt),

@@ -198,6 +198,25 @@ const COMBAT_SNAPSHOT_REFRESH_MS = 30 * 1000;
 /** What a counted combat row reads when there is no rate to time it with */
 const COMBAT_UNKNOWN_TEXT = '[? · no sim rate]';
 
+/**
+ * What a combat row's value line reads when the row has a rate but the mode's figure is not in
+ * the reading it came from — a run stored before the gross was kept, or one taken with no market
+ * prices. Shaped after {@link COMBAT_UNKNOWN_TEXT} so the two read as the same kind of answer.
+ */
+const COMBAT_VALUE_UNKNOWN_TEXT = '[? · no sim value]';
+
+/**
+ * Which figure the panel's value mode asks a combat row for, and what it is called.
+ *
+ * `profit` is the net the simulation made; `estimated_value` is the gross its drops fetch after
+ * the sale tax, before the consumables are paid for — the same distinction the market rows draw
+ * between `totalProfit` and `totalRevenue`.
+ */
+const COMBAT_VALUE_FIELDS = {
+    profit: { perHour: 'profitPerHour', total: 'profitTotal', label: 'Profit' },
+    estimated_value: { perHour: 'revenuePerHour', total: 'revenueTotal', label: 'Value' },
+};
+
 /** How long a row's "sim 24h" button simulates its zone for */
 const ZONE_SIM_HOURS = 24;
 
@@ -327,11 +346,14 @@ function compareCombatGear(runLoadout, rowLoadout) {
  * @param {number} [input.now=Date.now()] - The clock
  * @returns {{kind: 'estimate'|'unknown'|'infinite', seconds: number|null, flags: Array<string>,
  *   rateFlags: Array<string>|null, text: string, title: string, source?: string,
- *   profitPerHour: number|null, profitTotal: number|null}|null} Null for a row that is not
+ *   profitPerHour: number|null, profitTotal: number|null, revenuePerHour: number|null,
+ *   revenueTotal: number|null}|null} Null for a row that is not
  *   combat. `rateFlags` is the reading's own flags, or null when the row has no reading at all —
  *   an empty array is what "this row already has a fresh rate" means. `profitPerHour` is the
- *   simulated net per hour and `profitTotal` what this row's run is expected to make; either is
- *   null when the reading could not say, and never a zero standing in for "unknown".
+ *   simulated net per hour and `profitTotal` what this row's run is expected to make;
+ *   `revenuePerHour` and `revenueTotal` are the same two figures gross of consumables, for the
+ *   panel's "Estimated Value" mode. Each is null when the reading could not say — a run stored
+ *   before the gross was kept has no revenue — and never a zero standing in for "unknown".
  */
 export function estimateCombatQueueRow({
     actionObj,
@@ -359,6 +381,8 @@ export function estimateCombatQueueRow({
             rateFlags: picked.reading ? picked.reading.flags : null,
             profitPerHour: picked.reading?.profitPerHour ?? null,
             profitTotal: null,
+            revenuePerHour: picked.reading?.revenuePerHour ?? null,
+            revenueTotal: null,
         };
     }
 
@@ -372,6 +396,8 @@ export function estimateCombatQueueRow({
             rateFlags: null,
             profitPerHour: null,
             profitTotal: null,
+            revenuePerHour: null,
+            revenueTotal: null,
         };
     }
 
@@ -391,6 +417,8 @@ export function estimateCombatQueueRow({
     // total of zero, which would read as "this fight earns nothing".
     const profitPerHour = Number.isFinite(reading.profitPerHour) ? reading.profitPerHour : null;
     const profitTotal = profitPerHour === null ? null : (profitPerHour * seconds) / 3600;
+    const revenuePerHour = Number.isFinite(reading.revenuePerHour) ? reading.revenuePerHour : null;
+    const revenueTotal = revenuePerHour === null ? null : (revenuePerHour * seconds) / 3600;
 
     return {
         kind: 'estimate',
@@ -402,6 +430,8 @@ export function estimateCombatQueueRow({
         source: useZoneRate ? 'zone' : 'allZones',
         profitPerHour,
         profitTotal,
+        revenuePerHour,
+        revenueTotal,
     };
 }
 
@@ -476,8 +506,8 @@ function simReadingAge(savedAt, now) {
  * @param {{flag: string|null, sentence: string}} gear - From `compareCombatGear`
  * @param {string} where - The zone and tier, as a reader says them
  * @param {number} now - The clock
- * @returns {{rate: number, profitPerHour: number|null, source: string, flags: Array<string>,
- *   sentences: Array<string>}}
+ * @returns {{rate: number, profitPerHour: number|null, revenuePerHour: number|null,
+ *   source: string, flags: Array<string>, sentences: Array<string>}}
  */
 function describeAllZonesRate(zone, gear, where, now) {
     const { age, stale } = simReadingAge(zone.savedAt, now);
@@ -487,6 +517,7 @@ function describeAllZonesRate(zone, gear, where, now) {
     return {
         rate: zone.encountersPerHour,
         profitPerHour: Number.isFinite(zone.profitPerHour) ? zone.profitPerHour : null,
+        revenuePerHour: Number.isFinite(zone.revenuePerHour) ? zone.revenuePerHour : null,
         source: `the rate simulated for ${where} in your all-zones run ${age}`,
         flags,
         sentences: [stale ? 'That run is over a week old.' : null, gear.sentence].filter(Boolean),
@@ -503,8 +534,8 @@ function describeAllZonesRate(zone, gear, where, now) {
  * @param {{known: boolean, name: string|null, signature?: string|null}} rowLoadout - The row's loadout now
  * @param {string} where - The zone and tier, as a reader says them
  * @param {number} now - The clock
- * @returns {{rate: number, profitPerHour: number|null, source: string, flags: Array<string>,
- *   sentences: Array<string>}}
+ * @returns {{rate: number, profitPerHour: number|null, revenuePerHour: number|null,
+ *   source: string, flags: Array<string>, sentences: Array<string>}}
  */
 export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now()) {
     const { age, stale } = simReadingAge(zoneRate.savedAt, now);
@@ -535,6 +566,7 @@ export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now(
     return {
         rate: zoneRate.encountersPerHour,
         profitPerHour: Number.isFinite(zoneRate.profitPerHour) ? zoneRate.profitPerHour : null,
+        revenuePerHour: Number.isFinite(zoneRate.revenuePerHour) ? zoneRate.revenuePerHour : null,
         source: `from a ${hours} solo simulation of ${where} ${age}`,
         flags,
         sentences: [stale ? 'That run is over a week old.' : null, gearSentence].filter(Boolean),
@@ -765,6 +797,8 @@ class ActionTimeDisplay {
                 rateFlags: null,
                 profitPerHour: null,
                 profitTotal: null,
+                revenuePerHour: null,
+                revenueTotal: null,
                 text: COMBAT_UNKNOWN_TEXT,
                 title: 'No time estimate: it could not be worked out.',
             };
@@ -955,38 +989,74 @@ class ActionTimeDisplay {
     }
 
     /**
-     * Whether a combat row may show a profit figure at all.
+     * Whether a combat row may show a value figure at all.
      *
-     * Behind the panel's own value toggle, and only in `profit` mode: a stored combat rate is a
-     * net figure and nothing else. `zone-rate-sim.js` keeps `calculateSimRevenue`'s `netPerHour`
-     * and discards its `revenuePerHour`, and the all-zones snapshot does the same, so there is no
-     * gross for `estimated_value` mode to show. A combat row says nothing in that mode rather
-     * than quoting a net figure under a label that promises a gross one.
+     * Behind the panel's own value toggle, and nothing else. Both value modes can be answered: a
+     * stored rate now carries the simulation's gross as well as its net, so `estimated_value` has
+     * a figure of its own instead of borrowing the net one. A rate stored before the gross was
+     * kept still cannot answer that mode, and {@link combatRowValueFigures} says so on the row
+     * rather than falling back.
      *
      * @returns {boolean}
      */
     combatValueApplies() {
-        return (
-            Boolean(config.getSettingValue('actionQueue_showValue', true)) &&
-            config.getSettingValue('actionQueue_valueMode', 'profit') === 'profit'
-        );
+        return Boolean(config.getSettingValue('actionQueue_showValue', true));
     }
 
     /**
-     * What a combat row's profit line reads, or null when there is nothing honest to say.
+     * Which of a reading's figures the panel's value mode asks for.
+     * @returns {{perHour: string, total: string, label: string}} From {@link COMBAT_VALUE_FIELDS}
+     */
+    combatValueFields() {
+        const mode = config.getSettingValue('actionQueue_valueMode', 'profit');
+        return COMBAT_VALUE_FIELDS[mode] || COMBAT_VALUE_FIELDS.profit;
+    }
+
+    /**
+     * Why the mode's figure is missing from a reading that otherwise has a rate.
+     * @returns {string} The row's hover text
+     */
+    combatValueMissingTitle() {
+        return config.getSettingValue('actionQueue_valueMode', 'profit') === 'estimated_value'
+            ? 'No estimated value: this fight’s stored simulation kept only a net figure. Re-run the ' +
+                  'sim to value this row in Estimated Value mode.'
+            : 'No profit figure: this fight’s stored simulation was taken with no market prices. ' +
+                  'Re-run the sim to value this row.';
+    }
+
+    /**
+     * What a combat row's value line reads, or null when there is nothing to say at all.
      *
      * A counted row gets the total for its own run and the rate it rests on; an endless one has
      * no total, so it gets the rate alone. Both figures always share a sign — the total is the
      * rate times a duration — so only the leading one carries it.
      *
+     * Three outcomes, not two. A row with no reading at all says nothing, exactly as its time
+     * cell shows no figure. A row that has a reading the current mode cannot answer — a rate
+     * stored before the gross was kept, read in Estimated Value mode — says `[? · no sim value]`
+     * and why, mirroring the `[? · no sim rate]` its time cell shows when the rate is the thing
+     * missing. It never falls back to the other mode's figure, and never prints a zero.
+     *
      * @param {Object|null} combat - From {@link estimateCombatQueueRow}
-     * @returns {{text: string, negative: boolean}|null}
+     * @returns {{label: string, text: string, negative: boolean, unknown?: boolean,
+     *   title?: string}|null}
      */
-    combatRowProfitFigures(combat) {
+    combatRowValueFigures(combat) {
         if (!this.combatValueApplies()) return null;
-        const perHour = Number.isFinite(combat?.profitPerHour) ? combat.profitPerHour : null;
-        if (perHour === null) return null;
-        const total = Number.isFinite(combat.profitTotal) ? combat.profitTotal : null;
+        // `rateFlags` is null exactly when the row has no reading behind it
+        if (!combat || combat.rateFlags === null || combat.rateFlags === undefined) return null;
+        const fields = this.combatValueFields();
+        const perHour = Number.isFinite(combat[fields.perHour]) ? combat[fields.perHour] : null;
+        if (perHour === null) {
+            return {
+                label: fields.label,
+                text: COMBAT_VALUE_UNKNOWN_TEXT,
+                negative: false,
+                unknown: true,
+                title: this.combatValueMissingTitle(),
+            };
+        }
+        const total = Number.isFinite(combat[fields.total]) ? combat[fields.total] : null;
         const money = (value) => formatLargeNumber(Math.abs(Math.round(value)));
         const negative = (total === null ? perHour : total) < 0;
         const sign = negative ? '-' : '+';
@@ -994,7 +1064,7 @@ class ActionTimeDisplay {
             total === null
                 ? `${sign}${money(perHour)}/hr`
                 : `${sign}${money(total)} (${negative ? '-' : ''}${money(perHour)}/hr)`;
-        return { text, negative };
+        return { label: fields.label, text, negative };
     }
 
     /**
@@ -1008,7 +1078,7 @@ class ActionTimeDisplay {
      */
     appendCombatRowProfit(actionDiv, combat) {
         try {
-            const figures = this.combatRowProfitFigures(combat);
+            const figures = this.combatRowValueFigures(combat);
             if (!figures) return;
             const color = figures.negative
                 ? config.getSettingValue('color_loss', '#f87171')
@@ -1020,10 +1090,16 @@ class ActionTimeDisplay {
                 font-size: 0.85em;
                 margin-top: 2px;
             `;
-            profitDiv.innerHTML = `Profit: <span style="color: ${color};">${figures.text}</span>`;
+            profitDiv.innerHTML = figures.unknown
+                ? `${figures.label}: ${figures.text}`
+                : `${figures.label}: <span style="color: ${color};">${figures.text}</span>`;
             profitDiv.title =
-                'Estimated, not measured: the simulated rate for this fight, over the time this row is ' +
-                'expected to take. Net of the consumables the simulation drank.';
+                figures.title ||
+                (figures.label === 'Value'
+                    ? 'Estimated, not measured: the simulated rate for this fight, over the time this row is ' +
+                      'expected to take. What its drops sell for after tax, before the consumables it drinks.'
+                    : 'Estimated, not measured: the simulated rate for this fight, over the time this row is ' +
+                      'expected to take. Net of the consumables the simulation drank.');
             const container = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
             (container || actionDiv).appendChild(profitDiv);
         } catch (error) {
@@ -1037,12 +1113,16 @@ class ActionTimeDisplay {
      * A row with no total of its own does not contribute a zero — it marks the total incomplete,
      * the same way a fight with no time marks the time total `+ [?]`.
      *
+     * Which figure is folded in follows the panel's value mode, so the total and the rows under
+     * it are always quoting the same question's answer.
+     *
      * @param {{total: number, hasAny: boolean, incomplete: boolean}} tally - Mutated in place
      * @param {Object|null} combat - From {@link estimateCombatQueueRow}
      */
     addCombatValue(tally, combat) {
         if (!combat || !this.combatValueApplies()) return;
-        const total = Number.isFinite(combat.profitTotal) ? combat.profitTotal : null;
+        const fields = this.combatValueFields();
+        const total = Number.isFinite(combat[fields.total]) ? combat[fields.total] : null;
         if (total === null) {
             tally.incomplete = true;
             return;

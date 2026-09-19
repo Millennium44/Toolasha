@@ -104,6 +104,19 @@ describe('prepareZoneRateRun', () => {
 });
 
 describe('zoneRateEntry', () => {
+    test('keeps the run gross beside its net, for Estimated Value mode', () => {
+        const entry = zoneRateEntry(
+            { encounters: 4800, simulatedTime: 24 * HOUR_NS },
+            {
+                params: { zoneHrid: FLY, difficultyTier: 2, hours: 24, gameData: {} },
+                loadout: { id: '0', source: 'worn', name: null, signature: null },
+            },
+            { revenue: () => ({ netPerHour: 1000, revenuePerHour: 1400 }), now: 5 }
+        );
+        expect(entry.profitPerHour).toBe(1000);
+        expect(entry.revenuePerHour).toBe(1400);
+    });
+
     test("divides the run's encounters by its own simulated hours", () => {
         const prepared = {
             params: { zoneHrid: FLY, difficultyTier: 2, hours: 24, gameData: {} },
@@ -128,6 +141,9 @@ describe('zoneRateEntry', () => {
             signature: 'sig',
             encountersPerHour: 200,
             profitPerHour: 1000,
+            // The stub answered with a net figure and nothing else, which is what a run taken
+            // with no market data leaves — null, never the net standing in for the gross
+            revenuePerHour: null,
             xpPerHour: 20,
             deathsPerHour: 2 / 24,
             hours: 24,

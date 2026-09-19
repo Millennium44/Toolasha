@@ -132,9 +132,15 @@ export function zoneRateEntry(
     if (!Number.isFinite(encounters) || encounters <= 0 || !(simHours > 0)) return null;
 
     let profitPerHour = null;
+    // The gross the run's drops fetch, after the sale tax and before the consumables are paid
+    // for — `calculateSimRevenue`'s `revenuePerHour`, which already nets the tax per drop
+    // (`taxedDropValue`). Kept alongside the net so a surface asking "estimated value" has an
+    // answer of its own rather than a net figure under a gross label.
+    let revenuePerHour = null;
     try {
         const result = revenue(simResult, params.gameData, 'player1', simHours);
         profitPerHour = Number.isFinite(result?.netPerHour) ? result.netPerHour : null;
+        revenuePerHour = Number.isFinite(result?.revenuePerHour) ? result.revenuePerHour : null;
     } catch {
         // Market data may be unavailable; the rate does not depend on it
     }
@@ -149,6 +155,7 @@ export function zoneRateEntry(
         signature: loadout.signature,
         encountersPerHour: encounters / simHours,
         profitPerHour,
+        revenuePerHour,
         xpPerHour: xp / simHours,
         deathsPerHour: (Number(simResult.deaths?.player1) || 0) / simHours,
         hours: simHours,

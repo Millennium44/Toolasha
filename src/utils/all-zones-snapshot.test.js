@@ -85,6 +85,14 @@ describe('bestSoloZone', () => {
 });
 
 describe('zoneFromSnapshot', () => {
+    test('carries the run gross when the snapshot has one', () => {
+        const withGross = {
+            ...snapshot,
+            zones: snapshot.zones.map((zone) => ({ ...zone, revenuePerHour: 520_000 })),
+        };
+        expect(zoneFromSnapshot(withGross, '/actions/combat/rat', 1).revenuePerHour).toBe(520_000);
+    });
+
     test('finds the row for a zone at its tier, with the snapshot dating it', () => {
         const row = zoneFromSnapshot(snapshot, '/actions/combat/rat', 1);
 
@@ -93,6 +101,9 @@ describe('zoneFromSnapshot', () => {
             zoneHrid: '/actions/combat/rat',
             difficultyTier: 1,
             profitPerHour: 400_000,
+            // This fixture predates the gross, which is exactly what a snapshot on disk from
+            // before it was kept looks like: no answer, rather than the net one repeated
+            revenuePerHour: null,
             xpPerHour: null,
             encountersPerHour: 180,
             savedAt: snapshot.savedAt,

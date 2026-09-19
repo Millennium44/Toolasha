@@ -102,7 +102,7 @@ function combatAction(id, { maxCount = 1080, currentCount = 80, tier = 3, loadou
     };
 }
 
-function snapshot({ rate = 500, profitPerHour = 1_000_000, tier = 3 } = {}) {
+function snapshot({ rate = 500, profitPerHour = 1_000_000, revenuePerHour = 1_400_000, tier = 3 } = {}) {
     return {
         savedAt: NOW - 3 * HOUR,
         fingerprint: 'abc',
@@ -113,6 +113,9 @@ function snapshot({ rate = 500, profitPerHour = 1_000_000, tier = 3 } = {}) {
                 zoneName: 'Gobo Planet',
                 difficultyTier: tier,
                 ...(profitPerHour === null ? {} : { profitPerHour }),
+                // Absent in a run stored before the gross was kept, which is what
+                // `revenuePerHour: null` stands for below
+                ...(revenuePerHour === null ? {} : { revenuePerHour }),
                 xpPerHour: 50_000,
                 ...(rate === null ? {} : { encountersPerHour: rate }),
             },
@@ -162,6 +165,19 @@ describe('estimateCombatQueueRow carries the profit its rate came with', () => {
         expect(result.seconds).toBe(7200);
         expect(result.profitPerHour).toBe(1_000_000);
         expect(result.profitTotal).toBe(2_000_000);
+    });
+
+    test('the gross rides along beside the net, for Estimated Value mode', () => {
+        const result = estimate();
+        expect(result.revenuePerHour).toBe(1_400_000);
+        expect(result.revenueTotal).toBe(2_800_000);
+    });
+
+    test('a reading stored before the gross was kept has no revenue, and never the net instead', () => {
+        const result = estimate({ snapshot: snapshot({ revenuePerHour: null }) });
+        expect(result.profitPerHour).toBe(1_000_000);
+        expect(result.revenuePerHour).toBeNull();
+        expect(result.revenueTotal).toBeNull();
     });
 
     test('a Fight ∞ row has a rate but no total', () => {
@@ -290,14 +306,32 @@ describe('the Queued Actions panel shows what a fight is expected to make', () =
         expect(totalText()).toBe('Total time: ~2h 00m 00s');
     });
 
-    test('nothing is shown in estimated-value mode, which a net rate cannot answer', async () => {
+    test('estimated-value mode quotes the gross, not the net', async () => {
         game.valueMode = 'estimated_value';
         game.currentActions = [combatAction(1)];
         const menu = queueMenu(['Gobo Planet (T3)']);
         actionTimeDisplay.injectQueueTimes(menu);
         await flush();
 
-        expect(profits(menu)).toEqual([]);
+        expect(profits(menu)).toEqual(['Value: +2.80M (1.40M/hr)']);
+        expect(totalText()).toContain('Estimated value: +2.80M');
+        expect(totalText()).not.toContain('[?]');
+    });
+
+    test('a rate stored before the gross was kept says so, and is never answered with the net', async () => {
+        game.valueMode = 'estimated_value';
+        game.snapshot = snapshot({ revenuePerHour: null });
+        await actionTimeDisplay.refreshCombatSnapshot();
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+        actionTimeDisplay.injectQueueTimes(menu);
+        await flush();
+
+        // The row says why, and the total is short by it rather than quoting the net figure
+        expect(profits(menu)).toEqual(['Value: [? \u00b7 no sim value]']);
+        expect(menu.querySelector('.mwi-queue-action-profit').title).toContain('Re-run the sim');
+        expect(totalText()).not.toContain('1.00M');
+        expect(totalText()).not.toContain('+0');
         expect(totalText()).toBe('Total time: ~2h 00m 00s');
     });
 });

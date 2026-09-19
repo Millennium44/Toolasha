@@ -808,6 +808,10 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
                 // per-item composition below is what lets a *display* reading
                 // the snapshot apply the cap at rank time.
                 profitPerHour: Number.isFinite(result.revenue?.netPerHour) ? result.revenue.netPerHour : null,
+                // The gross beside the net: after the sale tax, before the consumables. The
+                // queued-actions panel's "Estimated Value" mode has no other figure to answer
+                // with, and a net one under that label would be a different question's answer.
+                revenuePerHour: Number.isFinite(result.revenue?.revenuePerHour) ? result.revenue.revenuePerHour : null,
                 xpPerHour: totalXp / simHours,
                 // The one figure that turns a zone into a *duration*: the results
                 // table computes it, shows it and throws it away, so anything
