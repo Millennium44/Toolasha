@@ -146,6 +146,7 @@ describe('zoneRateEntry', () => {
             revenuePerHour: null,
             xpPerHour: 20,
             deathsPerHour: 2 / 24,
+            partySize: 1,
             hours: 24,
             savedAt: 5,
         });
@@ -154,6 +155,21 @@ describe('zoneRateEntry', () => {
     test('a run that cleared nothing has no rate', () => {
         const prepared = { params: { hours: 24 }, loadout: {} };
         expect(zoneRateEntry({ encounters: 0, simulatedTime: HOUR_NS }, prepared)).toBeNull();
+    });
+
+    test('the run’s own party size is recorded, solo included', () => {
+        const prepared = { params: { zoneHrid: FLY, difficultyTier: 0, hours: 24 }, loadout: {} };
+        const solo = zoneRateEntry({ encounters: 10, simulatedTime: HOUR_NS, numberOfPlayers: 1 }, prepared);
+        expect(solo.partySize).toBe(1);
+
+        const party = zoneRateEntry({ encounters: 10, simulatedTime: HOUR_NS, numberOfPlayers: 3 }, prepared);
+        expect(party.partySize).toBe(3);
+    });
+
+    test('a run with no numberOfPlayers at all still records a party size of 1', () => {
+        const prepared = { params: { zoneHrid: FLY, difficultyTier: 0, hours: 24 }, loadout: {} };
+        const entry = zoneRateEntry({ encounters: 10, simulatedTime: HOUR_NS }, prepared);
+        expect(entry.partySize).toBe(1);
     });
 });
 

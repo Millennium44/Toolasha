@@ -146,6 +146,15 @@ export function zoneRateEntry(
     }
     const xp = Object.values(simResult.experienceGained?.player1 || {}).reduce((sum, v) => sum + (v || 0), 0);
 
+    // The run's own party size, the same way `buildAllZonesSnapshot` records
+    // its top-level `partySize`: every SimResult carries `numberOfPlayers`
+    // (`new SimResult(zone, players.length)`), and it is written every time,
+    // 1 included, so a reader can tell "solo" from "predates the field".
+    const partySize = (() => {
+        const n = Math.floor(Number(simResult?.numberOfPlayers));
+        return Number.isFinite(n) && n >= 1 ? n : 1;
+    })();
+
     return {
         zoneHrid: params.zoneHrid,
         difficultyTier: params.difficultyTier,
@@ -158,6 +167,7 @@ export function zoneRateEntry(
         revenuePerHour,
         xpPerHour: xp / simHours,
         deathsPerHour: (Number(simResult.deaths?.player1) || 0) / simHours,
+        partySize,
         hours: simHours,
         savedAt: now,
     };

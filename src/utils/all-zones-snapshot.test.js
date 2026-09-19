@@ -21,6 +21,7 @@ import {
     zoneFromSnapshot,
     snapshotLoadout,
     snapshotPartySize,
+    zoneSimRatePartySize,
     zoneSimRateKey,
     zoneSimRateFor,
     loadoutSignature,
@@ -279,5 +280,19 @@ describe('the party a stored run was simulated with', () => {
         expect(snapshotPartySize(null)).toBeNull();
         expect(snapshotPartySize({ partySize: 0 })).toBeNull();
         expect(snapshotPartySize({ partySize: 'three' })).toBeNull();
+    });
+});
+
+describe('the party a stored single-zone rate was simulated with', () => {
+    test('a recorded size is read back, solo included', () => {
+        expect(zoneSimRatePartySize({ partySize: 3 })).toBe(3);
+        expect(zoneSimRatePartySize({ partySize: 1 })).toBe(1);
+    });
+
+    test('an entry saved before the field existed says nothing rather than saying solo', () => {
+        expect(zoneSimRatePartySize({ zoneHrid: '/actions/combat/fly' })).toBeNull();
+        expect(zoneSimRatePartySize(null)).toBeNull();
+        expect(zoneSimRatePartySize({ partySize: 0 })).toBeNull();
+        expect(zoneSimRatePartySize({ partySize: 'three' })).toBeNull();
     });
 });

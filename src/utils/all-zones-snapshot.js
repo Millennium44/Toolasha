@@ -308,6 +308,22 @@ export async function saveZoneSimRate(storageKey, entry) {
 }
 
 /**
+ * How many players a stored single-zone rate was simulated with, if it recorded it.
+ *
+ * The same reading as {@link snapshotPartySize}, for the single-zone rate
+ * store instead of the all-zones snapshot: a rate saved before this field
+ * existed cannot say what to divide a Bestiary projection by, and null is
+ * that answer, never 1 standing in for it.
+ *
+ * @param {Object|null} entry - A stored single-zone rate entry (e.g. from {@link zoneSimRateFor})
+ * @returns {number|null} The recorded party size, or null when the entry predates the field
+ */
+export function zoneSimRatePartySize(entry) {
+    const size = Math.floor(Number(entry?.partySize));
+    return Number.isFinite(size) && size >= 1 ? size : null;
+}
+
+/**
  * The stored single-zone rate for one zone, tier and loadout, if it is usable.
  *
  * Same rule as {@link zoneFromSnapshot}: a missing or non-positive rate is no
