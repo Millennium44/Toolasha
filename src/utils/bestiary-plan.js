@@ -365,6 +365,25 @@ function zoneSpawnShape(zoneHrid) {
  * and is left alone rather than guessed at. A partial segment crosses nothing,
  * so there is nothing to be confident about and it keeps its count.
  *
+ * `fight-confidence.js`'s binomial-slot model needs *bodies*, not credits: it
+ * treats a fight as `b` independent slots each holding one monster, and a
+ * credit is not a monster — a T2 kill is one body worth three credits, not
+ * three independent chances at one. So both sides of the threshold are
+ * converted back to bodies here, at `zone.creditsPerKill` (the same `(tier +
+ * 1) / partySize` {@link creditsPerKill} in `bestiary.js` struck the rate
+ * with), before they reach `padFightCount`: `bodiesNeeded = creditsNeeded /
+ * creditsPerKill`, and `bodiesPerFight = creditsPerFight / creditsPerKill`,
+ * which is just the zone's raw kills per fight. A zone with no
+ * `creditsPerKill` recorded (every existing caller, and every test that never
+ * weights a kill) divides by 1 — the credit and the body are the same number
+ * there, so this is silently the identity conversion.
+ *
+ * `bodiesNeeded` can come out fractional — crossing a threshold three credits
+ * short of it, at three credits a kill, needs exactly one more body, not a
+ * third of one. `fightsForKillConfidence` and `padFightCount`'s deterministic
+ * branch already `Math.ceil` the kill count for exactly this reason, so the
+ * rounding up happens there and does not need to be repeated here.
+ *
  * A dungeon's "fight" is a clear, which hands out many kills of a monster
  * rather than one or none, so the spawn shape goes along with the rate: how
  * many slots a clear draws, and which of its monsters are written into a fixed
@@ -387,13 +406,19 @@ function padSegmentFights(segments, zonesByHrid, options) {
         const crossings = segment.monsters.filter((m) => m.reached);
         if (!crossings.length) continue;
 
+        // The rate a zone's monsters were struck at — (tier + 1) / partySize,
+        // see `creditsPerKill` in bestiary.js. A zone that never recorded one
+        // (every caller and test that predates the credits conversion) keeps
+        // credits and bodies the same number.
+        const perKill = Number(zone.creditsPerKill) || 1;
         const shape = options.spawnShape(segment.zoneHrid);
         // `killsNeeded` and `killsPerFight` are fight-confidence.js's names and
-        // are left alone; both sides are in Bestiary credits here rather than
-        // bodies, which is the same ratio and so the same fight count.
+        // are left alone, but the values handed to them are bodies, converted
+        // back out of the Bestiary credits the rest of the planner works in —
+        // see the module doc above.
         const thresholds = crossings.map((m) => ({
-            killsNeeded: m.to - m.from,
-            killsPerFight: (Number(zone.creditsPerHour?.[m.monsterHrid]) || 0) / perHour,
+            killsNeeded: (m.to - m.from) / perKill,
+            killsPerFight: (Number(zone.creditsPerHour?.[m.monsterHrid]) || 0) / perHour / perKill,
             slotsPerFight: shape?.slotsPerFight ?? null,
             deterministic:
                 Boolean(options.isBossMonster(m.monsterHrid)) || Boolean(shape?.fixedOnly?.has(m.monsterHrid)),
@@ -432,12 +457,16 @@ function padSegmentFights(segments, zonesByHrid, options) {
  * exactly.
  *
  * @param {Object} input
- * @param {Array<{zoneHrid: string, name?: string, creditsPerHour: Object, encountersPerHour?: number,
- *   isDungeon?: boolean, note?: string, score?: number}>} input.zones -
+ * @param {Array<{zoneHrid: string, name?: string, creditsPerHour: Object, creditsPerKill?: number,
+ *   encountersPerHour?: number, isDungeon?: boolean, note?: string, score?: number}>} input.zones -
  *   Candidate zones with their simulated Bestiary credits per hour by monster (and, when known, fights per
  *   hour, so a
  *   stay can be quoted in fights as well as time); earlier zones win ties. `score` is an optional relative
- *   ranking (0-100) used only to break near-ties on bestiary pace — see `tolerancePercent`
+ *   ranking (0-100) used only to break near-ties on bestiary pace — see `tolerancePercent`. `creditsPerKill`
+ *   is the `(tier + 1) / partySize` rate the zone's kills were struck at (see `creditsPerKill` in
+ *   `bestiary.js`); the fight-count padding divides it back out before pricing thresholds, since a fight is
+ *   random over bodies, not over fractional credits. Omitting it — every caller predating this — means
+ *   credits and bodies were the same number for that zone.
  * @param {Object} input.counts - monsterHrid → credits so far (the Bestiary's own already-weighted figure)
  * @param {number} input.hours - The time budget, in hours mode
  * @param {number} [input.targetPoints] - Points wanted; when set, the plan runs to it instead of to a clock

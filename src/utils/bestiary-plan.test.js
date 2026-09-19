@@ -625,6 +625,104 @@ describe('fight-count confidence padding', () => {
 });
 
 /**
+ * `padSegmentFights` prices its thresholds in Bestiary credits (`m.to -
+ * m.from`, `creditsPerHour / encountersPerHour`), but `fight-confidence.js`'s
+ * binomial-slot model is only correct over bodies: it treats a fight as `b`
+ * independent slots, each this monster with probability `p / b`. A tier-N
+ * kill is one body worth N+1 credits, not N+1 independent chances at a body,
+ * so feeding it credits directly understates the real variance whenever
+ * `creditsPerKill` (`(tier + 1) / partySize`, see `bestiary.js`) is not 1.
+ *
+ * `zone.creditsPerKill` is how the conversion back to bodies is threaded in —
+ * see `_buildBestiaryPlanZones` in `combat-sim-ui.js`, which is where the
+ * tier and party size the rate was struck at are known. Omitting it (every
+ * zone built before this fix) divides by 1, the identity.
+ */
+describe('fight-count padding is over bodies, not credits', () => {
+    // The same six-credits-short fixture as the plain padding tests above,
+    // varied only by creditsPerKill.
+    const shortAt = (creditsPerKill) => ({
+        zones: [
+            {
+                zoneHrid: 'z',
+                name: 'z',
+                creditsPerHour: { colossus: 10 },
+                encountersPerHour: 100,
+                creditsPerKill,
+            },
+        ],
+        counts: { colossus: 94 },
+        hours: 0.6,
+        confidencePercent: 90,
+        bufferPercent: 5,
+        isBossMonster: () => false,
+    });
+
+    test('T0 solo (creditsPerKill 1) is bit-for-bit what the credit-only math already gave', () => {
+        // Omitting creditsPerKill and stating it as 1 must be the same
+        // number — 1 is the identity conversion.
+        const omitted = planBestiaryRoute(shortAt(undefined)).segments[0];
+        const stated = planBestiaryRoute(shortAt(1)).segments[0];
+        expect(omitted).toEqual(stated);
+        // Pinned against the pre-existing "spawn table" test above, which is
+        // this exact fixture with no creditsPerKill at all.
+        expect(omitted.encounters).toBe(91);
+        expect(omitted.fightPadding).toBe('confidence');
+    });
+
+    test('T2 solo pads to the body count directly, and further than the too-tight credit figure', () => {
+        const t2 = planBestiaryRoute(shortAt(3)).segments[0];
+        // 6 credits short at 3 credits a kill is 2 real kills, at a real
+        // per-fight body chance of (10/100)/3.
+        const byBody = fightsForKillConfidence({ killsNeeded: 2, killsPerFight: 10 / 100 / 3, confidencePercent: 90 });
+        expect(t2.encounters).toBe(byBody);
+        // The bug: feeding the model 6 "kills" at a 0.1 rate (this fixture's
+        // pre-fix, credits-only computation, pinned at the top of this file)
+        // pads to 91 — too tight for what is really a 2-body confidence
+        // problem, which needs relatively more padding, not less.
+        expect(t2.encounters).toBeGreaterThan(91);
+        expect(t2.fightPadding).toBe('confidence');
+    });
+
+    test('a party fight with a net creditsPerKill above 1 pads further, same as a plain tier boost', () => {
+        // Tier 2 in a party of 2: (2 + 1) / 2 = 1.5 credits a kill — still a
+        // net *boost* over a solo credit, so it pads the same direction a
+        // solo tier boost does.
+        const boosted = planBestiaryRoute(shortAt(1.5)).segments[0];
+        const byBody = fightsForKillConfidence({
+            killsNeeded: 6 / 1.5,
+            killsPerFight: 10 / 100 / 1.5,
+            confidencePercent: 90,
+        });
+        expect(boosted.encounters).toBe(byBody);
+        expect(boosted.encounters).toBeGreaterThan(91);
+    });
+
+    test(
+        'a party that nets below one credit a kill needs MORE real kills for the same credit gap, ' +
+            'so it pads less, not more',
+        () => {
+            // This is the flip side of the tier case, not a second instance of
+            // the same bug: a party of 3 at T0 earns 1/3 credit a kill, so a
+            // 6-credit gap is really 18 real kills away. A confidence quantile's
+            // relative padding shrinks as the real kill count grows (its
+            // coefficient of variation falls with 1/sqrt(k)), so the correctly
+            // modeled 18-kill problem needs *less* relative padding than the
+            // credits-only model's wrongly-modeled 6-kill problem did — the
+            // opposite of the tier-boost direction, and just as correct.
+            const party = planBestiaryRoute(shortAt(1 / 3)).segments[0];
+            const byBody = fightsForKillConfidence({
+                killsNeeded: 18,
+                killsPerFight: 10 / 100 / (1 / 3),
+                confidencePercent: 90,
+            });
+            expect(party.encounters).toBe(byBody);
+            expect(party.encounters).toBeLessThan(91);
+        }
+    );
+});
+
+/**
  * A dungeon segment is quoted in clears, and a clear hands out many kills of
  * the same monster. Whether that count is random is a fact about the dungeon's
  * spawn tables — drawn from `randomSpawnInfoMap`, or written into a

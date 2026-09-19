@@ -49,7 +49,13 @@ import {
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
-import { monsterCreditsPerHour, countsByMonster, zoneBestiaryOutlook, resolvePartySize } from '../../utils/bestiary.js';
+import {
+    monsterCreditsPerHour,
+    countsByMonster,
+    zoneBestiaryOutlook,
+    resolvePartySize,
+    creditsPerKill,
+} from '../../utils/bestiary.js';
 import {
     planBestiaryRoute,
     rescaleDungeonRates,
@@ -2974,9 +2980,19 @@ class CombatSimUI {
                 // Bestiary credits, not bodies: a kill at tier N is worth N+1
                 // credits and a party splits each one, which is the unit the
                 // Bestiary's own counts are already in
+                const resolvedPartySize = resolvePartySize(sim.numberOfPlayers, fallbackPartySize);
                 const creditsPerHour = monsterCreditsPerHour(sim, simHours, {
                     difficultyTier: r.zone.difficultyTier,
-                    partySize: resolvePartySize(sim.numberOfPlayers, fallbackPartySize),
+                    partySize: resolvedPartySize,
+                });
+                // What the planner's fight-count padding needs to convert
+                // these rates back to bodies — see bestiary-plan.js's
+                // padSegmentFights. Kept alongside creditsPerHour rather than
+                // re-derived from it, since tier and party size are known
+                // right here and a ratio would just be re-deriving them badly.
+                const perKillCredits = creditsPerKill({
+                    difficultyTier: r.zone.difficultyTier,
+                    partySize: resolvedPartySize,
                 });
                 const bestiary = bestiaryCounts
                     ? zoneBestiaryOutlook({
@@ -3004,6 +3020,7 @@ class CombatSimUI {
                     bestiary: bestiary ? bestiary.pointsPerDay : null,
                     _bestiary: bestiary,
                     _creditsPerHour: creditsPerHour,
+                    _creditsPerKill: perKillCredits,
                     stamina: (xp.stamina || 0) / simHours,
                     intelligence: (xp.intelligence || 0) / simHours,
                     attack: (xp.attack || 0) / simHours,
@@ -3416,6 +3433,12 @@ class CombatSimUI {
                 zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
                 name: `${row.zone} T${row.tier}`,
                 creditsPerHour: row._creditsPerHour,
+                // What the planner's fight-count padding converts credits
+                // back to bodies with — see bestiary-plan.js's
+                // padSegmentFights. A dungeon's rescaled creditsPerHour below
+                // is still struck at this same rate, so it carries over
+                // unchanged through the object spread.
+                creditsPerKill: row._creditsPerKill,
                 encountersPerHour: row.encounters,
                 // Only used to break near-ties in bestiary pace — see
                 // planBestiaryRoute's tolerancePercent
