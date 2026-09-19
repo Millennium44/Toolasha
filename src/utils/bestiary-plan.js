@@ -2,15 +2,16 @@
  * The Bestiary route planner: given a time budget, which zones in which order
  * earn the most Bestiary points.
  *
- * Points land on powers of ten of each monster's kill count (see
- * `bestiary.js`), so a zone is worth the most while one of its monsters is
+ * Points land on powers of ten of each monster's Bestiary credit count (see
+ * `bestiary.js`, whose {@link creditsPerKill} explains why a credit is not a
+ * kill), so a zone is worth the most while one of its monsters is
  * close to a threshold and worth very little the moment it crosses one — the
  * next threshold is ten times further away. A single zone held for a whole
  * day therefore wastes most of the day; a route that hops to whichever zone
  * has the nearest threshold does not.
  *
  * The planner is that hop, repeated: pick the zone whose next point arrives
- * soonest at its simulated kill rates from the current counts, fight there
+ * soonest at its simulated credit rates from the current counts, fight there
  * until that point lands, advance every count the zone touches, and go again
  * until the budget is spent. Greedy, not optimal — a zone whose monsters
  * cross three thresholds within the hour loses to one that crosses a single
@@ -49,13 +50,13 @@ const MAX_PLAN_HOURS = 1e6;
 
 /**
  * The soonest point a zone reaches from the current counts.
- * @param {Object} killsPerHour - monsterHrid → kills/hour
+ * @param {Object} creditsPerHour - monsterHrid → credits/hour
  * @param {Object} counts - monsterHrid → current count (may be fractional mid-plan)
  * @returns {{hours: number, monsterHrid: string|null}} `hours` is Infinity when the zone earns nothing
  */
-function soonestPoint(killsPerHour, counts) {
+function soonestPoint(creditsPerHour, counts) {
     let best = { hours: Infinity, monsterHrid: null };
-    for (const [hrid, rate] of Object.entries(killsPerHour || {})) {
+    for (const [hrid, rate] of Object.entries(creditsPerHour || {})) {
         const perHour = Number(rate) || 0;
         if (!(perHour > 0)) continue;
         const count = Math.max(0, Number(counts[hrid]) || 0);
@@ -75,10 +76,10 @@ function soonestPoint(killsPerHour, counts) {
  *
  * @returns {{points: number, monsters: Array}} monsters: {monsterHrid, from, count, to, reached}
  */
-function advance(killsPerHour, counts, hours, snap) {
+function advance(creditsPerHour, counts, hours, snap) {
     let points = 0;
     const monsters = [];
-    for (const [hrid, rate] of Object.entries(killsPerHour || {})) {
+    for (const [hrid, rate] of Object.entries(creditsPerHour || {})) {
         const perHour = Number(rate) || 0;
         if (!(perHour > 0)) continue;
         const from = Math.max(0, Number(counts[hrid]) || 0);
@@ -113,9 +114,9 @@ function advance(killsPerHour, counts, hours, snap) {
  * The points one zone earns held for the whole budget.
  * @returns {number}
  */
-function singleZonePoints(killsPerHour, counts, hours) {
+function singleZonePoints(creditsPerHour, counts, hours) {
     let points = 0;
-    for (const [hrid, rate] of Object.entries(killsPerHour || {})) {
+    for (const [hrid, rate] of Object.entries(creditsPerHour || {})) {
         const perHour = Number(rate) || 0;
         if (!(perHour > 0)) continue;
         const count = Math.max(0, Number(counts[hrid]) || 0);
@@ -131,15 +132,15 @@ function singleZonePoints(killsPerHour, counts, hours) {
  * removed: advance to whichever of the zone's own monsters reaches its next
  * threshold soonest, bank what that crossing is worth, repeat.
  *
- * @param {Object} killsPerHour - monsterHrid → kills/hour
+ * @param {Object} creditsPerHour - monsterHrid → credits/hour
  * @param {Object} counts - monsterHrid → current count
  * @param {number} target - Points wanted
  * @returns {number|null} Hours, or null when the zone never gets there inside the safety cap
  */
-function singleZoneHoursToTarget(killsPerHour, counts, target) {
+function singleZoneHoursToTarget(creditsPerHour, counts, target) {
     if (!(target > 0)) return 0;
     const state = [];
-    for (const [hrid, rate] of Object.entries(killsPerHour || {})) {
+    for (const [hrid, rate] of Object.entries(creditsPerHour || {})) {
         const perHour = Number(rate) || 0;
         if (!(perHour > 0)) continue;
         state.push({ perHour, count: Math.max(0, Math.floor(Number(counts[hrid]) || 0)) });
@@ -202,12 +203,12 @@ function middle(values) {
 }
 
 /**
- * Restate a dungeon's simulated kill rates at the clear time you actually get.
+ * Restate a dungeon's simulated credit rates at the clear time you actually get.
  *
  * The simulator clears a dungeon at the pace of a party that never hesitates,
  * never re-stocks and never wipes on a wave it should not have; the run history
  * knows what the door really costs. Both agree about what one clear *contains*
- * — the sim's kills per simulated hour divided by its completions per simulated
+ * — the sim's credits per simulated hour divided by its completions per simulated
  * hour is a wave-for-wave inventory of a single clear — so the honest rate is
  * that inventory times the clears per hour your own runs manage.
  *
@@ -216,19 +217,19 @@ function middle(values) {
  * the sim's own clear time, said so in `source`.
  *
  * @param {Object} input
- * @param {Object} input.killsPerHour - The sim's kills per hour by monster
+ * @param {Object} input.creditsPerHour - The sim's Bestiary credits per hour by monster
  * @param {number} input.simClearsPerHour - The sim's completions per simulated hour
  * @param {Array<Object>} [input.runs] - Recorded runs for this dungeon, any tier (`{tier, duration|totalTime}`)
  * @param {number|null} [input.tier] - The tier being rescaled
- * @returns {{killsPerHour: Object, clearsPerHour: number, clearSeconds: number,
+ * @returns {{creditsPerHour: Object, clearsPerHour: number, clearSeconds: number,
  *   source: 'measured'|'measured-all-tiers'|'sim', runs: number}|null} Null when the sim never cleared it
  */
-export function rescaleDungeonRates({ killsPerHour = {}, simClearsPerHour = 0, runs = [], tier = null } = {}) {
+export function rescaleDungeonRates({ creditsPerHour = {}, simClearsPerHour = 0, runs = [], tier = null } = {}) {
     const simClears = Number(simClearsPerHour) || 0;
     if (!(simClears > 0)) return null;
 
     const perClear = {};
-    for (const [hrid, rate] of Object.entries(killsPerHour || {})) {
+    for (const [hrid, rate] of Object.entries(creditsPerHour || {})) {
         const perHour = Number(rate) || 0;
         if (!(perHour > 0)) continue;
         perClear[hrid] = perHour / simClears;
@@ -257,7 +258,7 @@ export function rescaleDungeonRates({ killsPerHour = {}, simClearsPerHour = 0, r
     const clearsPerHour = 3600 / clearSeconds;
     const scaled = {};
     for (const [hrid, perOne] of Object.entries(perClear)) scaled[hrid] = perOne * clearsPerHour;
-    return { killsPerHour: scaled, clearsPerHour, clearSeconds, source, runs: sampled };
+    return { creditsPerHour: scaled, clearsPerHour, clearSeconds, source, runs: sampled };
 }
 
 /**
@@ -355,7 +356,7 @@ function zoneSpawnShape(zoneHrid) {
  * so padding here is what both of them show and fill — there is no second
  * place to keep in step.
  *
- * A segment's kills per fight is its zone's kills/hour for that monster over
+ * A segment's credits per fight is its zone's credits/hour for that monster over
  * its fights/hour; a zone that never reported fights/hour cannot form the rate
  * and is left alone rather than guessed at. A partial segment crosses nothing,
  * so there is nothing to be confident about and it keeps its count.
@@ -383,9 +384,12 @@ function padSegmentFights(segments, zonesByHrid, options) {
         if (!crossings.length) continue;
 
         const shape = options.spawnShape(segment.zoneHrid);
+        // `killsNeeded` and `killsPerFight` are fight-confidence.js's names and
+        // are left alone; both sides are in Bestiary credits here rather than
+        // bodies, which is the same ratio and so the same fight count.
         const thresholds = crossings.map((m) => ({
             killsNeeded: m.to - m.from,
-            killsPerFight: (Number(zone.killsPerHour?.[m.monsterHrid]) || 0) / perHour,
+            killsPerFight: (Number(zone.creditsPerHour?.[m.monsterHrid]) || 0) / perHour,
             slotsPerFight: shape?.slotsPerFight ?? null,
             deterministic:
                 Boolean(options.isBossMonster(m.monsterHrid)) || Boolean(shape?.fixedOnly?.has(m.monsterHrid)),
@@ -424,12 +428,13 @@ function padSegmentFights(segments, zonesByHrid, options) {
  * exactly.
  *
  * @param {Object} input
- * @param {Array<{zoneHrid: string, name?: string, killsPerHour: Object, encountersPerHour?: number,
+ * @param {Array<{zoneHrid: string, name?: string, creditsPerHour: Object, encountersPerHour?: number,
  *   isDungeon?: boolean, note?: string, score?: number}>} input.zones -
- *   Candidate zones with their simulated kills per hour by monster (and, when known, fights per hour, so a
+ *   Candidate zones with their simulated Bestiary credits per hour by monster (and, when known, fights per
+ *   hour, so a
  *   stay can be quoted in fights as well as time); earlier zones win ties. `score` is an optional relative
  *   ranking (0-100) used only to break near-ties on bestiary pace — see `tolerancePercent`
- * @param {Object} input.counts - monsterHrid → kills so far (the Bestiary)
+ * @param {Object} input.counts - monsterHrid → credits so far (the Bestiary's own already-weighted figure)
  * @param {number} input.hours - The time budget, in hours mode
  * @param {number} [input.targetPoints] - Points wanted; when set, the plan runs to it instead of to a clock
  * @param {number} [input.tolerancePercent] - How much slower (in percent) a zone may be at reaching its next
@@ -480,8 +485,8 @@ export function planBestiaryRoute({
         (zone) =>
             zone &&
             zone.zoneHrid &&
-            zone.killsPerHour &&
-            Object.values(zone.killsPerHour).some((rate) => Number(rate) > 0)
+            zone.creditsPerHour &&
+            Object.values(zone.creditsPerHour).some((rate) => Number(rate) > 0)
     );
     // The route walks on whole kills, so the starting counts are floored once
     // here. `state` is the walk's own mutable copy; `start` is the untouched
@@ -560,7 +565,7 @@ export function planBestiaryRoute({
     for (let step = 0; step < MAX_STEPS && remaining > 1e-9 && usable.length; step += 1) {
         const candidates = [];
         for (const zone of usable) {
-            const next = soonestPoint(zone.killsPerHour, state);
+            const next = soonestPoint(zone.creditsPerHour, state);
             if (Number.isFinite(next.hours)) candidates.push({ zone, next });
         }
         if (!candidates.length) break;
@@ -595,14 +600,14 @@ export function planBestiaryRoute({
         }
 
         if (pickNext.hours <= remaining) {
-            const result = advance(pick.killsPerHour, state, pickNext.hours, pickNext.monsterHrid);
+            const result = advance(pick.creditsPerHour, state, pickNext.hours, pickNext.monsterHrid);
             record(pick, pickNext.hours, result, false, viaScore);
             remaining -= pickNext.hours;
             used += pickNext.hours;
         } else {
             // The budget runs out before the next point: fight here for what
             // is left and show how far each monster got
-            const result = advance(pick.killsPerHour, state, remaining, null);
+            const result = advance(pick.creditsPerHour, state, remaining, null);
             record(pick, remaining, result, true, viaScore);
             used += remaining;
             remaining = 0;
@@ -615,7 +620,7 @@ export function planBestiaryRoute({
         // The comparison a points target wants is time, not points: which one
         // zone, held the whole way, gets there soonest
         for (const zone of usable) {
-            const toTarget = singleZoneHoursToTarget(zone.killsPerHour, start, target);
+            const toTarget = singleZoneHoursToTarget(zone.creditsPerHour, start, target);
             // A zone that never gets there only stands in until one that does
             const better =
                 !bestSingle || (toTarget !== null && (bestSingle.hours === null || toTarget < bestSingle.hours));
@@ -630,7 +635,7 @@ export function planBestiaryRoute({
         }
     } else {
         for (const zone of usable) {
-            const points = singleZonePoints(zone.killsPerHour, start, budget);
+            const points = singleZonePoints(zone.creditsPerHour, start, budget);
             if (!bestSingle || points > bestSingle.points) {
                 bestSingle = {
                     zoneHrid: zone.zoneHrid,

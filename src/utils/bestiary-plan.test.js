@@ -1,9 +1,9 @@
 import { describe, test, expect } from 'vitest';
 import { planBestiaryRoute, rescaleDungeonRates, formatPlanHours, formatPlanText } from './bestiary-plan.js';
-import { pointsFromCount } from './bestiary.js';
+import { pointsFromCount, monsterCreditsPerHour, resolvePartySize } from './bestiary.js';
 import { fightsForKillConfidence } from './fight-confidence.js';
 
-const zone = (zoneHrid, killsPerHour, name = zoneHrid) => ({ zoneHrid, name, killsPerHour });
+const zone = (zoneHrid, creditsPerHour, name = zoneHrid) => ({ zoneHrid, name, creditsPerHour });
 
 describe('planning a Bestiary route', () => {
     test('nothing to plan: no zones, no budget, or zones that kill nothing', () => {
@@ -191,8 +191,8 @@ describe('tie-breaking near-equal bestiary pace by score', () => {
         // double the XP/hr and profit/day, which shows up only as `score`
         const plan = planBestiaryRoute({
             zones: [
-                { zoneHrid: 'aqua-t0', name: 'Aqua Planet T0', killsPerHour: { '/monsters/fish': 10 }, score: 20 },
-                { zoneHrid: 'aqua-t3', name: 'Aqua Planet T3', killsPerHour: { '/monsters/shark': 10 }, score: 70 },
+                { zoneHrid: 'aqua-t0', name: 'Aqua Planet T0', creditsPerHour: { '/monsters/fish': 10 }, score: 20 },
+                { zoneHrid: 'aqua-t3', name: 'Aqua Planet T3', creditsPerHour: { '/monsters/shark': 10 }, score: 70 },
             ],
             counts: {},
             hours: 0.5,
@@ -205,8 +205,8 @@ describe('tie-breaking near-equal bestiary pace by score', () => {
         // fast: a point at 1 kill / 1 per hour = 1 h. slow: same point at
         // 1/1.05 per hour = 1.05 h — five percent slower, on the nose
         const zones = [
-            { zoneHrid: 'fast', name: 'Fast', killsPerHour: { '/monsters/a': 1 }, score: 10 },
-            { zoneHrid: 'slow', name: 'Slow', killsPerHour: { '/monsters/b': 1 / 1.05 }, score: 90 },
+            { zoneHrid: 'fast', name: 'Fast', creditsPerHour: { '/monsters/a': 1 }, score: 10 },
+            { zoneHrid: 'slow', name: 'Slow', creditsPerHour: { '/monsters/b': 1 / 1.05 }, score: 90 },
         ];
 
         const within = planBestiaryRoute({ zones, counts: {}, hours: 2, tolerancePercent: 10 });
@@ -220,8 +220,8 @@ describe('tie-breaking near-equal bestiary pace by score', () => {
 
     test('tolerance 0 ignores score entirely and reproduces the old, speed-only route', () => {
         const zones = [
-            { zoneHrid: 'fast', name: 'Fast', killsPerHour: { '/monsters/a': 1 }, score: 1 },
-            { zoneHrid: 'slow', name: 'Slow', killsPerHour: { '/monsters/b': 0.5 }, score: 99 },
+            { zoneHrid: 'fast', name: 'Fast', creditsPerHour: { '/monsters/a': 1 }, score: 1 },
+            { zoneHrid: 'slow', name: 'Slow', creditsPerHour: { '/monsters/b': 0.5 }, score: 99 },
         ];
         const explicit = planBestiaryRoute({ zones, counts: {}, hours: 5, tolerancePercent: 0 });
         expect(explicit.segments[0].zoneHrid).toBe('fast');
@@ -233,8 +233,8 @@ describe('tie-breaking near-equal bestiary pace by score', () => {
 
     test('identical rows resolve to the earlier one, deterministically across runs', () => {
         const zones = [
-            { zoneHrid: 'x', name: 'X', killsPerHour: { '/monsters/a': 1 }, score: 50 },
-            { zoneHrid: 'y', name: 'Y', killsPerHour: { '/monsters/b': 1 }, score: 50 },
+            { zoneHrid: 'x', name: 'X', creditsPerHour: { '/monsters/a': 1 }, score: 50 },
+            { zoneHrid: 'y', name: 'Y', creditsPerHour: { '/monsters/b': 1 }, score: 50 },
         ];
         for (let i = 0; i < 5; i += 1) {
             const plan = planBestiaryRoute({ zones, counts: {}, hours: 1, tolerancePercent: 10 });
@@ -244,8 +244,8 @@ describe('tie-breaking near-equal bestiary pace by score', () => {
 
     test('the route total reflects the rows the tie-break actually chose, not the fastest ones', () => {
         const zones = [
-            { zoneHrid: 'fast', name: 'Fast', killsPerHour: { '/monsters/a': 1 }, score: 10 },
-            { zoneHrid: 'slow', name: 'Slow', killsPerHour: { '/monsters/b': 1 / 1.05 }, score: 90 },
+            { zoneHrid: 'fast', name: 'Fast', creditsPerHour: { '/monsters/a': 1 }, score: 10 },
+            { zoneHrid: 'slow', name: 'Slow', creditsPerHour: { '/monsters/b': 1 / 1.05 }, score: 90 },
         ];
         const plan = planBestiaryRoute({ zones, counts: {}, hours: 2, tolerancePercent: 10 });
         expect(plan.segments[0].zoneHrid).toBe('slow');
@@ -286,8 +286,8 @@ describe('plan text', () => {
 describe('fights per stay', () => {
     test('a zone with a fight rate quotes each stay in fights, merged stays add up, unknown rates read null', () => {
         const zones = [
-            { zoneHrid: 'a', name: 'a', killsPerHour: { fly: 10 }, encountersPerHour: 120 },
-            { zoneHrid: 'b', name: 'b', killsPerHour: { bee: 10 } },
+            { zoneHrid: 'a', name: 'a', creditsPerHour: { fly: 10 }, encountersPerHour: 120 },
+            { zoneHrid: 'b', name: 'b', creditsPerHour: { bee: 10 } },
         ];
         // Padding off, so this stays a test of the raw rate arithmetic; the
         // confidence padding has its own describe below.
@@ -427,13 +427,13 @@ describe('a dungeon at your own clear time', () => {
             { tier: 1, duration: 1_200_000 },
             { tier: 0, duration: 60_000 },
         ];
-        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs, tier: 1 });
+        const scaled = rescaleDungeonRates({ creditsPerHour: sim, simClearsPerHour: 6, runs, tier: 1 });
         expect(scaled.source).toBe('measured');
         expect(scaled.runs).toBe(2);
         expect(scaled.clearSeconds).toBe(1200);
         expect(scaled.clearsPerHour).toBeCloseTo(3, 9);
-        expect(scaled.killsPerHour['/monsters/goblin']).toBeCloseTo(30, 9);
-        expect(scaled.killsPerHour['/monsters/king']).toBeCloseTo(3, 9);
+        expect(scaled.creditsPerHour['/monsters/goblin']).toBeCloseTo(30, 9);
+        expect(scaled.creditsPerHour['/monsters/king']).toBeCloseTo(3, 9);
     });
 
     test('a tier with no runs falls back to the dungeon median, and says so', () => {
@@ -441,30 +441,30 @@ describe('a dungeon at your own clear time', () => {
             { tier: 0, duration: 1_200_000 },
             { tier: 0, totalTime: 1_200_000 },
         ];
-        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs, tier: 2 });
+        const scaled = rescaleDungeonRates({ creditsPerHour: sim, simClearsPerHour: 6, runs, tier: 2 });
         expect(scaled.source).toBe('measured-all-tiers');
         expect(scaled.runs).toBe(2);
         expect(scaled.clearsPerHour).toBeCloseTo(3, 9);
     });
 
     test('with no runs at all the sim clear time stands, unchanged', () => {
-        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs: [], tier: 1 });
+        const scaled = rescaleDungeonRates({ creditsPerHour: sim, simClearsPerHour: 6, runs: [], tier: 1 });
         expect(scaled.source).toBe('sim');
         expect(scaled.runs).toBe(0);
         expect(scaled.clearSeconds).toBeCloseTo(600, 9);
-        expect(scaled.killsPerHour['/monsters/goblin']).toBeCloseTo(60, 9);
-        expect(scaled.killsPerHour['/monsters/king']).toBeCloseTo(6, 9);
+        expect(scaled.creditsPerHour['/monsters/goblin']).toBeCloseTo(60, 9);
+        expect(scaled.creditsPerHour['/monsters/king']).toBeCloseTo(6, 9);
     });
 
     test('a dungeon the sim never cleared, or one that killed nothing, has no rate to rescale', () => {
-        expect(rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 0, runs: [] })).toBeNull();
-        expect(rescaleDungeonRates({ killsPerHour: {}, simClearsPerHour: 6, runs: [] })).toBeNull();
+        expect(rescaleDungeonRates({ creditsPerHour: sim, simClearsPerHour: 0, runs: [] })).toBeNull();
+        expect(rescaleDungeonRates({ creditsPerHour: {}, simClearsPerHour: 6, runs: [] })).toBeNull();
         expect(rescaleDungeonRates()).toBeNull();
     });
 
     test('runs without a usable duration are ignored rather than counted as instant', () => {
         const runs = [{ tier: 1, duration: 0 }, { tier: 1 }, { tier: 1, duration: 1_800_000 }];
-        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs, tier: 1 });
+        const scaled = rescaleDungeonRates({ creditsPerHour: sim, simClearsPerHour: 6, runs, tier: 1 });
         expect(scaled.runs).toBe(1);
         expect(scaled.clearsPerHour).toBeCloseTo(2, 9);
     });
@@ -475,7 +475,7 @@ describe('a dungeon at your own clear time', () => {
                 {
                     zoneHrid: 'd|T1',
                     name: '[D] Den T1',
-                    killsPerHour: { '/monsters/goblin': 30 },
+                    creditsPerHour: { '/monsters/goblin': 30 },
                     encountersPerHour: 3,
                     isDungeon: true,
                     note: 'measured (2 runs)',
@@ -493,8 +493,8 @@ describe('a dungeon at your own clear time', () => {
 describe('fight-count confidence padding', () => {
     // One zone, one monster six kills short of its next threshold: the exact
     // shape of the maintainer's Crystal Colossus row.
-    const sixShort = (killsPerHour = 10, encountersPerHour = 100) => ({
-        zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { colossus: killsPerHour }, encountersPerHour }],
+    const sixShort = (creditsPerHour = 10, encountersPerHour = 100) => ({
+        zones: [{ zoneHrid: 'z', name: 'z', creditsPerHour: { colossus: creditsPerHour }, encountersPerHour }],
         counts: { colossus: 94 },
         hours: 0.6,
     });
@@ -536,7 +536,7 @@ describe('fight-count confidence padding', () => {
         }).segments[0];
         // Black Bear 6167 -> 10000: 3833 kills in an hour at 13,832 fights.
         const large = planBestiaryRoute({
-            zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { bear: 3833 }, encountersPerHour: 13_832 }],
+            zones: [{ zoneHrid: 'z', name: 'z', creditsPerHour: { bear: 3833 }, encountersPerHour: 13_832 }],
             counts: { bear: 6167 },
             hours: 1,
             confidencePercent: 90,
@@ -553,7 +553,7 @@ describe('fight-count confidence padding', () => {
         // `a` crosses 94 -> 100 (6 kills at 0.01/fight); `b` crosses
         // 900 -> 1000 (100 kills at 0.1/fight), both inside one merged stay.
         const plan = planBestiaryRoute({
-            zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { a: 10, b: 100 }, encountersPerHour: 1000 }],
+            zones: [{ zoneHrid: 'z', name: 'z', creditsPerHour: { a: 10, b: 100 }, encountersPerHour: 1000 }],
             counts: { a: 94, b: 900 },
             hours: 1,
             confidencePercent: 90,
@@ -597,7 +597,7 @@ describe('fight-count confidence padding', () => {
 
     test('a zone with no fight rate is left alone rather than guessed at', () => {
         const segment = planBestiaryRoute({
-            zones: [{ zoneHrid: 'z', name: 'z', killsPerHour: { colossus: 10 } }],
+            zones: [{ zoneHrid: 'z', name: 'z', creditsPerHour: { colossus: 10 } }],
             counts: { colossus: 94 },
             hours: 0.6,
             confidencePercent: 90,
@@ -624,7 +624,7 @@ describe('a dungeon segment quoted in clears', () => {
                 {
                     zoneHrid: '/actions/combat/den|T0',
                     name: 'Den T0',
-                    killsPerHour: { '/monsters/imp': 120, '/monsters/boss': 10 },
+                    creditsPerHour: { '/monsters/imp': 120, '/monsters/boss': 10 },
                     encountersPerHour: 10,
                     isDungeon: true,
                 },
@@ -668,5 +668,83 @@ describe('a dungeon segment quoted in clears', () => {
         const segment = denPlan(() => null);
         expect(segment.fightPadding).toBe('confidence');
         expect(segment.encounters).toBeGreaterThan(5);
+    });
+});
+
+describe('the route is planned in credits, not bodies', () => {
+    // One zone, one monster, 120 bodies over a 2 h sim = 60 kills/hr. The
+    // Bestiary already holds 100 credits for it, so the next point is at 1,000.
+    const sim = { deaths: { '/monsters/fly': 120, player1: 3 } };
+    const simHours = 2;
+    const counts = { '/monsters/fly': 100 };
+
+    const planWith = (options, extra) =>
+        planBestiaryRoute({
+            zones: [
+                {
+                    zoneHrid: 'fly|T0',
+                    name: 'fly',
+                    creditsPerHour: monsterCreditsPerHour(sim, simHours, options),
+                    encountersPerHour: 60,
+                },
+            ],
+            counts,
+            hours: 24,
+            confidencePercent: 0,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+            spawnShape: () => null,
+            ...extra,
+        });
+
+    /** How long the next point takes, with no clock in the way */
+    const toNextPoint = (options) => planWith(options, { targetPoints: 1 });
+
+    test('a solo T0 route is what the raw kill rate always produced, unchanged', () => {
+        // The pre-fix input: deaths / hours, with no weighting of any kind
+        const raw = planBestiaryRoute({
+            zones: [
+                {
+                    zoneHrid: 'fly|T0',
+                    name: 'fly',
+                    creditsPerHour: { '/monsters/fly': 60 },
+                    encountersPerHour: 60,
+                },
+            ],
+            counts,
+            hours: 24,
+            confidencePercent: 0,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+            spawnShape: () => null,
+        });
+        expect(planWith({ difficultyTier: 0, partySize: 1 })).toEqual(raw);
+    });
+
+    test('the same fight at T2 reaches the point in a third of the time, and a third of the fights', () => {
+        const t0 = toNextPoint({ difficultyTier: 0, partySize: 1 });
+        const t2 = toNextPoint({ difficultyTier: 2, partySize: 1 });
+        // 900 credits still wanted, but each kill pays three of them
+        expect(t0.hoursUsed).toBeCloseTo(900 / 60, 9);
+        expect(t2.hoursUsed).toBeCloseTo(900 / 180, 9);
+        expect(t0.segments[0].encounters / t2.segments[0].encounters).toBeCloseTo(3, 6);
+    });
+
+    test('a party of three earns a third of the credit, so the route takes three times as long', () => {
+        const solo = toNextPoint({ difficultyTier: 0, partySize: 1 });
+        const party = toNextPoint({ difficultyTier: 0, partySize: 3 });
+        expect(party.hoursUsed / solo.hoursUsed).toBeCloseTo(3, 9);
+        // A party of three at T2 lands exactly back on the solo T0 pace
+        expect(toNextPoint({ difficultyTier: 2, partySize: 3 }).hoursUsed).toBeCloseTo(solo.hoursUsed, 9);
+    });
+
+    test('a run that recorded no party size falls back to the setting, and never overrides one it did record', () => {
+        const solo = toNextPoint({ difficultyTier: 0, partySize: 1 });
+        // A recorded 3 wins over a configured fallback of 2
+        const recorded = toNextPoint({ difficultyTier: 0, partySize: resolvePartySize(3, 2) });
+        expect(recorded.hoursUsed / solo.hoursUsed).toBeCloseTo(3, 9);
+        // Nothing recorded: the fallback of 2 is what answers
+        const fallback = toNextPoint({ difficultyTier: 0, partySize: resolvePartySize(null, 2) });
+        expect(fallback.hoursUsed / solo.hoursUsed).toBeCloseTo(2, 9);
     });
 });

@@ -1421,6 +1421,30 @@ describe('all-zones snapshot', () => {
         expect(buildAllZonesSnapshot([fly], { hours: 2 }).zones[0].encountersPerHour).toBeNull();
     });
 
+    /**
+     * `simResult.deaths` is a party-wide body count, so a Bestiary projection
+     * off a stored run has to know how many players produced it. Dungeon rows
+     * carried a party size; ordinary zones carried none, and a reader had no
+     * way to tell a three-player run from a solo one.
+     */
+    test('records the party the run was simulated with, taken from the run itself', async () => {
+        const trio = zoneResult('Fly');
+        trio.simResult.numberOfPlayers = 3;
+
+        const snapshot = buildAllZonesSnapshot([trio], { hours: 4 });
+        expect(snapshot.partySize).toBe(3);
+        expect(await saveAllZonesSnapshot(snapshot)).toBe(true);
+        expect((await loadAllZonesSnapshot()).partySize).toBe(3);
+    });
+
+    test('a solo run says 1 rather than nothing, so a reader can tell it from a run that never said', () => {
+        const snapshot = buildAllZonesSnapshot([zoneResult('Fly')], { hours: 4 });
+        expect(snapshot.partySize).toBe(1);
+        // Additive: a reader written before the field sees the row it always did
+        expect(snapshot).toMatchObject({ version: 1, hours: 4, fingerprint: null });
+        expect(snapshot.zones).toHaveLength(1);
+    });
+
     test('records which gear the run was simulated in, and round-trips it', async () => {
         const snapshot = buildAllZonesSnapshot([zoneResult('Fly')], {
             hours: 4,
@@ -4502,8 +4526,10 @@ describe('the Bestiary route planner under the all-zones table', () => {
     });
 
     test('plans the route from the sim rates and the counts, in order, with the thresholds crossed', async () => {
-        // Farm: fly 10/hr at 8 kills (12 min to 10), rat 2/hr unmet (30 min to 1);
-        // Hive: bee 1/hr unmet (1 h to 1). One hour: Farm 0:30 (+3), Hive 0:30 partial.
+        // Farm (T0): fly 10 kills/hr at 8 credits (12 min to 10), rat 2/hr unmet
+        // (30 min to 1). Hive is T2, so its bee's 1 kill/hr is 3 credits/hr and
+        // its first credit lands in 20 min, not an hour. One hour: Farm 0:30
+        // (+3), Hive 0:30 (+1).
         mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
         await ui._displayAllZonesResults(
             [result('Farm', { '/monsters/fly': 10, '/monsters/rat': 2 }), result('Hive', { '/monsters/bee': 1 }, 2)],
@@ -4530,11 +4556,13 @@ describe('the Bestiary route planner under the all-zones table', () => {
         expect(rows[0][5]).toContain('Rat 0 → 1');
         expect(rows[1].slice(0, 3)).toEqual(['2', 'Hive T2▶', '0:30']);
         expect(rows[1][3]).toMatch(/^(≈[0-9,]+|—)$/);
-        expect(rows[1][4]).toBe('+0');
-        expect(rows[1][5]).toContain('partial: Bee 0/1');
+        // A T2 kill credits three, so half an hour of bees crosses the first
+        // threshold instead of falling short of it
+        expect(rows[1][4]).toBe('+1');
+        expect(rows[1][5]).toContain('Bee 0 → 1');
 
         const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
-        expect(footer).toContain('3 points');
+        expect(footer).toContain('4 points');
         expect(footer).toContain('best single zone Farm T0: 3');
 
         // The budget is remembered for next time
@@ -4596,9 +4624,10 @@ describe('the Bestiary route planner under the all-zones table', () => {
 
         expect(written).toHaveLength(1);
         const lines = written[0].split('\n');
-        expect(lines[0]).toBe('Bestiary plan — 1:00 h, 2 points');
+        expect(lines[0]).toBe('Bestiary plan — 1:00 h, 3 points');
         expect(lines[1]).toBe('1. Farm T0 — 0:12 (≈2 fights) — +2 — Fly 8→10');
-        expect(lines[2]).toMatch(/^2\. Hive T2 — 0:48( \(≈[0-9]+ fights\))? — \+0 — \(partial: Bee 0\/1\)$/);
+        // Hive is T2: three credits a bee, so the first one lands inside the stay
+        expect(lines[2]).toMatch(/^2\. Hive T2 — 0:48( \(≈[0-9]+ fights\))? — \+1 — Bee 0→1$/);
         expect(lines[3]).toBe('Best single zone: Farm T0 — 2 points');
         expect(copyBtn.textContent).toBe('Copied ✓');
     });

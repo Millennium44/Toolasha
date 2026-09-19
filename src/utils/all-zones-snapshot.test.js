@@ -20,6 +20,7 @@ import {
     bestSoloZone,
     zoneFromSnapshot,
     snapshotLoadout,
+    snapshotPartySize,
     zoneSimRateKey,
     zoneSimRateFor,
     loadoutSignature,
@@ -264,5 +265,19 @@ describe('single-zone rates', () => {
         memory.clear();
         expect(await saveZoneSimRate(null, entry())).toBe(false);
         expect(memory.size).toBe(0);
+    });
+});
+
+describe('the party a stored run was simulated with', () => {
+    test('a recorded size is read back, solo included', () => {
+        expect(snapshotPartySize({ partySize: 3 })).toBe(3);
+        expect(snapshotPartySize({ partySize: 1 })).toBe(1);
+    });
+
+    test('a snapshot written before the field says nothing rather than saying solo', () => {
+        expect(snapshotPartySize({ zones: [] })).toBeNull();
+        expect(snapshotPartySize(null)).toBeNull();
+        expect(snapshotPartySize({ partySize: 0 })).toBeNull();
+        expect(snapshotPartySize({ partySize: 'three' })).toBeNull();
     });
 });

@@ -114,6 +114,26 @@ export function zoneFromSnapshot(snapshot, zoneHrid, difficultyTier = 0) {
 }
 
 /**
+ * How many players a stored run was simulated with, if it recorded it.
+ *
+ * The other half of a Bestiary projection off a stored run. `simResult.deaths`
+ * is a party-wide body count, so the credit a run earns *you* is divided by the
+ * party (see `bestiary.js`'s `creditsPerKill`), and a snapshot written before
+ * this field existed cannot say what to divide by. Null is that answer, never 1
+ * standing in for it: 1 would silently quote a three-player run's kills as if
+ * they were all yours, which is the bug this field exists to prevent. A caller
+ * with a null hands it to `resolvePartySize` along with the player's configured
+ * fallback.
+ *
+ * @param {Object|null} snapshot - From {@link loadAllZonesSnapshot}
+ * @returns {number|null} The recorded party size, or null when the run predates the field
+ */
+export function snapshotPartySize(snapshot) {
+    const size = Math.floor(Number(snapshot?.partySize));
+    return Number.isFinite(size) && size >= 1 ? size : null;
+}
+
+/**
  * The gear a stored run was configured from, or nothing if it did not say.
  *
  * The provenance half of a stored rate, following the precedent in

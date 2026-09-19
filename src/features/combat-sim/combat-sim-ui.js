@@ -49,7 +49,7 @@ import {
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
-import { monsterKillsPerHour, countsByMonster, zoneBestiaryOutlook } from '../../utils/bestiary.js';
+import { monsterCreditsPerHour, countsByMonster, zoneBestiaryOutlook, resolvePartySize } from '../../utils/bestiary.js';
 import {
     planBestiaryRoute,
     rescaleDungeonRates,
@@ -756,7 +756,14 @@ export async function currentGearFingerprint() {
  * ROI board needs to quote a simulated clear time for a tier nobody has run.
  * Additive, so a reader that predates it sees the same row it always did.
  *
- * @returns {Object} `{version, savedAt, hours, fingerprint, maxTierFood, loadout, zones}`
+ * The run's own `partySize` sits at the top level for the same reason and on
+ * the same terms: an ordinary zone's rows recorded nothing about how many
+ * players produced them, and a Bestiary projection has to divide by that number
+ * (see `bestiary.js`'s {@link creditsPerKill}) because `simResult.deaths` is a
+ * party-wide body count. Written every time, 1 included, so a reader can tell
+ * "this was a solo run" from "this run predates the field".
+ *
+ * @returns {Object} `{version, savedAt, hours, fingerprint, maxTierFood, partySize, loadout, zones}`
  */
 export function buildAllZonesSnapshot(zoneResults, options = {}) {
     const {
@@ -766,7 +773,22 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
         savedAt = Date.now(),
         maxTierFood = false,
         loadout = null,
+        partySize = null,
     } = options;
+
+    // The run's party size, taken from the run itself where the caller did not
+    // say: every SimResult carries `numberOfPlayers` (`new SimResult(zone,
+    // players.length)`), and every zone in one all-zones run was simulated by
+    // the same party.
+    const recordedPartySize = (() => {
+        const given = Math.floor(Number(partySize));
+        if (Number.isFinite(given) && given >= 1) return given;
+        for (const result of Array.isArray(zoneResults) ? zoneResults : []) {
+            const n = Math.floor(Number(result?.simResult?.numberOfPlayers));
+            if (Number.isFinite(n) && n >= 1) return n;
+        }
+        return 1;
+    })();
 
     const zones = (Array.isArray(zoneResults) ? zoneResults : [])
         .filter((result) => result?.simResult && result.zone)
@@ -853,6 +875,7 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
         hours,
         fingerprint,
         maxTierFood: Boolean(maxTierFood),
+        partySize: recordedPartySize,
         loadout: {
             source: loadout?.source || 'unknown',
             name: loadout?.name || null,
@@ -2922,6 +2945,10 @@ class CombatSimUI {
         // Off by the setting: no column, no planner, and the Bestiary is not
         // asked for either
         const bestiaryOn = config.getSettingValue('combatSim_bestiary', true) !== false;
+        // Only ever a fallback: every live run states its own party size on the
+        // SimResult, and this is what a reading that never recorded one falls
+        // back to. See `bestiary.js`'s resolvePartySize.
+        const fallbackPartySize = config.getSettingValue('combatSim_bestiaryPartySize', 1);
         const bestiaryRows = bestiaryOn ? dataManager.getCharacterMonsters?.() || null : null;
         const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
         // Not loaded yet: ask the game for it the way the Bestiary tab does,
@@ -2944,10 +2971,16 @@ class CombatSimUI {
                 const totalXP = Object.values(xp).reduce((s, v) => s + v, 0) / simHours;
                 const playerDeaths = (sim.deaths?.[playerHrid] || 0) / simHours;
                 const encounters = (sim.encounters || 0) / simHours;
-                const killsPerHour = monsterKillsPerHour(sim, simHours);
+                // Bestiary credits, not bodies: a kill at tier N is worth N+1
+                // credits and a party splits each one, which is the unit the
+                // Bestiary's own counts are already in
+                const creditsPerHour = monsterCreditsPerHour(sim, simHours, {
+                    difficultyTier: r.zone.difficultyTier,
+                    partySize: resolvePartySize(sim.numberOfPlayers, fallbackPartySize),
+                });
                 const bestiary = bestiaryCounts
                     ? zoneBestiaryOutlook({
-                          killsPerHour,
+                          creditsPerHour,
                           counts: bestiaryCounts,
                           hours: 24,
                       })
@@ -2970,7 +3003,7 @@ class CombatSimUI {
                     totalXP,
                     bestiary: bestiary ? bestiary.pointsPerDay : null,
                     _bestiary: bestiary,
-                    _killsPerHour: killsPerHour,
+                    _creditsPerHour: creditsPerHour,
                     stamina: (xp.stamina || 0) / simHours,
                     intelligence: (xp.intelligence || 0) / simHours,
                     attack: (xp.attack || 0) / simHours,
@@ -3192,7 +3225,7 @@ class CombatSimUI {
                                             m.hoursToNext < 1
                                                 ? `${Math.max(1, Math.round(m.hoursToNext * 60))}m`
                                                 : `${m.hoursToNext.toFixed(1)}h`;
-                                        return `${name}: ${m.count} defeated, ${m.killsPerHour.toFixed(1)}/hr → next point at ${m.nextAt} in ${eta} (+${m.pointsGained} in 24h)`;
+                                        return `${name}: ${m.count} credits, ${m.creditsPerHour.toFixed(1)}/hr → next point at ${m.nextAt} in ${eta} (+${m.pointsGained} in 24h)`;
                                     })
                                     .join('\n');
                                 const cellTitle = `${outlook.pointsGained} points in the first 24 h here.\n${lines}`;
@@ -3382,7 +3415,7 @@ class CombatSimUI {
             const zone = {
                 zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
                 name: `${row.zone} T${row.tier}`,
-                killsPerHour: row._killsPerHour,
+                creditsPerHour: row._creditsPerHour,
                 encountersPerHour: row.encounters,
                 // Only used to break near-ties in bestiary pace — see
                 // planBestiaryRoute's tolerancePercent
@@ -3392,7 +3425,7 @@ class CombatSimUI {
 
             const simHours = Number(row._dungeon.simHours) || 0;
             const scaled = rescaleDungeonRates({
-                killsPerHour: row._killsPerHour,
+                creditsPerHour: row._creditsPerHour,
                 simClearsPerHour: simHours > 0 ? row._dungeon.completions / simHours : 0,
                 runs: runs.filter((run) => run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid),
                 tier: row.tier,
@@ -3401,7 +3434,7 @@ class CombatSimUI {
 
             return {
                 ...zone,
-                killsPerHour: scaled.killsPerHour,
+                creditsPerHour: scaled.creditsPerHour,
                 // A dungeon's "fights" are clears, which is also what the plan
                 // table calls them
                 encountersPerHour: scaled.clearsPerHour,

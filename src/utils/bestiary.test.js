@@ -2,7 +2,9 @@ import { describe, test, expect } from 'vitest';
 import {
     pointsFromCount,
     nextPointCount,
-    monsterKillsPerHour,
+    creditsPerKill,
+    resolvePartySize,
+    monsterCreditsPerHour,
     countsByMonster,
     zoneBestiaryOutlook,
 } from './bestiary.js';
@@ -31,10 +33,10 @@ describe('the game’s point formula', () => {
 });
 
 describe('a zone’s outlook', () => {
-    test('kills per hour come from the simulator’s monster deaths, never the players’', () => {
+    test('credits per hour come from the simulator’s monster deaths, never the players’', () => {
         const sim = { deaths: { '/monsters/fly': 120, '/monsters/rat': 60, player1: 2 } };
-        expect(monsterKillsPerHour(sim, 2)).toEqual({ '/monsters/fly': 60, '/monsters/rat': 30 });
-        expect(monsterKillsPerHour(sim, 0)).toEqual({});
+        expect(monsterCreditsPerHour(sim, 2)).toEqual({ '/monsters/fly': 60, '/monsters/rat': 30 });
+        expect(monsterCreditsPerHour(sim, 0)).toEqual({});
     });
 
     test('counts read off the monsters_updated list', () => {
@@ -52,7 +54,7 @@ describe('a zone’s outlook', () => {
         // Fly at 12 kills, 60/hr: reaches 100 in ~1.47 h (+3), 1,000 in ~16.5 h (+4)
         // Rat never met, 30/hr: first kill in 2 minutes (+1), 10 in 20 min (+2), 100 in 3.3 h (+3)
         const outlook = zoneBestiaryOutlook({
-            killsPerHour: { '/monsters/fly': 60, '/monsters/rat': 30 },
+            creditsPerHour: { '/monsters/fly': 60, '/monsters/rat': 30 },
             counts: { '/monsters/fly': 12 },
             hours: 24,
         });
@@ -65,10 +67,60 @@ describe('a zone’s outlook', () => {
     });
 
     test('a zone that kills nothing is worth nothing', () => {
-        expect(zoneBestiaryOutlook({ killsPerHour: {}, counts: {} })).toMatchObject({
+        expect(zoneBestiaryOutlook({ creditsPerHour: {}, counts: {} })).toMatchObject({
             pointsGained: 0,
             firstPointHours: null,
             monsters: [],
         });
+    });
+});
+
+describe('a kill is not a credit', () => {
+    test('a kill at tier N credits N+1, the way the game’s help says', () => {
+        expect(creditsPerKill({ difficultyTier: 0 })).toBe(1);
+        expect(creditsPerKill({ difficultyTier: 1 })).toBe(2);
+        expect(creditsPerKill({ difficultyTier: 2 })).toBe(3);
+        expect(creditsPerKill()).toBe(1);
+    });
+
+    test('the live Manticore tooltip reconciles exactly', () => {
+        // Defeated: 496.8 | T0 Defeated: 45 | T2 Defeated: 150.6
+        const total = 45 * creditsPerKill({ difficultyTier: 0 }) + 150.6 * creditsPerKill({ difficultyTier: 2 });
+        expect(total).toBeCloseTo(496.8, 6);
+        // ...and 496.8 has passed 1, 10 and 100, so the tooltip's "Points Earned: 6"
+        expect(pointsFromCount(total)).toBe(6);
+    });
+
+    test('a party splits each kill, because the sim’s deaths are the party’s', () => {
+        expect(creditsPerKill({ difficultyTier: 0, partySize: 3 })).toBeCloseTo(1 / 3, 12);
+        expect(creditsPerKill({ difficultyTier: 2, partySize: 3 })).toBe(1);
+        // A party of one divides by nothing
+        expect(creditsPerKill({ difficultyTier: 2, partySize: 1 })).toBe(3);
+        // Nonsense never multiplies the credit up
+        expect(creditsPerKill({ difficultyTier: -4, partySize: 0 })).toBe(1);
+    });
+
+    test('a T0 solo run’s credit rate is its kill rate, unchanged', () => {
+        const sim = { deaths: { '/monsters/fly': 120 }, numberOfPlayers: 1, difficultyTier: 0 };
+        expect(monsterCreditsPerHour(sim, 2, { difficultyTier: 0, partySize: 1 })).toEqual({ '/monsters/fly': 60 });
+    });
+
+    test('a T2 solo run is worth three times its kill rate', () => {
+        const sim = { deaths: { '/monsters/fly': 120 } };
+        expect(monsterCreditsPerHour(sim, 2, { difficultyTier: 2, partySize: 1 })).toEqual({ '/monsters/fly': 180 });
+    });
+
+    test('a party of three at T2 nets the same as a solo T0 run at the same body count', () => {
+        const sim = { deaths: { '/monsters/fly': 120 } };
+        expect(monsterCreditsPerHour(sim, 2, { difficultyTier: 2, partySize: 3 })).toEqual({ '/monsters/fly': 60 });
+    });
+
+    test('the run’s own party size beats the configured fallback; the fallback only answers for a run without one', () => {
+        expect(resolvePartySize(3, 5)).toBe(3);
+        expect(resolvePartySize(1, 5)).toBe(1);
+        expect(resolvePartySize(null, 4)).toBe(4);
+        expect(resolvePartySize(undefined, 4)).toBe(4);
+        expect(resolvePartySize(null, null)).toBe(1);
+        expect(resolvePartySize(0, 0)).toBe(1);
     });
 });
