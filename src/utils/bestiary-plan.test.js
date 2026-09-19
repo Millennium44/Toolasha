@@ -131,10 +131,12 @@ describe('planning a Bestiary route', () => {
         expect(plan.totalPoints).toBeGreaterThanOrEqual(plan.bestSingle.points);
     });
 
-    test('the single-zone comparison starts from the same floored counts the route did', () => {
-        // 9.9 kills is nine kills to the route — thresholds are whole kills —
-        // so the comparison must not be handed the raw 9.9 and credited with
-        // a tenth of a kill the route never had
+    test('the single-zone comparison keeps the fractional starting count, not a floored one', () => {
+        // Counts are Bestiary credits, not kills, and a party split leaves them
+        // openly fractional (see bestiary.js). 9.9 credits plus the tenth of a
+        // credit this stay earns (0.01 h at 10/hr) lands exactly on 10 and
+        // crosses both the 1 and 10 thresholds — a floored 9 would need a
+        // whole hour more to get there and crosses nothing in this stay.
         const fractional = planBestiaryRoute({
             zones: [zone('b', { '/monsters/bee': 10 })],
             counts: { '/monsters/bee': 9.9 },
@@ -146,10 +148,23 @@ describe('planning a Bestiary route', () => {
             hours: 0.01,
         });
 
-        // 0.01 h at 10/hr is a tenth of a kill: from 9 that reaches nothing
-        expect(fractional.bestSingle.points).toBe(0);
-        expect(fractional.bestSingle.points).toBe(whole.bestSingle.points);
-        expect(fractional.totalPoints).toBe(whole.totalPoints);
+        expect(fractional.bestSingle.points).toBe(2);
+        expect(whole.bestSingle.points).toBe(0);
+        expect(fractional.bestSingle.points).not.toBe(whole.bestSingle.points);
+    });
+
+    test('a negative or non-finite starting count still clamps to 0', () => {
+        const plan = planBestiaryRoute({
+            zones: [zone('a', { '/monsters/fly': 10 })],
+            counts: { '/monsters/fly': -5, '/monsters/rat': NaN, '/monsters/wolf': Infinity },
+            hours: 0.1,
+        });
+        // -5 clamps to 0, so one hop of ten kills/hour for 0.1 h reaches 1 kill
+        // (the first point) rather than being credited from a negative start
+        expect(plan.segments[0].monsters.find((m) => m.monsterHrid === '/monsters/fly')).toMatchObject({
+            from: 0,
+            reached: true,
+        });
     });
 
     test('the single-zone comparison is not measured from the counts the route already advanced', () => {

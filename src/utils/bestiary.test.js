@@ -50,6 +50,29 @@ describe('a zone’s outlook', () => {
         });
     });
 
+    test('a fractional credit total survives — it is not a kill count to floor', () => {
+        // The live Manticore tooltip: Defeated: 496.8 | T0 Defeated: 45 | T2 Defeated: 150.6
+        expect(countsByMonster([{ monsterHrid: '/monsters/manticore', count: 496.8 }])).toEqual({
+            '/monsters/manticore': 496.8,
+        });
+    });
+
+    test('a negative or non-finite count still clamps to 0', () => {
+        expect(
+            countsByMonster([
+                { monsterHrid: '/monsters/fly', count: -5 },
+                { monsterHrid: '/monsters/rat', count: NaN },
+                { monsterHrid: '/monsters/wolf', count: Infinity },
+                { monsterHrid: '/monsters/bat' /* count missing */ },
+            ])
+        ).toEqual({
+            '/monsters/fly': 0,
+            '/monsters/rat': 0,
+            '/monsters/wolf': 0,
+            '/monsters/bat': 0,
+        });
+    });
+
     test('points over the horizon, and how soon the first one lands', () => {
         // Fly at 12 kills, 60/hr: reaches 100 in ~1.47 h (+3), 1,000 in ~16.5 h (+4)
         // Rat never met, 30/hr: first kill in 2 minutes (+1), 10 in 20 min (+2), 100 in 3.3 h (+3)

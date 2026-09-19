@@ -151,6 +151,13 @@ export function monsterCreditsPerHour(simResult, simHours, { difficultyTier = 0,
 
 /**
  * The Bestiary counts as the game sends them, keyed by monster.
+ *
+ * The game's own figure is a credit total, not a kill count, and it is openly
+ * fractional (a party kill splits a credit across its members — see the
+ * module doc above). Flooring it here would throw away up to a whole credit
+ * per monster and overstate the time to the next threshold, so the fraction
+ * is kept; only a negative or non-finite count clamps to 0.
+ *
  * @param {Array<{monsterHrid: string, count: number}>} monsters - `monsters_updated.monsters`
  * @returns {Object} monsterHrid → count
  */
@@ -158,7 +165,8 @@ export function countsByMonster(monsters) {
     const out = {};
     for (const entry of monsters || []) {
         if (!entry?.monsterHrid) continue;
-        out[entry.monsterHrid] = Math.max(0, Math.floor(Number(entry.count) || 0));
+        const raw = Number(entry.count);
+        out[entry.monsterHrid] = Number.isFinite(raw) ? Math.max(0, raw) : 0;
     }
     return out;
 }

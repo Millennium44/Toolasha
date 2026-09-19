@@ -488,15 +488,17 @@ export function planBestiaryRoute({
             zone.creditsPerHour &&
             Object.values(zone.creditsPerHour).some((rate) => Number(rate) > 0)
     );
-    // The route walks on whole kills, so the starting counts are floored once
-    // here. `state` is the walk's own mutable copy; `start` is the untouched
-    // snapshot the single-zone comparison is measured from — it has to see the
-    // same starting point the route did, not the raw counts (a fractional count
-    // would credit the zone with progress the route never had) and not the
-    // state the route has since advanced.
+    // The counts arriving here are Bestiary credits (see `bestiary.js`), which
+    // are openly fractional — a party kill can be worth a third of a credit —
+    // so no flooring happens here. `state` is the walk's own mutable copy;
+    // `start` is the untouched snapshot the single-zone comparison is measured
+    // from — it has to see the same starting point the route did, not the
+    // state the route has since advanced. A negative or non-finite count still
+    // clamps to 0, the same guard `countsByMonster` applies.
     const start = {};
     for (const [hrid, count] of Object.entries(counts || {})) {
-        start[hrid] = Math.max(0, Math.floor(Number(count) || 0));
+        const raw = Number(count);
+        start[hrid] = Number.isFinite(raw) ? Math.max(0, raw) : 0;
     }
     const state = { ...start };
 
