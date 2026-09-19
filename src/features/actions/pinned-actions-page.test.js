@@ -1,10 +1,17 @@
 /**
+ * @vitest-environment happy-dom
+ *
  * The pinned list once combat zones are in it.
  *
  * A pinned action's numbers are computed live; a combat zone's come from a
  * simulation that finished at some point, in gear that may since have changed.
  * These tests are about the row shape that lets the two sit in one sorted table
  * without the older one quietly passing for the fresher one.
+ *
+ * happy-dom (rather than the repo's default `node`) only because one describe
+ * block below — "a combat row's click" — renders the actual table and clicks a
+ * real row: that click handler is inline inside `renderOverviewTab` and is not
+ * exported on its own, so exercising it means building the DOM.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -16,6 +23,15 @@ vi.mock('../combat-sim/combat-sim-ui.js', () => ({
         loadAllZonesSnapshot: async () => null,
         currentGearFingerprint: async () => null,
     },
+}));
+
+// The row click handler's own navigation calls — spied on rather than left real,
+// since this file is about which one a combat row reaches, not what either does.
+const mockCombatZoneOpen = vi.hoisted(() => ({
+    openCombatZoneAtTier: vi.fn(),
+}));
+vi.mock('../../utils/combat-zone-open.js', () => ({
+    openCombatZoneAtTier: mockCombatZoneOpen.openCombatZoneAtTier,
 }));
 
 // The manifest fetch is a real network call in production; loadActions' progressive-
@@ -113,6 +129,122 @@ describe('combatZoneRows', () => {
     test('nothing stored is no rows rather than a throw', () => {
         expect(combatZoneRows(null, 'gear-a')).toEqual([]);
         expect(combatZoneRows({}, 'gear-a')).toEqual([]);
+    });
+
+    test('the tier lives on the row, not just in its name or key', () => {
+        const [fly, jungle] = combatZoneRows(SNAPSHOT, 'gear-a');
+        expect(fly.difficultyTier).toBe(0);
+        expect(jungle.difficultyTier).toBe(2);
+    });
+});
+
+describe('a combat row click', () => {
+    // `getGameObject()` (module-private) walks `#root`'s React fiber tree —
+    // this is the same shape `navigateToAction`/`item-navigation.js` measured live.
+    function mountReactRoot(handleGoToAction) {
+        document.getElementById('root')?.remove();
+        const root = document.createElement('div');
+        root.id = 'root';
+        root._reactRootContainer = { current: { stateNode: { handleGoToAction }, child: null, sibling: null } };
+        document.body.appendChild(root);
+        return root;
+    }
+
+    beforeEach(() => {
+        mockCombatZoneOpen.openCombatZoneAtTier.mockReset();
+        page.selectedSkills = [];
+        page.sortColumn = 'name';
+        page.sortDirection = 'asc';
+        page.activeTab = 'overview';
+        page.itemsSpriteUrl = null;
+        page.isActive = true;
+        page.hiddenElements = [];
+        page.pageContainer = document.createElement('div');
+        document.body.appendChild(page.pageContainer);
+    });
+
+    afterEach(() => {
+        document.getElementById('root')?.remove();
+        page.pageContainer?.remove();
+        page.pageContainer = null;
+        page.contentArea = null;
+        page.isActive = false;
+        page.allActions = [];
+        vi.restoreAllMocks();
+    });
+
+    test('a combat-sim row opens its own tier through openCombatZoneAtTier, not handleGoToAction', async () => {
+        mockCombatZoneOpen.openCombatZoneAtTier.mockResolvedValue({ opened: true, tierConfirmed: true, filled: false });
+        const goTo = vi.fn();
+        mountReactRoot(goTo);
+
+        page.allActions = combatZoneRows(SNAPSHOT, 'gear-a');
+        page.renderTable();
+
+        const jungleRow = page.contentArea.querySelector('[data-action-hrid="/actions/combat/jungle|T2"]');
+        expect(jungleRow).toBeTruthy();
+        jungleRow.dispatchEvent(new Event('click', { bubbles: true }));
+
+        // Row's own tier (2), read off the row — never re-derived from the name or key
+        expect(mockCombatZoneOpen.openCombatZoneAtTier).toHaveBeenCalledWith('/actions/combat/jungle', 2);
+        expect(goTo).not.toHaveBeenCalled();
+
+        // Not hidden yet — the open is still in flight
+        expect(page.isActive).toBe(true);
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Hidden only once the zone actually opened
+        expect(page.isActive).toBe(false);
+    });
+
+    test('a combat-sim row that fails to open leaves the pinned page up rather than stranding the player', async () => {
+        mockCombatZoneOpen.openCombatZoneAtTier.mockResolvedValue({
+            opened: false,
+            tierConfirmed: false,
+            filled: false,
+        });
+        mountReactRoot(vi.fn());
+
+        page.allActions = combatZoneRows(SNAPSHOT, 'gear-a');
+        page.renderTable();
+
+        const flyRow = page.contentArea.querySelector('[data-action-hrid="/actions/combat/fly|T0"]');
+        flyRow.dispatchEvent(new Event('click', { bubbles: true }));
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(page.isActive).toBe(true);
+    });
+
+    test('a non-combat row is untouched: still handleGoToAction, still hidden synchronously', () => {
+        const handleGoToAction = vi.fn();
+        mountReactRoot(handleGoToAction);
+
+        page.allActions = [
+            {
+                actionHrid: '/actions/milking/cow',
+                baseActionHrid: '/actions/milking/cow',
+                name: 'Milk Cow',
+                skill: 'Milking',
+                type: '/action_types/milking',
+                level: 1,
+                profitPerHour: 6000,
+                expPerHour: 100,
+            },
+        ];
+        page.renderTable();
+
+        const row = page.contentArea.querySelector('[data-action-hrid="/actions/milking/cow"]');
+        expect(row).toBeTruthy();
+        row.dispatchEvent(new Event('click', { bubbles: true }));
+
+        expect(handleGoToAction).toHaveBeenCalledWith('/actions/milking/cow');
+        expect(mockCombatZoneOpen.openCombatZoneAtTier).not.toHaveBeenCalled();
+        // Hidden immediately — no async step in this path
+        expect(page.isActive).toBe(false);
     });
 });
 

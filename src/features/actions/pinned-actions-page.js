@@ -22,6 +22,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 import assetManifest from '../../utils/asset-manifest.js';
 import { capProfitRate, sellsFromProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
+import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
@@ -137,6 +138,10 @@ export function combatZoneRows(snapshot, currentFingerprint) {
                 // collide with each other or with a pinned action's own key
                 actionHrid: `${zone.zoneHrid}|T${tier}`,
                 baseActionHrid: zone.zoneHrid,
+                // The row's own tier, on the row where the click handler can read it —
+                // never re-derived from `name` or the `|T` suffix on `actionHrid` (see
+                // `openCombatZoneAtTier` caller in the row click handler below).
+                difficultyTier: tier,
                 name: `${zoneName} T${tier}`,
                 skill: 'Combat',
                 type: '/action_types/combat',
@@ -779,6 +784,28 @@ class PinnedActionsPage {
                 row.style.background = row.dataset.rowBg || 'transparent';
             });
             row.addEventListener('click', () => {
+                // A combat-sim row's `baseActionHrid` is a zone hrid, and
+                // `handleGoToAction` only ever opens the Combat Zones *list* for
+                // one of those — never the zone's own detail panel, and never at
+                // this row's tier (see `navigateToAction`'s doc-comment in
+                // `utils/item-navigation.js`). Route those through
+                // `openCombatZoneAtTier`, which drives the whole
+                // navigate-click-tile-confirm-tier sequence instead.
+                if (action.source === 'combat-sim') {
+                    openCombatZoneAtTier(action.baseActionHrid, action.difficultyTier ?? 0)
+                        .then((result) => {
+                            // Hidden only once the zone is actually open — hiding first,
+                            // like the synchronous path below does, would leave the
+                            // player staring at nothing if the async sequence refuses
+                            // partway through (list never rendered, tile never found).
+                            if (result.opened) this.hidePage(true);
+                        })
+                        .catch((error) => {
+                            console.error('[PinnedActionsPage] Opening a combat zone row failed:', error);
+                        });
+                    return;
+                }
+
                 const game = getGameObject();
                 if (game?.handleGoToAction) {
                     this.hidePage(true);
