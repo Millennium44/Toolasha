@@ -109,9 +109,16 @@ describe('fightsForKillConfidence', () => {
     test('p at the edges', () => {
         // Certain kills: exactly k fights, no padding possible or needed.
         expect(fights(7, 1, 99)).toBe(7);
-        // More than one kill per fight (a dungeon quoted in clears) is not a
-        // random variable worth padding either.
-        expect(fights(10, 2.5, 99)).toBe(4);
+        // More than one kill per fight — a dungeon quoted in clears, or a zone
+        // whose encounter holds three monsters — is still a random count. With
+        // no slot count to go on it takes the conservative reading and pads,
+        // where it used to return the bare expectation of 4.
+        expect(fights(10, 2.5, 99)).toBeGreaterThan(4);
+        // A mean of 2.5 can never be certain, whatever the slot count: no
+        // whole number of always-this-monster slots averages two and a half.
+        expect(fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 2.5, slotsPerFight: 2 })).toBeGreaterThan(4);
+        // Three slots, all of them this monster, is certain, and pads nothing.
+        expect(fightsForKillConfidence({ killsNeeded: 10, killsPerFight: 3, slotsPerFight: 3 })).toBe(4);
         // A vanishingly rare monster still answers, and answers big.
         expect(fights(1, 1e-4, 90)).toBe(23_025);
         // No rate at all is null, never a guess.
@@ -276,5 +283,202 @@ describe('padFightCount', () => {
             floorPercent: 0,
         });
         expect(result).toEqual({ fights: 600, basis: 'deterministic' });
+    });
+});
+
+/**
+ * A fight that hands out several kills.
+ *
+ * Same discipline as above: the batched answer is checked against a brute-force
+ * scan of the same exact tail rather than against a second closed form, the
+ * shape is checked against the properties a quantile cannot violate, and the
+ * two cases that must stay at zero padding — a boss, and a per-clear drop the
+ * game writes down rather than draws — are pinned so the fix cannot regress
+ * them.
+ */
+describe('fightsForKillConfidence with a batched fight', () => {
+    /** The same question, by scanning every fight count from zero. */
+    const bruteForceBatched = (killsNeeded, killsPerFight, slotsPerFight, confidence) => {
+        const perSlot = killsPerFight / slotsPerFight;
+        for (let n = 0; n <= 100_000; n += 1) {
+            if (binomialAtLeast(n * slotsPerFight, killsNeeded, perSlot) >= confidence) return n;
+        }
+        return null;
+    };
+
+    const batched = (killsNeeded, killsPerFight, slotsPerFight, confidencePercent) =>
+        fightsForKillConfidence({ killsNeeded, killsPerFight, slotsPerFight, confidencePercent });
+
+    test('agrees with a brute-force scan of the same tail', () => {
+        for (const [k, p, b] of [
+            [6, 4, 40],
+            [30, 12, 200],
+            [1, 2.5, 16],
+            [100, 9, 45],
+            [14, 1.5, 3],
+        ]) {
+            for (const c of [50, 75, 90, 99]) {
+                expect(batched(k, p, b, c)).toBe(bruteForceBatched(k, p, b, c / 100));
+            }
+        }
+    });
+
+    test('one slot is the old Bernoulli fight, unchanged', () => {
+        for (const [k, p] of [
+            [6, 0.1],
+            [30, 0.5],
+            [1, 0.02],
+        ]) {
+            expect(batched(k, p, 1, 90)).toBe(fights(k, p, 90));
+            expect(batched(k, p, 1, 90)).toBe(bruteForce(k, p, 0.9));
+        }
+    });
+
+    test('a per-clear drop that fills every slot is arithmetic, and pads nothing', () => {
+        // Three slots, all of them this monster: 3 kills a clear, every clear.
+        expect(batched(60, 3, 3, 90)).toBe(20);
+        expect(batched(60, 3, 3, 99)).toBe(20);
+    });
+
+    test('a random per-clear draw pads past the bare expectation', () => {
+        // A dungeon handing out ~12 kills a clear over ~200 drawn slots: the
+        // expectation is 5 clears, and 5 clears clear the target about half
+        // the time.
+        expect(batched(60, 12, 200, 50)).toBeLessThanOrEqual(6);
+        expect(batched(60, 12, 200, 90)).toBeGreaterThan(5);
+        expect(batched(60, 12, 200, 99)).toBeGreaterThan(batched(60, 12, 200, 90));
+    });
+
+    test('an unknown slot count pads at least as hard as a known one', () => {
+        // "Not known" takes the variance-maximizing reading, so it can never
+        // strand someone a stated slot count would have covered.
+        for (const [k, p, b] of [
+            [60, 12, 200],
+            [6, 4, 40],
+            [300, 9, 45],
+        ]) {
+            const known = batched(k, p, b, 90);
+            const unknown = fightsForKillConfidence({ killsNeeded: k, killsPerFight: p, confidencePercent: 90 });
+            expect(unknown).toBeGreaterThanOrEqual(known);
+            // And it is still a queue somebody would type, not a blow-up.
+            expect(unknown).toBeLessThan(known * 1.5 + 5);
+        }
+    });
+
+    test('a slot count below the mean is raised until the arithmetic works', () => {
+        // Four kills a fight cannot come out of two slots. The answer is the
+        // deterministic one rather than a NaN.
+        expect(batched(40, 4, 2, 90)).toBe(10);
+        expect(Number.isFinite(batched(40, 4, 2, 90))).toBe(true);
+    });
+
+    test('is monotone in confidence and in kills wanted', () => {
+        let previous = 0;
+        for (const c of [10, 25, 50, 75, 90, 95, 99]) {
+            const n = batched(60, 12, 200, c);
+            expect(n).toBeGreaterThanOrEqual(previous);
+            previous = n;
+        }
+        previous = 0;
+        for (const k of [1, 6, 30, 60, 200, 1000]) {
+            const n = batched(k, 12, 200, 90);
+            expect(n).toBeGreaterThanOrEqual(previous);
+            previous = n;
+        }
+    });
+
+    test('never asks for fewer fights than the kills could possibly take', () => {
+        for (const [k, p, b] of [
+            [6, 4, 40],
+            [60, 12, 200],
+            [100, 9, 45],
+        ]) {
+            expect(batched(k, p, b, 90) * b).toBeGreaterThanOrEqual(k);
+            expect(batched(k, p, b, 90)).toBeGreaterThanOrEqual(Math.ceil(k / b));
+        }
+    });
+});
+
+describe('padFightCount on a dungeon row', () => {
+    /** A dungeon clear handing out `killsPerFight` of this monster over `slots` drawn slots. */
+    const clear = (killsNeeded, killsPerFight, slotsPerFight) => ({ killsNeeded, killsPerFight, slotsPerFight });
+
+    test('a monster drawn from the wave tables is padded like any other row', () => {
+        // Pre-fix this returned 5 fights and basis `unpadded`: p >= 1 took the
+        // deterministic branch and the flat floor was skipped with it.
+        const result = padFightCount({
+            unpaddedFights: 5,
+            thresholds: [clear(60, 12, 200)],
+            confidencePercent: 90,
+            floorPercent: 5,
+        });
+        expect(result.basis).toBe('confidence');
+        expect(result.fights).toBeGreaterThan(5);
+        expect(result.fights).toBe(
+            fightsForKillConfidence({ killsNeeded: 60, killsPerFight: 12, slotsPerFight: 200, confidencePercent: 90 })
+        );
+    });
+
+    test('a fixed-wave drop keeps exactly zero padding', () => {
+        // The boss on the last wave of every clear: one a clear, always.
+        const result = padFightCount({
+            unpaddedFights: 60,
+            thresholds: [{ killsNeeded: 60, killsPerFight: 1, slotsPerFight: 200, deterministic: true }],
+            confidencePercent: 90,
+            floorPercent: 5,
+        });
+        expect(result).toEqual({ fights: 60, basis: 'unpadded' });
+    });
+
+    test('a fixed roster of several a clear is still arithmetic', () => {
+        const result = padFightCount({
+            unpaddedFights: 20,
+            thresholds: [{ killsNeeded: 60, killsPerFight: 3, slotsPerFight: 200, deterministic: true }],
+            confidencePercent: 90,
+            floorPercent: 5,
+        });
+        expect(result).toEqual({ fights: 20, basis: 'unpadded' });
+    });
+
+    test('a drawn row and a fixed row in the same clear: the drawn one binds', () => {
+        const result = padFightCount({
+            unpaddedFights: 5,
+            thresholds: [
+                { killsNeeded: 60, killsPerFight: 12, slotsPerFight: 200 },
+                { killsNeeded: 5, killsPerFight: 1, slotsPerFight: 200, deterministic: true },
+            ],
+            confidencePercent: 90,
+            floorPercent: 5,
+        });
+        expect(result.basis).toBe('confidence');
+        expect(result.fights).toBe(
+            fightsForKillConfidence({ killsNeeded: 60, killsPerFight: 12, slotsPerFight: 200, confidencePercent: 90 })
+        );
+    });
+
+    test('a zone whose encounter holds three monsters is no longer treated as certain', () => {
+        // An ordinary zone the task monster dominates: 1.5 kills an encounter
+        // out of three slots. Pre-fix p >= 1 skipped both paddings.
+        const result = padFightCount({
+            unpaddedFights: 40,
+            thresholds: [clear(60, 1.5, 3)],
+            confidencePercent: 90,
+            floorPercent: 5,
+        });
+        expect(result.basis).toBe('confidence');
+        expect(result.fights).toBeGreaterThan(42);
+    });
+
+    test('confidence off still leaves the flat floor on a drawn dungeon row', () => {
+        // Pre-fix a dungeon row got neither, because it counted as
+        // deterministic and deterministic rows skip the flat floor too.
+        expect(
+            padFightCount({
+                unpaddedFights: 100,
+                thresholds: [clear(60, 12, 200)],
+                confidencePercent: 0,
+                floorPercent: 5,
+            })
+        ).toEqual({ fights: 105, basis: 'flat' });
     });
 });

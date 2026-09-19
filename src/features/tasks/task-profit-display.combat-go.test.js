@@ -42,6 +42,7 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { buildAllPlayerDTOs, buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
+import { fightsForKillConfidence } from '../../utils/fight-confidence.js';
 
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runSimulation: vi.fn(),
@@ -875,5 +876,86 @@ describe('_applyGoEstimate (confidence padding and the boss exception)', () => {
         });
 
         expect(input.value).toBe('210');
+    });
+});
+
+/**
+ * Ask 5b (a fight that hands out more than one kill is still random): an
+ * encounter fills up to `maxSpawnCount` monster slots, so a zone the task
+ * monster dominates can average more than one kill a fight. Pre-fix
+ * `killsPerFight >= 1` took the deterministic branch in `padFightCount` and
+ * the estimate was filled verbatim — no quantile and no flat buffer — on a
+ * count that is every bit as random as a rare monster's. The zone's slot count
+ * comes from the game data, so the padding can model the batch instead of
+ * mistaking its mean for certainty.
+ */
+describe('_applyGoEstimate (a fight worth more than one kill)', () => {
+    const CROWD_ZONE = [
+        {
+            hrid: '/actions/combat/crowd',
+            name: 'Crowd Zone',
+            category: '/categories/crowd',
+            sortIndex: 1,
+            monsters: ['/monsters/fly'],
+        },
+    ];
+
+    /** Game data whose encounters hold `slots` monsters. */
+    function crowdedGameData(slots) {
+        const data = buildGameData(CROWD_ZONE);
+        data.actionDetailMap['/actions/combat/crowd'].combatZoneInfo.fightInfo.randomSpawnInfo.maxSpawnCount = slots;
+        return data;
+    }
+
+    function settings({ buffer = 5, confidence = 90 } = {}) {
+        vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) => {
+            if (key === 'taskCombatGoBuffer') return buffer;
+            if (key === 'combatFightConfidence') return confidence;
+            return fallback;
+        });
+    }
+
+    test('a three-slot encounter averaging 1.5 kills is padded, not filled verbatim', async () => {
+        dataManager.initClientData = crowdedGameData(3);
+        const { input } = buildDetailPanel('Crowd Zone', 0);
+        settings();
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/crowd',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 40,
+            killsNeeded: 60,
+            killsPerFight: 1.5,
+        });
+
+        // Pre-fix this filled the bare 40. Sixty kills at 1.5 a fight over
+        // three slots wants more than that nine times in ten.
+        expect(Number(input.value)).toBe(
+            fightsForKillConfidence({
+                killsNeeded: 60,
+                killsPerFight: 1.5,
+                slotsPerFight: 3,
+                confidencePercent: 90,
+            })
+        );
+        expect(Number(input.value)).toBeGreaterThan(42);
+    });
+
+    test('a boss in such a zone is still filled verbatim', async () => {
+        dataManager.initClientData = crowdedGameData(3);
+        const { input } = buildDetailPanel('Crowd Zone', 0);
+        settings();
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(true);
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/crowd',
+            monsterHrid: '/monsters/fly',
+            predictedFights: 100,
+            killsNeeded: 10,
+            killsPerFight: 0.1,
+        });
+
+        expect(input.value).toBe('100');
     });
 });

@@ -279,6 +279,74 @@ function settingNumber(id, hardDefault) {
 }
 
 /**
+ * What one fight in a zone draws, as far as a kill count is concerned.
+ *
+ * Two numbers come out of the spawn tables, and both are facts about the game
+ * data rather than inferences from a simulated rate:
+ *
+ * - `slotsPerFight`, the independent monster slots one fight fills. For an
+ *   ordinary zone that is `randomSpawnInfo.maxSpawnCount`. For a dungeon —
+ *   whose "fight" in this planner is a whole clear — it is the waves that are
+ *   *not* on `fixedSpawnsMap` times the widest random table's `maxSpawnCount`,
+ *   because those are exactly the waves whose roster is drawn rather than
+ *   written down.
+ * - `fixedOnly`, the dungeon monsters that appear in a `fixedSpawnsMap` roster
+ *   and in no random table. Those arrive the same number of times every clear,
+ *   so their count is arithmetic and padding it pads for variance that is not
+ *   there. A monster in *both* is not on this list: its count still moves.
+ *
+ * The planner keys zones as `<actionHrid>|T<tier>`, and the tier does not
+ * change the tables, so the suffix is dropped.
+ *
+ * @param {string} zoneHrid - The planner's zone key
+ * @returns {{slotsPerFight: number|null, fixedOnly: Set<string>}|null} null when
+ *   the game data cannot answer
+ */
+function zoneSpawnShape(zoneHrid) {
+    try {
+        const actionHrid = String(zoneHrid || '').split('|')[0];
+        const info = dataManager.getActionDetails?.(actionHrid)?.combatZoneInfo;
+        if (!info) return null;
+        if (!info.isDungeon) {
+            const slots = Number(info.fightInfo?.randomSpawnInfo?.maxSpawnCount) || 0;
+            return { slotsPerFight: slots > 0 ? slots : null, fixedOnly: new Set() };
+        }
+
+        const dungeon = info.dungeonInfo || {};
+        const maxWaves = Number(dungeon.maxWaves) || 0;
+        const fixedMap = dungeon.fixedSpawnsMap || {};
+        const randomMap = dungeon.randomSpawnInfoMap || {};
+
+        const randomMonsters = new Set();
+        let widestTable = 0;
+        for (const table of Object.values(randomMap)) {
+            widestTable = Math.max(widestTable, Number(table?.maxSpawnCount) || 0);
+            for (const spawn of table?.spawns || []) {
+                if (spawn?.combatMonsterHrid) randomMonsters.add(spawn.combatMonsterHrid);
+            }
+        }
+
+        const fixedOnly = new Set();
+        let fixedWaves = 0;
+        for (const [wave, roster] of Object.entries(fixedMap)) {
+            const waveNum = Number(wave);
+            if (waveNum >= 1 && waveNum <= maxWaves) fixedWaves += 1;
+            for (const spawn of roster || []) {
+                const hrid = spawn?.combatMonsterHrid;
+                if (hrid && !randomMonsters.has(hrid)) fixedOnly.add(hrid);
+            }
+        }
+
+        const randomWaves = Math.max(0, maxWaves - fixedWaves);
+        const slots = randomWaves * widestTable;
+        return { slotsPerFight: slots > 0 ? slots : null, fixedOnly };
+    } catch (error) {
+        console.error('[BestiaryPlan] Reading a zone spawn table failed:', error);
+        return null;
+    }
+}
+
+/**
  * Raise each segment's quoted fight count until the thresholds that segment
  * crosses are actually reached at the configured confidence.
  *
@@ -287,14 +355,20 @@ function settingNumber(id, hardDefault) {
  * so padding here is what both of them show and fill — there is no second
  * place to keep in step.
  *
- * A segment's kill chance per fight is its zone's kills/hour for that monster
- * over its fights/hour; a zone that never reported fights/hour cannot form the
- * rate and is left alone rather than guessed at. A partial segment crosses
- * nothing, so there is nothing to be confident about and it keeps its count.
+ * A segment's kills per fight is its zone's kills/hour for that monster over
+ * its fights/hour; a zone that never reported fights/hour cannot form the rate
+ * and is left alone rather than guessed at. A partial segment crosses nothing,
+ * so there is nothing to be confident about and it keeps its count.
+ *
+ * A dungeon's "fight" is a clear, which hands out many kills of a monster
+ * rather than one or none, so the spawn shape goes along with the rate: how
+ * many slots a clear draws, and which of its monsters are written into a fixed
+ * wave instead of drawn. See {@link zoneSpawnShape} and `fight-confidence.js`.
  *
  * @param {Array<Object>} segments
  * @param {Map<string, Object>} zonesByHrid
- * @param {{confidencePercent: number, bufferPercent: number, isBossMonster: function(string): boolean}} options
+ * @param {{confidencePercent: number, bufferPercent: number, isBossMonster: function(string): boolean,
+ *   spawnShape: function(string): ({slotsPerFight: number|null, fixedOnly: Set<string>}|null)}} options
  */
 function padSegmentFights(segments, zonesByHrid, options) {
     for (const segment of segments) {
@@ -308,10 +382,13 @@ function padSegmentFights(segments, zonesByHrid, options) {
         const crossings = segment.monsters.filter((m) => m.reached);
         if (!crossings.length) continue;
 
+        const shape = options.spawnShape(segment.zoneHrid);
         const thresholds = crossings.map((m) => ({
             killsNeeded: m.to - m.from,
             killsPerFight: (Number(zone.killsPerHour?.[m.monsterHrid]) || 0) / perHour,
-            deterministic: Boolean(options.isBossMonster(m.monsterHrid)),
+            slotsPerFight: shape?.slotsPerFight ?? null,
+            deterministic:
+                Boolean(options.isBossMonster(m.monsterHrid)) || Boolean(shape?.fixedOnly?.has(m.monsterHrid)),
         }));
         const { fights, basis } = padFightCount({
             unpaddedFights: segment.encounters,
@@ -366,6 +443,9 @@ function padSegmentFights(segments, zonesByHrid, options) {
  *   boss, which needs no padding at all.
  * @param {function(string): boolean} [input.isBossMonster] - Whether a monster spawns on a fixed wave rather
  *   than out of the spawn table. Defaults to the game's own answer.
+ * @param {function(string): ({slotsPerFight: number|null, fixedOnly: Set<string>}|null)} [input.spawnShape] -
+ *   What one fight in a zone draws: how many monster slots, and which of its monsters are written into a
+ *   fixed wave rather than drawn. Defaults to the game's own spawn tables — see {@link zoneSpawnShape}.
  * @returns {{
  *   mode: 'hours'|'points',
  *   hours: number,
@@ -391,6 +471,7 @@ export function planBestiaryRoute({
     confidencePercent = null,
     bufferPercent = null,
     isBossMonster = null,
+    spawnShape = null,
 } = {}) {
     const targeting = Number(targetPoints) > 0;
     const target = targeting ? Number(targetPoints) : 0;
@@ -580,6 +661,10 @@ export function planBestiaryRoute({
                       typeof dataManager.isBossMonster === 'function'
                           ? Boolean(dataManager.isBossMonster(hrid))
                           : false,
+        // Game data that has not loaded means "shape unknown", which
+        // `fight-confidence.js` reads as the conservative slot count rather
+        // than as "no variance" — the same bias as the boss test above.
+        spawnShape: typeof spawnShape === 'function' ? spawnShape : zoneSpawnShape,
     });
 
     return {

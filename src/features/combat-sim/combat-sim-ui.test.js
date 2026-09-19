@@ -4980,8 +4980,11 @@ describe('dungeons in the all-zones run and in the plan', () => {
         expect(cells[0][1]).toBe('[D] Den T1▶');
         expect(cells[0][2]).toBe('1:00');
         // Three clears an hour, your pace — not the simulator's six — and the
-        // stay is quoted in clears rather than fights
-        expect(cells[0][3]).toBe('≈3 clears');
+        // stay is quoted in clears rather than fights. Four rather than three
+        // because a clear's goblins are drawn from the wave tables, so the
+        // two kills this stay crosses get the same confidence padding every
+        // other row gets (`utils/fight-confidence.js`).
+        expect(cells[0][3]).toBe('≈4 clears');
         expect(cells[0][4]).toBe('+2');
         // Where the clear time came from rides on the row
         const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
@@ -4998,11 +5001,12 @@ describe('dungeons in the all-zones run and in the plan', () => {
 
         const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
         expect(fightsCell.getAttribute('title')).toContain('sim clear time');
-        // The simulator's own six clears an hour, unrescaled
+        // The simulator's own six clears an hour, unrescaled — plus the one
+        // clear of confidence padding a drawn kill count gets
         const cells = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')].map((td) =>
             td.textContent.trim()
         );
-        expect(cells[3]).toBe('≈6 clears');
+        expect(cells[3]).toBe('≈7 clears');
     });
 });
 

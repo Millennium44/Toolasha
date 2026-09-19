@@ -608,3 +608,65 @@ describe('fight-count confidence padding', () => {
         expect(segment.fightPadding).toBeNull();
     });
 });
+
+/**
+ * A dungeon segment is quoted in clears, and a clear hands out many kills of
+ * the same monster. Whether that count is random is a fact about the dungeon's
+ * spawn tables — drawn from `randomSpawnInfoMap`, or written into a
+ * `fixedSpawnsMap` roster — and never an inference from the rate, which is why
+ * the shape is injected here the same way the boss test is.
+ */
+describe('a dungeon segment quoted in clears', () => {
+    /** A 15-clear stay in a dungeon that hands out 12 imps and 1 boss a clear. */
+    const denPlan = (spawnShape) =>
+        planBestiaryRoute({
+            zones: [
+                {
+                    zoneHrid: '/actions/combat/den|T0',
+                    name: 'Den T0',
+                    killsPerHour: { '/monsters/imp': 120, '/monsters/boss': 10 },
+                    encountersPerHour: 10,
+                    isDungeon: true,
+                },
+            ],
+            counts: { '/monsters/imp': 940, '/monsters/boss': 0 },
+            hours: 0.5,
+            confidencePercent: 90,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+            spawnShape,
+        }).segments[0];
+
+    test('a monster drawn from the wave tables is padded like any other', () => {
+        const segment = denPlan(() => ({ slotsPerFight: 200, fixedOnly: new Set() }));
+        expect(segment.encountersUnpadded).toBeCloseTo(5, 6);
+        expect(segment.fightPadding).toBe('confidence');
+        expect(segment.encounters).toBe(
+            fightsForKillConfidence({
+                killsNeeded: 60,
+                killsPerFight: 12,
+                slotsPerFight: 200,
+                confidencePercent: 90,
+            })
+        );
+        // Pre-fix: 5 clears, which crosses the threshold about half the time.
+        expect(segment.encounters).toBeGreaterThan(5);
+    });
+
+    test('a monster written into a fixed wave keeps zero padding', () => {
+        // The same stay, but the imp is the dungeon's fixed roster: twelve
+        // every clear, always, so five clears is arithmetic.
+        const segment = denPlan(() => ({
+            slotsPerFight: 200,
+            fixedOnly: new Set(['/monsters/imp', '/monsters/boss']),
+        }));
+        expect(segment.encounters).toBeCloseTo(5, 6);
+        expect(segment.fightPadding).toBeNull();
+    });
+
+    test('spawn tables the game has not loaded pad rather than assume certainty', () => {
+        const segment = denPlan(() => null);
+        expect(segment.fightPadding).toBe('confidence');
+        expect(segment.encounters).toBeGreaterThan(5);
+    });
+});

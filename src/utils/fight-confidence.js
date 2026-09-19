@@ -27,6 +27,46 @@
  * P(fights ≤ n) = P(Binomial(n, p) ≥ k). The answer is the smallest `n` whose
  * binomial upper tail reaches `c`.
  *
+ * ## When a fight hands out more than one kill
+ *
+ * "One draw per fight" is the special case `p < 1`. A fight is really a *batch*
+ * of draws: an ordinary zone's encounter fills up to `maxSpawnCount` monster
+ * slots from the table, and a dungeon *clear* — which is what the planner
+ * quotes a dungeon in — is fifty-odd waves of four or five slots each. Those
+ * zones hand out `p` kills a fight with `p` well above one, and the count is
+ * every bit as random as a rare monster's.
+ *
+ * The batch is modelled as what it is: `b` independent slots per fight, each
+ * one this monster with probability `p / b`. Then kills in `n` fights are
+ * Binomial(n·b, p/b) and the machinery above applies *unchanged* — search on
+ * slots for the smallest `m` with P(Binomial(m, p/b) ≥ k) ≥ c, then quote
+ * `⌈m / b⌉` fights, which is exact because the tail is monotone in `m` and a
+ * fight buys exactly `b` slots.
+ *
+ * `b = 1` is the old Bernoulli fight, so nothing that quoted one moves. The
+ * per-fight variance `p(1 − p/b)` *rises* with `b` toward the Poisson limit
+ * `p`, so more slots means more padding, and the slot count is therefore a
+ * claim that has to come from the game data rather than be guessed generously.
+ * It does: `randomSpawnInfo.maxSpawnCount` for a zone, and, for a dungeon, the
+ * waves that are not on `fixedSpawnsMap` times their table's `maxSpawnCount`.
+ *
+ * A slot count that is genuinely unknown while `p > 1` falls back to the
+ * variance-maximizing reading — {@link UNKNOWN_SLOT_RESOLUTION} slots per
+ * expected kill, which is Poisson to within 2% of the variance. That over-pads
+ * rather than strands, and it is the only guess in here.
+ *
+ * ## What is *not* padded
+ *
+ * A kill count that is arithmetic rather than luck. Two cases reach that, and
+ * both are read off the game data, never inferred from the rate:
+ *
+ * - a boss, which arrives on a fixed wave (`dataManager.isBossMonster`);
+ * - a dungeon monster that appears only in `fixedSpawnsMap` rosters, which is
+ *   handed out the same number of times every single clear.
+ *
+ * `p / b ≥ 1` — every slot in the fight is this monster — is the third, and it
+ * is the same statement: there is nothing left to be uncertain about.
+ *
  * A normal approximation to that tail is not good enough where it matters
  * most. At k = 6 the distribution is visibly skewed and a continuity-corrected
  * normal is off by several fights — and six is precisely the case that
@@ -59,6 +99,20 @@
 
 /** Beyond this the answer has stopped being a number anyone would queue. */
 const MAX_FIGHTS = 1e9;
+
+/** The same cap, applied to the slot search that sits underneath it. */
+const MAX_SLOTS = 1e9;
+
+/**
+ * Slots assumed per expected kill when a fight hands out more than one and
+ * nothing said how many slots it has.
+ *
+ * At 64 the per-slot chance is 1/64, so the per-fight variance is
+ * `p(1 − 1/64)` — 98.4% of the Poisson limit a batch of unknown width can
+ * reach. The cost of being wrong this way is a queue a few percent long; the
+ * cost of the other way is the stranding the module exists to stop.
+ */
+const UNKNOWN_SLOT_RESOLUTION = 64;
 
 /** Confidence is clamped below 1 — P = 1 needs infinitely many fights. */
 const MAX_CONFIDENCE = 0.99999;
@@ -171,42 +225,47 @@ export function binomialAtLeast(n, k, p) {
 }
 
 /**
- * The fights needed to land `killsNeeded` kills with probability at least
- * `confidencePercent`.
+ * How many independent monster slots one fight draws, given its mean.
  *
- * `killsPerFight ≥ 1` is not a random variable in any useful sense — a dungeon
- * quoted in clears hands out its monsters every clear — so that case returns
- * the plain requirement with no padding at all. So does a confidence of zero,
- * which is the documented off switch.
+ * A caller that knows is believed, except that a slot count below the mean is
+ * arithmetically impossible (it would need a per-slot chance above one), so it
+ * is raised until it is not. A caller that does not know keeps the Bernoulli
+ * fight while the mean allows it, and otherwise takes the conservative reading
+ * described on {@link UNKNOWN_SLOT_RESOLUTION}.
  *
- * @param {Object} input
- * @param {number} input.killsNeeded - kills still wanted, `k`
- * @param {number} input.killsPerFight - kills of this monster per fight, `p`
- * @param {number} [input.confidencePercent=90] - how often the queue should suffice
- * @returns {number|null} fights to queue, or null when `p` is unknown or not positive
+ * @param {number} p - kills of this monster per fight
+ * @param {number|null|undefined} slotsPerFight - what the caller knows, if anything
+ * @returns {number} slots per fight, at least 1
  */
-export function fightsForKillConfidence({ killsNeeded, killsPerFight, confidencePercent = 90 } = {}) {
-    const k = Math.ceil(Number(killsNeeded) || 0);
-    const p = Number(killsPerFight);
-    if (!(k > 0)) return 0;
-    if (!Number.isFinite(p) || !(p > 0)) return null;
+function resolveSlots(p, slotsPerFight) {
+    const given = Math.floor(Number(slotsPerFight));
+    if (Number.isFinite(given) && given >= 1) return Math.max(given, Math.ceil(p - 1e-9));
+    if (p <= 1) return 1;
+    return Math.ceil(p * UNKNOWN_SLOT_RESOLUTION);
+}
 
-    const expected = Math.ceil(k / p - 1e-9);
-    if (p >= 1) return expected;
-
-    const confidence = Math.min(MAX_CONFIDENCE, Math.max(0, (Number(confidencePercent) || 0) / 100));
-    if (!(confidence > 0)) return expected;
-
-    // Opening guess: continuity-corrected normal, solved for n as a quadratic
-    // in √n. Close enough that the bracket below is a handful of fights wide.
+/**
+ * The smallest number of slots whose binomial upper tail reaches `confidence`.
+ *
+ * Opening guess: continuity-corrected normal, solved for the slot count as a
+ * quadratic in its square root. Close enough that the bracket below is a
+ * handful of slots wide, so every exact evaluation happens near the answer.
+ *
+ * @param {number} k - kills wanted
+ * @param {number} p - chance one slot is this monster, in (0, 1)
+ * @param {number} confidence - in (0, 1)
+ * @returns {number} slots, capped at {@link MAX_SLOTS}
+ */
+function slotsForKillConfidence(k, p, confidence) {
     const z = inverseNormalCdf(confidence);
     const root = (z * Math.sqrt(p * (1 - p)) + Math.sqrt(z * z * p * (1 - p) + 4 * p * (k - 0.5))) / (2 * p);
     let guess = Math.ceil(root * root);
     if (!Number.isFinite(guess) || guess < k) guess = k;
-    if (guess > MAX_FIGHTS) return MAX_FIGHTS;
+    if (guess > MAX_SLOTS) return MAX_SLOTS;
 
     // Bracket the exact answer around the guess, then bisect. The tail is
-    // increasing in n for fixed k and p, so this is a clean monotone search.
+    // increasing in the slot count for fixed k and p, so this is a clean
+    // monotone search.
     const reaches = (n) => binomialAtLeast(n, k, p) >= confidence;
     let lo = Math.max(k - 1, Math.floor(guess * 0.9) - 4);
     let hi = Math.max(lo + 1, Math.ceil(guess * 1.1) + 4);
@@ -218,9 +277,9 @@ export function fightsForKillConfidence({ killsNeeded, killsPerFight, confidence
     }
     while (!reaches(hi)) {
         lo = hi;
-        hi = Math.min(MAX_FIGHTS, hi + span);
+        hi = Math.min(MAX_SLOTS, hi + span);
         span *= 2;
-        if (hi >= MAX_FIGHTS) return MAX_FIGHTS;
+        if (hi >= MAX_SLOTS) return MAX_SLOTS;
     }
     while (hi - lo > 1) {
         const mid = Math.floor((lo + hi) / 2);
@@ -231,12 +290,64 @@ export function fightsForKillConfidence({ killsNeeded, killsPerFight, confidence
 }
 
 /**
+ * The fights needed to land `killsNeeded` kills with probability at least
+ * `confidencePercent`.
+ *
+ * A fight is `slotsPerFight` independent draws, each this monster with chance
+ * `killsPerFight / slotsPerFight`; the default of one slot is the ordinary
+ * Bernoulli fight. Only two things return the plain unpadded requirement: a
+ * confidence of zero, which is the documented off switch, and a per-slot
+ * chance that has reached one, where every slot is this monster and there is
+ * no randomness left to pad. A mean above one kill a fight is *not* by itself
+ * either of those — see the module doc.
+ *
+ * Whether a monster is handed out on a fixed schedule (a boss, a dungeon's
+ * fixed-wave roster) is a fact about the game data, not about `p`, so it is the
+ * caller's to state — see {@link padFightCount}'s `deterministic`.
+ *
+ * @param {Object} input
+ * @param {number} input.killsNeeded - kills still wanted, `k`
+ * @param {number} input.killsPerFight - kills of this monster per fight, `p`
+ * @param {number} [input.slotsPerFight] - monster slots one fight draws, `b`;
+ *   omitted or unusable means "not known", which keeps the single-draw fight
+ *   while `p ≤ 1` and is conservative above it
+ * @param {number} [input.confidencePercent=90] - how often the queue should suffice
+ * @returns {number|null} fights to queue, or null when `p` is unknown or not positive
+ */
+export function fightsForKillConfidence({
+    killsNeeded,
+    killsPerFight,
+    slotsPerFight = null,
+    confidencePercent = 90,
+} = {}) {
+    const k = Math.ceil(Number(killsNeeded) || 0);
+    const p = Number(killsPerFight);
+    if (!(k > 0)) return 0;
+    if (!Number.isFinite(p) || !(p > 0)) return null;
+
+    const expected = Math.ceil(k / p - 1e-9);
+    const slots = resolveSlots(p, slotsPerFight);
+    const perSlot = p / slots;
+    if (!(perSlot < 1)) return expected;
+
+    const confidence = Math.min(MAX_CONFIDENCE, Math.max(0, (Number(confidencePercent) || 0) / 100));
+    if (!(confidence > 0)) return expected;
+
+    const slotsNeeded = slotsForKillConfidence(k, perSlot, confidence);
+    return Math.min(MAX_FIGHTS, Math.ceil(slotsNeeded / slots));
+}
+
+/**
  * One kill threshold a queued stay has to clear.
  * @typedef {Object} FightThreshold
  * @property {number} killsNeeded - kills still wanted
  * @property {number} killsPerFight - kills of this monster per fight
- * @property {boolean} [deterministic] - true for a boss, which spawns on a
- *   fixed wave rather than out of the spawn table and so needs no padding
+ * @property {number} [slotsPerFight] - monster slots one fight draws; a
+ *   dungeon clear has as many as its random waves have spawn slots, and
+ *   omitting it means "not known"
+ * @property {boolean} [deterministic] - true for a kill count the game hands
+ *   out on a schedule rather than out of a spawn table — a boss, or a dungeon
+ *   monster that only ever appears in `fixedSpawnsMap` — which needs no padding
  */
 
 /**
@@ -272,13 +383,20 @@ export function padFightCount({ unpaddedFights, thresholds = [], confidencePerce
         const p = Number(threshold.killsPerFight);
         if (!Number.isFinite(p) || !(p > 0)) continue;
         priced += 1;
-        const deterministic = Boolean(threshold.deterministic) || p >= 1;
+        // Deterministic is a statement about the game data — a boss, a fixed
+        // dungeon wave — plus the one case the rate settles by itself: every
+        // slot in the fight is this monster. A mean above one kill a fight is
+        // not enough on its own; a dungeon's spawn table is random *within* a
+        // clear, and treating it as arithmetic is what stranded people.
+        const slots = resolveSlots(p, threshold.slotsPerFight);
+        const deterministic = Boolean(threshold.deterministic) || p / slots >= 1;
         if (!deterministic) randomCount += 1;
         const need = deterministic
             ? Math.ceil(Number(threshold.killsNeeded) / p - 1e-9)
             : fightsForKillConfidence({
                   killsNeeded: threshold.killsNeeded,
                   killsPerFight: p,
+                  slotsPerFight: threshold.slotsPerFight,
                   confidencePercent: confidence,
               });
         if (Number.isFinite(need)) required = Math.max(required, need);

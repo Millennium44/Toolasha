@@ -1064,10 +1064,27 @@ class TaskProfitDisplay {
         // plugin treated boss spawns as deterministic in one place and random
         // in the other.
         const deterministic = Boolean(estimate.monsterHrid && dataManager.isBossMonster(estimate.monsterHrid));
+        // An encounter fills up to `maxSpawnCount` monster slots, so a zone the
+        // task monster dominates hands out more than one kill a fight. That is
+        // still a random count, and quoting the slot count is what lets the
+        // padding treat it as one instead of as arithmetic. Absent game data
+        // leaves it null, which is "not known", not "one".
+        const slotsPerFight =
+            Number(
+                dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.combatZoneInfo?.fightInfo
+                    ?.randomSpawnInfo?.maxSpawnCount
+            ) || null;
         const { fights } = padFightCount({
             unpaddedFights: estimate.predictedFights,
             thresholds: Number.isFinite(estimate.killsPerFight)
-                ? [{ killsNeeded: estimate.killsNeeded, killsPerFight: estimate.killsPerFight, deterministic }]
+                ? [
+                      {
+                          killsNeeded: estimate.killsNeeded,
+                          killsPerFight: estimate.killsPerFight,
+                          slotsPerFight,
+                          deterministic,
+                      },
+                  ]
                 : [],
             confidencePercent,
             // A boss stay gets no flat floor either — zero padding is the
