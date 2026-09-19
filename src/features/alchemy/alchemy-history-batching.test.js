@@ -47,7 +47,10 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => game.prices[hrid] ?? 0,
+    // Matches the real getItemPrice: null for "no market data", the same
+    // signal `decompose-history-tracker.js` and `transmute-history-tracker.js`
+    // now read to mark an output unpriced instead of silently costing it 0.
+    getItemPrice: (hrid) => (hrid in game.prices ? game.prices[hrid] : null),
     getItemPrices: () => null,
 }));
 vi.mock('./alchemy-session-store.js', () => ({
@@ -328,6 +331,38 @@ describe('transmute: successes come from the output counts', () => {
         expect(transmuteHistoryTracker.activeSession.totalSuccesses).toBe(0);
         expect(transmuteHistoryTracker.activeSession.results['/items/essence']).toBeUndefined();
     });
+
+    test('an output the market cannot price is marked unpriced, not costed at 0', async () => {
+        // getItemPrice returns null for '/items/shard' this time
+        delete game.prices['/items/shard'];
+        await transmuteHistoryTracker.startSession('/items/gem', 1000);
+
+        await transmuteHistoryTracker.handleActionCompleted(
+            message(1, [{ id: 'shards', itemHrid: '/items/shard', count: 10 }])
+        );
+        await transmuteHistoryTracker.handleActionCompleted(
+            message(5, [{ id: 'shards', itemHrid: '/items/shard', count: 14 }])
+        );
+
+        const result = transmuteHistoryTracker.activeSession.results['/items/shard'];
+        expect(result.count).toBe(5);
+        expect(result.totalValue).toBe(0);
+        expect(result.unpriced).toBe(true);
+    });
+
+    test('a self-return is never marked unpriced even though it is never priced', async () => {
+        await transmuteHistoryTracker.startSession('/items/gem', 1000);
+        await transmuteHistoryTracker.handleActionCompleted(
+            message(1, [{ id: 'gems', itemHrid: '/items/gem', count: 100 }])
+        );
+        await transmuteHistoryTracker.handleActionCompleted(
+            message(5, [{ id: 'gems', itemHrid: '/items/gem', count: 98 }])
+        );
+
+        const result = transmuteHistoryTracker.activeSession.results['/items/gem'];
+        expect(result.isSelfReturn).toBe(true);
+        expect(result.unpriced).toBeFalsy();
+    });
 });
 
 describe('decompose: successes come from the output counts, not the row count', () => {
@@ -421,6 +456,49 @@ describe('decompose: successes come from the output counts, not the row count', 
         // If both rows' deltas were summed instead of taking the max, this
         // would read as 10 successes instead of 5
         expect(decomposeHistoryTracker.activeSession.totalSuccesses).toBe(6);
+    });
+
+    test('an output the market cannot price is marked unpriced, not costed at 0', async () => {
+        // getItemPrice returns null for '/items/dust' this time
+        delete game.prices['/items/dust'];
+        await decomposeHistoryTracker.startSession('/items/ore', 0, 1000);
+
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(1, [{ id: 'dust', itemHrid: '/items/dust', count: 10 }])
+        );
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(6, [{ id: 'dust', itemHrid: '/items/dust', count: 15 }])
+        );
+
+        const result = decomposeHistoryTracker.activeSession.results['/items/dust'];
+        expect(result.count).toBe(6);
+        expect(result.totalValue).toBe(0);
+        expect(result.unpriced).toBe(true);
+    });
+
+    test('a later priced tick does not clear an earlier unpriced mark', async () => {
+        // First tick: no price for dust yet
+        delete game.prices['/items/dust'];
+        await decomposeHistoryTracker.startSession('/items/ore', 0, 1000);
+
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(1, [{ id: 'dust', itemHrid: '/items/dust', count: 10 }])
+        );
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(3, [{ id: 'dust', itemHrid: '/items/dust', count: 12 }])
+        );
+        expect(decomposeHistoryTracker.activeSession.results['/items/dust'].unpriced).toBe(true);
+
+        // Now the market prices it — later ticks add value, but the session's
+        // total stays flagged incomplete since the earlier tick never did
+        game.prices['/items/dust'] = 20;
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(6, [{ id: 'dust', itemHrid: '/items/dust', count: 15 }])
+        );
+
+        const result = decomposeHistoryTracker.activeSession.results['/items/dust'];
+        expect(result.unpriced).toBe(true);
+        expect(result.totalValue).toBe(3 * 20);
     });
 });
 

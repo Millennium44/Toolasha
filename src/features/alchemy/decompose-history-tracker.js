@@ -277,6 +277,7 @@ class DecomposeHistoryTracker {
                         count: 0,
                         totalValue: 0,
                         priceEach: 0,
+                        unpriced: false,
                     };
                 }
 
@@ -284,10 +285,20 @@ class DecomposeHistoryTracker {
                 const received = successCount * bulkMultiplier * expectedCount;
                 this.activeSession.results[outputItemHrid].count += received;
 
-                // Record market price at time of result
-                const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' }) || 0;
-                this.activeSession.results[outputItemHrid].priceEach = price;
-                this.activeSession.results[outputItemHrid].totalValue += price * received;
+                // Record market price at time of result. `null` means the market
+                // cannot price this item at all — folding that into the total as
+                // 0 would report "earned nothing" for "could not tell what this
+                // was worth", so the tick is excluded from totalValue (there is
+                // no number to add) and the result is marked unpriced instead.
+                // Sticky across the session: once any tick could not be priced,
+                // the total stays incomplete even if a later tick can be.
+                const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' });
+                if (price === null) {
+                    this.activeSession.results[outputItemHrid].unpriced = true;
+                } else {
+                    this.activeSession.results[outputItemHrid].priceEach = price;
+                    this.activeSession.results[outputItemHrid].totalValue += price * received;
+                }
             }
         }
 

@@ -549,3 +549,95 @@ describe('transmute history totals: a flagged group poisons the overall "All ite
         }
     });
 });
+
+describe('transmute history totals: an unpriced output is not a bare zero', () => {
+    beforeEach(() => {
+        mocks.prices = { [INPUT_A_HRID]: 100 };
+    });
+
+    test('marks Revenue, Net and Break-even Input with ¶, never a silent 0', () => {
+        // The tracker records an output the market cannot price as
+        // `unpriced: true` with no value added — never as a priced zero.
+        loadSessions([
+            makeSession({
+                results: {
+                    [OUTPUT_HRID]: { count: 8, isSelfReturn: false, totalValue: 0, priceEach: 0, unpriced: true },
+                },
+            }),
+        ]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        expect(group.revenue).toBe(0);
+        expect(group.revenueUnpriced).toBe(true);
+        expect(group.net).toBe(0 - group.inputCost - group.catalystCost - group.coinCost);
+
+        transmuteHistoryViewer.modal = document.createElement('div');
+        transmuteHistoryViewer.modal.innerHTML = '<div class="mwi-transmute-history-totals-container"></div>';
+        transmuteHistoryViewer.renderTotals();
+
+        const text = transmuteHistoryViewer.modal.textContent;
+        expect(text).toContain('¶');
+
+        const revenueCell = Array.from(transmuteHistoryViewer.modal.querySelectorAll('td')).find((td) =>
+            td.title.includes('could not price')
+        );
+        expect(revenueCell).toBeDefined();
+        expect(revenueCell.textContent).toContain('¶');
+
+        const netCell = Array.from(transmuteHistoryViewer.modal.querySelectorAll('td')).find((td) =>
+            td.title.includes('Includes an unpriced output')
+        );
+        expect(netCell).toBeDefined();
+        expect(netCell.textContent).toContain('¶');
+    });
+
+    test('a genuine zero-value output carries no ¶ mark', () => {
+        loadSessions([
+            makeSession({
+                results: {
+                    [OUTPUT_HRID]: { count: 8, isSelfReturn: false, totalValue: 0, priceEach: 0, unpriced: false },
+                },
+            }),
+        ]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        expect(group.revenue).toBe(0);
+        expect(group.revenueUnpriced).toBe(false);
+
+        transmuteHistoryViewer.modal = document.createElement('div');
+        transmuteHistoryViewer.modal.innerHTML = '<div class="mwi-transmute-history-totals-container"></div>';
+        transmuteHistoryViewer.renderTotals();
+
+        // The legend itself always explains the marker's meaning — what must
+        // stay clean is the data cells, which is where a real zero would be
+        // wrongly flagged.
+        const cellText = Array.from(transmuteHistoryViewer.modal.querySelectorAll('td'))
+            .map((td) => td.textContent)
+            .join('');
+        expect(cellText).not.toContain('¶');
+    });
+
+    test('a self-return output never makes revenue unpriced', () => {
+        loadSessions([
+            makeSession({
+                results: {
+                    [INPUT_A_HRID]: { count: 2, isSelfReturn: true, totalValue: 0, priceEach: 0 },
+                    [OUTPUT_HRID]: { count: 6, isSelfReturn: false, totalValue: 6000, priceEach: 1000 },
+                },
+            }),
+        ]);
+
+        const [group] = transmuteHistoryViewer.computeInputItemTotals();
+        expect(group.revenueUnpriced).toBe(false);
+    });
+
+    test('the legend explains the ¶ marker', () => {
+        loadSessions([makeSession({})]);
+        transmuteHistoryViewer.modal = document.createElement('div');
+        transmuteHistoryViewer.modal.innerHTML = '<div class="mwi-transmute-history-totals-container"></div>';
+        transmuteHistoryViewer.renderTotals();
+
+        const legend = transmuteHistoryViewer.modal.textContent;
+        expect(legend).toMatch(/¶ output unpriced/);
+    });
+});

@@ -86,6 +86,7 @@ const TRANSMUTE_TOTALS_LEGEND = [
     '† catalyst on some sessions could not be priced — excluded, not zero',
     '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
     '◇ catalyst estimated on some sessions, not measured',
+    '¶ output unpriced — total is incomplete, not zero-earning; Net and Break-even Input carry the same mark',
     'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
     '§ self-return counts on some sessions were derived from the recorded successes, not observed — ' +
         'and that success count is itself approximate on these sessions (recorded through the same batching ' +
@@ -652,16 +653,22 @@ class TransmuteHistoryViewer {
                 // Profit
                 const profitCell = document.createElement('td');
                 const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
-                // An unpriced input makes the figure incomplete, not zero-cost —
-                // the asterisk is what tells the two apart at a glance
-                profitCell.textContent = formatKMB(profitDetail.profit, 1) + (profitDetail.inputUnpriced ? '*' : '');
+                // An unpriced input makes the figure incomplete, not zero-cost,
+                // and an unpriced output is the same gap on the other side —
+                // each has its own mark so the two are never confused with a
+                // real loss or a real zero
+                profitCell.textContent =
+                    formatKMB(profitDetail.profit, 1) +
+                    (profitDetail.inputUnpriced ? '*' : '') +
+                    (profitDetail.revenueUnpriced ? '¶' : '');
                 profitCell.style.cssText = `
                     padding: 6px 10px;
                     font-weight: bold;
                     color: ${profitDetail.profit >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS};
                 `;
                 profitCell.title =
-                    `Output value: ${formatKMB(profitDetail.revenue, 1)}\n` +
+                    `Output value: ${formatKMB(profitDetail.revenue, 1)}` +
+                    `${profitDetail.revenueUnpriced ? ' (¶ unpriced — incomplete, not zero)' : ''}\n` +
                     `${formatInputCostLine(profitDetail)}\n` +
                     `Transmute coins: −${formatKMB(profitDetail.coinCost, 1)}\n` +
                     `${this.formatCatalystLine(profitDetail)} (see totals row below)\n` +
@@ -737,6 +744,7 @@ class TransmuteHistoryViewer {
                 netConsumed: 0,
                 nonSelfReturnOutputs: 0,
                 revenue: 0,
+                revenueUnpriced: false,
                 inputCost: 0,
                 inputUnpriced: false,
                 coinCost: 0,
@@ -757,6 +765,7 @@ class TransmuteHistoryViewer {
                 group.netConsumed += detail.netConsumed;
                 group.nonSelfReturnOutputs += detail.nonSelfReturnOutputs;
                 group.revenue += detail.revenue;
+                if (detail.revenueUnpriced) group.revenueUnpriced = true;
                 group.inputCost += detail.inputCost;
                 if (detail.inputUnpriced) group.inputUnpriced = true;
                 group.coinCost += detail.coinCost;
@@ -881,6 +890,7 @@ class TransmuteHistoryViewer {
             netConsumed: 0,
             nonSelfReturnOutputs: 0,
             revenue: 0,
+            revenueUnpriced: false,
             inputCost: 0,
             inputUnpriced: false,
             coinCost: 0,
@@ -912,6 +922,7 @@ class TransmuteHistoryViewer {
             pooled.repairedSessions += group.repairedSessions;
             pooled.unreliableSessions += group.unreliableSessions;
             pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
+            pooled.revenueUnpriced = pooled.revenueUnpriced || group.revenueUnpriced;
             pooled.impossible = pooled.impossible || group.impossible;
             for (const hrid of group.catalystHrids || []) pooled.catalystHrids.add(hrid);
         }
@@ -1041,7 +1052,13 @@ class TransmuteHistoryViewer {
             })
         );
 
-        row.appendChild(this.createTotalsCell(formatKMB(group.revenue, 1)));
+        row.appendChild(
+            this.createTotalsCell(formatKMB(group.revenue, 1) + (group.revenueUnpriced ? '¶' : ''), {
+                title: group.revenueUnpriced
+                    ? 'At least one session in this group had an output the market could not price — this total is incomplete, not zero-earning.'
+                    : undefined,
+            })
+        );
         row.appendChild(
             this.createTotalsCell(
                 group.impossible ? '—' : formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''),
@@ -1059,12 +1076,24 @@ class TransmuteHistoryViewer {
         row.appendChild(this.createTotalsCell(groupCatalystText, { title: groupCatalystTitle }));
 
         row.appendChild(this.createTotalsCell(formatKMB(group.coinCost, 1)));
+        // Net and Break-even both derive from revenue, so an unpriced output
+        // poisons them the same way it poisons revenue itself — carrying the
+        // ¶ mark through here is what keeps a genuinely bad Net (a real loss)
+        // apart from a Net that only looks bad because part of what was earned
+        // could not be counted.
         row.appendChild(
-            this.createTotalsCell(group.impossible ? '—' : formatKMB(group.net, 1), {
-                color: group.impossible ? '#fbbf24' : group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
-                bold: true,
-                title: group.impossible ? impossibleTitle : undefined,
-            })
+            this.createTotalsCell(
+                (group.impossible ? '—' : formatKMB(group.net, 1)) + (group.revenueUnpriced ? '¶' : ''),
+                {
+                    color: group.impossible ? '#fbbf24' : group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                    bold: true,
+                    title: group.impossible
+                        ? impossibleTitle
+                        : group.revenueUnpriced
+                          ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                          : undefined,
+                }
+            )
         );
 
         row.appendChild(
@@ -1074,7 +1103,14 @@ class TransmuteHistoryViewer {
         );
         row.appendChild(
             this.createTotalsCell(
-                !group.impossible && group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—'
+                (!group.impossible && group.breakEvenInputValue !== null
+                    ? formatKMB(group.breakEvenInputValue, 1)
+                    : '—') + (group.revenueUnpriced ? '¶' : ''),
+                {
+                    title: group.revenueUnpriced
+                        ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                        : undefined,
+                }
             )
         );
 
@@ -1117,6 +1153,7 @@ class TransmuteHistoryViewer {
                 acc.attempts += group.attempts;
                 acc.successes += group.successes;
                 acc.revenue += group.revenue;
+                acc.revenueUnpriced = acc.revenueUnpriced || group.revenueUnpriced;
                 acc.inputCost += group.inputCost;
                 acc.coinCost += group.coinCost;
                 acc.catalystCost += group.catalystCost;
@@ -1137,6 +1174,7 @@ class TransmuteHistoryViewer {
                 attempts: 0,
                 successes: 0,
                 revenue: 0,
+                revenueUnpriced: false,
                 inputCost: 0,
                 coinCost: 0,
                 catalystCost: 0,
@@ -1186,7 +1224,14 @@ class TransmuteHistoryViewer {
                 title: overall.hasImpossibleGroup ? overallImpossibleTitle : undefined,
             })
         );
-        row.appendChild(this.createTotalsCell(formatKMB(overall.revenue, 1), { bold: true }));
+        row.appendChild(
+            this.createTotalsCell(formatKMB(overall.revenue, 1) + (overall.revenueUnpriced ? '¶' : ''), {
+                bold: true,
+                title: overall.revenueUnpriced
+                    ? 'At least one session had an output the market could not price — this total is incomplete, not zero-earning.'
+                    : undefined,
+            })
+        );
         row.appendChild(
             this.createTotalsCell(
                 overall.hasImpossibleGroup ? '—' : formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''),
@@ -1201,11 +1246,18 @@ class TransmuteHistoryViewer {
 
         const net = overall.revenue - overall.inputCost - overall.catalystCost - overall.coinCost;
         row.appendChild(
-            this.createTotalsCell(overall.hasImpossibleGroup ? '—' : formatKMB(net, 1), {
-                bold: true,
-                color: overall.hasImpossibleGroup ? '#fbbf24' : net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
-                title: overall.hasImpossibleGroup ? overallImpossibleTitle : undefined,
-            })
+            this.createTotalsCell(
+                (overall.hasImpossibleGroup ? '—' : formatKMB(net, 1)) + (overall.revenueUnpriced ? '¶' : ''),
+                {
+                    bold: true,
+                    color: overall.hasImpossibleGroup ? '#fbbf24' : net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                    title: overall.hasImpossibleGroup
+                        ? overallImpossibleTitle
+                        : overall.revenueUnpriced
+                          ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                          : undefined,
+                }
+            )
         );
 
         // Mixed input items — neither figure is meaningful across items
@@ -1346,10 +1398,20 @@ class TransmuteHistoryViewer {
      * still means "not recorded", never "none used"; `catalystUnrecorded` keeps
      * those apart so callers do not read the gap as zero-cost.
      *
+     * An output the market cannot price is excluded from `revenue` the same
+     * way an unpriced input is excluded from `inputCost` — there is no number
+     * to add, and adding zero would report "this earned nothing" for "we do
+     * not know what this earned". `revenueUnpriced` carries that gap forward
+     * the way `inputUnpriced` already does, so `Net` and `Break-even Input`
+     * — both derived from `revenue` — can say they are incomplete too rather
+     * than reading as a real loss. A self-return is never priced in the first
+     * place (it is the same item handed back, not a sale), so it cannot make
+     * revenue unpriced.
+     *
      * @param {Object} session
-     * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number,
-     *   nonSelfReturnOutputs: number, inputBasis: string|null, inputUnpriced: boolean, catalystHrid: string|null,
-     *   catalystCost: number,
+     * @returns {{profit: number, revenue: number, revenueUnpriced: boolean, inputCost: number, coinCost: number,
+     *   netConsumed: number, nonSelfReturnOutputs: number, inputBasis: string|null, inputUnpriced: boolean,
+     *   catalystHrid: string|null, catalystCost: number,
      *   catalystUnrecorded: boolean, catalystUnpriced: boolean, catalystEstimated: boolean,
      *   catalystEntries: Array<{hrid: string, count: number, cost: number, unpriced: boolean}>}}
      */
@@ -1361,6 +1423,7 @@ class TransmuteHistoryViewer {
         const bulkMultiplier = session.bulkMultiplier ?? itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
 
         let revenue = 0;
+        let revenueUnpriced = false;
         let selfReturned = 0;
         let nonSelfReturnOutputs = 0;
         for (const result of Object.values(session.results || {})) {
@@ -1368,6 +1431,7 @@ class TransmuteHistoryViewer {
                 selfReturned += result.count || 0;
             } else {
                 revenue += calculatePriceAfterTax(result.totalValue || 0);
+                if (result.unpriced) revenueUnpriced = true;
                 nonSelfReturnOutputs += result.count || 0;
             }
         }
@@ -1394,6 +1458,7 @@ class TransmuteHistoryViewer {
         return {
             profit: revenue - inputCost - coinCost,
             revenue,
+            revenueUnpriced,
             inputCost,
             coinCost,
             netConsumed,
@@ -1510,7 +1575,10 @@ class TransmuteHistoryViewer {
             } else {
                 const total = formatKMB(result.totalValue || 0, 1);
                 const each = formatKMB(result.priceEach || 0, 1);
-                text.textContent = `${name} x${result.count} = ${total} (${each} each)`;
+                text.textContent = `${name} x${result.count} = ${total}${result.unpriced ? '¶' : ''} (${each} each)`;
+                if (result.unpriced) {
+                    text.title = 'The market could not price this output — this value is incomplete, not zero.';
+                }
             }
 
             line.appendChild(text);

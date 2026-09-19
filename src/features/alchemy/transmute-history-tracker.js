@@ -290,6 +290,7 @@ class TransmuteHistoryTracker {
                         totalValue: 0,
                         priceEach: 0,
                         isSelfReturn: isOutputSelfReturn,
+                        unpriced: false,
                     };
                 }
 
@@ -297,11 +298,23 @@ class TransmuteHistoryTracker {
                 const received = actions * bulkMultiplier;
                 this.activeSession.results[outputItemHrid].count += received;
 
-                // Record market price at time of result
+                // Record market price at time of result. `null` means the market
+                // cannot price this item at all — folding that into the total as
+                // 0 would report "earned nothing" for "could not tell what this
+                // was worth", so the tick is excluded from totalValue (there is
+                // no number to add) and the result is marked unpriced instead.
+                // Sticky across the session: once any tick could not be priced,
+                // the total stays incomplete even if a later tick can be. A
+                // self-return is never priced — it is the same item handed back,
+                // not a sale — so it is exempt.
                 if (!isOutputSelfReturn) {
-                    const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' }) || 0;
-                    this.activeSession.results[outputItemHrid].priceEach = price;
-                    this.activeSession.results[outputItemHrid].totalValue += price * received;
+                    const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' });
+                    if (price === null) {
+                        this.activeSession.results[outputItemHrid].unpriced = true;
+                    } else {
+                        this.activeSession.results[outputItemHrid].priceEach = price;
+                        this.activeSession.results[outputItemHrid].totalValue += price * received;
+                    }
                 }
             }
         }

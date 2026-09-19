@@ -86,6 +86,7 @@ const DECOMPOSE_TOTALS_LEGEND = [
     '* input unpriced — total is incomplete',
     '† catalyst on some sessions could not be priced — excluded, not zero',
     '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
+    '¶ output unpriced — total is incomplete, not zero-earning; Net and Break-even Input carry the same mark',
     'A "Pooled" row adds up inputs the game data says are the same bet — hover it for the members',
 ];
 
@@ -560,9 +561,17 @@ class DecomposeHistoryViewer {
      * when it is a refined (★) item, and is reported as unpriced when even that
      * fails — an unknown cost is not a zero one.
      *
+     * An output the market cannot price is excluded from `revenue` the same
+     * way an unpriced input is excluded from `inputCost` — there is no number
+     * to add, and adding zero would report "this earned nothing" for "we do
+     * not know what this earned". `revenueUnpriced` carries that gap forward
+     * the way `inputUnpriced` already does, so `Net` and `Break-even Input`
+     * — both derived from `revenue` — can say they are incomplete too rather
+     * than reading as a real loss.
+     *
      * @param {Object} session
      * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, coinCost: number,
-     *   netConsumed: number, inputBasis: string|null, inputUnpriced: boolean}}
+     *   netConsumed: number, inputBasis: string|null, inputUnpriced: boolean, revenueUnpriced: boolean}}
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
@@ -573,8 +582,10 @@ class DecomposeHistoryViewer {
         const attempts = session.totalAttempts || 0;
 
         let revenue = 0;
+        let revenueUnpriced = false;
         for (const result of Object.values(session.results || {})) {
             revenue += calculatePriceAfterTax(result.totalValue || 0);
+            if (result.unpriced) revenueUnpriced = true;
         }
 
         const netConsumed = attempts * bulkMultiplier;
@@ -631,6 +642,7 @@ class DecomposeHistoryViewer {
         return {
             profit: revenue - inputCost - catalystCost - coinCost,
             revenue,
+            revenueUnpriced,
             inputCost,
             catalystCost,
             catalystUnpriced,
@@ -849,16 +861,22 @@ class DecomposeHistoryViewer {
                 // Profit
                 const profitCell = document.createElement('td');
                 const profitDetail = this.profitCache.get(session.id) || this.computeSessionProfit(session);
-                // An unpriced input makes the figure incomplete, not zero-cost —
-                // the asterisk is what tells the two apart at a glance
-                profitCell.textContent = formatKMB(profitDetail.profit, 1) + (profitDetail.inputUnpriced ? '*' : '');
+                // An unpriced input makes the figure incomplete, not zero-cost,
+                // and an unpriced output is the same gap on the other side —
+                // each has its own mark so the two are never confused with a
+                // real loss or a real zero
+                profitCell.textContent =
+                    formatKMB(profitDetail.profit, 1) +
+                    (profitDetail.inputUnpriced ? '*' : '') +
+                    (profitDetail.revenueUnpriced ? '¶' : '');
                 profitCell.style.cssText = `
                     padding: 6px 10px;
                     font-weight: bold;
                     color: ${profitDetail.profit >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS};
                 `;
                 profitCell.title =
-                    `Output value: ${formatKMB(profitDetail.revenue, 1)}\n` +
+                    `Output value: ${formatKMB(profitDetail.revenue, 1)}` +
+                    `${profitDetail.revenueUnpriced ? ' (¶ unpriced — incomplete, not zero)' : ''}\n` +
                     `${formatInputCostLine(profitDetail)}\n` +
                     `Catalysts: −${formatKMB(profitDetail.catalystCost, 1)}\n` +
                     `Alchemy coins: −${formatKMB(profitDetail.coinCost, 1)}`;
@@ -927,7 +945,10 @@ class DecomposeHistoryViewer {
             const name = this.getItemName(itemHrid);
             const total = formatKMB(result.totalValue || 0, 1);
             const each = formatKMB(result.priceEach || 0, 1);
-            text.textContent = `${name} x${result.count} = ${total} (${each} each)`;
+            text.textContent = `${name} x${result.count} = ${total}${result.unpriced ? '¶' : ''} (${each} each)`;
+            if (result.unpriced) {
+                text.title = 'The market could not price this output — this value is incomplete, not zero.';
+            }
 
             line.appendChild(text);
             cell.appendChild(line);
@@ -963,6 +984,7 @@ class DecomposeHistoryViewer {
                 successes: 0,
                 netConsumed: 0,
                 revenue: 0,
+                revenueUnpriced: false,
                 inputCost: 0,
                 inputUnpriced: false,
                 catalystCost: 0,
@@ -977,6 +999,7 @@ class DecomposeHistoryViewer {
                 group.successes += session.totalSuccesses || 0;
                 group.netConsumed += detail.netConsumed;
                 group.revenue += detail.revenue;
+                if (detail.revenueUnpriced) group.revenueUnpriced = true;
                 group.inputCost += detail.inputCost;
                 if (detail.inputUnpriced) group.inputUnpriced = true;
                 group.catalystCost += detail.catalystCost;
@@ -1043,6 +1066,7 @@ class DecomposeHistoryViewer {
             successes: 0,
             netConsumed: 0,
             revenue: 0,
+            revenueUnpriced: false,
             inputCost: 0,
             inputUnpriced: false,
             catalystCost: 0,
@@ -1064,6 +1088,7 @@ class DecomposeHistoryViewer {
             pooled.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
             pooled.coinCost += group.coinCost;
             pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
+            pooled.revenueUnpriced = pooled.revenueUnpriced || group.revenueUnpriced;
             for (const hrid of group.catalystHrids || []) pooled.catalystHrids.add(hrid);
         }
 
@@ -1146,7 +1171,13 @@ class DecomposeHistoryViewer {
         const successPct = group.successRate !== null ? `${(group.successRate * 100).toFixed(1)}%` : '—';
         row.appendChild(createTotalsCell(`${group.successes} (${successPct})`));
 
-        row.appendChild(createTotalsCell(formatKMB(group.revenue, 1)));
+        row.appendChild(
+            createTotalsCell(formatKMB(group.revenue, 1) + (group.revenueUnpriced ? '¶' : ''), {
+                title: group.revenueUnpriced
+                    ? 'At least one session in this group had an output the market could not price — this total is incomplete, not zero-earning.'
+                    : undefined,
+            })
+        );
         row.appendChild(
             createTotalsCell(formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''), {
                 title: group.inputUnpriced
@@ -1159,14 +1190,30 @@ class DecomposeHistoryViewer {
         row.appendChild(createTotalsCell(catalystText, { title: catalystTitle }));
 
         row.appendChild(createTotalsCell(formatKMB(group.coinCost, 1)));
+        // Net and Break-even both derive from revenue, so an unpriced output
+        // poisons them the same way it poisons revenue itself — carrying the
+        // ¶ mark through here is what keeps a genuinely bad Net (a real loss)
+        // apart from a Net that only looks bad because part of what was earned
+        // could not be counted.
         row.appendChild(
-            createTotalsCell(formatKMB(group.net, 1), {
+            createTotalsCell(formatKMB(group.net, 1) + (group.revenueUnpriced ? '¶' : ''), {
                 color: group.net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
                 bold: true,
+                title: group.revenueUnpriced
+                    ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                    : undefined,
             })
         );
         row.appendChild(
-            createTotalsCell(group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—')
+            createTotalsCell(
+                (group.breakEvenInputValue !== null ? formatKMB(group.breakEvenInputValue, 1) : '—') +
+                    (group.revenueUnpriced ? '¶' : ''),
+                {
+                    title: group.revenueUnpriced
+                        ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                        : undefined,
+                }
+            )
         );
 
         return row;
@@ -1204,6 +1251,7 @@ class DecomposeHistoryViewer {
                 acc.successes += group.successes;
                 acc.netConsumed += group.netConsumed;
                 acc.revenue += group.revenue;
+                acc.revenueUnpriced = acc.revenueUnpriced || group.revenueUnpriced;
                 acc.inputCost += group.inputCost;
                 acc.catalystCost += group.catalystCost;
                 acc.coinCost += group.coinCost;
@@ -1218,6 +1266,7 @@ class DecomposeHistoryViewer {
                 successes: 0,
                 netConsumed: 0,
                 revenue: 0,
+                revenueUnpriced: false,
                 inputCost: 0,
                 catalystCost: 0,
                 coinCost: 0,
@@ -1241,7 +1290,14 @@ class DecomposeHistoryViewer {
 
         const successPct = overall.attempts > 0 ? `${((overall.successes / overall.attempts) * 100).toFixed(1)}%` : '—';
         row.appendChild(createTotalsCell(`${overall.successes} (${successPct})`, { bold: true }));
-        row.appendChild(createTotalsCell(formatKMB(overall.revenue, 1), { bold: true }));
+        row.appendChild(
+            createTotalsCell(formatKMB(overall.revenue, 1) + (overall.revenueUnpriced ? '¶' : ''), {
+                bold: true,
+                title: overall.revenueUnpriced
+                    ? 'At least one session had an output the market could not price — this total is incomplete, not zero-earning.'
+                    : undefined,
+            })
+        );
         row.appendChild(
             createTotalsCell(formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''), { bold: true })
         );
@@ -1253,9 +1309,12 @@ class DecomposeHistoryViewer {
 
         const net = overall.revenue - overall.inputCost - overall.catalystCost - overall.coinCost;
         row.appendChild(
-            createTotalsCell(formatKMB(net, 1), {
+            createTotalsCell(formatKMB(net, 1) + (overall.revenueUnpriced ? '¶' : ''), {
                 bold: true,
                 color: net >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS,
+                title: overall.revenueUnpriced
+                    ? 'Includes an unpriced output — this total is incomplete, not a confirmed figure.'
+                    : undefined,
             })
         );
 

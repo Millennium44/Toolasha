@@ -198,6 +198,63 @@ describe('decompose history totals: honesty markers', () => {
         decomposeHistoryViewer.renderTotals();
         expect(totalsText()).toContain('‡');
     });
+
+    test('an unpriced output marks Revenue, Net and Break-even — not a bare zero', () => {
+        // The market could not price the output (Labyrinth Token, live) — the
+        // tracker records that as `unpriced: true` with no value added, never
+        // as a priced zero.
+        loadSessions([
+            makeSession({
+                results: { [OUTPUT_HRID]: { count: 8, totalValue: 0, priceEach: 0, unpriced: true } },
+            }),
+        ]);
+
+        const [group] = decomposeHistoryViewer.computeInputItemTotals();
+        expect(group.revenue).toBe(0);
+        expect(group.revenueUnpriced).toBe(true);
+        // Net is still computed (revenue 0 minus real costs), but it must
+        // carry the same mark so it is never read as a confirmed loss.
+        expect(group.net).toBe(0 - group.inputCost - group.catalystCost - group.coinCost);
+
+        decomposeHistoryViewer.renderTotals();
+
+        expect(totalsText()).toContain('¶');
+        const revenueCell = Array.from(decomposeHistoryViewer.modal.querySelectorAll('td')).find((td) =>
+            td.title.includes('could not price')
+        );
+        expect(revenueCell).toBeDefined();
+        expect(revenueCell.textContent).toContain('¶');
+
+        const netCell = Array.from(decomposeHistoryViewer.modal.querySelectorAll('td')).find((td) =>
+            td.title.includes('Includes an unpriced output')
+        );
+        expect(netCell).toBeDefined();
+        expect(netCell.textContent).toContain('¶');
+    });
+
+    test('a genuinely zero-value output is a bare zero, with no ¶ mark', () => {
+        // A real zero (e.g. a priced item that happens to be worthless) must
+        // still read as zero — marking every zero would erase the distinction
+        // this whole feature exists to draw.
+        loadSessions([
+            makeSession({
+                results: { [OUTPUT_HRID]: { count: 8, totalValue: 0, priceEach: 0, unpriced: false } },
+            }),
+        ]);
+
+        const [group] = decomposeHistoryViewer.computeInputItemTotals();
+        expect(group.revenue).toBe(0);
+        expect(group.revenueUnpriced).toBe(false);
+
+        decomposeHistoryViewer.renderTotals();
+        // The legend itself always explains the marker's meaning — what must
+        // stay clean is the data cells, which is where a real zero would be
+        // wrongly flagged.
+        const cellText = Array.from(decomposeHistoryViewer.modal.querySelectorAll('td'))
+            .map((td) => td.textContent)
+            .join('');
+        expect(cellText).not.toContain('¶');
+    });
 });
 
 describe('decompose history totals: the table that gets drawn', () => {
