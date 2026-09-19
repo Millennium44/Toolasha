@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leftovers: counts that were never padded, and earnings that were never earned
+
+- A zone where your task monster fills more than one slot a fight — and every dungeon row — was padded by nothing at all, because more than one kill per fight was treated as certainty. Those counts are padded now, and a boss or a fixed roster still is not.
+- Alchemy history recorded an output it could not price as worth zero, so a session that earned an unpriceable item read as a confirmed loss. It is marked instead, and the net and break-even figures carry the mark.
+- Queued fights now answer the "Estimated Value" setting instead of showing nothing. A fight simulated before this change says so and asks to be re-run, rather than quietly showing its profit figure instead.
+- A queued row that can never be valued now marks the panel's total as short, instead of leaving a total that looks complete.
+- A repeat-unlimited enhancing run shows the time its materials and protections will buy, on the panel and in the queue — and says nothing about materials when it is the target level that stops it.
+- Long durations print two units rather than three: "73 years 9 months", not "73 years 9 months 29 days". Anything under a day is unchanged.
+
 ### The queued actions panel, and fight counts you can trust
 
 - Every queued fight now shows its expected profit, as a total and a rate, and the panel totals them.
