@@ -2951,10 +2951,6 @@ class CombatSimUI {
         // Off by the setting: no column, no planner, and the Bestiary is not
         // asked for either
         const bestiaryOn = config.getSettingValue('combatSim_bestiary', true) !== false;
-        // Only ever a fallback: every live run states its own party size on the
-        // SimResult, and this is what a reading that never recorded one falls
-        // back to. See `bestiary.js`'s resolvePartySize.
-        const fallbackPartySize = config.getSettingValue('combatSim_bestiaryPartySize', 1);
         const bestiaryRows = bestiaryOn ? dataManager.getCharacterMonsters?.() || null : null;
         const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
         // Not loaded yet: ask the game for it the way the Bestiary tab does,
@@ -2980,7 +2976,17 @@ class CombatSimUI {
                 // Bestiary credits, not bodies: a kill at tier N is worth N+1
                 // credits and a party splits each one, which is the unit the
                 // Bestiary's own counts are already in
-                const resolvedPartySize = resolvePartySize(sim.numberOfPlayers, fallbackPartySize);
+                //
+                // The fallback below is not expected to fire: every live run's
+                // SimResult states its own `numberOfPlayers` (see
+                // `bestiary.js`'s resolvePartySize), so this row is built from
+                // a run that just happened, never a stored one predating that
+                // field. It is kept — solo, never a configured guess — so a
+                // row is never silently wrong if that ever stops being true;
+                // `_partySizeUnknown` lets the plan say so instead of hiding it.
+                const rawPartySize = Math.floor(Number(sim.numberOfPlayers));
+                const partySizeUnknown = !(Number.isFinite(rawPartySize) && rawPartySize >= 1);
+                const resolvedPartySize = resolvePartySize(sim.numberOfPlayers, 1);
                 const creditsPerHour = monsterCreditsPerHour(sim, simHours, {
                     difficultyTier: r.zone.difficultyTier,
                     partySize: resolvedPartySize,
@@ -3021,6 +3027,10 @@ class CombatSimUI {
                     _bestiary: bestiary,
                     _creditsPerHour: creditsPerHour,
                     _creditsPerKill: perKillCredits,
+                    // Not expected to ever be true — see the comment above
+                    // `rawPartySize` — but the plan says so rather than
+                    // quoting a party's kills as a solo player's if it is
+                    _partySizeUnknown: partySizeUnknown,
                     stamina: (xp.stamina || 0) / simHours,
                     intelligence: (xp.intelligence || 0) / simHours,
                     attack: (xp.attack || 0) / simHours,
@@ -3428,6 +3438,15 @@ class CombatSimUI {
             }
         }
 
+        // Not expected to be seen — see `_partySizeUnknown` where the row is
+        // built — but if a run ever reaches the plan without its party size,
+        // this is the plan's existing way of flagging a row as answering for
+        // less than it looks like: the same `note` a dungeon row carries for
+        // "measured" vs. "sim clear time".
+        const partySizeNote = (row) =>
+            row._partySizeUnknown ? 'party size not recorded — assumed solo, may undercount a party run' : null;
+        const withNote = (zone, extra) => ({ ...zone, note: [zone.note, extra].filter(Boolean).join(' · ') || null });
+
         return rows.map((row) => {
             const zone = {
                 zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
@@ -3444,7 +3463,7 @@ class CombatSimUI {
                 // planBestiaryRoute's tolerancePercent
                 score: row.score,
             };
-            if (!row._dungeon) return zone;
+            if (!row._dungeon) return withNote(zone, partySizeNote(row));
 
             const simHours = Number(row._dungeon.simHours) || 0;
             const scaled = rescaleDungeonRates({
@@ -3453,22 +3472,25 @@ class CombatSimUI {
                 runs: runs.filter((run) => run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid),
                 tier: row.tier,
             });
-            if (!scaled) return { ...zone, isDungeon: true };
+            if (!scaled) return withNote({ ...zone, isDungeon: true }, partySizeNote(row));
 
-            return {
-                ...zone,
-                creditsPerHour: scaled.creditsPerHour,
-                // A dungeon's "fights" are clears, which is also what the plan
-                // table calls them
-                encountersPerHour: scaled.clearsPerHour,
-                isDungeon: true,
-                note:
-                    scaled.source === 'measured'
-                        ? `measured (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
-                        : scaled.source === 'measured-all-tiers'
-                          ? `measured, all tiers (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
-                          : 'sim clear time',
-            };
+            return withNote(
+                {
+                    ...zone,
+                    creditsPerHour: scaled.creditsPerHour,
+                    // A dungeon's "fights" are clears, which is also what the plan
+                    // table calls them
+                    encountersPerHour: scaled.clearsPerHour,
+                    isDungeon: true,
+                    note:
+                        scaled.source === 'measured'
+                            ? `measured (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
+                            : scaled.source === 'measured-all-tiers'
+                              ? `measured, all tiers (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
+                              : 'sim clear time',
+                },
+                partySizeNote(row)
+            );
         });
     }
 
@@ -3770,9 +3792,16 @@ class CombatSimUI {
                 const scoreNote = segment.viaScore
                     ? 'Picked over a faster zone here because its Score is meaningfully higher, within the tolerance set above.'
                     : '';
-                const nameTitle = [segment.note ? `Clear time: ${segment.note}` : '', scoreNote]
-                    .filter(Boolean)
-                    .join(' — ');
+                // A dungeon's note is about where its clear time came from;
+                // any other note (currently only a missing party size — see
+                // `_buildBestiaryPlanZones`) is not, so it is not given that
+                // label
+                const noteTitle = segment.note
+                    ? segment.isDungeon
+                        ? `Clear time: ${segment.note}`
+                        : segment.note
+                    : '';
+                const nameTitle = [noteTitle, scoreNote].filter(Boolean).join(' — ');
                 const nameTitleAttr = nameTitle ? ` title="${esc(nameTitle)}"` : '';
                 const scoreMark = segment.viaScore
                     ? ' <span style="color:#8ab4f8;" aria-hidden="true">&#9733;</span>'

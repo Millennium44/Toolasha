@@ -4833,6 +4833,40 @@ describe('the Bestiary plan step ▶ open button', () => {
         // all — no rows, and so no open buttons either
         expect(ui.panel.querySelectorAll('.mwi-csim-plan-open-btn')).toHaveLength(0);
     });
+
+    /**
+     * There is no more setting to fall back to (`combatSim_bestiaryPartySize`
+     * was removed): a run whose `SimResult` never says how many players it
+     * simulated is still assumed solo, but the plan says so instead of
+     * treating a guess as a fact. A live run always states `numberOfPlayers`
+     * (see `combat-simulator.js`'s `new SimResult(zone, players.length)`), so
+     * this is a defensive path, not one a real run is expected to take.
+     */
+    test('a run that never recorded its party size is assumed solo, and the plan says so', async () => {
+        const noPartySize = result('Farm', { '/monsters/fly': 10 });
+        delete noPartySize.simResult.numberOfPlayers;
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+
+        await ui._displayAllZonesResults([noPartySize], 1, gameData);
+
+        expect(ui._bestiaryPlanZones).toHaveLength(1);
+        expect(ui._bestiaryPlanZones[0].note).toContain('party size not recorded');
+        // Solo, same as `creditsPerKill`'s own default — not silently doubled
+        // or halved by a guess
+        expect(ui._bestiaryPlanZones[0].creditsPerKill).toBe(1);
+    });
+
+    test('a run that did record its party size gets no such note', async () => {
+        const trio = result('Farm', { '/monsters/fly': 10 });
+        trio.simResult.numberOfPlayers = 3;
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+
+        await ui._displayAllZonesResults([trio], 1, gameData);
+
+        expect(ui._bestiaryPlanZones).toHaveLength(1);
+        expect(ui._bestiaryPlanZones[0].note).toBeFalsy();
+        expect(ui._bestiaryPlanZones[0].creditsPerKill).toBeCloseTo(1 / 3);
+    });
 });
 
 describe('planning to a points target from the panel', () => {
