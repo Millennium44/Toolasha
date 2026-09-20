@@ -256,6 +256,10 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/dungeon-key-forecast.js')), 'Toolasha.Utils.dungeonKeyForecast'],
     [normalize(join(__dirname, 'src/utils/dungeon-keys.js')), 'Toolasha.Utils.dungeonKeys'],
     [normalize(join(__dirname, 'src/utils/dungeon-level-gap.js')), 'Toolasha.Utils.dungeonLevelGap'],
+    // The dungeon chest expectation and its refinement-chest split, reached
+    // from the combat bundle (the ROI board) and the sim bundle (expected drops)
+    // since they were made to share one level-gap reading
+    [normalize(join(__dirname, 'src/utils/dungeon-chest-luck.js')), 'Toolasha.Utils.dungeonChestLuck'],
     [normalize(join(__dirname, 'src/utils/equipment-savings.js')), 'Toolasha.Utils.equipmentSavings'],
     [normalize(join(__dirname, 'src/utils/game-server.js')), 'Toolasha.Utils.gameServer'],
     [normalize(join(__dirname, 'src/utils/tester-shop.js')), 'Toolasha.Utils.testerShop'],

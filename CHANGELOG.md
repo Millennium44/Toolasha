@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dungeon chest maths is shared rather than copied into two bundles
+
+- Making the simulator and the chest-luck panel agree on a level-gapped payout left the module compiled into both the combat and sim bundles, each with its own state; it is now shared through one copy like the other cross-bundle helpers.
+
 ### Combat Sim: a rare-find build is no longer credited rare drops the game cannot pay
 
 - The simulator multiplied a rare drop's chance by Combat Rare Find with no ceiling, so enough rare find pushed a drop past certainty and the run was priced for more than one of them a kill. Rare rates now stop at certainty, as the common-drop path and the live drop model already did.
