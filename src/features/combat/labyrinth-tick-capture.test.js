@@ -255,6 +255,45 @@ describe('the file says which capture it is, and how the capture ended', () => {
 });
 
 describe('adjacent duplicate ticks are dropped, and counted', () => {
+    test('a fight boundary preserves an identical first update without a battle id', () => {
+        capture.startCapture();
+        const fight = { monsters: [{ hrid: '/monsters/cyclops' }], players: [] };
+        const update = { pMap: battle.pMap, mMap: battle.mMap };
+        emit('new_battle', fight);
+        emit('battle_updated', update);
+        emit('new_battle', fight);
+        emit('battle_updated', update);
+        expect(capture.captureFile().ticks).toHaveLength(4);
+        expect(capture.captureStatus().duplicatesDiscarded).toBe(0);
+        emit('battle_updated', update);
+        expect(capture.captureFile().ticks).toHaveLength(4);
+        expect(capture.captureStatus().duplicatesDiscarded).toBe(1);
+    });
+
+    test('clearing an active capture removes listeners and its auto-stop timer', () => {
+        vi.useFakeTimers();
+        try {
+            const battleListeners = bus.get('battle_updated')?.size || 0;
+            const newBattleListeners = bus.get('new_battle')?.size || 0;
+            capture.startCapture();
+            emit('battle_updated', battle);
+            capture.clearCapture();
+            expect(capture.isCapturing()).toBe(false);
+            expect(bus.get('battle_updated')?.size).toBe(battleListeners);
+            expect(bus.get('new_battle')?.size).toBe(newBattleListeners);
+            expect(vi.getTimerCount()).toBe(0);
+            emit('battle_updated', battle);
+            expect(capture.captureFile().ticks).toEqual([]);
+            expect(capture.captureFile().recordedAt).toBeNull();
+            capture.startCapture();
+            emit('battle_updated', battle);
+            expect(capture.captureFile().ticks[0].at).toBe(0);
+        } finally {
+            capture.stopCapture();
+            vi.useRealTimers();
+        }
+    });
+
     test('an exact repeat of the previous battle tick is discarded, not kept', () => {
         capture.startCapture();
         emit('battle_updated', battle);
