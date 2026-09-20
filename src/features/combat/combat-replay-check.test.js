@@ -288,6 +288,42 @@ describe('deriving what happened from a recording', () => {
 });
 
 describe('the opening swing of every fight, which used to be invisible', () => {
+    test('a party member’s first tick is compared with the counters in the opening snapshot', () => {
+        // Reduced from Pirate Cove: slot 0 is unchanged while slot 2 first
+        // appears with 15006, up from the opening 15005. With no opening
+        // baseline and no previous swinger, the 3029 HP loss had no owner.
+        const opened = {
+            at: 0,
+            type: 'new_battle',
+            payload: {
+                players: {
+                    0: { attackAttemptCounter: 19297, currentManapoints: 2343, isPreparingAutoAttack: true },
+                    2: {
+                        attackAttemptCounter: 15005,
+                        currentManapoints: 2873,
+                        preparingAbilityHrid: '/abilities/entangle',
+                    },
+                },
+                monsters: { 1: { name: 'Zombie', combatDetails: { currentHitpoints: 4704, maxHitpoints: 7350 } } },
+            },
+        };
+        const tick = {
+            at: 1_000,
+            type: 'battle_updated',
+            payload: {
+                pMap: {
+                    0: { atkCounter: 19297, cMP: 2343, isAutoAtk: true },
+                    2: { atkCounter: 15006, cMP: 2863, abilityHrid: '/abilities/elemental_affinity' },
+                },
+                mMap: { 1: { cHP: 1675, mHP: 7350, dmgCounter: 1 } },
+            },
+        };
+        const [fight] = replayFights([opened, tick, { ...opened, at: 2_000 }]);
+        expect(fight.players['2']?.damage).toBe(3029);
+        expect(fight.players['2']?.byAbility['/abilities/entangle'].damage).toBe(3029);
+        expect(fight.unattributedDealt).toBe(0);
+    });
+
     /**
      * A wave of one monster, hit `hits` times and killed.
      *
@@ -994,6 +1030,13 @@ describe('the loadout the fight was actually fought in', () => {
 });
 
 describe('what the check simulates', () => {
+    test('a recorded party is rejected before starting a solo simulation', async () => {
+        replayCheck.observations = [evenObservation({ fights: 5, partySize: 5 })];
+        expect(await replayCheck.check()).toBeNull();
+        expect(replayCheck.error).toBe('Recorded in a party of 5. Only solo runs can be compared to a solo sim.');
+        expect(game.lastRun).toBeNull();
+    });
+
     /** A sim result complete enough for `predictFromSim` to read */
     const simResult = {
         simulatedTime: 3600 * 1e9,

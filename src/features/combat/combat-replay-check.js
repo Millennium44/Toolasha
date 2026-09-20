@@ -567,6 +567,20 @@ function seedWave(attribution, monsters) {
     }
 }
 
+/**
+ * Seed the player counters from a full battle snapshot before reading deltas.
+ * Without these, a member's first `atkCounter`/`cMP` update establishes a
+ * baseline instead of identifying their action in a multi-player tick.
+ * @param {Object} attribution - From `newAttributionState`, mutated
+ * @param {Object} players - `new_battle`'s players, by index
+ */
+function seedPlayerCounters(attribution, players) {
+    for (const [index, player] of Object.entries(players || {})) {
+        if (Number.isFinite(player?.attackAttemptCounter)) attribution.playersAtk[index] = player.attackAttemptCounter;
+        if (Number.isFinite(player?.currentManapoints)) attribution.playersMP[index] = player.currentManapoints;
+    }
+}
+
 export function replayFights(ticks) {
     const attribution = newAttributionState();
     const taken = newTakenState();
@@ -638,6 +652,7 @@ export function replayFights(ticks) {
             // boundary, so `taken.playersHP` and `playersDmg` are deliberately
             // kept: resetting them would throw away the first hit of every fight
             noteActions(attribution, tick.payload?.players);
+            seedPlayerCounters(attribution, tick.payload?.players);
 
             current = {
                 startAt: tick.at,
