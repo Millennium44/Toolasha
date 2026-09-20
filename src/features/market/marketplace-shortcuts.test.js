@@ -52,6 +52,59 @@ describe('executeAction reads the submenu quantity as a comma-formatted number',
     });
 });
 
+describe('teardown cancels delayed marketplace work', () => {
+    test('a shortcut does not resume into a marketplace click after disable', async () => {
+        vi.useFakeTimers();
+        const click = vi.spyOn(marketplaceShortcuts, 'clickInstantActionButton').mockResolvedValue();
+        try {
+            const pending = marketplaceShortcuts.executeAction('buy', '/items/whatever', 0);
+
+            marketplaceShortcuts.disable();
+            await vi.advanceTimersByTimeAsync(300);
+            await pending;
+
+            expect(click).not.toHaveBeenCalled();
+        } finally {
+            click.mockRestore();
+            marketplaceShortcuts.initialize();
+            vi.useRealTimers();
+        }
+    });
+
+    test('disable clears a captured quantity before another character can reuse it', () => {
+        marketplaceShortcuts.pendingQuantity = 250;
+
+        marketplaceShortcuts.disable();
+
+        expect(marketplaceShortcuts.pendingQuantity).toBeNull();
+        marketplaceShortcuts.initialize();
+    });
+
+    test('disable cancels queued modal injections', () => {
+        vi.useFakeTimers();
+        try {
+            const modal = document.createElement('div');
+            modal.innerHTML = `
+                <div class="MarketplacePanel_header__x">Buy Listing</div>
+                <div class="outer">
+                    <div class="wrapper">
+                        <div class="MarketplacePanel_quantityInputs__x"><input value="5" /></div>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+
+            marketplaceShortcuts.injectQuickInputButtons(modal);
+            marketplaceShortcuts.disable();
+            vi.advanceTimersByTime(150);
+
+            expect(modal.querySelector('.mwi-mp-quick-input')).toBeNull();
+        } finally {
+            marketplaceShortcuts.initialize();
+            vi.useRealTimers();
+        }
+    });
+});
+
 describe('quick-input preset buttons read the quantity field as a comma-formatted number', () => {
     test('accumulating a preset onto a comma-formatted quantity adds to the real value', () => {
         vi.useFakeTimers();
