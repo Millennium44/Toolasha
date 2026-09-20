@@ -1393,6 +1393,14 @@ class TaskRerollWalk {
             return true;
         }
 
+        // The popup's limits can change before the widget's observer runs.
+        // Revalidate at the press too: a stale limit must not authorize either
+        // a payment or a discard that the new limits would keep.
+        if (this._capSignature() !== this.planCap) {
+            this._replan();
+            return false;
+        }
+
         const cards = this._cards();
 
         // A board that moved under the plan is not a reason to stop — the plan
@@ -1511,14 +1519,15 @@ class TaskRerollWalk {
         if (planned.kind === 'pay') {
             const option = preferredRerollOption(findRerollOptions(card), planned.currency);
             if (!option) return null;
+            // React can reuse a button while changing its quote. Node identity
+            // alone does not prove that this is still the payment on the label,
+            // and a free offer disappearing must never fall through to paid.
+            if (option.kind !== planned.currency || option.cost !== planned.cost) return null;
             if (planned.manual) {
                 // The player presses whatever button is on screen, and the board
                 // redraws freely between the plan and the press — so the guard
                 // is that the button still costs what the label says, not that
                 // it is the same DOM element
-                if (Number.isFinite(option.cost) && Number.isFinite(planned.cost) && option.cost !== planned.cost) {
-                    return null;
-                }
                 return option.button;
             }
             // The chooser must still be offering exactly what the label priced
