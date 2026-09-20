@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const settings = vi.hoisted(() => ({ enabled: false }));
 vi.mock('../../core/config.js', () => ({
@@ -39,8 +39,13 @@ const sampleResults = () => ({ baseline: { dps: 1 }, results: [{ candidate: { ty
 
 describe('upgrade-results-store', () => {
     beforeEach(() => {
+        globalThis.GM_info = { script: { version: '9.9.9' } };
         settings.enabled = false;
         store.data = {};
+    });
+
+    afterEach(() => {
+        delete globalThis.GM_info;
     });
 
     test('does not save when the option is off', async () => {
@@ -54,6 +59,7 @@ describe('upgrade-results-store', () => {
         expect(store.data[KEY]).toBeTruthy();
         expect(store.data[KEY].data.results).toHaveLength(1);
         expect(typeof store.data[KEY].savedAt).toBe('number');
+        expect(store.data[KEY].scriptVersion).toBe('9.9.9');
     });
 
     test('does not save an empty result set', async () => {
@@ -63,13 +69,13 @@ describe('upgrade-results-store', () => {
     });
 
     test('load returns null when the option is off, even with a stored payload', async () => {
-        store.data[KEY] = { data: sampleResults(), savedAt: 123 };
+        store.data[KEY] = { data: sampleResults(), savedAt: 123, scriptVersion: '9.9.9' };
         expect(await loadUpgradeResults(KEY)).toBeNull();
     });
 
     test('load returns the payload when the option is on', async () => {
         settings.enabled = true;
-        store.data[KEY] = { data: sampleResults(), savedAt: 123 };
+        store.data[KEY] = { data: sampleResults(), savedAt: 123, scriptVersion: '9.9.9' };
         const payload = await loadUpgradeResults(KEY);
         expect(payload.savedAt).toBe(123);
         expect(payload.data.results).toHaveLength(1);
@@ -77,7 +83,16 @@ describe('upgrade-results-store', () => {
 
     test('load returns null for an empty stored result set', async () => {
         settings.enabled = true;
-        store.data[KEY] = { data: { results: [] }, savedAt: 1 };
+        store.data[KEY] = { data: { results: [] }, savedAt: 1, scriptVersion: '9.9.9' };
+        expect(await loadUpgradeResults(KEY)).toBeNull();
+    });
+
+    test('load rejects results from another build or before version stamps', async () => {
+        settings.enabled = true;
+        store.data[KEY] = { data: sampleResults(), savedAt: 123, scriptVersion: '9.9.8' };
+        expect(await loadUpgradeResults(KEY)).toBeNull();
+
+        store.data[KEY] = { data: sampleResults(), savedAt: 123 };
         expect(await loadUpgradeResults(KEY)).toBeNull();
     });
 

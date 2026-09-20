@@ -41,7 +41,13 @@ function deps(overrides = {}) {
     const applied = [];
     return {
         applied,
-        store: { snapshots: { 41704: combatSnapshot }, whenReady: vi.fn(async () => true) },
+        store: {
+            snapshots: { 41704: combatSnapshot },
+            whenReady: vi.fn(async () => true),
+            resolveEquipment: vi.fn((snapshot) =>
+                snapshot.equipment.map((entry) => ({ ...entry, enhancementLevel: 12 }))
+            ),
+        },
         makeDTO: () => ({ hrid: 'player1', equipment: {} }),
         makeGameData: () => ({
             actionDetailMap: {
@@ -74,7 +80,7 @@ describe('prepareZoneRateRun', () => {
         expect(d.applied).toEqual([combatSnapshot]);
         expect(d.store.whenReady).toHaveBeenCalled();
         expect(run.loadout).toMatchObject({ id: '41704', source: 'loadout', name: 'Combat' });
-        expect(run.loadout.signature).toBeTruthy();
+        expect(run.loadout.signature).toContain('/items/sword@12');
     });
 
     test('a row with no loadout is simulated in worn gear, and says so', async () => {

@@ -880,6 +880,7 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
     // and the name only says which loadout the run started from.
     return {
         version: 1,
+        scriptVersion: scriptVersion(),
         savedAt,
         hours,
         fingerprint,

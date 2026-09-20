@@ -12,6 +12,7 @@
 
 import storage from '../core/storage.js';
 import { characterKey, readScoped } from './character-key.js';
+import { currentBuildEntries, fromCurrentBuild, scriptVersion } from './script-version.js';
 
 /** Where a finished all-zones run is kept, for anything that ranks zones later */
 export const ALL_ZONES_SNAPSHOT_KEY = 'allZonesSnapshot';
@@ -36,7 +37,12 @@ export const ALL_ZONES_SNAPSHOT_STORE = 'combatExport';
  */
 export async function saveAllZonesSnapshot(snapshot) {
     try {
-        return await storage.setJSON(characterKey(ALL_ZONES_SNAPSHOT_KEY), snapshot, ALL_ZONES_SNAPSHOT_STORE, true);
+        return await storage.setJSON(
+            characterKey(ALL_ZONES_SNAPSHOT_KEY),
+            { ...snapshot, scriptVersion: scriptVersion() },
+            ALL_ZONES_SNAPSHOT_STORE,
+            true
+        );
     } catch (error) {
         console.error('[AllZonesSnapshot] Saving the all-zones snapshot failed:', error);
         return false;
@@ -52,7 +58,7 @@ export async function loadAllZonesSnapshot() {
         // Discard any legacy global snapshot: a sim run against another
         // character's gear is actively misleading, so no adoption.
         const saved = await readScoped(ALL_ZONES_SNAPSHOT_KEY, ALL_ZONES_SNAPSHOT_STORE, null, { migrate: 'discard' });
-        return saved && Array.isArray(saved.zones) ? saved : null;
+        return fromCurrentBuild(saved) && Array.isArray(saved.zones) ? saved : null;
     } catch (error) {
         console.error('[AllZonesSnapshot] Reading the all-zones snapshot failed:', error);
         return null;
@@ -240,14 +246,16 @@ export function zoneSimRateKey(zoneHrid, difficultyTier = 0, loadoutId = 0) {
  *
  * Taken when a single-zone run starts and again when its rate is read, so a
  * loadout edited in between is caught: same id, different gear, and the rate
- * says so. Item and ability hrids only, sorted — enhancement levels are left
- * out because a "highest owned" loadout's stored level is a stale reading, not
- * what it wears.
+ * says so. Equipment includes enhancement levels because two copies of the
+ * same item at different levels are materially different combat loadouts. A
+ * caller with a "highest owned" loadout must pass the resolved equipment the
+ * loadout would equip now rather than the snapshot's possibly stale levels.
  *
  * @param {Object|null} snapshot - A loadout snapshot (`equipment`, `abilities`, `food`, `drinks`)
+ * @param {Array<Object>|null} [resolvedEquipment] - Equipment with the enhancement levels actually equipped
  * @returns {string|null} The signature, or null with no snapshot
  */
-export function loadoutSignature(snapshot) {
+export function loadoutSignature(snapshot, resolvedEquipment = snapshot?.equipment) {
     if (!snapshot || typeof snapshot !== 'object') return null;
     const hrids = (list, field) =>
         (Array.isArray(list) ? list : [])
@@ -255,8 +263,17 @@ export function loadoutSignature(snapshot) {
             .filter(Boolean)
             .sort()
             .join(',');
+    const equipment = (Array.isArray(resolvedEquipment) ? resolvedEquipment : [])
+        .map((entry) => {
+            if (!entry?.itemHrid) return '';
+            const level = Number(entry.enhancementLevel);
+            return `${entry.itemHrid}@${Number.isFinite(level) ? level : 0}`;
+        })
+        .filter(Boolean)
+        .sort()
+        .join(',');
     return [
-        hrids(snapshot.equipment, 'itemHrid'),
+        equipment,
         hrids(snapshot.abilities, 'abilityHrid'),
         hrids(snapshot.food, 'itemHrid'),
         hrids(snapshot.drinks, 'itemHrid'),
@@ -270,7 +287,7 @@ export function loadoutSignature(snapshot) {
 export async function loadZoneSimRates() {
     try {
         const saved = await storage.getJSON(characterKey(ZONE_SIM_RATES_KEY), ALL_ZONES_SNAPSHOT_STORE, null);
-        return saved && typeof saved.rates === 'object' && saved.rates !== null ? saved.rates : {};
+        return saved && typeof saved.rates === 'object' && saved.rates !== null ? currentBuildEntries(saved.rates) : {};
     } catch (error) {
         console.error('[AllZonesSnapshot] Reading single-zone rates failed:', error);
         return {};
@@ -293,7 +310,10 @@ export async function saveZoneSimRate(storageKey, entry) {
         if (!storageKey || !entry?.zoneHrid) return false;
         const saved = await storage.getJSON(storageKey, ALL_ZONES_SNAPSHOT_STORE, null);
         const rates = { ...(saved && typeof saved.rates === 'object' && saved.rates !== null ? saved.rates : {}) };
-        rates[zoneSimRateKey(entry.zoneHrid, entry.difficultyTier, entry.loadoutId)] = entry;
+        rates[zoneSimRateKey(entry.zoneHrid, entry.difficultyTier, entry.loadoutId)] = {
+            ...entry,
+            scriptVersion: scriptVersion(),
+        };
 
         const keys = Object.keys(rates);
         if (keys.length > ZONE_SIM_RATES_LIMIT) {
