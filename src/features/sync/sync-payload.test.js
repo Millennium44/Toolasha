@@ -201,6 +201,25 @@ describe('redaction', () => {
         });
         expect(JSON.parse(safe.script_settingsMap_abc)).toEqual({ a: 1 });
     });
+
+    test('omits an unreadable settings map rather than uploading unredacted credentials', () => {
+        const malformed = '{"sync_token":{"value":"ghp_secret"}';
+        const safe = redactSettingsStore({ script_settingsMap_abc: malformed, ordinary: 1 });
+
+        expect(safe.script_settingsMap_abc).toBeUndefined();
+        expect(safe.ordinary).toBe(1);
+        expect(JSON.stringify(safe)).not.toContain('ghp_secret');
+    });
+
+    test('omits settings-map values that are not keyed objects', () => {
+        const safe = redactSettingsStore({
+            script_settingsMap_null: null,
+            script_settingsMap_number: 42,
+            script_settingsMap_array: [{ sync_token: { value: 'ghp_secret' } }],
+        });
+
+        expect(safe).toEqual({});
+    });
 });
 
 describe('buildPayloadJSON', () => {

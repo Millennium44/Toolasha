@@ -173,15 +173,16 @@ export function redactSettingsStore(entries) {
             try {
                 map = JSON.parse(value);
             } catch {
-                // Unparseable settings map: pass it through rather than drop it,
-                // and accept that we cannot prove it is token-free
-                safe[key] = value;
+                // An unreadable settings map cannot be proven credential-free.
+                // Leave it out of the remote payload rather than risk copying a
+                // token or passphrase into the gist.
                 continue;
             }
         }
 
-        if (!map || typeof map !== 'object') {
-            safe[key] = value;
+        if (!map || typeof map !== 'object' || Array.isArray(map)) {
+            // A settings map is always a keyed object. Anything else cannot be
+            // inspected using the setting IDs below and therefore fails closed.
             continue;
         }
 
