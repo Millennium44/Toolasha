@@ -34,6 +34,7 @@ class InventoryCategoryTotals {
     constructor() {
         this.isInitialized = false;
         this.pendingUpdate = false;
+        this.pendingUpdateTimer = null;
         this.itemsUpdatedHandler = null;
         this.itemsUpdatedDebounceTimer = null;
         this.unwatchBadgeMode = null;
@@ -103,6 +104,10 @@ class InventoryCategoryTotals {
 
     disable() {
         try {
+            clearTimeout(this.pendingUpdateTimer);
+            this.pendingUpdateTimer = null;
+            this.pendingUpdate = false;
+
             if (!this.isInitialized) {
                 return;
             }
@@ -124,7 +129,6 @@ class InventoryCategoryTotals {
             dom.removeStyles(CSS_ID);
 
             this.isInitialized = false;
-            this.pendingUpdate = false;
         } catch (error) {
             console.error('[Inventory Category Totals] Disable failed part-way:', error);
         } finally {
@@ -133,12 +137,14 @@ class InventoryCategoryTotals {
     }
 
     scheduleUpdate() {
-        if (this.pendingUpdate) {
+        if (!this.isInitialized || this.pendingUpdate) {
             return;
         }
         this.pendingUpdate = true;
-        setTimeout(() => {
+        this.pendingUpdateTimer = setTimeout(() => {
+            this.pendingUpdateTimer = null;
             this.pendingUpdate = false;
+            if (!this.isInitialized) return;
             this.updateAllCategoryTotals();
         }, 0);
     }

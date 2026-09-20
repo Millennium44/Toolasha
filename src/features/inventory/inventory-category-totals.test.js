@@ -100,6 +100,7 @@ beforeEach(() => {
     inventoryCategoryTotals.unwatchBadgeMode = null;
     inventoryCategoryTotals.isInitialized = false;
     inventoryCategoryTotals.pendingUpdate = false;
+    inventoryCategoryTotals.pendingUpdateTimer = null;
     inventoryCategoryTotals.itemsUpdatedHandler = null;
     inventoryCategoryTotals.itemsUpdatedDebounceTimer = null;
     vi.useFakeTimers();
@@ -231,5 +232,19 @@ describe('following the badge mode', () => {
         inventoryCategoryTotals.disable();
 
         expect(configMock.listeners.get('inv_valueBadges')?.size ?? 0).toBe(0);
+    });
+
+    test('disable() cancels a queued redraw so the removed total cannot return', () => {
+        const label = drawInventory();
+        inventoryCategoryTotals.initialize();
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(label.querySelector('.mwi-category-total')).not.toBeNull();
+
+        inventoryCategoryTotals.scheduleUpdate();
+        inventoryCategoryTotals.disable();
+        vi.runAllTimers();
+
+        expect(label.querySelector('.mwi-category-total')).toBeNull();
+        expect(inventoryCategoryTotals.pendingUpdate).toBe(false);
     });
 });
