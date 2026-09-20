@@ -519,6 +519,7 @@ function clearSession() {
     startedAt = 0;
     recordingStartedAt = 0;
     recordingStoppedAt = null;
+    recordingId = null;
     stoppedReason = null;
     loadout = null;
 }
