@@ -293,6 +293,26 @@ describe('recording for longer than the buffer holds', () => {
         expect(recorder.isRecording()).toBe(true);
         detach();
     });
+
+    test('a hard-cap split is not counted as a complete fight or allowed to satisfy the target', () => {
+        recorder.startRecording({ target: { value: 2, unit: 'fights' } });
+        fight(1);
+        // This boundary banks one complete fight; the next battle then exceeds
+        // the hard cap before its closing boundary can be kept beside its opening.
+        fight(8000);
+        expect(recorder.recordingStatus().segments).toBe(2);
+        fight(1);
+
+        expect(recorder.isRecording()).toBe(true);
+        expect(recorder.recordingStatus().fights).toBe(1);
+        expect(recorder.sessionFile()).toMatchObject({ truncated: true, ticksComplete: true });
+        expect(recorder.sessionFile().segments.map((entry) => entry.fights)).toEqual([1, 0]);
+
+        fight(1);
+        expect(recorder.isRecording()).toBe(false);
+        expect(recorder.recordingStatus()).toMatchObject({ fights: 2, targetMet: true });
+        expect(recorder.sessionFile().segments.map((entry) => entry.fights)).toEqual([1, 1]);
+    });
 });
 
 describe('recording a set amount', () => {

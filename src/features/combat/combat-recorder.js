@@ -762,6 +762,11 @@ function capture(type, payload) {
 
     rotateSegment();
 
+    // A hard-cap cut leaves the new segment inside a battle whose opening is
+    // only in the old segment. Its next boundary starts the first whole fight;
+    // counting it as a closure would inflate exported fights and stop targets early.
+    sawNewBattle = atBoundary;
+
     // The battle that closed the old segment opens the new one. It is the same
     // payload in both, and harmless in both: the old segment reads it only as
     // the end of its last fight, the new one only as the start of its first.
