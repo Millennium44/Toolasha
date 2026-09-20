@@ -398,6 +398,13 @@ class CombatSimulator {
 
         while (this.simulationTime < simulationTimeLimit && !this.converged) {
             const nextEvent = this.eventQueue.getNextEvent();
+            // The cap bounds simulated time, not just the start of an event.
+            // Count the quiet interval, but never award a hit/kill beyond it.
+            // Events exactly on the boundary retain their existing behavior.
+            if (nextEvent.time > simulationTimeLimit) {
+                this.simulationTime = simulationTimeLimit;
+                break;
+            }
             this.processEvent(nextEvent);
 
             ticks++;

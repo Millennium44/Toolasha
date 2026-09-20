@@ -431,8 +431,7 @@ describe('golden run: one seeded hour, pinned exactly', () => {
             '/monsters/golden_rat': 3723,
         });
 
-        // The run stops on the first event at or past the hour; with this seed
-        // that lands exactly on it
+        // The run never advances beyond its requested hour.
         expect(result.simulatedTime).toBe(3600000000000);
     });
 
@@ -470,9 +469,10 @@ describe('labyrinth attempt accounting', () => {
      * @param {number} seed - RNG seed
      * @param {Object} levels - Monster level block (see monster())
      * @param {number} capSeconds - Simulation time cap
-     * @returns {{result: Object, labyrinth: Labyrinth}}
+     * @param {number} [exactCap] - Optional exact nanosecond boundary
+     * @returns {{result: Object, labyrinth: Labyrinth, wins: number[]}}
      */
-    function labyrinthRun(seed, levels, capSeconds) {
+    function labyrinthRun(seed, levels, capSeconds, exactCap) {
         // The golden zone (for SimResult's constructor) plus the lab monster
         setGameData({
             actionDetailMap: {
@@ -503,7 +503,15 @@ describe('labyrinth attempt accounting', () => {
         // Room level 100 = scale factor 1, so the level block is used as-is
         const labyrinth = new Labyrinth(LAB_MONSTER, 100);
         const simulator = new CombatSimulator([player], zone, undefined, labyrinth);
-        return { result: simulator.simulate(capSeconds * ONE_SECOND), labyrinth };
+        const wins = [];
+        const checkEncounterEnd = simulator.checkEncounterEnd.bind(simulator);
+        simulator.checkEncounterEnd = () => {
+            const before = simulator.simResult.encounters;
+            const ended = checkEncounterEnd();
+            if (simulator.simResult.encounters > before) wins.push(simulator.simulationTime);
+            return ended;
+        };
+        return { result: simulator.simulate(exactCap ?? capSeconds * ONE_SECOND), labyrinth, wins };
     }
 
     /** The invariants every labyrinth run must satisfy, whatever the seed */
@@ -518,9 +526,7 @@ describe('labyrinth attempt accounting', () => {
         }
     }
 
-    // Feeble monster: every fight is a quick kill, so the event that crosses
-    // the time cap is very often the killing blow itself — the exact case the
-    // old subtraction scored as 101%
+    // Feeble monster: every fight is a quick kill.
     const FEEBLE = {
         staminaLevel: 3,
         intelligenceLevel: 1,
@@ -532,19 +538,20 @@ describe('labyrinth attempt accounting', () => {
     };
 
     test('an all-win run keeps every win in the denominator, cap-on-kill included', () => {
-        let sawCapLandOnAKill = false;
         for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
-            const { result, labyrinth } = labyrinthRun(seed, FEEBLE, 60);
+            const { result, labyrinth, wins } = labyrinthRun(seed, FEEBLE, 60);
             expectSoundCounts(result, labyrinth);
             expect(result.encounters).toBeGreaterThan(0);
-            if (result.labyUnfinishedAttempts === 0) {
-                // The run stopped on a resolution — under the old accounting
-                // this read wins/(wins-1), i.e. more than 100%
-                sawCapLandOnAKill = true;
-                expect(result.encounters).toBe(result.labyAttemptCount);
-            }
+            expect(result.simulatedTime).toBe(60 * ONE_SECOND);
+
+            // Replay the same seed, stopping exactly on its first killing blow.
+            // This tests boundary accounting without relying on cap overshoot.
+            const onKill = labyrinthRun(seed, FEEBLE, 60, wins[0]);
+            expectSoundCounts(onKill.result, onKill.labyrinth);
+            expect(onKill.result.encounters).toBe(1);
+            expect(onKill.result.labyAttemptCount).toBe(1);
+            expect(onKill.result.labyUnfinishedAttempts).toBe(0);
         }
-        expect(sawCapLandOnAKill).toBe(true);
     });
 
     test('an all-loss run counts the deaths and claims no wins', () => {
