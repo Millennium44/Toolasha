@@ -4312,9 +4312,13 @@ class ActionTimeDisplay {
             const inventoryLookup = this.buildInventoryLookup(dataManager.getInventory());
             this._lastQueueMenu = queueMenu;
 
-            // Clear all existing time and profit displays to prevent duplicates
+            // Clear all existing time, profit and experience displays to prevent duplicates.
+            // The experience line is appended per pass like the profit line, so it has to be
+            // swept with it: without this a row grew a fresh `XP:` line on every redraw, and
+            // the stale ones stayed behind at whatever rate was known when they were drawn.
             queueMenu.querySelectorAll('.mwi-queue-action-time').forEach((el) => el.remove());
             queueMenu.querySelectorAll('.mwi-queue-action-profit').forEach((el) => el.remove());
+            queueMenu.querySelectorAll('.mwi-queue-action-xp').forEach((el) => el.remove());
             queueMenu.querySelectorAll(`.${ZONE_SIM_CLASS}`).forEach((el) => el.remove());
             queueMenu.querySelectorAll(`.${QUEUE_SIM_HEADER_CLASS}`).forEach((el) => el.remove());
             const existingTotal = document.querySelector('#mwi-queue-total-time');

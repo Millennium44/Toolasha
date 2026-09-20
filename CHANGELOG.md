@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queued actions stacked a new XP line on every redraw
+
+- The XP line was added on each redraw but never cleared with the time and profit lines beside it, so stale copies piled up under a row.
+- A changelog test also over-specified its own rule and went red on the twenty-first unreleased entry; it now checks what the slicer documents.
+
 ### Queued Actions: XP per row and a queue total, behind a new setting
 
 - An optional "Show XP for queued actions" setting adds each queued row's expected experience and XP/hr beside its profit line, plus a Total XP in the footer — read from the stored combat simulation for fights and from game data for everything else, with a row that has no figure marking the total `+ [?]` rather than counting as zero.

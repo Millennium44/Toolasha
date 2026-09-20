@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { filterChangelogSince, markerVersions, stripMarkers, markerFor, omissionLine } from './changelog-markers.js';
-import { sliceForkChangelog, DEFAULT_MIN_ENTRIES } from '../../../scripts/changelog-slice.js';
+import { sliceForkChangelog, DEFAULT_MIN_ENTRIES, DEFAULT_MAX_ENTRIES } from '../../../scripts/changelog-slice.js';
 import { stampChangelog } from '../../../scripts/stamp-changelog-version.js';
 
 const NOTE = '4 more changes are not shown here — the full list is in CHANGELOG.md on GitHub.';
@@ -257,10 +257,25 @@ describe('against the real CHANGELOG.md, across release states', () => {
         Object.entries(sources).map(([label, text]) => [label, sliceForkChangelog(text)])
     );
 
-    it('ships exactly the floor while there are fewer than two markers', () => {
+    it('ships exactly the floor when there is no release boundary to cover', () => {
+        // `entriesToCover` aims at a marker in the whole section; with none there
+        // is no boundary to reach for and the floor is the entire rule.
+        const slice = states['no markers'];
+        expect(slice.markerVersions).toHaveLength(0);
+        expect(slice.shownEntries).toBe(DEFAULT_MIN_ENTRIES);
+    });
+
+    it('stays between the floor and the cap once there is a boundary to cover', () => {
+        // How many markers survive INTO the slice is not the contract, and it
+        // moves on its own: the budget counts entries above a marker in the
+        // section, so adding one entry above the newest marker can push an older
+        // one out of the window while the budget never changes. An assertion
+        // keyed on the slice's own marker count went red on exactly that, with
+        // nothing about the slicing different.
         for (const [label, slice] of Object.entries(states)) {
-            if (slice.markerVersions.length >= 2) continue;
-            expect(slice.shownEntries, label).toBe(DEFAULT_MIN_ENTRIES);
+            if (label === 'no markers') continue;
+            expect(slice.shownEntries, label).toBeGreaterThanOrEqual(DEFAULT_MIN_ENTRIES);
+            expect(slice.shownEntries, label).toBeLessThanOrEqual(DEFAULT_MAX_ENTRIES);
         }
     });
 

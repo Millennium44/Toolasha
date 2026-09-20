@@ -248,6 +248,24 @@ describe('the Queued Actions panel shows what the queue is expected to teach', (
         expect(menu.textContent).not.toContain('undefined');
     });
 
+    test('redrawing the panel replaces the XP line rather than stacking another one under it', async () => {
+        // The line is appended per pass, like the profit line beside it. The panel redraws
+        // whenever the queue is reopened or a rate lands, so anything not swept first survives:
+        // a row grew one `XP:` line per redraw, each frozen at the rate known when it was drawn.
+        game.currentActions = [combatAction(1)];
+        const menu = queueMenu(['Gobo Planet (T3)']);
+
+        for (let pass = 0; pass < 3; pass++) {
+            actionTimeDisplay.injectQueueTimes(menu);
+            await flush();
+        }
+
+        expect(xpLines(menu)).toEqual(['XP: 500.00K (250.00K/hr)']);
+        expect(menu.querySelectorAll('.mwi-queue-action-xp')).toHaveLength(1);
+        // The footer must not count the row once per redraw either
+        expect(totalText()).toContain('Total XP: 500.00K');
+    });
+
     test('a skilling row reads the XP its action grants, over the count it will run', async () => {
         game.currentActions = [countedAction(1, MILK, 250)];
         const menu = queueMenu(['Milk Cow']);
