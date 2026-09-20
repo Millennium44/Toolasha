@@ -12,6 +12,7 @@
         "watch": "rollup -c -w",
         "dev": "rollup -c -w",
         "test": "vitest run",
+        "test:related": "vitest related --run",
         "test:watch": "vitest",
         "replay": "node scripts/replay-combat.mjs",
         "compare": "node scripts/compare-attribution.mjs",
@@ -62,7 +63,7 @@
         "src/**/*.js": [
             "eslint --fix",
             "prettier --write",
-            "bash -c 'npm test'",
+            "npm run test:related --",
             "bash -c 'npm run build:dev'",
             "bash -c 'npm run build'"
         ],
