@@ -56,7 +56,7 @@ const mocks = vi.hoisted(() => ({
     /** What `buildGameDataPayload` and `buildAllPlayerDTOs` hand the panel */
     gameData: { itemDetailMap: {} },
     playerDTOs: [{ hrid: 'player1', equipment: {} }],
-    /** Optional override for a delayed or failed live-player profile read */
+    /** Optional delayed/failed profile read used by run-start lifecycle tests */
     buildPlayerDTOs: null,
     /** buffHrid → detail, what `getGuildBuffDetailMap` hands the shrine grid */
     guildBuffDetailMap: {},
@@ -80,6 +80,8 @@ const mocks = vi.hoisted(() => ({
     editorSelfHrid: null,
     /** What runSimulation() resolves with; null falls back to `{}` */
     simResult: null,
+    simRuns: 0,
+    allZonesRuns: 0,
     /** playerHrid each calculateSimRevenue() call was made with, in order */
     revenueCalls: [],
     /** How many upgrade-advisor runs and worker cancellations were requested */
@@ -258,7 +260,10 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 
 vi.mock('./combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => mocks.gameData,
-    buildAllPlayerDTOs: async () => (mocks.buildPlayerDTOs ? mocks.buildPlayerDTOs() : { players: mocks.playerDTOs }),
+    buildAllPlayerDTOs: async () =>
+        mocks.buildPlayerDTOs
+            ? mocks.buildPlayerDTOs()
+            : { players: mocks.playerDTOs, playerInfo: [], selfHrid: 'player1', missingMembers: [] },
     getCombatZones: () => mocks.zones,
     getCurrentCombatZone: () => null,
     getCommunityBuffs: () => ({}),
@@ -278,7 +283,10 @@ vi.mock('./combat-sim-adapter.js', () => ({
 }));
 
 vi.mock('./combat-sim-runner.js', () => ({
-    runSimulation: async () => mocks.simResult || {},
+    runSimulation: async () => {
+        mocks.simRuns++;
+        return mocks.simResult || {};
+    },
     runLabyrinthSimulation: async () => ({}),
     cancelSimulation: () => {},
     cancelActiveSimulations: () => {
@@ -350,6 +358,7 @@ vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: () => ({})
 
 vi.mock('./all-zones-runner.js', () => ({
     runAllZonesSimulation: async (params) => {
+        mocks.allZonesRuns++;
         mocks.allZonesArgs = params;
         if (params.onProgress) params.onProgress(100);
         return mocks.allZonesResult;
@@ -1370,6 +1379,175 @@ describe('results outliving the character they were run for', () => {
 
         expect(mocks.upgradeRuns).toBe(0);
         expect(ui._upgradeRunning).toBe(false);
+    });
+});
+
+describe('runs waiting for live player profiles', () => {
+    const profileResult = () => ({
+        players: mocks.playerDTOs,
+        playerInfo: [],
+        selfHrid: 'player1',
+        missingMembers: [],
+    });
+
+    let releaseProfiles;
+
+    beforeEach(() => {
+        mocks.characterId = 'char1';
+        mocks.editedDTOs = null;
+        ui._allZonesMode = null;
+        mocks.simRuns = 0;
+        mocks.allZonesRuns = 0;
+        mocks.allZonesResult = [];
+        mocks.zones = [{ hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 3, maxDifficulty: 0 }];
+        mocks.simResult = {
+            simulatedTime: 3600 * 1e9,
+            zoneName: '/actions/combat/fly',
+            difficultyTier: 0,
+            encounters: 10,
+            deaths: { player1: 0 },
+            experienceGained: { player1: { defense: 100 } },
+            consumablesUsed: { player1: {} },
+        };
+        mocks.buildPlayerDTOs = () =>
+            new Promise((resolve) => {
+                releaseProfiles = resolve;
+            });
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.characterId = 'char1';
+        mocks.buildPlayerDTOs = null;
+        mocks.simResult = null;
+        mocks.zones = [];
+        mocks.allZonesResult = [];
+        vi.restoreAllMocks();
+    });
+
+    const configureSingle = () => selectZone();
+
+    const configureAllZones = () => {
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+    };
+
+    const configureSeek = async () => {
+        const input = ui.panel.querySelector('#mwi-csim-seek-input');
+        input.value = 'Cheese';
+        ui._seekItems = [{ itemHrid: '/items/cheese', name: 'Cheese' }];
+        ui._seekSelectedItem = { itemHrid: '/items/cheese', name: 'Cheese' };
+        const adapter = await import('./combat-sim-adapter.js');
+        return vi
+            .spyOn(adapter, 'getZonesThatDropItem')
+            .mockReturnValue([{ zoneHrid: '/actions/combat/fly', name: 'Fly', difficultyTier: 0 }]);
+    };
+
+    test('rapid Single Sim clicks start only one worker run', async () => {
+        configureSingle();
+
+        const first = ui._onSimulate();
+        const second = ui._onSimulate();
+        releaseProfiles(profileResult());
+        await Promise.all([first, second]);
+
+        expect(mocks.simRuns).toBe(1);
+    });
+
+    test('Single Sim does not start after the character changes during profile loading', async () => {
+        configureSingle();
+
+        const run = ui._onSimulate();
+        mocks.characterId = 'char2';
+        releaseProfiles(profileResult());
+        await run;
+
+        expect(mocks.simRuns).toBe(0);
+    });
+
+    test('a load from a destroyed panel cannot overtake a newer same-character run', async () => {
+        configureSingle();
+        const staleRun = ui._onSimulate();
+        const releaseStale = releaseProfiles;
+
+        ui.destroy();
+        ui.buildPanel();
+        configureSingle();
+        const currentRun = ui._onSimulate();
+        const releaseCurrent = releaseProfiles;
+
+        releaseStale(profileResult());
+        await staleRun;
+        expect(mocks.simRuns).toBe(0);
+
+        releaseCurrent(profileResult());
+        await currentRun;
+        expect(mocks.simRuns).toBe(1);
+    });
+
+    test('rapid All Zones clicks start only one worker sweep', async () => {
+        configureAllZones();
+
+        const first = ui._onSimulateAllZones();
+        const second = ui._onSimulateAllZones();
+        releaseProfiles(profileResult());
+        await Promise.all([first, second]);
+
+        expect(mocks.allZonesRuns).toBe(1);
+    });
+
+    test('All Zones does not start after the character changes during profile loading', async () => {
+        configureAllZones();
+
+        const run = ui._onSimulateAllZones();
+        mocks.characterId = 'char2';
+        releaseProfiles(profileResult());
+        await run;
+
+        expect(mocks.allZonesRuns).toBe(0);
+    });
+
+    test('rapid Seek clicks start only one worker sweep', async () => {
+        const dropSpy = await configureSeek();
+
+        const first = ui._onSeek();
+        const second = ui._onSeek();
+        releaseProfiles(profileResult());
+        await Promise.all([first, second]);
+        dropSpy.mockRestore();
+
+        expect(mocks.allZonesRuns).toBe(1);
+    });
+
+    test('Seek does not start after the character changes during profile loading', async () => {
+        const dropSpy = await configureSeek();
+
+        const run = ui._onSeek();
+        mocks.characterId = 'char2';
+        releaseProfiles(profileResult());
+        await run;
+        dropSpy.mockRestore();
+
+        expect(mocks.allZonesRuns).toBe(0);
+    });
+
+    test('normal run modes stay idle while an upgrade analysis owns the workers', async () => {
+        configureSingle();
+        ui._upgradeRunning = true;
+        await ui._onSimulate();
+
+        configureAllZones();
+        await ui._onSimulateAllZones();
+
+        const dropSpy = await configureSeek();
+        await ui._onSeek();
+        dropSpy.mockRestore();
+        ui._upgradeRunning = false;
+
+        expect(mocks.simRuns).toBe(0);
+        expect(mocks.allZonesRuns).toBe(0);
+        expect(ui._runStarting).toBe(false);
     });
 });
 

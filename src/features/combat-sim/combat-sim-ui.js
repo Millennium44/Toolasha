@@ -1814,6 +1814,8 @@ class CombatSimUI {
         this.panel = null;
         this._editor = null;
         this.isRunning = false;
+        this._runStarting = false;
+        this._runStartToken = 0;
         this._upgradeRunning = false;
         this._detachDrag = null;
         this.elapsedTimer = null;
@@ -4073,10 +4075,15 @@ class CombatSimUI {
      * @private
      */
     async _onSeek() {
+        if (this._runStarting || this._upgradeRunning) return;
         if (this.isRunning) {
             this._setStatus('A simulation is already running.');
             return;
         }
+
+        // A live profile read below yields before `isRunning` is set. Claim
+        // that window so a rapid second click cannot launch another sweep.
+        const ownerId = dataManager.getCurrentCharacterId();
 
         const input = this.panel?.querySelector('#mwi-csim-seek-input');
         const queryText = input?.value?.trim() || '';
@@ -4115,22 +4122,37 @@ class CombatSimUI {
             Math.max(1, parseInt(hoursEl?.value) || config.getSettingValue('combatSim_seekDefaultHours', 10))
         );
 
+        this._runStarting = true;
+        const startToken = ++this._runStartToken;
         let playerDTOs;
-        const editedDTOs = this._editor?.getEditedDTOs();
-        if (editedDTOs) {
-            playerDTOs = Object.values(editedDTOs);
-            // Revenue/drops below are computed for whichever player
-            // `_activePlayerTab` names, and that field doubles as "which
-            // player's tab is open in a previous single-zone result" — left
-            // alone here, a party where self isn't player1 would price this
-            // run for whoever's tab a past result happened to leave selected.
-            this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
-        } else {
-            const result = await buildAllPlayerDTOs();
-            playerDTOs = result.players;
-            this._playerInfo = result.playerInfo;
-            this._activePlayerTab = result.selfHrid;
+        try {
+            const editedDTOs = this._editor?.getEditedDTOs();
+            if (editedDTOs) {
+                playerDTOs = Object.values(editedDTOs);
+                // Revenue/drops below are computed for whichever player
+                // `_activePlayerTab` names, and that field doubles as "which
+                // player's tab is open in a previous single-zone result" — left
+                // alone here, a party where self isn't player1 would price this
+                // run for whoever's tab a past result happened to leave selected.
+                this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
+            } else {
+                const result = await buildAllPlayerDTOs();
+                playerDTOs = result.players;
+                this._playerInfo = result.playerInfo;
+                this._activePlayerTab = result.selfHrid;
+            }
+        } catch (error) {
+            if (startToken !== this._runStartToken) return;
+            this._runStarting = false;
+            if (!this._stillSameCharacter(ownerId)) return;
+            console.error('[CombatSimUI] Failed to load players for Seek:', error);
+            this._setStatus(`Seek error: ${error.message || 'Could not load character data'}`);
+            return;
         }
+        if (startToken !== this._runStartToken) return;
+        this._runStarting = false;
+
+        if (!this._stillSameCharacter(ownerId)) return;
 
         if (!playerDTOs.length) {
             this._setStatus('No character data available.');
@@ -4462,7 +4484,7 @@ class CombatSimUI {
      * @private
      */
     _isBusy() {
-        return Boolean(this.isRunning || this._upgradeRunning);
+        return Boolean(this._runStarting || this.isRunning || this._upgradeRunning);
     }
 
     /**
@@ -4470,6 +4492,7 @@ class CombatSimUI {
      * @private
      */
     async _onSimulate() {
+        if (this._runStarting) return;
         if (this.isRunning) {
             // Stop the running simulation. The warm workers stay: Stop here is
             // almost always "that is not what I meant" followed by an edit and
@@ -4482,6 +4505,7 @@ class CombatSimUI {
             this._switchTab('configure');
             return;
         }
+        if (this._upgradeRunning) return;
 
         // Route to all-zones simulation if active
         if (this._allZonesMode) {
@@ -4526,22 +4550,38 @@ class CombatSimUI {
         // live character's own and overwrite it in storage
         let trueSelfHrid;
         let missingMembers;
+        let editedDTOs;
 
-        const editedDTOs = this._editor?.getEditedDTOs();
-        if (editedDTOs) {
-            playerDTOs = Object.values(editedDTOs);
-            playerInfo = this._editor?.getPlayerInfo() || [];
-            trueSelfHrid = this._editor?.getSelfHrid() || null;
-            selfHrid = trueSelfHrid || playerDTOs[0]?.hrid || 'player1';
-            missingMembers = this._editor?.getMissingMembers() || [];
-        } else {
-            const result = await buildAllPlayerDTOs();
-            playerDTOs = result.players;
-            playerInfo = result.playerInfo;
-            trueSelfHrid = result.selfHrid;
-            selfHrid = result.selfHrid;
-            missingMembers = result.missingMembers;
+        this._runStarting = true;
+        const startToken = ++this._runStartToken;
+        try {
+            editedDTOs = this._editor?.getEditedDTOs();
+            if (editedDTOs) {
+                playerDTOs = Object.values(editedDTOs);
+                playerInfo = this._editor?.getPlayerInfo() || [];
+                trueSelfHrid = this._editor?.getSelfHrid() || null;
+                selfHrid = trueSelfHrid || playerDTOs[0]?.hrid || 'player1';
+                missingMembers = this._editor?.getMissingMembers() || [];
+            } else {
+                const result = await buildAllPlayerDTOs();
+                playerDTOs = result.players;
+                playerInfo = result.playerInfo;
+                trueSelfHrid = result.selfHrid;
+                selfHrid = result.selfHrid;
+                missingMembers = result.missingMembers;
+            }
+        } catch (error) {
+            if (startToken !== this._runStartToken) return;
+            this._runStarting = false;
+            if (!this._stillSameCharacter(ownerId)) return;
+            console.error('[CombatSimUI] Failed to load players for simulation:', error);
+            this._setStatus(`Simulation error: ${error.message || 'Could not load character data'}`);
+            return;
         }
+        if (startToken !== this._runStartToken) return;
+        this._runStarting = false;
+
+        if (!this._stillSameCharacter(ownerId)) return;
 
         if (!playerDTOs.length) {
             this._setStatus('No character data available.');
@@ -4699,6 +4739,7 @@ class CombatSimUI {
      * @private
      */
     async _onSimulateAllZones() {
+        if (this._runStarting || this.isRunning || this._upgradeRunning) return;
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
         const selectedZones = this._getSelectedAllZones();
@@ -4724,21 +4765,37 @@ class CombatSimUI {
 
         // Use edited DTOs if available, otherwise auto-fill
         let playerDTOs;
-        const editedDTOs = this._editor?.getEditedDTOs();
-        if (editedDTOs) {
-            playerDTOs = Object.values(editedDTOs);
-            // Revenue/drops below are computed for whichever player
-            // `_activePlayerTab` names, and that field doubles as "which
-            // player's tab is open in a previous single-zone result" — left
-            // alone here, a party where self isn't player1 would price this
-            // run for whoever's tab a past result happened to leave selected.
-            this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
-        } else {
-            const result = await buildAllPlayerDTOs();
-            playerDTOs = result.players;
-            this._playerInfo = result.playerInfo;
-            this._activePlayerTab = result.selfHrid;
+        let editedDTOs;
+        this._runStarting = true;
+        const startToken = ++this._runStartToken;
+        try {
+            editedDTOs = this._editor?.getEditedDTOs();
+            if (editedDTOs) {
+                playerDTOs = Object.values(editedDTOs);
+                // Revenue/drops below are computed for whichever player
+                // `_activePlayerTab` names, and that field doubles as "which
+                // player's tab is open in a previous single-zone result" — left
+                // alone here, a party where self isn't player1 would price this
+                // run for whoever's tab a past result happened to leave selected.
+                this._activePlayerTab = this._editor?.getSelfHrid() || playerDTOs[0]?.hrid || 'player1';
+            } else {
+                const result = await buildAllPlayerDTOs();
+                playerDTOs = result.players;
+                this._playerInfo = result.playerInfo;
+                this._activePlayerTab = result.selfHrid;
+            }
+        } catch (error) {
+            if (startToken !== this._runStartToken) return;
+            this._runStarting = false;
+            if (!this._stillSameCharacter(ownerId)) return;
+            console.error('[CombatSimUI] Failed to load players for all-zones simulation:', error);
+            this._setStatus(`Simulation error: ${error.message || 'Could not load character data'}`);
+            return;
         }
+        if (startToken !== this._runStartToken) return;
+        this._runStarting = false;
+
+        if (!this._stillSameCharacter(ownerId)) return;
 
         if (!playerDTOs.length) {
             this._setStatus('No character data available.');
@@ -6833,6 +6890,8 @@ class CombatSimUI {
             this.panel = null;
         }
         this.isRunning = false;
+        this._runStartToken++;
+        this._runStarting = false;
         this._upgradeRunning = false;
 
         // Clear cached character data so next open loads fresh state
