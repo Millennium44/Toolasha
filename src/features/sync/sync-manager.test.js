@@ -24,6 +24,10 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         flushAll: async () => {
             storageCalls.push('flushAll');
+            if (payload.pendingText !== undefined) {
+                payload.text = payload.pendingText;
+                payload.pendingText = undefined;
+            }
         },
         get: async (key, _store, fallback = null) => stored.map[key] ?? fallback,
         set: async (key, value) => {
@@ -129,6 +133,7 @@ beforeEach(() => {
     dialog.last = null;
     dialog.calls = 0;
     payload.text = '{"local":1}';
+    payload.pendingText = undefined;
     payload.applied = undefined;
     payload.appliedText = undefined;
     payload.merged = [];
@@ -310,6 +315,23 @@ describe('pull', () => {
 
         expect(result).toMatchObject({ skipped: true, reason: 'not-newer' });
         expect(payload.applied).toBeUndefined();
+    });
+
+    test.each([false, true])('detects queued local edits before a pull (silent=%s)', async (silent) => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        // IndexedDB still has the last synced copy; an edited list is waiting
+        // for storage's three-second debounce and must count as a local change.
+        payload.pendingText = '{"local":2}';
+
+        const result = await syncManager.pull({ silent });
+
+        expect(result).toMatchObject({ skipped: true, reason: silent ? 'conflict' : 'cancelled' });
+        expect(payload.applied).toBeUndefined();
+        expect(dialog.calls).toBe(silent ? 0 : 1);
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-01-01T00:00:00.000Z');
     });
 
     test('asks first when both sides moved, and honours "keep this device"', async () => {

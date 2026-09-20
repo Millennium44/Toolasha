@@ -19,10 +19,14 @@ vi.mock('../../core/storage.js', () => ({
         // whether a merge base includes the last few seconds of recording.
         beginRestore: async () => {
             flushLog.push('beginRestore');
+            if (storeState.flushError) throw storeState.flushError;
             for (const [name, entries] of Object.entries(storeState.pending || {})) {
                 storeState.stores[name] = { ...(storeState.stores[name] || {}), ...entries };
             }
             storeState.pending = {};
+        },
+        endRestore: async () => {
+            flushLog.push('endRestore');
         },
     },
 }));
@@ -88,6 +92,7 @@ beforeEach(() => {
     importOutcome.complete = true;
     storeState.unreadable = false;
     storeState.pending = {};
+    storeState.flushError = null;
     flushLog.length = 0;
     reconcileKeyMigrationState.mockClear();
     storeState.stores = {
@@ -259,6 +264,55 @@ describe('buildPayloadJSON', () => {
 });
 
 describe('applyPayload', () => {
+    test('releases the restore hold if its initial flush fails', async () => {
+        storeState.flushError = new Error('flush failed');
+
+        await expect(applyPayload(JSON.stringify({ formatVersion: 1, stores: {} }))).rejects.toThrow('flush failed');
+
+        expect(importedPayloads).toHaveLength(0);
+        expect(flushLog).toEqual(['beginRestore', 'endRestore']);
+    });
+
+    test('releases the restore hold if settings reconciliation fails before import', async () => {
+        reconcileKeyMigrationState.mockRejectedValueOnce(new Error('reconciliation failed'));
+        const json = JSON.stringify({
+            formatVersion: 1,
+            stores: { settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } } },
+        });
+
+        await expect(applyPayload(json)).rejects.toThrow('reconciliation failed');
+
+        expect(importedPayloads).toHaveLength(0);
+        expect(flushLog).toEqual(['beginRestore', 'endRestore']);
+    });
+
+    test('preserves queued device settings and entries absent from the incoming map', async () => {
+        storeState.pending = {
+            settings: {
+                script_settingsMap_abc: {
+                    sync_token: { value: 'ghp_replacement' },
+                    sync_passphrase: { value: 'new-passphrase' },
+                    combatSim_maxThreads: { value: 2 },
+                    recentLocalChoice: { isTrue: false },
+                },
+            },
+        };
+        const json = JSON.stringify({
+            formatVersion: 1,
+            stores: { settings: { script_settingsMap_abc: { chatCommands: { isTrue: false } } } },
+        });
+
+        await applyPayload(json);
+
+        expect(importedPayloads[0].stores.settings.script_settingsMap_abc).toEqual({
+            sync_token: { value: 'ghp_replacement' },
+            sync_passphrase: { value: 'new-passphrase' },
+            combatSim_maxThreads: { value: 2 },
+            recentLocalChoice: { isTrue: false },
+            chatCommands: { isTrue: false },
+        });
+    });
+
     test('keeps this device’s token when the incoming map has none', async () => {
         const json = JSON.stringify({
             formatVersion: 1,

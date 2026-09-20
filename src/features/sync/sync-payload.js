@@ -363,41 +363,36 @@ export async function applyPayload(json) {
     const droppedUnowned = dropUnownedFromPayload(payload);
     const settingsStore = payload?.stores?.[SETTINGS_STORE];
 
-    if (settingsStore) {
-        const local = await storage.getAll(SETTINGS_STORE);
-        for (const [key, incoming] of Object.entries(settingsStore)) {
-            if (!key.startsWith('script_settingsMap')) continue;
-            settingsStore[key] = preserveLocalOnlySettings(local[key], incoming);
-        }
-        // Device-local bookkeeping is never taken from a payload, even one
-        // written by an older build that did not redact it
-        for (const key of Object.keys(settingsStore)) {
-            if (LOCAL_ONLY_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) delete settingsStore[key];
-        }
-        // A settings map here lands the same way copySettingsFromCharacter and
-        // importSettings do: whole, from somewhere else. A payload written by a
-        // build older than a merge carries the retired ids and none of the ids
-        // that replaced them, while this profile's key-migration record still
-        // says those carries are done — so the settings the merge produced read
-        // as never chosen and fall back to schema defaults. Forget the record
-        // for exactly the maps that did not bring their own (see
-        // reconcileKeyMigrationState), so the next load reconciles what this
-        // pull actually landed.
-        await settingsStorage.reconcileKeyMigrationState(Object.keys(settingsStore));
-    }
-
-    // Land the debounce queue BEFORE reading merge bases, not on the way into
-    // `importEverything`. A history writes through `storage.set`, which holds
-    // the value for three seconds; `mergeLocalHistories` reads through
-    // `storage.tryGet`, which goes to IndexedDB and cannot see it. Flushing
-    // afterwards — which is what `importEverything` does — makes the queued
-    // value land and then be overwritten by a union computed without it, so a
-    // pull arriving in the seconds after a kill, a fill or an XP sample threw
-    // exactly those entries away. Flushing here makes the base current; the
-    // flush inside `importEverything` then finds nothing left to do.
-    await storage.beginRestore?.();
-
+    // Land the debounce queue before ANY local reads, including the settings
+    // preserved below. Both getAll and tryGet read IndexedDB, so preserving a
+    // token or a recent setting before this flush would write its old value
+    // back over the queued edit, just like merging a history from a stale base.
     try {
+        await storage.beginRestore?.();
+
+        if (settingsStore) {
+            const local = await storage.getAll(SETTINGS_STORE);
+            for (const [key, incoming] of Object.entries(settingsStore)) {
+                if (!key.startsWith('script_settingsMap')) continue;
+                settingsStore[key] = preserveLocalOnlySettings(local[key], incoming);
+            }
+            // Device-local bookkeeping is never taken from a payload, even one
+            // written by an older build that did not redact it
+            for (const key of Object.keys(settingsStore)) {
+                if (LOCAL_ONLY_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))) delete settingsStore[key];
+            }
+            // A settings map here lands the same way copySettingsFromCharacter and
+            // importSettings do: whole, from somewhere else. A payload written by a
+            // build older than a merge carries the retired ids and none of the ids
+            // that replaced them, while this profile's key-migration record still
+            // says those carries are done — so the settings the merge produced read
+            // as never chosen and fall back to schema defaults. Forget the record
+            // for exactly the maps that did not bring their own (see
+            // reconcileKeyMigrationState), so the next load reconciles what this
+            // pull actually landed.
+            await settingsStorage.reconcileKeyMigrationState(Object.keys(settingsStore));
+        }
+
         const { merged, failed: mergeFailed, held: mergeHeld } = await mergeLocalHistories(payload);
 
         // What is remembered as "the state of this device" has to be what was
