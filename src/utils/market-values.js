@@ -75,7 +75,10 @@ export function refreshMarketValues(now = Date.now()) {
         const payload = dataManager.getMarketItemValues();
         const version = payload?.marketValuesVersion ?? null;
         const values = payload?.marketItemValues ?? null;
-        if (values && version !== cache.version) {
+        // A pushed map can be ahead of localStorage beyond the refresh window.
+        // Once a version is known, only a newer stored version may replace it.
+        const newerVersion = cache.version === null || (version !== null && version > cache.version);
+        if (values && version !== cache.version && newerVersion) {
             cache = { version, values };
             bandCache = new Map();
         }
