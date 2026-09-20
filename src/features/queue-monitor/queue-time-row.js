@@ -32,17 +32,16 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
-import { runningAction } from '../../utils/combat-actions.js';
+import { compareActionQueueOrder, runningAction } from '../../utils/combat-actions.js';
 
 /**
  * What is left of the current character's action queue.
  *
  * An infinite action is reported rather than counted: it never empties, so a
  * total that silently skipped it would say "12m" about a queue that will still
- * be running tomorrow. Everything queued *behind* an infinite action is in the
- * same position, but it is still counted — the figure is then the time to reach
- * the infinite action, which is the honest reading of "when does the queue
- * change".
+ * be running tomorrow. Everything queued *behind* an infinite action is still
+ * included in the queue size, but contributes no duration: the figure is the
+ * time to reach the first infinite action.
  *
  * @returns {{seconds: number, finite: number, queued: number, infinite: boolean}|null}
  *   Null when the game has not loaded enough to say anything
@@ -66,9 +65,13 @@ export function queueTimeLeft() {
     // single finite action, if any, has already burned part of its current unit.
     const current = runningAction(actions);
 
-    for (const action of actions) {
+    for (const action of [...actions].sort(compareActionQueueOrder)) {
         if (action?.isDone) continue;
         queued += 1;
+
+        // Later rows cannot start while the first unbounded action is running.
+        // Keep their queue count, but do not charge their time before that boundary.
+        if (infinite) continue;
 
         if (!action.hasMaxCount) {
             infinite = true;
@@ -148,7 +151,7 @@ registerRow({
         container.title =
             (unbounded
                 ? 'The action running now has no count, so the queue never empties.'
-                : `About ${shortDuration(left.seconds)} until the queue empties, ` +
+                : `About ${shortDuration(left.seconds)} until ${left.infinite ? 'the action with no count starts' : 'the queue empties'}, ` +
                   `across ${left.finite} counted action${left.finite === 1 ? '' : 's'}.`) +
             (left.infinite && left.finite > 0
                 ? '\nAn action with no count is queued, so this is time until that.'
