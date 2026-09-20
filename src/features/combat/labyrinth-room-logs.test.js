@@ -291,6 +291,37 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(text()).not.toContain('Milking Lv.173');
     });
 
+    test('replay explains exclusions and sim failures rather than claiming too few fights', () => {
+        const card = labyrinthRoomLogs.renderReplayResult({
+            groups: [],
+            pool: { attempts: 40, monsters: 2 },
+            diagnostics: { excluded: { build: 20, incomplete: 2, wounded: 3 }, failedGroups: 1, deferredGroups: 0 },
+        });
+        expect(card.textContent).toContain('20 older fights without saved inputs');
+        expect(card.textContent).toContain('2 fights were only partially recorded');
+        expect(card.textContent).toContain('3 fights started below 90% health');
+        expect(card.textContent).toContain('1 comparisons could not run');
+        expect(card.textContent).not.toContain('keep going and check back');
+    });
+
+    test('Replay remains available when stored fights no longer match the current build', () => {
+        const button = document.createElement('button');
+        labyrinthRoomLogs.replayButton = button;
+        labyrinthRoomLogs.simSource = { fingerprint: () => 'changed-build', replay: () => {} };
+        const status = vi
+            .spyOn(labFightRecorder, 'recordingStatus')
+            .mockImplementation((fp) => ({ attempts: fp ? 0 : 4 }));
+        try {
+            labyrinthRoomLogs.paintReplay();
+            expect(button.disabled).toBe(false);
+            expect(button.textContent).toBe('Replay (4)');
+        } finally {
+            status.mockRestore();
+            labyrinthRoomLogs.replayButton = null;
+            labyrinthRoomLogs.simSource = null;
+        }
+    });
+
     test('a replay result draws above the record with its diagnosis and rates', async () => {
         labyrinthRoomLogs.replayResult = {
             groups: [
@@ -763,6 +794,25 @@ describe('the fight recorder path measures whole fights', () => {
         noted.mockRestore();
         labFightRecorder.clearRecording();
         vi.useRealTimers();
+    });
+
+    test('the build is captured at fight opening rather than read after combat', () => {
+        const replayInputs = vi.fn(() => ({ version: 1 }));
+        labyrinthRoomLogs.simSource = { fingerprint: () => 'start-build', replayInputs };
+        labyrinthRoomLogs.openFight(
+            { roomKey: 'a', monsterHrid: '/monsters/fly' },
+            {
+                caughtStart: true,
+                playerMaxHp: 100,
+                playerHp: 100,
+                monsterMaxHp: 100,
+                monsterHp: 100,
+            }
+        );
+        labyrinthRoomLogs.simSource.fingerprint = () => 'changed';
+        expect(labyrinthRoomLogs.fight.fingerprint).toBe('start-build');
+        expect(replayInputs).toHaveBeenCalledWith('/monsters/fly');
+        expect(labyrinthRoomLogs.fight.replayInputs).toEqual({ version: 1 });
     });
 
     test('the opening hit between the snapshot and the first retained tick is counted', () => {

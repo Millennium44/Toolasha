@@ -34,9 +34,9 @@
  *
  * ## Bounded
  *
- * A thousand fights, oldest dropped. That is many runs of history — about
- * 720 KB per character at ~737 bytes a record — still small enough to hold and
- * write without thinking about it. The number is doubled transiently by
+ * A thousand fights, oldest dropped. Saved replay inputs add to each record,
+ * so storage depends on build size as well as the fight count.
+ * The number is doubled transiently by
  * `mergeAttempts`, which unions both devices' pools before slicing, so a
  * cross-device sync peaks at up to twice the cap in memory; that is the figure
  * to check against before raising it again. The upload is not the constraint:
@@ -57,6 +57,7 @@
  */
 
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { copyReplayInputs } from './labyrinth-replay-inputs.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { clearRecord, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -69,7 +70,7 @@ const KEY = 'labyrinthFightRecorder';
 /**
  * Fights kept before the oldest fall off — many runs of history, still small.
  *
- * At ~737 bytes a record this is ~720 KB per character. `mergeAttempts` unions
+ * Records also contain the effective room inputs for historical replay. `mergeAttempts` unions
  * both devices' pools before slicing to the cap, so a cross-device sync holds
  * up to twice this many records at once; raise it only against that figure, not
  * against the steady-state one.
@@ -369,6 +370,7 @@ export function noteAttempt(attempt) {
         // the absent field as a fight that bled for nothing
         playerDotDamage: nonNegOrNull(attempt.playerDotDamage),
         fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
+        replayInputs: copyReplayInputs(attempt.replayInputs),
         // Which fingerprint definition the value above was computed under.
         // Stamped from the constant rather than taken from the caller: the
         // recorder and the fingerprint are the same build, and a caller-supplied

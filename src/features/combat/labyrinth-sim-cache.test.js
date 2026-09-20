@@ -77,6 +77,58 @@ const {
 } = await import('./labyrinth-sim-cache.js');
 const { buildAccuracyExport } = await import('./labyrinth-accuracy-export.js');
 const { default: loadoutSnapshot } = await import('./loadout-snapshot.js');
+const { default: labFightRecorder } = await import('./labyrinth-fight-recorder.js');
+const { FINGERPRINT_VERSION } = await import('./labyrinth-fingerprint.js');
+
+test('replay uses historical room inputs after the current build changes and reports sim failures', async () => {
+    const inputs = {
+        version: 1,
+        playerDTO: { hrid: 'player1', attackLevel: 12 },
+        crates: ['/items/old_crate'],
+        communityBuffs: { comExp: 2 },
+        labyrinthCombatBuffs: [],
+        fullAbilities: true,
+    };
+    const spy = vi.spyOn(labFightRecorder, 'recordedAttempts').mockReturnValue([
+        {
+            monsterHrid: '/monsters/fly',
+            seconds: 20,
+            roomLevel: 10,
+            outcome: 'clear',
+            complete: true,
+            cleared: true,
+            playerMaxHp: 100,
+            playerHpStart: 100,
+            fingerprintVersion: FINGERPRINT_VERSION,
+            fingerprint: 'old',
+            replayInputs: inputs,
+        },
+    ]);
+    try {
+        const captureReplayInputs = vi.fn(() => {
+            throw new Error('must use saved inputs');
+        });
+        const result = await simCacheMethods.replayRecordedFights.call({
+            _snapshotContentFingerprint: () => 'new',
+            captureReplayInputs,
+            getSimHours: () => 1,
+            getSimStopRule: () => ({ maxTrials: 10 }),
+        });
+        expect(captureReplayInputs).not.toHaveBeenCalled();
+        expect(simRuns.list).toHaveLength(1);
+        expect(simRuns.list[0]).toMatchObject({
+            playerDTOs: [inputs.playerDTO],
+            crates: inputs.crates,
+            communityBuffs: inputs.communityBuffs,
+            fullAbilities: true,
+        });
+        // The mock runner returns {}, so failure must not be called insufficient data.
+        expect(result.diagnostics.failedGroups).toBe(1);
+        expect(result.diagnostics.excluded.build).toBe(0);
+    } finally {
+        spy.mockRestore();
+    }
+});
 
 afterEach(() => {
     settings.map.clear();

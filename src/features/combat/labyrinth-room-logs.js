@@ -813,6 +813,7 @@ class LabyrinthRoomLogs {
             // Which build fought this, read as the fight OPENS. Read at close
             // instead, a gear or loadout change mid-fight filed the fight under
             // whichever cohort the player happened to be wearing by the end.
+            replayInputs: start.caughtStart ? this.simSource?.replayInputs?.(session.monsterHrid) || null : null,
             fingerprint: this.simSource?.fingerprint?.() || null,
             monsterMaxHp: start.monsterMaxHp,
             // Absolute health at the fight's start, so the recorder can measure
@@ -1256,6 +1257,7 @@ class LabyrinthRoomLogs {
             // and the damage-over-time tick count beside them for the hit mix
             ...tallyHitsMisses(fight.attrTally),
             fingerprint: fight.fingerprint,
+            replayInputs: fight.replayInputs,
             // The clear chance in effect while the fight ran — captured at room
             // entry (or during the fight, if the tile's sim landed late). Null
             // when the room was never simmed; the recorder must not backfill it
@@ -1611,14 +1613,13 @@ class LabyrinthRoomLogs {
         });
 
         // Calibration replay: fights are recorded passively across runs, so this
-        // just re-sims whatever has accumulated for your current gear and reports
+        // just re-sims the saved room builds and reports
         // where the sim diverges from what actually happened
         this.replayButton = document.createElement('button');
         this.replayButton.textContent = 'Replay';
         this.replayButton.title =
-            'Re-simulate the rooms recorded on your current gear and compare your real damage rate and the ' +
-            'monster’s against the sim — the decomposition the clear rate alone cannot give. Fights accumulate ' +
-            'passively as you play; a monster needs a handful before it can be judged.';
+            'Compare recorded fights using their saved room builds. Older fights need to match your current ' +
+            'build. Replay explains exclusions; fewer than five clean fights is exploratory.';
         this.replayButton.style.cssText =
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.replayButton.addEventListener('click', () => this.onReplayClicked());
@@ -1710,11 +1711,10 @@ class LabyrinthRoomLogs {
         this.paintCapture();
     }
 
-    /** Enable Replay once the pool has fights on the current gear, and count them */
+    /** Let any recorded pool open Replay; its report explains exclusions. */
     paintReplay() {
         if (!this.replayButton) return;
-        const fingerprint = this.simSource?.fingerprint?.() || null;
-        const kept = labFightRecorder.recordingStatus(fingerprint).attempts;
+        const kept = labFightRecorder.recordingStatus().attempts;
         const canReplay = kept > 0 && !!this.simSource?.replay;
         this.replayButton.textContent = kept ? `Replay (${kept})` : 'Replay';
         this.replayButton.disabled = !canReplay;
@@ -2334,6 +2334,30 @@ class LabyrinthRoomLogs {
         title.textContent = 'Calibration replay';
         box.appendChild(title);
 
+        if (result?.diagnostics) {
+            const { excluded, failedGroups, deferredGroups } = result.diagnostics;
+            const reasons = [
+                [excluded.build, 'older fights without saved inputs do not match the current build'],
+                [excluded.invalidSnapshot, 'fights have unreadable saved inputs'],
+                [excluded.incomplete, 'fights were only partially recorded'],
+                [excluded.wounded, 'fights started below 90% health'],
+                [excluded.unknown, 'fights have an unknown outcome'],
+                [excluded.legacy, 'fights use an older build fingerprint'],
+                [failedGroups, 'comparisons could not run because inputs or simulation results were unavailable'],
+                [deferredGroups, 'eligible groups were not run (three groups per replay)'],
+            ].filter(([count]) => count > 0);
+            for (const [count, reason] of reasons) box.appendChild(this.makeNote(`${count} ${reason}.`));
+            box.appendChild(
+                this.makeNote(
+                    'Saved builds use the current game data and simulator. Fewer than five clean fights gives an exploratory comparison, not an accuracy verdict.'
+                )
+            );
+            if (!result.groups?.length) {
+                box.appendChild(this.makeNote('No comparison could be produced from the recorded fights.'));
+                return box;
+            }
+        }
+
         if (result?.error) {
             box.appendChild(this.makeNote('The replay could not run — the sim or loadout was unavailable.'));
             return box;
@@ -2354,6 +2378,14 @@ class LabyrinthRoomLogs {
         const color = { above: '#ff9a6b', below: '#ff9a6b', consistent: '#8fe6a0', insufficient: '#9ab0d8' };
 
         for (const group of result.groups) {
+            if (group.inputSource)
+                box.appendChild(
+                    this.makeNote(
+                        group.inputSource === 'recorded'
+                            ? 'Using the build and buffs saved when these fights started.'
+                            : 'Older recording: using the matching current build; historical buffs and consumables were not saved.'
+                    )
+                );
             const head = document.createElement('div');
             head.style.cssText = 'font-weight:700; color:#f2f7ff; margin:4px 0 2px;';
             const name = group.monsterName || this.prettyMonsterName(group.monsterHrid);

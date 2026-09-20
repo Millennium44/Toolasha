@@ -110,6 +110,22 @@ beforeEach(async () => {
 });
 
 describe('labyrinth fight recorder', () => {
+    test('persists a detached historical room build across reload', async () => {
+        const replayInputs = {
+            version: 1,
+            playerDTO: { hrid: 'player1', attackLevel: 10 },
+            crates: [],
+            communityBuffs: {},
+            labyrinthCombatBuffs: [],
+            fullAbilities: true,
+        };
+        recorder.noteAttempt(attempt({ replayInputs }));
+        replayInputs.playerDTO.attackLevel = 99;
+        await settle();
+        recorder.forget();
+        await recorder.load();
+        expect(recorder.recordedAttempts()[0].replayInputs.playerDTO.attackLevel).toBe(10);
+    });
     test('fights are kept passively, no arming', () => {
         recorder.noteAttempt(attempt());
         recorder.noteAttempt(attempt({ outcome: 'clear', cleared: true }));

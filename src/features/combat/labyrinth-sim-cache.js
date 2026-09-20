@@ -29,11 +29,12 @@ import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { setSimConfigSource } from './labyrinth-accuracy-export.js';
-import { deriveObserved, predictedFromSim, compareLab } from './labyrinth-replay-check.js';
+import { predictedFromSim, compareLab } from './labyrinth-replay-check.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { copyReplayInputs, replayCandidates } from './labyrinth-replay-inputs.js';
 
 /**
  * The zone a probe fight nominally happens in when the real one is not a zone.
@@ -195,8 +196,6 @@ const DECISION_MAX_TRIALS = 4000;
  */
 const MAX_BADGE_SIM_RETRIES = 3;
 const BADGE_SIM_RETRY_MS = 2500;
-/** A recorded room needs at least this many fights before a replay is worth a sim */
-const MIN_REPLAY_FIGHTS = 3;
 /** At most this many rooms are replayed at once, so a Replay press is bounded */
 const MAX_REPLAY_GROUPS = 3;
 
@@ -700,35 +699,46 @@ export const simCacheMethods = {
         labFightRecorder.clearRecording();
     },
 
-    /**
-     * Re-simulate the rooms the recorder captured and compare the real damage
-     * rates against the sim's.
-     *
-     * The accuracy record asks whether the clear chance is right; this asks why
-     * it is wrong, by measuring your damage rate and the monster's from the
-     * recorded fights and putting each beside the same rate a fresh sim produces
-     * for that monster at that room level. The comparison itself is pure and
-     * lives in labyrinth-replay-check; this feeds it the sim, run with the loadout
-     * you are wearing now — which is why it pools only the fights fought in that
-     * same gear, by fingerprint.
-     *
-     * @returns {Promise<{groups: Array<Object>, pool: Object,
-     *   config: {stopRule: Object, hours: number, seedPolicy: string}}>}
-     */
+    /** Snapshot the effective room inputs before combat changes levels, equipment or buffs. */
+    captureReplayInputs(monsterHrid) {
+        try {
+            const playerDTO = this.buildLabyrinthPlayerDTO(this.getLabyrinthLoadoutId(monsterHrid));
+            return copyReplayInputs({
+                version: 1,
+                playerDTO,
+                crates: this.getCrateHrids(),
+                communityBuffs: getCommunityBuffs(),
+                labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+                fullAbilities: this.labyrinthFullAbilities(),
+            });
+        } catch (error) {
+            console.error('[LabyrinthSimCache] Capturing replay inputs failed:', error);
+            return null;
+        }
+    },
+
+    /** Replay each recorded build separately; legacy records require a current-build match. */
     async replayRecordedFights() {
         const fingerprint = this._snapshotContentFingerprint();
-        const attempts = labFightRecorder.recordedAttempts(fingerprint);
-        const observed = deriveObserved(attempts);
-        // The most-fought rooms first, and only those with enough fights to be
-        // worth a sim — a couple bound the sim cost and answer the question
-        const worth = observed.filter((group) => group.fights >= MIN_REPLAY_FIGHTS).slice(0, MAX_REPLAY_GROUPS);
+        const attempts = labFightRecorder.recordedAttempts();
+        const { candidates, excluded } = replayCandidates(attempts, fingerprint);
+        const worth = candidates.slice(0, MAX_REPLAY_GROUPS);
+        const diagnostics = {
+            excluded,
+            eligibleGroups: candidates.length,
+            failedGroups: 0,
+            deferredGroups: Math.max(0, candidates.length - worth.length),
+        };
 
         const groups = [];
-        for (const group of worth) {
+        for (const { group, inputs } of worth) {
             try {
-                const loadoutId = this.getLabyrinthLoadoutId(group.monsterHrid);
-                const dto = this.buildLabyrinthPlayerDTO(loadoutId);
-                if (!dto) continue;
+                const saved = inputs || this.captureReplayInputs(group.monsterHrid);
+                if (!saved) {
+                    diagnostics.failedGroups++;
+                    continue;
+                }
+                const dto = saved.playerDTO;
 
                 const simResult = await runLabyrinthSimulation({
                     gameData: buildGameDataPayload(),
@@ -736,35 +746,39 @@ export const simCacheMethods = {
                     zoneHrid: '/actions/combat/fly',
                     monsterHrid: group.monsterHrid,
                     roomLevel: group.roomLevel,
-                    crates: this.getCrateHrids(),
+                    crates: saved.crates,
                     hours: this.getSimHours(),
                     precision: this.getSimStopRule(),
-                    communityBuffs: getCommunityBuffs(),
-                    labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
-                    fullAbilities: this.labyrinthFullAbilities(),
+                    communityBuffs: saved.communityBuffs,
+                    labyrinthCombatBuffs: saved.labyrinthCombatBuffs,
+                    fullAbilities: saved.fullAbilities,
                 });
 
                 const predicted = predictedFromSim(simResult, {
                     playerHrid: dto.hrid || 'player1',
                     monsterHrid: group.monsterHrid,
                 });
-                if (!predicted) continue;
+                if (!predicted) {
+                    diagnostics.failedGroups++;
+                    continue;
+                }
 
-                groups.push(compareLab(group, predicted));
+                groups.push({ ...compareLab(group, predicted), inputSource: inputs ? 'recorded' : 'current' });
             } catch (error) {
+                diagnostics.failedGroups++;
                 console.error('[LabyrinthSimCache] Replaying a recorded room failed:', error);
             }
         }
 
-        // What the pool holds for this gear, so the panel can say "12 fights over
-        // 3 monsters, none with enough yet" when nothing cleared the bar
-        const status = labFightRecorder.recordingStatus(fingerprint);
+        // Report the whole pool; diagnostics explain why particular fights were excluded.
+        const status = labFightRecorder.recordingStatus();
         // The rule the sims above ran under, for the export the result rides in.
         // Unseeded: these runs take no fixed seed, so only the distribution —
         // not the exact trial sequence — reproduces.
         return {
             groups,
             pool: status,
+            diagnostics,
             config: { stopRule: this.getSimStopRule(), hours: this.getSimHours(), seedPolicy: 'unseeded' },
         };
     },
