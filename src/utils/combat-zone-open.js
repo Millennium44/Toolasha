@@ -55,14 +55,24 @@
  * list is only rendered when the Combat page is showing its "Combat Zones"
  * tab, and a player mid-fight is viewing the Battle tab/panel instead.
  *
- * The fix: if the list does not appear after `navigateToAction`, look among
- * `GAME.COMBAT_PAGE_TABS` for the one labelled "Combat Zones" (matched
- * case-insensitively on rendered text, never by position) and click it, then
- * wait for the list again. Clicking a page tab is navigation, not a game
- * action — pressing "Add Queue" or "Start Now" remains off-limits everywhere
- * in this module. If no such tab is found, or the list still does not
- * appear, this refuses exactly like every other step here: an honest
+ * The fix: look among `GAME.COMBAT_PAGE_TABS` for the one labelled "Combat
+ * Zones" (matched case-insensitively on rendered text, never by position) and
+ * click it, then wait for the list. Clicking a page tab is navigation, not a
+ * game action — pressing "Add Queue" or "Start Now" remains off-limits
+ * everywhere in this module. If no such tab is found, or the list still does
+ * not appear, this refuses exactly like every other step here: an honest
  * `{opened: false, ...}` rather than a guess.
+ *
+ * The first version of that fix waited for the list FIRST and only reached for
+ * the tab once the wait timed out, which made every mid-fight open cost the
+ * full `ZONE_LIST_TIMEOUT_MS` before anything happened: the game jumped to
+ * Combat and then sat there for five seconds. Reported as "it works now but
+ * after a large delay". Whether the Combat Zones tab is selected is readable
+ * from the DOM synchronously, and an unselected one means the list is not
+ * late, it is impossible — so `ensureZoneListShowing` reads the selection
+ * first and waits only for something that can actually appear. The one
+ * subtlety is that `navigateToAction` may itself be about to select that tab,
+ * which is what `PAGE_TAB_SETTLE_MS` and the re-read after it are for.
  *
  * A sequence that switches onto Combat Zones and then fails to reach a
  * usable, tier-confirmed panel clicks back to whichever tab was selected
@@ -159,6 +169,22 @@ const ZONE_LIST_TIMEOUT_MS = 5000;
  * faster or slower than the first one.
  */
 const ZONE_LIST_RETRY_TIMEOUT_MS = ZONE_LIST_TIMEOUT_MS;
+
+/**
+ * How long to let the game's own navigation settle before concluding that the
+ * Combat page is not going to select its "Combat Zones" tab by itself.
+ *
+ * `navigateToAction` calls the game's `handleGoToAction`, which sets React
+ * state; the tab it selects is marked on the next render, not on the call. So
+ * "not selected" read immediately after that call does not yet mean "will not
+ * become selected", and clicking the tab is only justified once the game has
+ * had a render or two to do it first. 300 ms is the same budget the combobox
+ * popup already gets (`TIER_MENU_SETTLE_MS`) — roughly twenty frames, far more
+ * than a React commit needs, and small enough that a player never sees it.
+ * The point is to replace a five-second wait for something that cannot happen
+ * with a short wait for something that might.
+ */
+const PAGE_TAB_SETTLE_MS = 300;
 
 /** How long to wait for the zone's own detail panel to mount after its tile is clicked. */
 const PANEL_TIMEOUT_MS = 5000;
@@ -392,11 +418,24 @@ function findSelectedCombatPageTab() {
  */
 function findSelectedTab(tabs) {
     for (const tab of tabs) {
-        if (tab.getAttribute('aria-selected') === 'true' || tab.classList.contains('Mui-selected')) {
+        if (isSelectedTab(tab)) {
             return tab;
         }
     }
     return null;
+}
+
+/**
+ * Whether `tab` is the active one in its strip — `aria-selected="true"`,
+ * mirrored in the `Mui-selected` class. Synchronous and free, which is the
+ * whole point: whether the Combat page is showing its Combat Zones tab is
+ * knowable the instant the question is asked, so nothing has to wait to find
+ * out that a list which cannot render is not going to render.
+ * @param {HTMLElement} tab
+ * @returns {boolean}
+ */
+function isSelectedTab(tab) {
+    return tab.getAttribute('aria-selected') === 'true' || tab.classList.contains('Mui-selected');
 }
 
 /**
@@ -431,6 +470,90 @@ function restoreCombatTabs(previousGroupTab, previousPageTab, capturedCharacterI
     if (characterIdentityChanged(capturedCharacterId)) return;
     if (previousGroupTab) previousGroupTab.click();
     if (previousPageTab) previousPageTab.click();
+}
+
+/**
+ * Click onto the Combat page's own "Combat Zones" tab, recording what was
+ * selected before so a later failure can put the player back on it. A no-op
+ * (returns false) when there is no such tab, and when that tab is already the
+ * selected one — a sequence only ever restores a tab it actually switched.
+ *
+ * The previously selected tab is never recorded as the zones tab itself:
+ * restoring to it would be a click that undoes nothing and hides the fact
+ * that nothing was switched.
+ * @param {{previousPageTab: HTMLElement|null, switched: boolean}} state - Mutated on a real switch
+ * @returns {boolean} True when a tab was actually clicked
+ */
+function selectZonesPageTab(state) {
+    const zonesTab = findCombatZonesPageTab();
+    if (!zonesTab || isSelectedTab(zonesTab)) return false;
+
+    const previous = findSelectedCombatPageTab();
+    state.previousPageTab = previous === zonesTab ? null : previous;
+    state.switched = true;
+    zonesTab.click();
+    return true;
+}
+
+/**
+ * Get the Combat Zones list on screen, switching the Combat page's own tab
+ * onto it when that is what is in the way.
+ *
+ * The order matters, and it is the difference between this returning at once
+ * and it taking five seconds. Mid-fight the list is not merely late — it is
+ * not mounted at all and never will be until the page tab is switched, so
+ * waiting for it first spends the whole `ZONE_LIST_TIMEOUT_MS` budget
+ * learning something the DOM could have answered synchronously. Whether the
+ * "Combat Zones" tab is selected IS that synchronous answer.
+ *
+ * So: read the list (free); if it is absent and the zones tab is present but
+ * unselected, give the game `PAGE_TAB_SETTLE_MS` to select it itself — the
+ * `navigateToAction` that just fired may be about to — and then re-read both
+ * the list and the tab's selection before clicking anything. Only a tab that
+ * is *still* unselected, with *still* no list, gets clicked; a game that did
+ * its own navigation during the settle is followed, not fought, so there is
+ * no double-switch and nothing to restore. The long wait then happens once,
+ * for a list that can now actually appear.
+ *
+ * The late fallback after that wait covers the other shape: a Combat panel
+ * that had not rendered its tabs at all when the sequence started, so there
+ * was no selection to read. That is a genuine wait, not a wait for the
+ * impossible, and it keeps its full budget.
+ * @param {string|null} characterId - Captured before the first await
+ * @returns {Promise<{zoneList: HTMLElement|null, previousPageTab: HTMLElement|null, switched: boolean, aborted: boolean}>}
+ */
+async function ensureZoneListShowing(characterId) {
+    const state = {
+        zoneList: document.querySelector(ZONE_LIST_SELECTOR),
+        previousPageTab: null,
+        switched: false,
+        aborted: false,
+    };
+    if (state.zoneList) return state;
+
+    const zonesTab = findCombatZonesPageTab();
+    if (zonesTab && !isSelectedTab(zonesTab)) {
+        await wait(PAGE_TAB_SETTLE_MS);
+        if (characterIdentityChanged(characterId)) {
+            state.aborted = true;
+            return state;
+        }
+        state.zoneList = document.querySelector(ZONE_LIST_SELECTOR);
+        if (state.zoneList) return state;
+        selectZonesPageTab(state);
+    }
+
+    state.zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_TIMEOUT_MS);
+    if (characterIdentityChanged(characterId)) {
+        state.aborted = true;
+        return state;
+    }
+    if (state.zoneList || state.switched) return state;
+
+    if (!selectZonesPageTab(state)) return state;
+    state.zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_RETRY_TIMEOUT_MS);
+    if (characterIdentityChanged(characterId)) state.aborted = true;
+    return state;
 }
 
 /**
@@ -615,26 +738,17 @@ async function openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId
 
     if (!navigateToAction(zoneHrid)) return result;
 
-    let zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_TIMEOUT_MS);
-    if (characterIdentityChanged(characterId)) return result;
-
     // A player mid-fight is on the Battle view, not the Combat Zones list —
     // measured live (see module doc-comment). Switching the Combat page's
     // own tab is navigation, not a game action, so it is allowed here.
-    let previousPageTab = null;
+    const listState = await ensureZoneListShowing(characterId);
+    if (listState.aborted) return result;
+
+    const previousPageTab = listState.previousPageTab;
+    const zoneList = listState.zoneList;
     if (!zoneList) {
-        const zonesTab = findCombatZonesPageTab();
-        if (!zonesTab) return result;
-
-        previousPageTab = findSelectedCombatPageTab();
-        zonesTab.click();
-
-        zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_RETRY_TIMEOUT_MS);
-        if (characterIdentityChanged(characterId)) return result;
-        if (!zoneList) {
-            restoreCombatTabs(null, previousPageTab, characterId);
-            return result;
-        }
+        restoreCombatTabs(null, previousPageTab, characterId);
+        return result;
     }
 
     // The zones list keeps every zone group mounted and hides all but the

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The ▶ combat-zone button opens the zone straight away instead of after a five-second pause
+
+- Pressed mid-fight, ▶ jumped to Combat and then sat there: it waited the full timeout for a zones list that cannot render until the Combat Zones tab is showing. It now reads which tab is selected — free, and instantly — and switches onto Combat Zones before waiting, giving the game a brief moment to navigate there itself first.
+
 ### The ▶ combat-zone button works for a zone outside the group you are looking at
 
 - The zones list keeps every zone group mounted and hides all but the selected one, so ▶ could find a tile the player could not click: it opened nothing and the button looked dead, most often mid-fight. It now selects the zone's own group first — worked out from where the tile sits in the list — and puts both tabs back if the zone still will not open.

@@ -33,6 +33,26 @@ function resetCharacterTracking() {
 /** Matches `ZONE_LIST_TIMEOUT_MS` / `ZONE_LIST_RETRY_TIMEOUT_MS` in combat-zone-open.js. */
 const ZONE_LIST_WAIT_MS = 5000;
 
+/** Matches `PAGE_TAB_SETTLE_MS` in combat-zone-open.js. */
+const PAGE_TAB_SETTLE_MS = 300;
+
+/**
+ * Resolved-yet? for a promise, without awaiting it — how the tests below
+ * assert that a step happened *before* a long timeout could have elapsed,
+ * rather than timing the suite's wall clock (which, under fake timers,
+ * measures nothing about the code under test).
+ * @param {Promise<unknown>} promise
+ * @returns {{settled: boolean}}
+ */
+function settlementFlag(promise) {
+    const flag = { settled: false };
+    promise.then(
+        () => (flag.settled = true),
+        () => (flag.settled = true)
+    );
+    return flag;
+}
+
 let comboboxIdSeq = 0;
 
 /** A MUI-shaped Difficulty combobox, portalled listbox included, as measured live. */
@@ -605,13 +625,167 @@ describe('openCombatZoneAtTier — in-combat (Battle view, no Combat Zones list)
         });
 
         const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3);
-        // The first wait for the list has to exhaust before the code looks
-        // for a page tab at all — this is what proves the tab click is a
-        // *fallback*, not the first thing tried.
-        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS);
+        const flag = settlementFlag(resultPromise);
+        // The tab click is the first thing tried once the list reads absent
+        // and its tab reads unselected — not something reached only after the
+        // list wait times out. Only the short settle is advanced here, so a
+        // sequence that waited for the list first would still be waiting.
+        await vi.advanceTimersByTimeAsync(PAGE_TAB_SETTLE_MS);
+        expect(flag.settled).toBe(true);
 
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS); // drain, so a regression fails rather than hangs
         const result = await resultPromise;
         expect(result).toEqual({ opened: true, tierConfirmed: true, filled: false });
+    });
+
+    test('mid-fight: never waits out the list timeout before switching the page tab', async () => {
+        // The reported delay: "it goes to combat right away but then takes a
+        // while to go to combat zones and open the zone". Mid-fight the list
+        // is not late, it is unmounted and cannot mount until the page tab is
+        // switched — so waiting ZONE_LIST_TIMEOUT_MS for it first spends five
+        // seconds learning what `aria-selected` answers for free.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party', 'My Party', 'Battle #8'], 'Battle #8');
+        let zonesTabClicked = 0;
+        tabs['Combat Zones'].addEventListener('click', () => {
+            zonesTabClicked++;
+            const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+            tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 3));
+        });
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 3);
+        const flag = settlementFlag(resultPromise);
+
+        // Nothing clicked yet: the settle is the game's own chance to navigate first.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(zonesTabClicked).toBe(0);
+
+        // ...and by the end of the settle the whole open is already done,
+        // long before the list timeout could have elapsed.
+        await vi.advanceTimersByTimeAsync(PAGE_TAB_SETTLE_MS);
+        expect(zonesTabClicked).toBe(1);
+        expect(flag.settled).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS); // drain, so a regression fails rather than hangs
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+    });
+
+    test('the game selecting the Combat Zones tab itself during the settle: no second switch, no failure', async () => {
+        // `navigateToAction` calls the game's own `handleGoToAction`, which
+        // may put the page on Combat Zones a render later. "Not selected"
+        // read the instant after that call therefore does not mean "will not
+        // become selected", so the selection is re-read after the settle and
+        // the tab is left alone when the game got there first.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party', 'My Party', 'Battle #8'], 'Battle #8');
+        const zonesTabClicks = countClicks(tabs['Combat Zones']);
+        const battleTabClicks = countClicks(tabs['Battle #8']);
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            setTimeout(() => {
+                tabs['Battle #8'].setAttribute('aria-selected', 'false');
+                tabs['Battle #8'].classList.remove('Mui-selected');
+                tabs['Combat Zones'].setAttribute('aria-selected', 'true');
+                tabs['Combat Zones'].classList.add('Mui-selected');
+                const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+                tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 2));
+            }, 50);
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 2);
+        await vi.advanceTimersByTimeAsync(PAGE_TAB_SETTLE_MS);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(zonesTabClicks.count).toBe(0);
+        // Nothing was switched by this sequence, so nothing is restored either.
+        expect(battleTabClicks.count).toBe(0);
+    });
+
+    test('the game selects the tab during the settle but the list renders later: waits, still never clicks the tab', async () => {
+        // The selection flipping is enough to know the list is coming; it is
+        // the tab's state, not the list's presence, that rules the click in
+        // or out.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party', 'My Party', 'Battle #8'], 'Battle #8');
+        const zonesTabClicks = countClicks(tabs['Combat Zones']);
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            setTimeout(() => {
+                tabs['Battle #8'].setAttribute('aria-selected', 'false');
+                tabs['Battle #8'].classList.remove('Mui-selected');
+                tabs['Combat Zones'].setAttribute('aria-selected', 'true');
+            }, 50);
+            setTimeout(() => {
+                const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+                tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 1));
+            }, 900);
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 1);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(zonesTabClicks.count).toBe(0);
+    });
+
+    test('the Combat Zones tab is already selected and the list is merely late: waits for it, clicks nothing', async () => {
+        // A real wait for something that genuinely is about to appear keeps
+        // its full budget — the goal is to stop waiting for the impossible,
+        // not to make real waits flakier.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party'], 'Combat Zones');
+        const zonesTabClicks = countClicks(tabs['Combat Zones']);
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            setTimeout(() => {
+                const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+                tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 0));
+            }, 2000);
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 0);
+        await vi.advanceTimersByTimeAsync(2500);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(zonesTabClicks.count).toBe(0);
+    });
+
+    test('the Combat panel has no tabs yet: the list wait still runs, and the tab fallback still fires after it', async () => {
+        // Nothing Combat-shaped in the DOM at all when the sequence starts —
+        // there is no selection to read, so the long wait is the honest thing
+        // to do, and the late tab fallback is what the old code always did.
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+        let zonesTabClicked = 0;
+
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            setTimeout(() => {
+                const tabs = buildCombatPageTabs(['Combat Zones', 'Find Party', 'Battle #8'], 'Battle #8');
+                tabs['Combat Zones'].addEventListener('click', () => {
+                    zonesTabClicked++;
+                    const { tiles } = buildZoneList([{ hrid: '/actions/combat/aqua', name: 'Aqua Planet' }]);
+                    tiles['/actions/combat/aqua'].addEventListener('click', () => buildPanel('Aqua Planet', 4));
+                });
+            }, 1000);
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier('/actions/combat/aqua', 4);
+        const flag = settlementFlag(resultPromise);
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(flag.settled).toBe(false); // still inside the genuine list wait
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(zonesTabClicked).toBe(1);
     });
 
     test('no "Combat Zones" page tab found: refuses cleanly without clicking anything', async () => {
