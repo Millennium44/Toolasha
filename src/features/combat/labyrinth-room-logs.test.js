@@ -291,17 +291,46 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(text()).not.toContain('Milking Lv.173');
     });
 
-    test('replay explains exclusions and sim failures rather than claiming too few fights', () => {
+    test('replay explains exclusions and still says when nothing has enough fights yet', () => {
         const card = labyrinthRoomLogs.renderReplayResult({
             groups: [],
             pool: { attempts: 40, monsters: 2 },
-            diagnostics: { excluded: { build: 20, incomplete: 2, wounded: 3 }, failedGroups: 1, deferredGroups: 0 },
+            diagnostics: {
+                excluded: { build: 20, incomplete: 2, wounded: 3, tooFew: 4 },
+                failedGroups: 1,
+                deferredGroups: 0,
+                minFights: 3,
+                verdictMinFights: 5,
+            },
         });
         expect(card.textContent).toContain('20 older fights without saved inputs');
         expect(card.textContent).toContain('2 fights were only partially recorded');
         expect(card.textContent).toContain('3 fights started below 90% health');
         expect(card.textContent).toContain('1 comparisons could not run');
-        expect(card.textContent).not.toContain('keep going and check back');
+        expect(card.textContent).toContain('4 fights are in rooms with fewer than 3 attempts');
+        // The exclusion list explains WHICH fights were dropped; it does not
+        // replace telling the reader that nothing has accumulated enough yet
+        expect(card.textContent).toContain('keep going and check back');
+    });
+
+    test('replay marks a comparison under the verdict bar as exploratory only', () => {
+        const group = {
+            monsterHrid: '/monsters/fly',
+            monsterName: 'Fly',
+            roomLevel: 10,
+            fights: 3,
+            clears: 3,
+            metrics: [],
+            diagnosis: 'Not enough fights yet.',
+        };
+        const render = (exploratory) =>
+            labyrinthRoomLogs.renderReplayResult({
+                groups: [{ ...group, exploratory }],
+                pool: { attempts: 3, monsters: 1 },
+                diagnostics: { excluded: {}, failedGroups: 0, deferredGroups: 0, minFights: 3, verdictMinFights: 5 },
+            }).textContent;
+        expect(render(true)).toContain('Exploratory only: fewer than 5 clean fights');
+        expect(render(false)).not.toContain('Exploratory only');
     });
 
     test('replay distinguishes historical builds for otherwise identical room groups', () => {

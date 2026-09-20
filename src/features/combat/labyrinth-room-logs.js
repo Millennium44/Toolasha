@@ -1619,7 +1619,8 @@ class LabyrinthRoomLogs {
         this.replayButton.textContent = 'Replay';
         this.replayButton.title =
             'Compare recorded fights using their saved room builds. Older fights need to match your current ' +
-            'build. Replay explains exclusions; fewer than five clean fights is exploratory.';
+            'build. Replay explains exclusions; a room needs three attempts before it is simulated at all, ' +
+            'and five clean ones before the comparison states a verdict.';
         this.replayButton.style.cssText =
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.replayButton.addEventListener('click', () => this.onReplayClicked());
@@ -2346,8 +2347,14 @@ class LabyrinthRoomLogs {
         title.textContent = 'Calibration replay';
         box.appendChild(title);
 
-        if (result?.diagnostics) {
-            const { excluded, failedGroups, deferredGroups } = result.diagnostics;
+        if (result?.error) {
+            box.appendChild(this.makeNote('The replay could not run — the sim or loadout was unavailable.'));
+            return box;
+        }
+
+        const diagnostics = result?.diagnostics;
+        if (diagnostics) {
+            const { excluded, failedGroups, deferredGroups, minFights } = diagnostics;
             const reasons = [
                 [excluded.build, 'older fights without saved inputs do not match the current build'],
                 [excluded.invalidSnapshot, 'fights have unreadable saved inputs'],
@@ -2355,33 +2362,24 @@ class LabyrinthRoomLogs {
                 [excluded.wounded, 'fights started below 90% health'],
                 [excluded.unknown, 'fights have an unknown outcome'],
                 [excluded.legacy, 'fights use an older build fingerprint'],
+                [excluded.tooFew, `fights are in rooms with fewer than ${minFights} attempts so far`],
                 [failedGroups, 'comparisons could not run because inputs or simulation results were unavailable'],
                 [deferredGroups, 'eligible groups were not run (three groups per replay)'],
             ].filter(([count]) => count > 0);
             for (const [count, reason] of reasons) box.appendChild(this.makeNote(`${count} ${reason}.`));
-            box.appendChild(
-                this.makeNote(
-                    'Saved builds use the current game data and simulator. Fewer than five clean fights gives an exploratory comparison, not an accuracy verdict.'
-                )
-            );
-            if (!result.groups?.length) {
-                box.appendChild(this.makeNote('No comparison could be produced from the recorded fights.'));
-                return box;
-            }
+            box.appendChild(this.makeNote('Saved builds use the current game data and simulator.'));
         }
 
-        if (result?.error) {
-            box.appendChild(this.makeNote('The replay could not run — the sim or loadout was unavailable.'));
-            return box;
-        }
         if (!result?.groups?.length) {
+            // The bar, restated: fights are recorded passively, so "nothing to
+            // show" is the normal early state and has to say what is missing
             const pool = result?.pool;
             const note =
                 pool && pool.attempts > 0
-                    ? `${pool.attempts} fight${pool.attempts === 1 ? '' : 's'} recorded on this gear over ` +
+                    ? `${pool.attempts} fight${pool.attempts === 1 ? '' : 's'} recorded over ` +
                       `${pool.monsters} monster${pool.monsters === 1 ? '' : 's'}, but none has the handful of ` +
                       `attempts a rate needs yet. Fights accumulate as you play — keep going and check back.`
-                    : 'No fights recorded on this gear yet. They accumulate automatically as you fight combat ' +
+                    : 'No fights recorded yet. They accumulate automatically as you fight combat ' +
                       'rooms — no need to do anything, just play and check back.';
             box.appendChild(this.makeNote(note));
             return box;
@@ -2389,7 +2387,15 @@ class LabyrinthRoomLogs {
 
         const color = { above: '#ff9a6b', below: '#ff9a6b', consistent: '#8fe6a0', insufficient: '#9ab0d8' };
 
+        const verdictMin = result?.diagnostics?.verdictMinFights;
         for (const group of result.groups) {
+            if (group.exploratory)
+                box.appendChild(
+                    this.makeNote(
+                        `Exploratory only: fewer than ${verdictMin || 5} clean fights, so nothing below states a ` +
+                            'verdict — the rates are shown so you can look, not so you can conclude.'
+                    )
+                );
             if (group.inputSource)
                 box.appendChild(
                     this.makeNote(

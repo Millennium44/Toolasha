@@ -1,5 +1,11 @@
 import { describe, test, expect } from 'vitest';
-import { copyReplayInputs, replayCandidates, replayBuildSummary } from './labyrinth-replay-inputs.js';
+import {
+    copyReplayInputs,
+    replayCandidates,
+    replayBuildSummary,
+    MIN_REPLAY_FIGHTS,
+} from './labyrinth-replay-inputs.js';
+import { MIN_LAB_FIGHTS } from './labyrinth-replay-check.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 const inputs = (level = 10) => ({
@@ -26,6 +32,16 @@ const fight = (extra = {}) => ({
     replayInputs: inputs(),
     ...extra,
 });
+
+/**
+ * A cohort of `n` identical fights. Cohort splitting is what most of these
+ * tests are about, and a cohort under MIN_REPLAY_FIGHTS is not a candidate at
+ * all, so the smallest cohort a splitting test can use is that many fights.
+ * @param {number} n - How many fights
+ * @param {Object} [extra] - Overrides applied to each
+ * @returns {Array<Object>}
+ */
+const cohort = (n, extra = {}) => Array.from({ length: n }, () => fight(extra));
 
 describe('recorded replay builds', () => {
     test('build references stay stable for equivalent inputs and reveal only a short weapon description', () => {
@@ -59,40 +75,59 @@ describe('recorded replay builds', () => {
         combatChanged.playerDTO.guildCombatBuffs[0].ratioBoost = 0.02;
         const { candidates } = replayCandidates(
             [
-                fight({ replayInputs: original }),
-                fight({ replayInputs: metadataOnly }),
-                fight({ replayInputs: combatChanged }),
+                ...cohort(3, { replayInputs: original }),
+                ...cohort(3, { replayInputs: metadataOnly }),
+                ...cohort(3, { replayInputs: combatChanged }),
             ],
             null
         );
-        expect(candidates.map(({ group }) => group.fights)).toEqual([2, 1]);
+        expect(candidates.map(({ group }) => group.fights)).toEqual([6, 3]);
     });
     test('noncombat levels and food disabled by the labyrinth worker do not split a build', () => {
         const other = inputs();
         other.playerDTO.woodcuttingLevel = 99;
         other.playerDTO.food = [{ hrid: '/items/apple' }];
         other.playerDTO.drinks = [{ hrid: '/items/tea' }];
-        expect(replayCandidates([fight(), fight({ replayInputs: other })], null).candidates[0].group.fights).toBe(2);
+        expect(
+            replayCandidates([...cohort(3), ...cohort(3, { replayInputs: other })], null).candidates[0].group.fights
+        ).toBe(6);
     });
     test('a supported saved-input schema survives a global fingerprint migration', () => {
-        expect(replayCandidates([fight({ fingerprintVersion: 1 })], 'new').candidates).toHaveLength(1);
+        expect(replayCandidates(cohort(3, { fingerprintVersion: 1 }), 'new').candidates).toHaveLength(1);
         expect(
-            replayCandidates([fight({ fingerprintVersion: 1, replayInputs: null })], 'old-build').excluded.legacy
-        ).toBe(1);
+            replayCandidates(cohort(3, { fingerprintVersion: 1, replayInputs: null }), 'old-build').excluded.legacy
+        ).toBe(3);
     });
-    test('saved inputs survive a change to the current build and permit a single exploratory fight', () => {
-        const { candidates, excluded } = replayCandidates([fight()], 'new-build');
+    test('saved inputs survive a change to the current build', () => {
+        const { candidates, excluded } = replayCandidates(cohort(MIN_REPLAY_FIGHTS), 'new-build');
         expect(candidates).toHaveLength(1);
-        expect(candidates[0].group.fights).toBe(1);
+        expect(candidates[0].group.fights).toBe(MIN_REPLAY_FIGHTS);
         expect(candidates[0].inputs.playerDTO.attackLevel).toBe(10);
         expect(excluded.build).toBe(0);
     });
+    test('a cohort under the minimum is reported, not simulated', () => {
+        const { candidates, excluded } = replayCandidates(cohort(MIN_REPLAY_FIGHTS - 1), 'new-build');
+        expect(candidates).toHaveLength(0);
+        expect(excluded.tooFew).toBe(MIN_REPLAY_FIGHTS - 1);
+    });
+    test('a cohort between the two bars may explore but never states a verdict', () => {
+        const exploring = replayCandidates(cohort(MIN_REPLAY_FIGHTS), 'new-build').candidates;
+        expect(exploring).toHaveLength(1);
+        expect(exploring[0].exploratory).toBe(true);
+        const judging = replayCandidates(cohort(MIN_LAB_FIGHTS), 'new-build').candidates;
+        expect(judging).toHaveLength(1);
+        expect(judging[0].exploratory).toBe(false);
+    });
     test('different effective builds never pool, while unrelated global fingerprints do not split them', () => {
         const { candidates } = replayCandidates(
-            [fight(), fight({ fingerprint: 'unrelated-loadout-changed' }), fight({ replayInputs: inputs(11) })],
+            [
+                ...cohort(3),
+                ...cohort(3, { fingerprint: 'unrelated-loadout-changed' }),
+                ...cohort(3, { replayInputs: inputs(11) }),
+            ],
             'current'
         );
-        expect(candidates.map(({ group }) => group.fights)).toEqual([2, 1]);
+        expect(candidates.map(({ group }) => group.fights)).toEqual([6, 3]);
     });
     test('copying freezes historical inputs against later loadout mutation', () => {
         const original = inputs();
@@ -114,13 +149,15 @@ describe('recorded replay builds', () => {
         expect(excluded).toMatchObject({ build: 1, invalidSnapshot: 1, incomplete: 1, wounded: 1 });
     });
     test('legacy recordings still require a known matching build', () => {
-        const old = fight({ replayInputs: null });
-        expect(replayCandidates([old], 'old-build').candidates).toHaveLength(1);
-        expect(replayCandidates([old], null).candidates).toHaveLength(0);
+        const old = cohort(3, { replayInputs: null });
+        expect(replayCandidates(old, 'old-build').candidates).toHaveLength(1);
+        expect(replayCandidates(old, null).candidates).toHaveLength(0);
     });
     test('object key ordering does not split equivalent inputs', () => {
         const other = inputs();
         other.playerDTO = { abilities: [], attackLevel: 10, hrid: 'player1' };
-        expect(replayCandidates([fight(), fight({ replayInputs: other })], null).candidates[0].group.fights).toBe(2);
+        expect(
+            replayCandidates([...cohort(3), ...cohort(3, { replayInputs: other })], null).candidates[0].group.fights
+        ).toBe(6);
     });
 });

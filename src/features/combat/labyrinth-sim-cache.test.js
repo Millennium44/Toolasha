@@ -136,8 +136,9 @@ test('replay uses historical room inputs after the current build changes and rep
         labyrinthCombatBuffs: [],
         fullAbilities: true,
     };
-    const spy = vi.spyOn(labFightRecorder, 'recordedAttempts').mockReturnValue([
-        {
+    // Three fights, because a cohort under MIN_REPLAY_FIGHTS is never simulated
+    const spy = vi.spyOn(labFightRecorder, 'recordedAttempts').mockReturnValue(
+        Array.from({ length: 3 }, () => ({
             monsterHrid: '/monsters/fly',
             seconds: 20,
             roomLevel: 10,
@@ -149,8 +150,8 @@ test('replay uses historical room inputs after the current build changes and rep
             fingerprintVersion: FINGERPRINT_VERSION,
             fingerprint: 'old',
             replayInputs: inputs,
-        },
-    ]);
+        }))
+    );
     try {
         const captureReplayInputs = vi.fn(() => {
             throw new Error('must use saved inputs');
@@ -172,6 +173,7 @@ test('replay uses historical room inputs after the current build changes and rep
         // The mock runner returns {}, so failure must not be called insufficient data.
         expect(result.diagnostics.failedGroups).toBe(1);
         expect(result.diagnostics.excluded.build).toBe(0);
+        expect(result.diagnostics.excluded.tooFew).toBe(0);
     } finally {
         spy.mockRestore();
     }
@@ -180,7 +182,7 @@ test('replay uses historical room inputs after the current build changes and rep
 test('replay exports a distinct named build reference for each historical build', async () => {
     adapter.gameData = { itemDetailMap: { '/items/steel_sword': { name: 'Steel Sword' } } };
     simRuns.result = { simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 };
-    const attempts = [7, 9].map((enhancementLevel) => ({
+    const attempts = [7, 7, 7, 9, 9, 9].map((enhancementLevel) => ({
         monsterHrid: '/monsters/fly',
         seconds: 20,
         roomLevel: 10,
@@ -221,7 +223,9 @@ test('replay exports a distinct named build reference for each historical build'
 
 test('task progress does not fragment a replay build or consume its three-group limit', async () => {
     simRuns.result = { simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 };
-    const attempts = [5, 4, 3, 2, 1, 0].map((remaining, index) => ({
+    // Six fights on one build and three on another, so both cohorts clear
+    // MIN_REPLAY_FIGHTS; the task counters differ on every one of them
+    const attempts = [9, 8, 7, 6, 5, 4, 3, 2, 1].map((remaining, index) => ({
         monsterHrid: '/monsters/fly',
         seconds: 20,
         roomLevel: 10,
@@ -234,7 +238,7 @@ test('task progress does not fragment a replay build or consume its three-group 
             version: 1,
             playerDTO: {
                 hrid: 'player1',
-                attackLevel: index === 5 ? 11 : 10,
+                attackLevel: index >= 6 ? 11 : 10,
                 taskMonsterHrids: remaining ? ['/monsters/fly'] : [],
                 taskMonsterRemaining: remaining ? { '/monsters/fly': remaining } : {},
             },
@@ -252,12 +256,12 @@ test('task progress does not fragment a replay build or consume its three-group 
             getSimStopRule: () => ({ maxTrials: 10 }),
         });
         expect(result.diagnostics).toMatchObject({ eligibleGroups: 2, deferredGroups: 0, failedGroups: 0 });
-        expect(result.groups.map((group) => group.fights)).toEqual([5, 1]);
+        expect(result.groups.map((group) => group.fights)).toEqual([6, 3]);
         expect(simRuns.list).toHaveLength(2);
         // The replay runner defaults task damage off; retain the original saved
         // inputs for export while ignoring that inactive metadata in equality.
         expect(simRuns.list.every((run) => run.taskDamageMode === undefined)).toBe(true);
-        expect(simRuns.list[0].playerDTOs[0].taskMonsterRemaining).toEqual({ '/monsters/fly': 5 });
+        expect(simRuns.list[0].playerDTOs[0].taskMonsterRemaining).toEqual({ '/monsters/fly': 9 });
     } finally {
         spy.mockRestore();
     }

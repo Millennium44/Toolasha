@@ -1,6 +1,26 @@
 /** Saved room inputs, independent of unrelated loadouts and the current build. */
-import { deriveObserved } from './labyrinth-replay-check.js';
+import { deriveObserved, MIN_LAB_FIGHTS } from './labyrinth-replay-check.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
+
+/**
+ * A recorded cohort needs at least this many fights before a replay is worth a sim.
+ *
+ * Saved builds made it possible to replay a cohort the current gear no longer
+ * matches, which is a real gain — but it is not a reason to spend a full
+ * simulation on a cohort that cannot say anything when it finishes. One fight
+ * has no rate: every metric comes back `insufficient` and the diagnosis is the
+ * sentence asking for more fights, after the worker has run for as long as the
+ * stop rule allows. Three is where a cohort starts to be worth the sim, which
+ * is the bar this had before saved builds arrived.
+ *
+ * Above this bar and below {@link MIN_LAB_FIGHTS} a cohort is *exploration*: the
+ * comparison runs and is shown, flagged as exploratory, and no metric in it
+ * states a verdict. Five clean fights is what this repo's combat validation
+ * treats as the threshold for an accuracy verdict, and that is what
+ * `compareMetric` already enforces per metric; the flag is so the panel says so
+ * rather than leaving the reader to infer it from four `insufficient` rows.
+ */
+export const MIN_REPLAY_FIGHTS = 3;
 
 /** Copy plain simulation inputs at the fight boundary; never retain live references. */
 export function copyReplayInputs(value) {
@@ -99,10 +119,23 @@ export function replayBuildSummary(inputs, itemDetailMap = {}) {
     return { id, label: `Build ${id} · ${name}${enhancement > 0 ? ` +${enhancement}` : ''}` };
 }
 
-/** Keep distinct recorded builds separate and explain every eligibility filter. */
+/**
+ * Keep distinct recorded builds separate and explain every eligibility filter.
+ *
+ * A cohort under {@link MIN_REPLAY_FIGHTS} is not a candidate at all — its
+ * fights are counted into `excluded.tooFew` so the panel can say how much is
+ * waiting rather than dropping them silently. A cohort over that bar but under
+ * {@link MIN_LAB_FIGHTS} is a candidate flagged `exploratory`.
+ *
+ * @param {Array<Object>} attempts - Recorded attempts, newest last
+ * @param {string|null} [fingerprint] - The current build's fingerprint, which is
+ *   what a record with no saved inputs has to match to be replayable at all
+ * @returns {{candidates: Array<{group: Object, inputs: Object|null, exploratory: boolean}>,
+ *   excluded: Object}}
+ */
 export function replayCandidates(attempts, fingerprint) {
     const cohorts = new Map();
-    const excluded = { build: 0, invalidSnapshot: 0, incomplete: 0, wounded: 0, unknown: 0, legacy: 0 };
+    const excluded = { build: 0, invalidSnapshot: 0, incomplete: 0, wounded: 0, unknown: 0, legacy: 0, tooFew: 0 };
     for (const attempt of attempts) {
         const inputs = copyReplayInputs(attempt.replayInputs);
         if (attempt.replayInputs && !inputs) {
@@ -130,7 +163,17 @@ export function replayCandidates(attempts, fingerprint) {
         excluded.wounded += observed.droppedNotCleanStart;
         excluded.unknown += observed.droppedUnknownOutcome;
         excluded.legacy += observed.droppedLegacyFingerprint;
-        for (const group of observed) candidates.push({ group, inputs: cohort.inputs });
+        for (const group of observed) {
+            // A cohort that cannot support a rate is not worth a simulation: it
+            // would run to its stop rule and come back with every metric
+            // `insufficient`. Its fights are reported, not discarded — they keep
+            // accumulating and the cohort becomes a candidate once it clears the bar.
+            if (group.fights < MIN_REPLAY_FIGHTS) {
+                excluded.tooFew += group.fights;
+                continue;
+            }
+            candidates.push({ group, inputs: cohort.inputs, exploratory: group.fights < MIN_LAB_FIGHTS });
+        }
     }
     candidates.sort((a, b) => b.group.fights - a.group.fights);
     return { candidates, excluded };

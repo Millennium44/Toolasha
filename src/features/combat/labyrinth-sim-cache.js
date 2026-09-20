@@ -29,12 +29,17 @@ import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { setSimConfigSource } from './labyrinth-accuracy-export.js';
-import { predictedFromSim, compareLab } from './labyrinth-replay-check.js';
+import { predictedFromSim, compareLab, MIN_LAB_FIGHTS } from './labyrinth-replay-check.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
-import { copyReplayInputs, replayCandidates, replayBuildSummary } from './labyrinth-replay-inputs.js';
+import {
+    copyReplayInputs,
+    replayCandidates,
+    replayBuildSummary,
+    MIN_REPLAY_FIGHTS,
+} from './labyrinth-replay-inputs.js';
 
 /**
  * The zone a probe fight nominally happens in when the real one is not a zone.
@@ -725,7 +730,17 @@ export const simCacheMethods = {
         }
     },
 
-    /** Replay each recorded build separately; legacy records require a current-build match. */
+    /**
+     * Replay each recorded build separately; legacy records require a current-build match.
+     *
+     * A cohort under `MIN_REPLAY_FIGHTS` is never simulated — see the constant
+     * for why — and one under `MIN_LAB_FIGHTS` is simulated but returned flagged
+     * `exploratory`, so the panel can show the comparison without letting it read
+     * as an accuracy verdict.
+     *
+     * @returns {Promise<{groups: Array<Object>, pool: Object, diagnostics: Object,
+     *   config: {stopRule: Object, hours: number, seedPolicy: string}}>}
+     */
     async replayRecordedFights() {
         const fingerprint = this._snapshotContentFingerprint();
         const attempts = labFightRecorder.recordedAttempts();
@@ -736,10 +751,14 @@ export const simCacheMethods = {
             eligibleGroups: candidates.length,
             failedGroups: 0,
             deferredGroups: Math.max(0, candidates.length - worth.length),
+            // The two bars, quoted so the panel and the export state the rule
+            // rather than restating a constant that can drift away from it
+            minFights: MIN_REPLAY_FIGHTS,
+            verdictMinFights: MIN_LAB_FIGHTS,
         };
 
         const groups = [];
-        for (const { group, inputs } of worth) {
+        for (const { group, inputs, exploratory } of worth) {
             try {
                 const saved = inputs || this.captureReplayInputs(group.monsterHrid);
                 if (!saved) {
@@ -774,6 +793,9 @@ export const simCacheMethods = {
 
                 groups.push({
                     ...compareLab(group, predicted),
+                    // Under MIN_LAB_FIGHTS every metric reads `insufficient`; this
+                    // says so outright so a reader cannot take the row as a verdict
+                    exploratory,
                     inputSource: inputs ? 'recorded' : 'current',
                     build: replayBuildSummary(saved, gameData?.itemDetailMap),
                 });
