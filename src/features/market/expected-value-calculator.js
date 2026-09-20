@@ -308,10 +308,12 @@ class ExpectedValueCalculator {
                 if (processedItems.has(itemHrid)) continue;
                 processedItems.add(itemHrid);
 
-                // Get price and tradeable status
-                const price = this.getDropPrice(itemHrid);
+                // The worker's canBeSold flag controls tax. Nested contents and
+                // special currencies already resolve to net values, not new sales.
+                const resolved = this.resolveSellSideValue(itemHrid);
+                const price = resolved?.value ?? null;
                 const itemDetails = dataManager.getItemDetails(itemHrid);
-                const canBeSold = itemDetails?.isTradable !== false;
+                const canBeSold = Boolean(resolved?.needsTax) && itemDetails?.isTradable !== false;
 
                 priceMap[itemHrid] = {
                     price,
@@ -410,14 +412,12 @@ class ExpectedValueCalculator {
             const itemDetails = dataManager.getItemDetails(itemHrid);
             const canBeSold = itemDetails?.isTradable !== false;
 
-            // Special case: Coin never has market tax (it's currency, not a market item)
-            const isCoin = itemHrid === this.COIN_HRID;
-
-            const dropValue = isCoin
-                ? avgCount * dropRate * price // No tax for coins
-                : canBeSold
-                  ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
-                  : avgCount * dropRate * price;
+            // A nested container is opened, not sold: its contents were taxed
+            // when resolved. The same applies to net special-currency values.
+            const dropValue =
+                canBeSold && resolved.needsTax
+                    ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
+                    : avgCount * dropRate * price;
             totalExpectedValue += dropValue;
         }
 
@@ -703,16 +703,11 @@ class ExpectedValueCalculator {
             // Calculate expected value for this drop
             const itemCanBeSold = itemDetails.isTradable !== false;
 
-            // Special case: Coin never has market tax (it's currency, not a market item)
-            const isCoin = itemHrid === this.COIN_HRID;
-
             const dropValue =
                 price !== null
-                    ? isCoin
-                        ? avgCount * dropRate * price // No tax for coins
-                        : itemCanBeSold
-                          ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
-                          : avgCount * dropRate * price
+                    ? itemCanBeSold && resolved.needsTax
+                        ? calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
+                        : avgCount * dropRate * price
                     : 0;
 
             drops.push({
