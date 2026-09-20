@@ -85,6 +85,18 @@ describe('recording the combat feed', () => {
         expect(recorder.recordingStatus().ticks).toBe(0);
     });
 
+    test('a recording identity survives stop and export but changes on the next start', () => {
+        recorder.startRecording();
+        const first = recorder.recordingFile().recordingId;
+        expect(first).toEqual(expect.any(String));
+        recorder.stopRecording();
+        const exported = recorder.sessionFile();
+        expect(exported.recordingId).toBe(first);
+        expect(exported.segments[0].recordingId).toBe(first);
+        recorder.startRecording();
+        expect(recorder.recordingFile().recordingId).not.toBe(first);
+    });
+
     test('stopping keeps what was captured', () => {
         recorder.startRecording();
         send('battle_updated', { pMap: {}, mMap: {} });
@@ -143,6 +155,8 @@ describe('recording for longer than the buffer holds', () => {
 
         expect(recorder.isRecording()).toBe(true);
         expect(banked.length).toBeGreaterThan(0);
+        expect(banked[0].recordingId).toBe(recorder.recordingFile().recordingId);
+        expect(banked[0].segment).not.toBe(recorder.recordingFile().segment);
         expect(recorder.recordingStatus().ticks).toBeLessThan(4000);
         detach();
     });
