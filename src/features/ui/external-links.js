@@ -110,7 +110,7 @@ class ExternalLinks {
         div.title = `Opens ${this.hostnameOf(url)} in a new tab.`;
 
         div.addEventListener('click', () => {
-            window.open(url, '_blank');
+            window.open(url, '_blank', 'noopener');
         });
 
         // Insert at the beginning (after Settings if it exists)

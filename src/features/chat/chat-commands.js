@@ -430,7 +430,7 @@ class ChatCommands {
 
             case 'wiki':
                 // Wiki always works (uses best effort normalization if no match)
-                window.open(`https://milkywayidle.wiki.gg/wiki/${normalizedName}`, '_blank');
+                window.open(`https://milkywayidle.wiki.gg/wiki/${normalizedName}`, '_blank', 'noopener');
                 break;
 
             case 'market':
