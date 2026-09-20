@@ -163,6 +163,10 @@ function extractAttacks(ticks, opts) {
     };
 
     for (const tick of ticks || []) {
+        // Loadout diagnostics share the capture but carry no combat delta. They
+        // must not reset pending hits as though the monster disappeared, or
+        // extend the measured battle timeline. Untyped legacy ticks still work.
+        if (tick?.type && tick.type !== 'new_battle' && tick.type !== 'battle_updated') continue;
         const at = tick?.at;
         if (firstAt === undefined && Number.isFinite(at)) firstAt = at;
         if (Number.isFinite(at)) lastAt = at;

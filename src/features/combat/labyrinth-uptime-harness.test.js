@@ -344,6 +344,24 @@ function ptick(at, p, m) {
 }
 
 describe('extractPlayerAttacks', () => {
+    test('loadout trace markers do not erase a pending hit or extend the battle timeline', () => {
+        const ticks = [
+            ptick(100, { atkCounter: 0, abilityHrid: '/abilities/fireball' }, { cHP: 1000, dmgCounter: 0 }),
+            ptick(200, { atkCounter: 1, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }),
+            ptick(300, { atkCounter: 1, isAutoAtk: true }, { cHP: 850, dmgCounter: 1 }),
+        ];
+        const withMarkers = [
+            { at: 0, type: 'items_updated', payload: { equipment: [] } },
+            ticks[0],
+            ticks[1],
+            { at: 250, type: 'abilities_updated', payload: {} },
+            ticks[2],
+            { at: 5000, type: 'items_updated', payload: { equipment: [] } },
+        ];
+        const expected = extractPlayerAttacks(ticks);
+        expect(expected.byAbility['/abilities/fireball']).toMatchObject({ hits: 1, damage: 150 });
+        expect(extractPlayerAttacks(withMarkers)).toEqual(expected);
+    });
     test('labels the player’s swings by ability and pays them off from the monster’s dmgCounter', () => {
         // The two-direction fixture: the same ladder as incoming, roles swapped.
         // A cast ability swings at one tick and resolves on the next (the

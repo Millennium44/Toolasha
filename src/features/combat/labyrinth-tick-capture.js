@@ -307,8 +307,11 @@ export function captureFile() {
     // pass here, not per-tick bookkeeping.
     let maxGapMs = null;
     let gapsOver5s = 0;
-    for (let i = 1; i < ticks.length; i++) {
-        const gap = ticks[i].at - ticks[i - 1].at;
+    // Equipment/ability markers say nothing about combat-feed cadence. A marker
+    // halfway through a stalled battle stream must not conceal the gap.
+    const battleTicks = ticks.filter((tick) => tick.type === 'battle_updated' || tick.type === 'new_battle');
+    for (let i = 1; i < battleTicks.length; i++) {
+        const gap = battleTicks[i].at - battleTicks[i - 1].at;
         if (maxGapMs === null || gap > maxGapMs) maxGapMs = gap;
         if (gap > 5000) gapsOver5s++;
     }

@@ -440,7 +440,9 @@ toolashaRoot.Debug = {
         let prevAtk;
         let prevPHP;
         let firstAt;
-        const rows = ticks.map((tick, i) => {
+        const rows = ticks.flatMap((tick, i) => {
+            // Keep raw capture indices while skipping loadout diagnostic markers.
+            if (tick?.type && tick.type !== 'new_battle' && tick.type !== 'battle_updated') return [];
             const at = tick?.at;
             if (firstAt === undefined && Number.isFinite(at)) firstAt = at;
             const monster = tick?.payload?.mMap?.[mi];
@@ -461,7 +463,7 @@ toolashaRoot.Debug = {
             if (monster && atk != null) prevAtk = atk;
             else prevAtk = undefined;
             if (php != null) prevPHP = php;
-            return row;
+            return [row];
         });
         console.log(
             `[UptimeTrace] ${capture.context?.monsterHrid || '?'} — ${rows.length} ticks (attack rises flagged):`

@@ -245,6 +245,22 @@ describe('the file says which capture it is, and how the capture ended', () => {
         expect(file.gapsOver5s).toBe(0);
     });
 
+    test('loadout markers cannot conceal a gap in the battle feed', () => {
+        vi.useFakeTimers();
+        try {
+            capture.startCapture();
+            emit('battle_updated', battle);
+            vi.advanceTimersByTime(3000);
+            emit('abilities_updated', {});
+            vi.advanceTimersByTime(3000);
+            emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
+            expect(capture.captureFile()).toMatchObject({ maxGapMs: 6000, gapsOver5s: 1 });
+        } finally {
+            capture.stopCapture();
+            vi.useRealTimers();
+        }
+    });
+
     test('the file names the fingerprint spec beside its context', () => {
         capture.startCapture({ fingerprint: 'fp-abc' });
         const file = capture.captureFile();
