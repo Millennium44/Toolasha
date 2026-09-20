@@ -493,6 +493,10 @@ class MarketAPI {
             const key = `${entry.itemHrid}:${entry.enhancementLevel}`;
             // A sighting from the future is a clock disagreement, not fresher data
             const observed = Number.isFinite(entry.observedAt) ? Math.min(entry.observedAt, now) : now;
+            // A history request may finish after a live book has already arrived.
+            // Compare observation times, not the order the responses reached us.
+            const existing = this.pricePatchs[key];
+            if (existing?.timestamp > observed && existing.timestamp <= now) continue;
             this.pricePatchs[key] = {
                 a: entry.ask,
                 b: entry.bid,
@@ -543,23 +547,30 @@ class MarketAPI {
                 console.log(
                     `[MarketAPI] Migrating price patches from v${migrationVersion} to v${this.CURRENT_MIGRATION_VERSION}`
                 );
-                // Clear old patches (they may have corrupted data)
-                this.pricePatchs = {};
-                await storage.set(this.CACHE_KEY_PATCHES, {}, 'settings');
+                // Drop the old stored format, but keep observations made by this
+                // session while the version read was pending.
+                await storage.setJSON(this.CACHE_KEY_PATCHES, this.pricePatchs, 'settings');
                 await storage.set(this.CACHE_KEY_MIGRATION, this.CURRENT_MIGRATION_VERSION, 'settings');
-                console.log('[MarketAPI] Price patches cleared due to migration');
+                console.log('[MarketAPI] Stored price patches migrated');
                 return;
             }
 
             // Load patches normally
             const patches = await storage.getJSON(this.CACHE_KEY_PATCHES, 'settings', {});
-            this.pricePatchs = patches || {};
+            // The read may return a snapshot from before a live book arrived.
+            // Merge per item so that read cannot erase newer in-memory quotes.
+            const now = Date.now();
+            for (const [key, patch] of Object.entries(patches || {})) {
+                if (!Number.isFinite(patch?.timestamp) || patch.timestamp <= 0 || patch.timestamp > now) continue;
+                const existing = this.pricePatchs[key];
+                if (existing?.timestamp >= patch.timestamp && existing.timestamp <= now) continue;
+                this.pricePatchs[key] = patch;
+            }
 
             // Purge stale patches (older than API data)
             this.purgeStalePatches();
         } catch (error) {
             console.error('[MarketAPI] Failed to load price patches:', error);
-            this.pricePatchs = {};
         }
     }
 
