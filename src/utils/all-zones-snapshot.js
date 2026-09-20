@@ -250,6 +250,10 @@ export function zoneSimRateKey(zoneHrid, difficultyTier = 0, loadoutId = 0) {
  * same item at different levels are materially different combat loadouts. A
  * caller with a "highest owned" loadout must pass the resolved equipment the
  * loadout would equip now rather than the snapshot's possibly stale levels.
+ * Ability and consumable order and their equipped triggers are included: the
+ * simulator tries them in order, and a different trigger changes when they run.
+ * The v2 prefix keeps older signatures, which did not cover these changes,
+ * from certifying that an unchanged item list still describes the same run.
  *
  * @param {Object|null} snapshot - A loadout snapshot (`equipment`, `abilities`, `food`, `drinks`)
  * @param {Array<Object>|null} [resolvedEquipment] - Equipment with the enhancement levels actually equipped
@@ -257,12 +261,25 @@ export function zoneSimRateKey(zoneHrid, difficultyTier = 0, loadoutId = 0) {
  */
 export function loadoutSignature(snapshot, resolvedEquipment = snapshot?.equipment) {
     if (!snapshot || typeof snapshot !== 'object') return null;
-    const hrids = (list, field) =>
-        (Array.isArray(list) ? list : [])
-            .map((entry) => entry?.[field] || '')
-            .filter(Boolean)
-            .sort()
-            .join(',');
+    // Match applyLoadoutSnapshotToDTO: only equipped entries use a trigger,
+    // missing triggers mean the item's defaults, and [] means no conditions.
+    const triggerMap = {
+        ...(snapshot.abilityCombatTriggersMap || {}),
+        ...(snapshot.consumableCombatTriggersMap || {}),
+    };
+    const entrySignature = (hrid) => {
+        if (!hrid) return null;
+        const raw = triggerMap[hrid];
+        const triggers = Array.isArray(raw)
+            ? raw.map((trigger) => [
+                  trigger.dependencyHrid,
+                  trigger.conditionHrid,
+                  trigger.comparatorHrid,
+                  trigger.value || 0,
+              ])
+            : null;
+        return [hrid, triggers];
+    };
     const equipment = (Array.isArray(resolvedEquipment) ? resolvedEquipment : [])
         .map((entry) => {
             if (!entry?.itemHrid) return '';
@@ -272,12 +289,11 @@ export function loadoutSignature(snapshot, resolvedEquipment = snapshot?.equipme
         .filter(Boolean)
         .sort()
         .join(',');
-    return [
-        equipment,
-        hrids(snapshot.abilities, 'abilityHrid'),
-        hrids(snapshot.food, 'itemHrid'),
-        hrids(snapshot.drinks, 'itemHrid'),
-    ].join('|');
+    const abilities = (Array.isArray(snapshot.abilities) ? snapshot.abilities : [])
+        .filter((entry) => entry?.abilityHrid)
+        .map((entry) => entrySignature(entry.abilityHrid));
+    const consumables = (list) => Array.from({ length: 3 }, (_, index) => entrySignature(list?.[index]?.itemHrid));
+    return `v2:${JSON.stringify([equipment, abilities, consumables(snapshot.food), consumables(snapshot.drinks)])}`;
 }
 
 /**

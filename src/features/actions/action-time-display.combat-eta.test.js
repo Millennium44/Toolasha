@@ -82,6 +82,7 @@ vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
 }));
 
 const { default: actionTimeDisplay, estimateCombatQueueRow } = await import('./action-time-display.js');
+const { loadoutSignature } = await import('../../utils/all-zones-snapshot.js');
 
 // Local time, so the completion clocks read the same in every timezone
 const NOW = new Date(2026, 8, 17, 12, 0, 0).getTime();
@@ -299,6 +300,39 @@ describe('estimateCombatQueueRow with a single-zone rate', () => {
         });
         expect(result.flags).toEqual(['gear changed']);
         expect(result.text).toBe('[~2h 00m 00s · sim, gear changed]');
+        expect(result.title).toContain('edited since');
+    });
+
+    test('reordering the saved ability rotation marks its earlier simulated rate as changed', () => {
+        const original = {
+            abilities: [{ abilityHrid: '/abilities/slash' }, { abilityHrid: '/abilities/smash' }],
+        };
+        const edited = { ...original, abilities: [...original.abilities].reverse() };
+        const result = estimate({
+            rowLoadout: { known: true, name: 'Combat', signature: loadoutSignature(edited) },
+            zoneRate: zoneRate({ signature: loadoutSignature(original) }),
+            snapshot: null,
+        });
+        expect(result.flags).toContain('gear changed');
+        expect(result.title).toContain('edited since');
+        expect(result.title).not.toContain('the loadout this action uses');
+    });
+
+    test('changing an equipped consumable trigger marks its earlier simulated rate as changed', () => {
+        const original = {
+            food: [{ itemHrid: '/items/apple' }],
+            consumableCombatTriggersMap: {
+                '/items/apple': [{ conditionHrid: '/combat_trigger_conditions/current_hitpoints', value: 50 }],
+            },
+        };
+        const edited = structuredClone(original);
+        edited.consumableCombatTriggersMap['/items/apple'][0].value = 10;
+        const result = estimate({
+            rowLoadout: { known: true, name: 'Combat', signature: loadoutSignature(edited) },
+            zoneRate: zoneRate({ signature: loadoutSignature(original) }),
+            snapshot: null,
+        });
+        expect(result.flags).toContain('gear changed');
         expect(result.title).toContain('edited since');
     });
 

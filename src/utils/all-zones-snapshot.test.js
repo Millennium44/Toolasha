@@ -262,6 +262,24 @@ describe('single-zone rates', () => {
         expect(loadoutSignature(stored, resolved)).not.toBe(loadoutSignature(stored));
     });
 
+    test('signs equipped ability triggers without treating unrelated trigger edits as loadout changes', () => {
+        const original = {
+            abilities: [{ abilityHrid: '/abilities/slash' }],
+            abilityCombatTriggersMap: {
+                '/abilities/slash': [{ conditionHrid: '/combat_trigger_conditions/current_manapoints', value: 50 }],
+            },
+        };
+        const edited = structuredClone(original);
+        edited.abilityCombatTriggersMap['/abilities/slash'][0].value = 10;
+        expect(loadoutSignature(edited)).not.toBe(loadoutSignature(original));
+        const unrelated = structuredClone(original);
+        unrelated.abilityCombatTriggersMap['/abilities/smash'] = [];
+        expect(loadoutSignature(unrelated)).toBe(loadoutSignature(original));
+        const defaults = { abilities: original.abilities };
+        const unconditional = { ...defaults, abilityCombatTriggersMap: { '/abilities/slash': [] } };
+        expect(loadoutSignature(unconditional)).not.toBe(loadoutSignature(defaults));
+    });
+
     test('saving one writes its own key and leaves the all-zones snapshot untouched', async () => {
         memory.clear();
         const allZones = structuredClone(snapshot);
