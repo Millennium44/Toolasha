@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dungeon tracker stops reading storage on every ordinary battle
+
+- The tracker checked for a saved dungeon run on every `new_battle` outside a dungeon too, so ordinary combat did two pointless IndexedDB reads a fight; it now skips the check when the running action is a normal zone, remembers an empty result, and fetches both keys in one transaction.
+
 ### Combat sim: a killing blow keeps its attacker's swing timer
 
 - An auto-attack killing blow now re-arms its attacker before the wave is torn down, as an ability killing blow already did, so a build slower than the respawn gap no longer restarts its clock from the respawn.

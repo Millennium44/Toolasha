@@ -14,7 +14,7 @@ import {
     DUNGEON_PARTY_FAILED_RE,
 } from '../../utils/game-text.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { characterKey, readScopedFrom, writeScoped } from '../../utils/character-key.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { assessRecoveredStart } from './dungeon-pace.js';
 import { parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
@@ -114,6 +114,15 @@ class DungeonTracker {
         // Set synchronously in completeDungeon() before async clearInProgressRun()
         this._lastCompletionTime = 0;
 
+        // The last battle whose restore found nothing saved, as `{ owner, battleId }`.
+        // A restore that comes back empty stays empty until something writes a
+        // record, so repeating the read on every wave of the same battle only
+        // costs transactions. Keyed on the character as well as the battle
+        // because the two characters' records are different keys, and cleared by
+        // `saveInProgressRun` — the only thing that can make an empty read
+        // non-empty.
+        this._emptyRestore = null;
+
         // True only when the run was picked back up from storage rather than started here.
         // A restored run never saw its own "Key counts" start message, so the next one it
         // sees is the completion; a run started here has that message still to come.
@@ -177,6 +186,27 @@ class DungeonTracker {
     }
 
     /**
+     * Whether the running combat action rules this battle out as a dungeon's.
+     *
+     * The one check `startDungeon` makes before it bails ("this battle belongs
+     * to a normal zone"), hoisted so `onNewBattle` can make it *before* paying
+     * for a storage read. A normal zone's `new_battle` carries a wave number
+     * like a dungeon's, so every wave of ordinary combat used to reach
+     * `restoreInProgressRun` and read two keys to restore nothing — forever,
+     * because `startDungeon` then bails without setting `isTracking`.
+     *
+     * No running action is *not* a rule-out: the queue can be unread when a
+     * battle arrives, and `startDungeon` falls back to `pendingDungeonInfo`
+     * there. Saying "not a dungeon" on a null would skip legitimate restores.
+     *
+     * @param {Object|null} running - The running combat action, or null
+     * @returns {boolean} True only when the running action is known not to be a dungeon
+     */
+    isNonDungeonBattle(running) {
+        return Boolean(running) && !this.isDungeonAction(running.actionHrid);
+    }
+
+    /**
      * Save in-progress run to IndexedDB
      * @returns {Promise<boolean>} Success status
      */
@@ -216,6 +246,12 @@ class DungeonTracker {
             // Who the server said was fighting; see `battlePartyNames`
             partyNames: this.currentRun.partyNames ?? null,
         };
+
+        // There is a record now, so "nothing saved" is no longer the answer for
+        // anyone. Dropping the whole memo rather than matching it against this
+        // battle keeps the invalidation on the safe side: a missed restore is a
+        // far worse bug than a read this change was meant to save.
+        this._emptyRestore = null;
 
         return writeScoped(IN_PROGRESS_KEY, stateToSave, 'settings', true);
     }
@@ -274,10 +310,33 @@ class DungeonTracker {
         // character's start time, wave times and key counts — a clear time they
         // never ran, permanently in the chart and the ROI board.
         const owner = currentOwner();
-        const saved = await readScoped(IN_PROGRESS_KEY, 'settings', null, DISCARD_LEGACY);
+
+        // Already asked, for this character and this battle, and the answer was
+        // "nothing saved". Only a write can change that, and `saveInProgressRun`
+        // drops this memo when it makes one.
+        if (
+            this._emptyRestore &&
+            this._emptyRestore.owner === owner &&
+            this._emptyRestore.battleId === currentBattleId
+        ) {
+            return false;
+        }
+
+        // Both halves of the scoped read in one transaction. `readScoped` issues
+        // the scoped `get` and then, when it comes back empty, a second `get` for
+        // the legacy bare key — two readonly transactions per battle, and the
+        // empty case is the common one, so the second one nearly always ran.
+        const scopedKey = characterKey(IN_PROGRESS_KEY);
+        const values = await storage.getMany([scopedKey, IN_PROGRESS_KEY], 'settings');
+        // Verified before `readScopedFrom`, which recomputes `characterKey` from
+        // whoever is logged in now: on a switch mid-read it would resolve the
+        // arriving character's key against the departing character's batch.
+        if (currentOwner() !== owner) return false;
+        const saved = await readScopedFrom(IN_PROGRESS_KEY, values, 'settings', null, DISCARD_LEGACY);
         if (currentOwner() !== owner) return false;
 
         if (!saved) {
+            this._emptyRestore = { owner, battleId: currentBattleId };
             return false; // No saved state
         }
 
@@ -1157,11 +1216,17 @@ class DungeonTracker {
                 // wave times. restoreInProgressRun matches on battleId and on the
                 // running action, and clears the record itself when it does not
                 // match — so a genuinely new run falls through to a fresh start.
-                const restored = await this.restoreInProgressRun(battleId);
-                if (currentOwner() !== owner) return;
-                if (restored) {
-                    this.learnPartyNames(data);
-                    return;
+                //
+                // Skipped outright when the running action is a normal zone:
+                // this battle is that zone's, there is nothing of ours to pick
+                // up, and `startDungeon` is about to bail on the same check.
+                if (!this.isNonDungeonBattle(running)) {
+                    const restored = await this.restoreInProgressRun(battleId);
+                    if (currentOwner() !== owner) return;
+                    if (restored) {
+                        this.learnPartyNames(data);
+                        return;
+                    }
                 }
             } else {
                 // Clear any stale saved state first (in case previous run didn't clear properly)
@@ -1172,6 +1237,15 @@ class DungeonTracker {
             // Start fresh dungeon
             this.startDungeon(data);
         } else if (!this.isTracking) {
+            // A normal zone's battles carry a wave number too, and its running
+            // action settles that none of this is ours: nothing to restore, and
+            // `startDungeon` would bail on the same check. Without this, every
+            // wave of ordinary combat paid for a restore that found nothing and
+            // left `isTracking` false, so the next one paid again.
+            if (this.isNonDungeonBattle(running)) {
+                return;
+            }
+
             // Mid-dungeon start - try to restore first
             const restored = await this.restoreInProgressRun(battleId);
             // `restoreInProgressRun` stands itself down on a switch and reports
@@ -1231,7 +1305,7 @@ class DungeonTracker {
         // battle and ran its timer against Golem Cave's fights.
         const running = runningCombatAction(dataManager.getCurrentActions());
         if (running) {
-            if (!this.isDungeonAction(running.actionHrid)) {
+            if (this.isNonDungeonBattle(running)) {
                 this.pendingDungeonInfo = null;
                 return; // Not in a dungeon - this battle belongs to a normal zone
             }
@@ -1909,6 +1983,7 @@ class DungeonTracker {
             this.waveTimes = [];
             this.pendingDungeonInfo = null;
             this.currentBattleId = null;
+            this._emptyRestore = null;
 
             // Clear party message tracking
             this.firstKeyCountTimestamp = null;

@@ -40,11 +40,29 @@ const mockStorage = vi.hoisted(() => {
         if (!stores.has(name)) stores.set(name, new Map());
         return stores.get(name);
     };
+    // Every readonly transaction the tracker opens, in order. A `get` is one
+    // transaction and a `getMany` is one whatever its key count — which is the
+    // whole point of batching the scoped and legacy keys together.
+    const reads = [];
     return {
         stores,
         storeFor,
-        reset: () => stores.clear(),
+        reads,
+        reset: () => {
+            stores.clear();
+            reads.length = 0;
+        },
+        getMany: vi.fn(async (keys, storeName = 'settings') => {
+            reads.push({ op: 'getMany', keys: [...keys], storeName });
+            const store = storeFor(storeName);
+            const result = new Map();
+            for (const key of keys) {
+                if (store.has(key) && store.get(key) != null) result.set(key, store.get(key));
+            }
+            return result;
+        }),
         get: vi.fn(async (key, storeName = 'settings', defaultValue = null) => {
+            reads.push({ op: 'get', keys: [key], storeName });
             const store = storeFor(storeName);
             return store.has(key) && store.get(key) != null ? store.get(key) : defaultValue;
         }),
@@ -198,6 +216,7 @@ function resetTracker() {
     tracker.characterId = null;
     tracker.recentChatMessages = [];
     tracker._lastCompletionTime = 0;
+    tracker._emptyRestore = null;
     tracker.hibernationDetected = false;
     tracker.timerRegistry.clearAll();
     if (tracker.visibilityHandler) {
@@ -2276,10 +2295,16 @@ describe('switching characters', () => {
             lastUpdateTime: Date.now(),
         });
 
-        mockStorage.get.mockImplementationOnce(async (key, storeName = 'settings', fallback = null) => {
+        // The switch lands while the read is in flight — one transaction now,
+        // carrying the scoped and legacy keys together.
+        mockStorage.getMany.mockImplementationOnce(async (keys, storeName = 'settings') => {
             game.characterId = 'alt456';
             const store = mockStorage.storeFor(storeName);
-            return store.has(key) && store.get(key) != null ? store.get(key) : fallback;
+            const result = new Map();
+            for (const key of keys) {
+                if (store.has(key) && store.get(key) != null) result.set(key, store.get(key));
+            }
+            return result;
         });
 
         expect(await tracker.restoreInProgressRun(42)).toBe(false);
@@ -3349,5 +3374,133 @@ describe('reading a DOM chat stamp on a day-first client', () => {
 
             expect((await tracker.backfillFromChatHistory()).runsAdded).toBe(0);
         });
+    });
+});
+
+describe('not paying for a restore that cannot help', () => {
+    /** A record the restore path will accept, written straight to the store. */
+    function seedRecord({ charId = game.characterId, battleId = 7, dungeonHrid = DEN } = {}) {
+        mockStorage.storeFor('settings').set(`${IN_PROGRESS}_${charId}`, {
+            battleId,
+            dungeonHrid,
+            tier: 0,
+            startTime: Date.now() - 60_000,
+            currentWave: 4,
+            maxWaves: 10,
+            wavesCompleted: 3,
+            waveTimes: [1000, 1000, 1000],
+            lastUpdateTime: Date.now(),
+        });
+    }
+
+    test('an ordinary combat zone never reads storage, however many battles go by', async () => {
+        // A normal zone's new_battle carries a wave number just like a dungeon's,
+        // so nothing above the running-action check tells the two apart. Before
+        // this guard every wave read both the scoped and the legacy key to
+        // restore nothing, and left isTracking false so the next one read again.
+        game.actions = [{ actionHrid: FLY, difficultyTier: 0, ordinal: 0, isDone: false }];
+
+        for (let battleId = 100; battleId < 120; battleId++) {
+            await tracker.onNewBattle({ wave: 1, battleId });
+            await tracker.onNewBattle({ wave: 2, battleId });
+        }
+        await flush();
+
+        expect(mockStorage.reads).toEqual([]);
+        expect(mockStorage.delete).not.toHaveBeenCalled();
+        expect(tracker.isTracking).toBe(false);
+    });
+
+    test('a real dungeon still restores its in-progress run mid-wave', async () => {
+        seedRecord({ battleId: 7 });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 5, battleId: 7 });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+        expect(tracker.currentRun.wavesCompleted).toBe(3);
+        expect(tracker.restoredMidRun).toBe(true);
+    });
+
+    test('the scoped and legacy keys are fetched in one transaction', async () => {
+        seedRecord({ battleId: 7 });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 5, battleId: 7 });
+
+        const restore = mockStorage.reads[0];
+        expect(restore.op).toBe('getMany');
+        expect(restore.keys).toEqual([`${IN_PROGRESS}_market123`, IN_PROGRESS]);
+    });
+
+    test('an empty restore is not repeated for the same battle', async () => {
+        // No running action at all: `startDungeon` has nothing to start from, so
+        // isTracking stays false and every later wave reaches the restore again.
+        game.actions = [];
+
+        await tracker.onNewBattle({ wave: 5, battleId: 7 });
+        await tracker.onNewBattle({ wave: 6, battleId: 7 });
+        await tracker.onNewBattle({ wave: 7, battleId: 7 });
+        await flush();
+
+        expect(mockStorage.reads).toHaveLength(1);
+        expect(tracker.isTracking).toBe(false);
+    });
+
+    test('the memo does not stop a later battle restoring', async () => {
+        game.actions = [];
+        await tracker.onNewBattle({ wave: 5, battleId: 7 });
+        expect(mockStorage.reads).toHaveLength(1);
+
+        // The dungeon is entered afterwards, as its own battle.
+        seedRecord({ battleId: 9 });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false }];
+        await tracker.onNewBattle({ wave: 5, battleId: 9 });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+    });
+
+    test('a saved record invalidates the memo for the battle it was taken on', async () => {
+        game.actions = [];
+        await tracker.onNewBattle({ wave: 5, battleId: 7 });
+        expect(tracker._emptyRestore).toEqual({ owner: 'market123', battleId: 7 });
+
+        // Anything that writes a record makes "nothing saved" the wrong answer.
+        beTracking({ battleId: 7, dungeonHrid: DEN });
+        await tracker.saveInProgressRun();
+        expect(tracker._emptyRestore).toBeNull();
+
+        tracker.isTracking = false;
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false }];
+        await tracker.onNewBattle({ wave: 6, battleId: 7 });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+    });
+
+    test("one character's empty memo does not answer for another", async () => {
+        // The memo is keyed on the character as well as the battle: the two
+        // characters' records live under different keys, and letting the market
+        // cow's "nothing saved" stand for the iron cow would silently drop the
+        // iron cow's half-finished run.
+        game.actions = [];
+        await tracker.onNewBattle({ wave: 5, battleId: 7 });
+        expect(tracker._emptyRestore).toEqual({ owner: 'market123', battleId: 7 });
+
+        game.characterId = 'iron456';
+        seedRecord({ charId: 'iron456', battleId: 7 });
+        game.actions = [{ actionHrid: DEN, difficultyTier: 0, ordinal: 0, isDone: false }];
+
+        await tracker.onNewBattle({ wave: 5, battleId: 7 });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.dungeonHrid).toBe(DEN);
+        expect(mockStorage.reads[1].keys).toEqual([`${IN_PROGRESS}_iron456`, IN_PROGRESS]);
     });
 });
