@@ -63,6 +63,8 @@ function monsterName(monster) {
 }
 
 for (const tick of file.ticks || []) {
+    // Labyrinth captures also carry loadout markers, which are not battle time.
+    if (tick.type && tick.type !== 'new_battle' && tick.type !== 'battle_updated') continue;
     if (tick.type === 'new_battle') {
         const players = tick.payload?.players || {};
         noteActions(state, players);
@@ -109,7 +111,9 @@ const share = (value, outOf) => (outOf > 0 ? `${((value / outOf) * 100).toFixed(
 
 console.log(`\n${path}`);
 console.log(`${file.ticks?.length || 0} ticks, ${seconds.toFixed(1)}s of battle time`);
-console.log(`Filter non-damaging: ${filterNonDamaging ? 'on' : 'off'}${file.truncated ? '  (recording hit its cap)' : ''}`);
+console.log(
+    `Filter non-damaging: ${filterNonDamaging ? 'on' : 'off'}${file.truncated ? '  (recording hit its cap)' : ''}`
+);
 
 for (const [index, player] of Object.entries(tally)) {
     const swings = player.hits + player.misses;
