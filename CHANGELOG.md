@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Queued Actions: XP per row and a queue total, behind a new setting
+
+- An optional "Show XP for queued actions" setting adds each queued row's expected experience and XP/hr beside its profit line, plus a Total XP in the footer — read from the stored combat simulation for fights and from game data for everything else, with a row that has no figure marking the total `+ [?]` rather than counting as zero.
+
 ### Dungeon Tracker: an ordinary tab switch no longer makes the run timer wildly wrong
 
 - Switching away from the game for a moment used to count as a computer sleep, which let the panel time a run from an unrelated party chat message — one reported run showed 92:39 for a dungeon that takes about twelve minutes — so a sleep is now detected from wall time the page actually failed to run, and a run the fight says you are doing alone is timed on its own clock instead of from party chat it can never have produced.

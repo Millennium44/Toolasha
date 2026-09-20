@@ -413,6 +413,13 @@ export const settingsGroups = {
                 ],
                 help: 'Choose how to calculate the total value for queued actions. Profit shows net earnings after materials and drinks. Estimated Value shows gross revenue after market tax (always positive).',
             },
+            actionQueue_showXp: {
+                id: 'actionQueue_showXp',
+                label: 'Queued actions: Show XP for queued actions',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds an XP line to each queued row — the experience the row is expected to give and the rate it rests on — and a Total XP to the footer. A fight reads its XP from the last combat simulation, the same reading that times it; every other action works it out from game data, with wisdom, Charm Experience and efficiency repeats included. A row with no figure marks the total "+ [?]" rather than counting as zero.',
+            },
         },
     },
 

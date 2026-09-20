@@ -26,6 +26,7 @@ import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime, formatLargeNumber } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
+import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { getCommunityGatheringQuantity } from '../../utils/community-buffs.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { isMobileMode } from '../../utils/mobile.js';
@@ -118,7 +119,8 @@ const QUEUE_EDIT_MENU_CSS = `
     }
 }
 .${QUEUE_EDIT_MENU_MARKER_CLASS} .mwi-queue-action-time,
-.${QUEUE_EDIT_MENU_MARKER_CLASS} .mwi-queue-action-profit {
+.${QUEUE_EDIT_MENU_MARKER_CLASS} .mwi-queue-action-profit,
+.${QUEUE_EDIT_MENU_MARKER_CLASS} .mwi-queue-action-xp {
     width: 100%;
     max-width: 100%;
     min-width: 0;
@@ -204,6 +206,14 @@ const COMBAT_UNKNOWN_TEXT = '[? · no sim rate]';
  * prices. Shaped after {@link COMBAT_UNKNOWN_TEXT} so the two read as the same kind of answer.
  */
 const COMBAT_VALUE_UNKNOWN_TEXT = '[? · no sim value]';
+
+/**
+ * What a row's experience line reads when the row exists but no XP figure could be worked out —
+ * a fight whose stored simulation predates the field, or a skilling action the game grants no
+ * `experienceGain` for (alchemy and enhancing both). Shaped after {@link COMBAT_VALUE_UNKNOWN_TEXT}
+ * so all three read as the same kind of answer.
+ */
+const QUEUE_XP_UNKNOWN_TEXT = '[? · no xp figure]';
 
 /**
  * Which figure the panel's value mode asks a combat row for, and what it is called.
@@ -347,7 +357,7 @@ function compareCombatGear(runLoadout, rowLoadout) {
  * @returns {{kind: 'estimate'|'unknown'|'infinite', seconds: number|null, flags: Array<string>,
  *   rateFlags: Array<string>|null, text: string, title: string, source?: string,
  *   profitPerHour: number|null, profitTotal: number|null, revenuePerHour: number|null,
- *   revenueTotal: number|null}|null} Null for a row that is not
+ *   revenueTotal: number|null, xpPerHour: number|null, xpTotal: number|null}|null} Null for a row that is not
  *   combat. `rateFlags` is the reading's own flags, or null when the row has no reading at all —
  *   an empty array is what "this row already has a fresh rate" means. `profitPerHour` is the
  *   simulated net per hour and `profitTotal` what this row's run is expected to make;
@@ -383,6 +393,8 @@ export function estimateCombatQueueRow({
             profitTotal: null,
             revenuePerHour: picked.reading?.revenuePerHour ?? null,
             revenueTotal: null,
+            xpPerHour: picked.reading?.xpPerHour ?? null,
+            xpTotal: null,
         };
     }
 
@@ -398,6 +410,8 @@ export function estimateCombatQueueRow({
             profitTotal: null,
             revenuePerHour: null,
             revenueTotal: null,
+            xpPerHour: null,
+            xpTotal: null,
         };
     }
 
@@ -419,6 +433,10 @@ export function estimateCombatQueueRow({
     const profitTotal = profitPerHour === null ? null : (profitPerHour * seconds) / 3600;
     const revenuePerHour = Number.isFinite(reading.revenuePerHour) ? reading.revenuePerHour : null;
     const revenueTotal = revenuePerHour === null ? null : (revenuePerHour * seconds) / 3600;
+    // The same rule for experience: a run stored before `xpPerHour` was kept has no XP at all,
+    // never an XP of zero, which would read as "this fight teaches nothing".
+    const xpPerHour = Number.isFinite(reading.xpPerHour) ? reading.xpPerHour : null;
+    const xpTotal = xpPerHour === null ? null : (xpPerHour * seconds) / 3600;
 
     return {
         kind: 'estimate',
@@ -432,6 +450,8 @@ export function estimateCombatQueueRow({
         profitTotal,
         revenuePerHour,
         revenueTotal,
+        xpPerHour,
+        xpTotal,
     };
 }
 
@@ -507,7 +527,7 @@ function simReadingAge(savedAt, now) {
  * @param {string} where - The zone and tier, as a reader says them
  * @param {number} now - The clock
  * @returns {{rate: number, profitPerHour: number|null, revenuePerHour: number|null,
- *   source: string, flags: Array<string>, sentences: Array<string>}}
+ *   xpPerHour: number|null, source: string, flags: Array<string>, sentences: Array<string>}}
  */
 function describeAllZonesRate(zone, gear, where, now) {
     const { age, stale } = simReadingAge(zone.savedAt, now);
@@ -518,6 +538,8 @@ function describeAllZonesRate(zone, gear, where, now) {
         rate: zone.encountersPerHour,
         profitPerHour: Number.isFinite(zone.profitPerHour) ? zone.profitPerHour : null,
         revenuePerHour: Number.isFinite(zone.revenuePerHour) ? zone.revenuePerHour : null,
+        // Summed across skills, as the simulator totals it — never a per-skill breakdown
+        xpPerHour: Number.isFinite(zone.xpPerHour) ? zone.xpPerHour : null,
         source: `the rate simulated for ${where} in your all-zones run ${age}`,
         flags,
         sentences: [stale ? 'That run is over a week old.' : null, gear.sentence].filter(Boolean),
@@ -535,7 +557,7 @@ function describeAllZonesRate(zone, gear, where, now) {
  * @param {string} where - The zone and tier, as a reader says them
  * @param {number} now - The clock
  * @returns {{rate: number, profitPerHour: number|null, revenuePerHour: number|null,
- *   source: string, flags: Array<string>, sentences: Array<string>}}
+ *   xpPerHour: number|null, source: string, flags: Array<string>, sentences: Array<string>}}
  */
 export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now()) {
     const { age, stale } = simReadingAge(zoneRate.savedAt, now);
@@ -567,6 +589,8 @@ export function describeZoneSimRate(zoneRate, rowLoadout, where, now = Date.now(
         rate: zoneRate.encountersPerHour,
         profitPerHour: Number.isFinite(zoneRate.profitPerHour) ? zoneRate.profitPerHour : null,
         revenuePerHour: Number.isFinite(zoneRate.revenuePerHour) ? zoneRate.revenuePerHour : null,
+        // Summed across skills, as the simulator totals it — never a per-skill breakdown
+        xpPerHour: Number.isFinite(zoneRate.xpPerHour) ? zoneRate.xpPerHour : null,
         source: `from a ${hours} solo simulation of ${where} ${age}`,
         flags,
         sentences: [stale ? 'That run is over a week old.' : null, gearSentence].filter(Boolean),
@@ -799,6 +823,8 @@ class ActionTimeDisplay {
                 profitTotal: null,
                 revenuePerHour: null,
                 revenueTotal: null,
+                xpPerHour: null,
+                xpTotal: null,
                 text: COMBAT_UNKNOWN_TEXT,
                 title: 'No time estimate: it could not be worked out.',
             };
@@ -1153,6 +1179,170 @@ class ActionTimeDisplay {
         if (!tally || !this.combatValueApplies()) return;
         if (actionDetails?.type === '/action_types/enhancing') return;
         tally.incomplete = true;
+    }
+
+    /**
+     * Whether the queue's experience figures are switched on.
+     *
+     * Its own setting, not the value toggle's: a player who wants XP on the rows may not want
+     * profit there, and the reverse.
+     *
+     * @returns {boolean}
+     */
+    queueXpApplies() {
+        return Boolean(config.getSettingValue('actionQueue_showXp', false));
+    }
+
+    /**
+     * What a row's experience line reads, or null when the row shows no line at all.
+     *
+     * Shaped exactly like {@link combatRowValueFigures}, and for the same reason: a row with a
+     * total says both the total and the rate it rests on, an endless one says the rate alone,
+     * and a row whose figure could not be worked out says `[? · no xp figure]` rather than
+     * printing a zero.
+     *
+     * @param {{perHour: number|null, total: number|null}|null} xp - From {@link combatRowXp} or
+     *   {@link skillingRowXp}
+     * @returns {{text: string, unknown: boolean}|null}
+     */
+    queueXpFigures(xp) {
+        if (!this.queueXpApplies() || !xp) return null;
+        const perHour = Number.isFinite(xp.perHour) ? xp.perHour : null;
+        if (perHour === null) return { text: QUEUE_XP_UNKNOWN_TEXT, unknown: true };
+        const total = Number.isFinite(xp.total) ? xp.total : null;
+        const amount = (value) => formatLargeNumber(Math.round(value));
+        return {
+            text: total === null ? `${amount(perHour)}/hr` : `${amount(total)} (${amount(perHour)}/hr)`,
+            unknown: false,
+        };
+    }
+
+    /**
+     * A combat row's experience, out of the same stored reading that timed it.
+     *
+     * `xpPerHour` is the simulator's total across every skill the fight trains, not a per-skill
+     * breakdown, so the row says one number. It is subject to exactly the freshness and gear
+     * rules the row's profit figure is, because it comes from the same reading. A reading that
+     * carried no XP — a run stored before the field — has no figure, and the panel's total goes
+     * short rather than quietly low.
+     *
+     * @param {Object|null} combat - From {@link estimateCombatQueueRow}
+     * @returns {{perHour: number|null, total: number|null}|null} Null when the row has no
+     *   reading behind it at all
+     */
+    combatRowXp(combat) {
+        if (!combat || combat.rateFlags === null || combat.rateFlags === undefined) return null;
+        return {
+            perHour: Number.isFinite(combat.xpPerHour) ? combat.xpPerHour : null,
+            total: Number.isFinite(combat.xpTotal) ? combat.xpTotal : null,
+        };
+    }
+
+    /**
+     * A skilling row's experience, worked out from game data rather than simulated.
+     *
+     * {@link calculateExpPerHour} is the repo's one answer to "what does this action teach": base
+     * `experienceGain`, every wisdom source (equipment, house rooms, community buff, drinks,
+     * achievements, Moo Pass, personal and guild buffs) plus skill-specific Charm Experience, over
+     * an action time and efficiency that already carry their own buffs. An action the game grants
+     * no `experienceGain` for — alchemy and enhancing, whose XP comes from the item rather than
+     * the action — has no figure here, and says so instead of reading as zero.
+     *
+     * The row's count is completions, the same figure the profit pass spends, so the total is the
+     * per-action XP times it.
+     *
+     * @param {string} actionHrid - The queued action
+     * @param {number} count - Completions this row will perform, 0 when it is endless
+     * @returns {{perHour: number|null, total: number|null}} Never null: a skilling row always
+     *   shows a line, even when that line is the admission that it has no figure
+     */
+    skillingRowXp(actionHrid, count) {
+        try {
+            const expData = calculateExpPerHour(actionHrid);
+            if (!expData || !Number.isFinite(expData.modifiedXP)) return { perHour: null, total: null };
+            const perHour = Number.isFinite(expData.expPerHour) ? expData.expPerHour : null;
+            const actionsCount = Number.isFinite(count) ? count : 0;
+            return { perHour, total: actionsCount > 0 ? expData.modifiedXP * actionsCount : null };
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Working out a queued row’s experience failed:', error);
+            return { perHour: null, total: null };
+        }
+    }
+
+    /**
+     * Draw a row's expected experience, under its profit line.
+     *
+     * Its own line for the reason the profit line is one: the panel is 414px at its widest, and a
+     * figure appended to either of the others would wrap mid-number.
+     *
+     * @param {HTMLElement} actionDiv - The row
+     * @param {{perHour: number|null, total: number|null}|null} xp - From {@link combatRowXp} or
+     *   {@link skillingRowXp}
+     */
+    appendQueueRowXp(actionDiv, xp) {
+        try {
+            const figures = this.queueXpFigures(xp);
+            if (!figures) return;
+            const color = config.getSettingValue('color_info', '#60a5fa');
+            const xpDiv = document.createElement('div');
+            xpDiv.className = 'mwi-queue-action-xp';
+            xpDiv.style.cssText = `
+                color: var(--text-color-secondary, ${config.COLOR_TEXT_SECONDARY});
+                font-size: 0.85em;
+                margin-top: 2px;
+            `;
+            xpDiv.innerHTML = figures.unknown
+                ? `XP: ${figures.text}`
+                : `XP: <span style="color: ${color};">${figures.text}</span>`;
+            xpDiv.title = figures.unknown
+                ? 'No experience figure: this row’s XP could not be worked out — a fight whose stored ' +
+                  'simulation predates the field, or an action the game grants no experience value for.'
+                : 'Estimated, not measured: experience for this row, summed across every skill it trains, ' +
+                  'with wisdom, Charm Experience and efficiency repeats included.';
+            const container = actionDiv.querySelector('[class*="QueuedActions_actionText"]');
+            (container || actionDiv).appendChild(xpDiv);
+        } catch (error) {
+            console.error('[ActionTimeDisplay] Drawing a queued row’s experience failed:', error);
+        }
+    }
+
+    /**
+     * Fold one row's expected experience into the panel's running XP total.
+     *
+     * A row with no total of its own — no figure at all, or a figure with nothing to bound it —
+     * does not contribute a zero. It marks the total incomplete, exactly as the profit total and
+     * the time total already say when a row they sum could not answer.
+     *
+     * @param {{total: number, hasAny: boolean, incomplete: boolean}} tally - Mutated in place
+     * @param {{perHour: number|null, total: number|null}|null} xp - From {@link combatRowXp} or
+     *   {@link skillingRowXp}, or null for a row with nothing behind it
+     */
+    addQueueXp(tally, xp) {
+        if (!tally || !this.queueXpApplies()) return;
+        const total = Number.isFinite(xp?.total) ? xp.total : null;
+        if (total === null) {
+            tally.incomplete = true;
+            return;
+        }
+        tally.total += total;
+        tally.hasAny = true;
+    }
+
+    /**
+     * The panel's Total XP line, or '' when there is nothing to say.
+     *
+     * `+ [?]` for the same reason the other two totals carry it: a total short a row must say so
+     * rather than read low.
+     *
+     * @param {{total: number, hasAny: boolean, incomplete: boolean}} tally - The running XP tally
+     * @returns {string} HTML to append after the total time and total profit lines
+     */
+    queueXpTotalText(tally) {
+        if (!this.queueXpApplies() || !tally?.hasAny) return '';
+        const color = config.getSettingValue('color_info', '#60a5fa');
+        const incomplete = tally.incomplete ? ' + [?]' : '';
+        const amount = formatLargeNumber(Math.round(tally.total));
+        return `<br>Total XP: <span style="color: ${color};">${amount}</span>${incomplete}`;
     }
 
     /**
@@ -4157,6 +4347,12 @@ class ActionTimeDisplay {
             // than adding a zero. A row that runs forever with nothing to bound it marks it the
             // same way, for the same reason.
             const valueTally = { total: 0, hasAny: false, incomplete: false };
+            // The same bookkeeping for experience, kept separately because it is behind its own
+            // setting and because a row can have one figure without the other: a fight's XP comes
+            // from the stored simulation, a skilling row's from game data, and either can be
+            // missing on its own. A row with no XP total marks this tally incomplete rather than
+            // adding a zero, so the footer's Total XP says `+ [?]` instead of reading low.
+            const xpTally = { total: 0, hasAny: false, incomplete: false };
 
             // Detect current action from DOM so we can avoid double-counting
             let currentAction = null;
@@ -4176,6 +4372,7 @@ class ActionTimeDisplay {
                     // A counted fight spends nothing from the ledger, and its value comes from the
                     // same simulated reading its time does rather than from the profit pass below
                     this.addCombatValue(valueTally, currentCombat);
+                    this.addQueueXp(xpTally, this.combatRowXp(currentCombat));
                     if (currentCombat.kind === 'estimate') {
                         accumulatedTime += currentCombat.seconds;
                         hasEstimate = true;
@@ -4318,6 +4515,11 @@ class ActionTimeDisplay {
                     // and a material-limited one still spends what it performs.
                     this.deductQueueActionMaterials(inventoryLookup, actionDetails, currentAction, { count });
 
+                    // The running action has no row of its own in the edit menu, but it is part of
+                    // every total the footer prints, so its experience is folded in here. A count
+                    // of 0 — endless and unbounded — has no total, and marks the tally short.
+                    this.addQueueXp(xpTally, this.skillingRowXp(currentAction.actionHrid, count));
+
                     // Store action for profit calculation (done async after UI renders)
                     // Skip enhancing actions — no profit applies
                     if (actionTimeSeconds > 0 && !isEnhancing) {
@@ -4411,10 +4613,18 @@ class ActionTimeDisplay {
                     this.appendZoneSimLine(actionDiv, actionObj, actionDetails);
                     this.appendCombatRowProfit(actionDiv, combat);
                     this.addCombatValue(valueTally, combat);
+                    const combatXp = this.combatRowXp(combat);
+                    this.appendQueueRowXp(actionDiv, combatXp);
+                    this.addQueueXp(xpTally, combatXp);
                     continue;
                 }
 
                 const isEnhancing = actionDetails.type === '/action_types/enhancing';
+                // A counted fight has already `continue`d above, so this only ever catches a
+                // `Fight ∞` row — whose experience comes from its stored reading, not from
+                // `experienceGain`, which a combat action does not carry
+                const isCombatRow =
+                    actionDetails.type === '/action_types/combat' || actionObj.actionHrid.includes('/combat/');
 
                 // Check if infinite BEFORE calculating count
                 const isInfinite = !actionObj.hasMaxCount || actionObj.actionHrid.includes('/combat/');
@@ -4607,6 +4817,11 @@ class ActionTimeDisplay {
                     if (infiniteCombat) {
                         this.appendCombatRowProfit(actionDiv, infiniteCombat);
                         this.addCombatValue(valueTally, infiniteCombat);
+                        const infiniteXp = this.combatRowXp(infiniteCombat);
+                        this.appendQueueRowXp(actionDiv, infiniteXp);
+                        // A rate with no run to apply it to: the row shows the rate, the total
+                        // goes short, exactly as it does for the profit figure beside it
+                        this.addQueueXp(xpTally, infiniteXp);
                     } else {
                         // Nothing to value this row by, and it never ends: the total says so
                         this.markValueUnbounded(valueTally, actionDetails);
@@ -4637,6 +4852,17 @@ class ActionTimeDisplay {
                     } else {
                         actionDiv.appendChild(profitDiv);
                     }
+                }
+
+                // Every non-combat row's experience, endless ones included, under the profit line
+                // the async pass will fill. It comes from game data rather than from a simulation,
+                // so it is known the moment the row is drawn and needs no second pass. A row that
+                // never ends has a rate but no total, and marks the footer short the way its
+                // profit line already does.
+                if (!isCombatRow) {
+                    const skillXp = this.skillingRowXp(actionObj.actionHrid, isTrulyInfinite ? 0 : count);
+                    this.appendQueueRowXp(actionDiv, skillXp);
+                    this.addQueueXp(xpTally, skillXp);
                 }
             }
 
@@ -4678,7 +4904,12 @@ class ActionTimeDisplay {
                 totalText = `Total time: ${simMark}${timeReadable(accumulatedTime)}`;
             }
 
-            totalDiv.innerHTML = totalText;
+            // Total XP sits under Total profit, and is written here rather than in the async pass
+            // because it needs nothing from the market: a queue with the value line switched off,
+            // or with nothing the market can answer, still shows it.
+            const xpText = this.queueXpTotalText(xpTally);
+
+            totalDiv.innerHTML = totalText + xpText;
 
             // Say why the total is marked when a material limit is the reason (or part of it) —
             // the sim-rate case is already explained on the combat row itself
@@ -4706,7 +4937,8 @@ class ActionTimeDisplay {
                     marketRows ? actionsToCalculate : [],
                     totalText,
                     queueMenu,
-                    valueTally
+                    valueTally,
+                    xpText
                 );
             }
         } catch (error) {
@@ -4729,8 +4961,17 @@ class ActionTimeDisplay {
      *   rows the market pass cannot answer contribute, and whether any row had no figure to
      *   contribute at all — a fight with no simulated rate, or a row that runs forever with
      *   nothing to bound it
+     * @param {string} [xpText] - The already-built Total XP line, rewritten alongside the value
+     *   line so the footer never loses it when this pass replaces the total's markup
      */
-    async calculateAndDisplayTotalProfit(totalDiv, actionsToCalculate, baseText, queueMenu, valueTally = null) {
+    async calculateAndDisplayTotalProfit(
+        totalDiv,
+        actionsToCalculate,
+        baseText,
+        queueMenu,
+        valueTally = null,
+        xpText = ''
+    ) {
         // Generate unique ID for this calculation to prevent race conditions
         const calculationId = Date.now() + Math.random();
         this.activeProfitCalculationId = calculationId;
@@ -4810,7 +5051,7 @@ class ActionTimeDisplay {
                 // way the time total says it: `+ [?]`, not a quietly smaller number
                 const incomplete = valueTally?.incomplete ? ' + [?]' : '';
                 const valueText = `<br>${valueLabel}: <span style="color: ${valueColor};">${valueSign}${formatLargeNumber(Math.abs(Math.round(totalProfit)))}</span>${incomplete}`;
-                totalDiv.innerHTML = baseText + valueText;
+                totalDiv.innerHTML = baseText + valueText + xpText;
             }
         } catch (error) {
             console.warn('[Action Time Display] Error calculating total profit:', error);
