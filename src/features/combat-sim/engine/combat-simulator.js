@@ -867,6 +867,7 @@ class CombatSimulator {
         }
 
         const aliveTargets = targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0);
+        const attackedTargets = new Set();
 
         for (let i = 0; i < aliveTargets.length; i++) {
             let target = aliveTargets[i];
@@ -875,7 +876,9 @@ class CombatSimulator {
                 // before the first pierce: rolling against the stale list can
                 // pick a player this same attack already killed, hitting a
                 // corpse for 0 and counting the death a second time.
-                const liveTargets = aliveTargets.filter((unit) => unit.combatDetails.currentHitpoints > 0);
+                const liveTargets = aliveTargets.filter(
+                    (unit) => unit.combatDetails.currentHitpoints > 0 && !attackedTargets.has(unit)
+                );
                 if (liveTargets.length === 0) {
                     break;
                 }
@@ -904,6 +907,7 @@ class CombatSimulator {
                 // to a damage-over-time tick between the two. Nothing to pierce.
                 break;
             }
+            attackedTargets.add(target);
             let source = event.source;
 
             const parryTarget = this.checkParry(targets);

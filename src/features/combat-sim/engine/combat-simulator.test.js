@@ -883,6 +883,35 @@ describe('pierce does not kill anyone twice', () => {
             setGameData(null);
         }
     });
+
+    test('a surviving high-threat player is not hit twice by one piercing swing', () => {
+        const sim = pierceSwing(7);
+        const [tank, other] = sim.players;
+
+        // Re-run the swing with both players healthy enough to survive it. A
+        // zero-threat second player makes the first threat roll deterministic:
+        // without excluding prior targets, both pierce hits land on the tank.
+        sim.simResult.attacks = {};
+        sim.eventQueue.clear();
+        for (const player of sim.players) {
+            player.combatDetails.maxHitpoints = 1_000_000;
+            player.combatDetails.currentHitpoints = 1_000_000;
+            player.combatDetails.smashEvasionRating = 0;
+        }
+        tank.combatDetails.combatStats.threat = 100;
+        other.combatDetails.combatStats.threat = 0;
+        sim.enemies[0].combatDetails.smashAccuracyRating = 1_000_000;
+
+        sim.processAutoAttackEvent(new AutoAttackEvent(sim.simulationTime, sim.enemies[0]));
+
+        const attemptsAgainst = (player) =>
+            Object.values(sim.simResult.attacks[TOAD_HRID]?.[player.hrid]?.autoAttack ?? {}).reduce(
+                (sum, count) => sum + count,
+                0
+            );
+        expect(attemptsAgainst(tank)).toBe(1);
+        expect(attemptsAgainst(other)).toBe(1);
+    });
 });
 
 /**

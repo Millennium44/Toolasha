@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: one piercing monster swing no longer hits the same player twice
+
+- A monster's piercing auto attack rerolled threat across the whole surviving party after every hit, so a tank who survived the first hit could be picked again by the same swing while a teammate was skipped. Each hit in a swing now lands on a different target.
+
 ### Lab Sim: its runs get the same guards as the combat simulator's
 
 - Labyrinth Single Sim, Upgrade Analysis and Skilling Analysis can no longer preempt one another or start twice from a quick double click, and a character switch or a closed panel abandons a start still waiting on profiles instead of resuming into a rebuilt panel.
