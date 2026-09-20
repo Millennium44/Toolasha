@@ -135,9 +135,18 @@ export function countDungeonChests(lootMap, chests = DUNGEON_CHESTS) {
  *
  * The *magnitude* is borrowed rather than measured: it is the debuff the
  * simulator applies to per-monster drops, and nothing has confirmed a dungeon
- * uses the same number. The structure is right and the multiplier is the best
- * available guess, so callers are given the observed rate alongside it — a
- * multiplier that is wrong shows up as the two disagreeing.
+ * uses the same number. The Game Guide puts the level-gap penalty on experience
+ * and drops without ever naming the reward chest, and the header of
+ * `dungeon-level-gap.js` deliberately declines to guess a chest multiplier. So
+ * the structure is right, the multiplier is an assumption, and callers are given
+ * the observed rate alongside it — a multiplier that is wrong shows up as the
+ * two disagreeing.
+ *
+ * The simulator's own dungeon revenue (`calculateExpectedDrops`) calls this
+ * rather than keeping its own copy of the split. It used to keep one that left
+ * the gap out entirely, so a gapped player was told one thing by this panel and
+ * something up to ten times different by the sim. One assumption in one place is
+ * worth more than two readings of the same unmeasured thing.
  *
  * @param {Object} input - The party and the bonuses
  * @param {number} input.partySize - How many are splitting the reward

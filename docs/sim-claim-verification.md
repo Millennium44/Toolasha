@@ -121,6 +121,22 @@ Two things that remain open, and neither is a measurement of the formula:
 
 The file is also explicit that the chest line is a separate, unmeasured mechanic, and that stays true.
 
+**The dungeon chest multiplier is an assumption, and it is now a shared one. Status: unverified.** Two
+callers scale a dungeon's reward chests: `chestsPerCompletion` in `src/utils/dungeon-chest-luck.js`, behind
+the chest-luck reading, and the dungeon branch of `calculateExpectedDrops` in
+`src/features/combat-sim/combat-sim-adapter.js`, behind the simulator's dungeon revenue. The first applied
+`(1 + levelGap)` and the second did not, so for a gapped player they differed by up to 10x — the panel and
+the Results view describing the same run. The adapter now calls the shared helper, so there is one
+multiplier rather than two.
+
+What that agreement does **not** establish is that the multiplier is right. The Guide puts the penalty on
+experience and drops and never names the reward chest, a dungeon can visibly pay a low-level character
+nothing at all (which a multiplier floored at a tenth cannot produce), and no sample has been taken. The
+value is the monster-drop debuff borrowed for want of a measured one. What would settle it is the chest
+panel's own pair of numbers: it shows the modelled rate beside the observed one for exactly this reason, so
+a gapped player running enough completions to separate 0.1 a run from 1.0 a run answers it. Until then,
+nothing in the fork should quote a dungeon's chest count for a gapped player as anything but an estimate.
+
 ## 5. The four repeating-effect tick intervals
 
 Where: `src/features/combat-sim/engine/combat-simulator.js:122`–`126` — `HOT_TICK_INTERVAL = 5 s`,

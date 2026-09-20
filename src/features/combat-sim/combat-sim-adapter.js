@@ -13,6 +13,7 @@ import { loadoutSnapshot, expectedValueCalculator } from '../../utils/bundle-bri
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
+import { chestsPerCompletion } from '../../utils/dungeon-chest-luck.js';
 import { combatLevel } from '../../utils/combat-level.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
@@ -1270,8 +1271,27 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
             const rewardDropTable = actionDetail?.combatZoneInfo?.dungeonInfo?.rewardDropTable;
 
             if (rewardDropTable) {
-                const baseChestCount = 5;
-                const chestsPerCompletion = (baseChestCount / numberOfPlayers) * (1 + combatDropQuantity);
+                // Through the shared helper rather than a second copy of the
+                // split: `chestsPerCompletion` is what the live chest-luck
+                // reading measures a player against, and the two used to
+                // disagree by the whole of the level-gap term - up to 10x for
+                // a gapped player, who would be told one thing by the panel
+                // and another by the sim.
+                //
+                // That the gap applies to a dungeon's chests at all, and at
+                // this size, is an **assumption, not a measured rule**: the
+                // Game Guide puts the penalty on experience and drops without
+                // naming the reward chest, and the header of
+                // `dungeon-level-gap.js` declines to guess a chest multiplier.
+                // It is shared here so that if the guess is wrong it is wrong
+                // in one place, and the chest-luck panel's observed-versus-
+                // modelled rate is the thing that would show it up. See
+                // `docs/sim-claim-verification.md` claim 4.
+                const perCompletion = chestsPerCompletion({
+                    partySize: numberOfPlayers,
+                    dropQuantity: combatDropQuantity,
+                    levelGap: debuffOnLevelGap,
+                });
 
                 for (const drop of rewardDropTable) {
                     const baseRate = drop.dropRate + (drop.dropRatePerDifficultyTier ?? 0) * difficultyTier;
@@ -1281,7 +1301,7 @@ export function calculateExpectedDrops(simResult, gameData, playerHrid = 'player
                     const avgCount = (drop.minCount + drop.maxCount) / 2;
                     let expected;
                     if (adjustedRate >= 1.0) {
-                        expected = simResult.dungeonsCompleted * chestsPerCompletion * avgCount;
+                        expected = simResult.dungeonsCompleted * perCompletion * avgCount;
                     } else {
                         expected = simResult.dungeonsCompleted * adjustedRate * avgCount;
                     }

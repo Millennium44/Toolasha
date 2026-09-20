@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: a level-gapped player's dungeon chests match what the chest-luck panel says
+
+- The simulator credited a player far below the top of their party a full share of a dungeon's reward chests, while the live chest-luck reading gave them as little as a tenth of one — the same run described two ways. Both now use one figure. Whether the level gap touches dungeon chests at all is still an assumption rather than a measured rule, and the panel's observed rate stays beside the modelled one to show it up.
+
 ### Dungeon ROI board: a solo run is charged every entry key it spends
 
 - The board charged one entry key a run whatever the party size, while crediting the run the five chest shares a solo clear is paid — the game consumes one key per reward chest. Solo dungeon rows were about four keys a run too cheap, and now agree with the simulator's own Results view.

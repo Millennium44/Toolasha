@@ -1,0 +1,100 @@
+/**
+ * `calculateExpectedDrops`: what a simulated run is credited with.
+ *
+ * The arithmetic here is what the Results view's revenue, the dungeon ROI board
+ * and every profit figure downstream are built on, so a term left out of it is
+ * not a rounding error — it is the whole of a cost line or a whole level-gap
+ * penalty.
+ */
+
+import { describe, test, expect, vi } from 'vitest';
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getInitClientData: () => null,
+        getItemDetails: (hrid) => ({ name: hrid.split('/').pop() }),
+        getPartyMembers: () => ({ members: [], source: 'none', updatedAt: 1 }),
+        battleData: null,
+        characterData: null,
+        characterEquipment: new Map(),
+        personalActionTypeBuffsMap: null,
+    },
+}));
+vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => [] } }));
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => null, getSettingValue: (_k, d) => d } }));
+vi.mock('../combat/loadout-snapshot.js', () => ({ default: {} }));
+vi.mock('../../api/marketplace.js', () => ({ default: {} }));
+vi.mock('../market/expected-value-calculator.js', () => ({ default: {} }));
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => ({}) }));
+vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+
+const { calculateExpectedDrops } = await import('./combat-sim-adapter.js');
+
+const DEN = '/actions/combat/chimerical_den';
+const CHEST = '/items/chimerical_chest';
+const TOKEN = '/items/chimerical_token';
+
+/** A dungeon whose table pays a guaranteed chest and a sub-1 token roll. */
+const dungeonGameData = {
+    combatMonsterDetailMap: {},
+    actionDetailMap: {
+        [DEN]: {
+            combatZoneInfo: {
+                dungeonInfo: {
+                    rewardDropTable: [
+                        { itemHrid: CHEST, dropRate: 1, minCount: 1, maxCount: 1 },
+                        { itemHrid: TOKEN, dropRate: 0.5, minCount: 10, maxCount: 10 },
+                    ],
+                },
+            },
+        },
+    },
+};
+
+function dungeonResult(overrides = {}) {
+    return {
+        isDungeon: true,
+        dungeonsCompleted: 10,
+        zoneName: DEN,
+        numberOfPlayers: 5,
+        difficultyTier: 0,
+        dropRateMultiplier: { player1: 1 },
+        rareFindMultiplier: { player1: 1 },
+        combatDropQuantity: { player1: 0 },
+        debuffOnLevelGap: { player1: 0 },
+        deaths: {},
+        ...overrides,
+    };
+}
+
+describe('dungeon chests per completion', () => {
+    test('a five-player split with no bonuses is one chest each', () => {
+        const drops = calculateExpectedDrops(dungeonResult(), dungeonGameData);
+        expect(drops.get(CHEST)).toBeCloseTo(10);
+        // A sub-1 reward rolls at its rate and is not multiplied by the split
+        expect(drops.get(TOKEN)).toBeCloseTo(10 * 0.5 * 10);
+    });
+
+    test('a solo run is paid the whole five shares, raised by the quantity bonus', () => {
+        const drops = calculateExpectedDrops(
+            dungeonResult({ numberOfPlayers: 1, combatDropQuantity: { player1: 0.295 } }),
+            dungeonGameData
+        );
+        expect(drops.get(CHEST)).toBeCloseTo(10 * 5 * 1.295);
+    });
+
+    test('the level gap cuts the chest count, the same way the chest-luck reading does', () => {
+        // The adapter used to leave `debuffOnLevelGap` out of the dungeon
+        // branch entirely, so the sim credited a gapped player a full share
+        // while `chestsPerCompletion` — the same figure the live chest-luck
+        // panel measures them against — gave a tenth of one. Both now go
+        // through that one helper.
+        //
+        // The multiplier itself is an assumption rather than a measured rule;
+        // see the comment at the call site and claim 4 of
+        // docs/sim-claim-verification.md. What this test pins is that the two
+        // callers cannot disagree about it.
+        const drops = calculateExpectedDrops(dungeonResult({ debuffOnLevelGap: { player1: -0.9 } }), dungeonGameData);
+        expect(drops.get(CHEST)).toBeCloseTo(10 * 0.1, 10);
+    });
+});
