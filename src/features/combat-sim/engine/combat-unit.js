@@ -645,13 +645,23 @@ class CombatUnit {
         this.updateCombatDetails();
     }
 
-    clearCCs() {
+    /**
+     * Drop the three crowd-control statuses and the expiry times that go with
+     * them. Split out from `clearCCs` because a caller that deliberately keeps
+     * the unit's buffs must not touch `damageTaken`, which is not a status of
+     * its own but derived state recomputed from the curse buff.
+     */
+    clearCCStatuses() {
         this.isStunned = false;
         this.stunExpireTime = null;
         this.isSilenced = false;
         this.silenceExpireTime = null;
         this.isBlinded = false;
         this.blindExpireTime = null;
+    }
+
+    clearCCs() {
+        this.clearCCStatuses();
         this.combatDetails.combatStats.damageTaken = 0;
     }
 

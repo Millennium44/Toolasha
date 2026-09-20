@@ -20,7 +20,7 @@ Status vocabulary:
 
 ## 1. A stun runs its full length even when its caster dies first
 
-Where: `src/features/combat-sim/engine/combat-simulator.js:1934` stores `isStunned` and `stunExpireTime`
+Where: `src/features/combat-sim/engine/combat-simulator.js:1957` stores `isStunned` and `stunExpireTime`
 on the **target**; nothing prunes either when the caster dies.
 
 **Status: instrumented (stun only).** `src/features/combat/stun-persistence.js` and its observer measure
@@ -36,15 +36,32 @@ covering the other two.
 ## 2. A player who died while stunned does not come back stunned when the dungeon clears
 
 Where: the dungeon-completion branch of `startNewEncounter`,
-`src/features/combat-sim/engine/combat-simulator.js:640`–`653`.
+`src/features/combat-sim/engine/combat-simulator.js:642`–`676`.
 
-**Status: unverified, and code reading now disputes it.** The branch restores hitpoints and manapoints and
-re-arms buff expirations for a player who was down. It does **not** call `clearCCs()`. The engine's two
-other revival paths both do — `processPlayerRespawnEvent` (`:527`) calls it directly, and the wipe restart
-reaches it through `CombatUnit.reset()` (`combat-unit.js:668`). Nothing clears `isStunned` on death, and
-dying drops the unit's queued `StunExpirationEvent` with `clearEventsForUnit`, so on this one path a stun
-looks able to survive the revival. **This needs deciding on its own merits; it is listed here as a
-disputed claim, not as a fix.**
+**Status: was false; fixed, and now pinned by tests.** The dispute recorded here was right. The branch
+restored hitpoints and manapoints and re-armed buff expirations for a player who was down, and did not
+touch crowd control. Dying sweeps every event naming the unit, `StunExpirationEvent` among them, and
+nothing at death lowers `isStunned` — so a player stunned, killed and then stood up by the clear stayed
+stunned with no event left that could ever lift it. The same held for blind and silence. It was not the
+flag alone: a stuck stun or silence fails `shouldTrigger`, so that player never casts an ability or takes
+a consumable again; a stuck blind sends `addNextAttackEvent` down its else branch, which queues nothing,
+so that player stops attacking entirely for the rest of the run.
+
+The branch now calls `clearCCStatuses()` for a player who `wasDown`, alongside the existing
+`removeExpiredBuffs()` / `_rescheduleBuffExpirations()`. Only for one who was down: a player still standing
+at the clear may be inside a stun that is behaving correctly, with its expiration event intact, and
+cancelling that would be the opposite bug. Statuses only rather than `clearCCs()`, because that also zeroes
+`damageTaken`, which is not a status but the curse buff's folded value — and this branch keeps buffs on
+purpose, so zeroing it would leave the stat disagreeing with the buff behind it until the next
+`updateCombatDetails` quietly restored it. `clearCCs()` is now that helper plus the `damageTaken` reset, so
+the three revival paths that do want both are unchanged.
+
+Covered by `crowd control does not survive a dungeon-clear revive` in `combat-simulator.test.js`: each of
+the three statuses cleared with no stale expiry time, a still-standing player's running stun and its queued
+expiration left alone, the curse amplification left alone, and — the assertion a flag check would have
+missed — the revived player holding an `AutoAttackEvent` afterwards rather than merely reading as unblinded.
+
+This entry no longer needs a live measurement to settle; the note below is kept for the record.
 
 Measurable from the live stream: yes.
 
@@ -65,8 +82,8 @@ against the first tick that reports that subject alive again.
 
 ## 3. A wave cleared by the same swing that kills the last player restarts the dungeon
 
-Where: `checkEncounterEnd`, `src/features/combat-sim/engine/combat-simulator.js:1012` reads
-`allPlayersDown` before the branches, and `:1037` routes the both-at-once case to the wipe branch so that
+Where: `checkEncounterEnd`, `src/features/combat-sim/engine/combat-simulator.js:1035` reads
+`allPlayersDown` before the branches, and `:1060` routes the both-at-once case to the wipe branch so that
 the two do not both do their accounting.
 
 **Status: measurable, not measured.**

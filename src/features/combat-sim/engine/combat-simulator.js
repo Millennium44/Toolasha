@@ -726,10 +726,33 @@ class CombatSimulator {
                     // their feet — a revive by another name, so it owes the same
                     // re-arming a cast revive does. Their expiry checks went with
                     // them when they died and nothing else prunes a buff.
+                    //
+                    // The crowd control they were under owes the same debt, and
+                    // for the same reason. Death sweeps every event naming the
+                    // unit, which takes the stun, blind and silence expirations
+                    // with it, and nothing at death lowers the flags those
+                    // events exist to lower. Stand a player up still carrying
+                    // one and there is no longer any event that could ever lift
+                    // it: stunned or silenced, they never cast or eat again;
+                    // blinded, `addNextAttackEvent` queues them nothing at all
+                    // and they simply stop fighting for the rest of the run.
+                    //
+                    // Only for a player who was down. One still standing at the
+                    // clear may be inside a stun that is doing exactly what it
+                    // should, with its expiration event intact on the queue —
+                    // cancelling that would be the opposite bug.
+                    //
+                    // Statuses only, not `clearCCs`: that also zeroes
+                    // `damageTaken`, which is not a status but the curse buff's
+                    // folded value, recomputed by `updateCombatDetails` from a
+                    // buff this branch deliberately keeps. Zeroing it here would
+                    // desynchronize the two until the next recompute quietly put
+                    // it back.
                     const wasDown = this.players[i].combatDetails.currentHitpoints <= 0;
                     this.players[i].combatDetails.currentHitpoints = this.players[i].combatDetails.maxHitpoints;
                     this.players[i].combatDetails.currentManapoints = this.players[i].combatDetails.maxManapoints;
                     if (wasDown) {
+                        this.players[i].clearCCStatuses();
                         this.players[i].removeExpiredBuffs(this.simulationTime);
                         this._rescheduleBuffExpirations(this.players[i]);
                     }

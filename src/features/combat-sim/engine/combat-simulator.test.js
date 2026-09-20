@@ -20,9 +20,12 @@ import { describe, test, expect, afterEach } from 'vitest';
 import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
 import CombatUtilities from './combat-utilities.js';
 import AutoAttackEvent from './events/auto-attack-event.js';
+import BlindExpirationEvent from './events/blind-expiration-event.js';
 import CombatStartEvent from './events/combat-start-event.js';
 import DamageOverTimeEvent from './events/damage-over-time-event.js';
 import EnemyRespawnEvent from './events/enemy-respawn-event.js';
+import SilenceExpirationEvent from './events/silence-expiration-event.js';
+import StunExpirationEvent from './events/stun-expiration-event.js';
 import { getGameData, setGameData } from './game-data.js';
 import Labyrinth from './labyrinth.js';
 import Monster from './monster.js';
@@ -1550,5 +1553,227 @@ describe('a wave transition and the swings that cross it', () => {
             expect(gap.rearm).not.toBeNull();
             expect(gap.rearm - gap.killedAt).toBeCloseTo(attackInterval, 0);
         }
+    });
+});
+
+/**
+ * Crowd control across a dungeon clear.
+ *
+ * Dying sweeps every event that names the unit, which takes the stun, blind and
+ * silence expirations with it, and nothing at death lowers the flags those
+ * events exist to lower. The dungeon clear then stands the body up. If it does
+ * not lower them itself, nothing ever will: there is no event left that could.
+ *
+ * The flags are not symmetrical in how they disable a player, so the tests are
+ * not either. A stuck stun or silence blocks `shouldTrigger`, so abilities and
+ * consumables stop forever while autos carry on; a stuck blind sends
+ * `addNextAttackEvent` down its else branch, which queues nothing at all — that
+ * one is a player who simply stops fighting, which is why the "can they still
+ * act" assertion below is written against blind.
+ */
+describe('crowd control does not survive a dungeon-clear revive', () => {
+    const DUNGEON_HRID = '/actions/combat/golden_oubliette';
+
+    /** A two-wave dungeon of fixed rosters — the wave draw is not what is under test. */
+    function installDungeon() {
+        installGameData();
+        getGameData().actionDetailMap[DUNGEON_HRID] = {
+            buffs: null,
+            combatZoneInfo: {
+                isDungeon: true,
+                fightInfo: { bossSpawns: null },
+                dungeonInfo: {
+                    maxWaves: 2,
+                    fixedSpawnsMap: {
+                        1: [{ combatMonsterHrid: RAT_HRID, difficultyTier: 0 }],
+                        2: [{ combatMonsterHrid: TOAD_HRID, difficultyTier: 0 }],
+                    },
+                    randomSpawnInfoMap: null,
+                },
+            },
+        };
+    }
+
+    /**
+     * A seeded dungeon sim with `count` players, one second into the run.
+     * @param {number} count - Party size
+     * @returns {{sim: CombatSimulator, zone: Zone, players: Player[]}}
+     */
+    function party(count) {
+        installDungeon();
+        seedSimRng(11);
+        const zone = new Zone(DUNGEON_HRID, 0);
+        const players = Array.from({ length: count }, (_, i) => {
+            const player = fixturePlayer();
+            player.hrid = 'player' + (i + 1);
+            player.zoneBuffs = zone.buffs;
+            player.extraBuffs = [];
+            return player;
+        });
+        const sim = new CombatSimulator(players, zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        players.forEach((player) => player.reset(sim.simulationTime));
+        return { sim, zone, players };
+    }
+
+    /**
+     * Wrap the wave counter past maxWaves and spawn, which is the clear.
+     * @param {CombatSimulator} sim - The simulator to advance
+     * @param {Zone} zone - Its zone
+     */
+    function clearTheDungeon(sim, zone) {
+        zone.encountersKilled = 3;
+        sim.enemies = null;
+        sim.simulationTime += ONE_SECOND;
+        sim.startNewEncounter();
+        expect(zone.dungeonsCompleted).toBe(1);
+    }
+
+    /**
+     * Kill a player the way the engine does: zero them and sweep their events,
+     * their queued crowd-control expiration among them.
+     * @param {CombatSimulator} sim - The simulator holding the queue
+     * @param {Object} victim - The player to put down
+     */
+    function kill(sim, victim) {
+        victim.combatDetails.currentHitpoints = 0;
+        sim.eventQueue.clearEventsForUnit(victim);
+    }
+
+    /**
+     * Events of one type standing for one unit.
+     * @param {CombatSimulator} sim - The simulator to read
+     * @param {string} type - The event type
+     * @param {Object} unit - The unit the events must name
+     * @returns {Object[]} The matching events
+     */
+    function eventsFor(sim, type, unit) {
+        return sim.eventQueue.minHeap.data.filter((event) => event.type === type && event.source === unit);
+    }
+
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('a player stunned, then killed, is not still stunned after the clear', () => {
+        const { sim, zone, players } = party(2);
+        const victim = players[1];
+
+        victim.isStunned = true;
+        victim.stunExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        sim.eventQueue.addEvent(new StunExpirationEvent(victim.stunExpireTime, victim));
+
+        kill(sim, victim);
+        expect(eventsFor(sim, StunExpirationEvent.type, victim)).toEqual([]);
+
+        clearTheDungeon(sim, zone);
+
+        expect(victim.combatDetails.currentHitpoints).toBe(victim.combatDetails.maxHitpoints);
+        expect(victim.isStunned).toBe(false);
+        // Not merely lowered: no stale time left behind either. A trigger reads
+        // `stunExpireTime === currentTime`, so a stale one is a live landmine.
+        expect(victim.stunExpireTime).toBeNull();
+    });
+
+    test('a player blinded, then killed, is not still blinded after the clear', () => {
+        const { sim, zone, players } = party(2);
+        const victim = players[1];
+
+        victim.isBlinded = true;
+        victim.blindExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        sim.eventQueue.addEvent(new BlindExpirationEvent(victim.blindExpireTime, victim));
+
+        kill(sim, victim);
+        clearTheDungeon(sim, zone);
+
+        expect(victim.isBlinded).toBe(false);
+        expect(victim.blindExpireTime).toBeNull();
+    });
+
+    test('a player silenced, then killed, is not still silenced after the clear', () => {
+        const { sim, zone, players } = party(2);
+        const victim = players[1];
+
+        victim.isSilenced = true;
+        victim.silenceExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        sim.eventQueue.addEvent(new SilenceExpirationEvent(victim.silenceExpireTime, victim));
+
+        kill(sim, victim);
+        clearTheDungeon(sim, zone);
+
+        expect(victim.isSilenced).toBe(false);
+        expect(victim.silenceExpireTime).toBeNull();
+    });
+
+    test('the revived player can actually act on the next wave, not merely read as free', () => {
+        // Blind is the flag that proves it. A lowered `isBlinded` and a queued
+        // swing are two different things: `addNextAttackEvent` queues nothing
+        // while the flag is up, so a half-fix that only lowered flags after
+        // `startAttacks` had already run would pass the assertions above and
+        // still leave this player standing there doing nothing.
+        const { sim, zone, players } = party(2);
+        const victim = players[1];
+
+        victim.isBlinded = true;
+        victim.blindExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        sim.eventQueue.addEvent(new BlindExpirationEvent(victim.blindExpireTime, victim));
+
+        kill(sim, victim);
+        clearTheDungeon(sim, zone);
+
+        expect(eventsFor(sim, AutoAttackEvent.type, victim).length).toBe(1);
+        expect(victim.isOutOfMana).toBe(false);
+    });
+
+    test('a player still standing keeps the stun that is legitimately running', () => {
+        const { sim, zone, players } = party(2);
+        const [standing, victim] = players;
+
+        standing.isStunned = true;
+        standing.stunExpireTime = sim.simulationTime + 30 * ONE_SECOND;
+        sim.eventQueue.addEvent(new StunExpirationEvent(standing.stunExpireTime, standing));
+        const expireTime = standing.stunExpireTime;
+
+        // Somebody has to be down, or the revive branch is not exercised at all
+        kill(sim, victim);
+        clearTheDungeon(sim, zone);
+
+        expect(standing.isStunned).toBe(true);
+        expect(standing.stunExpireTime).toBe(expireTime);
+        expect(eventsFor(sim, StunExpirationEvent.type, standing).map((event) => event.time)).toEqual([expireTime]);
+    });
+
+    test('the clear does not quietly cancel a curse the revived player is carrying', () => {
+        // `clearCCs` would have: it zeroes `damageTaken`, which is not a status
+        // but the folded value of a buff this branch keeps on purpose. Zeroed
+        // here, it would come back at the next `updateCombatDetails` — a stat
+        // that disagrees with the buff behind it, for an interval nobody set.
+        const { sim, zone, players } = party(2);
+        const victim = players[1];
+
+        victim.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/curse',
+                typeHrid: '/buff_types/damage_taken',
+                ratioBoost: 0,
+                ratioBoostLevelBonus: 0,
+                flatBoost: 0.25,
+                flatBoostLevelBonus: 0,
+                duration: 15000000000,
+            },
+            sim.simulationTime
+        );
+        expect(victim.combatDetails.combatStats.damageTaken).toBeCloseTo(0.25, 10);
+
+        victim.isStunned = true;
+        victim.stunExpireTime = sim.simulationTime + 3 * ONE_SECOND;
+        kill(sim, victim);
+        clearTheDungeon(sim, zone);
+
+        expect(victim.isStunned).toBe(false);
+        expect(victim.combatBuffs['/buff_uniques/curse']).toBeDefined();
+        expect(victim.combatDetails.combatStats.damageTaken).toBeCloseTo(0.25, 10);
     });
 });

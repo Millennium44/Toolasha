@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim: a party member killed while stunned came back from a dungeon clear still disabled
+
+- Clearing the dungeon stood a downed player up at full health but left the stun, blind or silence they died under in place with nothing left to ever lift it, so simulated runs could carry a permanently crippled party member — one who never casts or eats again, or in the case of blind stops attacking entirely — quietly understating every number after the first clear.
+
 ### Combat Sim: a simulated task now finishes
 
 - On-task task damage stops once the run has killed as many of that monster as the task still needs — every task on the board counting down on its own, and per player in a party — so a day-long run against a two-hour task no longer reads as though the bonus lasted all day, and the results say where each task ran out.
