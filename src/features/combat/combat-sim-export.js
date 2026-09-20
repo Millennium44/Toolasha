@@ -38,7 +38,8 @@ export function getLastBridgeIssue() {
  * Reads the namespaced `${key}_meta` sibling key written by websocket.js's saveCombatSimData
  * (kept separate from the payload so the external Shykai sim page, which reads the raw payload
  * key directly, is unaffected by this check). A value with no stamp at all is a legacy write
- * from before this feature existed — it is accepted, just noted as unverified. A value whose
+ * from before this feature existed — it is accepted, just noted as unverified. A present but
+ * malformed stamp cannot prove ownership and is refused for character-specific reads. A value whose
  * `writtenAt` is older than BRIDGE_STALE_MS only gets a console warning. A value stamped for a
  * different character than the one active on this tab is refused when `enforceOwner` is true.
  * @param {string} key - Base GM key, e.g. 'toolasha_init_character_data'
@@ -51,17 +52,31 @@ export function checkBridgeStamp(key, label, { enforceOwner }) {
 
     if (typeof GM_getValue === 'undefined') return true;
 
-    let meta = null;
+    let raw = null;
     try {
-        const raw = GM_getValue(`${key}_meta`, null);
-        if (raw) meta = JSON.parse(raw);
+        raw = GM_getValue(`${key}_meta`, null);
     } catch {
-        meta = null;
+        raw = null;
     }
 
-    if (!meta || !meta.characterId) {
+    if (!raw) {
         console.warn(`[Combat Sim Export] ${label} has no ownership stamp (legacy, unverified) — using it as-is.`);
         return true;
+    }
+
+    let meta = null;
+    try {
+        meta = JSON.parse(raw);
+    } catch {
+        // Handled below with other malformed stamp shapes.
+    }
+
+    if (!meta || typeof meta !== 'object' || !meta.characterId) {
+        const issue = `${label} has a corrupt ownership stamp — re-focus the game tab so Toolasha can refresh it.`;
+        console.warn(`[Combat Sim Export] ${issue}`);
+        if (!enforceOwner) return true;
+        lastBridgeIssue = issue;
+        return false;
     }
 
     if (typeof meta.writtenAt === 'number' && Date.now() - meta.writtenAt > BRIDGE_STALE_MS) {
