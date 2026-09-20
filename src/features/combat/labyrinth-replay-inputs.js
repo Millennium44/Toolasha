@@ -62,6 +62,23 @@ function buildKey(inputs) {
     return JSON.stringify(stable({ ...inputs, playerDTO }));
 }
 
+/**
+ * A concise reference for matching a comparison to its saved build. The short
+ * hash is only a display label; cohorts still use the full key, so a hash
+ * collision cannot combine fights. Names come from the current game data.
+ */
+export function replayBuildSummary(inputs, itemDetailMap = {}) {
+    const key = buildKey(inputs);
+    let hash = 5381;
+    for (let i = 0; i < key.length; i++) hash = (Math.imul(hash, 33) ^ key.charCodeAt(i)) >>> 0;
+    const id = hash.toString(16).padStart(8, '0');
+    const equipment = inputs.playerDTO.equipment;
+    const weapon = equipment?.['/equipment_types/main_hand'] || equipment?.['/equipment_types/two_hand'];
+    const name = weapon ? itemDetailMap?.[weapon.hrid]?.name || 'Equipped weapon' : 'Unarmed';
+    const enhancement = Math.max(0, Math.floor(Number(weapon?.enhancementLevel) || 0));
+    return { id, label: `Build ${id} · ${name}${enhancement > 0 ? ` +${enhancement}` : ''}` };
+}
+
 /** Keep distinct recorded builds separate and explain every eligibility filter. */
 export function replayCandidates(attempts, fingerprint) {
     const cohorts = new Map();

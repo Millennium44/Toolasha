@@ -34,7 +34,7 @@ import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
-import { copyReplayInputs, replayCandidates } from './labyrinth-replay-inputs.js';
+import { copyReplayInputs, replayCandidates, replayBuildSummary } from './labyrinth-replay-inputs.js';
 
 /**
  * The zone a probe fight nominally happens in when the real one is not a zone.
@@ -747,9 +747,10 @@ export const simCacheMethods = {
                     continue;
                 }
                 const dto = saved.playerDTO;
+                const gameData = buildGameDataPayload();
 
                 const simResult = await runLabyrinthSimulation({
-                    gameData: buildGameDataPayload(),
+                    gameData,
                     playerDTOs: [dto],
                     zoneHrid: '/actions/combat/fly',
                     monsterHrid: group.monsterHrid,
@@ -771,7 +772,11 @@ export const simCacheMethods = {
                     continue;
                 }
 
-                groups.push({ ...compareLab(group, predicted), inputSource: inputs ? 'recorded' : 'current' });
+                groups.push({
+                    ...compareLab(group, predicted),
+                    inputSource: inputs ? 'recorded' : 'current',
+                    build: replayBuildSummary(saved, gameData?.itemDetailMap),
+                });
             } catch (error) {
                 diagnostics.failedGroups++;
                 console.error('[LabyrinthSimCache] Replaying a recorded room failed:', error);

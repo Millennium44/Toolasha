@@ -2398,6 +2398,7 @@ class LabyrinthRoomLogs {
                 group.clears
             } cleared`;
             box.appendChild(head);
+            if (group.build?.label) box.appendChild(this.makeNote(group.build.label));
 
             const diag = document.createElement('div');
             diag.style.cssText = 'color:#d7e6ff; margin-bottom:3px;';

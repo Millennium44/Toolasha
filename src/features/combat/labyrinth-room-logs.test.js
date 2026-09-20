@@ -304,6 +304,28 @@ describe('the sim accuracy list opens a room type at a time', () => {
         expect(card.textContent).not.toContain('keep going and check back');
     });
 
+    test('replay distinguishes historical builds for otherwise identical room groups', () => {
+        const roomGroup = {
+            monsterHrid: '/monsters/cyclops',
+            monsterName: 'Cyclops',
+            roomLevel: 200,
+            fights: 5,
+            clears: 3,
+            metrics: [],
+            inputSource: 'recorded',
+            diagnosis: 'Observed and predicted line up within noise.',
+        };
+        const card = labyrinthRoomLogs.renderReplayResult({
+            groups: [
+                { ...roomGroup, build: { id: 'd5132a01', label: 'Build d5132a01 · Steel Sword +7' } },
+                { ...roomGroup, build: { id: 'c6168b02', label: 'Build c6168b02 · Steel Sword +9' } },
+            ],
+        });
+        expect(card.textContent).toContain('Build d5132a01 · Steel Sword +7');
+        expect(card.textContent).toContain('Build c6168b02 · Steel Sword +9');
+        expect(card.textContent.match(/Cyclops · lvl 200 · 5 fights, 3 cleared/g)).toHaveLength(2);
+    });
+
     test('Replay remains available when stored fights no longer match the current build', () => {
         const button = document.createElement('button');
         labyrinthRoomLogs.replayButton = button;

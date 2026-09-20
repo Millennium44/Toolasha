@@ -41,7 +41,7 @@ vi.mock('../../core/storage.js', () => ({
  *  client's data sheet has arrived, which is a state the sim must not run in */
 const adapter = vi.hoisted(() => ({ gameData: {}, playerDTO: { hrid: 'player1' } }));
 /** Every call the mocked runner received, so "never asked the worker" is testable */
-const simRuns = vi.hoisted(() => ({ list: [] }));
+const simRuns = vi.hoisted(() => ({ list: [], result: {} }));
 
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => adapter.gameData,
@@ -51,7 +51,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runLabyrinthSimulation: async (options) => {
         simRuns.list.push(options);
-        return {};
+        return simRuns.result;
     },
     runBlindBuffProbe: async () => [],
     runPlayerStatProbe: async () => null,
@@ -177,10 +177,53 @@ test('replay uses historical room inputs after the current build changes and rep
     }
 });
 
+test('replay exports a distinct named build reference for each historical build', async () => {
+    adapter.gameData = { itemDetailMap: { '/items/steel_sword': { name: 'Steel Sword' } } };
+    simRuns.result = { simulatedTime: 20e9, labyAttemptCount: 1, encounters: 1 };
+    const attempts = [7, 9].map((enhancementLevel) => ({
+        monsterHrid: '/monsters/fly',
+        seconds: 20,
+        roomLevel: 10,
+        outcome: 'clear',
+        complete: true,
+        cleared: true,
+        playerMaxHp: 100,
+        playerHpStart: 100,
+        replayInputs: {
+            version: 1,
+            playerDTO: {
+                hrid: 'player1',
+                equipment: { '/equipment_types/main_hand': { hrid: '/items/steel_sword', enhancementLevel } },
+            },
+            crates: [],
+            communityBuffs: {},
+            labyrinthCombatBuffs: [],
+            fullAbilities: true,
+        },
+    }));
+    const spy = vi.spyOn(labFightRecorder, 'recordedAttempts').mockReturnValue(attempts);
+    try {
+        const result = await simCacheMethods.replayRecordedFights.call({
+            _snapshotContentFingerprint: () => 'new',
+            getSimHours: () => 1,
+            getSimStopRule: () => ({ maxTrials: 10 }),
+        });
+        const builds = result.groups.map((group) => group.build);
+        expect(builds).toHaveLength(2);
+        expect(new Set(builds.map((build) => build.id)).size).toBe(2);
+        expect(builds[0].label).toContain('Steel Sword +7');
+        expect(builds[1].label).toContain('Steel Sword +9');
+        expect(JSON.stringify(builds)).not.toContain('/items/');
+    } finally {
+        spy.mockRestore();
+    }
+});
+
 afterEach(() => {
     settings.map.clear();
     storageWrites.list = [];
     simRuns.list = [];
+    simRuns.result = {};
     adapter.gameData = {};
     adapter.playerDTO = { hrid: 'player1' };
 });

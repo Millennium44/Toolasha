@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { copyReplayInputs, replayCandidates } from './labyrinth-replay-inputs.js';
+import { copyReplayInputs, replayCandidates, replayBuildSummary } from './labyrinth-replay-inputs.js';
 import { FINGERPRINT_VERSION } from './labyrinth-fingerprint.js';
 
 const inputs = (level = 10) => ({
@@ -28,6 +28,23 @@ const fight = (extra = {}) => ({
 });
 
 describe('recorded replay builds', () => {
+    test('build references stay stable for equivalent inputs and reveal only a short weapon description', () => {
+        const original = inputs();
+        original.playerDTO.equipment = {
+            '/equipment_types/two_hand': { hrid: '/items/steel_sword', enhancementLevel: 7 },
+        };
+        const metadataOnly = structuredClone(original);
+        metadataOnly.playerDTO.food = [{ hrid: '/items/apple' }];
+        metadataOnly.playerDTO.tokenUpgrades = { speed: 2 };
+        const items = { '/items/steel_sword': { name: 'Steel Sword' } };
+        const summary = replayBuildSummary(original, items);
+        expect(replayBuildSummary(metadataOnly, items)).toEqual(summary);
+        expect(summary.label).toBe(`Build ${summary.id} · Steel Sword +7`);
+        expect(JSON.stringify(summary)).not.toContain('/items/');
+        const different = structuredClone(original);
+        different.playerDTO.abilities = [{ hrid: '/abilities/slash', level: 1 }];
+        expect(replayBuildSummary(different, items).id).not.toBe(summary.id);
+    });
     test('noncombat DTO metadata does not split a build while resolved combat buffs still do', () => {
         const original = inputs();
         original.playerDTO.tokenUpgrades = { speed: 1, experience: 1 };
