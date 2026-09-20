@@ -288,7 +288,7 @@ describe('recording for longer than the buffer holds', () => {
     test('a hard-cap split is not counted as a complete fight or allowed to satisfy the target', () => {
         recorder.startRecording({ target: { value: 2, unit: 'fights' } });
         fight(1);
-        // This boundary banks one complete fight; the next battle then exceeds
+        // This boundary closes one complete fight; the next battle then exceeds
         // the hard cap before its closing boundary can be kept beside its opening.
         fight(8000);
         expect(recorder.recordingStatus().segments).toBe(2);
