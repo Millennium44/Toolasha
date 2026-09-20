@@ -23,7 +23,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ handlers: new Map() }));
+const game = vi.hoisted(() => ({ handlers: new Map(), snapshots: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: { Z_FLOATING_PANEL: 1000 },
@@ -52,7 +52,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
 }));
 
 vi.mock('./queue-snapshot.js', () => ({
-    default: { getOtherCharacterSnapshots: () => [] },
+    default: { getOtherCharacterSnapshots: () => game.snapshots },
 }));
 
 const { default: queueMonitorUI } = await import('./queue-monitor-ui.js');
@@ -60,7 +60,46 @@ const { default: queueMonitorUI } = await import('./queue-monitor-ui.js');
 beforeEach(() => {
     document.body.innerHTML = '';
     game.handlers.clear();
+    game.snapshots = [];
     vi.useFakeTimers();
+});
+
+describe('snapshot freshness', () => {
+    test('shows how recently each character snapshot was captured', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Cow',
+                timestamp: Date.now() - 12 * 60 * 1000,
+                totalQueueSeconds: 3600,
+                hasInfiniteAction: false,
+                actions: [{ actionName: 'Milking', estimatedSeconds: 3600, isInfinite: false }],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.querySelector('.toolasha-qm-age')?.textContent).toBe('Updated 12m ago');
+    });
+
+    test('marks old snapshots as stale while retaining their precise age', async () => {
+        vi.setSystemTime(new Date('2026-09-20T12:00:00Z'));
+        game.snapshots = [
+            {
+                characterId: 'other',
+                characterName: 'Alt Cow',
+                timestamp: Date.now() - 26 * 60 * 60 * 1000,
+                totalQueueSeconds: 3600,
+                hasInfiniteAction: false,
+                actions: [],
+            },
+        ];
+
+        await queueMonitorUI.initialize();
+
+        expect(document.querySelector('.toolasha-qm-age')?.textContent).toBe('Updated 1d 2h ago · stale');
+    });
 });
 
 afterEach(() => {
