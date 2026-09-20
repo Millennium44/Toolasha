@@ -41,15 +41,41 @@
  *   with nowhere to put its mana looks exactly like food, and that ambiguity is
  *   a discard rather than a guess.
  *
- * ## What that leaves unanswerable, and why the panel says so
+ * ## Damage over time is settled, and the answer is that it cannot be measured
  *
  * Damage over time has no positive signature; it is a health fall that nothing
- * else explains. If the server counts a tick of it in `dmgCounter` the same way
- * it counts a swing, there is nothing here to separate the two and this tool
- * cannot measure it at all. So every health fall is classified and counted:
- * falls attributed to a swing, and falls with nothing behind them. A category
- * with no observations and a large attributed count is a stated result — "not
- * resolvable from what the server sends" — and not an empty row.
+ * else explains. The question was whether the server counts a tick of it in
+ * `dmgCounter` the same way it counts a swing, and a run made to answer it — a
+ * fire mage, damage over time landing throughout — produced 539 health falls,
+ * every one of them attributed to a `dmgCounter` move and none unattributed.
+ * So a tick raises the target's damage counter exactly as a hit does, the wire
+ * carries no discriminator between them, and `DOT_TICK_INTERVAL` is not
+ * measurable from this stream by any means. The falls are still classified and
+ * counted, because that count is the evidence; the row states the finding
+ * rather than waiting for a sample that cannot exist.
+ *
+ * ## Recovery is timed per effect, not per meal
+ *
+ * The heal-over-time constant is the rate an *already-running* recovery ticks
+ * at. Gaps between separate eats are not that: consumables fire on missing-HP
+ * and missing-MP triggers, so those gaps are set by when the player happens to
+ * need food and run to minutes of not eating. Measured that way the sample was
+ * nonsense — 8 s, 142 s, 25 s, 42 s, 10 s, 10 s, 68 s — with the two genuine
+ * 10 s readings buried among gaps between meals, and no amount of extra sample
+ * would have fixed a quantity that was the wrong quantity.
+ *
+ * So an interval counts only when the *same* recovery effect was still on the
+ * unit at both ends, identified from its `combatBuffMap` entry by unique hrid
+ * and start time: a fresh eat starts a new instance and never chains onto the
+ * last tick of the old one. What that entry is called is read off the wire
+ * rather than borrowed from the engine, which invents names the server has
+ * never sent — Fury is `/buff_uniques/fury_*` with a plain `/buff_types/*`
+ * type, and anything assuming a matching type name would have missed it. A
+ * short-lived instance whose hrid names healing, recovery or regeneration is
+ * what qualifies; a loadout drink or a permanent passive is minutes or endless
+ * and is excluded by that, so it can never bridge two meals. An interval with
+ * no such instance shared across both ends is discarded and counted as
+ * discarded, which is why the row can shrink to nothing and say so.
  *
  * ## What the intervals are measured with
  *
@@ -105,7 +131,8 @@ export const EFFECT_SPECS = [
         minObservations: 20,
         signature:
             'One resource rising on a quiet unit while the other is known to be below its maximum, on a tick ' +
-            'where nothing named an ability.',
+            'where nothing named an ability, with the same recovery effect still on the unit as at the ' +
+            'previous tick.',
     },
     {
         key: EFFECTS.dot,
@@ -113,6 +140,11 @@ export const EFFECT_SPECS = [
         assumedMs: 3_000,
         minObservations: 20,
         signature: 'Hitpoints falling on a unit whose damage counter did not move, so no swing resolved on it.',
+        settled:
+            'Settled: not measurable from this stream. A run made to answer it — a fire mage with damage ' +
+            'over time landing throughout — produced 539 health falls, all 539 attributed to a damage-counter ' +
+            'move and none unattributed. A tick raises the target’s damage counter exactly as a hit does, so ' +
+            'the wire carries nothing that separates the two and no sample can settle this constant.',
     },
     {
         key: EFFECTS.enrage,
@@ -129,6 +161,7 @@ export const REJECTIONS = {
     abilityInTick: 'A recovery discarded because something named an ability on that tick',
     maxUnknown: 'A recovery discarded because the unit’s maximum for the other resource is not known yet',
     otherResourceFull: 'A recovery discarded because the other resource was full, so regen and food look alike',
+    effectNotContinuous: 'A recovery discarded because the same effect was not active at both ends of it',
     outOfRange: 'Interval implausible for a periodic tick',
     hidden: 'Tab was in the background',
 };
@@ -314,7 +347,12 @@ function summarizeEffect(spec, tally) {
 
     let state;
     let text;
-    if (!rows.length && !rejected) {
+    if (spec.settled) {
+        // A finding, not a pending row: this one was answered by a run made to
+        // answer it, and the answer was that the stream cannot carry it
+        state = 'settled';
+        text = spec.settled;
+    } else if (!rows.length && !rejected) {
         state = 'empty';
         text = 'Nothing seen yet.';
     } else if (!rows.length) {
@@ -380,6 +418,7 @@ export function summarize(tally) {
 
     const resolved = effects.filter((effect) => effect.state === 'consistent' || effect.state === 'differs');
     const disagreeing = resolved.filter((effect) => effect.state === 'differs');
+    const settled = effects.filter((effect) => effect.state === 'settled');
     let verdict;
     if (!resolved.length) {
         const seen = effects.reduce((sum, effect) => sum + effect.kept + effect.rejected, 0);
@@ -394,6 +433,12 @@ export function summarize(tally) {
         verdict =
             `${resolved.length} of ${effects.length} effects resolved, and consistent with the constant the ` +
             'engine assumes. The rest are unresolved, which is not the same as confirmed.';
+    }
+
+    if (settled.length) {
+        verdict +=
+            ` ${settled.length} more is settled the other way: not measurable from this stream, ` +
+            'which is a result rather than a gap.';
     }
 
     return {
@@ -434,6 +479,56 @@ export function enrageBoost(buffMap) {
     return total;
 }
 
+/** The engine's time unit, which every duration the game states is counted in */
+const NANOSECONDS_PER_MS = 1e6;
+
+/**
+ * Longer than this, a buff is not one meal's recovery window.
+ *
+ * A consumable's `recoveryDuration` is seconds; a drink's stat buff is minutes
+ * and a loadout passive has no end at all. The ceiling is what keeps a
+ * five-minute coffee from bridging two meals half a minute apart and making the
+ * gap between them look like a period.
+ */
+export const HOT_MAX_DURATION_MS = 60_000;
+
+/**
+ * What a recovery-over-time entry is called on the wire.
+ *
+ * Matched on the entry's own unique hrid and its stated type, because those are
+ * what the server sends. The engine's name for this — a consumable tick — does
+ * not appear on the wire at all, and a type name invented on our side is not
+ * evidence that the server uses it: Fury arrives as `/buff_uniques/fury_*` with
+ * a plain `/buff_types/*` type, so anything keyed on a matching type name would
+ * have missed it entirely.
+ */
+const HOT_TOKENS = ['heal', 'regen', 'recover', 'restore'];
+
+/**
+ * The recovery effects currently running on a unit, as instance identities.
+ *
+ * An instance is the unique hrid *and* the start time the server states for it.
+ * That pair is what makes a second helping a different effect from the first:
+ * re-eating restates the same hrid with a new start time, so the identity
+ * changes and an interval cannot chain across the two.
+ *
+ * @param {Object} buffMap - A unit's `combatBuffMap`
+ * @returns {Set<string>} One identity per running recovery effect; empty when none
+ */
+export function healOverTimeInstances(buffMap) {
+    const instances = new Set();
+    for (const [uniqueHrid, buff] of Object.entries(buffMap || {})) {
+        const named = `${uniqueHrid} ${buff?.typeHrid ?? ''}`.toLowerCase();
+        if (!HOT_TOKENS.some((token) => named.includes(token))) continue;
+        const durationMs = Number(buff?.duration) / NANOSECONDS_PER_MS;
+        if (!(durationMs > 0) || durationMs > HOT_MAX_DURATION_MS) continue;
+        const startTime = String(buff?.startTime ?? '');
+        if (!startTime) continue;
+        instances.add(`${uniqueHrid}@${startTime}`);
+    }
+    return instances;
+}
+
 /**
  * The live half's state machine, kept here so a test can drive it with a tick
  * sequence rather than by playing the game.
@@ -445,27 +540,45 @@ export function createTickPeriodWatch() {
     const units = new Map();
     /** When each unit was last seen ticking each effect */
     const seen = new Map();
+    /** Which effect instances were running at that last tick, where the effect has any */
+    const running = new Map();
     const out = [];
     const rejections = [];
     const falls = [];
 
     /**
      * Emit the interval since this unit last ticked this effect.
+     *
+     * An effect that has an identity on the wire — recovery does — is timed
+     * only across ticks of the *same* instance. Both ends are remembered either
+     * way, so a discarded interval still gives the next one something to pair
+     * with rather than dropping a whole run of ticks.
+     *
      * @param {string} key - Unit key
      * @param {string} effect - Which effect
      * @param {number} at - Arrival time
      * @param {number} simultaneous - How many units ticked it on this same tick
+     * @param {Set<string>|null} [instances] - Effect instances running now, where the effect has any
      * @returns {void}
      */
-    function note(key, effect, at, simultaneous) {
+    function note(key, effect, at, simultaneous, instances = null) {
         const id = `${key}:${effect}`;
         const last = seen.get(id);
+        const lastInstances = running.get(id);
         seen.set(id, at);
+        if (instances) running.set(id, instances);
         if (last === undefined) return;
         const intervalMs = at - last;
         if (intervalMs < MIN_INTERVAL_MS || intervalMs > MAX_INTERVAL_MS) {
             rejections.push({ effect, reason: 'outOfRange' });
             return;
+        }
+        if (instances) {
+            const shared = [...instances].some((instance) => lastInstances?.has(instance));
+            if (!shared) {
+                rejections.push({ effect, reason: 'effectNotContinuous' });
+                return;
+            }
         }
         out.push({ effect, intervalMs, at, simultaneous });
     }
@@ -480,6 +593,7 @@ export function createTickPeriodWatch() {
         newBattle() {
             for (const key of [...units.keys()]) if (key.startsWith('m')) units.delete(key);
             for (const id of [...seen.keys()]) if (id.startsWith('m')) seen.delete(id);
+            for (const id of [...running.keys()]) if (id.startsWith('m')) running.delete(id);
         },
 
         /**
@@ -498,6 +612,7 @@ export function createTickPeriodWatch() {
                     for (const spec of EFFECT_SPECS) rejections.push({ effect: spec.key, reason: 'hidden' });
                 }
                 seen.clear();
+                running.clear();
                 return;
             }
 
@@ -560,13 +675,18 @@ export function createTickPeriodWatch() {
                         rejections.push({ effect: EFFECTS.hot, reason: 'otherResourceFull' });
                         continue;
                     }
-                    candidates.push({ key, effect: EFFECTS.hot });
+                    // The claim being measured is the rate a *running* recovery
+                    // ticks at, so the effect has to still be the one that
+                    // ticked last time. A gap between two meals is not a period
+                    candidates.push({ key, effect: EFFECTS.hot, instances: healOverTimeInstances(now.combatBuffMap) });
                 }
             }
 
             const counts = {};
             for (const candidate of candidates) counts[candidate.effect] = (counts[candidate.effect] || 0) + 1;
-            for (const candidate of candidates) note(candidate.key, candidate.effect, at, counts[candidate.effect]);
+            for (const candidate of candidates) {
+                note(candidate.key, candidate.effect, at, counts[candidate.effect], candidate.instances || null);
+            }
         },
 
         /**

@@ -120,3 +120,40 @@ Two things that remain open, and neither is a measurement of the formula:
   with the displayed level computes the wrong threshold — that is a caller-side correctness question.
 
 The file is also explicit that the chest line is a separate, unmeasured mechanic, and that stays true.
+
+## 5. The four repeating-effect tick intervals
+
+Where: `src/features/combat-sim/engine/combat-simulator.js:122`–`126` — `HOT_TICK_INTERVAL = 5 s`,
+`DOT_TICK_INTERVAL = 3 s`, `REGEN_TICK_INTERVAL = 10 s`, and the enrage ramp at 60 s. All four arrived with
+the engine and none of them was ever checked here. The observer for them is
+`src/features/combat/tick-period.js` and `tick-period-observer.js`, behind the `tickPeriodWatch` setting.
+
+**Hitpoint and mana regeneration, 10 s — measured, and consistent.** 57 clean intervals off the live
+stream, median 10,000 ms. The signature is a simultaneous rise in `cHP` and `cMP` on a unit whose own
+`dmgCounter` and `atkCounter` did not move, which nothing else on the wire produces.
+
+**Damage over time, 3 s — not measurable, and that is the finding.** A damage-over-time tick is a health
+fall with no positive signature of its own, so the whole question was whether the server counts it in the
+target's `dmgCounter` the way it counts a swing. A run made to answer it — a fire mage, damage over time
+landing throughout — gave **539 health falls, all 539 attributed to a `dmgCounter` move and none
+unattributed**. A tick therefore raises the damage counter exactly as a hit does, the stream carries no
+discriminator between the two, and no sample of any size can separate them. The panel states this as a
+settled result rather than as a row waiting for data, and the attributed/unattributed counts stay on screen
+because they are the evidence. Do not propose measuring this one again without a new field on the wire.
+
+**Food and drink recovery, 5 s — instrumented, after the first attempt measured the wrong quantity.** The
+constant is the rate an _already-running_ recovery ticks at. The first version timed gaps between
+consecutive health rises on a quiet unit, which is the gap between separate **eats**: consumables fire on
+missing-HP and missing-MP triggers, so that quantity is set by when the player happens to need food and
+runs to minutes (a live sample read 8 s, 142 s, 25 s, 42 s, 10 s, 10 s, 68 s, 10 s, 55 s, 125 s, 60 s).
+No amount of extra sample fixes a quantity that is the wrong quantity. An interval now counts only when the
+**same recovery effect instance** — unique hrid plus the server's `startTime` for it, read from the unit's
+`combatBuffMap` — was on the unit at both ends, so a fresh meal never chains onto the last tick of the one
+before it, while a tick missed because it had nothing to add still shows as a clean 2x echo. Instances are
+matched on what the wire names them, not on an engine-side name: the engine calls this a consumable tick,
+which the server never sends, and Fury is the standing warning that a type name invented here need not
+exist there. Intervals dropped for a lapse are counted under their own discard reason, so the sample can
+shrink to nothing and say why rather than quietly shrinking.
+
+**Enrage ramp, 60 s — instrumented, not yet sampled.** One observation a minute at best, off a monster's
+enrage entry restating a larger boost in its `combatBuffMap`.

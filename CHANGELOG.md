@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tick Period: recovery is timed per effect, and damage over time is settled as unmeasurable
+
+- Food and drink recovery intervals now count only while the same heal-over-time effect stays on the unit, so gaps between separate meals are discarded with a reason instead of being averaged into the period, and the damage-over-time row states the settled finding that the stream cannot distinguish a tick from a hit.
+
 ### Combat Sim: a party member killed while stunned came back from a dungeon clear still disabled
 
 - Clearing the dungeon stood a downed player up at full health but left the stun, blind or silence they died under in place with nothing left to ever lift it, so simulated runs could carry a permanently crippled party member — one who never casts or eats again, or in the case of blind stops attacking entirely — quietly understating every number after the first clear.

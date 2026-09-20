@@ -115,12 +115,22 @@ describe('the panel', () => {
     test('shows an effect it could not isolate as a stated result, not a blank row', async () => {
         await tickPeriod.initialize();
         const tally = tickPeriod.tally();
-        for (let index = 0; index < 20; index += 1) foldRejection(tally, EFFECTS.dot, 'hpFallAttributed');
+        for (let index = 0; index < 20; index += 1) foldRejection(tally, EFFECTS.hot, 'effectNotContinuous');
 
         tickPeriodPanel.show({ remember: false });
         expect(text()).not.toContain(FAILED);
         expect(text()).toContain('not resolvable');
+        expect(text()).toContain('the same effect was not active at both ends');
         expect(text()).toContain('Discarded candidates (20)');
+    });
+
+    test('states the damage-over-time finding rather than waiting for a sample', async () => {
+        await tickPeriod.initialize();
+
+        tickPeriodPanel.show({ remember: false });
+        expect(text()).not.toContain(FAILED);
+        expect(text()).toContain('Settled: not measurable from this stream');
+        expect(text()).toContain('539');
     });
 });
 

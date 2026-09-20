@@ -55,6 +55,7 @@ const ACCENT = '#f0c674';
 const STATE_COLORS = {
     consistent: '#8ec07c',
     differs: '#f2777a',
+    settled: '#8ec07c',
     provisional: ACCENT,
     unresolved: '#9aa4bb',
     empty: '#9aa4bb',
@@ -356,8 +357,10 @@ export const tickPeriodPanel = createPanel({
         falls.appendChild(
             panelNote(
                 'Damage over time has no signature of its own — it is a health fall with no swing behind it. ' +
-                    'So every fall is counted either way: if all of them are attributed, the effect is not ' +
-                    'measurable from this stream rather than absent from the game.'
+                    'A run made to settle that — a fire mage, damage over time landing throughout — gave 539 ' +
+                    'falls, all 539 attributed and none unattributed. So a tick raises the damage counter just ' +
+                    'as a hit does, and the effect is not measurable from this stream rather than absent from ' +
+                    'the game. These are the same counts from your own fighting.'
             )
         );
         falls.appendChild(panelLine('Attributed to a swing', String(summary.hpFalls.attributed), '#9aa4bb'));

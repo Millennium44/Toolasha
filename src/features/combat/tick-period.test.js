@@ -6,6 +6,7 @@ import {
     foldHpFall,
     foldObservation,
     foldRejection,
+    healOverTimeInstances,
     modeCluster,
     multiples,
     summarize,
@@ -73,6 +74,30 @@ describe('enrageBoost', () => {
     });
 });
 
+describe('healOverTimeInstances', () => {
+    it('identifies a running recovery by hrid and start time together', () => {
+        const map = {
+            '/buff_uniques/cheese_hp_regen': { typeHrid: '/buff_types/hp_regen', duration: 15e9, startTime: 'A' },
+        };
+        expect([...healOverTimeInstances(map)]).toEqual(['/buff_uniques/cheese_hp_regen@A']);
+        const again = { '/buff_uniques/cheese_hp_regen': { ...map['/buff_uniques/cheese_hp_regen'], startTime: 'B' } };
+        expect([...healOverTimeInstances(again)]).toEqual(['/buff_uniques/cheese_hp_regen@B']);
+    });
+
+    it('leaves out a loadout drink and a permanent passive, which would bridge two meals', () => {
+        expect(
+            healOverTimeInstances({
+                // Minutes long: a coffee, not one meal's recovery window
+                '/buff_uniques/hp_regen_coffee': { typeHrid: '/buff_types/hp_regen', duration: 300e9, startTime: 'A' },
+                // No end at all, and not a recovery either way
+                '/buff_uniques/house_well': { typeHrid: '/buff_types/max_hitpoints', duration: 0, startTime: 'A' },
+                '/buff_uniques/wisdom_tea': { typeHrid: '/buff_types/experience', duration: 30e9, startTime: 'A' },
+            }).size
+        ).toBe(0);
+        expect(healOverTimeInstances(null).size).toBe(0);
+    });
+});
+
 describe('createTickPeriodWatch', () => {
     /**
      * A tick in which one player gained both resources with no counters moving.
@@ -116,9 +141,21 @@ describe('createTickPeriodWatch', () => {
         expect(rejections).toEqual([{ effect: EFFECTS.hot, reason: 'abilityInTick' }]);
     });
 
+    /**
+     * A recovery effect as the wire states one: named, nanosecond duration,
+     * and a start time that changes when the unit eats again.
+     * @param {string} startTime - The server's start time for this instance
+     * @returns {Object} A `combatBuffMap`
+     */
+    const recovering = (startTime) => ({
+        '/buff_uniques/cheese_hp_regen': { typeHrid: '/buff_types/hp_regen', duration: 15e9, startTime },
+    });
+
     it('times recovery when the untouched resource proves it was not regeneration', () => {
         const watch = createTickPeriodWatch();
-        const food = (hp) => ({ pMap: { 0: { cHP: hp, cMP: 100, mHP: 1000, mMP: 500 } } });
+        const food = (hp) => ({
+            pMap: { 0: { cHP: hp, cMP: 100, mHP: 1000, mMP: 500, combatBuffMap: recovering('A') } },
+        });
         watch.battleUpdated(food(440), 0, {});
         watch.battleUpdated(food(500), 2000, {});
         watch.battleUpdated(food(560), 7000, {});
@@ -127,6 +164,54 @@ describe('createTickPeriodWatch', () => {
         const { observations } = watch.drain();
         expect(observations.map((entry) => entry.effect)).toEqual([EFFECTS.hot, EFFECTS.hot]);
         expect(observations.map((entry) => entry.intervalMs)).toEqual([5000, 5010]);
+    });
+
+    it('will not chain a fresh meal onto the last tick of the one before it', () => {
+        const watch = createTickPeriodWatch();
+        const food = (hp, startTime) => ({
+            pMap: { 0: { cHP: hp, cMP: 100, mHP: 1000, mMP: 500, combatBuffMap: recovering(startTime) } },
+        });
+        watch.battleUpdated(food(440, 'A'), 0, {});
+        watch.battleUpdated(food(500, 'A'), 2000, {});
+        watch.battleUpdated(food(560, 'A'), 7000, {});
+        // A minute of not needing food, then a second helping: the same hrid,
+        // a new start time, and a gap that is a trigger condition and not a period
+        watch.battleUpdated(food(700, 'B'), 68_000, {});
+        watch.battleUpdated(food(760, 'B'), 73_000, {});
+
+        const { observations, rejections } = watch.drain();
+        expect(observations.map((entry) => entry.intervalMs)).toEqual([5000, 5000]);
+        expect(rejections).toContainEqual({ effect: EFFECTS.hot, reason: 'effectNotContinuous' });
+    });
+
+    it('keeps a doubled interval inside one continuous effect, because a missed tick is never sent', () => {
+        const watch = createTickPeriodWatch();
+        const food = (hp) => ({
+            pMap: { 0: { cHP: hp, cMP: 100, mHP: 1000, mMP: 500, combatBuffMap: recovering('A') } },
+        });
+        watch.battleUpdated(food(440), 0, {});
+        watch.battleUpdated(food(500), 2000, {});
+        watch.battleUpdated(food(560), 12_000, {});
+
+        const { observations, rejections } = watch.drain();
+        expect(observations.map((entry) => entry.intervalMs)).toEqual([10_000]);
+        expect(rejections).toEqual([]);
+    });
+
+    it('discards an interval spanning a lapse, and says that is why', () => {
+        const watch = createTickPeriodWatch();
+        const food = (hp, buffMap) => ({
+            pMap: { 0: { cHP: hp, cMP: 100, mHP: 1000, mMP: 500, combatBuffMap: buffMap } },
+        });
+        watch.battleUpdated(food(440, recovering('A')), 0, {});
+        watch.battleUpdated(food(500, recovering('A')), 2000, {});
+        // The effect ran out; whatever raised health five seconds later was not
+        // the same recovery still ticking
+        watch.battleUpdated(food(560, {}), 7000, {});
+
+        const { observations, rejections } = watch.drain();
+        expect(observations).toEqual([]);
+        expect(rejections).toEqual([{ effect: EFFECTS.hot, reason: 'effectNotContinuous' }]);
     });
 
     it('refuses a health fall that a swing explains, and says which it was', () => {
@@ -203,16 +288,42 @@ describe('against the recorded stream', () => {
         expect(regen.cluster.median).toBeLessThan(10_100);
     });
 
-    it('reports damage over time as unresolved rather than as zero', () => {
+    it('reports damage over time as settled rather than as zero', () => {
         const tally = replay(recordedParty);
         const summary = summarize(tally);
         const dot = summary.effects.find((effect) => effect.key === EFFECTS.dot);
-        // Every health fall in these recordings came with a damage counter, so
-        // the honest result is that nothing could be isolated — and the
-        // attributed count is what makes that readable
+        // Every health fall in these recordings came with a damage counter, and
+        // a run made to settle it found the same for all 539 of its falls, so
+        // the row states a finding rather than waiting for a sample
         expect(summary.hpFalls.attributed).toBeGreaterThan(0);
-        expect(dot.state).not.toBe('consistent');
-        expect(dot.state).not.toBe('differs');
+        expect(dot.state).toBe('settled');
+        expect(dot.text).toContain('not measurable');
+        expect(dot.text).toContain('539');
+    });
+});
+
+describe('the gate leaves the other three alone', () => {
+    it('does not move the regeneration period in either recorded run', () => {
+        const run = summarize(replay(recordedRun)).effects.find((effect) => effect.key === EFFECTS.regen);
+        expect(run.cluster.median).toBe(10_000);
+        // Nothing was dropped for a reason that only applies to recovery
+        expect(run.rejections).toEqual([]);
+        const refresh = summarize(replay(recordedRefresh)).effects.find((effect) => effect.key === EFFECTS.regen);
+        expect(refresh.cluster.median).toBeGreaterThan(9900);
+        expect(refresh.cluster.median).toBeLessThan(10_100);
+    });
+
+    it('times regeneration with no buff map in sight at all', () => {
+        const watch = createTickPeriodWatch();
+        const tick = (hp, mp) => ({ pMap: { 0: { cHP: hp, cMP: mp, mHP: 1000, mMP: 500 } }, mMap: {} });
+        watch.battleUpdated(tick(480, 185), 0, {});
+        watch.battleUpdated(tick(500, 200), 10_000, {});
+        watch.battleUpdated(tick(520, 215), 20_000, {});
+        watch.battleUpdated(tick(540, 230), 30_000, {});
+
+        const { observations, rejections } = watch.drain();
+        expect(observations.map((entry) => entry.intervalMs)).toEqual([10_000, 10_000]);
+        expect(rejections).toEqual([]);
     });
 });
 
@@ -223,10 +334,11 @@ describe('summarize', () => {
 
     it('makes an effect it could not isolate a stated result, not an empty row', () => {
         const tally = emptyTally();
-        for (let index = 0; index < 12; index += 1) foldRejection(tally, EFFECTS.dot, 'hpFallAttributed');
-        const dot = summarize(tally).effects.find((effect) => effect.key === EFFECTS.dot);
-        expect(dot.state).toBe('unresolved');
-        expect(dot.text).toContain('not resolvable');
+        for (let index = 0; index < 12; index += 1) foldRejection(tally, EFFECTS.hot, 'effectNotContinuous');
+        const hot = summarize(tally).effects.find((effect) => effect.key === EFFECTS.hot);
+        expect(hot.state).toBe('unresolved');
+        expect(hot.text).toContain('not resolvable');
+        expect(hot.rejections.map((row) => row.key)).toEqual(['effectNotContinuous']);
     });
 
     it('calls a cluster on the assumed constant consistent, and one off it a difference', () => {
