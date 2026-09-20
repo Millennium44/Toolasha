@@ -54,22 +54,53 @@ const GLOBAL_STATE_KEY = '__toolashaNoticeLog';
 const UNKNOWN_CHARACTER = 'unknown';
 
 /**
- * The one log every copy of this module shares.
- * @returns {{characterId: string|null, entries: Array<Object>, seenAt: number, loading: Promise|null, dirty: boolean}} State
+ * An independent record for one character, including any in-flight read.
+ * @param {string|null} [characterId] - Owner, or no owner for the switching view
+ * @returns {Object} Character log state
  */
-function state() {
+function createState(characterId = null) {
+    return { characterId, loadedFor: null, entries: [], seenAt: 0, loading: null, dirty: false, generation: 0 };
+}
+
+/** @returns {Object} Shared character records and the log currently displayed */
+function registry() {
     const host = typeof globalThis === 'undefined' ? {} : globalThis;
     if (!host[GLOBAL_STATE_KEY]) {
-        host[GLOBAL_STATE_KEY] = {
-            characterId: null,
-            loadedFor: null,
-            entries: [],
-            seenAt: 0,
-            loading: null,
-            dirty: false,
-        };
+        host[GLOBAL_STATE_KEY] = { characters: new Map(), visible: createState(), hiddenFor: null };
     }
     return host[GLOBAL_STATE_KEY];
+}
+
+/** @returns {Object} The displayed log, empty during character teardown */
+function state() {
+    return registry().visible;
+}
+
+/** @returns {Object} Select the current character before any read or mutation */
+function currentState() {
+    const shared = registry();
+    const characterId = currentCharacterId();
+    if (!shared.characters.has(characterId)) shared.characters.set(characterId, createState(characterId));
+    const character = shared.characters.get(characterId);
+    // Cleanup listeners still observe the departing id until data-manager has
+    // completed teardown. Their writes must not reveal its log again.
+    if (shared.hiddenFor !== characterId) shared.visible = character;
+    return character;
+}
+
+/**
+ * Release a finished departing record so returning reloads any storage changes.
+ * @param {Object} character - Record whose pending work may have finished
+ */
+function releaseInactiveState(character) {
+    const shared = registry();
+    if (
+        shared.visible !== character &&
+        !character.loading &&
+        shared.characters.get(character.characterId) === character
+    ) {
+        shared.characters.delete(character.characterId);
+    }
 }
 
 /**
@@ -109,26 +140,25 @@ export function noticeLogKey(characterId) {
  * player has not seen yet. The saved entries go *underneath* instead, and the
  * merge is by timestamp.
  *
- * A character switch reloads from the other character's key, discarding what is
- * held — which is correct, because that log belongs to the character that was
- * being played and has already been persisted.
+ * Each character retains its own record, so a pending read can finish for its
+ * owner after a switch without touching the displayed log. Returning to that
+ * character reuses a pending read and preserves notices appended while it ran.
+ * Settled departing records are released so later visits reread storage.
  *
  * @returns {Promise<void>} Resolves once the entries are in memory
  */
 export async function loadNoticeLog() {
-    const shared = state();
-    const characterId = currentCharacterId();
+    const shared = currentState();
+    const { characterId, generation } = shared;
 
-    if (shared.loading) await shared.loading;
+    if (shared.loading) return await shared.loading;
     if (shared.loadedFor === characterId) return;
-
-    const switched = shared.characterId !== null && shared.characterId !== characterId;
-    if (switched) shared.entries = [];
-    shared.characterId = characterId;
 
     shared.loading = (async () => {
         try {
             const saved = await storage.getJSON(noticeLogKey(characterId), 'settings', null);
+            // Clearing is authoritative, even if a saved log arrives later.
+            if (shared.generation !== generation) return;
             if (saved && Array.isArray(saved.entries)) {
                 const merged = [...saved.entries, ...shared.entries];
                 merged.sort((a, b) => (a?.at || 0) - (b?.at || 0));
@@ -143,9 +173,12 @@ export async function loadNoticeLog() {
             // because one read failed would lose more than it protects
             console.error('[NoticeLog] Could not read the notice log:', error);
         } finally {
-            shared.loadedFor = characterId;
             shared.loading = null;
-            if (shared.dirty) await persist();
+            if (shared.generation === generation) {
+                shared.loadedFor = characterId;
+                if (shared.dirty) await persist(shared);
+            }
+            releaseInactiveState(shared);
         }
     })();
 
@@ -159,10 +192,10 @@ export async function loadNoticeLog() {
  * exact case digesting exists for — would otherwise be a burst of IndexedDB
  * transactions for a record nobody is reading yet.
  *
+ * @param {Object} shared - The character record that initiated the write
  * @returns {Promise<void>} When the write has been handed to storage
  */
-async function persist() {
-    const shared = state();
+async function persist(shared) {
     if (!shared.characterId) return;
     // Nothing is written before the saved log has been read back. A notice can
     // arrive first — the websocket is talking while IndexedDB is still
@@ -200,8 +233,7 @@ async function persist() {
  * @returns {Object} The entry as stored
  */
 export function appendNotice({ key, category, subject, text, urgency, channels = [], at = Date.now() }) {
-    const shared = state();
-    if (!shared.characterId) shared.characterId = currentCharacterId();
+    const shared = currentState();
 
     const entry = {
         at,
@@ -223,7 +255,7 @@ export function appendNotice({ key, category, subject, text, urgency, channels =
     // from here as well as from the feature's `initialize`, so a script whose
     // panel never starts still ends up with a log that survives a reload
     if (shared.loadedFor !== shared.characterId && !shared.loading) loadNoticeLog();
-    else persist();
+    else persist(shared);
     return entry;
 }
 
@@ -275,10 +307,10 @@ export function noticesSince(since) {
  * @returns {void}
  */
 export function markNoticesSeen(at = Date.now()) {
-    const shared = state();
+    const shared = currentState();
     shared.seenAt = at;
     shared.dirty = true;
-    persist();
+    persist(shared);
 }
 
 /**
@@ -286,14 +318,14 @@ export function markNoticesSeen(at = Date.now()) {
  * @returns {Promise<void>} When the empty log has been written
  */
 export async function clearNotices() {
-    const shared = state();
-    if (!shared.characterId) shared.characterId = currentCharacterId();
+    const shared = currentState();
     // Emptying it is authoritative: there is nothing left for a later load to
     // merge underneath, so the write is allowed even if the read never happened
     shared.loadedFor = shared.characterId;
+    shared.generation += 1;
     shared.entries = [];
     shared.seenAt = Date.now();
-    await persist();
+    await persist(shared);
 }
 
 /**
@@ -305,36 +337,13 @@ export function _resetNoticeLog() {
     delete host[GLOBAL_STATE_KEY];
 }
 
-// `loadNoticeLog()` only clears `entries` once it actually runs — from
-// notice-log-panel.js's `initialize()`, which fires on `character_switched`,
-// deferred, well after this switch has begun. Until then `shared.characterId`
-// still equals the departing character's id, so `loadNoticeLog()`'s own
-// staleness check would not even fire if something called it early. The
-// overlay's 1s redraw is on its own timer and can land in that gap, at which
-// point unreadNoticeCount()/noticeCount() would answer for the character that
-// just left, under the arriving character's name on the Notices tile.
-//
-// Clearing `entries` here, at `character_switching`, closes that without
-// risking the entries the departing character has not yet had persisted:
-// `data-manager.js` awaits `storage.flushAll()` before ever emitting
-// `character_switching`, so every debounced `persist()` this module has
-// queued has already been written by the time this runs. `characterId` is
-// left as the departing id — the same "switched" comparison
-// `loadNoticeLog()` makes when it eventually runs for the arriving character
-// still needs it to be the *old* one to notice the change.
-//
-// `loadedFor` is cleared with it, and that is not cosmetic. `persist()` writes
-// under `characterId` and only refuses when `loadedFor` disagrees with it.
-// Leaving both as the departing id while `entries` is empty arms every write
-// path that can still run in this gap — `appendNotice()` for a notice the
-// websocket delivers mid-switch, `markNoticesSeen()` if the panel is opened —
-// to write `{entries: []}` over the departing character's saved two hundred.
-// The flushAll() above only guarantees nothing is *already* in flight; it says
-// nothing about a write started after this runs. With `loadedFor` null those
-// writes bail, and `appendNotice()` takes its load-first branch instead, which
-// merges under the arriving character's log where the notice belongs.
+// Hide the departing log immediately. Its own record stays intact: flushAll()
+// drains writes already queued, but an outstanding storage read can still
+// merge and persist notices later. That work must retain its original owner.
 dataManager.on?.('character_switching', () => {
-    const shared = state();
-    shared.entries = [];
-    shared.loadedFor = null;
+    const shared = registry();
+    const departing = shared.visible;
+    shared.visible = createState();
+    shared.hiddenFor = currentCharacterId();
+    releaseInactiveState(departing);
 });
