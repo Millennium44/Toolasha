@@ -219,6 +219,7 @@ import { createPersistedRecord, mergeById } from '../../utils/persisted-record.j
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { clearRecord, clearedRecord, entriesOf, mergeClearable } from '../../utils/cleared-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { stableStringify } from '../../utils/stable-stringify.js';
 import { hashPlayerName } from './labyrinth-accuracy-export.js';
 
 /** Below this many fights the spread of the sample says nothing about the mean */
@@ -426,7 +427,10 @@ export function applyLoadoutSnapshot(dto, snapshot) {
  * What two snapshots have to agree on to count as the same loadout.
  *
  * When it was taken is not part of it: two segments of one recording are taken
- * minutes apart and are the same kit.
+ * minutes apart and are the same kit. Nor is the order the equipment map was
+ * built in — the game rebuilds it by delete/set, so re-equipping the same item
+ * moves its key to the end without changing what is worn. Arrays stay in their
+ * order, because the ability and consumable slots are a rotation.
  *
  * @param {Object} [snapshot] - From `captureLoadoutSnapshot`
  * @returns {string}
@@ -435,7 +439,72 @@ function loadoutSignature(snapshot) {
     if (!snapshot) return 'none';
     const fields = { levels: snapshot.levels };
     for (const key of SNAPSHOT_FIELDS) fields[key] = snapshot[key] ?? null;
-    return JSON.stringify(fields);
+    return stableStringify(fields);
+}
+
+/**
+ * The biggest group of observations that were all fought in one build.
+ *
+ * A level-up is a build change and the recorder rightly splits on it, so an
+ * hour of ordinary combat XP arrives here as several builds. Simulating the
+ * pooled sample would compare one character against fights fought by two, so
+ * the check measures the largest group instead and says what it set aside —
+ * the one thing it must never do is produce a single-build verdict over a
+ * sample that was not one.
+ *
+ * Ties go to the group holding the newest fights: with nothing to choose on
+ * size, the build nearest to now is the one the reader is still playing.
+ *
+ * @param {Array<Object>} observations - From `observeRecording`, one zone and tier
+ * @returns {Array<Object>} The winning group, in the order it came in
+ */
+export function largestLoadoutCohort(observations) {
+    const groups = new Map();
+    for (const entry of observations || []) {
+        const key = loadoutSignature(entry.loadout);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(entry);
+    }
+
+    let best = [];
+    let bestFights = -1;
+    let bestRecordedAt = -Infinity;
+    for (const group of groups.values()) {
+        const fights = group.reduce((total, entry) => total + (entry.fights?.length || 0), 0);
+        const recordedAt = Math.max(...group.map((entry) => entry.recordedAt || 0));
+        if (fights > bestFights || (fights === bestFights && recordedAt > bestRecordedAt)) {
+            best = group;
+            bestFights = fights;
+            bestRecordedAt = recordedAt;
+        }
+    }
+    return best;
+}
+
+/**
+ * What the check measured, and what it left out, when the sample held several builds.
+ *
+ * A level-up is a build change, so an ordinary hour of combat splits into two
+ * or three builds and every one of them is a real boundary. The check measures
+ * the biggest and says so here — a verdict over a split sample would describe a
+ * character nobody played, and a refusal would throw away a sample that is
+ * mostly one build.
+ *
+ * @param {Object} observed - From `aggregateObservations`
+ * @returns {string} One sentence naming the cohort used and the fights set aside
+ */
+export function describeCohort(observed) {
+    const builds = observed?.loadoutCohorts || 2;
+    const kept = observed?.fights || 0;
+    const setAside = observed?.setAsideFights || 0;
+    const weapon = observed?.loadout?.equipment?.main_hand?.hrid;
+    const kit = weapon ? ` (${itemName(weapon)} build)` : '';
+    return (
+        `Mixed builds — these fights were not all fought in the same kit, and a level-up counts as a change. ` +
+        `The sample holds ${builds} builds; the check ran against the largest${kit}: ` +
+        `${kept} ${kept === 1 ? 'fight' : 'fights'}, with ${setAside} set aside. ` +
+        `Record the zone in one build for a reading over all of it.`
+    );
 }
 
 /**
@@ -841,7 +910,17 @@ export function aggregateObservations(observations) {
         (entry) => entry.zoneHrid === newest.zoneHrid && entry.difficultyTier === newest.difficultyTier
     );
 
-    const fights = matching.flatMap((entry) => entry.fights);
+    // Everything below is measured over one build. A level-up mid-recording is
+    // a build change, so an ordinary session arrives here as several — the
+    // largest group is what gets measured, and the rest is reported as set
+    // aside rather than pooled into a verdict that would describe nobody.
+    const signatures = new Set(matching.map((entry) => loadoutSignature(entry.loadout)));
+    const cohort = signatures.size > 1 ? largestLoadoutCohort(matching) : matching;
+    const fightsIn = (entries) => entries.reduce((total, entry) => total + (entry.fights?.length || 0), 0);
+    const setAsideRecordings = matching.length - cohort.length;
+    const setAsideFights = fightsIn(matching) - fightsIn(cohort);
+
+    const fights = cohort.flatMap((entry) => entry.fights);
     const seconds = fights.reduce((total, fight) => total + fight.seconds, 0);
     const damageDealt = fights.reduce((total, fight) => total + fight.damageDealt, 0);
     const damageTaken = fights.reduce((total, fight) => total + fight.damageTaken, 0);
@@ -869,7 +948,7 @@ export function aggregateObservations(observations) {
     const drops = {};
     let gainsSeconds = 0;
     let gainsFights = 0;
-    for (const entry of matching) {
+    for (const entry of cohort) {
         addInto(xpBySkill, entry.xpBySkill);
         addInto(drops, entry.drops);
         gainsSeconds += Number(entry.gainsSeconds) || 0;
@@ -877,25 +956,30 @@ export function aggregateObservations(observations) {
     }
     const xpTotal = Object.values(xpBySkill).reduce((total, value) => total + value, 0);
 
-    // The newest snapshot there is, which is the one the fights nearest to now
-    // were fought in. When they disagree the sample straddles a gear change and
-    // no single snapshot describes all of it — that is worth saying out loud
-    // rather than picking one and going quiet.
-    const byNewest = [...matching].sort((left, right) => right.recordedAt - left.recordedAt);
+    // The newest snapshot in the cohort. Every entry in it agrees on the
+    // build, so this is the cohort's own kit and not a pick between two —
+    // whatever else the sample held was set aside above and is reported.
+    const byNewest = [...cohort].sort((left, right) => right.recordedAt - left.recordedAt);
     const loadout = byNewest.find((entry) => entry.loadout)?.loadout ?? null;
-    const signatures = new Set(matching.map((entry) => loadoutSignature(entry.loadout)));
 
     return {
         zoneHrid: newest.zoneHrid,
         difficultyTier: newest.difficultyTier,
-        partySize: Math.max(...matching.map((entry) => entry.partySize || 1)),
-        truncated: matching.some((entry) => entry.truncated),
-        contextChanged: matching.some((entry) => entry.contextChanged),
+        partySize: Math.max(...cohort.map((entry) => entry.partySize || 1)),
+        truncated: cohort.some((entry) => entry.truncated),
+        contextChanged: cohort.some((entry) => entry.contextChanged),
         loadout,
         mixedLoadouts: signatures.size > 1,
-        recordings: matching.length,
-        recordedAt: newest.recordedAt,
-        oldestRecordedAt: Math.min(...matching.map((entry) => entry.recordedAt)),
+        // How many builds the whole sample held, and what measuring one of
+        // them cost. A reader checking only `mixedLoadouts` still learns the
+        // sample was not one build; one that shows these can say how much of
+        // it was left out.
+        loadoutCohorts: signatures.size,
+        setAsideRecordings,
+        setAsideFights,
+        recordings: cohort.length,
+        recordedAt: Math.max(...cohort.map((entry) => entry.recordedAt || 0)),
+        oldestRecordedAt: Math.min(...cohort.map((entry) => entry.recordedAt)),
         fights: fights.length,
         seconds,
         damageDealt,
@@ -1452,10 +1536,7 @@ export function deviationHints(comparison, observed) {
                 'now. Anything enhanced, swapped or levelled since the recording is being read as a deviation.'
         );
     } else if (observed.mixedLoadouts) {
-        hints.push(
-            'Gear drift — these fights were not all fought in the same kit, and only the newest snapshot was ' +
-                'simulated. Press Forget and record the zone again in one loadout before reading anything off this.'
-        );
+        hints.push(describeCohort(observed));
     }
 
     // The most specific thing this check can say, and only when it is specific:
@@ -2042,8 +2123,11 @@ class ReplayCheck {
      */
     liveMarginPct(file) {
         const live = this.observationFrom(file);
+        // Over the largest single-build cohort, which is what `aggregate`
+        // already narrows to. A level-up mid-recording splits the sample, and
+        // refusing to measure a split one would leave a percent-band target
+        // that no amount of further recording could ever reach.
         const observed = aggregateObservations(live ? [...this.observations, live] : this.observations);
-        if (observed?.mixedLoadouts) return null;
         return noiseMargin(observed?.samples?.dps);
     }
 
@@ -2166,16 +2250,6 @@ class ReplayCheck {
             this.error = 'The recording is not stamped with a zone, so there is nothing to simulate against it.';
             return null;
         }
-        if (observed.mixedLoadouts) {
-            this.comparison = null;
-            this.lastSimResult = null;
-            this.uptime = null;
-            this.error =
-                'These recordings contain more than one loadout. Save the recording, then Forget and record one build ' +
-                'before running an accuracy check.';
-            return null;
-        }
-
         this.running = true;
         try {
             const current = buildPlayerDTO();
@@ -3022,12 +3096,7 @@ function drawCaveats(body, observed) {
             )
         );
         if (observed.mixedLoadouts) {
-            body.appendChild(
-                panelNote(
-                    'These recordings were not all made with the same loadout. An accuracy check cannot compare ' +
-                        'this mixed sample to one build. Save the recording before using Forget to start a clean sample.'
-                )
-            );
+            body.appendChild(panelNote(describeCohort(observed)));
         }
         body.appendChild(
             panelNote(

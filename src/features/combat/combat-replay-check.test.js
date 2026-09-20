@@ -138,6 +138,8 @@ import replayCheck, {
     waveTimingFromRecording,
     dungeonWaveTiming,
     aggregateObservations,
+    describeCohort,
+    largestLoadoutCohort,
     predictFromSim,
     deviationPct,
     noiseMargin,
@@ -961,6 +963,15 @@ describe('the line the tile carries', () => {
 });
 
 describe('the loadout the fight was actually fought in', () => {
+    /** A sim result complete enough for `predictFromSim` to read */
+    const cohortSimResult = {
+        simulatedTime: 3600 * 1e9,
+        encounters: 360,
+        deaths: {},
+        totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+        warnings: [],
+    };
+
     test('late ingestion uses the recorded zone and tier, including an explicitly unknown zone', () => {
         game.zone = { zoneHrid: '/actions/combat/bee', difficultyTier: 2 };
         const file = { ...recording, combatZone: { zoneHrid: '/actions/combat/fly', difficultyTier: 1 } };
@@ -972,22 +983,85 @@ describe('the loadout the fight was actually fought in', () => {
         expect(replayCheck.observationFrom(recording).zoneHrid).toBe('/actions/combat/bee');
     });
 
-    test('mixed recorded builds cannot produce a single-build accuracy verdict', async () => {
+    test('mixed recorded builds are checked against the largest of them, not refused', async () => {
+        // Was a refusal. A level-up is a build change and happens during any
+        // ordinary recording, so refusing a mixed sample refused nearly every
+        // sample — the fights are still good, they just describe two
+        // characters, and the biggest group of them describes one.
+        game.simResult = cohortSimResult;
         replayCheck.observations = [
             evenObservation({ fights: 3, recordedAt: 1_000, loadout: captureLoadoutSnapshot(loadout()) }),
             evenObservation({
-                fights: 3,
+                fights: 6,
                 recordedAt: 2_000,
                 loadout: captureLoadoutSnapshot(loadout({ weapon: '/items/spear' })),
             }),
         ];
         replayCheck.comparison = { old: true };
         await replayCheck.check();
-        expect(game.lastRun).toBe(null);
-        expect(replayCheck.comparison).toBe(null);
-        expect(replayCheck.error).toMatch(/more than one loadout/);
+
+        expect(replayCheck.error).toBe(null);
+        expect(game.lastRun).not.toBe(null);
+        // The larger cohort's kit, and only its fights
+        expect(game.lastRun.playerDTOs[0].equipment.main_hand.hrid).toBe('/items/spear');
+        expect(replayCheck.observed().fights).toBe(6);
+        expect(replayCheck.observed().setAsideFights).toBe(3);
+        expect(replayCheck.observed().loadoutCohorts).toBe(2);
         expect(replayCheck.observations).toHaveLength(2);
-        expect(replayCheck.liveMarginPct(null)).toBe(null);
+        // ...and a percent-band target can still be measured off it
+        expect(Number.isFinite(replayCheck.liveMarginPct(null))).toBe(true);
+    });
+
+    test('a level-up mid-recording still leaves a usable check over the bigger cohort', async () => {
+        // The regression this exists for: combat XP raises a level during the
+        // recording, the recorder rotates the segment, and the two halves carry
+        // different snapshots. Nothing about the gear changed and the fights
+        // are fine — the check must measure the larger half and say so.
+        game.simResult = cohortSimResult;
+        const before = captureLoadoutSnapshot(loadout({ attack: 90 }));
+        const after = captureLoadoutSnapshot(loadout({ attack: 91 }));
+        replayCheck.observations = [
+            evenObservation({ fights: 2, recordedAt: 1_000, loadout: before }),
+            evenObservation({ fights: 7, recordedAt: 2_000, loadout: after }),
+        ];
+
+        await replayCheck.check();
+
+        expect(replayCheck.error).toBe(null);
+        expect(game.lastRun.playerDTOs[0].attackLevel).toBe(91);
+        const observed = replayCheck.observed();
+        expect(observed.fights).toBe(7);
+        expect(observed.setAsideFights).toBe(2);
+        expect(observed.setAsideRecordings).toBe(1);
+        expect(observed.mixedLoadouts).toBe(true);
+        expect(Number.isFinite(replayCheck.liveMarginPct(null))).toBe(true);
+    });
+
+    test('cohorts of equal size go to the build holding the newest fights', () => {
+        const early = evenObservation({ fights: 3, recordedAt: 1_000, loadout: captureLoadoutSnapshot(loadout()) });
+        const late = evenObservation({
+            fights: 3,
+            recordedAt: 2_000,
+            loadout: captureLoadoutSnapshot(loadout({ weapon: '/items/spear' })),
+        });
+
+        expect(largestLoadoutCohort([early, late])).toEqual([late]);
+    });
+
+    test('the cohort note names the build measured and the fights set aside', () => {
+        const observed = aggregateObservations([
+            evenObservation({ fights: 2, recordedAt: 1_000, loadout: captureLoadoutSnapshot(loadout()) }),
+            evenObservation({
+                fights: 7,
+                recordedAt: 2_000,
+                loadout: captureLoadoutSnapshot(loadout({ weapon: '/items/spear' })),
+            }),
+        ]);
+
+        const note = describeCohort(observed);
+        expect(note).toContain('2 builds');
+        expect(note).toContain('7 fights');
+        expect(note).toContain('2 set aside');
     });
 
     test('the snapshot keeps what describes the character', () => {
@@ -1577,18 +1651,20 @@ describe('what the panel admits it does not know', () => {
         expect(text).not.toContain('Simmed against the gear worn when recorded');
     });
 
-    test('a sample straddling a gear change is not passed off as one loadout', () => {
+    test('a sample straddling a gear change says which build was measured', () => {
         replayCheck.observations = [
             evenObservation({ fights: 3, recordedAt: 1_000, loadout: captureLoadoutSnapshot(loadout()) }),
             evenObservation({
-                fights: 3,
+                fights: 4,
                 recordedAt: 2_000,
                 loadout: captureLoadoutSnapshot(loadout({ weapon: '/items/spear' })),
             }),
         ];
         replayCheckPanel.show({ remember: false });
 
-        expect(replayCheckPanel.panel.textContent).toContain('not all made with the same loadout');
+        const text = replayCheckPanel.panel.textContent;
+        expect(text).toContain('not all fought in the same kit');
+        expect(text).toContain('4 fights, with 3 set aside');
     });
 });
 
