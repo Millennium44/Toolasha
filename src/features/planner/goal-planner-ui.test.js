@@ -12,7 +12,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ data: {} }));
+const store = vi.hoisted(() => ({ data: {}, onGet: null }));
 // Mutable so a test can simulate a character switch mid-await; every other
 // test leaves it at the default and never notices it exists.
 const character = vi.hoisted(() => ({ id: 'char1' }));
@@ -43,7 +43,11 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(true),
-        get: async (key, _name, fallback = null) => store.data[key] ?? fallback,
+        get: async (key, _name, fallback = null) => {
+            const value = store.data[key] ?? fallback;
+            await store.onGet?.(key);
+            return value;
+        },
         tryGet: async (key) =>
             store.data[key] != null ? { found: true, value: store.data[key] } : { found: false, value: null },
         set: async (key, value) => {
@@ -115,10 +119,11 @@ vi.mock('../../utils/combat-zone-open.js', () => ({
     },
 }));
 
-const plannerContext = vi.hoisted(() => ({ value: null, builds: 0 }));
+const plannerContext = vi.hoisted(() => ({ value: null, builds: 0, onBuild: null }));
 vi.mock('./goal-planner-context.js', () => ({
     buildPlannerContext: async () => {
         plannerContext.builds += 1;
+        if (plannerContext.onBuild) return plannerContext.onBuild();
         return plannerContext.value;
     },
     withHouseCosts: async (context) => context,
@@ -218,6 +223,8 @@ beforeEach(() => {
     combatZone.calls = [];
     combatZone.opened = true;
     plannerContext.builds = 0;
+    plannerContext.onBuild = null;
+    store.onGet = null;
     store.data = {
         goalPlannerGoals_char1: [
             { id: 'g-gold', type: 'gold', amount: 500_000_000 },
@@ -232,7 +239,7 @@ beforeEach(() => {
 afterEach(() => {
     // A panel remembers which form was open between openings, which is right
     // for a panel and wrong for a test
-    goalPlannerPanel.hide({ remember: false });
+    goalPlannerPanel.disable();
     goalPlannerPanel.formType = null;
     goalPlannerPanel.goals = [];
     goalPlannerPanel.plans = [];
@@ -296,6 +303,83 @@ describe('drawing a plan', () => {
 });
 
 describe('the character-switch boundary', () => {
+    test('a late snapshot cannot replace the arriving character plans', async () => {
+        const gate = Promise.withResolvers();
+        const reading = Promise.withResolvers();
+        store.data.goalPlannerSnapshot_char1 = { plans: [{ goalId: 'departing' }], computedAt: 10 };
+        store.onGet = async (key) => {
+            if (key !== 'goalPlannerSnapshot_char1') return;
+            reading.resolve();
+            await gate.promise;
+        };
+        const loading = goalPlannerPanel.load();
+        await reading.promise;
+        goalPlannerPanel.disable();
+        character.id = 'char2';
+        store.data.goalPlannerGoals_char2 = [{ id: 'arriving', type: 'gold', amount: 100 }];
+        store.data.goalPlannerSnapshot_char2 = { plans: [{ goalId: 'arriving' }], computedAt: 20 };
+        await goalPlannerPanel.load();
+        gate.resolve();
+        await loading;
+
+        expect(goalPlannerPanel.goals.map((goal) => goal.id)).toEqual(['arriving']);
+        expect(goalPlannerPanel.plans).toEqual([{ goalId: 'arriving' }]);
+        expect(goalPlannerPanel.pricedAt).toBe(20);
+    });
+
+    test('an add finishing after a switch cannot plan the departing list for the arriving character', async () => {
+        await goalPlannerPanel.load();
+        const adding = goalPlannerPanel.addGoal({ type: 'gold', amount: 123 });
+        goalPlannerPanel.disable();
+        character.id = 'char2';
+        goalPlannerPanel.goals = [{ id: 'arriving', type: 'gold', amount: 200 }];
+        await adding;
+
+        expect(goalPlannerPanel.goals.map((goal) => goal.id)).toEqual(['arriving']);
+        expect(plannerContext.builds).toBe(0);
+        expect(store.data.goalPlannerSnapshot_char2).toBeUndefined();
+    });
+
+    test('a removal finishing after a switch cannot replace the arriving list', async () => {
+        await goalPlannerPanel.load();
+        goalPlannerPanel.context = fixtureContext();
+        const removing = goalPlannerPanel.removeGoal('g-gold');
+        goalPlannerPanel.disable();
+        character.id = 'char2';
+        goalPlannerPanel.goals = [{ id: 'arriving', type: 'gold', amount: 200 }];
+        await removing;
+
+        expect(goalPlannerPanel.goals.map((goal) => goal.id)).toEqual(['arriving']);
+        expect(store.data.goalPlannerSnapshot_char2).toBeUndefined();
+    });
+
+    test('disable releases pricing and rejects an old result even after returning to the same character', async () => {
+        const oldPrice = Promise.withResolvers();
+        const newPrice = Promise.withResolvers();
+        plannerContext.onBuild = () => oldPrice.promise;
+        const oldRun = goalPlannerPanel.refresh();
+        goalPlannerPanel.disable();
+        const released = !goalPlannerPanel.busy;
+
+        plannerContext.onBuild = () => newPrice.promise;
+        const newRun = goalPlannerPanel.refresh();
+        oldPrice.resolve(fixtureContext());
+        await oldRun;
+        const afterOld = {
+            context: goalPlannerPanel.context,
+            busy: goalPlannerPanel.busy,
+            snapshot: store.data.goalPlannerSnapshot_char1,
+        };
+
+        const fresh = fixtureContext();
+        newPrice.resolve(fresh);
+        await newRun;
+        expect(released).toBe(true);
+        expect(afterOld).toEqual({ context: null, busy: true, snapshot: undefined });
+        expect(goalPlannerPanel.context).toBe(fresh);
+        expect(goalPlannerPanel.busy).toBe(false);
+    });
+
     test('disable clears the priced context and plans, so the next character does not inherit them', async () => {
         // Build up everything a priced session accumulates
         goalPlannerPanel.show();
