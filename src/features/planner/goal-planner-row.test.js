@@ -149,12 +149,27 @@ describe('the next goal step tile', () => {
         expect(container.textContent).not.toContain('No goals');
     });
 
-    test('goals that exist but have not been planned yet fall back to the finished line', () => {
+    test('goals that exist but have not been planned yet ask for pricing', () => {
         game.goals = [{ id: 'g1' }];
         game.plans = [];
 
         expect(nextGoalStep()).toBeNull();
-        expect(draw().textContent).toContain('Every goal is done');
+        expect(draw().textContent).toContain('Goals need planning');
+        expect(draw().title).toContain('Refresh');
+    });
+
+    test('a completed saved plan does not complete another goal missing from the snapshot', () => {
+        game.goals = [{ id: 'g1' }, { id: 'g2' }];
+        game.plans = [plan('g1', 'Have 10M coins', [step('done', 'Already have 10M', true)], true)];
+
+        expect(draw().textContent).toContain('Goals need planning');
+    });
+
+    test('an unsatisfied plan without actionable steps is not called complete', () => {
+        game.goals = [{ id: 'g1' }];
+        game.plans = [plan('g1', 'Own unpriced equipment', [])];
+
+        expect(draw().textContent).toContain('Goals need planning');
     });
 
     test('how many steps are left is on the tile, and where it sits is in the tooltip', () => {

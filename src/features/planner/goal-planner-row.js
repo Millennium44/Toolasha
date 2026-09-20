@@ -79,6 +79,13 @@ registerRow({
 
         const next = nextGoalStep();
         if (!next) {
+            const plans = Array.isArray(goalPlannerPanel?.plans) ? goalPlannerPanel.plans : [];
+            const completed = new Set(plans.filter((plan) => plan?.satisfied === true).map((plan) => plan.goalId));
+            if (!goals.every((goal) => completed.has(goal.id))) {
+                row(container, [{ text: 'Goals need planning', color: ROW_COLORS.dim, ellipsis: true }]);
+                container.title = 'Some goals have no completed plan.\nDouble-click the planner and press Refresh.';
+                return;
+            }
             row(container, [{ text: 'Every goal is done', color: ROW_COLORS.good, ellipsis: true }]);
             container.title =
                 `${goals.length} goal${goals.length === 1 ? '' : 's'}, none with work left.` +
