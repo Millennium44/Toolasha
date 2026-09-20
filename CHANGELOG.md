@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The ▶ combat-zone button works for a zone outside the group you are looking at
+
+- The zones list keeps every zone group mounted and hides all but the selected one, so ▶ could find a tile the player could not click: it opened nothing and the button looked dead, most often mid-fight. It now selects the zone's own group first — worked out from where the tile sits in the list — and puts both tabs back if the zone still will not open.
+
 ### Tick Period: the recovery row drops its pre-fix sample and says why a party cannot fill it
 
 - Food and drink intervals measured before the per-effect fix are discarded on load, since they timed gaps between meals; the confirmed 10 s regeneration sample is kept.

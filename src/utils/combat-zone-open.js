@@ -24,12 +24,23 @@
  * only the ARIA role and the value format are load-bearing here, both far
  * less likely to move under a game update than a hashed class name.
  *
- * `GAME.COMBAT_ZONE_TABS` (now `GAME.COMBAT_PAGE_TABS`) — the selector this
- * used to click a "zone tab" by matching its text to a zone's display name —
- * turned out, on measurement, to match the Combat *page's* top-level tabs
- * ("Combat Zones", "Find Party", "Combat Sim", "Statistics"), never a
- * per-zone tab. That old use as a zone-tab fallback could never fire and is
- * not reused. It is reused for something the page tabs actually are, below.
+ * `GAME.COMBAT_ZONE_TABS` (now `GAME.COMBAT_PAGE_TABS`) matches *every* MUI tab
+ * button inside the Combat panel, and that is two different strips depending
+ * on what the page is showing. Measured live, mid-fight, it matched exactly
+ * four: "Combat Zones", "Find Party", "My Party", "Battle #8" — the page's own
+ * top-level tabs. Measured live again with the Combat Zones tab showing, the
+ * same selector additionally matched the twelve per-zone GROUP tabs ("1.
+ * Smelly Planet" … "12. Dungeons").
+ *
+ * An earlier version of this comment concluded from the mid-fight measurement
+ * alone that the selector matches page tabs "never a per-zone tab", and that
+ * the old zone-tab text match "could never fire". That is wrong, and it
+ * misled a later investigation: with the zones list showing, a text match
+ * against this selector can absolutely land on a group tab. Anything reading
+ * it must say which strip it means. `findCombatZonesPageTab` pins its strip by
+ * matching one exact label; the group-tab step below deliberately does not go
+ * through this selector at all, resolving a group from the tile's own DOM
+ * ancestry instead (see below).
  *
  * ## A player mid-fight has no Combat Zones list in the DOM at all
  *
@@ -79,6 +90,47 @@
  * codebase is resolved — `resolveActionTile` (`action-panel-helper.js`),
  * which reads the tile's own name text and looks up its action hrid — rather
  * than comparing display-name strings here a second time.
+ *
+ * ## The tile can be in the DOM and still be unreachable
+ *
+ * The Combat Zones list is itself a tab strip: twelve zone GROUPS ("1. Smelly
+ * Planet" … "12. Dungeons"), one selected, the rest rendered into tab panels
+ * carrying `TabPanel_hidden`. Measured live: the mounted list's `textContent`
+ * holds every zone's name whichever group is selected, so a plain
+ * `querySelectorAll(TILE_SELECTOR)` over the list happily returns a tile the
+ * player cannot see. Clicking that tile opens nothing, the detail panel never
+ * mounts, the sequence refuses, and the tab restore drops the player back on
+ * their fight — "the ▶ button did nothing", which is exactly how this was
+ * reported. It only worked when the player happened to have that zone's group
+ * already selected.
+ *
+ * So the tile search rejects any tile under a `TabPanel_hidden` ancestor, and
+ * when the only match is such a tile, the group that owns it is selected
+ * first and the tile is waited for again — reachable this time.
+ *
+ * ### Resolving a zone's group without naming it
+ *
+ * The group is never derived from the zone. It is read off the tile that was
+ * already found by hrid: the tile's own `TabPanel_tabPanel` ancestor is the
+ * group's panel, and the tab that controls that panel is either the one its
+ * `aria-labelledby` names, or — failing that attribute — the tab at the same
+ * index in the strip that sits beside the panels' own container. No group
+ * name, number or order is written down anywhere here, so the game renaming
+ * "Sorcerer's Tower", reordering the groups, or adding a thirteenth changes
+ * nothing; a dungeon like Pirate Cove needs no special case, because its tile
+ * lives in the Dungeons group's panel like any other tile in any other group.
+ * Index correspondence is positional, but positional *within one rendered
+ * tabs component*, where the strip and the panels are two halves of the same
+ * render and move together. It is checked before it is trusted: if the strip
+ * and the panel list are not the same length, the mapping is not believed and
+ * the sequence refuses rather than clicking whichever tab that index happens
+ * to hit.
+ *
+ * A failed sequence clicks the previously selected GROUP tab back too, for
+ * the same reason it restores the page tab: a refusal should leave the page
+ * as it found it, and a player who pressed ▶ and got nothing should not also
+ * find their zones list scrolled to some other group than the one they were
+ * reading.
  */
 
 import dataManager from '../core/data-manager.js';
@@ -110,6 +162,25 @@ const ZONE_LIST_RETRY_TIMEOUT_MS = ZONE_LIST_TIMEOUT_MS;
 
 /** How long to wait for the zone's own detail panel to mount after its tile is clicked. */
 const PANEL_TIMEOUT_MS = 5000;
+
+/**
+ * How long to wait for a zone's tile to become reachable after its group tab
+ * is clicked. Same budget as the list waits — the group swap is the same kind
+ * of React re-render, and nothing measured suggests it is quicker.
+ */
+const GROUP_TILE_TIMEOUT_MS = 5000;
+
+/** How often the reachable-tile wait re-checks, matching `waitForElement`'s own poll. */
+const GROUP_TILE_POLL_MS = 100;
+
+/** The per-group tab panels the Combat Zones list renders its tiles into. */
+const TAB_PANEL_SELECTOR = '[class*="TabPanel_tabPanel"]';
+
+/** The class the game puts on a tab panel that is rendered but not showing. */
+const HIDDEN_TAB_PANEL_CLASS = 'TabPanel_hidden';
+
+/** A MUI tab button — page tabs and per-zone group tabs are both these. */
+const TAB_BUTTON_SELECTOR = 'button[class*="MuiTab-root"]';
 
 /** How long to let a combobox's popup (or its close, after picking an option) render. */
 const TIER_MENU_SETTLE_MS = 300;
@@ -302,13 +373,24 @@ function findCombatZonesPageTab() {
  * (`enhancement-display.js`, `panel-observer.js`, `tea-recommendation.js`,
  * the alchemy tab-watchers). Unverified specifically for the Combat page's
  * own tabs. If wrong, `findSelectedCombatPageTab` returns null, nothing is
- * captured, and `restoreCombatPageTab` becomes a no-op — the player is left
+ * captured, and `restoreCombatTabs` becomes a no-op — the player is left
  * on the Combat Zones tab rather than restored, which is the same
  * "leave rather than guess" refusal shape as everywhere else in this module.
  * @returns {HTMLElement|null}
  */
 function findSelectedCombatPageTab() {
-    const tabs = document.querySelectorAll(GAME.COMBAT_PAGE_TABS);
+    return findSelectedTab(document.querySelectorAll(GAME.COMBAT_PAGE_TABS));
+}
+
+/**
+ * Whichever of `tabs` is marked active — `aria-selected="true"`, mirrored in
+ * the `Mui-selected` class, the convention every MUI tab strip this codebase
+ * reads already uses. Null when none is marked, which callers treat as
+ * "nothing captured, nothing to restore" rather than guessing at a default.
+ * @param {Iterable<HTMLElement>} tabs
+ * @returns {HTMLElement|null}
+ */
+function findSelectedTab(tabs) {
     for (const tab of tabs) {
         if (tab.getAttribute('aria-selected') === 'true' || tab.classList.contains('Mui-selected')) {
             return tab;
@@ -318,38 +400,162 @@ function findSelectedCombatPageTab() {
 }
 
 /**
- * Click back to `previousTab` (from {@link findSelectedCombatPageTab}) after
- * a sequence that switched onto the Combat Zones tab did not end up with a
- * usable, tier-confirmed panel open. A no-op if nothing was captured, or if
- * the character has since switched — a tab click for the wrong character's
- * page is worse than leaving it alone.
- * @param {HTMLElement|null} previousTab
- * @param {string|null} capturedCharacterId
- * @returns {void}
+ * The tab currently selected in `tab`'s own strip — its `[role="tablist"]`,
+ * or its parent element when the game does not mark one. Scoped to that one
+ * strip on purpose: the Combat panel renders the page tabs and the zone-group
+ * tabs at the same time, and a document-wide search would confuse the two.
+ * @param {HTMLElement} tab
+ * @returns {HTMLElement|null}
  */
-function restoreCombatPageTab(previousTab, capturedCharacterId) {
-    if (!previousTab) return;
-    if (characterIdentityChanged(capturedCharacterId)) return;
-    previousTab.click();
+function findSelectedSiblingTab(tab) {
+    const strip = tab.closest('[role="tablist"]') || tab.parentElement;
+    if (!strip) return null;
+    return findSelectedTab(strip.querySelectorAll(TAB_BUTTON_SELECTOR));
 }
 
 /**
- * Find the Combat Zones list tile for `zoneHrid` — resolved the same way
- * every other skill-screen tile is (`resolveActionTile`), which reads the
- * tile's own rendered name and looks that up to an action hrid, rather than
+ * Click back to the tabs a failed sequence switched away from — the zone
+ * group first, while the zones list is still showing and its strip is still
+ * mounted, then the Combat page tab that takes the player back to their
+ * fight. A no-op for whichever of them was never captured (nothing was
+ * switched, or nothing marked a selection), and for all of them once the
+ * character has switched — a tab click on the wrong character's page is worse
+ * than leaving it alone.
+ * @param {HTMLElement|null} previousGroupTab
+ * @param {HTMLElement|null} previousPageTab
+ * @param {string|null} capturedCharacterId
+ * @returns {void}
+ */
+function restoreCombatTabs(previousGroupTab, previousPageTab, capturedCharacterId) {
+    if (!previousGroupTab && !previousPageTab) return;
+    if (characterIdentityChanged(capturedCharacterId)) return;
+    if (previousGroupTab) previousGroupTab.click();
+    if (previousPageTab) previousPageTab.click();
+}
+
+/**
+ * Every Combat Zones list tile for `zoneHrid` — resolved the same way every
+ * other skill-screen tile is (`resolveActionTile`), which reads the tile's
+ * own rendered name and looks that up to an action hrid, rather than
  * comparing display-name text against `zoneHrid`'s name a second time here.
+ * @param {HTMLElement} zoneList
+ * @param {string} zoneHrid
+ * @returns {HTMLElement[]}
+ */
+function findZoneTiles(zoneList, zoneHrid) {
+    return Array.from(zoneList.querySelectorAll(TILE_SELECTOR)).filter(
+        (tile) => resolveActionTile(tile).actionHrid === zoneHrid
+    );
+}
+
+/**
+ * True when `element` sits inside a tab panel the game has hidden — rendered,
+ * findable by `querySelectorAll`, and not something the player can click. The
+ * Combat Zones list keeps all twelve zone groups mounted this way, so a tile
+ * found by hrid is not yet a tile that can be clicked.
+ * @param {HTMLElement} element
+ * @returns {boolean}
+ */
+function isInHiddenTabPanel(element) {
+    let node = element;
+    while (node) {
+        if (String(node.className || '').includes(HIDDEN_TAB_PANEL_CLASS)) return true;
+        node = node.parentElement;
+    }
+    return false;
+}
+
+/**
+ * The tile for `zoneHrid` the player could actually click — the first match
+ * that is not buried in a hidden group panel. Null when the zone's only tile
+ * is hidden (its group is not selected) as well as when there is no tile at
+ * all; the caller tells the two apart with {@link findZoneTiles}.
  * @param {HTMLElement} zoneList
  * @param {string} zoneHrid
  * @returns {HTMLElement|null}
  */
-function findZoneTile(zoneList, zoneHrid) {
-    const tiles = zoneList.querySelectorAll(TILE_SELECTOR);
-    for (const tile of tiles) {
-        if (resolveActionTile(tile).actionHrid === zoneHrid) {
-            return tile;
-        }
+function findReachableZoneTile(zoneList, zoneHrid) {
+    return findZoneTiles(zoneList, zoneHrid).find((tile) => !isInHiddenTabPanel(tile)) || null;
+}
+
+/**
+ * The group tab that controls the tab panel `tile` lives in — read off the
+ * tile's own ancestry, never from the zone's name or a group order written
+ * down here (see the module doc-comment). Prefers the panel's own
+ * `aria-labelledby`; falls back to the tab at the panel's index in the strip
+ * beside the panels' container, and refuses (returns null) when the strip and
+ * the panels do not correspond one-to-one, rather than clicking whichever tab
+ * that index lands on.
+ * @param {HTMLElement} tile
+ * @returns {HTMLElement|null}
+ */
+function findGroupTabForTile(tile) {
+    const groupPanel = tile.closest(TAB_PANEL_SELECTOR);
+    if (!groupPanel) return null;
+
+    const labelledBy = groupPanel.getAttribute('aria-labelledby');
+    if (labelledBy) {
+        const labelled = document.getElementById(labelledBy);
+        if (labelled && labelled.matches(TAB_BUTTON_SELECTOR)) return labelled;
     }
-    return null;
+
+    const panelsContainer = groupPanel.parentElement;
+    if (!panelsContainer) return null;
+    const panels = Array.from(panelsContainer.children).filter((child) => child.matches(TAB_PANEL_SELECTOR));
+    const index = panels.indexOf(groupPanel);
+    if (index < 0) return null;
+
+    const tabs = findTabStripFor(panelsContainer);
+    if (tabs.length !== panels.length) return null;
+    return tabs[index];
+}
+
+/**
+ * The tab buttons belonging to `panelsContainer` — the nearest ancestor's
+ * worth of tabs that are not themselves inside the panels (a selected panel
+ * can hold a nested tab strip of its own, and those are not this strip's).
+ * @param {HTMLElement} panelsContainer
+ * @returns {HTMLElement[]}
+ */
+function findTabStripFor(panelsContainer) {
+    let scope = panelsContainer.parentElement;
+    while (scope) {
+        const tabs = Array.from(scope.querySelectorAll(TAB_BUTTON_SELECTOR)).filter(
+            (tab) => !panelsContainer.contains(tab)
+        );
+        if (tabs.length > 0) return tabs;
+        scope = scope.parentElement;
+    }
+    return [];
+}
+
+/**
+ * Wait for `zoneHrid`'s tile to become reachable — polled rather than
+ * observed, the same shape as `waitForElement`, because what is being waited
+ * for is not an element appearing but a hidden one becoming shown. The list
+ * is re-read from the document if the group swap replaced the container the
+ * caller was holding.
+ * @param {HTMLElement} zoneList
+ * @param {string} zoneHrid
+ * @param {number} timeout
+ * @returns {Promise<HTMLElement|null>}
+ */
+function waitForReachableZoneTile(zoneList, zoneHrid, timeout) {
+    return new Promise((resolve) => {
+        const startTime = Date.now();
+        const check = () => {
+            const list = zoneList.isConnected ? zoneList : document.querySelector(ZONE_LIST_SELECTOR);
+            const tile = list ? findReachableZoneTile(list, zoneHrid) : null;
+            if (tile) {
+                resolve(tile);
+            } else if (Date.now() - startTime >= timeout) {
+                resolve(null);
+            } else {
+                setTimeout(check, GROUP_TILE_POLL_MS);
+            }
+        };
+        check();
+    });
 }
 
 /**
@@ -426,15 +632,38 @@ async function openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId
         zoneList = await waitForElement(ZONE_LIST_SELECTOR, ZONE_LIST_RETRY_TIMEOUT_MS);
         if (characterIdentityChanged(characterId)) return result;
         if (!zoneList) {
-            restoreCombatPageTab(previousPageTab, characterId);
+            restoreCombatTabs(null, previousPageTab, characterId);
             return result;
         }
     }
 
-    const tile = findZoneTile(zoneList, zoneHrid);
+    // The zones list keeps every zone group mounted and hides all but the
+    // selected one, so a tile found by hrid may be one the player cannot
+    // click. Selecting its group is navigation, like the page tab above.
+    let previousGroupTab = null;
+    let tile = findReachableZoneTile(zoneList, zoneHrid);
     if (!tile) {
-        restoreCombatPageTab(previousPageTab, characterId);
-        return result;
+        const hiddenTile = findZoneTiles(zoneList, zoneHrid)[0];
+        if (!hiddenTile) {
+            restoreCombatTabs(null, previousPageTab, characterId);
+            return result;
+        }
+
+        const groupTab = findGroupTabForTile(hiddenTile);
+        if (!groupTab) {
+            restoreCombatTabs(null, previousPageTab, characterId);
+            return result;
+        }
+
+        previousGroupTab = findSelectedSiblingTab(groupTab);
+        groupTab.click();
+
+        tile = await waitForReachableZoneTile(zoneList, zoneHrid, GROUP_TILE_TIMEOUT_MS);
+        if (characterIdentityChanged(characterId)) return result;
+        if (!tile) {
+            restoreCombatTabs(previousGroupTab, previousPageTab, characterId);
+            return result;
+        }
     }
 
     tile.click();
@@ -445,7 +674,7 @@ async function openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId
     const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier, characterId);
     result.tierConfirmed = tierConfirmed;
     if (!tierConfirmed) {
-        restoreCombatPageTab(previousPageTab, characterId);
+        restoreCombatTabs(previousGroupTab, previousPageTab, characterId);
         return result;
     }
     if (characterIdentityChanged(characterId)) return result;

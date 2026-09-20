@@ -146,6 +146,92 @@ function buildCombatPageTabs(labels, selectedLabel) {
     return buttons;
 }
 
+/**
+ * The Combat Zones list as the live client actually renders it: a strip of
+ * zone-GROUP tabs ("1. Smelly Planet" … "12. Dungeons") over a panels
+ * container holding one `TabPanel_tabPanel` per group, all mounted, all but
+ * the selected one carrying `TabPanel_hidden`. Clicking a group tab moves the
+ * hidden marker and the selection the way the game's own tab component does.
+ *
+ * `extraTabs` adds decoy tab buttons to the strip so it no longer corresponds
+ * one-to-one with the panels — the shape the group resolution must refuse on
+ * rather than index into. `labelPanels` wires the `aria-labelledby` /
+ * button-id pair MUI normally emits, which is the preferred resolution path.
+ */
+function buildGroupedZoneList(groups, selectedLabel, { extraTabs = 0, labelPanels = false } = {}) {
+    const container = document.createElement('div');
+    container.className = 'CombatZones_combatZones__1a';
+
+    const tabList = document.createElement('div');
+    tabList.setAttribute('role', 'tablist');
+    container.appendChild(tabList);
+
+    const panelsContainer = document.createElement('div');
+    panelsContainer.className = 'TabsComponent_tabPanelsContainer__1a';
+    container.appendChild(panelsContainer);
+
+    const tiles = {};
+    const tabs = {};
+    const panels = [];
+
+    const applySelection = (label) => {
+        groups.forEach((group, index) => {
+            const isSelected = group.label === label;
+            tabs[group.label].setAttribute('aria-selected', isSelected ? 'true' : 'false');
+            tabs[group.label].classList.toggle('Mui-selected', isSelected);
+            panels[index].className = isSelected
+                ? 'TabPanel_tabPanel__tXMJF'
+                : 'TabPanel_tabPanel__tXMJF TabPanel_hidden__26UM3';
+        });
+    };
+
+    groups.forEach((group, index) => {
+        const button = document.createElement('button');
+        button.className = 'MuiButtonBase-root MuiTab-root';
+        button.textContent = group.label;
+        tabList.appendChild(button);
+        tabs[group.label] = button;
+
+        const panel = document.createElement('div');
+        if (labelPanels) {
+            button.id = `mwi-test-group-tab-${index}`;
+            panel.setAttribute('aria-labelledby', button.id);
+        }
+        for (const z of group.zones) {
+            const tile = document.createElement('div');
+            tile.className = 'SkillAction_skillAction__1a';
+            const name = document.createElement('div');
+            name.className = 'SkillAction_name__1a';
+            name.textContent = z.name;
+            tile.appendChild(name);
+            panel.appendChild(tile);
+            tiles[z.hrid] = tile;
+        }
+        panelsContainer.appendChild(panel);
+        panels.push(panel);
+
+        button.addEventListener('click', () => applySelection(group.label));
+    });
+
+    for (let i = 0; i < extraTabs; i++) {
+        const decoy = document.createElement('button');
+        decoy.className = 'MuiButtonBase-root MuiTab-root';
+        decoy.textContent = `Decoy ${i}`;
+        tabList.appendChild(decoy);
+    }
+
+    applySelection(selectedLabel);
+    document.body.appendChild(container);
+    return { container, tiles, tabs, panels, selectGroup: applySelection };
+}
+
+/** Count every click on a tile, so a test can prove an unreachable one was never pressed. */
+function countClicks(element) {
+    const counter = { count: 0 };
+    element.addEventListener('click', () => counter.count++);
+    return counter;
+}
+
 /** Drive an in-progress `selectDifficultyTier`/`openCombatZoneAtTier` call through its three settle waits. */
 async function pickTierOption(tier) {
     await vi.advanceTimersByTimeAsync(300); // combobox popup opens
@@ -598,6 +684,181 @@ describe('openCombatZoneAtTier — in-combat (Battle view, no Combat Zones list)
         const result = await openCombatZoneAtTier('/actions/combat/aqua', 1);
         expect(result).toEqual({ opened: true, tierConfirmed: true, filled: false });
         expect(zonesTabClicked).toBe(0);
+    });
+});
+
+describe('openCombatZoneAtTier — zone groups (the list is itself a tab strip)', () => {
+    // MEASURED CONTRACT (do not re-derive): with the Combat Zones tab showing,
+    // `GAME.COMBAT_PAGE_TABS` matches the twelve per-zone GROUP tabs ("1.
+    // Smelly Planet" … "12. Dungeons") as well as the page's own tabs, and the
+    // mounted list's textContent holds every zone's name whichever group is
+    // selected — the unselected groups are rendered into `TabPanel_hidden`
+    // panels. A tile found by hrid is therefore not necessarily a tile the
+    // player can click, which is why ▶ "did nothing" for a zone outside the
+    // group the player happened to be looking at.
+
+    const AQUA = { hrid: '/actions/combat/aqua', name: 'Aqua Planet' };
+    const SMELLY = { hrid: '/actions/combat/fly', name: 'Fly Plains' };
+    const PIRATE = { hrid: '/actions/combat/pirate_cove', name: 'Pirate Cove' };
+
+    /** The three-group list the tests below drive, Dungeons included. */
+    function threeGroups() {
+        return [
+            { label: '1. Smelly Planet', zones: [SMELLY] },
+            { label: '3. Aqua Planet', zones: [AQUA] },
+            { label: '12. Dungeons', zones: [PIRATE] },
+        ];
+    }
+
+    test('a tile in a hidden group panel is not treated as reachable: the group tab is selected first, then the tile is clicked', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        const list = buildGroupedZoneList(threeGroups(), '1. Smelly Planet');
+        const aquaClicks = countClicks(list.tiles[AQUA.hrid]);
+        const groupClicks = countClicks(list.tabs['3. Aqua Planet']);
+        list.tiles[AQUA.hrid].addEventListener('click', () => buildPanel('Aqua Planet', 2));
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier(AQUA.hrid, 2);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(groupClicks.count).toBe(1);
+        expect(aquaClicks.count).toBe(1);
+        // The group tab was pressed before the tile, not after it
+        expect(list.tabs['3. Aqua Planet'].getAttribute('aria-selected')).toBe('true');
+    });
+
+    test('a zone in the Dungeons group is reached the same way, with no dungeon special case', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        const list = buildGroupedZoneList(threeGroups(), '1. Smelly Planet');
+        let input;
+        list.tiles[PIRATE.hrid].addEventListener('click', () => {
+            ({ input } = buildPanel('Pirate Cove', 0));
+        });
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier(PIRATE.hrid, 0, { count: 3 });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: true });
+        expect(input.value).toBe('3');
+        expect(list.tabs['12. Dungeons'].getAttribute('aria-selected')).toBe('true');
+    });
+
+    test('resolves the group through the panel’s aria-labelledby when the game emits it, even with a strip that does not index-match', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        // `extraTabs` breaks the positional fallback on purpose: only the
+        // aria pairing can resolve the group here.
+        const list = buildGroupedZoneList(threeGroups(), '1. Smelly Planet', { extraTabs: 2, labelPanels: true });
+        list.tiles[AQUA.hrid].addEventListener('click', () => buildPanel('Aqua Planet', 1));
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier(AQUA.hrid, 1);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(list.tabs['3. Aqua Planet'].getAttribute('aria-selected')).toBe('true');
+    });
+
+    test('refuses without clicking anything when the strip and the group panels do not correspond', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        const list = buildGroupedZoneList(threeGroups(), '1. Smelly Planet', { extraTabs: 2 });
+        const aquaClicks = countClicks(list.tiles[AQUA.hrid]);
+        const groupClicks = countClicks(list.tabs['3. Aqua Planet']);
+        list.tiles[AQUA.hrid].addEventListener('click', () => buildPanel('Aqua Planet', 2));
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier(AQUA.hrid, 2, { count: 10 });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await resultPromise).toEqual({ opened: false, tierConfirmed: false, filled: false });
+        expect(groupClicks.count).toBe(0);
+        expect(aquaClicks.count).toBe(0);
+    });
+
+    test('refuses and restores the group tab when the tile never becomes reachable after the group is selected', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        // A group tab whose click does not unhide anything — the tile stays
+        // buried and the sequence must give the player their group back.
+        const list = buildGroupedZoneList(threeGroups(), '1. Smelly Planet');
+        list.tabs['3. Aqua Planet'].replaceWith(list.tabs['3. Aqua Planet'].cloneNode(true));
+        const deadTab = list.container.querySelectorAll('button')[1];
+        const deadClicks = countClicks(deadTab);
+        const smellyTabClicks = countClicks(list.tabs['1. Smelly Planet']);
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier(AQUA.hrid, 2, { count: 10 });
+        await vi.advanceTimersByTimeAsync(5000); // exhaust the reachable-tile wait
+
+        expect(await resultPromise).toEqual({ opened: false, tierConfirmed: false, filled: false });
+        expect(deadClicks.count).toBe(1);
+        expect(smellyTabClicks.count).toBe(1); // restored to the group the player was on
+    });
+
+    test('mid-fight: switches the page tab, then the group tab, and a later failure restores both', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        const pageTabs = buildCombatPageTabs(['Combat Zones', 'Find Party', 'My Party', 'Battle #8'], 'Battle #8');
+        const battleTabClicks = countClicks(pageTabs['Battle #8']);
+        let smellyTabClicks;
+        vi.spyOn(itemNavigation, 'navigateToAction').mockImplementation(() => {
+            pageTabs['Combat Zones'].addEventListener('click', () => {
+                const list = buildGroupedZoneList(threeGroups(), '1. Smelly Planet');
+                smellyTabClicks = countClicks(list.tabs['1. Smelly Planet']);
+                // The tile opens no panel — the sequence gets as far as the
+                // group switch and then has to unwind all of it.
+            });
+            return true;
+        });
+
+        const resultPromise = openCombatZoneAtTier(AQUA.hrid, 2, { count: 10 });
+        await vi.advanceTimersByTimeAsync(ZONE_LIST_WAIT_MS); // page tab fallback
+        await vi.advanceTimersByTimeAsync(5000); // panel wait exhausts
+
+        expect(await resultPromise).toEqual({ opened: true, tierConfirmed: false, filled: false });
+        expect(smellyTabClicks.count).toBe(1);
+        expect(battleTabClicks.count).toBe(1);
+    });
+
+    test('a tile in the selected group is clicked straight away — no group tab is touched', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        const list = buildGroupedZoneList(threeGroups(), '3. Aqua Planet');
+        const groupClicks = countClicks(list.tabs['3. Aqua Planet']);
+        const otherGroupClicks = countClicks(list.tabs['1. Smelly Planet']);
+        list.tiles[AQUA.hrid].addEventListener('click', () => buildPanel('Aqua Planet', 4));
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const result = await openCombatZoneAtTier(AQUA.hrid, 4);
+        expect(result).toEqual({ opened: true, tierConfirmed: true, filled: false });
+        expect(groupClicks.count).toBe(0);
+        expect(otherGroupClicks.count).toBe(0);
+    });
+
+    test('refuses to click a group tab for a character that switched away mid-wait', async () => {
+        vi.useFakeTimers();
+        dataManager.initClientData = buildGameData([AQUA, SMELLY, PIRATE]);
+        dataManager.currentCharacterId = 'char-a';
+        const list = buildGroupedZoneList(threeGroups(), '1. Smelly Planet');
+        const smellyTabClicks = countClicks(list.tabs['1. Smelly Planet']);
+        list.tabs['3. Aqua Planet'].addEventListener('click', () => {
+            // The switch lands while the sequence waits for the group's tiles
+            dataManager.currentCharacterId = 'char-b';
+        });
+        vi.spyOn(itemNavigation, 'navigateToAction').mockReturnValue(true);
+
+        const resultPromise = openCombatZoneAtTier(AQUA.hrid, 2, { count: 10 });
+        await vi.advanceTimersByTimeAsync(5000);
+
+        expect(await resultPromise).toEqual({ opened: false, tierConfirmed: false, filled: false });
+        // Nothing clicked back either: a tab click on the new character's page
+        // is worse than leaving it where it is.
+        expect(smellyTabClicks.count).toBe(0);
     });
 });
 
