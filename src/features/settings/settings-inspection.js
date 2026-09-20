@@ -16,6 +16,7 @@
 import { settingsGroups } from '../../core/settings-schema.js';
 import { getCustomPriceOverrides } from './custom-price-overrides.js';
 import { isPricingSideChanged } from '../../utils/pricing-side-select.js';
+import { stableStringify } from '../../utils/stable-stringify.js';
 
 /**
  * Whether a schema type stores its value in `isTrue` rather than `value`.
@@ -25,26 +26,6 @@ import { isPricingSideChanged } from '../../utils/pricing-side-select.js';
 function isBooleanType(type) {
     const kind = type || 'checkbox';
     return kind === 'checkbox' || kind === 'checkboxWithButton';
-}
-
-/**
- * JSON text with every object's keys in sorted order, arrays left in theirs.
- * @param {*} value
- * @returns {string}
- */
-function stableStringify(value) {
-    if (Array.isArray(value)) {
-        return `[${value.map(stableStringify).join(',')}]`;
-    }
-    if (value && typeof value === 'object') {
-        const body = Object.keys(value)
-            .sort()
-            .filter((key) => value[key] !== undefined)
-            .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
-            .join(',');
-        return `{${body}}`;
-    }
-    return JSON.stringify(value) ?? 'undefined';
 }
 
 /**

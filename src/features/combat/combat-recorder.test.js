@@ -838,6 +838,31 @@ describe('what was worn while it was recorded', () => {
         expect(file.segments.flatMap((entry) => entry.ticks)).toHaveLength(8);
     });
 
+    test('re-equipping the same item is not a build change, whatever order the map ends in', () => {
+        // The game's equipment map is rebuilt by delete/set, so taking a ring
+        // off and putting it back moves its key to the end. Raw JSON read that
+        // as a new build: the segment rotated, the fight in flight was thrown
+        // away and the session was marked truncated for a kit that never moved.
+        let worn = {
+            equipment: { main_hand: { hrid: '/items/sword' }, ring: { hrid: '/items/ring' } },
+        };
+        recorder.setLoadoutProvider(() => worn);
+        recorder.startRecording();
+        send('new_battle', { players: {}, monsters: {} });
+        send('battle_updated', { pMap: {}, mMap: {} });
+
+        // Same kit, rebuilt in the order an unequip/re-equip leaves behind
+        worn = { equipment: { ring: { hrid: '/items/ring' }, main_hand: { hrid: '/items/sword' } } };
+        send('battle_updated', { pMap: {}, mMap: {} });
+        send('new_battle', { players: {}, monsters: {} });
+
+        const file = recorder.sessionFile();
+        expect(file.segments).toHaveLength(1);
+        expect(file.segments[0].contextChanged).toBeFalsy();
+        expect(file.segments[0].truncated).toBeFalsy();
+        expect(file.fights).toBe(1);
+    });
+
     test('the loadout is snapshotted when the recording starts', () => {
         // Otherwise the check that reads this can only sim whoever is logged in
         // when it runs, and enhancing a weapon in between reads as a deviation

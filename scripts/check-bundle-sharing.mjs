@@ -129,6 +129,14 @@ const ALLOWLIST = new Map([
         'stateless ownership tickets; the generation lives on the owner, not here',
     ],
     [
+        'src/utils/stable-stringify.js',
+        // One exported pure function over its argument, no module state: the
+        // combat recorder signs a build with it and the settings inspector
+        // compares two saved values with it, and two copies produce byte-for-
+        // byte the same text.
+        'stateless single-function JSON serializer; no module state to share',
+    ],
+    [
         'src/utils/yield-to-browser.js',
         // One exported function, closes over nothing: a duplicated copy
         // behaves identically to a shared one.

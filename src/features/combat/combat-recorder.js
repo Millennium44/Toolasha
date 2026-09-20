@@ -117,6 +117,7 @@ import webSocketHook from '../../core/websocket.js';
 import { describeMonsterPanel } from '../../utils/battle-panel-monsters.js';
 import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { stableStringify } from '../../utils/stable-stringify.js';
 
 /**
  * Ticks per segment.
@@ -421,7 +422,12 @@ function captureContext() {
     return {
         loadout: nextLoadout,
         combatZone: nextZone,
-        signature: JSON.stringify([nextZone, nextLoadout ? build : null]),
+        // Sorted keys, because the equipment map is rebuilt by delete/set:
+        // unequipping and re-equipping the same item moves its key to the end,
+        // and raw JSON would read an identical kit as a build change and throw
+        // the fight in flight away. Arrays keep their order — the ability and
+        // consumable slots are a rotation, and two orders are two builds.
+        signature: stableStringify([nextZone, nextLoadout ? build : null]),
     };
 }
 
