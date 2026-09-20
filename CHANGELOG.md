@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Storage: a reopened connection is no longer closed out from under a retry
+
+- When several reads timed out together, each one reopened IndexedDB and closed the connection the previous one had just opened, so a retry could hit a null handle and quietly answer the caller with a schema default instead of the record on disk.
+
 ### Dungeon tracker stops reading storage on every ordinary battle
 
 - The tracker checked for a saved dungeon run on every `new_battle` outside a dungeon too, so ordinary combat did two pointless IndexedDB reads a fight; it now skips the check when the running action is a normal zone, remembers an empty result, and fetches both keys in one transaction.

@@ -131,6 +131,23 @@ const READ_TIMEOUT_MS = 10_000;
 const READ_WEDGED = Symbol('storage-read-wedged');
 
 /**
+ * Whether opening a transaction failed because the connection is gone, rather
+ * than because the read itself cannot be made.
+ *
+ * The distinction decides what the caller is told. A store that does not exist
+ * is a real answer and the caller's default is the right one. A connection that
+ * was closed under the operation — `this.db` nulled mid-reopen (a `TypeError`
+ * off `null.transaction`), or a handle already closing (`InvalidStateError`) —
+ * is not an answer at all, and answering the default there is how a read of a
+ * perfectly readable record came back as "nothing stored".
+ * @param {*} error - Whatever `db.transaction()` threw
+ * @returns {boolean} True when the connection, not the request, is the problem
+ */
+function isConnectionGone(error) {
+    return error instanceof TypeError || error?.name === 'InvalidStateError';
+}
+
+/**
  * How long one IndexedDB write may take before it is reported as failed.
  *
  * Writes settle from the same events reads do — `success`, `error`, `abort` —
@@ -223,6 +240,30 @@ class Storage {
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
         this._lastReconnectFailureAt = 0; // When a reconnect last gave up, so waits do not pile up
+
+        /**
+         * Which connection is current, as a number that only goes up.
+         *
+         * A wedge does not strand one read, it strands every read in flight,
+         * and they all time out within milliseconds of each other. Without
+         * this, the second one to wake up closes the connection the first one
+         * had just opened and nulled `this.db` under its retry — which then
+         * threw inside `_runGet`, was swallowed, and answered the caller's
+         * schema default as though the store had said so. (What that costs is
+         * not log noise: the dungeon tracker's restore reading null starts a
+         * fresh run over a live one.)
+         *
+         * An operation captures this before it starts and hands it to
+         * `_recoverWedgedConnection`, which declines to close a connection
+         * opened after that point — somebody else has already recovered, and
+         * the right move is to use what they opened.
+         */
+        this._connectionGeneration = 0;
+        /**
+         * The recovery in flight, if any, so N stranded reads run one recovery
+         * between them rather than N reopens racing each other.
+         */
+        this._recovering = null;
 
         /**
          * Longest one read may take before the connection is called wedged.
@@ -494,23 +535,52 @@ class Storage {
      * therefore the recovery, and it is the same recovery `onclose`/
      * `onversionchange` already run — this just reaches it from the one signal
      * IndexedDB never sends, which is silence.
+     *
+     * Two things keep concurrent callers from undoing each other, because a
+     * stall strands every read at once and they all arrive here together:
+     *
+     * - The generation check. A caller passes the generation its operation
+     *   started on; if the connection has been replaced since, somebody else
+     *   has already recovered and this caller must not close their new
+     *   connection out from under its own retry.
+     * - The single in-flight promise. Callers that do arrive on the same
+     *   generation await one recovery between them rather than each closing
+     *   and reopening, which would leave the last one's connection live and
+     *   every earlier one's retry pointed at a closed handle.
+     * @param {number} [genAtStart] - `_connectionGeneration` when the operation began
      * @returns {Promise<boolean>} Whether a connection is available afterwards
      * @private
      */
-    async _recoverWedgedConnection() {
-        if (this.db) {
-            try {
-                this.db.close();
-            } catch (error) {
-                console.warn('[Storage] Closing the wedged connection failed:', error);
-            }
+    async _recoverWedgedConnection(genAtStart) {
+        if (typeof genAtStart === 'number' && genAtStart !== this._connectionGeneration) {
+            // Somebody recovered while this caller was timing out. Their
+            // connection is newer than the wedge and is the one to retry on.
+            return this.db ? true : this._awaitConnection();
         }
-        this.db = null;
-        this._dbNulledReason = 'read-timeout';
-        // A reconnect that failed in the last 30 s normally suppresses the wait.
-        // This is new evidence, not a repeat of that outage, so it gets a turn.
-        this._lastReconnectFailureAt = 0;
-        return this._awaitConnection();
+        if (this._recovering) return this._recovering;
+
+        const recovery = (async () => {
+            if (this.db) {
+                try {
+                    this.db.close();
+                } catch (error) {
+                    console.warn('[Storage] Closing the wedged connection failed:', error);
+                }
+            }
+            this.db = null;
+            this._dbNulledReason = 'read-timeout';
+            // A reconnect that failed in the last 30 s normally suppresses the wait.
+            // This is new evidence, not a repeat of that outage, so it gets a turn.
+            this._lastReconnectFailureAt = 0;
+            return this._awaitConnection();
+        })();
+
+        this._recovering = recovery;
+        try {
+            return await recovery;
+        } finally {
+            if (this._recovering === recovery) this._recovering = null;
+        }
     }
 
     /**
@@ -543,18 +613,25 @@ class Storage {
      * @private
      */
     async _guardedRead(op, target, storeName, unreadable, run) {
-        const first = await this._raceReadTimeout(run());
+        // Captured before the read starts: whatever happens next, this caller
+        // may only ever close *this* connection — see `_recoverWedgedConnection`.
+        const generation = this._connectionGeneration;
+        const started = Boolean(this.db);
+        const first = started ? await this._raceReadTimeout(run()) : READ_WEDGED;
         if (first !== READ_WEDGED) return first;
 
         this._readTimeouts += 1;
         this._lastReadTimeout = { op, target, storeName, at: Date.now() };
         console.error(
-            `[Storage] ${op}(${target}) on store ${storeName} did not complete within ${this.readTimeoutMs} ms — ` +
-                'the IndexedDB connection has stopped answering. Reopening it and retrying the read once.'
+            started
+                ? `[Storage] ${op}(${target}) on store ${storeName} did not complete within ${this.readTimeoutMs} ms — ` +
+                      'the IndexedDB connection has stopped answering. Reopening it and retrying the read once.'
+                : `[Storage] ${op}(${target}) on store ${storeName} could not be started — the connection is being ` +
+                      'reopened. Waiting for it and retrying the read once, rather than answering with a default.'
         );
 
-        if (await this._recoverWedgedConnection()) {
-            const second = await this._raceReadTimeout(run());
+        if (await this._recoverWedgedConnection(generation)) {
+            const second = this.db ? await this._raceReadTimeout(run()) : READ_WEDGED;
             if (second !== READ_WEDGED) return second;
             this._readTimeouts += 1;
         }
@@ -604,6 +681,12 @@ class Storage {
      * `settings` store while the lock was held, because IndexedDB serialises a
      * store across every connection on the origin. Recovery by reconnect is the
      * read watchdog's job and it stays there; this one reports and answers.
+     *
+     * The connection-generation guard added to that watchdog does not reach
+     * here for the same reason, and does not need to: a write that could not be
+     * made answers `false`, which requeues the value, and a requeued value is a
+     * whole write later — by then whichever reader was recovering has finished
+     * and the next flush runs on whatever connection is current.
      * @param {string} op - Which write, e.g. `set`
      * @param {string} target - The key, or a description for a bulk write
      * @param {string} storeName - Object store the write was against
@@ -676,7 +759,10 @@ class Storage {
                 };
             } catch (error) {
                 console.error(`[Storage] Get transaction failed for key ${key}:`, error);
-                resolve(defaultValue);
+                // A connection that went away mid-flight has said nothing about
+                // this key; the watchdog reopens and retries rather than the
+                // caller being handed a default it will happily write back.
+                resolve(isConnectionGone(error) ? READ_WEDGED : defaultValue);
             }
         });
     }
@@ -748,7 +834,7 @@ class Storage {
                 }
             } catch (error) {
                 console.error(`[Storage] getMany transaction failed for ${storeName}:`, error);
-                resolve(result);
+                resolve(isConnectionGone(error) ? READ_WEDGED : result);
             }
         });
     }
@@ -808,7 +894,7 @@ class Storage {
                 };
             } catch (error) {
                 console.error(`[Storage] Read transaction failed for key ${key}:`, error);
-                resolve(null);
+                resolve(isConnectionGone(error) ? READ_WEDGED : null);
             }
         });
     }
@@ -1512,7 +1598,7 @@ class Storage {
                 };
             } catch (error) {
                 console.error(`[Storage] GetAllKeys transaction failed for store ${storeName}:`, error);
-                resolve([]);
+                resolve(isConnectionGone(error) ? READ_WEDGED : []);
             }
         });
     }
@@ -1571,7 +1657,7 @@ class Storage {
                 };
             } catch (error) {
                 console.error(`[Storage] Key listing failed for store ${storeName}:`, error);
-                resolve(null);
+                resolve(isConnectionGone(error) ? READ_WEDGED : null);
             }
         });
     }
@@ -1627,7 +1713,7 @@ class Storage {
                 };
             } catch (error) {
                 console.error(`[Storage] GetAll transaction failed for store ${storeName}:`, error);
-                resolve({});
+                resolve(isConnectionGone(error) ? READ_WEDGED : {});
             }
         });
     }
@@ -2212,6 +2298,9 @@ class Storage {
         }
         this.db = db;
         this._dbNulledReason = null;
+        // Every adoption is a new generation, so an operation that started on
+        // the old connection can tell that it must not close this one.
+        this._connectionGeneration += 1;
         this._setupDbEventHandlers();
     }
 

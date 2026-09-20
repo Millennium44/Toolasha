@@ -253,3 +253,140 @@ describe('Storage opening a connection while another open is in flight', () => {
         await expect(storage.get('k', 'settings', 'fallback')).resolves.toBe('v');
     });
 });
+
+/**
+ * A connection whose transactions cannot be opened at all.
+ *
+ * What `this.db.transaction(...)` does when the handle is null (a `TypeError`)
+ * or already closing (`InvalidStateError`) — the two ways a read used to be
+ * answered with the caller's default while the record sat readable on disk.
+ * @param {Error} error - What `transaction()` throws
+ * @returns {object} A fake IDBDatabase
+ */
+function createThrowingDb(error) {
+    return {
+        objectStoreNames: ['settings'],
+        version: 20,
+        transaction() {
+            throw error;
+        },
+        close() {},
+    };
+}
+
+describe('Storage recovering from a wedge while another recovery is running', () => {
+    beforeEach(() => {
+        storage.db = null;
+        storage._dbNulledReason = null;
+        storage._lastReconnectFailureAt = 0;
+        storage._reconnecting = false;
+        storage._recovering = null;
+        storage._readTimeouts = 0;
+        storage._lastReadTimeout = null;
+        storage._writeTimeouts = 0;
+        storage.readTimeoutMs = 30;
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        storage.db = null;
+        storage.readTimeoutMs = 10_000;
+        storage._dbNulledReason = null;
+        storage._recovering = null;
+        globalThis.indexedDB = originalIndexedDB;
+    });
+
+    // The live report: four stores timing out at once with 'Successfully
+    // reconnected to IndexedDB' repeating between them. Every stranded read
+    // recovered separately, so each one closed the connection the previous one
+    // had just opened.
+    test('concurrent wedged reads run one recovery between them', async () => {
+        const { db } = createWedgedDb();
+        storage.db = db;
+        const healthy = createHealthyDb({ a: '1', b: '2' });
+        let healthyClosed = 0;
+        healthy.close = () => {
+            healthyClosed += 1;
+        };
+        const { opens } = installFakeIndexedDB([healthy]);
+
+        const [first, second] = await Promise.all([
+            storage.get('a', 'settings', 'fallback'),
+            storage.get('b', 'settings', 'fallback'),
+        ]);
+
+        // Both retries ran on the reopened connection and read from disk.
+        expect(first).toBe('1');
+        expect(second).toBe('2');
+        // And nobody closed it: one recovery, one open, zero closes of the new
+        // connection. A second close here is what left a retry calling
+        // `transaction()` on null.
+        expect(opens.count).toBe(1);
+        expect(healthyClosed).toBe(0);
+        expect(storage.db).toBe(healthy);
+    });
+
+    test('a recovery for an older connection leaves the current one alone', async () => {
+        const healthy = createHealthyDb({ a: '1' });
+        let closed = 0;
+        healthy.close = () => {
+            closed += 1;
+        };
+        storage.db = healthy;
+        storage._connectionGeneration = 7;
+
+        // An operation that began two connections ago finally wakes up. The
+        // connection it was wedged on is long gone; closing what is here now
+        // would only wedge somebody else.
+        await expect(storage._recoverWedgedConnection(5)).resolves.toBe(true);
+        expect(closed).toBe(0);
+        expect(storage.db).toBe(healthy);
+    });
+
+    test('a read on a connection that has gone away is unreadable, not a default', async () => {
+        // `transaction()` off a nulled handle: the throw that used to be caught
+        // and answered with the schema default, which is how a dungeon-tracker
+        // restore read null over a live run.
+        storage.db = createThrowingDb(new TypeError("Cannot read properties of null (reading 'transaction')"));
+        installFakeIndexedDB([createHealthyDb({ a: 'on disk' })]);
+
+        await expect(storage.get('a', 'settings', 'fallback')).resolves.toBe('on disk');
+        expect(storage.diagnostics().readTimeouts).toBeGreaterThan(0);
+    });
+
+    test('a closing connection is unreadable, not a default', async () => {
+        const invalidState = new Error('The database connection is closing.');
+        invalidState.name = 'InvalidStateError';
+        storage.db = createThrowingDb(invalidState);
+        installFakeIndexedDB([createHealthyDb({ a: 'on disk' })]);
+
+        await expect(storage.tryGet('a', 'settings')).resolves.toEqual({ found: true, value: 'on disk' });
+    });
+
+    // A missing store is a real answer, not a lost connection: it must not
+    // spend a reconnect on every read.
+    test('a request that simply cannot be made still answers its default', async () => {
+        const notFound = new Error('No objectStore named nope');
+        notFound.name = 'NotFoundError';
+        storage.db = createThrowingDb(notFound);
+        const { opens } = installFakeIndexedDB([createHealthyDb()]);
+
+        await expect(storage.get('a', 'nope', 'fallback')).resolves.toBe('fallback');
+        expect(opens.count).toBe(0);
+        expect(storage.diagnostics().readTimeouts).toBe(0);
+    });
+
+    // The read and write paths are deliberately asymmetric: a write that could
+    // not be made is reported and requeued, never retried on a new connection,
+    // because its transaction may yet commit.
+    test('a write on a broken connection is reported without reopening anything', async () => {
+        storage.db = createThrowingDb(new TypeError("Cannot read properties of null (reading 'transaction')"));
+        const { opens } = installFakeIndexedDB([createHealthyDb()]);
+
+        await expect(storage.set('a', '1', 'settings', true)).resolves.toBe(false);
+        expect(opens.count).toBe(0);
+        expect(storage.diagnostics().writeTimeouts).toBe(0);
+    });
+});
