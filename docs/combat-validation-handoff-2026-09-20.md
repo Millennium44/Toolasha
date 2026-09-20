@@ -63,7 +63,8 @@ tracing is later useful, integrate it with existing diagnostics instead of addin
   implementation. FIFO queue tests prove deterministic local order, not server order.
 - **Replay limitation:** saved inputs use current game data and the current engine, not an archived
   balance patch. Comparisons across a game balance change must be identified as such.
-- **Authorization:** no merges by this agent. No test-server access was used during this audit.
+- **Authorization:** no merges by this agent. The user authorized testing in the supplied Zombie T3
+  and Pirate Cove T2 test-server tabs. The Zombie tab was used for the recorder checks below.
 
 ## Assumptions requiring game evidence
 
@@ -101,13 +102,52 @@ All rows below remain unverified in this audit. A local regression test does not
 
 ## Evidence log
 
-| Check                                    | Status                                                      |
-| ---------------------------------------- | ----------------------------------------------------------- |
-| Equipped versus configured build capture | Reproduced by targeted test before fix; passes after fix.   |
-| Capture during loadout-snapshot loading  | Reproduced by targeted test before fix; passes after fix.   |
-| DTO levels after `skills_updated`        | Reproduced by targeted test before fix; passes after fix.   |
-| Live test-server parity                  | Pending reviewer; no live captures collected in this audit. |
-| Browser storage/performance              | Pending reviewer measurements.                              |
+| Check                                    | Status                                                                                                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Equipped versus configured build capture | Reproduced by targeted test before fix; passes after fix.                                                                   |
+| Capture during loadout-snapshot loading  | Reproduced by targeted test before fix; passes after fix.                                                                   |
+| DTO levels after `skills_updated`        | Reproduced by targeted test before fix; passes after fix.                                                                   |
+| Live test-server parity                  | Five-fight normal-combat smoke test collected; a longer capture is underway. PR #142 still needs live labyrinth validation. |
+| Browser storage/performance              | Pending reviewer measurements.                                                                                              |
 
 Update this log with commit, artifact, observed result and remaining ambiguity after each live
 test. Do not mark a mechanic confirmed from a simulator-only test or a bundled arrival timestamp.
+
+## Local validation
+
+- The three focused regressions above failed before the fixes and passed after them.
+- The normal pre-commit checks completed for the implementation: full test suite, ESLint,
+  Prettier, Markdown lint, development build and production build.
+- Compatibility checked by applying the PR and fixes to main `745b0f1c`; 1,210 tests across
+  34 relevant suites passed, including the newly changed expected-drop calculations.
+
+## Live recorder evidence
+
+The initial Zombie T3 export was collected on test-server userscript
+`3.56.0.20260920152508`, **not the updated PR #142 build**. The artifact is named
+`toolasha-sim-accuracy-sanitized-2026-09-20-19-32-33.json`. Its raw payload is retained locally,
+outside Git; it is not attached here because this version's Sanitized export still contains
+character IDs in consumable inventory hashes. A separate recorder fix removes those redundant
+hashes while retaining the item HRID, count, enhancement level and availability time.
+
+- `ticksComplete: true`, one segment, 137 ticks: 131 `battle_updated` and six `new_battle` messages.
+- Five completed fights contributed 80.255 seconds to the rate comparison. The recording began
+  mid-fight and ended during another fight. Raw-tick completeness does not mean every fight was
+  captured from start to finish.
+- The incoming-ability section counts six starts and labels one initial partial excluded. Its
+  last attempt has unknown outcome and nonzero monster HP. Do not equate that section's count
+  with the five completed fights in the rate comparison.
+- Observed DPS was 256.99 versus simulated 206.67: +24.35%, with the panel's ±16.41% margin.
+  Damage per landed hit differed by +26.16% ±21.62%; swing rate by -3.22% ±5.33%. This is a lead
+  for a larger sample, not an established engine defect or validation of a newer engine build.
+- Boundary payloads retain consumable counts and coffee buff maps, offering more evidence about
+  consumable availability than equipped slots alone. A boundary snapshot still does not prove
+  uninterrupted uptime throughout the recording.
+- Setting a count target and pressing Record, and pressing Record to ±5%, both left the running
+  recorder displaying an unlimited target in this installed build. A longer recording was
+  started and will be stopped manually; the target-control issue needs reproduction on a
+  current complete bundle set before assigning a cause.
+
+The longer sample should retain the same build and zone. Recheck its measured uncertainty rather
+than treating a fixed fight count as sufficient, and keep its results separate from this first
+smoke test. Export the whole session and verify `ticksComplete` again.
