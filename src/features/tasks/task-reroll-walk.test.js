@@ -1251,6 +1251,66 @@ describe('a discarded slot is done with, not walked again', () => {
 });
 
 describe('the walk replans rather than clicking the wrong thing', () => {
+    test('a reused payment button with a changed quote is repriced before a click', async () => {
+        const list = board([{ name: 'Milking - Cow', buttons: ['Back', 'Pay 10,000'], quest: quest(MILKING) }]);
+        await walk.start();
+        expect(walk.step.cost).toBe(10000);
+
+        // React may update the existing node instead of replacing it. The
+        // task name and goal can stay the same after another reroll too.
+        const payment = list.querySelectorAll('button')[1];
+        payment.textContent = 'Pay 20,000';
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+        expect(walk.step.cost).toBe(20000);
+        expect(chipText()).toContain('20.0K');
+    });
+
+    test('a reused free button becoming paid does not spend under the free label', async () => {
+        const list = board([{ name: 'Milking - Cow', buttons: CHOOSER, quest: quest(MILKING) }]);
+        await walk.start();
+        expect(walk.step.currency).toBe('free');
+
+        list.querySelectorAll('button')[1].textContent = 'Pay 10,000';
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+        expect(walk.step.currency).toBe('coin');
+        expect(walk.step.cost).toBe(10000);
+    });
+
+    test('a lowered protection limit is checked even before the widget observes its change', async () => {
+        taskRerollProtection.protection.isInitialized = true;
+        board([{ name: 'Milking - Cow', buttons: ['Back', 'Pay 10,000'], quest: quest(MILKING) }]);
+        await walk.start();
+        expect(walk.step.kind).toBe('pay');
+
+        taskRerollProtection.protection.coinThreshold = 10000;
+        taskRerollProtection.protection.cowbellThreshold = 1;
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+        expect(walk.step.kind).toBe('back');
+    });
+
+    test('raising the protection limits cancels an already planned discard confirmation', async () => {
+        taskRerollProtection.protection.isInitialized = true;
+        taskRerollProtection.protection.coinThreshold = 10000;
+        taskRerollProtection.protection.cowbellThreshold = 1;
+        board([{ name: 'Milking - Cow', buttons: ['Back', 'Confirm Discard'], quest: quest(MILKING) }]);
+        await walk.start();
+        expect(walk.step.kind).toBe('confirmDiscard');
+
+        taskRerollProtection.protection.coinThreshold = 320000;
+        taskRerollProtection.protection.cowbellThreshold = 32;
+
+        expect(walk.advance()).toBe(false);
+        expect(clicks).toEqual([]);
+        expect(walk.step).toBe(null);
+        expect(walk.state).toBe('stopped');
+    });
+
     test('a card that is no longer in its slot is planned again, not clicked', async () => {
         const list = board([
             { name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) },
