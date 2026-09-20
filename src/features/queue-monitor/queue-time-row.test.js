@@ -168,6 +168,26 @@ describe('the queue time tile', () => {
         const container = draw();
         expect(container.textContent).toContain('10m');
         expect(container.title).toContain('no count is queued');
+        expect(container.title).not.toContain('until the queue empties');
+    });
+
+    test('counted work behind a running unbounded action does not become a duration', () => {
+        game.actions = [unbounded(0), counted(60, 0, 1)];
+
+        expect(queueTimeLeft()).toEqual({ seconds: 0, finite: 0, queued: 2, infinite: true });
+        expect(draw().textContent).toContain('∞');
+    });
+
+    test('only work before the first unbounded action contributes, in execution order', () => {
+        const trailing = counted(60, 0, 2);
+        const first = counted(12, 6, 0);
+        const boundary = unbounded(1);
+        game.actions = [trailing, first, boundary];
+        game.elapsedSecondsInCurrentUnit = () => 4;
+
+        expect(queueTimeLeft()).toEqual({ seconds: 56, finite: 1, queued: 3, infinite: true });
+        expect(game.actions).toEqual([trailing, first, boundary]);
+        expect(draw().title).toContain('until the action with no count starts');
     });
 
     test('the running action subtracts time already spent on its current unit', () => {

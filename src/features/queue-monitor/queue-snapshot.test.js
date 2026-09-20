@@ -141,6 +141,34 @@ describe('queue snapshot', () => {
         expect(snapshot.totalQueueSeconds).toBe(0);
     });
 
+    test.each([false, true])('total stops at the unbounded action, with finite prefix: %s', async (withPrefix) => {
+        game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
+        const counted = (ordinal, maxCount, currentCount = 0) => ({
+            actionHrid: '/actions/milking/basic',
+            isDone: false,
+            hasMaxCount: true,
+            ordinal,
+            maxCount,
+            currentCount,
+        });
+        // Insertion order differs from execution order. Keep the trailing action
+        // in the saved details, but it cannot delay reaching the infinite one.
+        game.actions = [
+            counted(2, 60),
+            { actionHrid: '/actions/milking/basic', isDone: false, hasMaxCount: false, ordinal: 1 },
+            ...(withPrefix ? [counted(0, 12, 6)] : []),
+        ];
+
+        await queueSnapshot._onCharacterSwitching({ oldId: 'char1', oldName: 'Someone' });
+
+        const snapshot = queueSnapshot.getSnapshot('char1');
+        expect(snapshot.hasInfiniteAction).toBe(true);
+        expect(snapshot.totalQueueSeconds).toBe(withPrefix ? 60 : 0);
+        expect(snapshot.actions.at(-1).estimatedSeconds).toBe(600);
+        expect(snapshot.actions).toHaveLength(withPrefix ? 3 : 2);
+        expect(game.stored.queueSnapshot_char1.totalQueueSeconds).toBe(withPrefix ? 60 : 0);
+    });
+
     test('completed actions are excluded from the snapshot entirely', async () => {
         game.actionDetails['/actions/milking/basic'] = { name: 'Basic Milking' };
         game.actions = [

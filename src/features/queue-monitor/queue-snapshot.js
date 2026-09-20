@@ -96,7 +96,10 @@ class QueueSnapshot {
                         // Time = remaining / effectiveRate * actionTime
                         const effectiveRate = 1 + stats.totalEfficiency / 100;
                         estimatedSeconds = Math.ceil(remainingCount / effectiveRate) * stats.actionTime;
-                        totalQueueSeconds += estimatedSeconds;
+                        // The monitor displays this as time until the unbounded
+                        // action starts. Later rows stay in the details, but cannot
+                        // delay a boundary that comes before them in execution order.
+                        if (!hasInfiniteAction) totalQueueSeconds += estimatedSeconds;
                     }
                 } else {
                     hasInfiniteAction = true;
