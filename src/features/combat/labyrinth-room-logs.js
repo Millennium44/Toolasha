@@ -813,7 +813,7 @@ class LabyrinthRoomLogs {
             // Which build fought this, read as the fight OPENS. Read at close
             // instead, a gear or loadout change mid-fight filed the fight under
             // whichever cohort the player happened to be wearing by the end.
-            replayInputs: start.caughtStart ? this.simSource?.replayInputs?.(session.monsterHrid) || null : null,
+            replayInputs: start.caughtStart ? this.simSource?.replayInputs?.() || null : null,
             fingerprint: this.simSource?.fingerprint?.() || null,
             monsterMaxHp: start.monsterMaxHp,
             // Absolute health at the fight's start, so the recorder can measure

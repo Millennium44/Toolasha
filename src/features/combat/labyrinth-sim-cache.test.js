@@ -39,13 +39,13 @@ vi.mock('../../core/storage.js', () => ({
 }));
 /** What the mocked adapter hands back as the game data payload — null before the
  *  client's data sheet has arrived, which is a state the sim must not run in */
-const adapter = vi.hoisted(() => ({ gameData: {} }));
+const adapter = vi.hoisted(() => ({ gameData: {}, playerDTO: { hrid: 'player1' } }));
 /** Every call the mocked runner received, so "never asked the worker" is testable */
 const simRuns = vi.hoisted(() => ({ list: [] }));
 
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => adapter.gameData,
-    buildPlayerDTO: () => ({ hrid: 'player1' }),
+    buildPlayerDTO: () => adapter.playerDTO,
     getCommunityBuffs: () => ({}),
 }));
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
@@ -79,6 +79,53 @@ const { buildAccuracyExport } = await import('./labyrinth-accuracy-export.js');
 const { default: loadoutSnapshot } = await import('./loadout-snapshot.js');
 const { default: labFightRecorder } = await import('./labyrinth-fight-recorder.js');
 const { FINGERPRINT_VERSION } = await import('./labyrinth-fingerprint.js');
+
+test('fight-opening capture keeps the equipped build instead of the configured room loadout', () => {
+    adapter.playerDTO = {
+        hrid: 'player1',
+        equipment: { '/equipment_types/main_hand': { hrid: '/items/sword', enhancementLevel: 7 } },
+        abilities: [{ hrid: '/abilities/slash', level: 12, triggers: [{ value: 50 }] }],
+    };
+    const crates = ['/items/combat_crate'];
+    const buffs = [{ typeHrid: '/buff_types/damage', ratioBoost: 0.05 }];
+    const configured = { hrid: 'player1', equipment: {}, abilities: [] };
+    const buildLabyrinthPlayerDTO = vi.fn(() => configured);
+    const ctx = {
+        getLabyrinthLoadoutId: () => 3,
+        buildLabyrinthPlayerDTO,
+        getCrateHrids: () => crates,
+        getLabyrinthCombatBuffs: () => buffs,
+        labyrinthFullAbilities: () => true,
+    };
+    const saved = simCacheMethods.captureReplayInputs.call(ctx);
+    expect(saved.playerDTO).toEqual(adapter.playerDTO);
+    expect(buildLabyrinthPlayerDTO).not.toHaveBeenCalled();
+
+    // Neither later equipment/trigger changes nor mutable buff arrays rewrite history.
+    adapter.playerDTO.equipment['/equipment_types/main_hand'].enhancementLevel = 9;
+    adapter.playerDTO.abilities[0].triggers[0].value = 75;
+    crates.push('/items/other_crate');
+    buffs[0].ratioBoost = 0.1;
+    expect(saved.playerDTO.equipment['/equipment_types/main_hand'].enhancementLevel).toBe(7);
+    expect(saved.playerDTO.abilities[0].triggers[0].value).toBe(50);
+    expect(saved.crates).toEqual(['/items/combat_crate']);
+    expect(saved.labyrinthCombatBuffs[0].ratioBoost).toBe(0.05);
+
+    // Legacy replay still reconstructs the configured room, as its fingerprint promises.
+    expect(simCacheMethods.captureReplayInputs.call(ctx, '/monsters/fly').playerDTO).toEqual(configured);
+    expect(buildLabyrinthPlayerDTO).toHaveBeenCalledWith(3);
+});
+
+test('fight-opening capture remains available while configured loadout snapshots are loading', () => {
+    const saved = simCacheMethods.captureReplayInputs.call({
+        getLabyrinthLoadoutId: () => 3,
+        buildLabyrinthPlayerDTO: () => null,
+        getCrateHrids: () => [],
+        getLabyrinthCombatBuffs: () => [],
+        labyrinthFullAbilities: () => true,
+    });
+    expect(saved?.playerDTO).toEqual(adapter.playerDTO);
+});
 
 test('replay uses historical room inputs after the current build changes and reports sim failures', async () => {
     const inputs = {
@@ -135,6 +182,7 @@ afterEach(() => {
     storageWrites.list = [];
     simRuns.list = [];
     adapter.gameData = {};
+    adapter.playerDTO = { hrid: 'player1' };
 });
 
 describe('the persisted combat cache mirror', () => {

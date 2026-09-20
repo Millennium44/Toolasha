@@ -699,10 +699,18 @@ export const simCacheMethods = {
         labFightRecorder.clearRecording();
     },
 
-    /** Snapshot the effective room inputs before combat changes levels, equipment or buffs. */
-    captureReplayInputs(monsterHrid) {
+    /**
+     * Snapshot the equipped build at fight opening, before combat changes it.
+     * The room's configured loadout is a prediction, not evidence of what was worn.
+     * @param {string|null} [monsterHrid] - Only legacy replay passes a monster to
+     *   reconstruct its configured room loadout under a matching global fingerprint.
+     * @returns {Object|null} Detached replay inputs, or null when unavailable
+     */
+    captureReplayInputs(monsterHrid = null) {
         try {
-            const playerDTO = this.buildLabyrinthPlayerDTO(this.getLabyrinthLoadoutId(monsterHrid));
+            const playerDTO = monsterHrid
+                ? this.buildLabyrinthPlayerDTO(this.getLabyrinthLoadoutId(monsterHrid))
+                : buildPlayerDTO();
             return copyReplayInputs({
                 version: 1,
                 playerDTO,

@@ -811,7 +811,7 @@ describe('the fight recorder path measures whole fights', () => {
         );
         labyrinthRoomLogs.simSource.fingerprint = () => 'changed';
         expect(labyrinthRoomLogs.fight.fingerprint).toBe('start-build');
-        expect(replayInputs).toHaveBeenCalledWith('/monsters/fly');
+        expect(replayInputs).toHaveBeenCalledWith();
         expect(labyrinthRoomLogs.fight.replayInputs).toEqual({ version: 1 });
     });
 

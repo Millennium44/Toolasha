@@ -8,13 +8,14 @@
  * wisdom 0.005 × level as a flat boost.
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     clientData: null,
     guildBuffLevels: {},
     guildBuildingLevels: {},
     characterData: null,
+    currentSkills: null,
     equippedAbilities: [],
     equipment: new Map(),
     shrineCapturedAt: null,
@@ -31,6 +32,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => mocks.clientData,
+        getSkills: () => mocks.currentSkills,
         getCharacterGuildBuffLevel: (hrid) => mocks.guildBuffLevels[hrid] || 0,
         getGuildBuildingLevel: (hrid) => mocks.guildBuildingLevels[hrid] || 0,
         getGuildShrineCapturedAt: () => mocks.shrineCapturedAt,
@@ -88,6 +90,19 @@ const {
     getLabyrinthMonsters,
 } = await import('./combat-sim-adapter.js');
 const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
+
+afterEach(() => {
+    mocks.currentSkills = null;
+});
+
+test('a player DTO uses skills_updated levels instead of the login array', () => {
+    mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
+    mocks.characterData = { characterSkills: [{ skillHrid: '/skills/attack', level: 50 }] };
+    // data-manager replaces its current skills array on skills_updated;
+    // characterData.characterSkills still refers to the original login array.
+    mocks.currentSkills = [{ skillHrid: '/skills/attack', level: 51 }];
+    expect(buildPlayerDTO().attackLevel).toBe(51);
+});
 
 /**
  * The player list the Configure tab starts from.
