@@ -372,6 +372,45 @@ describe('importEverything formatVersion rejection', () => {
     });
 });
 
+describe('importEverything payload validation', () => {
+    test.each([undefined, null, [], 'settings', 7, true].map((value) => [value]))(
+        'rejects invalid stores: %j',
+        async (stores) => {
+            await expect(importEverything({ formatVersion: 1, stores })).rejects.toThrow(/stores/);
+
+            expect(storageMock.beginRestore).not.toHaveBeenCalled();
+            expect(storageMock.putAll).not.toHaveBeenCalled();
+        }
+    );
+
+    test.each([null, [], 'damaged history', 7, true].map((value) => [value]))(
+        'rejects malformed selected store %j before overwriting an earlier healthy store',
+        async (entries) => {
+            const payload = {
+                formatVersion: 1,
+                stores: { settings: { theme: 'light' }, xpHistory: entries },
+            };
+
+            await expect(importEverything(payload)).rejects.toThrow(/xpHistory/);
+
+            expect(db.get('settings').get('theme')).toBe('dark');
+            expect(storageMock.beginRestore).not.toHaveBeenCalled();
+            expect(storageMock.putAll).not.toHaveBeenCalled();
+        }
+    );
+
+    test('validates the requested stores while leaving unselected data untouched', async () => {
+        const result = await importEverything(
+            { formatVersion: 1, stores: { settings: { theme: 'light' }, xpHistory: null } },
+            { storeNames: ['settings'] }
+        );
+
+        expect(result.complete).toBe(true);
+        expect(db.get('settings').get('theme')).toBe('light');
+        expect(db.get('xpHistory').size).toBe(2);
+    });
+});
+
 describe('importEverything reports what did not land', () => {
     // The file-wide beforeEach already reinstalls every storage default and
     // clears the call records, which is exactly what these tests need.
@@ -473,5 +512,41 @@ describe('importEverything reports what did not land', () => {
         // Leaving the hold up would queue every debounced write in the script
         // until the unload flush
         expect(storage.endRestore).toHaveBeenCalled();
+    });
+
+    test('protects stores already restored when a later store throws before releasing held writes', async () => {
+        const payload = await exportEverything();
+        payload.stores.settings.theme = 'restored';
+        const writeStore = storageDefaults().putAll;
+        let protectedStores = new Set();
+        storageMock.putAll.mockImplementation((storeName, entries) => {
+            if (storeName === 'xpHistory') throw new Error('restore interrupted');
+            return writeStore(storeName, entries);
+        });
+        storageMock.finishRestore.mockImplementation((stores) => {
+            protectedStores = new Set(stores);
+        });
+        storageMock.endRestore.mockImplementation(async () => {
+            // A recorder queued its pre-restore state while another store was
+            // writing. Releasing the hold flushes it unless the completed store
+            // was latched, even though the whole restore did not finish.
+            if (!protectedStores.has('settings')) await writeStore('settings', { theme: 'stale' });
+        });
+
+        await expect(importEverything(payload)).rejects.toThrow('restore interrupted');
+
+        expect(db.get('settings').get('theme')).toBe('restored');
+        expect(storageMock.finishRestore).toHaveBeenCalledWith(new Set(['settings']));
+        expect(storageMock.endRestore).toHaveBeenCalledOnce();
+    });
+
+    test('releases the hold when the initial pending-write flush throws', async () => {
+        storageMock.beginRestore.mockRejectedValueOnce(new Error('flush interrupted'));
+
+        await expect(importEverything(await exportEverything())).rejects.toThrow('flush interrupted');
+
+        expect(storageMock.putAll).not.toHaveBeenCalled();
+        expect(storageMock.finishRestore).not.toHaveBeenCalled();
+        expect(storageMock.endRestore).toHaveBeenCalledOnce();
     });
 });
