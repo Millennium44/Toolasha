@@ -62,4 +62,14 @@ describe('external link tooltips', () => {
     test('a link that will not parse as a URL still gets a tooltip, not a thrown error', () => {
         expect(externalLinks.hostnameOf('not a url')).toBe('not a url');
     });
+
+    test('opens external tools without exposing the game tab as window.opener', () => {
+        const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {});
+        const container = navContainer();
+        externalLinks.addLink(container, 'Example', 'https://example.com/tool');
+
+        container.querySelector('.mwi-external-link').click();
+
+        expect(openSpy).toHaveBeenCalledWith('https://example.com/tool', '_blank', 'noopener');
+    });
 });

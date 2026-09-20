@@ -113,7 +113,7 @@ export async function handleViewCardClick(profileData) {
         );
 
         // Open in new tab
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener');
     } catch (error) {
         console.error('[CharacterCardButton] Failed to open character card:', error);
     }
@@ -222,7 +222,7 @@ export async function handleViewCardFromSnapshot(snapshotName) {
             combatScore
         );
 
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener');
     } catch (error) {
         console.error('[CharacterCardButton] Failed to open character card from snapshot:', error);
     }

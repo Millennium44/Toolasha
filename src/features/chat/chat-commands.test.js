@@ -236,7 +236,7 @@ describe('executeCommand', () => {
     test('/wiki always opens a URL, even for an item not in game data', () => {
         cmd.executeCommand({ type: 'wiki', itemName: 'Totally Made Up' });
 
-        expect(openSpy).toHaveBeenCalledWith('https://milkywayidle.wiki.gg/wiki/Totally_Made_Up', '_blank');
+        expect(openSpy).toHaveBeenCalledWith('https://milkywayidle.wiki.gg/wiki/Totally_Made_Up', '_blank', 'noopener');
     });
 
     test('/market on a known item opens the marketplace with the parsed enhancement level', () => {
